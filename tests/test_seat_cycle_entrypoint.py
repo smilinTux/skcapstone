@@ -887,8 +887,7 @@ def test_unit_templates_preserve_limits_and_disabled_install_contract() -> None:
     assert "OnUnitActiveSec=5min" in atlas_timer
     for seat in ("tank", "atlas"):
         assert (root / "systemd" / f"skfleet-{seat}.service").read_bytes() == (
-            root / "src" / "skcapstone" / "data" / "systemd" /
-            f"skfleet-{seat}.service"
+            root / "src" / "skcapstone" / "data" / "systemd" / f"skfleet-{seat}.service"
         ).read_bytes()
 
 

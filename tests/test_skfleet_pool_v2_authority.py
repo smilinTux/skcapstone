@@ -242,12 +242,12 @@ def test_worker_runtime_contract_is_unchanged() -> None:
 def test_role_seats_require_exact_label_and_dispatch_opt_in() -> None:
     """Tank and ATLAS cannot leak into generic or mismatched dispatch."""
     helpers = _load_helpers(
-        "_role_seat_metadata", "_pool_v2_dispatchable", "_pool_v2_ready_ids",
-        "_pool_v2_authority_rows"
+        "_role_seat_metadata",
+        "_pool_v2_dispatchable",
+        "_pool_v2_ready_ids",
+        "_pool_v2_authority_rows",
     )
-    helpers.update(
-        {"_SEAT_LABEL_PREFIX": "seat-", "_CATEGORY_OPT_IN": "dispatch-approved"}
-    )
+    helpers.update({"_SEAT_LABEL_PREFIX": "seat-", "_CATEGORY_OPT_IN": "dispatch-approved"})
     card_id = "a8100007"
     decision = [SimpleNamespace(card_id=card_id, eligible=True)]
     admission = _admission(card_id)
@@ -271,12 +271,12 @@ def test_role_seats_require_exact_label_and_dispatch_opt_in() -> None:
 
 def test_role_seats_require_exact_authority_metadata() -> None:
     helpers = _load_helpers(
-        "_role_seat_metadata", "_pool_v2_dispatchable", "_pool_v2_ready_ids",
-        "_pool_v2_authority_rows"
+        "_role_seat_metadata",
+        "_pool_v2_dispatchable",
+        "_pool_v2_ready_ids",
+        "_pool_v2_authority_rows",
     )
-    helpers.update(
-        {"_SEAT_LABEL_PREFIX": "seat-", "_CATEGORY_OPT_IN": "dispatch-approved"}
-    )
+    helpers.update({"_SEAT_LABEL_PREFIX": "seat-", "_CATEGORY_OPT_IN": "dispatch-approved"})
 
     def selected(seat: str, links: dict[str, str]) -> list[object]:
         card_id = "a8100007"
@@ -286,7 +286,12 @@ def test_role_seats_require_exact_authority_metadata() -> None:
         helpers["_ONLY_SEAT"] = seat
         return helpers["_pool_v2_authority_rows"](
             [SimpleNamespace(card_id=card_id, eligible=True)],
-            {card_id: admission}, False, {}, {"high": 1}, (), "chiap08"
+            {card_id: admission},
+            False,
+            {},
+            {"high": 1},
+            (),
+            "chiap08",
         )[0]
 
     assert selected("tank", {}) == []
@@ -294,10 +299,18 @@ def test_role_seats_require_exact_authority_metadata() -> None:
     assert len(selected("tank", {"approved_artifact_sha256": "a" * 64})) == 1
     assert selected("atlas", {"verification_target": "prod"}) == []
     assert selected("atlas", {"verification_evidence_sha256": "b" * 64}) == []
-    assert len(selected("atlas", {
-        "verification_target": "release-42/postconditions",
-        "verification_evidence_sha256": "b" * 64,
-    })) == 1
+    assert (
+        len(
+            selected(
+                "atlas",
+                {
+                    "verification_target": "release-42/postconditions",
+                    "verification_evidence_sha256": "b" * 64,
+                },
+            )
+        )
+        == 1
+    )
 
 
 def test_unsupported_worker_card_id_is_filtered_before_selection() -> None:
@@ -315,8 +328,7 @@ def test_unsupported_worker_card_id_is_filtered_before_selection() -> None:
     unsupported = "a8100007-01"
     supported = "a8100008"
     decisions = [
-        SimpleNamespace(card_id=card_id, eligible=True)
-        for card_id in (unsupported, supported)
+        SimpleNamespace(card_id=card_id, eligible=True) for card_id in (unsupported, supported)
     ]
     admissions = {card_id: _admission(card_id) for card_id in (unsupported, supported)}
 

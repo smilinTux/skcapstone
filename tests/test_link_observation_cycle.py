@@ -120,13 +120,8 @@ def test_packaged_units_are_identical() -> None:
 
 
 def test_service_supplies_exact_repository_scope() -> None:
-    service = (
-        Path(__file__).parents[1] / "systemd/skfleet-link-producer.service"
-    ).read_text()
-    assert (
-        "Environment=SKFLEET_LINK_REPOSITORIES=" + ",".join(REPOSITORIES)
-        in service
-    )
+    service = (Path(__file__).parents[1] / "systemd/skfleet-link-producer.service").read_text()
+    assert "Environment=SKFLEET_LINK_REPOSITORIES=" + ",".join(REPOSITORIES) in service
 
 
 def test_installer_wires_wrapper_and_units() -> None:

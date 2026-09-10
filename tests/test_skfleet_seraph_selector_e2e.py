@@ -191,7 +191,7 @@ def test_real_selector_runs_distinct_heads_concurrently_and_blocks_duplicates(
     _executable(
         fake_bin / "systemctl",
         f'if [ "$1" = "--user" ] && [ "$2" = "list-units" ]; then '
-        f'[ ! -s {unit_state} ] || while read unit; do '
+        f"[ ! -s {unit_state} ] || while read unit; do "
         f'printf "%s loaded active running\\n" "$unit"; done < {unit_state}; '
         "exit 0; fi\n"
         f'if [ "$1" = "--user" ] && [ "$2" = "is-active" ]; then '
@@ -402,8 +402,7 @@ cycle("replay", "seraph")
         receipt_events = [
             event
             for event in store._read_events(card_id)
-            if event.get("action") == "review_assignment_launch"
-            and event.get("launched") is True
+            if event.get("action") == "review_assignment_launch" and event.get("launched") is True
         ]
         assert len(claim_events) == 1
         assert len(receipt_events) == 1
