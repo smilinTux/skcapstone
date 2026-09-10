@@ -320,9 +320,7 @@ def test_reconciliation_skips_irrelevant_cards_without_niobe_runtime(
     )
 
     assert (
-        reconcile_fanout_receipt(
-            tmp_path, "3a11f071", live_sessions=set(), live_units=set()
-        )
+        reconcile_fanout_receipt(tmp_path, "3a11f071", live_sessions=set(), live_units=set())
         is None
     )
 
