@@ -101,7 +101,11 @@ process_group() {
   [[ -n "$SINCE" ]] && cmd="$cmd --since $SINCE"
   [[ -n "$tags" ]] && cmd="$cmd --tags $tags"
 
-  if eval "$cmd" > /tmp/telegram-catchup-$name.log 2>&1; then
+  # stdin MUST be /dev/null: this runs inside a `while read ... done < "$CONFIG"`
+  # loop, and if the CLI ever prompts (e.g. an unauthorized Telethon session asking
+  # for a phone number) it swallows the rest of the YAML config, silently dropping
+  # every remaining group from the run.
+  if eval "$cmd" < /dev/null > /tmp/telegram-catchup-$name.log 2>&1; then
     echo "OK"
     SUCCESS=$((SUCCESS + 1))
   else
