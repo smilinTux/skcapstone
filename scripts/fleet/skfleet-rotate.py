@@ -31,7 +31,7 @@ from skcapstone.scheduler_decision import (
 from skcapstone.review_admission import (
     governed_review_gate_reasons,
 )
-from skcapstone.seat_boundaries import BoundaryError, canonical_principal
+from skcapstone.seat_boundaries import BoundaryError
 from skcapstone.niobe_fanout import (
     FanoutBoundaryError,
     append_fanout_receipt,
@@ -208,6 +208,8 @@ def _governed_review_metadata(core, labels):
 
 def _review_assignment(cid, core, labels, reviewer):
     """Return Link's governed reviewer and recommendation for a review card."""
+    from skcapstone.seat_boundaries import canonical_principal
+
     if "review" not in {str(label).strip().lower() for label in labels}:
         return reviewer, None, None
     metadata = _governed_review_metadata(core, labels)
@@ -4071,7 +4073,7 @@ def _pool_v2_authority_rows(decisions, admissions, failed, unblocks, priorities,
         seat_labels = {
             str(label).strip().lower()
             for label in admission["labels"]
-            if str(label).strip().lower().startswith(_SEAT_LABEL_PREFIX)
+            if str(label).strip().lower().startswith("seat-")
         }
         if only_seat and seat_labels != {"seat-" + only_seat}:
             continue

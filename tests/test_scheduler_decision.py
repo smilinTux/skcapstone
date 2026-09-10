@@ -264,22 +264,22 @@ def test_only_v2_claimable_row_launches_and_nonclaimable_rows_do_not() -> None:
     )
     decisions = classify_scheduler_population(
         (
-            SchedulerFacts("legacy00"),
-            SchedulerFacts("onlyv200"),
-            SchedulerFacts("review00", awaiting_review=True),
-            SchedulerFacts("stale000", owner_health="stale"),
+            SchedulerFacts("1e9ac000"),
+            SchedulerFacts("0a1b2200"),
+            SchedulerFacts("ae71e000", awaiting_review=True),
+            SchedulerFacts("57a1e000", owner_health="stale"),
         )
     )
     admissions = {
-        "legacy00": _admission("legacy00"),
-        "onlyv200": _admission("onlyv200"),
-        "review00": _admission("review00", claimable=False, reason="review"),
-        "stale000": _admission("stale000", claimable=False, reason="owned-ready"),
+        "1e9ac000": _admission("1e9ac000"),
+        "0a1b2200": _admission("0a1b2200"),
+        "ae71e000": _admission("ae71e000", claimable=False, reason="review"),
+        "57a1e000": _admission("57a1e000", claimable=False, reason="owned-ready"),
     }
 
     rows, _pinned = authority_rows(decisions, admissions, False, {}, {"high": 1}, (), "chiap08")
 
-    assert {row[2] for row in rows} == {"legacy00", "onlyv200"}
+    assert {row[2] for row in rows} == {"1e9ac000", "0a1b2200"}
 
 
 def test_pool_v2_preclaim_accepts_unchanged_claimable_only() -> None:
