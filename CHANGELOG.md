@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- Card `7f3a9c21`: refresh Link's mediated multi-repository lineage input,
+  activate bounded Seraph, Tank, and ATLAS dispatch, raise Niobe to three
+  Codex workers with alternate lanes disabled, preserve source-head reviewer
+  independence, and record atomic dispatcher overlap as a truthful no-op.
+
 - Card `5ae93ae0`: require every governed Seraph review card to carry its
   immutable source-card and head-revision binding before scheduler admission.
 
