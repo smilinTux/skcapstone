@@ -6,6 +6,26 @@ import json
 from pathlib import Path
 
 
+def validate_parent_completion(task_id: str, home: Path) -> None:
+    """Refuse completion while a child of the card is nonterminal."""
+    from skcoord.card_store import CardStore
+
+    parent_label = f"parent-{task_id}".lower()
+    nonterminal = sorted(
+        card.id
+        for card in CardStore(home).list_cards(include_archived=True)
+        if parent_label in {label.lower() for label in card.labels}
+        and card.status.value not in {"done", "archived", "void"}
+        and not card.archived
+        and not card.meta.get("voided")
+    )
+    if nonterminal:
+        raise ValueError(
+            f"Card {task_id} has nonterminal children and cannot be completed: "
+            f"{', '.join(nonterminal)}"
+        )
+
+
 def complete_coord_task(home: Path, agent_name: str, task_id: str):
     """Validate governed review completion, then perform the board mutation."""
     from .coordination import Board
@@ -20,7 +40,11 @@ def complete_coord_task(home: Path, agent_name: str, task_id: str):
         except (OSError, ValueError):
             title = ""
     validate_review_completion(task_id, title, home_path)
-    return Board(home_path).complete_task(agent_name, task_id)
+    return Board(home_path).complete_task(
+        agent_name,
+        task_id,
+        precondition=lambda: validate_parent_completion(task_id, home_path),
+    )
 
 
 def move_coord_task(
@@ -51,4 +75,7 @@ def move_coord_task(
         column=column,
         actor=agent_name,
         order=order,
+        precondition=(
+            lambda: validate_parent_completion(task_id, home_path) if column == "done" else None
+        ),
     )

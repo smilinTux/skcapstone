@@ -1,5 +1,9 @@
 # Changelog
 
+- **Card ff79c130: validate child lifecycle inside terminal transactions.**
+  Parent completion now refuses nonterminal labeled children from inside the
+  shared skcoord mutation critical section for both supported terminal routes.
+
 - Card `35a61efb`: changed Seraph's hard-coded single review launch into a
   configurable batch bounded from one through eight, validated every exact
   recommendation, claim revision, launch receipt, active worker, source head,
