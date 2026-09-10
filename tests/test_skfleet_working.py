@@ -356,9 +356,7 @@ def test_direct_seat_stale_heartbeat_is_not_active(monkeypatch, tmp_path, capsys
         heartbeat_at="1970-01-01T00:00:01+00:00",
         process_record="/bounded/record.json",
     )
-    result, output, _ = run_report(
-        monkeypatch, tmp_path, capsys, monitor, [row], now=1000
-    )
+    result, output, _ = run_report(monkeypatch, tmp_path, capsys, monitor, [row], now=1000)
     assert result == 0
     assert "DIRECT SEAT ACTIVE" not in output
     assert "STALE PROJECTION" in output
