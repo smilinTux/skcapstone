@@ -1,5 +1,9 @@
 # Changelog
 
+- Card `d2126814`: admit up to four concurrent nonterminal dispatch requests
+  per builder node while preserving exact-request idempotency and terminal
+  capacity release.
+
 - Card `9012e178`: report the existing `do-not-claim` dispatcher exclusion in
   `coord gates` instead of incorrectly describing excluded cards as eligible.
 

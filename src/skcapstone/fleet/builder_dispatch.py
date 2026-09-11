@@ -28,6 +28,7 @@ PROVIDER = "skgateway"
 LEASE_SECONDS = 900
 TERMINAL_STATES = {"completed", "blocked", "failed", "stale"}
 MAX_ATTEMPTS = 2
+BUILDER_CAPACITY = 4
 _PROCESSES: dict[str, object] = {}
 _WORKER_TOOLS = "read,bash,edit,write,grep,find,ls"
 _BUNDLED_GUARD = Path(__file__).resolve().parents[3] / "scripts/fleet/pi-cardstore-guard.mjs"
@@ -137,8 +138,9 @@ def _ready_builders(paths: FleetPaths) -> list[NodeView]:
     return result
 
 
-def _node_busy(paths: FleetPaths, node: str) -> bool:
-    """Return whether a node has one nonterminal remote dispatch."""
+def _node_load(paths: FleetPaths, node: str) -> int:
+    """Return the number of nonterminal remote dispatches on one node."""
+    load = 0
     directory = paths.root / "dispatch" / node
     for path in sorted(directory.glob("*.json")) if directory.exists() else ():
         request = _load(path) or {}
@@ -148,8 +150,8 @@ def _node_busy(paths: FleetPaths, node: str) -> bool:
             and status.get("state") in TERMINAL_STATES
         ):
             continue
-        return True
-    return False
+        load += 1
+    return load
 
 
 def offer(
@@ -204,7 +206,7 @@ def offer(
         selected_node = view.name
         break
     if selected_node is None:
-        builders = [view for view in ready if not _node_busy(paths, view.name)]
+        builders = [view for view in ready if _node_load(paths, view.name) < BUILDER_CAPACITY]
         decision = scheduler.select(builders, scheduler.Workload("job", card_id))
         if decision.node is None:
             return None

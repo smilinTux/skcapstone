@@ -78,6 +78,52 @@ def test_niobe_places_one_generic_medium_card(paths, operator, noded41) -> None:
     assert repeated == request
 
 
+def test_niobe_admits_four_distinct_requests_and_denies_fifth(paths, operator, noded41) -> None:
+    _node(paths, operator, noded41)
+    writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
+    requests = []
+    for number in range(1, 6):
+        core = _card() | {"id": f"24b0000{number}"}
+        requests.append(
+            builder_dispatch.offer(
+                paths,
+                core,
+                ["sk-m", "source-only"],
+                writer=writer,
+            )
+        )
+
+    assert all(request is not None for request in requests[:4])
+    assert requests[4] is None
+    assert builder_dispatch._node_load(paths, "node-ziowk01") == 4
+    assert (
+        builder_dispatch.offer(
+            paths,
+            _card() | {"id": "24b00001"},
+            ["sk-m", "source-only"],
+            writer=writer,
+        )
+        == requests[0]
+    )
+
+    builder_dispatch._write_status(
+        paths,
+        "node-ziowk01",
+        requests[0],
+        "completed",
+    )
+    assert builder_dispatch._node_load(paths, "node-ziowk01") == 3
+    assert (
+        builder_dispatch.offer(
+            paths,
+            _card() | {"id": "24b00005"},
+            ["sk-m", "source-only"],
+            writer=writer,
+        )
+        is not None
+    )
+
+
 def test_offer_rejects_wrong_scheduler_and_lane_pins(paths) -> None:
     wrong = store.Writer(role="scheduler", node="atlas", identity="")
     try:
