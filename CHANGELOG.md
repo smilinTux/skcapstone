@@ -1,5 +1,8 @@
 # Changelog
 
+- Card `1cfb52d3`: keep provider-neutral gateway route health during the final
+  producer admission recheck so larger healthy routes can serve smaller cards.
+
 - Card `2dea585b`: use current advertised SKGateway routes and shared capacity
   domains for bounded ordinary producer selection instead of treating unrelated
   long-lived Pi sessions as active gateway work.

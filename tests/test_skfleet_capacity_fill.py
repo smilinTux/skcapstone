@@ -75,3 +75,15 @@ def test_runtime_counts_only_successful_launches() -> None:
     assert "_attempt_lane_name,_attempt_defer=select_compatible_lane(" in source
     assert "_attempt_remaining," in source
     assert "else:\n        launched+=1" in source
+
+
+def test_prelaunch_recheck_uses_gateway_routes_for_producer_health() -> None:
+    source = ROTATE.read_text(encoding="utf-8")
+    recheck = source.index("_attempt_health={")
+    selection = source.index("_attempt_lane_name,_attempt_defer=select_compatible_lane(", recheck)
+    block = source[recheck:selection]
+
+    assert "_producer_routes=_producer_routes_for(" in block
+    assert '"codex" if "codex-only"' in block
+    assert '_attempt_health["codex"]=(' in block
+    assert 'bool(_producer_routes),"gateway-route-capacity"' in block
