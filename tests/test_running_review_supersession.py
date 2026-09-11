@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
+import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
+from skcoord.card_store import CardCore, CardStore
 
 ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "scripts" / "fleet" / "skfleet-worker-wrapper.py"
@@ -118,5 +124,247 @@ def test_exact_superseded_generation_stops_only_its_process_group(monkeypatch) -
     values = args()
     module.monitor_review_supersession(values, child, stop)
 
-    assert killed == [(123, module.signal.SIGTERM)]
+    assert killed == [(123, module.signal.SIGTERM), (123, module.signal.SIGKILL)]
     assert values.review_supersession["claim_revision"] == "generation-1"
+
+
+def test_superseded_review_releases_only_exact_claim(monkeypatch) -> None:
+    module = load_module()
+    calls = []
+
+    class Board:
+        def __init__(self, home):
+            calls.append(("home", home))
+
+        def release_claim(self, owner, card, *, actor, expected_claim_revision):
+            calls.append((owner, card, actor, expected_claim_revision))
+            return True
+
+    monkeypatch.setattr("skcoord.coordination.Board", Board)
+    values = args()
+    values.review_supersession = {"current_head": "2" * 40}
+
+    module.release_superseded_review_claim(values)
+
+    assert calls[-1] == (
+        values.owner,
+        values.card,
+        values.owner,
+        "generation-1",
+    )
+
+
+def test_superseded_review_keeps_custody_when_exact_release_fails(monkeypatch) -> None:
+    module = load_module()
+
+    class Board:
+        def __init__(self, _home):
+            pass
+
+        def release_claim(self, *_args, **_kwargs):
+            return False
+
+    class Store:
+        def __init__(self, _home):
+            pass
+
+        def fold(self, _card):
+            return SimpleNamespace(owner=args().owner, meta={"_claim_revision": "other"})
+
+    monkeypatch.setattr("skcoord.coordination.Board", Board)
+    monkeypatch.setattr(module, "CardStore", Store)
+    values = args()
+    values.review_supersession = {"current_head": "2" * 40}
+
+    with pytest.raises(RuntimeError, match="exact claim was not released"):
+        module.release_superseded_review_claim(values)
+
+
+def test_terminal_snapshot_release_is_not_repeated(monkeypatch) -> None:
+    module = load_module()
+    values = args()
+    values.review_supersession = {"current_head": "2" * 40}
+    calls = []
+    monkeypatch.setattr(module, "publish_terminal_capacity", lambda *_args: True)
+    monkeypatch.setattr(
+        module,
+        "release_superseded_review_claim",
+        lambda *_args: calls.append("release") or True,
+    )
+
+    assert module.finalize_terminal_capacity(values, None) is True
+    assert calls == ["release"]
+
+
+def test_snapshot_failure_falls_back_to_exact_claim_release(monkeypatch, capsys) -> None:
+    module = load_module()
+    values = args()
+    values.review_supersession = {"current_head": "2" * 40}
+    calls = []
+
+    def fail_publication(*_args):
+        raise ValueError("bad snapshot")
+
+    monkeypatch.setattr(module, "publish_terminal_capacity", fail_publication)
+    monkeypatch.setattr(
+        module,
+        "release_superseded_review_claim",
+        lambda *_args: calls.append("release") or True,
+    )
+
+    assert module.finalize_terminal_capacity(values, None) is True
+    assert calls == ["release"]
+    assert "bad snapshot" in capsys.readouterr().err
+
+
+def test_failed_exact_release_preserves_owner_projection(monkeypatch) -> None:
+    module = load_module()
+    values = args()
+    values.review_supersession = {"current_head": "2" * 40}
+    idled = []
+    monkeypatch.setattr(
+        module,
+        "finalize_terminal_capacity",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("release failed")),
+    )
+    monkeypatch.setattr(module, "idle_owner_projection", idled.append)
+
+    with pytest.raises(RuntimeError, match="release failed"):
+        module.finalize_worker_exit(values, None)
+    assert idled == []
+
+
+def test_partial_publication_release_is_idempotent(monkeypatch) -> None:
+    module = load_module()
+
+    class Board:
+        def __init__(self, _home):
+            pass
+
+        def release_claim(self, *_args, **_kwargs):
+            raise ValueError("revision already released")
+
+    class Store:
+        def __init__(self, _home):
+            pass
+
+        def fold(self, _card):
+            return SimpleNamespace(owner=None, meta={})
+
+        def _read_events(self, _card):
+            return [
+                {
+                    "action": "release_claim",
+                    "released_owner": args().owner,
+                    "expected_claim_revision": args().claim_revision,
+                }
+            ]
+
+    monkeypatch.setattr("skcoord.coordination.Board", Board)
+    monkeypatch.setattr(module, "CardStore", Store)
+    values = args()
+    values.review_supersession = {"current_head": "2" * 40}
+
+    assert module.release_superseded_review_claim(values) is True
+
+
+def test_wrapper_never_rewrites_owner_projection(monkeypatch, tmp_path) -> None:
+    module = load_module()
+    monkeypatch.setattr(module.Path, "home", classmethod(lambda _cls: tmp_path))
+    agents = tmp_path / ".skcapstone" / "coordination" / "agents"
+    agents.mkdir(parents=True)
+    path = agents / f"{args().owner}.json"
+    path.write_text(
+        '{"agent":"pi-seraph-chiap08-3a11f071","state":"active",'
+        '"current_task":"new-card","claimed_tasks":["new-card","sibling"]}',
+        encoding="utf-8",
+    )
+
+    before = path.read_bytes()
+    module.idle_owner_projection(args().owner, args().card, args().claim_revision)
+    assert path.read_bytes() == before
+
+
+def test_superseded_main_releases_once_retires_capacity_and_exits_75(
+    monkeypatch, tmp_path
+) -> None:
+    module = load_module()
+    home = tmp_path / ".skcapstone"
+    home.mkdir()
+    store = CardStore(home)
+    store.create(
+        CardCore(
+            id="3a11f071",
+            title="obsolete review",
+            initial_owner=args().owner,
+            initial_claim_revision=args().claim_revision,
+        )
+    )
+    agents = home / "coordination" / "agents"
+    agents.mkdir(parents=True)
+    projection = agents / f"{args().owner}.json"
+    projection.write_text(
+        json.dumps(
+            {
+                "agent": args().owner,
+                "state": "active",
+                "current_task": args().card,
+                "claimed_tasks": [args().card],
+            }
+        ),
+        encoding="utf-8",
+    )
+    snapshot = tmp_path / "fleet-live.json"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "host": "chiap08",
+                "cards": ["3a11f071"],
+                "workers": [
+                    {
+                        "card_id": "3a11f071",
+                        "owner": args().owner,
+                        "claim_revision": args().claim_revision,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    values = argparse.Namespace(
+        **vars(args()),
+        model="fake",
+        stdout=tmp_path / "stdout.log",
+        live_snapshot=snapshot,
+        worker_executable="",
+        startup_timeout=1.0,
+        command=[sys.executable, "-c", "pass"],
+        evidence_dir=tmp_path / "evidence",
+    )
+    evidence = {
+        "card_id": values.card,
+        "claim_revision": values.claim_revision,
+        "owner": values.owner,
+        "current_head": "2" * 40,
+    }
+    monkeypatch.setattr(module.Path, "home", classmethod(lambda _cls: tmp_path))
+    monkeypatch.setattr(module, "parse_args", lambda: values)
+    monkeypatch.setattr(module, "preflight_worktree", lambda: 0)
+    monkeypatch.setattr(module, "preflight_mailbox", lambda _args: True)
+    monkeypatch.setattr(module, "emit_work_mail", lambda *_args: None)
+    monkeypatch.setattr(module, "review_supersession", lambda _args: evidence)
+    monkeypatch.setattr(module, "terminal_local_evidence", lambda child: child.poll() is not None)
+
+    assert module.main() == 75
+    assert store.fold(values.card).owner is None
+    assert json.loads(snapshot.read_text(encoding="utf-8"))["cards"] == []
+    folded_projection = json.loads(projection.read_text(encoding="utf-8"))
+    assert folded_projection["current_task"] is None
+    assert folded_projection["claimed_tasks"] == []
+    releases = [
+        event
+        for event in store._read_events(values.card)
+        if event.get("action") == "release_claim"
+        and event.get("expected_claim_revision") == values.claim_revision
+    ]
+    assert len(releases) == 1

@@ -326,7 +326,7 @@ def test_launcher_routes_every_lane_through_exit_wrapper() -> None:
     assert "subprocess.run(_worker_launch_command(unit,workspace,inner)" in source
 
 
-def test_idle_owner_projection_clears_active_worker(tmp_path, monkeypatch) -> None:
+def test_idle_owner_projection_defers_to_locked_reconciler(tmp_path, monkeypatch) -> None:
     home = tmp_path / "home"
     agents = home / ".skcapstone" / "coordination" / "agents"
     agents.mkdir(parents=True)
@@ -345,11 +345,9 @@ def test_idle_owner_projection_clears_active_worker(tmp_path, monkeypatch) -> No
         encoding="utf-8",
     )
     monkeypatch.setattr(Path, "home", lambda: home)
+    before = path.read_bytes()
     _wrapper().idle_owner_projection(owner)
-    data = json.loads(path.read_text(encoding="utf-8"))
-    assert data["state"] == "idle"
-    assert data["current_task"] is None
-    assert data["claimed_tasks"] == []
+    assert path.read_bytes() == before
 
 
 def test_idle_owner_projection_ignores_identity_mismatch(tmp_path, monkeypatch) -> None:

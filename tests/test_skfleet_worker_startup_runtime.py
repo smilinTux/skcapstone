@@ -331,6 +331,7 @@ def test_wrapper_publishes_terminal_capacity_on_every_child_exit(tmp_path, monke
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setattr(module, "emit_work_mail", lambda *args: None)
     monkeypatch.setattr(module, "idle_owner_projection", lambda *args: None)
+    monkeypatch.setattr(module, "release_superseded_review_claim", lambda *args: True)
     monkeypatch.setattr(module, "preflight_worktree", lambda: 0)
     monkeypatch.setattr(module, "preflight_mailbox", lambda args: True)
     monkeypatch.setattr(
@@ -411,6 +412,19 @@ def test_terminal_wrapper_exit_allows_real_next_claim_and_managed_launch(tmp_pat
             initial_owner="worker-1",
             initial_claim_revision="rev-1",
         )
+    )
+    agents = home / "coordination" / "agents"
+    agents.mkdir(parents=True)
+    (agents / "worker-1.json").write_text(
+        json.dumps(
+            {
+                "agent": "worker-1",
+                "state": "active",
+                "current_task": "feedbeef",
+                "claimed_tasks": ["feedbeef"],
+            }
+        ),
+        encoding="utf-8",
     )
     snapshot = tmp_path / "fleet-live.json"
     snapshot.write_text(
