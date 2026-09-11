@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import shutil
 import subprocess
 import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
@@ -27,6 +29,7 @@ LEASE_SECONDS = 900
 TERMINAL_STATES = {"completed", "blocked", "failed", "stale"}
 MAX_ATTEMPTS = 2
 _PROCESSES: dict[str, object] = {}
+_WORKER_TOOLS = "read,bash,edit,write,grep,find,ls"
 
 
 class BuilderDispatchError(ValueError):
@@ -66,6 +69,19 @@ def status_path(paths: FleetPaths, node: str, card_id: str) -> Path:
     return paths.status_path(node, "dispatch", card_id)
 
 
+@contextmanager
+def _request_exclusion(path: Path):
+    """Serialize one request generation across duplicate node daemons."""
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
 def eligible(core: dict, labels: list[str] | tuple[str, ...]) -> bool:
     """Return whether a card is the bounded generic medium source workload."""
     normalized = {str(label).strip().lower() for label in labels}
@@ -91,6 +107,23 @@ def _source(core: dict) -> tuple[str, str, str]:
     if len(revision) != 40 or any(ch not in "0123456789abcdef" for ch in revision):
         raise BuilderDispatchError("base_revision must be exact 40-hex")
     return repository, base_ref, revision
+
+
+def _request_matches_current_card(coordination_home: Path, request: dict) -> None:
+    """Reject an offered request after any source or eligibility amendment."""
+    card = CardStore(coordination_home).fold(str(request.get("card_id") or ""))
+    if card is None:
+        raise BuilderDispatchError("offered card is no longer foldable")
+    core = {"id": card.id, "meta": card.meta}
+    labels = sorted(str(label).strip().lower() for label in card.labels)
+    expected_labels = request.get("labels")
+    if (
+        not eligible(core, labels)
+        or _source(core)
+        != (request.get("repository"), request.get("base_ref"), request.get("base_revision"))
+        or labels != expected_labels
+    ):
+        raise BuilderDispatchError("offered card changed after dispatch request")
 
 
 def _ready_builders(paths: FleetPaths) -> list[NodeView]:
@@ -137,10 +170,20 @@ def offer(
     if not valid_name(card_id):
         raise BuilderDispatchError("invalid card id")
     repository, base_ref, revision = _source(core)
+    normalized_labels = sorted(str(label).strip().lower() for label in labels)
     ready = _ready_builders(paths)
+    selected_node = None
     for view in ready:
         existing = _load(request_path(paths, view.name, card_id))
-        if existing and existing.get("base_revision") == revision:
+        if not existing:
+            continue
+        same_binding = (
+            existing.get("repository"),
+            existing.get("base_ref"),
+            existing.get("base_revision"),
+            existing.get("labels"),
+        ) == (repository, base_ref, revision, normalized_labels)
+        if same_binding:
             prior = _load(status_path(paths, view.name, card_id)) or {}
             if prior.get("request_id") == existing.get("request_id") and (
                 prior.get("state") in TERMINAL_STATES
@@ -151,28 +194,47 @@ def offer(
             ):
                 return None
             return existing
-    builders = [view for view in ready if not _node_busy(paths, view.name)]
-    decision = scheduler.select(builders, scheduler.Workload("job", card_id))
-    if decision.node is None:
-        return None
-    scheduler.place(paths, scheduler.Workload("job", card_id), writer=writer, views=builders)
+        prior = _load(status_path(paths, view.name, card_id)) or {}
+        if (
+            prior.get("request_id") == existing.get("request_id")
+            and prior.get("state") == "running"
+        ):
+            return None
+        selected_node = view.name
+        break
+    if selected_node is None:
+        builders = [view for view in ready if not _node_busy(paths, view.name)]
+        decision = scheduler.select(builders, scheduler.Workload("job", card_id))
+        if decision.node is None:
+            return None
+        selected_node = decision.node
+    scheduler.place(
+        paths,
+        scheduler.Workload("job", card_id),
+        writer=writer,
+        views=[view for view in ready if view.name == selected_node],
+    )
     stamp = now or _now()
-    identity = f"{card_id}\0{decision.node}\0{revision}"
+    identity = json.dumps(
+        [card_id, selected_node, repository, base_ref, revision, normalized_labels],
+        separators=(",", ":"),
+    )
     request = {
         "schema": "skfleet.builder-dispatch/v1",
         "request_id": hashlib.sha256(identity.encode()).hexdigest(),
         "card_id": card_id,
-        "node": decision.node,
+        "node": selected_node,
         "role": ROLE,
         "provider": PROVIDER,
         "repository": repository,
         "base_ref": base_ref,
         "base_revision": revision,
+        "labels": normalized_labels,
         "offered_at": _iso(stamp),
         "lease_expires_at": _iso(stamp + timedelta(seconds=LEASE_SECONDS)),
         "writer": {"role": writer.role, "node": writer.node, "identity": writer.identity},
     }
-    path = request_path(paths, decision.node, card_id)
+    path = request_path(paths, selected_node, card_id)
     existing = _load(path)
     if existing and existing.get("request_id") == request["request_id"]:
         return existing
@@ -346,14 +408,26 @@ def _reconcile_running(
 
 def worker_command(request: dict, owner: str, claim_revision: str, workspace: Path) -> list[str]:
     """Build the only permitted remote worker command."""
+    worker = os.environ.get("SKFLEET_PI") or shutil.which("pi")
+    guard = os.environ.get("SKFLEET_PI_CARDSTORE_GUARD") or shutil.which("pi-cardstore-guard.mjs")
+    if not worker or not guard:
+        raise BuilderDispatchError("mediated worker runtime is not installed")
+    home = str(Path.home())
     return [
-        "env",
+        "/usr/bin/env",
+        "-i",
+        f"HOME={home}",
+        f"PATH={home}/.skenv/bin:{home}/.local/bin:/usr/local/bin:/usr/bin:/bin",
+        "LANG=C.UTF-8",
         f"SKAGENT={owner}",
         f"SKCAPSTONE_AGENT={owner}",
+        f"SKCAPSTONE_HOME={home}/.skcapstone",
         f"SKFLEET_CARD_ID={request['card_id']}",
         f"SKFLEET_CLAIM_REVISION={claim_revision}",
-        os.environ.get("SKFLEET_PI", str(Path.home() / ".npm-global/bin/pi")),
-        "--approve",
+        worker,
+        "--no-approve",
+        "--extension",
+        guard,
         "--name",
         owner,
         "--provider",
@@ -363,6 +437,9 @@ def worker_command(request: dict, owner: str, claim_revision: str, workspace: Pa
         "--thinking",
         "off",
         "--no-context-files",
+        "--no-skills",
+        "--tools",
+        _WORKER_TOOLS,
         "-p",
         (
             f"Work only SKCapstone card {request['card_id']}. "
@@ -431,109 +508,116 @@ def consume_one(
         return None
     directory = paths.root / "dispatch" / node
     for path in sorted(directory.glob("*.json")) if directory.exists() else ():
-        request = _load(path) or {}
-        if request.get("schema") != "skfleet.builder-dispatch/v1" or request.get("node") != node:
-            continue
-        prior = _load(status_path(paths, node, request["card_id"])) or {}
-        if prior.get("request_id") == request.get("request_id"):
-            if prior.get("state") == "running":
-                return _reconcile_running(paths, coordination_home, node, request, prior)
-            if prior.get("state") not in {"failed", "frozen"} or (
-                prior.get("state") == "failed" and int(prior.get("attempt") or 1) >= MAX_ATTEMPTS
+        with _request_exclusion(path):
+            request = _load(path) or {}
+            if (
+                request.get("schema") != "skfleet.builder-dispatch/v1"
+                or request.get("node") != node
             ):
                 continue
-        attempt = int(prior.get("attempt") or 0) + 1
-        owner = f"pi-builder-standby-{node}-{request['card_id']}"
-        workspace = paths.root / "workspaces" / owner
-        if not store.actuation_allowed(paths):
-            return None
-        materializer(request, workspace)
-        if not store.actuation_allowed(paths):
+            prior = _load(status_path(paths, node, request["card_id"])) or {}
+            if prior.get("request_id") == request.get("request_id"):
+                if prior.get("state") == "running":
+                    return _reconcile_running(paths, coordination_home, node, request, prior)
+                if prior.get("state") not in {"failed", "frozen"} or (
+                    prior.get("state") == "failed"
+                    and int(prior.get("attempt") or 1) >= MAX_ATTEMPTS
+                ):
+                    continue
+            attempt = int(prior.get("attempt") or 0) + 1
+            owner = f"pi-builder-standby-{node}-{request['card_id']}"
+            workspace = paths.root / "workspaces" / owner
+            if not store.actuation_allowed(paths):
+                return None
+            _request_matches_current_card(coordination_home, request)
+            materializer(request, workspace)
+            if not store.actuation_allowed(paths):
+                return _write_status(
+                    paths,
+                    node,
+                    request,
+                    "frozen",
+                    attempt=int(prior.get("attempt") or 0),
+                    claim_released=False,
+                )
+            _request_matches_current_card(coordination_home, request)
+            Board(coordination_home).claim_task(owner, request["card_id"])
+            card = CardStore(coordination_home).fold(request["card_id"])
+            revision = str(card.meta.get("_claim_revision") or "") if card else ""
+            if not card or card.owner != owner or not revision:
+                raise BuilderDispatchError("claimed generation is not authoritative")
+            frozen = _frozen_claim_status(
+                paths,
+                coordination_home,
+                node,
+                request,
+                owner,
+                revision,
+                int(prior.get("attempt") or 0),
+            )
+            if frozen is not None:
+                return frozen
+            startup_hello(coordination_home, owner, host=node)
+            command = worker_command(request, owner, revision, workspace)
+            frozen = _frozen_claim_status(
+                paths,
+                coordination_home,
+                node,
+                request,
+                owner,
+                revision,
+                int(prior.get("attempt") or 0),
+            )
+            if frozen is not None:
+                return frozen
+            run = launcher or (lambda argv, cwd: subprocess.Popen(argv, cwd=cwd))
+            exclusion_acquired = False
+            try:
+                with store.actuation_exclusion(paths):
+                    exclusion_acquired = True
+                    frozen = _frozen_claim_status(
+                        paths,
+                        coordination_home,
+                        node,
+                        request,
+                        owner,
+                        revision,
+                        int(prior.get("attempt") or 0),
+                    )
+                    if frozen is not None:
+                        return frozen
+                    process = run(command, workspace)
+            except Exception:
+                released = _release_exact(
+                    coordination_home, request["card_id"], owner, revision, actor=owner
+                )
+                state = "failed" if released and exclusion_acquired else "blocked"
+                _write_status(
+                    paths,
+                    node,
+                    request,
+                    state,
+                    owner=owner,
+                    claim_revision=revision,
+                    attempt=attempt if exclusion_acquired else int(prior.get("attempt") or 0),
+                    claim_released=released,
+                    mail_sent=_send_status(owner, request, state),
+                )
+                raise
+            pid = getattr(process, "pid", None)
+            if pid is not None:
+                _PROCESSES[request["request_id"]] = process
             return _write_status(
                 paths,
                 node,
                 request,
-                "frozen",
-                attempt=int(prior.get("attempt") or 0),
-                claim_released=False,
-            )
-        Board(coordination_home).claim_task(owner, request["card_id"])
-        card = CardStore(coordination_home).fold(request["card_id"])
-        revision = str(card.meta.get("_claim_revision") or "") if card else ""
-        if not card or card.owner != owner or not revision:
-            raise BuilderDispatchError("claimed generation is not authoritative")
-        frozen = _frozen_claim_status(
-            paths,
-            coordination_home,
-            node,
-            request,
-            owner,
-            revision,
-            int(prior.get("attempt") or 0),
-        )
-        if frozen is not None:
-            return frozen
-        startup_hello(coordination_home, owner, host=node)
-        command = worker_command(request, owner, revision, workspace)
-        frozen = _frozen_claim_status(
-            paths,
-            coordination_home,
-            node,
-            request,
-            owner,
-            revision,
-            int(prior.get("attempt") or 0),
-        )
-        if frozen is not None:
-            return frozen
-        run = launcher or (lambda argv, cwd: subprocess.Popen(argv, cwd=cwd))
-        exclusion_acquired = False
-        try:
-            with store.actuation_exclusion(paths):
-                exclusion_acquired = True
-                frozen = _frozen_claim_status(
-                    paths,
-                    coordination_home,
-                    node,
-                    request,
-                    owner,
-                    revision,
-                    int(prior.get("attempt") or 0),
-                )
-                if frozen is not None:
-                    return frozen
-                process = run(command, workspace)
-        except Exception:
-            released = _release_exact(
-                coordination_home, request["card_id"], owner, revision, actor=owner
-            )
-            state = "failed" if released and exclusion_acquired else "blocked"
-            _write_status(
-                paths,
-                node,
-                request,
-                state,
+                "running",
                 owner=owner,
                 claim_revision=revision,
-                attempt=attempt if exclusion_acquired else int(prior.get("attempt") or 0),
-                claim_released=released,
-                mail_sent=_send_status(owner, request, state),
+                pid=pid,
+                pid_start_ticks=_proc_start_ticks(pid) if pid is not None else None,
+                attempt=attempt,
             )
-            raise
-        pid = getattr(process, "pid", None)
-        if pid is not None:
-            _PROCESSES[request["request_id"]] = process
-        return _write_status(
-            paths,
-            node,
-            request,
-            "running",
-            owner=owner,
-            claim_revision=revision,
-            pid=pid,
-            pid_start_ticks=_proc_start_ticks(pid) if pid is not None else None,
-            attempt=attempt,
-        )
     return None
 
 

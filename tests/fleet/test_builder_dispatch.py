@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
+import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from threading import Event, Lock
 from types import SimpleNamespace
 
 import pytest
@@ -13,8 +17,9 @@ from skcapstone.fleet import builder_dispatch, sknoded, store
 
 
 @pytest.fixture(autouse=True)
-def _clear_process_registry():
+def _clear_process_registry(monkeypatch):
     builder_dispatch._PROCESSES.clear()
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: _folded())
     yield
     builder_dispatch._PROCESSES.clear()
 
@@ -40,6 +45,19 @@ def _card() -> dict:
             "base_revision": "9cc415465d6bacc22b51b09a3c861c61f0823d45",
         },
     }
+
+
+def _folded(**values) -> SimpleNamespace:
+    defaults = {
+        "id": "24b00003",
+        "owner": None,
+        "meta": dict(_card()["meta"]),
+        "labels": ["sk-m", "source-only"],
+        "status": SimpleNamespace(value="doing"),
+        "links": {},
+    }
+    defaults.update(values)
+    return SimpleNamespace(**defaults)
 
 
 def test_niobe_places_one_generic_medium_card(paths, operator, noded41) -> None:
@@ -70,15 +88,132 @@ def test_offer_rejects_wrong_scheduler_and_lane_pins(paths) -> None:
     assert not builder_dispatch.eligible(_card(), ["sk-m", "source-only", "codex-only"])
 
 
-def test_worker_command_is_pi_through_gateway_only() -> None:
+def test_worker_command_is_pi_through_gateway_only(monkeypatch) -> None:
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "must-not-cross-boundary")
     command = builder_dispatch.worker_command(
         _card() | {"card_id": "24b00003"}, "owner", "rev", "/tmp/work"
     )
+    assert command[:2] == ["/usr/bin/env", "-i"]
     assert "--provider" in command
     assert command[command.index("--provider") + 1] == "skgateway"
+    assert "--no-approve" in command
+    assert "--approve" not in command
+    assert command[command.index("--tools") + 1] == "read,bash,edit,write,grep,find,ls"
+    assert "--extension" in command
     assert "codex" not in " ".join(command).lower()
     assert "openai.com" not in " ".join(command).lower()
+    assert "must-not-cross-boundary" not in " ".join(command)
+    assert not any(part.startswith("AWS_SECRET_ACCESS_KEY=") for part in command)
     assert "SKFLEET_CLAIM_REVISION=rev" in command
+
+
+def test_post_offer_card_amendment_blocks_materialization_and_claim(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41)
+    builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+    )
+    amended = _folded()
+    amended.meta["base_revision"] = "a" * 40
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: amended)
+    monkeypatch.setattr(
+        builder_dispatch.Board,
+        "claim_task",
+        lambda *_args: pytest.fail("amended card was claimed"),
+    )
+    with pytest.raises(builder_dispatch.BuilderDispatchError, match="changed after dispatch"):
+        builder_dispatch.consume_one(
+            paths,
+            tmp_path,
+            "node-ziowk01",
+            materializer=lambda *_args: pytest.fail("amended source was materialized"),
+        )
+
+
+def test_reoffer_after_source_amendment_mints_a_new_bound_request(
+    paths, operator, noded41
+) -> None:
+    _node(paths, operator, noded41)
+    writer = store.Writer(role="scheduler", node="niobe", identity="")
+    first = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
+    amended = _card()
+    amended["meta"]["base_ref"] = "release"
+    second = builder_dispatch.offer(paths, amended, ["sk-m", "source-only"], writer=writer)
+
+    assert second["request_id"] != first["request_id"]
+    assert second["base_ref"] == "release"
+    assert (
+        builder_dispatch._load(builder_dispatch.request_path(paths, "node-ziowk01", "24b00003"))
+        == second
+    )
+
+
+def test_duplicate_node_daemons_share_one_request_generation(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41)
+    builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+    )
+    folded = _folded()
+    entered = Event()
+    resume = Event()
+    guard = Lock()
+    calls = {"materialize": 0, "claim": 0, "launch": 0}
+
+    def materialize(_request, workspace):
+        with guard:
+            calls["materialize"] += 1
+        entered.set()
+        assert resume.wait(2)
+        return workspace
+
+    def claim(_self, owner, _card_id):
+        with guard:
+            calls["claim"] += 1
+        folded.owner = owner
+        folded.meta = {"_claim_revision": "one-generation"}
+
+    def launch(_command, _workspace):
+        with guard:
+            calls["launch"] += 1
+        return SimpleNamespace(pid=os.getpid(), poll=lambda: None)
+
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: folded)
+    monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
+    monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(
+            builder_dispatch.consume_one,
+            paths,
+            tmp_path,
+            "node-ziowk01",
+            launcher=launch,
+            materializer=materialize,
+        )
+        assert entered.wait(2)
+        second = pool.submit(
+            builder_dispatch.consume_one,
+            paths,
+            tmp_path,
+            "node-ziowk01",
+            launcher=launch,
+            materializer=materialize,
+        )
+        time.sleep(0.05)
+        resume.set()
+        results = [first.result(timeout=2), second.result(timeout=2)]
+
+    assert calls == {"materialize": 1, "claim": 1, "launch": 1}
+    assert {result["state"] for result in results} == {"running"}
+    assert {result["claim_revision"] for result in results} == {"one-generation"}
 
 
 def test_consumer_claims_exact_generation_and_reports_running(
@@ -87,9 +222,7 @@ def test_consumer_claims_exact_generation_and_reports_running(
     _node(paths, operator, noded41)
     writer = store.Writer(role="scheduler", node="niobe", identity="")
     request = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
-    folded = SimpleNamespace(
-        owner=None, meta={}, status=SimpleNamespace(value="doing"), links={"verdict": "PASS"}
-    )
+    folded = _folded(links={"verdict": "PASS"})
 
     def claim(_self, owner, card_id):
         assert card_id == "24b00003"
@@ -146,7 +279,7 @@ def test_freeze_during_materialization_prevents_claim_and_remains_retryable(
         writer=store.Writer(role="scheduler", node="niobe", identity=""),
     )
     store.set_frozen(paths, False, writer=operator, reason="test setup")
-    folded = SimpleNamespace(owner=None, meta={})
+    folded = _folded()
     claims = []
 
     def materialize_then_freeze(_request, workspace):
@@ -200,7 +333,7 @@ def test_freeze_after_claim_releases_generation_and_prevents_launch(
         ["sk-m", "source-only"],
         writer=store.Writer(role="scheduler", node="niobe", identity=""),
     )
-    folded = SimpleNamespace(owner=None, meta={})
+    folded = _folded()
     claims = []
     releases = []
 
@@ -214,7 +347,7 @@ def test_freeze_after_claim_releases_generation_and_prevents_launch(
     def release(_self, owner, _card_id, **kwargs):
         releases.append((owner, kwargs["expected_claim_revision"]))
         folded.owner = None
-        folded.meta = {}
+        folded.meta = dict(_card()["meta"])
         return True
 
     monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
@@ -257,7 +390,7 @@ def test_freeze_winning_atomic_exclusion_prevents_process_creation(
         ["sk-m", "source-only"],
         writer=store.Writer(role="scheduler", node="niobe", identity=""),
     )
-    folded = SimpleNamespace(owner=None, meta={})
+    folded = _folded()
     releases = []
 
     def claim(_self, owner, _card_id):
@@ -303,7 +436,7 @@ def test_live_old_worker_refreshes_and_cannot_be_reaped(
         ["sk-m", "source-only"],
         writer=store.Writer(role="scheduler", node="niobe", identity=""),
     )
-    folded = SimpleNamespace(owner=None, meta={}, status=SimpleNamespace(value="doing"))
+    folded = _folded()
 
     def claim(_self, owner, _card_id):
         folded.owner = owner
@@ -411,7 +544,7 @@ def test_terminal_request_does_not_starve_next_request(
     builder_dispatch._write_status(paths, "node-ziowk01", first_request, "completed")
     second = _card() | {"id": "20000002"}
     second_request = builder_dispatch.offer(paths, second, ["sk-m", "source-only"], writer=writer)
-    folded = SimpleNamespace(owner=None, meta={})
+    folded = _folded(id="20000002")
 
     def claim(_self, owner, card_id):
         assert card_id == "20000002"
@@ -441,7 +574,7 @@ def test_launch_failure_releases_exact_claim_and_retries_once(
         ["sk-m", "source-only"],
         writer=store.Writer(role="scheduler", node="niobe", identity=""),
     )
-    folded = SimpleNamespace(owner=None, meta={}, status=SimpleNamespace(value="doing"))
+    folded = _folded()
     claims = []
 
     def claim(_self, owner, _card_id):
@@ -453,7 +586,7 @@ def test_launch_failure_releases_exact_claim_and_retries_once(
         assert kwargs["expected_claim_revision"] == folded.meta["_claim_revision"]
         assert owner == folded.owner
         folded.owner = None
-        folded.meta = {}
+        folded.meta = dict(_card()["meta"])
         return True
 
     monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
@@ -507,9 +640,7 @@ def test_supervisor_records_completion_and_sends_mail(
         ["sk-m", "source-only"],
         writer=store.Writer(role="scheduler", node="niobe", identity=""),
     )
-    folded = SimpleNamespace(
-        owner=None, meta={}, status=SimpleNamespace(value="doing"), links={"verdict": "PASS"}
-    )
+    folded = _folded(links={"verdict": "PASS"})
 
     def claim(_self, owner, _card_id):
         folded.owner = owner
