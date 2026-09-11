@@ -73,6 +73,7 @@ def test_niobe_places_one_generic_medium_card(paths, operator, noded41) -> None:
     )
     assert request["node"] == "node-ziowk01"
     assert request["provider"] == "skgateway"
+    assert request["logical_route"] == "sk-m"
     assert store.read_placement(paths, "job", "24b00003")["node"] == "node-ziowk01"
     repeated = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
     assert repeated == request
@@ -135,19 +136,36 @@ def test_offer_rejects_wrong_scheduler_and_lane_pins(paths) -> None:
     assert not builder_dispatch.eligible(_card(), ["sk-m", "source-only", "codex-only"])
 
 
+@pytest.mark.parametrize("route", ["sk-s", "sk-m", "sk-l", "sk-xl"])
+def test_provider_neutral_logical_routes_are_eligible(route) -> None:
+    assert builder_dispatch.eligible(_card(), [route, "source-only"])
+
+
+def test_ambiguous_or_direct_provider_routes_are_rejected() -> None:
+    assert not builder_dispatch.eligible(_card(), ["sk-s", "sk-m", "source-only"])
+    assert not builder_dispatch.eligible(_card(), ["sk-l", "source-only", "glm-only"])
+
+
 def test_worker_command_is_pi_through_gateway_only(monkeypatch) -> None:
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "must-not-cross-boundary")
     command = builder_dispatch.worker_command(
-        _card() | {"card_id": "24b00003"}, "owner", "rev", "/tmp/work"
+        _card() | {"card_id": "24b00003", "logical_route": "sk-s"},
+        "owner",
+        "rev",
+        "/tmp/work",
     )
     assert command[:2] == ["/usr/bin/env", "-i"]
     assert "--provider" in command
     assert command[command.index("--provider") + 1] == "skgateway"
+    assert command[command.index("--model") + 1] == "sk-s"
     assert "--no-approve" in command
     assert "--approve" not in command
     assert command[command.index("--tools") + 1] == "read,bash,edit,write,grep,find,ls"
     assert "--extension" in command
     assert "codex" not in " ".join(command).lower()
+    assert "glm" not in " ".join(command).lower()
+    assert "kimi" not in " ".join(command).lower()
+    assert "qwen" not in " ".join(command).lower()
     assert "openai.com" not in " ".join(command).lower()
     assert "must-not-cross-boundary" not in " ".join(command)
     assert not any(part.startswith("AWS_SECRET_ACCESS_KEY=") for part in command)
@@ -159,7 +177,10 @@ def test_worker_command_uses_bundled_guard_in_isolated_environment(monkeypatch) 
     monkeypatch.delenv("SKFLEET_PI_CARDSTORE_GUARD", raising=False)
     monkeypatch.setattr(builder_dispatch.shutil, "which", lambda *_args: None)
     command = builder_dispatch.worker_command(
-        _card() | {"card_id": "24b00003"}, "owner", "rev", "/tmp/work"
+        _card() | {"card_id": "24b00003", "logical_route": "sk-l"},
+        "owner",
+        "rev",
+        "/tmp/work",
     )
 
     assert command[command.index("--extension") + 1] == str(builder_dispatch._BUNDLED_GUARD)
@@ -171,7 +192,10 @@ def test_worker_command_rejects_missing_configured_guard(monkeypatch) -> None:
 
     with pytest.raises(builder_dispatch.BuilderDispatchError, match="does not exist"):
         builder_dispatch.worker_command(
-            _card() | {"card_id": "24b00003"}, "owner", "rev", "/tmp/work"
+            _card() | {"card_id": "24b00003", "logical_route": "sk-m"},
+            "owner",
+            "rev",
+            "/tmp/work",
         )
 
 

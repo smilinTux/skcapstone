@@ -25,6 +25,7 @@ from .paths import SOVEREIGN_HOME, FleetPaths, valid_name
 
 ROLE = "builder-standby"
 PROVIDER = "skgateway"
+LOGICAL_ROUTES = frozenset({"sk-s", "sk-m", "sk-l", "sk-xl"})
 LEASE_SECONDS = 900
 TERMINAL_STATES = {"completed", "blocked", "failed", "stale"}
 MAX_ATTEMPTS = 2
@@ -84,11 +85,17 @@ def _request_exclusion(path: Path):
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 
+def logical_route(labels: list[str] | tuple[str, ...]) -> str | None:
+    """Return the card's one unambiguous governed logical route."""
+    routes = LOGICAL_ROUTES.intersection(str(label).strip().lower() for label in labels)
+    return next(iter(routes)) if len(routes) == 1 else None
+
+
 def eligible(core: dict, labels: list[str] | tuple[str, ...]) -> bool:
-    """Return whether a card is the bounded generic medium source workload."""
+    """Return whether a card is a bounded provider-neutral source workload."""
     normalized = {str(label).strip().lower() for label in labels}
     return (
-        "sk-m" in normalized
+        logical_route(labels) is not None
         and "source-only" in normalized
         and not any(label.startswith("seat-") for label in normalized)
         and not normalized.intersection({"host-pin", "codex-only", "qwen-only", "glm-only"})
@@ -174,6 +181,9 @@ def offer(
         raise BuilderDispatchError("invalid card id")
     repository, base_ref, revision = _source(core)
     normalized_labels = sorted(str(label).strip().lower() for label in labels)
+    route = logical_route(labels)
+    if route is None:
+        raise BuilderDispatchError("card must select exactly one logical route")
     ready = _ready_builders(paths)
     selected_node = None
     for view in ready:
@@ -229,6 +239,7 @@ def offer(
         "node": selected_node,
         "role": ROLE,
         "provider": PROVIDER,
+        "logical_route": route,
         "repository": repository,
         "base_ref": base_ref,
         "base_revision": revision,
@@ -430,6 +441,9 @@ def worker_command(request: dict, owner: str, claim_revision: str, workspace: Pa
     if not worker:
         raise BuilderDispatchError("mediated worker runtime is not installed")
     guard = _guard_path()
+    route = str(request.get("logical_route") or "")
+    if route not in LOGICAL_ROUTES:
+        raise BuilderDispatchError("dispatch request has no supported logical route")
     home = str(Path.home())
     sovereign_home = str(Path(SOVEREIGN_HOME).expanduser())
     return [
@@ -452,7 +466,7 @@ def worker_command(request: dict, owner: str, claim_revision: str, workspace: Pa
         "--provider",
         PROVIDER,
         "--model",
-        "pi",
+        route,
         "--thinking",
         "off",
         "--no-context-files",
