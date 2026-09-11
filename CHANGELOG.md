@@ -1,5 +1,16 @@
 # Changelog
 
+- SKRSI is activated for its first target on the nor estate:
+  `scripts/skrsi/collect_fleet.py` emits fleet heartbeat-freshness
+  observations into a host-local append-only outbox. SKRSI ships contracts and
+  bounded components but deliberately no scheduler (its ARCHITECTURE.md states
+  the target registry "does not own runtime activation"), so activation is the
+  adopter's job; this is that job for one target. Observation only: it never
+  approves, merges, deploys, or mutates an authority store. Metadata is
+  allowlisted and every string is hashed, including the node name in the fence
+  key, so no clear host name reaches the outbox while the numeric measurement
+  stays readable.
+
 - Card `1cfb52d3`: keep provider-neutral gateway route health during the final
   producer admission recheck so larger healthy routes can serve smaller cards.
 
