@@ -9,10 +9,12 @@ from unittest.mock import patch
 import click
 import pytest
 from click.testing import CliRunner
+from skcoord.card_store import CardStore
 
 from skcapstone.cli.coord import register_coord_commands
 from skcapstone.coordination import Board, Task
 from skcapstone.mcp_server import call_tool
+from tests.test_ci_applicability import completion_fixture, repository_fixture
 
 _REQUIRED = (
     "ci_check_docs",
@@ -149,3 +151,133 @@ async def test_cli_mcp_fail_closed_for_noncanonical_or_incomplete_ci(
     ok, detail = await _invoke(home, entrypoint)
     assert not ok, detail
     assert Board(home).load_agent("reviewer").current_task == "abcd1234"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entrypoint", ["cli_complete", "cli_move", "mcp_complete", "mcp_move"])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "node",
+        "python",
+        "mixed",
+        "missing",
+        "na_success",
+        "stale",
+        "null",
+        "newer_failure",
+        "weakened",
+    ],
+)
+async def test_profile_completion_entrypoint_parity(tmp_path, entrypoint, case):
+    """All completion adapters enforce policy before claim or lifecycle mutation."""
+    home = _review_home(tmp_path, "[REVIEW] profile", "SUCCESS")
+    core, receipt, append = completion_fixture(
+        home, kind=case if case in {"python", "mixed"} else "node", card_id="abcd1234"
+    )
+    core_path = home / "cards/abcd1234/core.json"
+    payload = json.loads(core_path.read_text())
+    payload["meta"] = core["meta"]
+    if case == "null":
+        payload["meta"]["ci_profile"] = None
+    if case == "newer_failure":
+        append(ts="2026-09-11T09:00:00Z")
+    if case == "na_success":
+        receipt["checks"]["ci_check_python311"]["state"] = "SUCCESS"
+    if case == "stale":
+        receipt["candidate_revision"] = "c" * 40
+    if case == "newer_failure":
+        receipt["checks"]["ci_check_docs"]["state"] = "FAILURE"
+    if case == "weakened":
+        receipt["checks"] = {"ci_check_docs": receipt["checks"]["ci_check_docs"]}
+    core_path.write_text(json.dumps(payload))
+    if case != "missing":
+        append()
+    before = CardStore(home).fold("abcd1234").status
+    ok, detail = await _invoke(home, entrypoint)
+    assert ok == (case in {"node", "python", "mixed"}), detail
+    if not ok:
+        assert Board(home).load_agent("reviewer").current_task == "abcd1234"
+        assert CardStore(home).fold("abcd1234").status == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", [None, "digest", "null", "json", "missing_binding"])
+async def test_cli_mcp_creation_capsule_parity(tmp_path, invalid):
+    """Creation verifies the same capsule and rejects bad input before any card."""
+    _, _, meta, request = repository_fixture(tmp_path)
+    if invalid == "digest":
+        request["profile_sha256"] = "f" * 64
+    if invalid == "null":
+        request = None
+    if invalid == "json":
+        request = "{"
+    if invalid == "missing_binding":
+        meta = {}
+    cli_home, mcp_home = tmp_path / "cli", tmp_path / "mcp"
+    arguments = [
+        "coord",
+        "create",
+        "--title",
+        "profile creation fixture",
+        "--by",
+        "tester",
+        "--home",
+        str(cli_home),
+        "--ci-profile",
+        json.dumps(request),
+    ]
+    for key, value in meta.items():
+        arguments.extend(["--" + key.replace("_", "-"), value])
+    result = CliRunner().invoke(_main(), arguments)
+    with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(mcp_home)):
+        response = await call_tool(
+            "coord_create",
+            {
+                "title": "profile creation fixture",
+                "created_by": "tester",
+                "ci_profile": request,
+                **meta,
+            },
+        )
+    payload = json.loads(response[0].text)
+    assert (result.exit_code == 0) == (invalid is None), result.output
+    assert ("error" not in payload) == (invalid is None), payload
+    cli_cards = list(cli_home.glob("cards/*/core.json"))
+    mcp_cards = list(mcp_home.glob("cards/*/core.json"))
+    if invalid is not None:
+        assert cli_cards == mcp_cards == []
+    else:
+        assert len(cli_cards) == len(mcp_cards) == 1
+        cli_meta = json.loads(cli_cards[0].read_text())["meta"]
+        mcp_meta = json.loads(mcp_cards[0].read_text())["meta"]
+        assert cli_meta == mcp_meta
+        assert "repository_path" not in cli_meta["ci_profile"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entrypoint", ["cli_complete", "cli_move", "mcp_complete", "mcp_move"])
+@pytest.mark.parametrize("core_text", [None, "{", "[]", "{}", '{"title": null}'])
+async def test_unreadable_core_cannot_hide_review_from_completion(tmp_path, entrypoint, core_text):
+    """Unknown card identity must fail before any claim or lifecycle writes."""
+    home = _review_home(tmp_path, "[REVIEW] malformed core", "SUCCESS")
+    core = home / "cards/abcd1234/core.json"
+    if core_text is None:
+        core.unlink()
+    else:
+        core.write_text(core_text)
+    before = {str(path): path.read_bytes() for path in home.rglob("*.jsonl")}
+    ok, detail = await _invoke(home, entrypoint)
+    assert not ok, detail
+    assert "immutable core" in detail, detail
+    assert Board(home).load_agent("reviewer").current_task == "abcd1234"
+    assert {str(path): path.read_bytes() for path in home.rglob("*.jsonl")} == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entrypoint", ["cli_complete", "cli_move", "mcp_complete", "mcp_move"])
+async def test_nonreview_completion_remains_unchanged(tmp_path, entrypoint):
+    """A valid non-review card still completes without any CI receipt."""
+    home = _review_home(tmp_path, "ordinary implementation", None)
+    ok, detail = await _invoke(home, entrypoint)
+    assert ok, detail

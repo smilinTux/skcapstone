@@ -27,10 +27,10 @@ _SUCCESSFUL_CI = (
 )
 
 
-def _home(tmp_path, card_id, title, links=()):
+def _home(tmp_path, card_id, title, links=(), meta=None):
     card = tmp_path / "cards" / card_id
     card.mkdir(parents=True)
-    (card / "core.json").write_text(json.dumps({"title": title}))
+    (card / "core.json").write_text(json.dumps({"title": title, "meta": meta or {}}))
     ev = tmp_path / "coordination" / "card_events"
     ev.mkdir(parents=True)
     rows = [
@@ -43,6 +43,62 @@ def _home(tmp_path, card_id, title, links=()):
     ]
     (ev / "host.jsonl").write_text("\n".join(rows))
     return tmp_path
+
+
+@pytest.mark.parametrize(
+    "core_text", [None, "{", "[]", "{}", '{"title": null}', '{"meta": null}', '{"meta": []}']
+)
+def test_governed_pass_requires_readable_immutable_core(tmp_path, core_text):
+    """Malformed birth metadata cannot select a permissive legacy fallback."""
+    home = _home(
+        tmp_path,
+        "bbbbbbbb",
+        "[REVIEW] fixture",
+        links=(
+            ("verdict", "PASS", "2026-09-11T10:00:00Z"),
+            *_SUCCESSFUL_CI,
+        ),
+    )
+    core = home / "cards/bbbbbbbb/core.json"
+    if core_text is None:
+        core.unlink()
+    else:
+        core.write_text(core_text)
+    with pytest.raises(ValueError):
+        validate_review_completion("bbbbbbbb", "[REVIEW] fixture", home)
+
+
+def test_present_null_profile_cannot_fall_back_to_legacy(tmp_path):
+    """Even a full set of old green links cannot repair a malformed profile."""
+    home = _home(
+        tmp_path,
+        "bbbbbbbb",
+        "[REVIEW] fixture",
+        links=(
+            ("verdict", "PASS", "2026-09-11T10:00:00Z"),
+            *_SUCCESSFUL_CI,
+        ),
+        meta={"ci_profile": None},
+    )
+    with pytest.raises(ValueError):
+        validate_review_completion("bbbbbbbb", "[REVIEW] fixture", home)
+
+
+def test_mutable_policy_links_cannot_reduce_legacy_requirements(tmp_path):
+    """Folded links are evidence, never policy authority."""
+    home = _home(
+        tmp_path,
+        "bbbbbbbb",
+        "[REVIEW] fixture",
+        links=(
+            ("verdict", "PASS", "2026-09-11T10:00:00Z"),
+            ("ci_profile", '{"checks": {}}', "2026-09-11T10:01:00Z"),
+            ("required_checks", "ci_check_docs", "2026-09-11T10:01:00Z"),
+            _SUCCESSFUL_CI[0],
+        ),
+    )
+    with pytest.raises(ValueError, match="ci_check_python312"):
+        validate_review_completion("bbbbbbbb", "[REVIEW] fixture", home)
 
 
 @pytest.mark.parametrize(

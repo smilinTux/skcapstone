@@ -99,6 +99,16 @@ TOOLS: list[Tool] = [
                     "description": "Exact 40-hex source commit SHA",
                     "type": "string",
                 },
+                "ci_profile": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "candidate_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+                        "profile_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                        "repository_path": {"type": "string"},
+                    },
+                    "required": ["candidate_revision", "profile_sha256", "repository_path"],
+                },
                 "casey_authorization": {"type": "string"},
                 "casey_change_id": {"type": "string"},
             },
@@ -331,6 +341,10 @@ async def _handle_coord_create(args: dict) -> list[TextContent]:
         binding_meta = source_binding_meta(
             tags, args.get("repository"), args.get("base_ref"), args.get("base_revision")
         )
+        if "ci_profile" in args:
+            from ..ci_applicability import bind_ci_profile
+
+            binding_meta["ci_profile"] = bind_ci_profile(binding_meta, args["ci_profile"])
     except ValueError as exc:
         return _error_response(str(exc))
     task = Task(

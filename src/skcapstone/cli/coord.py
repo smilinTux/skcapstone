@@ -369,6 +369,11 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--base-ref", default=None, help="Named source branch or tag, such as main.")
     @click.option("--base-revision", default=None, help="Exact 40-hex source commit SHA.")
     @click.option(
+        "--ci-profile",
+        default=None,
+        help="JSON CI binding: candidate_revision, profile_sha256, repository_path.",
+    )
+    @click.option(
         "--claim-for-me",
         is_flag=True,
         help="Atomically create and claim for the resolved active agent.",
@@ -392,6 +397,7 @@ def register_coord_commands(main: click.Group) -> None:
         repository,
         base_ref,
         base_revision,
+        ci_profile,
         claim_for_me,
     ):
         """Create a new task on the board."""
@@ -436,6 +442,18 @@ def register_coord_commands(main: click.Group) -> None:
                 "link_head_revision": str(head_revision).lower(),
             }
         meta.update(binding_meta)
+        if ci_profile is not None:
+            from ..ci_applicability import _json, bind_ci_profile
+
+            try:
+                request = _json(ci_profile)
+                if head_revision is not None and head_revision != request.get(
+                    "candidate_revision"
+                ):
+                    raise ValueError("CI candidate does not match the review head")
+                meta["ci_profile"] = bind_ci_profile(meta, request)
+            except ValueError as exc:
+                raise click.ClickException(str(exc)) from None
 
         validate_agent_name(by)
         if task_id:
