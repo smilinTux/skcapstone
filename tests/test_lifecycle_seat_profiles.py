@@ -98,12 +98,17 @@ def test_mero_profile_cadence_matches_its_five_minute_timer() -> None:
 
 def test_control_plane_and_every_timer_have_exact_six_seat_five_minute_contract() -> None:
     root = Path(__file__).parents[1]
-    control = load_seat_control_plane()
+    # The record used to pin all six seats to the literal "chiap08", so the
+    # only estate it could describe was the one it was written on. It is now
+    # bound to whichever host the caller elects, and the contract under test
+    # is that all six land on that ONE host: the election is what guarantees
+    # a single dispatcher per estate.
+    control = load_seat_control_plane("some-elected-host")
     assert set(control["seats"]) == LIFECYCLE_SEATS
-    assert all(hosts == ["chiap08"] for hosts in control["seats"].values())
+    assert control["active_host"] == "some-elected-host"
+    assert all(hosts == ["some-elected-host"] for hosts in control["seats"].values())
     for seat in LIFECYCLE_SEATS:
-        timer_name = "skfleet-niobe-live.timer" if seat == "niobe" else f"skfleet-{seat}.timer"
-        timer = (root / "systemd" / timer_name).read_text()
+        timer = (root / "systemd" / f"skfleet-{seat}.timer").read_text()
         assert "every five minutes" in timer.lower()
         assert "15min" not in timer
 

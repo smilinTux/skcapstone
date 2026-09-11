@@ -293,10 +293,21 @@ elif [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
         _installed=0
 
         # skcapstone services
+        # The six bounded lifecycle seat units are installed but NOT enabled:
+        # without them on disk the whole workflow layer is simply absent on a
+        # fresh estate, which is how a new estate passed `fleet install --check`
+        # while running no seats at all. skfleet-niobe-live is deliberately
+        # excluded; it launches real agent runs and is an activation decision.
         for _unit in skcapstone.service skcapstone@.service \
                      skcapstone-memory-compress.service skcapstone-memory-compress.timer \
                      skcomms-heartbeat.service skcomms-heartbeat.timer \
-                     skfleet-link-producer.service skfleet-link-producer.timer; do
+                     skfleet-link-producer.service skfleet-link-producer.timer \
+                     skfleet-atlas.service skfleet-atlas.timer \
+                     skfleet-link.service skfleet-link.timer \
+                     skfleet-mero.service skfleet-mero.timer \
+                     skfleet-niobe.service skfleet-niobe.timer \
+                     skfleet-seraph.service skfleet-seraph.timer \
+                     skfleet-tank.service skfleet-tank.timer; do
             _src="$REPO_ROOT/systemd/$_unit"
             if [[ -f "$_src" ]]; then
                 # Substitute agent name in non-template units

@@ -12,12 +12,15 @@ Usage:
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import json
 import logging
 import os
 import platform
+import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -147,11 +150,572 @@ def run_diagnostics(home: Path, deep: bool = False) -> DiagnosticReport:
     report.checks.extend(_check_scheduler(home))
     report.checks.extend(_check_systemd_runtime(home))
     report.checks.extend(_check_store_integrity(home))
+    report.checks.extend(_check_estate(home))
     report.checks.extend(_check_codex())
     report.checks.extend(_check_harness_env(home))
     report.checks.extend(_check_versions())
 
     return report
+
+
+# ---------------------------------------------------------------------------
+# Estate bootstrap checks (category "estate").
+#
+# Every check below exists because a second estate was stood up from scratch
+# and the item was MISSING, with nothing in the codebase to create it and
+# nothing to report its absence. Each one names the exact fix, and each one
+# reports the real state: a question this host cannot answer comes back
+# ``unknown``, never a pass.
+#
+# The checks also police the estate-versus-host split described in
+# :mod:`skcapstone.estate`. ``~/.skcapstone`` is ONE Syncthing folder shared
+# by every node, so a host-local value written into it hands every node the
+# same wrong answer. That is the bug class that produces an estate where
+# every node believes it is the control node, and ``estate:host-local-leak``
+# exists to catch it on its own terms.
+# ---------------------------------------------------------------------------
+
+#: The six bounded lifecycle seat timers. A seat without its timer never
+#: runs, which is the state that reported ok=True with no workflow layer.
+SEAT_CYCLE_TIMERS = tuple(
+    f"skfleet-{seat}.timer" for seat in ("atlas", "link", "mero", "niobe", "seraph", "tank")
+)
+
+#: Files in the SYNCED estate tree that are cheap to read and plausible
+#: places for a host-local variable to be pasted. Deliberately a short,
+#: bounded list: the estate tree holds thousands of card files and a full
+#: scan would make ``doctor`` unusable.
+_SYNCED_ENV_GLOBS = ("*.env", "*.conf", "config/*.env", "config/*.conf", "config/*.sh")
+
+
+def _check_estate_seat_control_plane(home: Path) -> Check:
+    """Verify the estate has elected a host to run the six lifecycle seats.
+
+    Args:
+        home: Agent home directory (the synced estate tree).
+
+    Returns:
+        One Check in the ``estate`` category.
+    """
+    from .estate import local_host
+    from .lifecycle_seats import LIFECYCLE_SEATS
+
+    path = home / "coordination" / "seat-control-plane.json"
+    fix = f"skcapstone coord bootstrap --home {home}"
+    if not path.exists():
+        return Check(
+            name="estate:seat-control-plane",
+            description="Lifecycle seat control plane",
+            passed=False,
+            detail=(
+                f"{path} is absent, so all six lifecycle seats "
+                "(atlas, link, mero, niobe, seraph, tank) refuse to run"
+            ),
+            fix=fix,
+            category="estate",
+        )
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return Check(
+            name="estate:seat-control-plane",
+            description="Lifecycle seat control plane",
+            passed=False,
+            detail=f"{path} is unreadable: {exc}",
+            fix=f"Repair or delete the file, then run: {fix}",
+            category="estate",
+        )
+    if not isinstance(data, dict) or data.get("schema_version") != 1:
+        return Check(
+            name="estate:seat-control-plane",
+            description="Lifecycle seat control plane",
+            passed=False,
+            detail=f"{path} is not a schema_version 1 control record",
+            fix=f"Repair or delete the file, then run: {fix}",
+            category="estate",
+        )
+    active = str(data.get("active_host") or "")
+    seats = data.get("seats")
+    if not active or not isinstance(seats, dict) or set(seats) != set(LIFECYCLE_SEATS):
+        return Check(
+            name="estate:seat-control-plane",
+            description="Lifecycle seat control plane",
+            passed=False,
+            detail=(
+                f"{path} must name an active_host and all six lifecycle seats; "
+                f"it names host={active or 'none'} seats={sorted(seats) if isinstance(seats, dict) else seats}"  # noqa: E501
+            ),
+            fix=f"Repair or delete the file, then run: {fix}",
+            category="estate",
+        )
+    unpinned = sorted(
+        seat for seat, hosts in seats.items() if not isinstance(hosts, list) or active not in hosts
+    )
+    if unpinned:
+        return Check(
+            name="estate:seat-control-plane",
+            description="Lifecycle seat control plane",
+            passed=False,
+            detail=f"{path} does not place {', '.join(unpinned)} on active_host {active}",
+            fix=f"Repair or delete the file, then run: {fix}",
+            category="estate",
+        )
+    here = local_host()
+    # active_host naming ANOTHER host is correct and expected on every node
+    # that is not the elected one. It is estate-wide truth, an election that
+    # guarantees exactly one host dispatches, so a non-elected node reading
+    # someone else's name is the system working.
+    where = "this host" if active == here else f"{active} (this host is {here}, not elected)"
+    return Check(
+        name="estate:seat-control-plane",
+        description="Lifecycle seat control plane",
+        passed=True,
+        detail=f"six seats elected on {where}",
+        category="estate",
+    )
+
+
+def _check_estate_skmail_helper() -> Check:
+    """Verify the ``skmail`` helper the seats shell out to is resolvable.
+
+    Seats resolve it via ``$SKMAIL_BIN``, then the interpreter's own bin
+    directory, then ``PATH`` (``seat_mail._mail_command``). When none of the
+    three answer, every seat reports ``mailbox_error: skmail_not_found``.
+
+    Returns:
+        One Check in the ``estate`` category.
+    """
+    from .seat_mail import _mail_command
+
+    resolved = _mail_command()
+    if resolved:
+        return Check(
+            name="estate:skmail-helper",
+            description="skmail coordination helper",
+            passed=True,
+            detail=resolved,
+            category="estate",
+        )
+    return Check(
+        name="estate:skmail-helper",
+        description="skmail coordination helper",
+        passed=False,
+        detail=(
+            "not on $SKMAIL_BIN, beside the running interpreter, or on PATH; "
+            "every seat will report mailbox_error: skmail_not_found"
+        ),
+        fix=(
+            "install -m 755 <skcapstone checkout>/scripts/fleet/skmail "
+            f"{Path(sys.executable).parent / 'skmail'}"
+        ),
+        category="estate",
+    )
+
+
+def _check_estate_observation_feed(home: Path) -> Check:
+    """Verify the Link seat has a readable, fresh observation feed.
+
+    Args:
+        home: Agent home directory (the synced estate tree).
+
+    Returns:
+        One Check in the ``estate`` category.
+    """
+    path = home / "coordination" / "link-observations.json"
+    if not path.exists():
+        return Check(
+            name="estate:link-observation-feed",
+            description="Link observation feed",
+            passed=False,
+            detail=f"{path} is absent, so the link seat returns observation_feed_missing",
+            fix=f"skcapstone coord bootstrap --home {home}",
+            category="estate",
+        )
+    try:
+        from .link_observation_feed import ObservationFeedError, load_observation_feed
+
+        feed = load_observation_feed(path)
+    except ObservationFeedError as exc:
+        stale = str(exc) == "observation_feed_stale"
+        return Check(
+            name="estate:link-observation-feed",
+            description="Link observation feed",
+            passed=False,
+            detail=f"{path}: {exc}",
+            fix=(
+                "systemctl --user enable --now skfleet-link-producer.timer"
+                if stale
+                else f"Delete the file and re-run: skcapstone coord bootstrap --home {home}"
+            ),
+            category="estate",
+        )
+    except Exception as exc:  # noqa: BLE001 - doctor must never crash the report
+        return Check(
+            name="estate:link-observation-feed",
+            description="Link observation feed",
+            passed=False,
+            unknown=True,
+            detail=f"{path} could not be evaluated: {type(exc).__name__}: {exc}",
+            category="estate",
+        )
+    return Check(
+        name="estate:link-observation-feed",
+        description="Link observation feed",
+        passed=True,
+        detail=f"fresh, {len(feed.records)} observation(s) at revision {feed.source_revision}",
+        category="estate",
+    )
+
+
+def _env_d_node_files() -> list[Path]:
+    """Return host-local ``environment.d`` files that set ``SKFLEET_NODE``."""
+    from .estate import NODE_ENV, environment_d_dir
+
+    found: list[Path] = []
+    directory = environment_d_dir()
+    if not directory.is_dir():
+        return found
+    for path in sorted(directory.glob("*.conf")):
+        try:
+            body = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if any(line.strip().startswith(f"{NODE_ENV}=") for line in body.splitlines()):
+            found.append(path)
+    return found
+
+
+def _check_estate_node_env() -> Check:
+    """Verify ``SKFLEET_NODE`` is persisted host-locally, not only in a unit.
+
+    It used to be set ONLY inside a systemd unit, so the timer-driven seats
+    saw it and nothing else did: every interactive ``skcapstone fleet ...``
+    call failed with "no such node object".
+
+    Returns:
+        One Check in the ``estate`` category.
+    """
+    from .estate import NODE_ENV, environment_d_dir, node_name
+
+    persisted = _env_d_node_files()
+    live = os.environ.get(NODE_ENV, "")
+    expected = node_name()
+    if persisted:
+        return Check(
+            name="estate:fleet-node-env",
+            description=f"{NODE_ENV} persisted for every shell on this host",
+            passed=True,
+            detail=(
+                f"{', '.join(str(p) for p in persisted)}"
+                + (f"; live value {live}" if live else "; not yet in this shell's environment")
+            ),
+            category="estate",
+        )
+    return Check(
+        name="estate:fleet-node-env",
+        description=f"{NODE_ENV} persisted for every shell on this host",
+        passed=False,
+        detail=(
+            f"no {NODE_ENV}= assignment in {environment_d_dir()}"
+            + (
+                f"; it is set to {live} in this process only, which a new shell will not see"
+                if live
+                else "; interactive `skcapstone fleet ...` will fail with 'no such node object'"
+            )
+            + ". This value is HOST-LOCAL: every node has a different one, so it belongs "
+            "under XDG config and must never be written into the synced ~/.skcapstone tree"
+        ),
+        fix=(
+            f"skcapstone coord bootstrap (writes {environment_d_dir() / 'skfleet-node.conf'} "
+            f"with {NODE_ENV}={expected}), then log in again or run: "
+            f"systemctl --user import-environment {NODE_ENV}"
+        ),
+        category="estate",
+    )
+
+
+def _sknoded_interval(unit_dir: Path) -> tuple[Optional[int], str]:
+    """Read the ``--interval`` seconds from the installed ``sknoded.service``.
+
+    Args:
+        unit_dir: The systemd user unit directory to read.
+
+    Returns:
+        An ``(interval, detail)`` tuple. ``interval`` is ``None`` when the
+        unit is absent or states no interval, and ``detail`` says which.
+    """
+    path = unit_dir / "sknoded.service"
+    if not path.is_file():
+        return None, f"{path} is not installed"
+    try:
+        body = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return None, f"{path} is unreadable: {exc}"
+    match = re.search(r"^ExecStart=.*?--interval\s+(\d+)", body, re.MULTILINE)
+    if not match:
+        return None, f"{path} states no --interval on its ExecStart"
+    return int(match.group(1)), str(path)
+
+
+def _check_estate_sknoded_interval(unit_dir: Path) -> Check:
+    """Verify sknoded beats often enough that a healthy node never reads Dead.
+
+    Args:
+        unit_dir: The systemd user unit directory to read.
+
+    Returns:
+        One Check in the ``estate`` category.
+    """
+    from .fleet.node_controller import DEAD_AFTER_S, NOT_READY_AFTER_S
+
+    # Three beats before NotReady: one lost beat must be noise, not a phase
+    # transition. An interval at or above NOT_READY_AFTER_S guarantees the
+    # opposite, which is how a healthy node read as Dead between its beats.
+    ceiling = NOT_READY_AFTER_S // 3
+    interval, detail = _sknoded_interval(unit_dir)
+    if interval is None:
+        return Check(
+            name="estate:sknoded-interval",
+            description="sknoded beat interval versus the liveness thresholds",
+            passed=False,
+            unknown=True,
+            detail=detail,
+            category="estate",
+        )
+    if interval <= ceiling:
+        return Check(
+            name="estate:sknoded-interval",
+            description="sknoded beat interval versus the liveness thresholds",
+            passed=True,
+            detail=(
+                f"--interval {interval}s, at or under the {ceiling}s ceiling "
+                f"(NOT_READY_AFTER_S={NOT_READY_AFTER_S}, DEAD_AFTER_S={DEAD_AFTER_S})"
+            ),
+            category="estate",
+        )
+    phase = "Dead" if interval >= DEAD_AFTER_S else "NotReady"
+    return Check(
+        name="estate:sknoded-interval",
+        description="sknoded beat interval versus the liveness thresholds",
+        passed=False,
+        detail=(
+            f"--interval {interval}s in {detail} exceeds the {ceiling}s ceiling "
+            f"(NOT_READY_AFTER_S={NOT_READY_AFTER_S}, DEAD_AFTER_S={DEAD_AFTER_S}), "
+            f"so a healthy node reads as {phase} between its own beats"
+        ),
+        fix=(
+            f"Set ExecStart=... sknoded --interval {ceiling} in {unit_dir / 'sknoded.service'}, "
+            "then: systemctl --user daemon-reload && systemctl --user restart sknoded.service"
+        ),
+        category="estate",
+    )
+
+
+def _check_estate_seat_units(unit_dir: Path) -> Check:
+    """Verify the bounded lifecycle seat timers are installed on this host.
+
+    Args:
+        unit_dir: The systemd user unit directory to read.
+
+    Returns:
+        One Check in the ``estate`` category.
+    """
+    if not unit_dir.is_dir():
+        return Check(
+            name="estate:seat-units",
+            description="Bounded lifecycle seat units installed",
+            passed=False,
+            unknown=True,
+            detail=f"{unit_dir} does not exist, so no unit can be observed",
+            category="estate",
+        )
+    missing = [name for name in SEAT_CYCLE_TIMERS if not (unit_dir / name).is_file()]
+    if not missing:
+        return Check(
+            name="estate:seat-units",
+            description="Bounded lifecycle seat units installed",
+            passed=True,
+            detail=f"all {len(SEAT_CYCLE_TIMERS)} seat timers present in {unit_dir}",
+            category="estate",
+        )
+    return Check(
+        name="estate:seat-units",
+        description="Bounded lifecycle seat units installed",
+        passed=False,
+        detail=(
+            f"{len(missing)} of {len(SEAT_CYCLE_TIMERS)} seat timers absent from {unit_dir}: "
+            f"{', '.join(missing)}. The workflow layer does not run on this host"
+        ),
+        fix=(
+            "bash <skcapstone checkout>/scripts/install.sh   # lays the units down, then "
+            "systemctl --user enable --now " + " ".join(missing)
+        ),
+        category="estate",
+    )
+
+
+def _check_estate_unit_entrypoints(unit_dir: Path) -> Check:
+    """Verify every installed SKFleet unit names a python module that exists.
+
+    A unit whose ``ExecStart`` runs ``python -m <module>`` for a module that
+    is not installed fails the instant it is enabled, and systemd reports
+    only a generic start failure. ``skfleet-niobe-shadow.service`` shipped in
+    exactly that state and nobody noticed, so this check asks the question
+    directly instead of waiting for the unit to be enabled.
+
+    Args:
+        unit_dir: The systemd user unit directory to read.
+
+    Returns:
+        One Check in the ``estate`` category.
+    """
+    if not unit_dir.is_dir():
+        return Check(
+            name="estate:unit-entrypoints",
+            description="Installed SKFleet units name importable modules",
+            passed=False,
+            unknown=True,
+            detail=f"{unit_dir} does not exist, so no unit can be observed",
+            category="estate",
+        )
+    broken: list[str] = []
+    examined = 0
+    for path in sorted(unit_dir.glob("skfleet-*.service")):
+        try:
+            body = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        match = re.search(r"^ExecStart=.*?-m\s+(skcapstone[\w.]*)", body, re.MULTILINE)
+        if not match:
+            continue
+        examined += 1
+        module = match.group(1)
+        try:
+            if importlib.util.find_spec(module) is None:
+                broken.append(f"{path.name} -> {module}")
+        except (ImportError, ValueError):
+            broken.append(f"{path.name} -> {module}")
+    if not broken:
+        return Check(
+            name="estate:unit-entrypoints",
+            description="Installed SKFleet units name importable modules",
+            passed=True,
+            detail=f"{examined} unit(s) checked, every ExecStart module importable",
+            category="estate",
+        )
+    return Check(
+        name="estate:unit-entrypoints",
+        description="Installed SKFleet units name importable modules",
+        passed=False,
+        detail=f"{len(broken)} unit(s) name a missing module: {'; '.join(broken)}",
+        fix=(
+            "Remove the unit, or install the package that provides its module. A unit "
+            "that names a module nobody ships fails the instant it is enabled"
+        ),
+        category="estate",
+    )
+
+
+def _check_estate_host_local_leak(home: Path) -> Check:
+    """Report host-local values found inside the SYNCED estate tree.
+
+    This is a defect in its own right, not a symptom. ``~/.skcapstone`` is
+    one Syncthing folder shared by every node, so a variable that answers a
+    question about ONE machine hands every node in the estate the first
+    machine's answer. That is the exact mechanism that produces an estate
+    where every node believes it is the control node.
+
+    Args:
+        home: Agent home directory (the synced estate tree).
+
+    Returns:
+        One Check in the ``estate`` category.
+    """
+    from .estate import HOST_LOCAL_ENV_NAMES
+
+    leaks: list[str] = []
+    for pattern in _SYNCED_ENV_GLOBS:
+        for path in sorted(home.glob(pattern)):
+            if not path.is_file():
+                continue
+            try:
+                body = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for line in body.splitlines():
+                stripped = line.strip().removeprefix("export ").strip()
+                for name in HOST_LOCAL_ENV_NAMES:
+                    if stripped.startswith(f"{name}="):
+                        leaks.append(f"{path.name}: {name}")
+    if not leaks:
+        return Check(
+            name="estate:host-local-leak",
+            description="No host-local value inside the synced estate tree",
+            passed=True,
+            detail=(f"none of {', '.join(HOST_LOCAL_ENV_NAMES)} assigned under {home}"),
+            category="estate",
+        )
+    unique = sorted(set(leaks))
+    return Check(
+        name="estate:host-local-leak",
+        description="No host-local value inside the synced estate tree",
+        passed=False,
+        detail=(
+            f"{len(unique)} host-local assignment(s) inside the SYNCED tree {home}: "
+            f"{'; '.join(unique)}. Every node syncs this file and inherits one host's answer"
+        ),
+        fix=(
+            "Move each assignment out of ~/.skcapstone into the host-local XDG config "
+            "($XDG_CONFIG_HOME/environment.d/, default ~/.config/environment.d/), which "
+            "is per-machine and never synced"
+        ),
+        category="estate",
+    )
+
+
+def _check_estate(home: Path) -> list[Check]:
+    """Run every estate bootstrap check.
+
+    Args:
+        home: Agent home directory (the synced estate tree).
+
+    Returns:
+        List of Check results in the ``estate`` category.
+    """
+    from .estate import xdg_config_home
+
+    unit_dir = xdg_config_home() / "systemd" / "user"
+    checks = [
+        _check_estate_seat_control_plane(home),
+        _check_estate_skmail_helper(),
+        _check_estate_observation_feed(home),
+        _check_estate_node_env(),
+        _check_estate_host_local_leak(home),
+    ]
+    if platform.system() != "Linux":
+        checks.extend(
+            Check(
+                name=name,
+                description=description,
+                passed=False,
+                unknown=True,
+                detail=f"systemd user units are a Linux concept; this host is {platform.system()}",
+                category="estate",
+            )
+            for name, description in (
+                (
+                    "estate:sknoded-interval",
+                    "sknoded beat interval versus the liveness thresholds",
+                ),
+                ("estate:seat-units", "Bounded lifecycle seat units installed"),
+                ("estate:unit-entrypoints", "Installed SKFleet units name importable modules"),
+            )
+        )
+        return checks
+    checks.append(_check_estate_sknoded_interval(unit_dir))
+    checks.append(_check_estate_seat_units(unit_dir))
+    checks.append(_check_estate_unit_entrypoints(unit_dir))
+    return checks
 
 
 def multi_writer_migrations(home: Path) -> list[tuple[str, Path]]:

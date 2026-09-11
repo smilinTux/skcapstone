@@ -11,6 +11,8 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
+from .estate import local_host
+
 LIFECYCLE_SEATS = frozenset({"link", "mero", "seraph", "niobe", "tank", "atlas"})
 PROFILE_FILENAME = "config/seat-role.json"
 STARTUP_FILENAME = "config/lifecycle-startup.md"
@@ -40,19 +42,46 @@ def load_lifecycle_seat_profiles() -> dict[str, Any]:
     return value
 
 
-def load_seat_control_plane() -> dict[str, Any]:
-    """Load the packaged six-seat control record."""
+def load_seat_control_plane(active_host: str | None = None) -> dict[str, Any]:
+    """Load the packaged six-seat control record, bound to one active host.
+
+    The packaged file is a TEMPLATE: it ships the seat roster with an empty
+    ``active_host`` and empty host lists, and this function fills both in
+    from the local machine. It used to hardcode ``chiap08``, which meant the
+    only estate this record could ever describe was the one it was written
+    on, and a second estate got a control plane naming a host that is not
+    even on its network.
+
+    ``active_host`` stays in the record (and therefore in the synced
+    coordination tree) on purpose: it is an estate-wide ELECTION, not
+    host-local truth. Exactly one host per estate runs the six seats, and a
+    per-host answer would let two hosts both claim the seat and dispatch the
+    same cards twice. See :mod:`skcapstone.estate` for the full rule.
+
+    Args:
+        active_host: The host this estate elects to run the six seats.
+            ``None`` derives it from the local machine.
+
+    Returns:
+        The resolved control record, with every seat pinned to the active
+        host.
+
+    Raises:
+        ValueError: The packaged template is not schema 1, does not carry
+            exactly the six lifecycle seats, or the resolved host is empty.
+    """
 
     path = files("skcapstone").joinpath("data/seat-control-plane.json")
     value = json.loads(path.read_text(encoding="utf-8"))
     if value.get("schema_version") != 1:
         raise ValueError("unsupported seat control plane schema")
-    if value.get("active_host") != "chiap08":
-        raise ValueError("canonical lifecycle host must be chiap08")
     if set(value.get("seats", {})) != LIFECYCLE_SEATS:
         raise ValueError("seat control plane must contain exactly six lifecycle seats")
-    if any(hosts != ["chiap08"] for hosts in value["seats"].values()):
-        raise ValueError("every lifecycle seat must be pinned to chiap08")
+    host = local_host(active_host)
+    if not host:
+        raise ValueError("seat control plane requires a non-empty active host")
+    value["active_host"] = host
+    value["seats"] = {seat: [host] for seat in sorted(LIFECYCLE_SEATS)}
     return value
 
 

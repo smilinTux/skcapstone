@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "revision": "lifecycle-six-seat-v1",
-  "active_host": "chiap08",
+  "active_host": "",
   "seats": {
-    "link": ["chiap08"],
-    "mero": ["chiap08"],
-    "seraph": ["chiap08"],
-    "niobe": ["chiap08"],
-    "tank": ["chiap08"],
-    "atlas": ["chiap08"]
+    "link": [],
+    "mero": [],
+    "seraph": [],
+    "niobe": [],
+    "tank": [],
+    "atlas": []
   }
 }

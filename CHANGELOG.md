@@ -1,5 +1,67 @@
 # Changelog
 
+## Unreleased
+
+- A fresh estate can now be stood up without six hand-made files. Standing up
+  the second estate (control host noroc2027) proved that nothing in the
+  codebase creates the things every lifecycle seat requires, and nothing
+  reports them missing, so the failure mode was a silent one: `fleet install
+  --check` returned `ok=True` on an estate whose entire workflow layer was
+  absent. `skcapstone coord bootstrap` now also creates
+  `coordination/seat-control-plane.json` (without it all six seats refuse to
+  run), `coordination/link-observations.json` (without it the Link seat
+  returns `observation_feed_missing` forever), the bounded `skfleet-niobe`
+  cycle units, and `SKFLEET_NODE` in the host-local `environment.d` (it was
+  set only inside a systemd unit, so every interactive `skcapstone fleet`
+  call failed with "no such node object"). Still create-or-skip: re-running
+  never overwrites a decision the estate has already recorded.
+
+- New `skcapstone.estate` module states the architectural split the bootstrap
+  and the new checks obey. `~/.skcapstone` is ONE Syncthing folder shared by
+  every node, so only estate-wide truth may live there; host-specific truth
+  goes under `$XDG_CONFIG_HOME` / `$XDG_STATE_HOME` resolved from the
+  environment, never a hardcoded path. No host name, estate name, or home
+  directory is hardcoded anywhere in the new code.
+
+- `load_seat_control_plane()` no longer hardcodes `chiap08`. It shipped a
+  record that pinned all six seats to one estate's host and validated that
+  literal, which meant the only estate it could ever describe was the one it
+  was written on. The packaged file is now a template and the active host is
+  resolved from the local machine. `active_host` deliberately stays in the
+  SYNCED tree: it is an estate-wide election guaranteeing exactly one host
+  dispatches, and a per-host answer would let two hosts both claim the seat.
+
+- Eight new `skcapstone doctor` checks in a new `estate` category, each
+  naming the exact fix: `seat-control-plane`, `skmail-helper`,
+  `link-observation-feed`, `fleet-node-env`, `host-local-leak`,
+  `sknoded-interval`, `seat-units` and `unit-entrypoints`. `host-local-leak`
+  treats a host-local value found inside the synced tree as a defect in its
+  own right, because that is the bug class that produces an estate where
+  every node believes it is the control node. A question the host cannot
+  answer comes back `unknown`, never a pass.
+
+- `sknoded.service` shipped `--interval 300` against a 180s NotReady and 300s
+  Dead threshold, so a perfectly healthy node read as Dead in the window
+  between its own beats. It now beats every 60s, three beats before NotReady,
+  and `doctor` fails any interval above `NOT_READY_AFTER_S / 3`.
+
+- The six bounded lifecycle seat timers are now required by the `control`
+  install profile and `skfleet-*` units resolve to the `core` backend, so
+  `fleet install --check` stops reporting `ok=True` on an estate that has
+  none of them and `fleet install` can actually lay them down.
+  `scripts/install.sh` installs (but does not enable) the same six.
+
+- Removed `skfleet-niobe-shadow.service` and its timer. Their `ExecStart`
+  named `skcapstone.seat_shadow_entrypoint`, a module that is not on `main`
+  and never has been, so the unit failed the instant it was enabled.
+  Replaced by `skfleet-niobe.service` / `.timer`, which run the on-main
+  `seat_cycle_entrypoint --seat niobe`: the bounded staging step Niobe never
+  had, and the name the other five seats already use. KNOWN GAP left
+  deliberately: `niobe_activation.ROLLBACK_ACTION` still validates a literal
+  string naming the removed timer, and every activation record on disk
+  carries it, so repointing it needs its own migration rather than a silent
+  edit here. See docs/fleet/activation-runbook.md.
+
 - Card `c5a81d4b`: reserve source-only logical-route cards for the Niobe
   builder queue and derive its sole offer host from public seat placement.
 

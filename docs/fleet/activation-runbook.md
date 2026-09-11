@@ -138,14 +138,28 @@ last safe state. The approved Niobe rollback is:
 ```bash
 systemctl --user disable --now skfleet-link.timer
 systemctl --user disable --now skfleet-niobe-live.timer
-systemctl --user enable --now skfleet-niobe-shadow.timer
+systemctl --user enable --now skfleet-niobe.timer
 ```
+
+`skfleet-niobe.timer` replaces `skfleet-niobe-shadow.timer`, which was removed
+because its `ExecStart` named `skcapstone.seat_shadow_entrypoint`, a module
+that is not on `main` and never has been, so the unit failed the instant it was
+enabled. The rollback's safety-critical half (stopping live dispatch) always
+worked; its second half landed on a unit that could not run.
+
+KNOWN GAP, deliberately not fixed here: `niobe_activation.ROLLBACK_ACTION`
+still validates the literal string
+`disable_skfleet-niobe-live.timer_enable_skfleet-niobe-shadow.timer`, and every
+activation record already written to disk carries it. Repointing that string at
+`skfleet-niobe.timer` invalidates those records and needs its own migration, so
+it is a separate change with its own decision, not a silent edit inside this
+one.
 
 The initial review `c4e7a9b3` failed closed on a stale-card fence. Rereview
 `c4e7a9b4` passed that repair, and exact target-parity review `c4e7a9b6`
 passed the final candidate. The 2026-09-06 cutover disabled the legacy
 `skfleet-rotate.timer` before enabling `skfleet-niobe-live.timer`, so there is
-only one live dispatcher. The read-only shadow timer remains enabled. Tank
+only one live dispatcher. The read-only bounded cycle timer remains enabled. Tank
 rolls back through its card-pinned artifact procedure. Seraph rolls back by
 disabling `skfleet-seraph.timer`, preserving append-only review evidence, and
 reverting its pinned source commit. A feed failure disables Link's eligibility

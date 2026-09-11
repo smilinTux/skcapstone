@@ -99,17 +99,39 @@ def register_coord_mail_commands(coord: click.Group) -> None:
     @coord.command("bootstrap")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", default=None, help="Also create this agent's own mailbox file.")
-    def coord_bootstrap(home, agent):
-        """Create the coordination skeleton. Idempotent, safe to re-run.
+    @click.option(
+        "--estate",
+        default=None,
+        help="Estate identifier. Resolved from cluster.json or the local host when omitted.",
+    )
+    @click.option(
+        "--host",
+        default=None,
+        help="Host to elect for the six lifecycle seats. Defaults to this machine.",
+    )
+    def coord_bootstrap(home, agent, estate, host):
+        """Create the coordination skeleton and the estate's seat plane.
 
-        Nothing else in the codebase creates these directories, which is why a
-        fresh node has no mailbox until someone makes one by hand.
+        Idempotent and create-or-skip: re-running never overwrites a decision
+        the estate has already recorded. Nothing else in the codebase creates
+        any of this, which is why a fresh estate has no mailbox, no seat
+        control plane and no node name until someone makes them by hand.
+
+        Estate-wide items land in the synced tree and are shown relative to
+        it. Host-local items land under XDG config and are shown as absolute
+        paths, so the report itself shows which side of the split each one
+        is on.
         """
-        result = bootstrap(Path(home), agent)
+        result = bootstrap(Path(home), agent, host=host, estate=estate)
+        console.print(
+            f"  estate [bold]{result['estate']}[/bold]"
+            f"  host [bold]{result['host']}[/bold]"
+            f"  node [bold]{result['node']}[/bold]"
+        )
         if result["created"]:
-            console.print(f"  created in [bold]{result['home']}[/bold]:")
+            console.print(f"  created for [bold]{result['home']}[/bold]:")
             for c in result["created"]:
-                console.print(f"    + {c}")
+                console.print(f"    + {c}", markup=False)
         else:
             console.print(f"  nothing to create; [bold]{result['home']}[/bold] already complete")
         if result["mailbox"]:

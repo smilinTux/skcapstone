@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 import re
-import socket
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -88,10 +87,19 @@ def default_paths() -> FleetPaths:
 
 
 def self_node_name() -> str:
-    """This machine's node name (SKFLEET_NODE override, else hostname)."""
+    """This machine's node name (SKFLEET_NODE override, else hostname).
+
+    The hostname derivation lives in :func:`skcapstone.estate.node_name` so
+    that the value ``coord bootstrap`` PERSISTS into the host-local
+    ``environment.d`` file and the value computed here when nothing is
+    persisted cannot drift apart.
+
+    Returns:
+        The node name for this machine.
+    """
     env = os.environ.get("SKFLEET_NODE")
     if env:
         return env
-    host = socket.gethostname().split(".")[0].lower()
-    host = re.sub(r"[^a-z0-9-]", "-", host).strip("-") or "unknown"
-    return f"node-{host}"
+    from ..estate import node_name
+
+    return node_name()

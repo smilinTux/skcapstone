@@ -16,6 +16,12 @@ _UNIT_RULES: list[tuple[str, str]] = [
     ("skcomms*", "skcomms"),
     ("skcapstone*", "core"),
     ("sknoded*", "core"),
+    # The lifecycle seat units ship in skcapstone's own data/systemd and are
+    # laid down by skcapstone's install.sh, so "core" is the backend that
+    # actually provides them. Without this rule every required skfleet unit
+    # resolved to UNSUPPORTED and surfaced as needs_manual, which is the
+    # opposite of useful for units the repo itself installs.
+    ("skfleet-*", "core"),
     ("skgateway*", "core"),
     ("skchat*", "skchat"),
     ("livekit-server*", "skchat"),

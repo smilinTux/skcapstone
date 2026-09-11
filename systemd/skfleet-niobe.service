@@ -1,5 +1,5 @@
 [Unit]
-Description=SKFleet Niobe shadow-only successor beat
+Description=SKFleet Niobe bounded lifecycle cycle (staging, no dispatch)
 After=network-online.target
 
 [Service]
@@ -7,7 +7,7 @@ Type=oneshot
 Environment=SKAGENT=niobe
 Environment=SKCAPSTONE_AGENT=niobe
 Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/.skenv/bin/python3 -m skcapstone.seat_shadow_entrypoint --home %h/.skcapstone --control-plane %h/.skcapstone/coordination/seat-control-plane.json
+ExecStart=%h/.skenv/bin/python3 -m skcapstone.seat_cycle_entrypoint --seat niobe --home %h/.skcapstone --control-plane %h/.skcapstone/coordination/seat-control-plane.json
 TimeoutStartSec=120
 NoNewPrivileges=yes
 PrivateTmp=yes
