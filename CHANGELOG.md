@@ -240,6 +240,14 @@
   `Environment=` line cannot blank a bucket. The deprecated name will be
   dropped once no estate sets it.
 
+- The tank and ATLAS launch verifier accepted a receipt only when its model was
+  exactly `sk-codex-mid`. The launcher has emitted the job's logical route
+  (`sk-s`, `sk-m`, `sk-l`, `sk-xl`) since card `c5a81d5b`, so no real launch
+  receipt could ever match and every one was counted invalid; only a test
+  fixture feeding the literal back hid it. `verify_role_dispatch` now accepts
+  exactly the buckets the dispatch asked for, which keeps the gate real (an
+  unrequested model is still an invalid receipt) without naming a provider.
+
 - `scripts/fleet/skfleet-rotate.py` no longer compares hostnames against the
   literal `chiap08` to decide who publishes shared reconciliation output. The
   three sites (the full lifecycle reassessment report, automatic parent

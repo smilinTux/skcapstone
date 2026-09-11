@@ -558,9 +558,26 @@ def seraph_operation(home: Path) -> dict[str, int | str]:
 
 
 def verify_role_dispatch(
-    home: Path, completed: subprocess.CompletedProcess[str], seat: str
+    home: Path,
+    completed: subprocess.CompletedProcess[str],
+    seat: str,
+    accepted_models: Iterable[str] | None = None,
 ) -> dict[str, int | str]:
-    """Verify a bounded Tank or ATLAS selector result."""
+    """Verify a bounded Tank or ATLAS selector result.
+
+    Args:
+        home: Estate home holding the card store.
+        completed: Finished dispatcher process whose receipts are verified.
+        seat: ``tank`` or ``atlas``.
+        accepted_models: Models a receipt may name. Defaults to the resolved
+            size class buckets, which is what the dispatch path asked for. This
+            check used to require the literal ``sk-codex-mid``, which no launch
+            receipt has ever carried since the launcher started emitting the
+            job's logical route, so every real launch was counted invalid.
+
+    Returns:
+        Bounded counters and a reason string describing the verified outcome.
+    """
 
     output = "\n".join(
         value
@@ -601,6 +618,11 @@ def verify_role_dispatch(
         }
 
     store = CardStore(home)
+    accepted = (
+        set(accepted_models)
+        if accepted_models is not None
+        else set(resolve_size_class_models().values())
+    )
     succeeded = failed = 0
     invalid = int(completed.returncode != 0)
     seen_cards: set[str] = set()
@@ -616,7 +638,7 @@ def verify_role_dispatch(
             and seat_labels == {f"seat-{seat}"}
             and "dispatch-approved" in labels
             and launch["lane"] == "codex"
-            and launch["model"] == "sk-codex-mid"
+            and launch["model"] in accepted
         )
         seen_cards.add(launch["card"])
         if not valid:
@@ -740,7 +762,8 @@ def role_dispatch_operation(home: Path, seat: str) -> dict[str, int | str]:
     )
     # Resolved last, and from `env` rather than from a literal, so operator
     # configuration wins instead of being overwritten by a hardcoded default.
-    env.update(resolve_size_class_models(env))
+    size_models = resolve_size_class_models(env)
+    env.update(size_models)
     completed = subprocess.run(
         [str(dispatcher), "--go"],
         env=env,
@@ -748,7 +771,8 @@ def role_dispatch_operation(home: Path, seat: str) -> dict[str, int | str]:
         text=True,
         timeout=240,
     )
-    return verify_role_dispatch(home, completed, seat)
+    # Verification accepts exactly the buckets this dispatch asked for.
+    return verify_role_dispatch(home, completed, seat, set(size_models.values()))
 
 
 def _emit_review_work(home: Path, lineage_path: Path, feed_reason: str) -> dict[str, int | str]:

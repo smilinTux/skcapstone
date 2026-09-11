@@ -167,3 +167,61 @@ def test_no_provider_pinned_default_survives_in_the_dispatch_path() -> None:
 
     assert '"SKFLEET_CODEX_MODEL_S": "sk-codex-mid"' not in source
     assert '"SKFLEET_CODEX_MODEL_XL": "sk-codex-mid"' not in source
+
+
+def _launch_stdout(model: str, seat: str, card_id: str = "a8100007") -> str:
+    return (
+        f"LAUNCHED|chiap08|codex-auto-{card_id}|{card_id}|lane=codex|"
+        f"model={model}|owner=pi-{seat}-chiap08-{card_id}|claim_revision=revision-1\n"
+    )
+
+
+def _verify(monkeypatch, tmp_path: Path, seat: str, model: str) -> dict[str, object]:
+    """Run one role dispatch whose launcher reports the given launch model."""
+
+    card_id = "a8100007"
+    card = SimpleNamespace(
+        labels=[f"seat-{seat}", "dispatch-approved"],
+        status=SimpleNamespace(value="doing"),
+        owner=f"pi-{seat}-chiap08-{card_id}",
+        meta={"_claim_revision": "revision-1"},
+    )
+
+    def run(command, **kwargs):
+        if command[0] == "systemctl":
+            return SimpleNamespace(returncode=0)
+        return SimpleNamespace(returncode=0, stdout=_launch_stdout(model, seat, card_id))
+
+    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.subprocess.run", run)
+    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.CardStore.fold", lambda *_: card)
+    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.CardStore._read_events", lambda *_: [])
+    return role_dispatch_operation(tmp_path, seat)
+
+
+@pytest.mark.parametrize("model", ["sk-s", "sk-m", "sk-l", "sk-xl"])
+def test_verification_accepts_every_bucket_the_dispatch_asked_for(
+    tmp_path, monkeypatch, model: str
+) -> None:
+    """The launcher reports the job's logical route, so verification must take it."""
+
+    assert _verify(monkeypatch, tmp_path, "tank", model)["reason"] == "tank_dispatch_complete"
+
+
+def test_verification_accepts_a_configured_provider_pinned_override(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("SKFLEET_MODEL_M", "sk-codex-mid")
+
+    assert (
+        _verify(monkeypatch, tmp_path, "atlas", "sk-codex-mid")["reason"]
+        == "atlas_dispatch_complete"
+    )
+
+
+def test_verification_still_refuses_a_model_the_dispatch_never_requested(
+    tmp_path, monkeypatch
+) -> None:
+    """The gate stays real: an unrequested model is an invalid receipt."""
+
+    result = _verify(monkeypatch, tmp_path, "tank", "sk-glm-l")
+
+    assert result["reason"] == "tank_dispatch_failed"
+    assert result["dispatch_succeeded"] == 0

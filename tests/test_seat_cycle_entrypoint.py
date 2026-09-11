@@ -950,8 +950,9 @@ def test_role_dispatch_is_bounded_and_seat_scoped(tmp_path, monkeypatch, seat) -
         return SimpleNamespace(
             returncode=0,
             stdout=(
+                # The launcher emits the job's logical route, never a vendor id.
                 f"LAUNCHED|chiap08|codex-auto-{card_id}|{card_id}|lane=codex|"
-                f"model=sk-codex-mid|owner={owner}|claim_revision=revision-1\n"
+                f"model=sk-m|owner={owner}|claim_revision=revision-1\n"
             ),
         )
 
