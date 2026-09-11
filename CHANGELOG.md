@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- The fleet rotation's worker roster was a literal tuple of one estate's five
+  chi hosts, so on a second estate the live dispatcher exited immediately with
+  `NOOP|noroc2027|host is outside the authorized chiap01-chiap03 worker fleet`.
+  That was the last host gate refusing an activation the estate-portable
+  authorization work had already granted. The roster is now estate
+  configuration: an estate names its hosts once as `rotation_hosts` in its own
+  record (`config/estate.json`, else the `cluster.json` already consulted for
+  the operator and realm), and a host bootstrapping before that record has
+  synced may state it through `SKFLEET_ROTATION_HOSTS`. Declaring nothing
+  returns the chi fleet with the same members in the same ORDER, which is the
+  guarantee that matters: card ownership is a hash of the card id modulo this
+  tuple, so any change of contents or order moves every card and can hand two
+  hosts the same one. Tests freeze both the default tuple and the owners it
+  produces for a fixed set of card ids, and prove a second estate partitions
+  only across its own hosts. A malformed roster (a repeated host, an empty
+  entry, a name that is not a host name) now refuses the cycle rather than
+  silently reshuffling ownership. The refusal message reports the fleet
+  actually configured instead of the stale `chiap01-chiap03` literal, which had
+  been wrong since the tuple grew to five hosts.
+
 - The Niobe activation gate was hardcoded to one estate, so a second estate
   could not run it at all. On host noroc2027 it failed with
   `ActivationError: activation host is not chiap08`. Removed: the `chiap08`

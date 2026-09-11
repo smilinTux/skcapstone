@@ -425,3 +425,60 @@ def host_lifecycle_claim(
             f"host lifecycle claim names {claimed} but this machine is {running}"
         )
     return claimed
+
+
+#: Key an estate uses to name the worker hosts its rotation may dispatch to.
+ROTATION_HOSTS_KEY = "rotation_hosts"
+
+
+def estate_rotation_hosts(home: Path | str | None = None) -> tuple[str, ...] | None:
+    """Return the worker hosts this estate declares, in the order it declares them.
+
+    The fleet rotation partitions card OWNERSHIP by hashing each card id across
+    this roster, so both its MEMBERSHIP and its ORDER are load bearing: change
+    either and every card's owner moves, which is how two hosts end up believing
+    they own the same card. That is exactly why the roster is stated once, by
+    the estate, instead of each host deriving one for itself.
+
+    Resolution order, most explicit first, reading the same files
+    :func:`load_estate_profile` already consults:
+
+    1. ``<home>/config/estate.json``
+    2. ``<home>/cluster.json``
+    3. ``/etc/skcapstone/cluster.json``
+
+    The first file that declares the key answers. A file that is absent,
+    unreadable, or simply silent on the key is not an answer, so an estate that
+    has stated nothing gets ``None`` and the caller keeps its own default. That
+    is what leaves an existing estate partitioning byte for byte as it did
+    before this key existed.
+
+    Args:
+        home: The estate home to read. Defaults to the sovereign home.
+
+    Returns:
+        The declared hosts, or ``None`` when no consulted file declares any.
+
+    Raises:
+        EstateConfigError: When a file declares the key but the value is not a
+            non-empty list of unique, well formed short host names. Failing
+            closed matters more here than anywhere else in this module. A
+            malformed operator refuses work, which is loud; a silently dropped
+            or repeated host refuses nothing and instead hands two machines the
+            same cards.
+    """
+    root = sovereign_home(home)
+    for path in (root / ESTATE_CONFIG_RELATIVE, root / "cluster.json", SYSTEM_CLUSTER_PATH):
+        document = _read_json(path)
+        if document is None or ROTATION_HOSTS_KEY not in document:
+            continue
+        declared = document[ROTATION_HOSTS_KEY]
+        if not isinstance(declared, list) or not declared:
+            raise EstateConfigError(
+                f"estate {ROTATION_HOSTS_KEY} must be a non-empty list in {path}"
+            )
+        hosts = tuple(_name(item, ROTATION_HOSTS_KEY, path) for item in declared)
+        if len(set(hosts)) != len(hosts):
+            raise EstateConfigError(f"estate {ROTATION_HOSTS_KEY} names a host twice in {path}")
+        return hosts
+    return None

@@ -7,6 +7,7 @@ import pytest
 
 from skcapstone.estate import (
     EstateConfigError,
+    estate_rotation_hosts,
     host_lifecycle_claim,
     load_estate_profile,
     local_host,
@@ -102,3 +103,42 @@ def test_the_gate_reads_the_machine_not_an_environment_variable(monkeypatch) -> 
     monkeypatch.setenv("SKFLEET_NODE", "node-somewhere-else")
     monkeypatch.setattr("skcapstone.estate.socket.gethostname", lambda: "NorOC2027.lan")
     assert local_host() == "noroc2027"
+
+
+def test_an_estate_that_declares_no_rotation_hosts_answers_none(tmp_path: Path) -> None:
+    """Silence is silence, so the caller keeps the fleet it already had."""
+    assert estate_rotation_hosts(tmp_path) is None
+    write_estate(tmp_path)
+    assert estate_rotation_hosts(tmp_path) is None
+
+
+def test_the_estate_record_declares_the_rotation_fleet_in_order(tmp_path: Path) -> None:
+    """Order is preserved because ownership is a hash modulo this tuple."""
+    write_estate(tmp_path, rotation_hosts=["NOROC2027", " norwk01 "])
+    assert estate_rotation_hosts(tmp_path) == ("noroc2027", "norwk01")
+
+
+def test_cluster_json_is_the_fallback_rotation_host_source(tmp_path: Path) -> None:
+    """The same document the operator and realm fall back to answers here too."""
+    (tmp_path / "cluster.json").write_text(
+        json.dumps({"operator": "chef", "realm": "skworld.io", "rotation_hosts": ["noroc2027"]})
+    )
+    assert estate_rotation_hosts(tmp_path) == ("noroc2027",)
+
+
+def test_the_estate_record_wins_over_cluster_json(tmp_path: Path) -> None:
+    """The explicit authority record is consulted first, as it is for the operator."""
+    write_estate(tmp_path, rotation_hosts=["norwk01"])
+    (tmp_path / "cluster.json").write_text(json.dumps({"rotation_hosts": ["noroc2027"]}))
+    assert estate_rotation_hosts(tmp_path) == ("norwk01",)
+
+
+@pytest.mark.parametrize(
+    "declared",
+    [[], "noroc2027", ["noroc2027", "noroc2027"], ["noroc2027", ""], ["not a host"], [{}]],
+)
+def test_a_malformed_rotation_roster_fails_closed(tmp_path: Path, declared: object) -> None:
+    """A dropped or repeated host refuses nothing later, it double-assigns cards."""
+    write_estate(tmp_path, rotation_hosts=declared)
+    with pytest.raises(EstateConfigError):
+        estate_rotation_hosts(tmp_path)

@@ -43,6 +43,7 @@ from skcapstone.review_admission import (
     governed_review_gate_reasons,
 )
 from skcapstone.fleet.review_pool import elastic_reviewer_identity, review_fanout_limit
+from skcapstone.estate import EstateConfigError, estate_rotation_hosts
 from skcapstone.seat_boundaries import BoundaryError
 from skcapstone.niobe_fanout import (
     FanoutBoundaryError,
@@ -69,6 +70,51 @@ def _required_lane_target(name, env=None, default=None):
             "BLOCKED|%s|missing or invalid non-negative integer" % name
         )
     return value
+
+
+def _estate_rotation_hosts(home=None):
+    """Return the worker fleet this estate declares, or None when it declares none.
+
+    An estate with no record at all is an ordinary state (a fresh checkout, a
+    test host, a node whose synced tree has not landed yet), so silence is
+    silence and the caller keeps its own default. A record that exists and is
+    WRONG is not silence: it is refused here rather than quietly partitioning
+    the fleet across a roster nobody declared.
+    """
+    try:
+        return estate_rotation_hosts(home)
+    except EstateConfigError as exc:
+        raise SystemExit("BLOCKED|rotation_hosts|%s" % exc)
+
+
+def _resolve_rotation_hosts(env=None, declared=None,
+                            default=("chiap01","chiap02","chiap03","chiap04","chiap08")):
+    """Return the worker hosts this rotation may dispatch to, in partition order.
+
+    Ownership is a hash of the card id modulo this tuple, so the tuple's order
+    is as load bearing as its contents. Resolution is most explicit first:
+    SKFLEET_ROTATION_HOSTS for a host bootstrapping before its estate record
+    has synced, then the estate's declared roster, then the default. The
+    default is the chi fleet exactly as it was when it was a literal in this
+    file, so an estate that declares nothing partitions every card to the same
+    host it did before this was configurable.
+    """
+    values = os.environ if env is None else env
+    raw = str(values.get("SKFLEET_ROTATION_HOSTS", "") or "").strip()
+    if raw:
+        hosts = tuple(part.strip().lower() for part in raw.split(",") if part.strip())
+        source = "SKFLEET_ROTATION_HOSTS"
+    elif declared:
+        hosts = tuple(str(part).strip().lower() for part in declared)
+        source = "estate rotation_hosts"
+    else:
+        return tuple(default)
+    if (not hosts or len(set(hosts)) != len(hosts)
+            or not all(re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", host) for host in hosts)):
+        raise SystemExit(
+            "BLOCKED|%s|rotation hosts must be unique well formed host names" % source
+        )
+    return hosts
 
 
 def _slot_summary(lanes):
@@ -302,7 +348,14 @@ if not _LIFECYCLE_OK:
     assess=None
 
 HOST=os.uname().nodename
-ROTATION_HOSTS=("chiap01", "chiap02", "chiap03", "chiap04", "chiap08")
+# The worker fleet is ESTATE configuration, not a property of this script. Card
+# ownership is partitioned by hashing across this tuple, so its membership and
+# its order together decide which host may claim which card. An estate names its
+# own roster once, as rotation_hosts in its estate record (config/estate.json,
+# else cluster.json), or through SKFLEET_ROTATION_HOSTS on a host that is
+# bootstrapping before that record has synced. Declaring nothing keeps the chi
+# fleet this file has always carried, unchanged in value and in order.
+ROTATION_HOSTS=_resolve_rotation_hosts(declared=_estate_rotation_hosts())
 SKC=os.path.expanduser("~/.skenv/bin/skcapstone")
 TARGET=_required_lane_target("SKFLEET_TARGET")
 GLM_TARGET=_required_lane_target("SKFLEET_GLM_TARGET")
@@ -852,7 +905,8 @@ except BlockingIOError:
 
 
 if HOST not in ROTATION_HOSTS:
-    log(d,"NOOP|%s|host is outside the authorized chiap01-chiap03 worker fleet"%HOST)
+    log(d,"NOOP|%s|host is outside this estate's worker fleet: %s"%
+        (HOST,",".join(ROTATION_HOSTS)))
     sys.exit(0)
 
 # Mandatory read-only graph validation precedes slot and assignment decisions.
@@ -2475,7 +2529,14 @@ def outcome_lifecycle_bucket(lifecycle, historical_review):
 # chiap04 added 2026-08-27 after provisioning tmux 3.4 and pi 0.84.3 and a
 # 30G swapfile. 16 open cards name it, mostly the ChatGPT desktop client work,
 # which can only be done on the host running that desktop.
-KNOWN_HOSTS = ROTATION_HOSTS + ("chiap04", "chiap08", "chiwk11", "chiwk12", "noroc2027")
+# Hosts a card may NAME, which is a wider set than the hosts it may RUN on:
+# workstations and the control node are recognised so a card naming one is read
+# as deliberate rather than as noise. chiap04 and chiap08 are listed twice once
+# they join the rotation, which has always been harmless because this is only
+# ever used for membership, but dict.fromkeys says so rather than leaving a
+# reader to work it out.
+KNOWN_HOSTS = tuple(dict.fromkeys(
+    ROTATION_HOSTS + ("chiap04", "chiap08", "chiwk11", "chiwk12", "noroc2027")))
 
 def host_pin(core,labels):
     """Host this card must run on, or None to leave it unpinned."""
