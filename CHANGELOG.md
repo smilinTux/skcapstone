@@ -7,6 +7,10 @@
   6m20s old, so the metric reported a healthy node as nearly six minutes stale.
   It now agrees exactly with `skcapstone fleet nodes`.
 
+- Card `554d393b`: let bounded builder workers preserve each job's assigned
+  `sk-s`, `sk-m`, `sk-l`, or `sk-xl` logical route through SKGateway without
+  selecting a concrete provider backend or model on the host.
+
 - SKRSI is activated for its first target on the nor estate:
   `scripts/skrsi/collect_fleet.py` emits fleet heartbeat-freshness
   observations into a host-local append-only outbox. SKRSI ships contracts and
@@ -17,7 +21,6 @@
   allowlisted and every string is hashed, including the node name in the fence
   key, so no clear host name reaches the outbox while the numeric measurement
   stays readable.
-
 - Card `1cfb52d3`: keep provider-neutral gateway route health during the final
   producer admission recheck so larger healthy routes can serve smaller cards.
 
