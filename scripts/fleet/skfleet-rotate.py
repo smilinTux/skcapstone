@@ -23,6 +23,7 @@ from skcapstone.fleet_lane_health import (
     cycle_id as new_cycle_id,
     lane_health,
 )
+from skcapstone.fleet_route_preflight import resolve_and_preflight
 from skcapstone.fleet import builder_dispatch, store as fleet_store
 from skcapstone.fleet.review_capacity import (
     acquire_review_route_snapshot,
@@ -5349,6 +5350,15 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
                 "- request_id=%s\n- requester=%s\n- allowed_route=%s\n"
                 "- Your authority is limited to this route and the card criteria.\n"
                 % _fanout_env)
+    try:
+        _route_preflight=resolve_and_preflight(_GATEWAY_ENDPOINT,model)
+    except ValueError as exc:
+        log(d,"ROUTE_PREFLIGHT_BLOCKED|%s|%s|requested=%s|reason=%s"%
+            (HOST,cid,model,str(exc)[:140]))
+        continue
+    log(d,"ROUTE_PREFLIGHT_OK|%s|%s|requested=%s|served=%s|provider=%s"%
+        (HOST,cid,_route_preflight.requested_identity,
+         _route_preflight.served_identity,_route_preflight.provider or "unknown"))
     default_workspace=os.path.join(HOME,".skcapstone/fleet/workspaces",name)
     try:
         _source_spec = _source_workspace_spec(
