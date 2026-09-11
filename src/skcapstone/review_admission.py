@@ -100,5 +100,8 @@ def assert_governed_review_claim(home: Path, card_id: str, agent: str) -> None:
     )
     if reviewer != "seraph" and not reviewer.startswith("pi-seraph-") and not elastic:
         reasons = ("wrong-reviewer", *reasons)
+    metadata = governed_review_metadata(core, labels)
+    if metadata and reviewer == metadata[0].strip().lower():
+        reasons = ("producer-self-review", *reasons)
     if reasons:
         raise ValueError("governed review claim denied: " + ", ".join(dict.fromkeys(reasons)))

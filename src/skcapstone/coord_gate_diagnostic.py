@@ -9,6 +9,14 @@ from .card_store import CardStore
 from .review_admission import governed_review_gate_reasons
 
 
+def seraph_capacity_target() -> int:
+    """Return the same effective target used by the Seraph seat cycle."""
+    raw = os.environ.get("SKFLEET_SEAT_TARGET")
+    if raw is None:
+        raw = os.environ.get("SKFLEET_SERAPH_BATCH_SIZE", "2")
+    return max(0, int(raw))
+
+
 def diagnose(home: Path, card_id: str) -> dict[str, object]:
     """Explain one card using the same review gates consumed by POOL_V2."""
     store = CardStore(Path(home).expanduser())
@@ -21,7 +29,7 @@ def diagnose(home: Path, card_id: str) -> dict[str, object]:
         dependency not in cards or cards[dependency].status.value != "done"
         for dependency in card.dependencies
     )
-    target = max(0, int(os.environ.get("SKFLEET_SEAT_TARGET", "1")))
+    target = seraph_capacity_target()
     busy = sum(
         row.id != card.id
         and row.owner is not None
