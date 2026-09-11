@@ -19,6 +19,8 @@ from skcapstone.fleet import builder_dispatch, sknoded, store
 @pytest.fixture(autouse=True)
 def _clear_process_registry(monkeypatch):
     builder_dispatch._PROCESSES.clear()
+    monkeypatch.setenv("SKFLEET_PI", "/test/bin/pi")
+    monkeypatch.setenv("SKFLEET_PI_CARDSTORE_GUARD", "/test/bin/pi-cardstore-guard.mjs")
     monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: _folded())
     yield
     builder_dispatch._PROCESSES.clear()
@@ -105,6 +107,17 @@ def test_worker_command_is_pi_through_gateway_only(monkeypatch) -> None:
     assert "must-not-cross-boundary" not in " ".join(command)
     assert not any(part.startswith("AWS_SECRET_ACCESS_KEY=") for part in command)
     assert "SKFLEET_CLAIM_REVISION=rev" in command
+
+
+def test_worker_command_fails_closed_without_mediated_runtime(monkeypatch) -> None:
+    monkeypatch.delenv("SKFLEET_PI", raising=False)
+    monkeypatch.delenv("SKFLEET_PI_CARDSTORE_GUARD", raising=False)
+    monkeypatch.setattr(builder_dispatch.shutil, "which", lambda *_args: None)
+
+    with pytest.raises(builder_dispatch.BuilderDispatchError, match="mediated worker runtime"):
+        builder_dispatch.worker_command(
+            _card() | {"card_id": "24b00003"}, "owner", "rev", "/tmp/work"
+        )
 
 
 def test_post_offer_card_amendment_blocks_materialization_and_claim(
