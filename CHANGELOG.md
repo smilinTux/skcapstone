@@ -24,6 +24,9 @@
 
 ## Unreleased
 
+- Card `d9ea9869`: count only Codex managed workers against Seraph physical
+  capacity, so Qwen and GLM units cannot consume independent-review slots.
+
 - Card `bf7317af`: filter fleet worker mail recipients through configured,
   case-insensitive exclusions and prohibit implicit all-recipient broadcasts.
 

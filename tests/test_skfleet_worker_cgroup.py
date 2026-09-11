@@ -93,6 +93,7 @@ def test_migration_counts_and_publishes_old_and_new_workers() -> None:
       skfleet-worker-codex-feedface.service loaded active running worker
       unrelated.service loaded active running other
       skfleet-worker-glm-cafebabe.service loaded active running worker
+      skfleet-worker-qwen-acde1234.service loaded active running worker
     """
     units = functions["_parse_worker_units"](output)
     lanes = [
@@ -110,6 +111,10 @@ def test_migration_counts_and_publishes_old_and_new_workers() -> None:
     ]
     assert functions["_worker_cards"](sessions, units, lanes) == [
         "cafebabe",
+        "deadbeef",
+        "feedface",
+    ]
+    assert functions["_worker_cards"](sessions, units, lanes[:1]) == [
         "deadbeef",
         "feedface",
     ]

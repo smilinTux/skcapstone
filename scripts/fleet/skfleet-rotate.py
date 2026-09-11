@@ -589,10 +589,11 @@ def _lane_busy(lane, sessions, units):
 
 def _worker_cards(sessions, units, lanes):
     """Return cards represented by either migration-era worker form."""
+    lane_names = {lane["name"] for lane in lanes}
     return sorted(
         {s[len(lane["prefix"]):] for lane in lanes
          for s in sessions if s.startswith(lane["prefix"])}
-        | {unit["card"] for unit in units}
+        | {unit["card"] for unit in units if unit["lane"] in lane_names}
     )
 
 
