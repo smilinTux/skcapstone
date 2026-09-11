@@ -65,6 +65,17 @@ CardStore creation and claim fencing provide cross-cycle convergence.
 Seat-scoped selector cycles do not overwrite the generic fleet liveness and
 capacity snapshot.
 
+`skcapstone coord gates` derives its Seraph target from the active seat target,
+then the configured Seraph batch size, with the packaged value of two as its
+default. A claimed review without a terminal hashed PASS or FAIL remains a live
+claim. Partial findings are preserved as nonterminal evidence and never become
+a PASS or a review join. A later worker may continue that exact claim only under
+the existing claim owner and revision; otherwise an exact compare-and-swap
+retirement policy must first preserve the findings and release the generation.
+The second Seraph seat remains independently available during that process.
+Every claimant is checked against the candidate producer identity, so increasing
+capacity cannot permit a producer to review its own bytes.
+
 Installation must update the Python package, its wheel-owned
 `~/.skenv/bin/skfleet-rotate.py`, and the Seraph service unit from one reviewed
 commit, recording old and new
