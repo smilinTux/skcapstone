@@ -293,9 +293,21 @@ def verify_seraph_dispatch(
             str(getattr(card, "meta", {}).get("link_source_card") or ""),
             str(getattr(card, "meta", {}).get("link_head_revision") or ""),
         )
-        model_allowed = (launch["lane"] == "codex" and launch["model"] == "sk-codex-mid") or (
-            launch["lane"] == "escalate"
-            and launch["model"] == os.environ.get("SKFLEET_ESC_MODEL", "gpt-5.6-sol")
+        route_identity = receipts[0].get("route_identity") if len(receipts) == 1 else None
+        model_allowed = (
+            isinstance(route_identity, dict)
+            and receipts[0].get("schema") == "skfleet.review-assignment-launch/v2"
+            and route_identity.get("model_or_bucket") == launch["model"]
+            and isinstance(route_identity.get("logical_route"), str)
+            and bool(route_identity.get("logical_route"))
+            and isinstance(route_identity.get("provider"), str)
+            and bool(route_identity.get("provider"))
+            and isinstance(route_identity.get("capacity_domains"), list)
+            and bool(route_identity.get("capacity_domains"))
+            and all(
+                isinstance(domain, str) and domain
+                for domain in route_identity.get("capacity_domains", [])
+            )
         )
         common_valid = (
             card is not None

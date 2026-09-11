@@ -24,6 +24,13 @@ from skcapstone.fleet_lane_health import (
     lane_health,
 )
 from skcapstone.fleet import builder_dispatch, store as fleet_store
+from skcapstone.fleet.review_capacity import (
+    acquire_review_route_snapshot,
+    aggregate_review_capacity,
+    choose_review_route,
+    eligible_review_routes,
+    load_route_occupancy,
+)
 from skcapstone.fleet.paths import default_paths as default_fleet_paths
 from skcapstone.scheduler_decision import (
     SchedulerFacts,
@@ -880,6 +887,19 @@ except Exception as exc:
 # new workers are transient user services and never enter this oneshot's cgroup.
 sessions=sh("tmux","ls","-F","#{session_name}").split()
 worker_units=active_worker_units()
+_GATEWAY_ENDPOINT=os.environ.get("SKFLEET_GATEWAY_URL","http://chiap01:18790").rstrip("/")
+_review_route_snapshot=None
+_review_route_occupancy={}
+_review_route_ambiguous=False
+if ONLY_SEAT=="seraph":
+    _review_route_snapshot=acquire_review_route_snapshot(
+        _GATEWAY_ENDPOINT,
+        Path(HOME)/".skcapstone/evidence/fleet-review-routes.json",
+        new_cycle_id(HOST,STAMP),
+    )
+    _review_route_occupancy,_review_route_ambiguous=load_route_occupancy(
+        Path(HOME)/".skcapstone"
+    )
 GLM_HOLD_PATH=os.path.join(HOME,".skcapstone/evidence/fleet-glm-dispatch-hold.json")
 glm_held=False
 try:
@@ -982,8 +1002,14 @@ if ONLY_SEAT:
         raise SystemExit("BLOCKED|SKFLEET_SEAT_TARGET|seat dispatch requires a positive target")
     _codex=next(lane for lane in LANES if lane["name"]=="codex")
     _busy_cards=_worker_cards(sessions,worker_units,[_codex])
-    _codex["free"]=_seat_capacity(
-        ONLY_SEAT,SEAT_TARGET,CODEX_PHYSICAL_LIMIT,_busy_cards,_last_claim_owner)
+    if ONLY_SEAT=="seraph":
+        _capacity_routes=([] if _review_route_ambiguous else eligible_review_routes(
+            _review_route_snapshot or {},"S",[],"producer","pi-seraph-capacity",
+            _review_route_occupancy))
+        _codex["free"]=aggregate_review_capacity(_capacity_routes,SEAT_TARGET)
+    else:
+        _codex["free"]=_seat_capacity(
+            ONLY_SEAT,SEAT_TARGET,CODEX_PHYSICAL_LIMIT,_busy_cards,_last_claim_owner)
     _codex["target"]=SEAT_TARGET
 free=sum(_L["free"] for _L in LANES)
 log(d, "SLOTS|%s|%s" % (HOST, _slot_summary(LANES)))
@@ -4765,7 +4791,6 @@ def _lane_model(lane, core):
 _LANE_HEALTH_PATH=os.environ.get(
     "SKFLEET_LANE_HEALTH_PATH",
     os.path.join(HOME,".skcapstone/evidence/fleet-lane-health.json"))
-_GATEWAY_ENDPOINT=os.environ.get("SKFLEET_GATEWAY_URL","http://chiap01:18790").rstrip("/")
 _CAPACITY_DOMAINS={
     "codex":tuple(os.environ.get("SKFLEET_CODEX_CAPACITY_DOMAINS","codex").split(",")),
     "glm":tuple(os.environ.get("SKFLEET_GLM_CAPACITY_DOMAINS","zai").split(",")),
@@ -4847,6 +4872,9 @@ while _i<len(owned) and _i<len(_candidate_scan):
     _card_lane_health={lane["name"]:_health_for(
         lane["name"],_lane_model(lane,_card[3]))
         for lane in LANES}
+    if _ONLY_SEAT=="seraph":
+        _card_lane_health["codex"]=(
+            remaining.get("codex",0)>0,"review-route-capacity")
     _lane_name,_defer=select_compatible_lane(
         _labels,_esc,lane_order,remaining,qwen_suitable(_card[3]),_qwen_exclusive,
         _card_lane_health,QWEN_TARGET>0,GLM_TARGET>0)
@@ -4990,6 +5018,7 @@ launched=0
 launch_receipts=0
 processed_picks=0
 launch_remaining={lane["name"]:lane["free"] for lane in LANES}
+_review_route_reservations={}
 logdir=os.path.join(HOME,".skcapstone/fleet/logs"); os.makedirs(logdir,exist_ok=True)
 for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     if launched>=MAX_LAUNCH or not any(launch_remaining.values()):
@@ -4998,6 +5027,9 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     _attempt_escalation=needs_escalation(cid,core,_labels)
     _attempt_health={lane["name"]:_health_for(
         lane["name"],_lane_model(lane,core)) for lane in LANES}
+    if _ONLY_SEAT=="seraph":
+        _attempt_health["codex"]=(
+            launch_remaining.get("codex",0)>0,"review-route-capacity")
     _elastic_review = _POOL_V2_ADMISSIONS.get(cid, {}).get("elastic_review_admitted") is True
     _attempt_remaining = (
         {name: slots if name == "codex" else 0 for name, slots in launch_remaining.items()}
@@ -5192,7 +5224,37 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
             (HOST,sess,cid,_LANE["name"],affinity_reason))
         continue
     model=_lane_model(_LANE,fresh_claimability["core"])
-    admitted,health_reason=_health_for(_LANE["name"],model)
+    _route_identity={
+        "logical_route":_LANE["name"],
+        "provider":_LANE["name"],
+        "capacity_domains":list(_CAPACITY_DOMAINS[_LANE["name"]]),
+        "model_or_bucket":model,
+    }
+    if _ONLY_SEAT=="seraph":
+        _metadata=_governed_review_metadata(
+            fresh_claimability["core"],fresh_claimability["labels"])
+        _size_match=_GLM_SIZE_RE.search(
+            str(fresh_claimability["core"].get("title") or ""))
+        _routes=([] if _metadata is None or _size_match is None
+                 else eligible_review_routes(
+                     _review_route_snapshot or {},_size_match.group(1),
+                     fresh_claimability["labels"],_metadata[0],name,
+                     _review_route_occupancy))
+        _selected_route=choose_review_route(_routes,_review_route_reservations)
+        if _selected_route is None:
+            lane_drift += 1
+            log(d,"SKIPPED_REVIEW_ROUTE|%s|%s|reason=no-eligible-route"%(HOST,cid))
+            continue
+        model=str(_selected_route["model_or_bucket"])
+        _route_identity={
+            "logical_route":str(_selected_route["logical_route"]),
+            "provider":str(_selected_route["provider"]),
+            "capacity_domains":[str(_selected_route["capacity_domain"])],
+            "model_or_bucket":model,
+        }
+        admitted,health_reason=True,"healthy"
+    else:
+        admitted,health_reason=_health_for(_LANE["name"],model)
     if not admitted:
         lane_drift += 1
         _log_once_per_hour(
@@ -5332,7 +5394,11 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     inner=[
         sys.executable,wrapper,"--card",cid,"--owner",name,
         "--claim-revision",claimed_revision,"--host",HOST,"--lane",_LANE["name"],
-        "--model",model,"--stdout",lf,"--evidence-dir",_WORKER_EXIT_DIR,
+        "--model",model,"--logical-route",_route_identity["logical_route"],
+        "--provider",_route_identity["provider"],
+        *[item for domain in _route_identity["capacity_domains"]
+          for item in ("--capacity-domain",domain)],
+        "--stdout",lf,"--evidence-dir",_WORKER_EXIT_DIR,
         "--mail-recipient",WORKER_MAIL_RECIPIENTS[0],
         "--live-snapshot",os.path.join(LIVE, HOST + ".json"),
         "--session",sess,"--worker-executable",PI,
@@ -5377,6 +5443,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
                 actor=name,
                 claim_revision=claimed_revision,
                 launched=ok,
+                route_identity=_route_identity,
             )
             MeroObservation(
                 card_id=cid,
@@ -5384,7 +5451,8 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
                     "mero-" + _review_recommendation.recommendation_id + "-" + claimed_revision
                 ),
                 state="launched" if ok else "launch_failed",
-                process={"host": HOST, "session": sess, "alive": ok},
+                process={"host":HOST,"session":sess,"alive":ok,
+                         "route_identity":_route_identity},
                 evidence_sha256=_observation_evidence,
             ).append(Path(HOME) / ".skcapstone")
             log(
@@ -5401,6 +5469,10 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     else:
         launched+=1
         launch_remaining[_LANE["name"]]-=1
+        if _ONLY_SEAT=="seraph":
+            _domain=_route_identity["capacity_domains"][0]
+            _review_route_reservations[_domain]=(
+                _review_route_reservations.get(_domain,0)+1)
     time.sleep(2)
 
 # A selected Seraph candidate can be suppressed before claim, leaving no worker

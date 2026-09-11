@@ -44,6 +44,7 @@ def review_events(
     author: str = "builder",
     launched: bool = True,
     release_revision: str | None = None,
+    model: str = "sk-codex-mid",
 ) -> list[dict[str, object]]:
     events = [
         {
@@ -56,10 +57,17 @@ def review_events(
         {"action": "claim", "owner": owner, "claim_revision": revision},
         {
             "action": "review_assignment_launch",
+            "schema": "skfleet.review-assignment-launch/v2",
             "recommendation_id": "recommendation-1",
             "reviewer": owner,
             "claim_revision": revision,
             "launched": launched,
+            "route_identity": {
+                "logical_route": "review-medium",
+                "provider": "provider-a",
+                "capacity_domains": ["provider-a"],
+                "model_or_bucket": model,
+            },
         },
     ]
     if not launched:
@@ -703,7 +711,7 @@ def test_seraph_accepts_only_explicit_escalation_lane_model(tmp_path, monkeypatc
     monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.CardStore.fold", lambda *_: card)
     monkeypatch.setattr(
         "skcapstone.seat_cycle_entrypoint.CardStore._read_events",
-        lambda *_: review_events(owner, "revision-1"),
+        lambda *_: review_events(owner, "revision-1", model="sk-codex"),
     )
 
     assert seraph_operation(tmp_path)["reason"] == "seraph_dispatch_complete"
@@ -783,10 +791,17 @@ def test_link_materialization_race_launches_once_and_replay_is_denied(
             card_id,
             "review_assignment_launch",
             owner,
+            schema="skfleet.review-assignment-launch/v2",
             recommendation_id="batch-test",
             reviewer=owner,
             claim_revision=revision,
             launched=True,
+            route_identity={
+                "logical_route": "review-medium",
+                "provider": "provider-a",
+                "capacity_domains": ["provider-a"],
+                "model_or_bucket": "sk-codex-mid",
+            },
         )
         launched = True
         return SimpleNamespace(

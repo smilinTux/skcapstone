@@ -22,6 +22,22 @@ from skcapstone.fleet.worker_watchdog import StartupObservation, classify_startu
 from skcapstone.seat_mail import poll_mail, startup_hello
 
 
+def runtime_route_identity(args: argparse.Namespace) -> dict[str, object]:
+    """Return typed route identity only when the launcher supplied every field."""
+    logical_route = str(getattr(args, "logical_route", "") or "")
+    provider = str(getattr(args, "provider", "") or "")
+    domains = list(getattr(args, "capacity_domain", ()) or ())
+    if not logical_route or not provider or not domains or any(not value for value in domains):
+        return {"route_schema": None, "capacity_domains": []}
+    return {
+        "route_schema": "skfleet.runtime-route/v1",
+        "logical_route": logical_route,
+        "provider": provider,
+        "capacity_domains": domains,
+        "model_or_bucket": args.model,
+    }
+
+
 def startup_observation(args: argparse.Namespace, child_pid: int) -> StartupObservation:
     """Read host-local heartbeat and actual attributed executable descendants.
 
@@ -128,6 +144,7 @@ def write_process_record(
         "heartbeat_at": heartbeat_at or datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "completion_state": completion_state,
         "pid": pid,
+        **runtime_route_identity(args),
     }
     path = Path.home() / ".skcapstone/fleet/direct-seats" / (args.owner + ".json")
     try:
@@ -225,6 +242,7 @@ def record_review_supersession(args: argparse.Namespace, stderr: bytes) -> Path 
         **evidence,
         "host": args.host,
         "lane": args.lane,
+        **runtime_route_identity(args),
         "session_id": args.session,
         "unit_cgroup": unit_cgroup,
         "stdout_log": str(args.stdout),
@@ -447,6 +465,7 @@ def record_terminal_exit(args: argparse.Namespace, stderr: bytes, rc: int) -> No
         "host": args.host,
         "lane": args.lane,
         "model": args.model,
+        **runtime_route_identity(args),
         "owner": args.owner,
         "stderr": redacted,
         "stdout_log": args.stdout.name,
@@ -472,6 +491,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", required=True)
     parser.add_argument("--lane", required=True)
     parser.add_argument("--model", required=True)
+    parser.add_argument("--logical-route", default="")
+    parser.add_argument("--provider", default="")
+    parser.add_argument("--capacity-domain", action="append", default=[])
     parser.add_argument("--stdout", required=True, type=Path)
     parser.add_argument("--evidence-dir", required=True, type=Path)
     parser.add_argument("--mail-recipient", default="jarvis")
