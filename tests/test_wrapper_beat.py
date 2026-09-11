@@ -15,11 +15,12 @@ def test_beat_function_in_child_command():
 
 
 def test_beat_killed_on_all_exit_paths():
-    """Child cleanup stops its beat but never releases the claim itself."""
+    """Child cleanup stops only its beat; wrapper owns claim and projection."""
     src = ROTATE.read_text(encoding="utf-8")
-    assert 'trap "stop_beat; idle_agent; exit 143" HUP INT TERM' in src
-    assert 'trap "stop_beat; idle_agent" EXIT' in src
-    assert "stop_beat; idle_agent; exit $rc" in src
+    assert 'trap "stop_beat; exit 143" HUP INT TERM' in src
+    assert 'trap "stop_beat" EXIT' in src
+    assert "stop_beat; exit $rc" in src
+    assert "idle_agent" not in src
     assert "release_claim()" not in src
     assert "stop_beat; release_claim" not in src
 

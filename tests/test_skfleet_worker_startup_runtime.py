@@ -465,6 +465,9 @@ def test_terminal_wrapper_exit_allows_real_next_claim_and_managed_launch(tmp_pat
     assert module.main() == 0
     assert store.fold("feedbeef").owner is None
     assert json.loads(snapshot.read_text())["cards"] == []
+    released_projection = json.loads((agents / "worker-1.json").read_text(encoding="utf-8"))
+    assert released_projection["current_task"] is None
+    assert released_projection["claimed_tasks"] == []
 
     cli = shutil.which("skcapstone")
     assert cli is not None
@@ -599,6 +602,22 @@ def test_actual_launcher_shell_preserves_workspace_and_beat_identity(
     brief = tmp_path / "brief"
     brief.write_text("synthetic")
     beat = tmp_path / "beat.json"
+    agents = tmp_path / ".skcapstone" / "coordination" / "agents"
+    agents.mkdir(parents=True)
+    projection = agents / "worker.json"
+    projection.write_text(
+        json.dumps(
+            {
+                "agent": "worker",
+                "state": "active",
+                "current_task": "feedbeef",
+                "claimed_tasks": ["feedbeef"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    projection_before = projection.read_bytes()
     namespace = dict(
         cid="feedbeef",
         name="worker",
@@ -636,6 +655,7 @@ def test_actual_launcher_shell_preserves_workspace_and_beat_identity(
     assert payload["session_id"] == "session-1"
     assert payload["claim_revision"] == "rev-1"
     assert "release-claim" not in namespace["child"]
+    assert projection.read_bytes() == projection_before
 
 
 def test_wrapper_completion_reaps_long_heartbeat_sleeper_and_closes_pipes(tmp_path):

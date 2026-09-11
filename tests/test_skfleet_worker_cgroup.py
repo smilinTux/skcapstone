@@ -117,9 +117,11 @@ def test_migration_counts_and_publishes_old_and_new_workers() -> None:
 
 def test_launch_delegates_exact_claim_release_to_wrapper() -> None:
     source = ROTATE.read_text(encoding="utf-8")
-    assert "release-claim" not in source[source.index("child=(") : source.index("wrapper=os.path")]
-    assert 'trap "stop_beat; idle_agent; exit 143" HUP INT TERM' in source
-    assert 'trap "stop_beat; idle_agent" EXIT' in source
+    child = source[source.index("child=(") : source.index("wrapper=os.path")]
+    assert "release-claim" not in child
+    assert "idle_agent" not in child
+    assert 'trap "stop_beat; exit 143" HUP INT TERM' in source
+    assert 'trap "stop_beat" EXIT' in source
     assert '"--claim-revision",claimed_revision' in source
     assert '"--live-snapshot",os.path.join(LIVE, HOST + ".json")' in source
     assert "subprocess.run(_worker_launch_command(unit,workspace,inner)" in source
