@@ -988,6 +988,11 @@ _CODEX_LEVEL_DEFAULTS={"S":"sk-codex-fast","M":"sk-codex-mid",
                        "L":"sk-codex","XL":"sk-codex"}
 _CODEX_LEVELS={key:os.environ.get("SKFLEET_CODEX_MODEL_"+key,value)
                for key,value in _CODEX_LEVEL_DEFAULTS.items()}
+_LOGICAL_ROUTES={"S":"sk-s","M":"sk-m","L":"sk-l","XL":"sk-xl"}
+def _logical_route_for(core):
+    """Return the one job-sized gateway bucket without selecting a backend."""
+    matches=_GLM_SIZE_RE.findall(str((core or {}).get("title") or ""))
+    return _LOGICAL_ROUTES.get(matches[0]) if len(matches)==1 else None
 def _codex_model_for(core):
     match=_GLM_SIZE_RE.search(str((core or {}).get("title") or ""))
     return _CODEX_LEVELS.get(match.group(1)) if match else None
@@ -5225,11 +5230,11 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
             "- Do not deploy, dispatch, invoke an actuator, or change the target.\n"
         ) % (_verification_target, _verification_evidence_sha256)
     sess="%s%s"%(_LANE["prefix"],cid)
-    model=_LANE["model"]
-    if _LANE["name"]=="glm":
-        model=_glm_model_for(core) or model
-    if _LANE["name"]=="kimi":
-        model=_kimi_model_for(core) or model
+    model=_logical_route_for(core)
+    if model is None:
+        log(d,"SKIPPED_LOGICAL_ROUTE|%s|%s|reason=missing-or-ambiguous-size"%
+            (HOST,cid))
+        continue
     pi_tools=pi_tool_allowlist(_labels)
     if DRY:
         log(d,"WOULD_LAUNCH|%s|%s|%s|lane=%s|model=%s|%s"%(HOST,sess,cid,_LANE["name"],model,str(core.get("title"))[:40]))
@@ -5260,11 +5265,16 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         log(d,"SKIPPED_LANE_RACE|%s|%s|%s|selected=%s|reason=%s"%
             (HOST,sess,cid,_LANE["name"],affinity_reason))
         continue
-    model=_lane_model(_LANE,fresh_claimability["core"])
+    model=_logical_route_for(fresh_claimability["core"])
+    if model is None:
+        lane_drift += 1
+        log(d,"SKIPPED_LOGICAL_ROUTE_RACE|%s|%s|reason=missing-or-ambiguous-size"%
+            (HOST,cid))
+        continue
     _route_identity={
-        "logical_route":_LANE["name"],
-        "provider":_LANE["name"],
-        "capacity_domains":list(_CAPACITY_DOMAINS[_LANE["name"]]),
+        "logical_route":model,
+        "provider":"skgateway",
+        "capacity_domains":[],
         "model_or_bucket":model,
     }
     if _ONLY_SEAT=="seraph":
@@ -5282,10 +5292,9 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
             lane_drift += 1
             log(d,"SKIPPED_REVIEW_ROUTE|%s|%s|reason=no-eligible-route"%(HOST,cid))
             continue
-        model=str(_selected_route["model_or_bucket"])
         _route_identity={
-            "logical_route":str(_selected_route["logical_route"]),
-            "provider":str(_selected_route["provider"]),
+            "logical_route":model,
+            "provider":"skgateway",
             "capacity_domains":[str(_selected_route["capacity_domain"])],
             "model_or_bucket":model,
         }
@@ -5302,10 +5311,9 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
             lane_drift += 1
             log(d,"SKIPPED_PRODUCER_ROUTE|%s|%s|reason=no-eligible-route"%(HOST,cid))
             continue
-        model=str(_selected_route["model_or_bucket"])
         _route_identity={
-            "logical_route":str(_selected_route["logical_route"]),
-            "provider":str(_selected_route["provider"]),
+            "logical_route":model,
+            "provider":"skgateway",
             "capacity_domains":[str(_selected_route["capacity_domain"])],
             "model_or_bucket":model,
         }

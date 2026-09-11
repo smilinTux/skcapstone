@@ -11,6 +11,10 @@
   `sk-s`, `sk-m`, `sk-l`, or `sk-xl` logical route through SKGateway without
   selecting a concrete provider backend or model on the host.
 
+- Card `c5a81d5b`: preserve the job's `sk-s`, `sk-m`, `sk-l`, or `sk-xl`
+  route through fleet launch so SKGateway, rather than a worker lane, selects
+  the healthy qualified backend.
+
 - SKRSI is activated for its first target on the nor estate:
   `scripts/skrsi/collect_fleet.py` emits fleet heartbeat-freshness
   observations into a host-local append-only outbox. SKRSI ships contracts and
