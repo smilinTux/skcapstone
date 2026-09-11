@@ -234,8 +234,9 @@ def test_seraph_preclaim_batch_allows_distinct_heads_concurrently() -> None:
 def test_worker_runtime_contract_is_unchanged() -> None:
     """The authority repair does not alter Kimi, wrapper, heartbeat, or attribution."""
     source = ROTATE.read_text(encoding="utf-8")
-    assert 'if _LANE["name"]=="kimi":' in source
-    assert "model=_kimi_model_for(core) or model" in source
+    assert "model=_logical_route_for(core)" in source
+    assert '"provider":"skgateway"' in source
+    assert 'model=str(_selected_route["model_or_bucket"])' not in source
     assert 'qwen_suitable(fresh_claimability["core"]),' in source
     assert "SKFLEET_CARD_ID=%s SKFLEET_CLAIM_REVISION=%s SKFLEET_SESSION_ID=%s" in source
     assert '"--session",sess,"--worker-executable",PI,' in source

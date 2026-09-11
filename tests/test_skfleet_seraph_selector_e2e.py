@@ -42,6 +42,20 @@ class _HealthyGateway(BaseHTTPRequestHandler):
                     }
                     for provider in ("provider-alpha", "provider-beta")
                 ]
+                + [
+                    {
+                        "id": "sk-s",
+                        "provider": "provider-alpha",
+                        "advertised": True,
+                        "stale": False,
+                        "tools": True,
+                        "card": {
+                            "size_class": "S",
+                            "reasoning": True,
+                            "tier": "local",
+                        },
+                    }
+                ]
             }
         elif self.path == "/health":
             body = {
@@ -461,16 +475,22 @@ cycle("replay", "seraph")
         assert len(receipt_events) == 1
         route = receipt_events[0]["route_identity"]
         assert receipt_events[0]["schema"] == "skfleet.review-assignment-launch/v2"
-        assert route["logical_route"] in {"review-provider-alpha", "review-provider-beta"}
-        assert route["provider"] in {"provider-alpha", "provider-beta"}
-        assert route["capacity_domains"] == [route["provider"]]
-        assert route["model_or_bucket"] == route["logical_route"]
+        assert route["logical_route"] == "sk-s"
+        assert route["provider"] == "skgateway"
+        assert route["capacity_domains"] in [["provider-alpha"], ["provider-beta"]]
+        assert route["model_or_bucket"] == "sk-s"
         workspace = home / ".skcapstone" / "fleet" / "workspaces" / folded.owner
         assert (workspace / "REAL-GIT-WORKSPACE.txt").read_text(encoding="utf-8") == (
             "real Link to Seraph workspace\n"
         )
     assert {
         event["route_identity"]["provider"]
+        for card_id in card_ids
+        for event in store._read_events(card_id)
+        if event.get("action") == "review_assignment_launch" and event.get("launched") is True
+    } == {"skgateway"}
+    assert {
+        event["route_identity"]["capacity_domains"][0]
         for card_id in card_ids
         for event in store._read_events(card_id)
         if event.get("action") == "review_assignment_launch" and event.get("launched") is True
