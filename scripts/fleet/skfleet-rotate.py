@@ -28,6 +28,7 @@ from skcapstone.fleet.review_capacity import (
     acquire_review_route_snapshot,
     aggregate_review_capacity,
     choose_review_route,
+    eligible_gateway_routes,
     eligible_review_routes,
     load_route_occupancy,
 )
@@ -891,7 +892,7 @@ _GATEWAY_ENDPOINT=os.environ.get("SKFLEET_GATEWAY_URL","http://chiap01:18790").r
 _review_route_snapshot=None
 _review_route_occupancy={}
 _review_route_ambiguous=False
-if ONLY_SEAT=="seraph":
+if ONLY_SEAT in {"", "seraph"}:
     _review_route_snapshot=acquire_review_route_snapshot(
         _GATEWAY_ENDPOINT,
         Path(HOME)/".skcapstone/evidence/fleet-review-routes.json",
@@ -992,11 +993,30 @@ def _glm_model_for(core):
 def _kimi_model_for(core):
     match=_KIMI_SIZE_RE.search(str((core or {}).get("title") or ""))
     return "k3" if match and match.group(1)=="XL" else "kimi-for-coding"
+
+
+def _producer_routes_for(core, labels, lane=None):
+    """Return current gateway routes for one producer card and optional lane pin."""
+    match=_GLM_SIZE_RE.search(str((core or {}).get("title") or ""))
+    routes=([] if _review_route_ambiguous or match is None else eligible_gateway_routes(
+        _review_route_snapshot or {},match.group(1),labels,_review_route_occupancy))
+    if lane is None:
+        return routes
+    token=str(lane).lower()
+    return [route for route in routes if token in (
+        str(route.get("provider") or "")+" "+str(route.get("logical_route") or "")
+    ).lower()]
 if glm_held:
     log(d,"GLM_HOLD|%s|new GLM dispatch disabled by %s"%(HOST,GLM_HOLD_PATH))
 for _L in LANES:
     _L["busy"]=_lane_busy(_L,sessions,worker_units)
     _L["free"]=max(0,_L["target"]-len(_L["busy"]))
+if not ONLY_SEAT:
+    _gateway_routes=([] if _review_route_ambiguous else eligible_gateway_routes(
+        _review_route_snapshot or {},"S",[],_review_route_occupancy))
+    _codex=next(lane for lane in LANES if lane["name"]=="codex")
+    _codex["free"]=aggregate_review_capacity(
+        _gateway_routes,min(TARGET,CODEX_PHYSICAL_LIMIT,MAX_LAUNCH))
 if ONLY_SEAT:
     if not _SEAT_RE.fullmatch(ONLY_SEAT) or SEAT_TARGET < 1:
         raise SystemExit("BLOCKED|SKFLEET_SEAT_TARGET|seat dispatch requires a positive target")
@@ -4872,6 +4892,12 @@ while _i<len(owned) and _i<len(_candidate_scan):
     _card_lane_health={lane["name"]:_health_for(
         lane["name"],_lane_model(lane,_card[3]))
         for lane in LANES}
+    if not _ONLY_SEAT:
+        _producer_routes=_producer_routes_for(
+            _card[3],_labels,"codex" if "codex-only" in {
+                str(label).strip().lower() for label in _labels} else None)
+        _card_lane_health["codex"]=(
+            bool(_producer_routes),"gateway-route-capacity" if _producer_routes else "unknown")
     if _ONLY_SEAT=="seraph":
         _card_lane_health["codex"]=(
             remaining.get("codex",0)>0,"review-route-capacity")
@@ -5255,6 +5281,24 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         admitted,health_reason=True,"healthy"
     else:
         admitted,health_reason=_health_for(_LANE["name"],model)
+        _producer_routes=_producer_routes_for(
+            fresh_claimability["core"],fresh_claimability["labels"],
+            _LANE["name"] if "%s-only"%_LANE["name"] in {
+                str(label).strip().lower() for label in fresh_claimability["labels"]}
+            else None)
+        _selected_route=choose_review_route(_producer_routes,_review_route_reservations)
+        if _selected_route is None:
+            lane_drift += 1
+            log(d,"SKIPPED_PRODUCER_ROUTE|%s|%s|reason=no-eligible-route"%(HOST,cid))
+            continue
+        model=str(_selected_route["model_or_bucket"])
+        _route_identity={
+            "logical_route":str(_selected_route["logical_route"]),
+            "provider":str(_selected_route["provider"]),
+            "capacity_domains":[str(_selected_route["capacity_domain"])],
+            "model_or_bucket":model,
+        }
+        admitted,health_reason=True,"healthy"
     if not admitted:
         lane_drift += 1
         _log_once_per_hour(
@@ -5461,7 +5505,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     else:
         launched+=1
         launch_remaining[_LANE["name"]]-=1
-        if _ONLY_SEAT=="seraph":
+        if _route_identity.get("capacity_domains"):
             _domain=_route_identity["capacity_domains"][0]
             _review_route_reservations[_domain]=(
                 _review_route_reservations.get(_domain,0)+1)

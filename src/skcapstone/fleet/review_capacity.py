@@ -176,18 +176,15 @@ def load_route_occupancy(home: Path, *, now: float | None = None) -> tuple[dict[
     return occupancy, ambiguous
 
 
-def eligible_review_routes(
+def eligible_gateway_routes(
     snapshot: Mapping[str, Any],
     required_size: str,
     labels: Sequence[str],
-    producer: str,
-    reviewer: str,
     occupancy: Mapping[str, int],
 ) -> list[dict[str, Any]]:
     """Return healthy policy-compatible routes with per-domain free capacity."""
     if (
         required_size not in _SIZE
-        or canonical_principal(producer) == canonical_principal(reviewer)
         or snapshot.get("schema_version") != 1
         or snapshot.get("error") is not None
     ):
@@ -211,6 +208,20 @@ def eligible_review_routes(
         routes,
         key=lambda row: (_SIZE[str(row["size_class"])], str(row["logical_route"])),
     )
+
+
+def eligible_review_routes(
+    snapshot: Mapping[str, Any],
+    required_size: str,
+    labels: Sequence[str],
+    producer: str,
+    reviewer: str,
+    occupancy: Mapping[str, int],
+) -> list[dict[str, Any]]:
+    """Return eligible gateway routes after enforcing reviewer independence."""
+    if canonical_principal(producer) == canonical_principal(reviewer):
+        return []
+    return eligible_gateway_routes(snapshot, required_size, labels, occupancy)
 
 
 def aggregate_review_capacity(routes: Sequence[Mapping[str, Any]], target: int) -> int:

@@ -10,6 +10,7 @@ from skcapstone.fleet.review_capacity import (
     acquire_review_route_snapshot,
     aggregate_review_capacity,
     choose_review_route,
+    eligible_gateway_routes,
     eligible_review_routes,
     load_route_occupancy,
 )
@@ -185,6 +186,32 @@ def test_only_current_unavailable_capacity_excludes_route(
             "route-cloud-alias",
             "route-cloud-medium",
         }
+
+
+def test_producer_capacity_uses_gateway_truth_not_unrelated_pi_sessions(tmp_path):
+    now = 2_000_000_000.0
+    models, health, queue = _documents(now)
+    queue["backends"]["cloud-b"]["max"] = 32
+    documents = dict(zip(("/v1/models", "/health", "/queue"), (models, health, queue)))
+
+    def opener(url, timeout):
+        assert timeout == 8
+        suffix = next(key for key in documents if url.endswith(key))
+        return _Response(json.dumps(documents[suffix]).encode())
+
+    snapshot = acquire_review_route_snapshot(
+        "https://gateway", tmp_path / "snapshot.json", "cycle-1", opener=opener, now=lambda: now
+    )
+    routes = eligible_gateway_routes(snapshot, "M", [], {})
+
+    assert aggregate_review_capacity(routes, 3) == 3
+    assert {row["logical_route"] for row in routes} == {
+        "route-cloud-alias",
+        "route-cloud-medium",
+        "route-local-large",
+    }
+    assert sum(row["free"] for row in routes if row["capacity_domain"] == "cloud-b") == 64
+    assert choose_review_route(routes, {"cloud-b": 31})["capacity_domain"] == "cloud-b"
 
 
 def test_runtime_route_occupancy_is_typed_and_ambiguous_fails_closed(tmp_path):

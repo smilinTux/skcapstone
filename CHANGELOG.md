@@ -1,5 +1,9 @@
 # Changelog
 
+- Card `2dea585b`: use current advertised SKGateway routes and shared capacity
+  domains for bounded ordinary producer selection instead of treating unrelated
+  long-lived Pi sessions as active gateway work.
+
 - Card `7f9751c7`: keep current available provider capacity eligible for Seraph
   while excluding only current throttled or unavailable capacity.
 
