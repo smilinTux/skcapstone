@@ -83,15 +83,6 @@ def _append_health(
         os.fsync(stream.fileno())
 
 
-def _verify_card_fence(home: Path, card_id: str, expected_revision: str) -> None:
-    core = home / "cards" / card_id / "core.json"
-    if not core.is_file():
-        raise ValueError("Niobe approval card is missing")
-    actual = hashlib.sha256(core.read_bytes()).hexdigest()
-    if actual != expected_revision:
-        raise ValueError("Niobe approval card revision is stale")
-
-
 def run_live(
     *,
     activation_path: Path,
@@ -100,7 +91,11 @@ def run_live(
     runner=subprocess.run,
 ) -> int:
     value = json.loads(activation_path.read_text(encoding="utf-8"))
-    activation = parse_activation(value)
+    home = activation_path.parent.parent
+    host = (local_host or socket.gethostname()).strip().lower()
+    # parse_activation proves the card fence and that this machine is the host
+    # the record authorizes, using the estate's own operator and product scope.
+    activation = parse_activation(value, home=home, host=host)
     started_at = datetime.now(timezone.utc).isoformat()
     required_environment = {
         "SKFLEET_TARGET": "3",
@@ -110,13 +105,8 @@ def run_live(
     }
     if any(os.environ.get(key) != expected for key, expected in required_environment.items()):
         raise ValueError("Niobe live unit requires effective Codex-only target 3")
-    host = (local_host or socket.gethostname()).strip().lower()
-    if host != activation.host:
-        raise ValueError("Niobe live unit refused on inactive host")
     if not dispatcher.is_file():
         raise ValueError("Niobe dispatcher is missing")
-    home = activation_path.parent.parent
-    _verify_card_fence(home, activation.card_id, activation.card_revision)
     startup_hello(home, "niobe", host=host)
     mailbox = poll_mail("niobe")
     environment = os.environ.copy()

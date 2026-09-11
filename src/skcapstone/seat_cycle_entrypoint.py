@@ -23,6 +23,7 @@ from typing import Any, Callable
 from skcoord.card import Column
 from skcoord.card_store import CardStore
 
+from .estate import host_lifecycle_claim
 from .lifecycle_seats import LIFECYCLE_SEATS
 from .link_cycle import recommend_one_reviewer
 from .link_observation_feed import ObservationFeedError, load_observation_feed
@@ -73,8 +74,30 @@ class CycleSummary:
     mailbox_error: str | None = None
 
 
-def load_control_plane(path: Path) -> dict[str, Any]:
-    """Read and validate the small public active-host control record."""
+def load_control_plane(path: Path, *, host: str | None = None) -> dict[str, Any]:
+    """Read and validate the small public active-host control record.
+
+    This is the point where a record from the SYNCED coordination tree is
+    read and then trusted, so it is also where a host-local refusal belongs.
+    The election itself stays estate-wide (see :mod:`skcapstone.estate` for
+    why exactly one host per estate must be elected there). What is added on
+    top is one-directional: when this machine carries a host-local lifecycle
+    claim, the synced record has to agree with it. The claim can only ever
+    refuse, never grant, so a record that reached this machine by mis-sync or
+    tampering cannot activate a host whose own operator never declared it.
+
+    Args:
+        path: The estate's ``coordination/seat-control-plane.json``.
+        host: Running host override, for tests.
+
+    Returns:
+        The validated control record.
+
+    Raises:
+        ValueError: On a bad schema, a missing active host or revision, a seat
+            not provisioned on the active host, or a record that contradicts
+            this machine's own host-local claim.
+    """
 
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or value.get("schema_version") != 1:
@@ -90,6 +113,11 @@ def load_control_plane(path: Path) -> dict[str, Any]:
         hosts = seats.get(seat)
         if not isinstance(hosts, list) or active_host not in hosts:
             raise ValueError(f"seat {seat} is not provisioned on active host")
+    claim = host_lifecycle_claim(host=host)
+    if claim is not None and claim != active_host.strip().lower():
+        raise ValueError(
+            f"seat control plane names {active_host} but this machine claims {claim}"
+        )
     return value
 
 
@@ -120,7 +148,7 @@ def run_cycle(
     if seat not in _SEATS:
         raise ValueError(f"unsupported recurring seat: {seat}")
     host = (local_host or socket.gethostname()).strip().lower()
-    control = load_control_plane(control_plane)
+    control = load_control_plane(control_plane, host=host)
     revision = str(control["revision"])
     if host != str(control["active_host"]):
         summary = CycleSummary(

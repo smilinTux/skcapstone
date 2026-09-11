@@ -9,6 +9,16 @@ import pytest
 
 from skcapstone.niobe_live_entrypoint import run_live
 
+#: The estate these tests run as. The wrapper reads the operator and the
+#: product scope from the estate's own synced record, so the fixture below
+#: writes one instead of the module carrying a hardcoded operator.
+ESTATE = {
+    "schema": "sk.estate-authority/v1",
+    "operator": "casey",
+    "realm": "skworld.io",
+    "product_scope": ["skcapstone", "skdashboard", "skworld"],
+}
+
 
 @pytest.fixture(autouse=True)
 def codex_only_environment(monkeypatch) -> None:
@@ -19,6 +29,22 @@ def codex_only_environment(monkeypatch) -> None:
         "SKFLEET_KIMI_TARGET": "0",
     }.items():
         monkeypatch.setenv(key, value)
+
+
+@pytest.fixture(autouse=True)
+def estate_record(tmp_path: Path) -> None:
+    """Give every case an estate that names its operator and product scope."""
+    path = tmp_path / "home/config/estate.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(ESTATE))
+
+
+def approval_card(tmp_path: Path, card_id: str = "c4e7a9b2") -> str:
+    """Create the approval card the activation fences against."""
+    core = tmp_path / "home/cards" / card_id / "core.json"
+    core.parent.mkdir(parents=True, exist_ok=True)
+    core.write_text('{"id":"c4e7a9b2"}\n')
+    return hashlib.sha256(core.read_bytes()).hexdigest()
 
 
 def activation(card_revision: str = "a" * 64) -> dict:
@@ -45,10 +71,7 @@ def activation(card_revision: str = "a" * 64) -> dict:
 
 
 def test_live_wrapper_validates_then_runs_exact_dispatcher(tmp_path: Path, monkeypatch) -> None:
-    core = tmp_path / "home/cards/c4e7a9b2/core.json"
-    core.parent.mkdir(parents=True)
-    core.write_text('{"id":"c4e7a9b2"}\n')
-    revision = hashlib.sha256(core.read_bytes()).hexdigest()
+    revision = approval_card(tmp_path)
     path = tmp_path / "home/coordination/niobe-activation.json"
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(activation(revision)))
@@ -94,29 +117,42 @@ def test_live_wrapper_validates_then_runs_exact_dispatcher(tmp_path: Path, monke
 
 
 def test_live_wrapper_refuses_wrong_host(tmp_path: Path) -> None:
+    """An activation minted for one host does not authorize another."""
+    revision = approval_card(tmp_path)
     path = tmp_path / "home/coordination/niobe-activation.json"
     path.parent.mkdir(parents=True)
-    path.write_text(json.dumps(activation()))
+    path.write_text(json.dumps(activation(revision)))
     dispatcher = tmp_path / "skfleet-rotate.py"
     dispatcher.write_text("#!/bin/sh\n")
-    with pytest.raises(ValueError, match="inactive host"):
+    with pytest.raises(ValueError, match="this machine is chiap01"):
         run_live(activation_path=path, dispatcher=dispatcher, local_host="chiap01")
 
 
-def test_live_wrapper_refuses_non_codex_effective_environment(tmp_path: Path, monkeypatch) -> None:
+def test_live_wrapper_refuses_an_operator_the_estate_does_not_name(tmp_path: Path) -> None:
+    revision = approval_card(tmp_path)
+    record = activation(revision)
+    record["authorized_by"] = "jarvis"
     path = tmp_path / "home/coordination/niobe-activation.json"
     path.parent.mkdir(parents=True)
-    path.write_text(json.dumps(activation()))
+    path.write_text(json.dumps(record))
+    dispatcher = tmp_path / "skfleet-rotate.py"
+    dispatcher.write_text("#!/bin/sh\n")
+    with pytest.raises(ValueError, match="requires casey authorization"):
+        run_live(activation_path=path, dispatcher=dispatcher, local_host="chiap08")
+
+
+def test_live_wrapper_refuses_non_codex_effective_environment(tmp_path: Path, monkeypatch) -> None:
+    revision = approval_card(tmp_path)
+    path = tmp_path / "home/coordination/niobe-activation.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(activation(revision)))
     monkeypatch.setenv("SKFLEET_GLM_TARGET", "2")
     with pytest.raises(ValueError, match="Codex-only target 3"):
         run_live(activation_path=path, dispatcher=tmp_path, local_host="chiap08")
 
 
 def test_live_wrapper_records_dispatch_failure(tmp_path: Path, monkeypatch) -> None:
-    core = tmp_path / "home/cards/c4e7a9b2/core.json"
-    core.parent.mkdir(parents=True)
-    core.write_text('{"id":"c4e7a9b2"}\n')
-    revision = hashlib.sha256(core.read_bytes()).hexdigest()
+    revision = approval_card(tmp_path)
     path = tmp_path / "home/coordination/niobe-activation.json"
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(activation(revision)))
@@ -143,10 +179,7 @@ def test_live_wrapper_records_dispatch_failure(tmp_path: Path, monkeypatch) -> N
 
 
 def test_live_wrapper_deduplicates_one_systemd_invocation(tmp_path: Path, monkeypatch) -> None:
-    core = tmp_path / "home/cards/c4e7a9b2/core.json"
-    core.parent.mkdir(parents=True)
-    core.write_text('{"id":"c4e7a9b2"}\n')
-    revision = hashlib.sha256(core.read_bytes()).hexdigest()
+    revision = approval_card(tmp_path)
     path = tmp_path / "home/coordination/niobe-activation.json"
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(activation(revision)))
@@ -183,10 +216,7 @@ def test_live_wrapper_deduplicates_one_systemd_invocation(tmp_path: Path, monkey
 def test_live_wrapper_rejects_zero_exit_without_rotation_evidence(
     tmp_path: Path, monkeypatch
 ) -> None:
-    core = tmp_path / "home/cards/c4e7a9b2/core.json"
-    core.parent.mkdir(parents=True)
-    core.write_text('{"id":"c4e7a9b2"}\n')
-    revision = hashlib.sha256(core.read_bytes()).hexdigest()
+    revision = approval_card(tmp_path)
     path = tmp_path / "home/coordination/niobe-activation.json"
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(activation(revision)))
@@ -212,10 +242,7 @@ def test_live_wrapper_rejects_zero_exit_without_rotation_evidence(
 
 
 def test_live_wrapper_rejects_unterminated_rotation_evidence(tmp_path: Path, monkeypatch) -> None:
-    core = tmp_path / "home/cards/c4e7a9b2/core.json"
-    core.parent.mkdir(parents=True)
-    core.write_text('{"id":"c4e7a9b2"}\n')
-    revision = hashlib.sha256(core.read_bytes()).hexdigest()
+    revision = approval_card(tmp_path)
     path = tmp_path / "home/coordination/niobe-activation.json"
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(activation(revision)))
@@ -253,10 +280,7 @@ def test_live_wrapper_rejects_unterminated_rotation_evidence(tmp_path: Path, mon
 def test_live_wrapper_records_dispatch_exception(
     tmp_path: Path, monkeypatch, error: Exception
 ) -> None:
-    core = tmp_path / "home/cards/c4e7a9b2/core.json"
-    core.parent.mkdir(parents=True)
-    core.write_text('{"id":"c4e7a9b2"}\n')
-    revision = hashlib.sha256(core.read_bytes()).hexdigest()
+    revision = approval_card(tmp_path)
     path = tmp_path / "home/coordination/niobe-activation.json"
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(activation(revision)))
@@ -285,9 +309,7 @@ def test_live_wrapper_records_dispatch_exception(
 
 
 def test_live_wrapper_refuses_stale_well_formed_card_revision(tmp_path: Path) -> None:
-    core = tmp_path / "home/cards/c4e7a9b2/core.json"
-    core.parent.mkdir(parents=True)
-    core.write_text('{"id":"c4e7a9b2"}\n')
+    approval_card(tmp_path)
     path = tmp_path / "home/coordination/niobe-activation.json"
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(activation("b" * 64)))

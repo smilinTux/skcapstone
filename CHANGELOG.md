@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+- The Niobe activation gate was hardcoded to one estate, so a second estate
+  could not run it at all. On host noroc2027 it failed with
+  `ActivationError: activation host is not chiap08`. Removed: the `chiap08`
+  host literal, the `casey` operator literal, the single module-level
+  `CARD_ID`, and the three-product `PRODUCTS` set. The operator, realm and
+  product scope now come from the estate's own record in the synced tree
+  (`config/estate.json`, else the `cluster.json` CapAuth already reads), and
+  the host comes from the machine actually executing via
+  `estate.local_host()`, never from a file and never from an environment
+  variable. An activation minted for one host is therefore refused on
+  another. `card_id` got stricter rather than looser: instead of equality
+  with one shipped id it must name a card that exists in this estate and
+  still hashes to the record's `card_revision`. That fence lived only in the
+  two callers and could be skipped; `parse_activation` now owns it and
+  requires `home`, so an unfenced parse is impossible. Nothing became a
+  warning: a wrong host, a wrong operator, an expired record, a malformed
+  card fence, a widened action set and a wrong live unit are all still
+  refusals.
+
+- `seat_cycle_entrypoint.load_control_plane()` now cross-checks the synced
+  control record against an optional host-local lifecycle claim under
+  `$XDG_CONFIG_HOME`. The election stays estate-wide exactly as
+  `skcapstone.estate` argues it must; this claim can only ever refuse, never
+  grant, and a machine may claim only itself. It is a second lock on the same
+  door, so a record that reaches a machine by mis-sync or tampering cannot
+  activate a host whose own operator never declared it.
+
+- The Niobe rollback fence no longer compares against one literal that also
+  required enabling `skfleet-niobe-shadow.timer`. A second estate whose
+  truthful rollback is "disable the live timer, the bounded `skfleet-niobe`
+  timer keeps running" was refused for naming a real fallback instead of that
+  one. The fence is now behavioural and still exact: the rollback must
+  disable the very unit the activation turns live. An empty rollback, a
+  notify-only rollback and one that disables a different seat's timer are all
+  still refused. The chi literal satisfies it unchanged, so **the
+  `ROLLBACK_ACTION` migration deferred when that constant was removed is no
+  longer required**: every activation record already on disk stays valid.
+
 - A fresh estate can now be stood up without six hand-made files. Standing up
   the second estate (control host noroc2027) proved that nothing in the
   codebase creates the things every lifecycle seat requires, and nothing

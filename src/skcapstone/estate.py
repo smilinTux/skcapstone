@@ -38,6 +38,8 @@ import json
 import os
 import re
 import socket
+from dataclasses import dataclass
+from importlib.resources import files
 from pathlib import Path
 
 #: Environment variable an operator may set to name the estate explicitly.
@@ -191,3 +193,235 @@ def estate_realm(home: Path) -> str | None:
     """
     realm = _cluster_document(home).get("realm")
     return realm.strip() if isinstance(realm, str) and realm.strip() else None
+
+
+# ---------------------------------------------------------------------------
+# Authority facts for the lifecycle gate
+#
+# The rule at the top of this module decides where each of these lives. The
+# operator, the realm and the product scope are estate-wide, so they are read
+# from the synced tree. A machine's claim to be the active lifecycle host is
+# not: it is host-local, it lives under $XDG_CONFIG_HOME, and it may only ever
+# REFUSE, never grant. The election that grants stays in the synced
+# coordination record exactly as the module docstring's deliberate exception
+# describes; the claim is a second lock on the same door, so a record that
+# reached this machine by mis-sync or tampering cannot quietly activate a host
+# whose own operator never declared it.
+#
+# Investigated and deliberately not used as the operator source:
+# ``<home>/identity/identity.json``. On a live estate that file is the human
+# operator's PGP identity (name, email, fingerprint) and carries no
+# ``operator`` or ``realm`` key. Only the per-agent
+# ``agents/<agent>/identity/identity.json`` files carry those, mirrored from
+# cluster.json, so reading the estate operator from an agent's mirror would
+# make the gate depend on which agent happened to be migrated last.
+# ---------------------------------------------------------------------------
+
+#: Schema of the estate-wide authority record, in the synced tree.
+ESTATE_SCHEMA = "sk.estate-authority/v1"
+
+#: Schema of the host-local lifecycle claim, under XDG config.
+HOST_SCHEMA = "sk.lifecycle-host/v1"
+
+#: Estate-wide authority record, relative to the SKCapstone home.
+ESTATE_CONFIG_RELATIVE = "config/estate.json"
+
+#: Host-local lifecycle claim, relative to ``$XDG_CONFIG_HOME``.
+HOST_CONFIG_RELATIVE = "skcapstone/lifecycle-host.json"
+
+#: Machine-wide cluster record, outside any user's home.
+SYSTEM_CLUSTER_PATH = Path("/etc/skcapstone/cluster.json")
+
+_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+
+
+class EstateConfigError(ValueError):
+    """The estate's own configuration cannot answer an authorization question."""
+
+
+@dataclass(frozen=True)
+class EstateProfile:
+    """The estate-wide facts the lifecycle gate is allowed to trust.
+
+    Attributes:
+        operator: The one identity whose authorization a lifecycle activation
+            must carry, lowercased (for example ``casey`` or ``chef``).
+        realm: The estate's realm, as used by the three-tier fqid grammar.
+        product_scope: The exact set of products lifecycle seats may act on.
+        source: Path of the file the operator and realm were read from, kept
+            so a refusal can say which file was consulted.
+    """
+
+    operator: str
+    realm: str
+    product_scope: frozenset[str]
+    source: str
+
+
+def sovereign_home(home: Path | str | None = None) -> Path:
+    """Resolve the synced SKCapstone home.
+
+    Args:
+        home: Explicit home, used by tests and by callers that already know
+            which estate tree they are operating on.
+
+    Returns:
+        The estate home, from the argument, else ``$SKCAPSTONE_HOME``, else
+        ``~/.skcapstone``.
+    """
+    if home is not None:
+        return Path(home).expanduser()
+    raw = os.environ.get("SKCAPSTONE_HOME", "").strip()
+    return Path(raw).expanduser() if raw else Path.home() / ".skcapstone"
+
+
+def _read_json(path: Path) -> dict | None:
+    """Read a JSON object, returning ``None`` when absent or not an object."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _name(value: object, field: str, source: Path) -> str:
+    """Coerce and validate one lowercase name field, failing closed.
+
+    Args:
+        value: The raw field value.
+        field: Field name, for the error message.
+        source: File the value came from, for the error message.
+
+    Returns:
+        The normalised name.
+
+    Raises:
+        EstateConfigError: When the value is empty or not a safe short name.
+    """
+    text = str(value or "").strip().lower()
+    if not _NAME.fullmatch(text):
+        raise EstateConfigError(f"estate {field} is missing or malformed in {source}")
+    return text
+
+
+def _default_product_scope() -> frozenset[str]:
+    """The product scope shipped with the package, used when the estate is silent.
+
+    The scope is a product fact (which repositories the lifecycle seats are
+    built to touch) rather than an estate fact, so the packaged profile is a
+    truthful default. An estate running a different scope states it in its own
+    ``config/estate.json`` and the gate then compares against that.
+
+    Returns:
+        The packaged product scope.
+
+    Raises:
+        EstateConfigError: When the packaged profile declares no scope.
+    """
+    path = files("skcapstone").joinpath("data/lifecycle-seat-profiles.json")
+    value = json.loads(path.read_text(encoding="utf-8"))
+    scope = frozenset(str(item).strip().lower() for item in value.get("product_scope", []))
+    if not scope:
+        raise EstateConfigError("packaged lifecycle profile declares no product scope")
+    return scope
+
+
+def load_estate_profile(home: Path | str | None = None) -> EstateProfile:
+    """Load the estate-wide authority facts, failing closed when absent.
+
+    Resolution order, all inside the synced estate tree or machine-wide
+    configuration, never host-local state:
+
+    1. ``<home>/config/estate.json`` (schema ``sk.estate-authority/v1``), the
+       explicit record an estate writes to state its own operator, realm, or
+       product scope.
+    2. ``<home>/cluster.json``, then ``/etc/skcapstone/cluster.json``: the
+       same document :func:`estate_realm` and ``capauth.agent_identity`` read.
+
+    Args:
+        home: The estate home to read. Defaults to the sovereign home.
+
+    Returns:
+        The resolved :class:`EstateProfile`.
+
+    Raises:
+        EstateConfigError: When no consulted file yields a usable operator and
+            realm. There is no default operator: an estate that has not said
+            who authorizes its lifecycle work authorizes nobody.
+    """
+    root = sovereign_home(home)
+    estate_path = root / ESTATE_CONFIG_RELATIVE
+    estate = _read_json(estate_path)
+    if estate is not None:
+        if estate.get("schema") != ESTATE_SCHEMA:
+            raise EstateConfigError(f"estate record schema must be {ESTATE_SCHEMA}")
+        declared = estate.get("product_scope")
+        if declared is None:
+            scope = _default_product_scope()
+        else:
+            scope = frozenset(str(item).strip().lower() for item in declared)
+            if not scope:
+                raise EstateConfigError(f"estate product scope is empty in {estate_path}")
+        return EstateProfile(
+            operator=_name(estate.get("operator"), "operator", estate_path),
+            realm=_name(estate.get("realm"), "realm", estate_path),
+            product_scope=scope,
+            source=str(estate_path),
+        )
+
+    for cluster_path in (root / "cluster.json", SYSTEM_CLUSTER_PATH):
+        cluster = _read_json(cluster_path)
+        if cluster is None:
+            continue
+        return EstateProfile(
+            operator=_name(cluster.get("operator"), "operator", cluster_path),
+            realm=_name(cluster.get("realm"), "realm", cluster_path),
+            product_scope=_default_product_scope(),
+            source=str(cluster_path),
+        )
+
+    raise EstateConfigError(
+        f"no estate authority record: expected {estate_path} or {root / 'cluster.json'}"
+    )
+
+
+def host_lifecycle_claim(
+    *, config_home: Path | str | None = None, host: str | None = None
+) -> str | None:
+    """This machine's own claim to be the estate's active lifecycle host.
+
+    The claim never grants. The election stays estate-wide in
+    ``coordination/seat-control-plane.json`` for the reason the module
+    docstring gives, and this file can only ever add a refusal on top of it.
+    A machine may claim only itself: the recorded name is compared against the
+    machine actually executing, so copying the file to a second node refuses
+    rather than promotes it.
+
+    Args:
+        config_home: Override the XDG config root (tests).
+        host: Override the running host (tests).
+
+    Returns:
+        The claimed host name when this machine declares itself active, or
+        ``None`` when it makes no claim, which is the common case.
+
+    Raises:
+        EstateConfigError: When the file exists but is malformed, carries the
+            wrong schema, or names a machine other than the one running.
+    """
+    root = Path(config_home).expanduser() if config_home is not None else xdg_config_home()
+    path = root / HOST_CONFIG_RELATIVE
+    value = _read_json(path)
+    if value is None:
+        if path.exists():
+            raise EstateConfigError(f"host lifecycle claim is malformed: {path}")
+        return None
+    if value.get("schema") != HOST_SCHEMA:
+        raise EstateConfigError(f"host lifecycle claim schema must be {HOST_SCHEMA}")
+    claimed = _name(value.get("active_host"), "active_host", path)
+    running = local_host(host)
+    if claimed != running:
+        raise EstateConfigError(
+            f"host lifecycle claim names {claimed} but this machine is {running}"
+        )
+    return claimed

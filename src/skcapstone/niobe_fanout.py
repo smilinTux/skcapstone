@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Collection, Mapping
 
 from .card_store import Card, CardStore
-from .niobe_activation import LIVE_UNIT, parse_activation
+from .niobe_activation import LIVE_UNIT, ActivationError, parse_activation
 from .skrsi_estate_adapters import DEFAULT_CHILD_MODEL, SEAT_CHILD_ROUTES
 
 
@@ -111,16 +111,18 @@ def resolve_niobe_runtime_identity(
         or values.get("SKCAPSTONE_AGENT", "").strip().lower() != "niobe"
     ):
         raise FanoutBoundaryError("Niobe runtime agent identity is mismatched")
-    activation = parse_activation(json.loads(expected.read_text(encoding="utf-8")))
+    record = json.loads(expected.read_text(encoding="utf-8"))
     actual_host = (hostname or socket.gethostname()).strip().lower()
-    if actual_host != activation.host:
+    if str(record.get("host") or "").strip().lower() != actual_host:
         raise FanoutBoundaryError("Niobe runtime host is not authorized")
-    core = home / "cards" / activation.card_id / "core.json"
-    if (
-        not core.is_file()
-        or hashlib.sha256(core.read_bytes()).hexdigest() != activation.card_revision
-    ):
-        raise FanoutBoundaryError("Niobe runtime activation card is stale")
+    # The activation must also reference a card that exists in this estate at
+    # exactly the stated revision and carry this estate's own operator.
+    # parse_activation owns both, and re-checks the host. A failure is a
+    # boundary refusal here, never a warning.
+    try:
+        activation = parse_activation(record, home=home, host=actual_host)
+    except ActivationError as exc:
+        raise FanoutBoundaryError(f"Niobe runtime activation is refused: {exc}") from exc
     invocation = values.get("INVOCATION_ID", "")
     if not re.fullmatch(r"[0-9a-fA-F]{32}", invocation):
         raise FanoutBoundaryError("Niobe runtime has no verified systemd invocation")

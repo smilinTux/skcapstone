@@ -187,6 +187,18 @@ def test_source_head_reservation_is_atomic_across_cards(tmp_path: Path) -> None:
 
 def test_runtime_identity_rejects_spoofed_seat_without_systemd_service(tmp_path: Path) -> None:
     home = tmp_path / "home"
+    estate = home / "config/estate.json"
+    estate.parent.mkdir(parents=True)
+    estate.write_text(
+        json.dumps(
+            {
+                "schema": "sk.estate-authority/v1",
+                "operator": "casey",
+                "realm": "skworld.io",
+                "product_scope": ["skcapstone", "skdashboard", "skworld"],
+            }
+        )
+    )
     core = home / "cards/c4e7a9b2/core.json"
     core.parent.mkdir(parents=True)
     core.write_text('{"id":"c4e7a9b2"}\n')
@@ -262,7 +274,7 @@ def test_runtime_identity_rejects_spoofed_seat_without_systemd_service(tmp_path:
         == "casey-niobe"
     )
     core.write_text('{"id":"changed"}\n')
-    with pytest.raises(FanoutBoundaryError, match="activation card is stale"):
+    with pytest.raises(FanoutBoundaryError, match="card revision is stale"):
         resolve_niobe_runtime_identity(
             home,
             environ=environment,
