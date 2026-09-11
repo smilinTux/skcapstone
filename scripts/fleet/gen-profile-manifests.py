@@ -70,6 +70,40 @@ CONTROL_REQUIRED = [
     "skoperator.timer",
 ]
 
+#: The six bounded lifecycle seat timers plus the Link producer that feeds
+#: the Link seat. A seat's .service is a oneshot; the TIMER is what makes it
+#: recur, so a service without its timer is a seat that never runs.
+SEAT_CYCLE_TIMERS = [
+    f"skfleet-{seat}.timer" for seat in ("atlas", "link", "mero", "niobe", "seraph", "tank")
+] + ["skfleet-link-producer.timer"]
+
+#: Seat units the control role permits but does not mandate. Their oneshot
+#: services come along with their timers, and skfleet-niobe-live is
+#: deliberately allowed-only: it launches real agent runs, which is an
+#: activation decision and never an install baseline.
+SEAT_ALLOWED_EXTRA = [
+    f"skfleet-{seat}.service" for seat in ("atlas", "link", "mero", "niobe", "seraph", "tank")
+] + [
+    "skfleet-link-producer.service",
+    "skfleet-niobe-live.service",
+    "skfleet-niobe-live.timer",
+]
+
+#: Required BY THE ROLE, as opposed to CONTROL_REQUIRED which is additionally
+#: asserted to be enabled on the node right now.
+#:
+#: The seat timers are a deliberate exception to that assertion, and the
+#: exception is the entire point of this list existing. The control profile
+#: is defined as the node that runs the control-plane loops, and the seats
+#: ARE those loops, yet they were in no profile's allowed or required list at
+#: all. So a brand new estate with none of them installed reported ok=True
+#: from `fleet install --check` while the whole workflow layer was absent.
+#: Requiring only the seats that happen to be enabled on the node today would
+#: reproduce exactly that bug: it would let the manifest agree with whatever
+#: state the node drifted into. A seat timer that is required here and not
+#: enabled on the node is a REAL drift finding, and surfacing it is the fix.
+CONTROL_ROLE_REQUIRED = sorted(set(CONTROL_REQUIRED) | set(SEAT_CYCLE_TIMERS))
+
 #: Desktop, distro and third-party noise. Patterns, not names, so a manifest
 #: does not have to be regenerated every time someone installs a snap.
 DESKTOP_IGNORE = [
@@ -200,9 +234,20 @@ def build_control() -> dict:
             "description": (
                 "The single control seat (.158, node-noroc2027). Holds the full "
                 "sovereign tree and runs the control-plane loops. Changes almost "
-                "nothing, which is the point. " + _IGNORE_RULE + " " + _ADR_LINK
+                "nothing, which is the point. The six bounded lifecycle seat "
+                "timers (skfleet-atlas/link/mero/niobe/seraph/tank) and the Link "
+                "producer timer are REQUIRED here because the seats are those "
+                "control-plane loops; they were in no profile at all, so an "
+                "estate running none of them still reported ok=True from "
+                "`fleet install --check`. skfleet-niobe-live.timer is allowed "
+                "but never required: it launches real agent runs and is an "
+                "activation decision, not an install baseline. " + _IGNORE_RULE + " " + _ADR_LINK
             ),
-            "units": _units_block(allowed, CONTROL_REQUIRED, MODEL_SERVING),
+            "units": _units_block(
+                sorted(set(allowed) | set(SEAT_ALLOWED_EXTRA)),
+                CONTROL_ROLE_REQUIRED,
+                MODEL_SERVING,
+            ),
             "unitsIgnore": sorted(DESKTOP_IGNORE),
             "packages": _units_block(load_packages("node-noroc2027"), ["skcapstone"], []),
             "stateTier": "full-replica",
@@ -298,8 +343,7 @@ def build_observer() -> dict:
                 "sknoded, which is the ssh-pull fallback in docs/fleet/"
                 "control-bus-folder.md. Putting SK software on the box that hosts "
                 "the node adds risk for near-zero benefit. This manifest exists so "
-                "that 'not managed' is a recorded decision rather than an omission. "
-                + _ADR_LINK
+                "that 'not managed' is a recorded decision rather than an omission. " + _ADR_LINK
             ),
             "units": _units_block(
                 [],
