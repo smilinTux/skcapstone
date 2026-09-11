@@ -78,8 +78,9 @@ def sender_fqid(home: Path, sender: str) -> str | None:
     """
     try:
         data = json.loads(
-            (Path(home) / "agents" / sender.lower() / "identity" / "identity.json")
-            .read_text(encoding="utf-8")
+            (Path(home) / "agents" / sender.lower() / "identity" / "identity.json").read_text(
+                encoding="utf-8"
+            )
         )
     except (OSError, ValueError):
         return None
