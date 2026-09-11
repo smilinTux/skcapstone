@@ -170,13 +170,15 @@ def _card_process_snapshot(cid):
     suffix = "-" + str(cid)
     units = []
     try:
-        output = subprocess.run(
+        result = subprocess.run(
             ["systemctl", "--user", "list-units", "--type=service", "--state=running",
              "--no-legend", "--plain"],
             capture_output=True, text=True, timeout=10,
-        ).stdout
+        )
+        if result.returncode != 0:
+            raise OSError("systemd unit query failed")
         units = sorted(
-            fields[0] for line in output.splitlines()
+            fields[0] for line in result.stdout.splitlines()
             if (fields := line.split()) and fields[0].endswith(suffix + ".service")
         )
     except (OSError, subprocess.TimeoutExpired):

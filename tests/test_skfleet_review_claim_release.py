@@ -96,6 +96,23 @@ def test_terminal_outcome_requires_matching_readable_evidence_hash(tmp_path: Pat
     assert namespace["_durable_review_outcome"]("deadbeef") is None
 
 
+def test_nonzero_systemd_query_fails_closed() -> None:
+    namespace = {
+        "subprocess": SimpleNamespace(
+            run=lambda *_args, **_kwargs: SimpleNamespace(returncode=1, stdout=""),
+            TimeoutExpired=TimeoutError,
+        ),
+        "sh": lambda *_args: "",
+        "OSError": OSError,
+    }
+    _load("_card_process_snapshot", namespace)
+
+    assert namespace["_card_process_snapshot"]("deadbeef") == {
+        "sessions": [],
+        "units": ["systemd-query-failed"],
+    }
+
+
 def test_live_process_and_changed_generation_are_never_released(tmp_path: Path) -> None:
     card_root = tmp_path / "cards"
     for card in ("aaaaaaaa", "bbbbbbbb"):
