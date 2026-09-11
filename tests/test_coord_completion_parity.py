@@ -14,7 +14,12 @@ from skcoord.card_store import CardStore
 from skcapstone.cli.coord import register_coord_commands
 from skcapstone.coordination import Board, Task
 from skcapstone.mcp_server import call_tool
-from tests.test_ci_applicability import completion_fixture, git, repository_fixture
+from tests.test_ci_applicability import (
+    completion_fixture,
+    enrollment_fixture,
+    git,
+    repository_fixture,
+)
 
 _REQUIRED = (
     "ci_check_docs",
@@ -283,6 +288,51 @@ async def test_nonreview_completion_remains_unchanged(tmp_path, entrypoint):
     assert ok, detail
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entrypoint", ["cli_complete", "cli_move", "mcp_complete", "mcp_move"])
+@pytest.mark.parametrize(
+    "case", ["valid", "missing", "required_failure", "omitted_check", "mutable_evidence"]
+)
+async def test_initial_enrollment_completion_requires_full_policy(
+    tmp_path, monkeypatch, entrypoint, case
+):
+    """A registered policy-only candidate still needs every declared result."""
+    from skcapstone import ci_applicability
+
+    _, _, meta, request = enrollment_fixture(tmp_path)
+    monkeypatch.setattr(
+        ci_applicability,
+        "INITIAL_PROFILE_DIGESTS",
+        {meta["repository"].removesuffix(".git"): request["profile_sha256"]},
+    )
+    capsule = ci_applicability.bind_ci_profile(meta, request)
+    home = _review_home(tmp_path, "[REVIEW] initial enrollment", "SUCCESS")
+    _, receipt, append = completion_fixture(home, card_id="abcd1234")
+    path = home / "cards/abcd1234/core.json"
+    core = json.loads(path.read_text())
+    core["meta"] = {
+        **meta,
+        "ci_profile": capsule,
+        "link_head_revision": request["candidate_revision"],
+    }
+    path.write_text(json.dumps(core))
+    receipt["candidate_revision"] = request["candidate_revision"]
+    if case == "required_failure":
+        receipt["checks"]["ci_check_node_test"]["state"] = "FAILURE"
+    if case == "omitted_check":
+        del receipt["checks"]["ci_check_node_test"]
+    if case == "mutable_evidence":
+        receipt["checks"]["ci_check_node_test"]["evidence"] = "/tmp/latest"
+    if case != "missing":
+        append()
+    before = {str(p): p.read_bytes() for p in home.rglob("*.jsonl")}
+    ok, detail = await _invoke(home, entrypoint)
+    assert ok == (case == "valid"), detail
+    if not ok:
+        assert Board(home).load_agent("reviewer").current_task == "abcd1234"
+        assert {str(p): p.read_bytes() for p in home.rglob("*.jsonl")} == before
+
+
 @pytest.mark.parametrize("missing", [None, "candidate", "base", "blob", "tree"])
 def test_promisor_profile_binding_never_attempts_transport(tmp_path, monkeypatch, missing):
     """Local policy remains readable while missing promisor objects fail offline."""
@@ -332,3 +382,118 @@ def test_promisor_profile_binding_never_attempts_transport(tmp_path, monkeypatch
     for call in run.call_args_list:
         assert call.kwargs["env"]["GIT_NO_LAZY_FETCH"] == "1"
         assert call.kwargs["env"]["GIT_ALLOW_PROTOCOL"] == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("adapter", ["cli", "mcp"])
+@pytest.mark.parametrize("invalid", [False, True])
+async def test_profile_link_uses_exact_card_store(tmp_path, adapter, invalid):
+    """Both public writers persist the authoritative receipt only on its card."""
+    home = _review_home(tmp_path, "[REVIEW] receipt writer", "SUCCESS")
+    core, receipt, _ = completion_fixture(home, card_id="abcd1234")
+    path = home / "cards/abcd1234/core.json"
+    payload = json.loads(path.read_text())
+    payload["meta"] = core["meta"]
+    path.write_text(json.dumps(payload))
+    before = {str(p): p.read_bytes() for p in (home / "coordination/card_events").glob("*.jsonl")}
+    value = json.dumps(receipt)
+    if invalid:
+        value = value.replace('"schema_version": 1', '"schema_version": 1, "schema_version": 1')
+    if adapter == "cli":
+        result = CliRunner().invoke(
+            _main(),
+            [
+                "coord",
+                "link",
+                "abcd1234",
+                "ci_applicability",
+                value,
+                "--home",
+                str(home),
+                "--agent",
+                "reviewer",
+            ],
+        )
+        assert (result.exit_code == 0) == (not invalid), result.output
+    else:
+        with patch("skcapstone.mcp_tools._helpers.SHARED_ROOT", str(home)):
+            result = await call_tool(
+                "coord_link",
+                {
+                    "task_id": "abcd1234",
+                    "key": "ci_applicability",
+                    "value": value,
+                    "agent": "reviewer",
+                },
+            )
+        assert ("error" not in json.loads(result[0].text)) == (not invalid), result
+    events = CardStore(home)._read_events("abcd1234")
+    matches = [e for e in events if e.get("link_key") == "ci_applicability"]
+    if invalid:
+        assert matches == []
+        assert {
+            str(p): p.read_bytes() for p in (home / "coordination/card_events").glob("*.jsonl")
+        } == before
+        return
+    assert len(matches) == 1 and matches[0]["link_value"] == value
+    assert matches[0]["writer"] == "reviewer"
+    assert {
+        str(p): p.read_bytes() for p in (home / "coordination/card_events").glob("*.jsonl")
+    } == before
+    ok, detail = await _invoke(home, "cli_complete")
+    assert ok, detail
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entrypoint", ["cli_complete", "cli_move", "mcp_complete", "mcp_move"])
+@pytest.mark.parametrize("encoding", ["escaped_card", "escaped_key", "malformed", "chain"])
+async def test_malformed_exact_card_receipt_preserves_all_entrypoints(
+    tmp_path, entrypoint, encoding
+):
+    """Escapes or corrupt chains must not revive an older green receipt."""
+    home = _review_home(tmp_path, "[REVIEW] escaped evidence", "SUCCESS")
+    core, receipt, append = completion_fixture(home, card_id="abcd1234")
+    path = home / "cards/abcd1234/core.json"
+    payload = json.loads(path.read_text())
+    payload["meta"] = core["meta"]
+    path.write_text(json.dumps(payload))
+    append()
+    (home / "coordination/card_events/old-receipt.jsonl").write_text(
+        json.dumps(
+            {
+                "card_id": "abcd1234",
+                "action": "link",
+                "link_key": "ci_applicability",
+                "link_value": json.dumps(receipt),
+                "ts": "2026-09-11T10:00:00Z",
+            }
+        )
+        + "\n"
+    )
+    receipt["checks"]["ci_check_docs"]["state"] = "FAILURE"
+    row = {
+        "card_id": "abcd1234",
+        "action": "link",
+        "link_key": "ci_applicability",
+        "link_value": json.dumps(receipt),
+        "ts": "2026-09-11T11:00:00Z",
+    }
+    raw = json.dumps(row)
+    if encoding.startswith("escaped"):
+        raw = raw.replace('"action": "link"', '"action": "link", "action": "label"')
+        raw = (
+            raw.replace('"abcd1234"', '"\\u0061bcd1234"')
+            if encoding == "escaped_card"
+            else raw.replace('"ci_applicability"', '"ci_\\u0061pplicability"')
+        )
+    elif encoding == "chain":
+        row["prev_hash"] = "f" * 64
+        raw = json.dumps(row)
+    else:
+        raw = "{"
+    (home / "cards/abcd1234/events/new-writer.jsonl").write_text(raw + "\n")
+    before = {str(p): p.read_bytes() for p in home.rglob("*.jsonl")}
+    ok, detail = await _invoke(home, entrypoint)
+    assert not ok, detail
+    assert Board(home).load_agent("reviewer").current_task == "abcd1234"
+    assert {str(p): p.read_bytes() for p in home.rglob("*.jsonl")} == before

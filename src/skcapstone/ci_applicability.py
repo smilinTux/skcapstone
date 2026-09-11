@@ -6,13 +6,19 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .ci_profile_registry import INITIAL_PROFILE_DIGESTS
+
 _LIMIT = 64 * 1024
 _MANIFEST = ".skcapstone/ci-profile.json"
+_EVENT_BYTES = 8 * 1024 * 1024
+_EVENT_ROWS = 100000
+_EVENT_FILES = 1024
 _LEGACY = frozenset(
     {
         "ci_check_docs",
@@ -194,8 +200,27 @@ def bind_ci_profile(meta: dict, request: dict) -> dict:
             if _git(repo, "cat-file", "-t", revision) != b"commit\n":
                 raise ValueError("CI revisions must identify exact commit objects")
         _git(repo, "merge-base", "--is-ancestor", base, candidate)
-        data = _blob(repo, base)
-        if data != _blob(repo, candidate):
+        data = _blob(repo, candidate)
+        base_entry = _git(repo, "ls-tree", "-z", base, "--", _MANIFEST)
+        if not base_entry:
+            if INITIAL_PROFILE_DIGESTS.get(repository) != digest:
+                raise ValueError("Initial CI policy requires a registered repository digest")
+            changed = _git(
+                repo,
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-renames",
+                "--ignore-submodules=none",
+                "--name-only",
+                "-z",
+                base,
+                candidate,
+                "--",
+            )
+            if changed != _MANIFEST.encode("ascii") + b"\x00":
+                raise ValueError("Initial CI enrollment may change only the policy manifest")
+        elif data != _blob(repo, base):
             raise ValueError("CI policy changed between the approved base and candidate")
         if hashlib.sha256(data).hexdigest() != digest:
             raise ValueError("CI profile digest does not match committed policy bytes")
@@ -249,44 +274,98 @@ def _capsule(core: dict) -> tuple[dict, dict]:
     return capsule, policy
 
 
+def _card_event_rows(card_id: str, home: Path) -> list[dict]:
+    """Read only bounded, strict, hash-linked evidence for one exact card."""
+    if not isinstance(card_id, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", card_id
+    ):
+        raise ValueError("CI evidence requires a non-path card identifier")
+    directory = -1
+    rows = []
+    try:
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        try:
+            directory = os.open(home, flags)
+            for name in ("cards", card_id, "events"):
+                child = os.open(name, flags, dir_fd=directory)
+                os.close(directory)
+                directory = child
+        except FileNotFoundError:
+            return []
+        names = []
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if "sync-conflict" in entry.name:
+                    raise ValueError("CI card evidence has an unresolved sync conflict")
+                names.append(entry.name)
+                if len(names) > _EVENT_FILES:
+                    raise ValueError("CI card evidence has too many files")
+        remaining = _EVENT_BYTES
+        for name in sorted(names):
+            if not name.endswith(".jsonl"):
+                continue
+            descriptor = os.open(
+                name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
+            )
+            try:
+                info = os.fstat(descriptor)
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                    raise ValueError("CI card evidence must be regular single-link files")
+                if info.st_size > remaining:
+                    raise ValueError("CI card evidence exceeds the byte limit")
+                chunks = []
+                while True:
+                    chunk = os.read(descriptor, min(65536, remaining + 1))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    if remaining < 0:
+                        raise ValueError("CI card evidence exceeds the byte limit")
+                    chunks.append(chunk)
+            finally:
+                os.close(descriptor)
+            previous = ""
+            for raw in b"".join(chunks).decode("utf-8").splitlines():
+                line = raw.strip()
+                if not line:
+                    continue
+                if len(rows) >= _EVENT_ROWS:
+                    raise ValueError("CI card evidence exceeds the row limit")
+                row = _json(line)
+                if "card_id" in row and row["card_id"] != card_id:
+                    raise ValueError("CI event identity conflicts with its card directory")
+                if "prev_hash" in row and row["prev_hash"] != previous:
+                    raise ValueError("CI card evidence hash chain is invalid")
+                previous = hashlib.sha256(line.encode("utf-8")).hexdigest()
+                rows.append(row)
+    except (OSError, UnicodeError, TypeError, RuntimeError, AttributeError):
+        raise ValueError("CI applicability evidence files are unreadable") from None
+    finally:
+        if directory >= 0:
+            os.close(directory)
+    return rows
+
+
 def _latest_receipt(card_id: str, home: Path) -> dict:
     """Select one whole receipt by timezone-aware instant, rejecting ambiguity."""
     receipts = []
-    try:
-        paths = sorted((home / "coordination" / "card_events").glob("*.jsonl"))
-        for path in paths:
-            with path.open(encoding="utf-8") as handle:
-                for line in handle:
-                    if not line.strip():
-                        continue
-                    try:
-                        row = _json(line)
-                    except ValueError:
-                        if card_id in line and "ci_applicability" in line:
-                            raise ValueError("malformed CI applicability evidence row") from None
-                        continue
-                    if row.get("card_id") != card_id:
-                        continue
-                    key = row.get("link_key") or row.get("key") or row.get("raw_key")
-                    if key != "ci_applicability":
-                        continue
-                    if row.get("action") != "link":
-                        raise ValueError("invalid CI applicability evidence action")
-                    stamp = row.get("ts")
-                    if not isinstance(stamp, str):
-                        raise ValueError("CI applicability receipt requires a timestamp")
-                    try:
-                        instant = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
-                        if instant.tzinfo is None or instant.utcoffset() is None:
-                            raise ValueError()
-                    except ValueError:
-                        raise ValueError(
-                            "CI applicability timestamp must include a timezone"
-                        ) from None
-                    receipt = _json(row.get("link_value") or row.get("value"))
-                    receipts.append((instant, receipt))
-    except (OSError, UnicodeError):
-        raise ValueError("CI applicability evidence files are unreadable") from None
+    for row in _card_event_rows(card_id, home):
+        key = row.get("link_key") or row.get("key") or row.get("raw_key")
+        if key != "ci_applicability":
+            continue
+        if row.get("action") != "link":
+            raise ValueError("invalid CI applicability evidence action")
+        stamp = row.get("ts")
+        if not isinstance(stamp, str):
+            raise ValueError("CI applicability receipt requires a timestamp")
+        try:
+            instant = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            if instant.tzinfo is None or instant.utcoffset() is None:
+                raise ValueError()
+        except ValueError:
+            raise ValueError("CI applicability timestamp must include a timezone") from None
+        receipt = _json(row.get("link_value") or row.get("value"))
+        receipts.append((instant, receipt))
     if not receipts:
         raise ValueError("no CI applicability receipt was recorded")
     latest = max(stamp for stamp, _ in receipts)

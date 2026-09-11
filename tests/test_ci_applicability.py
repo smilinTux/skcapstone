@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from skcoord.card_store import CardCore, CardStore
 
 from skcapstone.ci_applicability import bind_ci_profile, validate_profile_completion
 
@@ -337,21 +338,19 @@ def completion_fixture(tmp_path, kind="node", card_id="bbbbbbbb"):
             for key, value in policy["checks"].items()
         },
     }
-    events = tmp_path / "coordination" / "card_events"
-    events.mkdir(parents=True, exist_ok=True)
+    store = CardStore(tmp_path)
+    if not (tmp_path / "cards" / card_id / "core.json").exists():
+        store.create(CardCore(id=card_id, title="synthetic profile receipt"))
 
     def append(receipt_value=None, ts="2026-09-11T10:00:00Z", **fields):
         """Append a synthetic receipt under the production evidence layout."""
         row = {
-            "card_id": card_id,
-            "action": "link",
             "link_key": "ci_applicability",
             "link_value": json.dumps(receipt if receipt_value is None else receipt_value),
             "ts": ts,
         }
         row.update(fields)
-        with (events / "host.jsonl").open("a") as handle:
-            handle.write(json.dumps(row) + "\n")
+        store.append_event(card_id, "link", row.pop("writer", "tester"), **row)
 
     return core, receipt, append
 
@@ -491,10 +490,11 @@ def test_profile_completion_fail_closed(tmp_path, case):
         stamp = "2026-09-11T10:00:00"
     append(ts=stamp, **fields)
     if case == "malformed_row":
-        with (tmp_path / "coordination/card_events/host.jsonl").open("a") as handle:
+        path = next((tmp_path / "cards/bbbbbbbb/events").glob("*.jsonl"))
+        with path.open("a") as handle:
             handle.write('{"card_id":"bbbbbbbb","link_key":"ci_applicability",\n')
     if case == "unreadable":
-        with patch.object(Path, "open", side_effect=OSError("unreadable")):
+        with patch("os.open", side_effect=OSError("unreadable")):
             with pytest.raises(ValueError):
                 validate_profile_completion("bbbbbbbb", tmp_path, core)
         return
@@ -531,3 +531,256 @@ def test_git_calls_are_offline_bounded_and_ignore_ambient_selection(tmp_path, mo
         assert call.kwargs["timeout"] == 10 and not call.kwargs.get("shell", False)
         assert "GIT_DIR" not in call.kwargs["env"]
         assert not {"fetch", "pull", "push", "clone"}.intersection(call.args[0])
+
+
+def enrollment_fixture(tmp_path):
+    """Create an approved-base repository before its first policy addition."""
+    repo, policy, meta, request = repository_fixture(tmp_path)
+    data = policy.read_bytes()
+    git(repo, "rm", ".skcapstone/ci-profile.json")
+    (repo / "source.txt").write_text("unchanged application source\n")
+    git(repo, "add", "source.txt")
+    git(repo, "commit", "-qm", "pre-enrollment base")
+    meta["base_revision"] = git(repo, "rev-parse", "HEAD")
+    policy.parent.mkdir(exist_ok=True)
+    policy.write_bytes(data)
+    git(repo, "add", ".skcapstone/ci-profile.json")
+    git(repo, "commit", "-qm", "initial policy only")
+    request["candidate_revision"] = git(repo, "rev-parse", "HEAD")
+    return repo, policy, meta, request
+
+
+@pytest.mark.parametrize(
+    "case", ["valid", "unregistered", "digest", "code", "delete", "rename", "symlink", "submodule"]
+)
+def test_initial_enrollment_requires_registered_manifest_only(tmp_path, monkeypatch, case):
+    """Initial policy cannot self-authorize a digest or unrelated source changes."""
+    from skcapstone import ci_applicability
+
+    repo, policy, meta, request = enrollment_fixture(tmp_path)
+    allowed = {REPOSITORY.removesuffix(".git"): request["profile_sha256"]}
+    if case == "unregistered":
+        allowed = {}
+    if case == "digest":
+        allowed[REPOSITORY.removesuffix(".git")] = "e" * 64
+    monkeypatch.setattr(ci_applicability, "INITIAL_PROFILE_DIGESTS", allowed, raising=False)
+    if case == "code":
+        (repo / "source.txt").write_text("changed source\n")
+    if case == "delete":
+        (repo / "source.txt").unlink()
+    if case == "rename":
+        git(repo, "mv", "source.txt", "renamed.txt")
+    if case == "symlink":
+        policy.unlink()
+        policy.symlink_to("../source.txt")
+    if case == "submodule":
+        git(repo, "config", "diff.ignoreSubmodules", "all")
+        git(
+            repo,
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000," + meta["base_revision"] + ",vendor",
+        )
+    if case in {"code", "delete", "rename", "symlink", "submodule"}:
+        if case != "submodule":
+            git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "invalid enrollment")
+        request["candidate_revision"] = git(repo, "rev-parse", "HEAD")
+    if case == "valid":
+        capsule = bind_ci_profile(meta, request)
+        assert capsule["manifest_text"].encode() == policy.read_bytes()
+    else:
+        with pytest.raises(ValueError):
+            bind_ci_profile(meta, request)
+
+
+def test_exact_card_receipts_ignore_global_and_unrelated_corruption(tmp_path):
+    """Unrelated/global evidence is not authority and cannot block this card."""
+    core, _, append = completion_fixture(tmp_path)
+    append()
+    other = tmp_path / "cards/other/events"
+    other.mkdir(parents=True)
+    (other / "broken.jsonl").write_bytes(b"\xff{")
+    global_events = tmp_path / "coordination/card_events"
+    global_events.mkdir(parents=True)
+    (global_events / "broken.jsonl").write_bytes(b"\xff{")
+    validate_profile_completion("bbbbbbbb", tmp_path, core)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "malformed",
+        "escaped_card",
+        "escaped_key",
+        "duplicate_receipt",
+        "chain",
+        "sync_conflict",
+        "symlink",
+        "hardlink",
+        "fifo",
+    ],
+)
+def test_exact_card_receipts_reject_unsafe_newer_evidence(tmp_path, case):
+    """No malformed or unsafe exact-card evidence can revive older green."""
+    core, receipt, append = completion_fixture(tmp_path)
+    append()
+    overlay = tmp_path / "coordination/card_events"
+    overlay.mkdir(parents=True)
+    (overlay / "old.jsonl").write_text(
+        json.dumps(
+            {
+                "card_id": "bbbbbbbb",
+                "action": "link",
+                "link_key": "ci_applicability",
+                "link_value": json.dumps(receipt),
+                "ts": "2026-09-11T10:00:00Z",
+            }
+        )
+        + "\n"
+    )
+    events = tmp_path / "cards/bbbbbbbb/events"
+    path = events / "new-writer.jsonl"
+    receipt["checks"][LEGACY[0]]["state"] = "FAILURE"
+    row = {
+        "card_id": "bbbbbbbb",
+        "action": "link",
+        "link_key": "ci_applicability",
+        "link_value": json.dumps(receipt),
+        "ts": "2026-09-11T11:00:00Z",
+    }
+    raw = json.dumps(row)
+    if case == "malformed":
+        raw = "{"
+    if case in {"escaped_card", "escaped_key"}:
+        raw = raw.replace('"action": "link"', '"action": "link", "action": "label"')
+        raw = (
+            raw.replace('"bbbbbbbb"', '"\\u0062bbbbbbb"')
+            if case == "escaped_card"
+            else raw.replace('"ci_applicability"', '"ci_\\u0061pplicability"')
+        )
+    if case == "duplicate_receipt":
+        receipt["checks"][LEGACY[0]]["state"] = "SUCCESS"
+        row["link_value"] = json.dumps(receipt).replace(
+            '"schema_version": 1', '"schema_version": 1, "schema_version": 1'
+        )
+        raw = json.dumps(row)
+    if case == "chain":
+        row["prev_hash"] = "f" * 64
+        raw = json.dumps(row)
+    if case == "sync_conflict":
+        path = events / "writer.sync-conflict-20260911"
+        raw = ""
+    if case == "symlink":
+        path.symlink_to(tmp_path / "missing")
+    elif case == "hardlink":
+        os.link(next(events.glob("*.jsonl")), path)
+    elif case == "fifo":
+        os.mkfifo(path)
+    else:
+        path.write_text(raw + "\n")
+    with pytest.raises(ValueError):
+        validate_profile_completion("bbbbbbbb", tmp_path, core)
+
+
+def test_cross_writer_receipts_conflict_at_same_instant(tmp_path):
+    core, receipt, append = completion_fixture(tmp_path)
+    append(writer="first")
+    receipt["checks"][LEGACY[0]]["state"] = "FAILURE"
+    append(writer="second")
+    with pytest.raises(ValueError):
+        validate_profile_completion("bbbbbbbb", tmp_path, core)
+
+
+@pytest.mark.parametrize("limit", ["_EVENT_BYTES", "_EVENT_ROWS", "_EVENT_FILES"])
+def test_exact_card_evidence_limits_fail_closed(tmp_path, monkeypatch, limit):
+    from skcapstone import ci_applicability
+
+    core, _, append = completion_fixture(tmp_path)
+    append()
+    monkeypatch.setattr(ci_applicability, limit, 0)
+    with pytest.raises(ValueError):
+        validate_profile_completion("bbbbbbbb", tmp_path, core)
+
+
+@pytest.mark.parametrize(
+    "identifier", ["../bbbbbbbb", "bbbbbbbb/events", "/absolute", "", ".", "a" * 129]
+)
+def test_exact_card_identifier_cannot_escape_home(tmp_path, identifier):
+    from skcapstone.ci_applicability import _card_event_rows
+
+    with pytest.raises(ValueError):
+        _card_event_rows(identifier, tmp_path)
+
+
+@pytest.mark.parametrize("segment", ["cards", "bbbbbbbb", "events"])
+def test_exact_card_evidence_rejects_symlink_directories(tmp_path, segment):
+    core, _, append = completion_fixture(tmp_path)
+    append()
+    path = tmp_path / "cards"
+    if segment in {"bbbbbbbb", "events"}:
+        path /= "bbbbbbbb"
+    if segment == "events":
+        path /= "events"
+    target = tmp_path / ("moved-" + segment)
+    path.rename(target)
+    path.symlink_to(target, target_is_directory=True)
+    with pytest.raises(ValueError):
+        validate_profile_completion("bbbbbbbb", tmp_path, core)
+
+
+def test_global_receipt_cannot_enroll_or_replace_exact_card_evidence(tmp_path):
+    core, receipt, _ = completion_fixture(tmp_path)
+    events = tmp_path / "coordination/card_events"
+    events.mkdir(parents=True)
+    (events / "old.jsonl").write_text(
+        json.dumps(
+            {
+                "card_id": "bbbbbbbb",
+                "action": "link",
+                "link_key": "ci_applicability",
+                "link_value": json.dumps(receipt),
+                "ts": "2026-09-11T10:00:00Z",
+            }
+        )
+        + "\n"
+    )
+    with pytest.raises(ValueError):
+        validate_profile_completion("bbbbbbbb", tmp_path, core)
+
+
+def test_authorized_gateway_registry_digest_is_exact_and_immutable():
+    from skcapstone.ci_profile_registry import INITIAL_PROFILE_DIGESTS
+
+    policy = {
+        "schema_version": 1,
+        "repository": "https://github.com/smilinTux/skgateway",
+        "checks": {
+            "ci_check_docs": {"expected": "SUCCESS", "reason": ""},
+            "ci_check_gitleaks": {"expected": "SUCCESS", "reason": ""},
+            "ci_check_lint": {
+                "expected": "NOT_APPLICABLE",
+                "reason": "SKGateway has no separate lint command; its Node test suite is the code-quality gate.",
+            },
+            "ci_check_shim_imports": {
+                "expected": "NOT_APPLICABLE",
+                "reason": "SKGateway is a Node.js repository and has no Python shim import boundary.",
+            },
+            "ci_check_python311": {
+                "expected": "NOT_APPLICABLE",
+                "reason": "SKGateway does not support or execute Python 3.11.",
+            },
+            "ci_check_python312": {
+                "expected": "NOT_APPLICABLE",
+                "reason": "SKGateway does not support or execute Python 3.12.",
+            },
+            "ci_check_node22": {"expected": "SUCCESS", "reason": ""},
+        },
+    }
+    data = (json.dumps(policy, separators=(",", ":")) + "\n").encode()
+    digest = hashlib.sha256(data).hexdigest()
+    assert digest == "f48fc610962a8da11d1d673665ac4d369dc6f28d43c745c9cc52f6b122bdb24b"
+    assert INITIAL_PROFILE_DIGESTS[policy["repository"]] == digest
+    with pytest.raises(TypeError):
+        INITIAL_PROFILE_DIGESTS[policy["repository"]] = "f" * 64

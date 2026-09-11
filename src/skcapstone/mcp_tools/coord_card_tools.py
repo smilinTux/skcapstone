@@ -185,8 +185,8 @@ async def _handle_coord_label(args: dict) -> list[TextContent]:
 
 
 async def _handle_coord_link(args: dict) -> list[TextContent]:
-    """Attach a link to a card via one appended overlay event."""
-    from ..card import CardEvent, CardEventLog
+    """Attach a link using the same authoritative writer as the CLI."""
+    from ..coord_links import append_coord_link
 
     task_id = args.get("task_id", "")
     key = args.get("key", "")
@@ -195,15 +195,7 @@ async def _handle_coord_link(args: dict) -> list[TextContent]:
         return _error_response("task_id, key, and value are required")
 
     try:
-        CardEventLog(_shared_root()).append(
-            CardEvent(
-                card_id=task_id,
-                action="link",
-                link_key=key,
-                link_value=value,
-                writer=args.get("agent", "") or "",
-            )
-        )
+        append_coord_link(_shared_root(), task_id, key, value, args.get("agent", "") or "")
     except ValueError as exc:
         return _error_response(str(exc))
     return _json_response({"linked": True, "task_id": task_id, "key": key, "value": value})

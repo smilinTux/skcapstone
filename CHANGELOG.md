@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Card `48f0ae70`: read CI receipts only from bounded, strict exact-card event
+  streams; route CLI/MCP receipts through CardStore; allow manifest-only initial
+  enrollment only for a centrally approved repository policy digest.
+
 - Cards `c0ee3907`, `0e849032`: bind review CI applicability to immutable
   repository policy and candidate receipts while preserving the six-check
   legacy gate. Local Git verification forbids promisor lazy fetch and transport.
