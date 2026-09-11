@@ -106,6 +106,7 @@ def test_worker_command_is_pi_through_gateway_only(monkeypatch) -> None:
     assert "must-not-cross-boundary" not in " ".join(command)
     assert not any(part.startswith("AWS_SECRET_ACCESS_KEY=") for part in command)
     assert "SKFLEET_CLAIM_REVISION=rev" in command
+    assert f"SKCAPSTONE_HOME={builder_dispatch.Path.home() / '.skcapstone'}" in command
 
 
 def test_worker_command_uses_bundled_guard_in_isolated_environment(monkeypatch) -> None:

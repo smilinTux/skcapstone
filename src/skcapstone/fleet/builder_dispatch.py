@@ -21,7 +21,7 @@ from ..coordination import Board
 from ..seat_mail import startup_hello
 from . import scheduler, store
 from .node_controller import NodeView, node_views
-from .paths import FleetPaths, valid_name
+from .paths import SOVEREIGN_HOME, FleetPaths, valid_name
 
 ROLE = "builder-standby"
 PROVIDER = "skgateway"
@@ -429,6 +429,7 @@ def worker_command(request: dict, owner: str, claim_revision: str, workspace: Pa
         raise BuilderDispatchError("mediated worker runtime is not installed")
     guard = _guard_path()
     home = str(Path.home())
+    sovereign_home = str(Path(SOVEREIGN_HOME).expanduser())
     return [
         "/usr/bin/env",
         "-i",
@@ -437,7 +438,7 @@ def worker_command(request: dict, owner: str, claim_revision: str, workspace: Pa
         "LANG=C.UTF-8",
         f"SKAGENT={owner}",
         f"SKCAPSTONE_AGENT={owner}",
-        f"SKCAPSTONE_HOME={home}/.skcapstone",
+        f"SKCAPSTONE_HOME={sovereign_home}",
         f"SKFLEET_CARD_ID={request['card_id']}",
         f"SKFLEET_CLAIM_REVISION={claim_revision}",
         worker,
