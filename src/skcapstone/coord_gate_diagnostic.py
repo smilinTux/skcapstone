@@ -24,9 +24,25 @@ def diagnose(home: Path, card_id: str) -> dict[str, object]:
     if card is None:
         return {"card_id": card_id, "eligible": False, "reasons": ["unknown-card"]}
 
-    cards = {row.id: row for row in store.list_cards()}
+    # Every gate decision is derived from one fresh authoritative fold.  Do not
+    # use a kanban projection or cached eligibility result: labels, dependencies
+    # and void events are all admission facts.
+    cards = {row.id: row for row in store.list_cards(include_archived=True)}
+    labels = {str(label).strip().lower() for label in card.labels}
+    structural_reasons: list[str] = []
+    if card.meta.get("voided"):
+        structural_reasons.append("voided-card")
+    if labels & {"do-not-claim", "not-claimable", "human-gate", "superseded"} or any(
+        label.startswith("superseded-") or "do-not-claim" in label for label in labels
+    ):
+        if "human-gate" in labels:
+            structural_reasons.append("human-gate")
+        else:
+            structural_reasons.append("do-not-claim")
     dependency_blocked = any(
-        dependency not in cards or cards[dependency].status.value != "done"
+        dependency not in cards
+        or cards[dependency].status.value != "done"
+        or cards[dependency].meta.get("voided")
         for dependency in card.dependencies
     )
     target = seraph_capacity_target()
@@ -52,6 +68,9 @@ def diagnose(home: Path, card_id: str) -> dict[str, object]:
             capacity_available=busy < target,
         )
     )
+    reasons.extend(structural_reasons)
+    if dependency_blocked and "dependency" not in reasons:
+        reasons.append("dependency")
     if card.status.value in {"done", "archived", "void"}:
         reasons.append("terminal")
     return {
