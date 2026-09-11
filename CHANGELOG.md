@@ -1,5 +1,9 @@
 # Changelog
 
+- Card `3b881689`: align governed review diagnostics with Seraph's packaged
+  two-seat target, preserve nonterminal partial findings, and reject producer
+  self-review at the claim boundary.
+
 - Card `3fa62ebd`: CAS-release an obsolete reviewer claim only after its findings and terminal-capacity evidence are published, while retaining custody on release failure.
 
 - Card `e9fc91b4`: skip Niobe fanout reconciliation for cards without an exact request and matching receipt, avoiding false activation failures for unrelated and terminal cards.
