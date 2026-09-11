@@ -3,6 +3,17 @@
 - Card `2dea585b`: use current advertised SKGateway routes and shared capacity
   domains for bounded ordinary producer selection instead of treating unrelated
   long-lived Pi sessions as active gateway work.
+- skmail records now stamp the sender's `from_fqid`, and `coord mail read` /
+  `tail` show it. Two estates run the same agent NAMES: `jarvis@chef.skworld`
+  on nor is a different being, with a different identity and operator, from
+  Casey's jarvis on chi. The mailboxes are already separated structurally (a
+  different Syncthing folder per estate, which is what actually keeps them
+  apart), but a record carried only a bare `from: "jarvis"`, so a message
+  quoted or read outside its own folder had nothing on it to disambiguate
+  against. The key is always present and is `None` where the node has no
+  identity file, so unqualified is explicit rather than indistinguishable from
+  an older record. Additive: every legacy key keeps its name and meaning, and
+  `scripts/fleet/skmail` reads by key name.
 
 - Card `d2126814`: admit up to four concurrent nonterminal dispatch requests
   per builder node while preserving exact-request idempotency and terminal

@@ -59,6 +59,33 @@ def writer_file(home: Path, sender: str, host: str | None = None) -> Path:
     return mailbox_dir(home) / f"{sender.lower()}@{host}.jsonl"
 
 
+def sender_fqid(home: Path, sender: str) -> str | None:
+    """The sender's fully-qualified id, so a message says which estate it is from.
+
+    Two estates run the same agent NAMES. `jarvis@chef.skworld` on the nor
+    fleet is a different being, with a different identity, memory and operator,
+    from Casey's jarvis on chi. The mailboxes are already separated
+    structurally (a different Syncthing folder per estate, which is what
+    actually keeps them apart), but the record itself carried only a bare
+    `from: "jarvis"`. A message quoted, forwarded, or read outside its own
+    folder therefore had nothing on it to disambiguate against, and the only
+    thing standing between the two was whoever was reading remembering the
+    difference.
+
+    Best effort by design: a node with no identity file still sends, with the
+    field left None rather than the send failing. Absent is honest; a guessed
+    realm would be worse than none.
+    """
+    try:
+        data = json.loads(
+            (Path(home) / "agents" / sender.lower() / "identity" / "identity.json")
+            .read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return None
+    return data.get("fqid") or None
+
+
 def send(
     home: Path, sender: str, to: str, priority: str, re: str, body: str, host: str | None = None
 ) -> dict:
@@ -83,6 +110,10 @@ def send(
         "re": re,
         "body": body,
         "host": host or socket.gethostname(),
+        # Which estate this came from. None when the node has no identity
+        # file; always present as a key so an unqualified sender is
+        # explicit rather than indistinguishable from an older record.
+        "from_fqid": sender_fqid(home, sender),
     }
     with open(path, "a", encoding="utf-8") as fh:
         # Same-host concurrency only; cross-host is solved by the filename.

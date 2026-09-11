@@ -16,6 +16,17 @@ from ..coord_mail import VALID_PRIORITIES, ack, bootstrap, read, send, tail
 from ._common import AGENT_HOME, console
 
 
+def _shown_sender(m: dict) -> str:
+    """Render the sender qualified by estate when the record carries it.
+
+    Two estates run the same agent names, so a bare "jarvis" in a report or a
+    quoted message is ambiguous between two different beings. Show the fqid
+    (`jarvis@chef.skworld`) whenever the record has one, and fall back to the
+    bare name only for records that predate the stamp.
+    """
+    return str(m.get("from_fqid") or m.get("from"))
+
+
 def register_coord_mail_commands(coord: click.Group) -> None:
     """Register mailbox + bootstrap verbs on the coord command group."""
 
@@ -57,7 +68,7 @@ def register_coord_mail_commands(coord: click.Group) -> None:
             # markup=False: a priority like [urgent] is otherwise parsed as a
             # Rich style tag and silently disappears from the output.
             console.print(
-                f"\n[{m.get('priority')}] {m.get('from')} -> {m.get('to')}"
+                f"\n[{m.get('priority')}] {_shown_sender(m)} -> {m.get('to')}"
                 f"  {str(m.get('ts',''))[:19]}",
                 markup=False,
             )
@@ -80,7 +91,7 @@ def register_coord_mail_commands(coord: click.Group) -> None:
         """Recent traffic between any peers."""
         for m in tail(Path(home), count):
             console.print(
-                f"{str(m.get('ts',''))[:19]}  {m.get('from')} -> {m.get('to')}"
+                f"{str(m.get('ts',''))[:19]}  {_shown_sender(m)} -> {m.get('to')}"
                 f"  [{m.get('priority')}] {str(m.get('re',''))[:50]}",
                 markup=False,
             )
