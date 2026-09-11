@@ -655,10 +655,10 @@ def _noop_reason(pool, owned, lane_deferred):
     return "no_eligible_work"
 
 
-def _worker_mail_routing(environ=os.environ):
-    """Return configured recipients after case-insensitive exclusions."""
+def _worker_mail_routing(environ=os.environ, owning_agent=None):
+    """Return Jarvis/configured recipients plus the card's owning agent."""
     raw = environ.get("SKFLEET_MAIL_RECIPIENTS")
-    requested = ("jarvis", "lumina") if raw is None else tuple(
+    requested = ("jarvis",) if raw is None else tuple(
         value.strip().lower() for value in raw.split(",") if value.strip()
     )
     if not requested:
@@ -668,6 +668,9 @@ def _worker_mail_routing(environ=os.environ):
         for value in environ.get("SKFLEET_EXCLUDED_MAIL_RECIPIENTS", "").split(",")
         if value.strip()
     }
+    excluded.add("lumina")
+    if owning_agent:
+        requested += (str(owning_agent).strip().lower(),)
     allowed = tuple(dict.fromkeys(
         value for value in requested
         if value not in excluded and value != "all"
@@ -5088,7 +5091,8 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     _RAILS=("CONSTRAINTS (standing rails, non-negotiable):\n"
       "- CardStore is append-only. Build JSON with a serializer and parse every line before appending. Never concatenate strings into JSON.\n"
       "- Join structural CardStore events with separate evidence events. Never infer a verdict from lifecycle state or from links alone.\n"
-      + _worker_mail_instructions(WORKER_MAIL_RECIPIENTS) +
+      + _worker_mail_instructions(
+          _worker_mail_routing(os.environ, core.get("originator"))) +
       "MAIL CHECK CADENCE. Check mail after startup, before each major phase, and\n"
       "at least every five minutes during a long-running task. Mail does not interrupt\n"
       "a tool call, so process new instructions at the next safe boundary. Never\n"
