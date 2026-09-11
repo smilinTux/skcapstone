@@ -115,9 +115,7 @@ def load_control_plane(path: Path, *, host: str | None = None) -> dict[str, Any]
             raise ValueError(f"seat {seat} is not provisioned on active host")
     claim = host_lifecycle_claim(host=host)
     if claim is not None and claim != active_host.strip().lower():
-        raise ValueError(
-            f"seat control plane names {active_host} but this machine claims {claim}"
-        )
+        raise ValueError(f"seat control plane names {active_host} but this machine claims {claim}")
     return value
 
 

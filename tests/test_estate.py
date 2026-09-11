@@ -9,10 +9,8 @@ from skcapstone.estate import (
     EstateConfigError,
     host_lifecycle_claim,
     load_estate_profile,
-    running_host,
+    local_host,
     sovereign_home,
-    xdg_config_home,
-    xdg_state_home,
 )
 
 
@@ -74,19 +72,6 @@ def test_sovereign_home_respects_the_environment(tmp_path: Path, monkeypatch) ->
     assert sovereign_home(tmp_path / "other") == tmp_path / "other"
 
 
-def test_xdg_roots_come_from_the_environment_with_standard_fallbacks(
-    tmp_path: Path, monkeypatch
-) -> None:
-    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
-    assert xdg_config_home() == Path.home() / ".config"
-    assert xdg_state_home() == Path.home() / ".local/state"
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    assert xdg_config_home() == tmp_path / "cfg"
-    assert xdg_state_home() == tmp_path / "state"
-
-
 def test_no_host_claim_when_the_machine_makes_none(tmp_path: Path) -> None:
     assert host_lifecycle_claim(config_home=tmp_path, host="noroc2027") is None
 
@@ -112,8 +97,8 @@ def test_malformed_host_claim_fails_closed(tmp_path: Path) -> None:
         host_lifecycle_claim(config_home=tmp_path, host="noroc2027")
 
 
-def test_running_host_is_the_machine_not_an_environment_variable(monkeypatch) -> None:
+def test_the_gate_reads_the_machine_not_an_environment_variable(monkeypatch) -> None:
+    """local_host() is the only host answer the gate trusts."""
     monkeypatch.setenv("SKFLEET_NODE", "node-somewhere-else")
-    monkeypatch.setattr("skcapstone.estate.socket.gethostname", lambda: "NorOC2027")
-    assert running_host() == "noroc2027"
-    assert running_host("Chiap08 ") == "chiap08"
+    monkeypatch.setattr("skcapstone.estate.socket.gethostname", lambda: "NorOC2027.lan")
+    assert local_host() == "noroc2027"

@@ -1005,3 +1005,72 @@ def test_role_dispatch_rejects_missing_wheel_owned_dispatcher(tmp_path, monkeypa
     result = role_dispatch_operation(tmp_path, seat)
 
     assert result["reason"] == f"{seat}_dispatcher_missing"
+
+
+def _claim(config_home: Path, host: str) -> None:
+    """Write this machine's host-local lifecycle claim."""
+    path = config_home / "skcapstone/lifecycle-host.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"schema": "sk.lifecycle-host/v1", "active_host": host}), encoding="utf-8"
+    )
+
+
+def test_a_second_estate_may_elect_its_own_active_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same six seats run on noroc2027, with that host's own claim agreeing."""
+    control_path = tmp_path / "control.json"
+    control_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "revision": "nor-r1",
+                "active_host": "noroc2027",
+                "seats": {
+                    seat: ["noroc2027"]
+                    for seat in ("link", "mero", "seraph", "niobe", "tank", "atlas")
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    config_home = tmp_path / "config"
+    _claim(config_home, "noroc2027")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    assert load_control_plane(control_path, host="noroc2027")["active_host"] == "noroc2027"
+
+
+def test_synced_record_cannot_activate_a_host_that_never_claimed_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A chi record arriving on a nor machine is refused by that machine's claim."""
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    config_home = tmp_path / "config"
+    _claim(config_home, "noroc2027")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    with pytest.raises(ValueError, match="this machine claims noroc2027"):
+        load_control_plane(control_path, host="noroc2027")
+
+
+def test_a_claim_copied_to_another_node_refuses_rather_than_promoting_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    config_home = tmp_path / "config"
+    _claim(config_home, "noroc2027")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    with pytest.raises(ValueError, match="this machine is chiap08"):
+        load_control_plane(control_path, host="chiap08")
+
+
+def test_a_machine_with_no_claim_still_follows_the_estate_election(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The claim only ever refuses: absent, the synced election stands."""
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-config"))
+    assert load_control_plane(control_path, host="chiap08")["active_host"] == "chiap08"
