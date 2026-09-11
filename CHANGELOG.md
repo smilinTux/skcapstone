@@ -27,6 +27,10 @@
 - Card `bf7317af`: filter fleet worker mail recipients through configured,
   case-insensitive exclusions and prohibit implicit all-recipient broadcasts.
 
+- Card `3fd609ed`: serialize ZIOWK01 builder selection, durable claim, workspace
+  preparation, and launch so competing dispatchers cannot consume an attempt
+  before claim durability or leave a partial worker after failure.
+
 - Card `2ebebda8`: admit governed reviews to bounded elastic Codex fanout while
   preserving exact source, producer, reviewer identity, claim generation,
   capacity, verdict, and retry-safe release fencing.

@@ -8,7 +8,9 @@ its own node's status subtree, scheduler (Phase 2) writes placements.
 
 from __future__ import annotations
 
+import fcntl
 import json
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -482,6 +484,19 @@ def check_actuation_gate(paths: FleetPaths) -> ActuationGate:
     return ActuationGate(True, None)
 
 
+@contextmanager
+def actuation_exclusion(paths: FleetPaths):
+    """Serialize the human freeze transition with process creation."""
+    lock_path = paths.freeze_path().with_suffix(".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
 def set_frozen(paths: FleetPaths, frozen: bool, *, writer: Writer, reason: str = "") -> dict:
     """Toggle the kill-switch. HUMAN operator only (spec section 8).
 
@@ -500,7 +515,8 @@ def set_frozen(paths: FleetPaths, frozen: bool, *, writer: Writer, reason: str =
         "writer": _writer_block(writer),
         "updatedAt": _now_iso(),
     }
-    _dump(paths.freeze_path(), payload)
+    with actuation_exclusion(paths):
+        _dump(paths.freeze_path(), payload)
     return payload
 
 
