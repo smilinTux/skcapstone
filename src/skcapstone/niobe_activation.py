@@ -25,7 +25,16 @@ _CARD_ID = re.compile(r"[0-9a-z][0-9a-z._-]{0,63}")
 ALLOWED_ACTIONS = frozenset({"claim", "release", "launch", "stop", "reassign"})
 FORBIDDEN_ACTIONS = frozenset({"merge", "deploy", "application_actuation", "external_dispatch"})
 LIVE_UNIT = "skfleet-niobe-live.timer"
-ROLLBACK_ACTION = "disable_skfleet-niobe-live.timer_enable_skfleet-niobe-shadow.timer"
+
+#: The one thing a rollback statement has to actually say. The previous check
+#: compared against a single literal that also required enabling
+#: `skfleet-niobe-shadow.timer`, a unit main does not ship, so a truthful
+#: rollback written by a second estate was refused for naming a real fallback
+#: instead of an absent one. The enforceable guarantee is narrower and still
+#: exact: the rollback must disable the very unit this activation turns live.
+#: The chi literal satisfies it unchanged, so records already on disk stay
+#: valid and no migration is needed.
+ROLLBACK_MUST_DISABLE = "disable_{unit}"
 
 
 class ActivationError(ValueError):
@@ -144,8 +153,11 @@ class NiobeActivation:
             or not self.rollback_action.strip()
         ):
             raise ActivationError("decision and rollback fields are required")
-        if self.rollback_action != ROLLBACK_ACTION:
-            raise ActivationError("activation rollback action is invalid")
+        if ROLLBACK_MUST_DISABLE.format(unit=self.live_unit) not in self.rollback_action:
+            raise ActivationError(
+                f"activation rollback must disable {self.live_unit}, "
+                f"got {self.rollback_action!r}"
+            )
 
 
 def _timestamp(value: object) -> datetime:

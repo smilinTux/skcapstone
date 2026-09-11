@@ -209,3 +209,49 @@ def test_activation_referencing_an_absent_card_is_rejected(tmp_path: Path) -> No
             host=CHI["host"],
             now=NOW,
         )
+
+
+def test_a_truthful_rollback_naming_another_fallback_is_accepted(tmp_path: Path) -> None:
+    """The nor estate rolls back to its own bounded timer, not to a shadow unit."""
+    revision = make_estate(tmp_path, NOR)
+    activation = parse_activation(
+        record(
+            NOR,
+            revision,
+            rollback={
+                "owner": "chef",
+                "action": (
+                    "disable_skfleet-niobe-live.timer; the bounded "
+                    "skfleet-niobe.timer keeps running"
+                ),
+            },
+        ),
+        home=tmp_path,
+        host=NOR["host"],
+        now=NOW,
+    )
+    assert activation.rollback_owner == "chef"
+
+
+def test_the_chi_rollback_literal_still_validates_unchanged(tmp_path: Path) -> None:
+    """Records already on disk keep working: no migration, no silent invalidation."""
+    revision = make_estate(tmp_path, CHI)
+    activation = parse_activation(record(CHI, revision), home=tmp_path, host=CHI["host"], now=NOW)
+    assert activation.rollback_action.startswith("disable_skfleet-niobe-live.timer")
+
+
+@pytest.mark.parametrize(
+    "action",
+    ["", "   ", "notify_casey", "disable_skfleet-mero.timer"],
+)
+def test_a_rollback_that_does_not_disable_the_live_unit_is_rejected(
+    tmp_path: Path, action: str
+) -> None:
+    revision = make_estate(tmp_path, CHI)
+    with pytest.raises(ActivationError):
+        parse_activation(
+            record(CHI, revision, rollback={"owner": "casey", "action": action}),
+            home=tmp_path,
+            host=CHI["host"],
+            now=NOW,
+        )
