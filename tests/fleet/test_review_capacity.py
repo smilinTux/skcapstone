@@ -4,6 +4,8 @@ import datetime
 import io
 import json
 
+import pytest
+
 from skcapstone.fleet.review_capacity import (
     acquire_review_route_snapshot,
     aggregate_review_capacity,
@@ -142,6 +144,47 @@ def test_provider_neutral_routes_tier_policy_and_shared_capacity(tmp_path):
     )
     assert eligible_review_routes(snapshot, "XL", [], "producer", "reviewer", {}) == []
     assert eligible_review_routes(snapshot, "M", [], "same", "same", {}) == []
+
+
+@pytest.mark.parametrize(
+    ("current", "capacity_state", "eligible"),
+    [
+        (True, "available", True),
+        (True, "throttled", False),
+        (True, "unavailable", False),
+        (False, "unavailable", True),
+        (True, "unknown", True),
+        (None, "throttled", True),
+    ],
+)
+def test_only_current_unavailable_capacity_excludes_route(
+    tmp_path, current, capacity_state, eligible
+):
+    now = 2_000_000_000.0
+    models, health, queue = _documents(now)
+    health["backends"]["cloud-b"]["capacity"] = {
+        "current": current,
+        "state": capacity_state,
+    }
+    documents = dict(zip(("/v1/models", "/health", "/queue"), (models, health, queue)))
+
+    def opener(url, timeout):
+        assert timeout == 8
+        suffix = next(key for key in documents if url.endswith(key))
+        return _Response(json.dumps(documents[suffix]).encode())
+
+    snapshot = acquire_review_route_snapshot(
+        "https://gateway", tmp_path / "snapshot.json", "cycle-1", opener=opener, now=lambda: now
+    )
+    routes = eligible_review_routes(snapshot, "M", [], "producer", "reviewer", {})
+    cloud_routes = [row for row in routes if row["capacity_domain"] == "cloud-b"]
+    assert bool(cloud_routes) is eligible
+    if eligible:
+        assert aggregate_review_capacity(cloud_routes, 8) == 2
+        assert {row["logical_route"] for row in cloud_routes} == {
+            "route-cloud-alias",
+            "route-cloud-medium",
+        }
 
 
 def test_runtime_route_occupancy_is_typed_and_ambiguous_fails_closed(tmp_path):
