@@ -43,7 +43,7 @@ def test_link_and_jarvis_use_distinct_fresh_process_reads() -> None:
         source.index("def _review_assignment(") : source.index("# Load this dependency-free")
     ]
     assert assignment.count("_card_process_snapshot(cid)") == 2
-    assert 'if observed_process["sessions"]:' in assignment
+    assert "if any(observed_process.values()):" in assignment
 
 
 def test_mero_tracks_review_lifecycle_without_mutation() -> None:

@@ -166,14 +166,29 @@ def _selection_diagnostic(pool, owned, lanes, owner_for, host_capacity=None):
 
 
 def _card_process_snapshot(cid):
-    """Return a fresh bounded same-card tmux snapshot."""
+    """Return a fresh bounded same-card local process snapshot."""
     suffix = "-" + str(cid)
+    units = []
+    try:
+        output = subprocess.run(
+            ["systemctl", "--user", "list-units", "--type=service", "--state=running",
+             "--no-legend", "--plain"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout
+        units = sorted(
+            fields[0] for line in output.splitlines()
+            if (fields := line.split()) and fields[0].endswith(suffix + ".service")
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        # Failure to query systemd is not proof that a worker is absent.
+        units = ["systemd-query-failed"]
     return {
         "sessions": sorted(
             session
             for session in sh("tmux", "ls", "-F", "#{session_name}").split()
             if session.endswith(suffix)
-        )
+        ),
+        "units": units,
     }
 
 
@@ -224,7 +239,7 @@ def _review_assignment(cid, core, labels, reviewer):
         raise BoundaryError("review card is missing")
     state_revision = review_state_revision(card)
     observed_process = _card_process_snapshot(cid)
-    if observed_process["sessions"]:
+    if any(observed_process.values()):
         raise BoundaryError("review card already has a live same-card process")
     recommendation = recommend_reviewer(
         Path(HOME) / ".skcapstone",
@@ -3888,6 +3903,91 @@ def close_reviewed_parents():
     return closed
 
 
+def _durable_review_outcome(cid):
+    """Return a terminal review verdict backed by readable hashed evidence."""
+    rows = list(event_rows(cid)) + list(_load_evidence_events().get(cid, ()))
+    rows.sort(key=lambda event: (str(event.get("ts") or ""), str(event.get("event_id") or "")))
+    for outcome_index in range(len(rows) - 1, -1, -1):
+        outcome = rows[outcome_index]
+        value = ""
+        if outcome.get("action") in ("verdict", "blocked"):
+            value = str(_native_outcome_value(outcome) or "")
+        elif outcome.get("action") == "link" and any(
+                key in _fold_key(outcome.get("link_key")) for key in _OUTCOME_KEYS):
+            value = str(outcome.get("link_value") or "")
+        if not re.match(r"^\s*(PASS|FAIL|BLOCKED)\s*(?::|$)", value, re.I):
+            continue
+        writer = str(outcome.get("writer") or "")
+        evidence_path = str(outcome.get("evidence") or outcome.get("evidence_path") or "")
+        evidence_sha = str(
+            outcome.get("evidence_sha256") or outcome.get("artifact_sha256") or ""
+        ).lower()
+        for event in rows[outcome_index + 1:]:
+            if str(event.get("writer") or "") != writer:
+                continue
+            key = _fold_key(event.get("link_key"))
+            if any(outcome_key in key for outcome_key in _OUTCOME_KEYS):
+                break
+            if key in ("evidence", "review_evidence"):
+                evidence_path = str(event.get("link_value") or "")
+            elif key in ("evidence_sha256", "review_evidence_sha256"):
+                evidence_sha = str(event.get("link_value") or "").lower()
+        if not evidence_path or not re.fullmatch(r"[0-9a-f]{64}", evidence_sha):
+            return None
+        try:
+            with open(os.path.expanduser(evidence_path), "rb") as handle:
+                if hashlib.sha256(handle.read()).hexdigest() != evidence_sha:
+                    return None
+        except OSError:
+            return None
+        return value
+    return None
+
+
+def release_finished_review_claims():
+    """Release exact local review generations after durable terminal outcomes."""
+    if HOST != "chiap08" or DRY:
+        return 0
+    released = 0
+    owner_pattern = re.compile(
+        r"^pi-(?:seraph|link|codex-review|glm-review)-%s-([0-9a-f]{8})$"
+        % re.escape(HOST)
+    )
+    for card_dir in sorted(glob.glob(os.path.join(CARDS, "*"))):
+        cid = os.path.basename(card_dir)
+        owner, _claimed_at, revision = _current_claim_identity_fresh(cid)
+        match = owner_pattern.fullmatch(str(owner or ""))
+        if not match or match.group(1) != cid or not revision:
+            continue
+        verdict = _durable_review_outcome(cid)
+        if verdict is None:
+            continue
+        process = _card_process_snapshot(cid)
+        if process["sessions"] or process["units"]:
+            continue
+        # The process check and the mutation are joined to one exact CardStore
+        # generation. A new owner or revision loses the race and is untouched.
+        fresh_owner, _fresh_at, fresh_revision = _current_claim_identity_fresh(cid)
+        if fresh_owner != owner or fresh_revision != revision:
+            continue
+        result = subprocess.run(
+            [SKC, "coord", "release-claim", cid, "--owner", owner,
+             "--expected-claim-revision", revision, "--agent", "fleet-review-closer"],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            log(d, "REVIEW_RELEASE_FAILED|%s|%s|%s" % (
+                HOST, cid, (result.stderr or result.stdout).strip()[:110]))
+            continue
+        _rows.pop(cid, None)
+        global _outcomes
+        _outcomes = None
+        released += 1
+        log(d, "REVIEW_RELEASED|%s|%s|owner=%s|claim_revision=%s|verdict=%s" % (
+            HOST, cid, owner, revision, verdict[:40]))
+    return released
+
+
 def _legacy_selector_decision(cid, core_p):
     """Run the legacy selector's authoritative exclusion path for one card."""
     if cid in excluded:
@@ -3937,6 +4037,7 @@ review_capacity = min(MAX_LAUNCH, sum(
 open_provisional_reviews(review_capacity, dry_run=DRY)
 if not DRY:
     close_reviewed_parents()
+    release_finished_review_claims()
 
 _PINNED_IDS=set()
 pool=[]
