@@ -9,7 +9,7 @@ from skcoord.card_store import CardStore
 
 def append_coord_link(home: Path, card_id: str, key: str, value: str, writer: str = "") -> None:
     """Write profile receipts to the exact card; preserve other overlay links."""
-    if key == "ci_applicability":
+    if key in {"ci_applicability", "ci_profile_enrollment"}:
         from .ci_applicability import _json
 
         _json(value)

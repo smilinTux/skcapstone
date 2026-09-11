@@ -207,10 +207,20 @@ async def test_profile_completion_entrypoint_parity(tmp_path, entrypoint, case):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("initial", [False, True])
 @pytest.mark.parametrize("invalid", [None, "digest", "null", "json", "missing_binding"])
-async def test_cli_mcp_creation_capsule_parity(tmp_path, invalid):
+async def test_cli_mcp_creation_capsule_parity(tmp_path, monkeypatch, initial, invalid):
     """Creation verifies the same capsule and rejects bad input before any card."""
-    _, _, meta, request = repository_fixture(tmp_path)
+    from skcapstone import ci_applicability
+
+    fixture = enrollment_fixture if initial else repository_fixture
+    _, _, meta, request = fixture(tmp_path)
+    if initial:
+        monkeypatch.setattr(
+            ci_applicability,
+            "INITIAL_PROFILE_DIGESTS",
+            {meta["repository"].removesuffix(".git"): request["profile_sha256"]},
+        )
     if invalid == "digest":
         request["profile_sha256"] = "f" * 64
     if invalid == "null":
@@ -258,6 +268,10 @@ async def test_cli_mcp_creation_capsule_parity(tmp_path, invalid):
         mcp_meta = json.loads(mcp_cards[0].read_text())["meta"]
         assert cli_meta == mcp_meta
         assert "repository_path" not in cli_meta["ci_profile"]
+        if initial:
+            assert cli_meta["ci_profile"]["initial_enrollment"] is True
+        else:
+            assert "initial_enrollment" not in cli_meta["ci_profile"]
 
 
 @pytest.mark.asyncio
@@ -286,51 +300,6 @@ async def test_nonreview_completion_remains_unchanged(tmp_path, entrypoint):
     home = _review_home(tmp_path, "ordinary implementation", None)
     ok, detail = await _invoke(home, entrypoint)
     assert ok, detail
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("entrypoint", ["cli_complete", "cli_move", "mcp_complete", "mcp_move"])
-@pytest.mark.parametrize(
-    "case", ["valid", "missing", "required_failure", "omitted_check", "mutable_evidence"]
-)
-async def test_initial_enrollment_completion_requires_full_policy(
-    tmp_path, monkeypatch, entrypoint, case
-):
-    """A registered policy-only candidate still needs every declared result."""
-    from skcapstone import ci_applicability
-
-    _, _, meta, request = enrollment_fixture(tmp_path)
-    monkeypatch.setattr(
-        ci_applicability,
-        "INITIAL_PROFILE_DIGESTS",
-        {meta["repository"].removesuffix(".git"): request["profile_sha256"]},
-    )
-    capsule = ci_applicability.bind_ci_profile(meta, request)
-    home = _review_home(tmp_path, "[REVIEW] initial enrollment", "SUCCESS")
-    _, receipt, append = completion_fixture(home, card_id="abcd1234")
-    path = home / "cards/abcd1234/core.json"
-    core = json.loads(path.read_text())
-    core["meta"] = {
-        **meta,
-        "ci_profile": capsule,
-        "link_head_revision": request["candidate_revision"],
-    }
-    path.write_text(json.dumps(core))
-    receipt["candidate_revision"] = request["candidate_revision"]
-    if case == "required_failure":
-        receipt["checks"]["ci_check_node_test"]["state"] = "FAILURE"
-    if case == "omitted_check":
-        del receipt["checks"]["ci_check_node_test"]
-    if case == "mutable_evidence":
-        receipt["checks"]["ci_check_node_test"]["evidence"] = "/tmp/latest"
-    if case != "missing":
-        append()
-    before = {str(p): p.read_bytes() for p in home.rglob("*.jsonl")}
-    ok, detail = await _invoke(home, entrypoint)
-    assert ok == (case == "valid"), detail
-    if not ok:
-        assert Board(home).load_agent("reviewer").current_task == "abcd1234"
-        assert {str(p): p.read_bytes() for p in home.rglob("*.jsonl")} == before
 
 
 @pytest.mark.parametrize("missing", [None, "candidate", "base", "blob", "tree"])

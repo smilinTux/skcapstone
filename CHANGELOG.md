@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Card `a5bf5e69`: mark centrally registered manifest-only enrollment in the
+  immutable capsule and require its own exact-card `ci_profile_enrollment`
+  receipt. Enrollment evidence makes no repository CI success claims;
+  established profiles retain every declared CI check requirement.
+
 - Card `48f0ae70`: read CI receipts only from bounded, strict exact-card event
   streams; route CLI/MCP receipts through CardStore; allow manifest-only initial
   enrollment only for a centrally approved repository policy digest.

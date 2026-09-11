@@ -230,7 +230,7 @@ def bind_ci_profile(meta: dict, request: dict) -> dict:
     policy = _manifest(text)
     if _repository(policy["repository"]) != repository:
         raise ValueError("CI manifest repository does not match the source binding")
-    return {
+    capsule = {
         "schema_version": 1,
         "repository": meta["repository"],
         "base_revision": base,
@@ -238,13 +238,18 @@ def bind_ci_profile(meta: dict, request: dict) -> dict:
         "profile_sha256": digest,
         "manifest_text": text,
     }
+    if not base_entry:
+        capsule["initial_enrollment"] = True
+    return capsule
 
 
 def _capsule(core: dict) -> tuple[dict, dict]:
     """Cross-check stored policy against immutable source birth metadata."""
     meta = _object(_object(core).get("meta"))
+    stored = _object(meta.get("ci_profile"))
+    enrollment = "initial_enrollment" in stored
     capsule = _object(
-        meta.get("ci_profile"),
+        stored,
         {
             "schema_version",
             "repository",
@@ -252,8 +257,15 @@ def _capsule(core: dict) -> tuple[dict, dict]:
             "candidate_revision",
             "profile_sha256",
             "manifest_text",
-        },
+        }
+        | ({"initial_enrollment"} if enrollment else set()),
     )
+    if enrollment and (
+        capsule["initial_enrollment"] is not True
+        or INITIAL_PROFILE_DIGESTS.get(_repository(capsule["repository"]))
+        != capsule["profile_sha256"]
+    ):
+        raise ValueError("Initial CI enrollment requires literal true and a registered digest")
     _version(capsule["schema_version"])
     for field, size in (("base_revision", 40), ("candidate_revision", 40), ("profile_sha256", 64)):
         _hex(capsule[field], size)
@@ -346,12 +358,12 @@ def _card_event_rows(card_id: str, home: Path) -> list[dict]:
     return rows
 
 
-def _latest_receipt(card_id: str, home: Path) -> dict:
+def _latest_receipt(card_id: str, home: Path, key: str = "ci_applicability") -> dict:
     """Select one whole receipt by timezone-aware instant, rejecting ambiguity."""
     receipts = []
     for row in _card_event_rows(card_id, home):
-        key = row.get("link_key") or row.get("key") or row.get("raw_key")
-        if key != "ci_applicability":
+        row_key = row.get("link_key") or row.get("key") or row.get("raw_key")
+        if row_key != key:
             continue
         if row.get("action") != "link":
             raise ValueError("invalid CI applicability evidence action")
@@ -367,7 +379,7 @@ def _latest_receipt(card_id: str, home: Path) -> dict:
         receipt = _json(row.get("link_value") or row.get("value"))
         receipts.append((instant, receipt))
     if not receipts:
-        raise ValueError("no CI applicability receipt was recorded")
+        raise ValueError(f"no {key} receipt was recorded")
     latest = max(stamp for stamp, _ in receipts)
     selected = next(value for stamp, value in receipts if stamp == latest)
     if any(
@@ -402,14 +414,16 @@ def _evidence(value: object) -> bool:
 def validate_profile_completion(card_id: str, home: Path, core: dict) -> None:
     """Validate immutable policy and its latest pinned whole-result receipt."""
     capsule, policy = _capsule(core)
+    enrollment = capsule.get("initial_enrollment") is True
+    key = "ci_profile_enrollment" if enrollment else "ci_applicability"
     receipt = _object(
-        _latest_receipt(card_id, Path(home)),
+        _latest_receipt(card_id, Path(home), key),
         {
             "schema_version",
             "repository",
             "candidate_revision",
             "profile_sha256",
-            "checks",
+            "evidence" if enrollment else "checks",
         },
     )
     _version(receipt["schema_version"])
@@ -418,6 +432,10 @@ def validate_profile_completion(card_id: str, home: Path, core: dict) -> None:
         for key in ("repository", "candidate_revision", "profile_sha256")
     ):
         raise ValueError("CI applicability receipt does not match immutable candidate pins")
+    if enrollment:
+        if not _evidence(receipt["evidence"]):
+            raise ValueError("CI profile enrollment lacks immutable evidence")
+        return
     results = _object(receipt["checks"], set(policy["checks"]))
     for key, declaration in policy["checks"].items():
         result = _object(results[key], {"state", "reason", "evidence"})
