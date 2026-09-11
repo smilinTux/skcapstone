@@ -135,20 +135,21 @@ def test_rotator_codex_size_aliases_have_exact_health_admission(
 ) -> None:
     """Configured role aliases share capacity health without duplicate bindings."""
     for level in ("S", "M", "L", "XL"):
-        key = "SKFLEET_CODEX_MODEL_" + level
+        monkeypatch.delenv("SKFLEET_CODEX_MODEL_" + level, raising=False)
+        key = "SKFLEET_MODEL_" + level
         monkeypatch.delenv(key, raising=False)
         if overrides:
             monkeypatch.setenv(key, "custom-" + (level if overrides == "distinct" else "shared"))
     script = Path(__file__).parents[1] / "scripts/fleet/skfleet-rotate.py"
     tree = ast.parse(script.read_text(encoding="utf-8"))
-    names = {"_CODEX_LEVEL_DEFAULTS", "_CODEX_LEVELS", "_GLM_SIZE_RE"}
+    names = {"_LOGICAL_ROUTES", "_SIZE_MODEL_DEFAULTS", "_SIZE_MODELS", "_GLM_SIZE_RE"}
     body = [
         node
         for node in tree.body
         if isinstance(node, ast.Assign)
         and any(isinstance(target, ast.Name) and target.id in names for target in node.targets)
         or isinstance(node, ast.FunctionDef)
-        and node.name in {"_codex_model_for", "_lane_model"}
+        and node.name in {"_size_model_for", "_lane_model"}
     ]
     start = next(
         i
@@ -172,9 +173,9 @@ def test_rotator_codex_size_aliases_have_exact_health_admission(
     lanes = namespace["_health_lanes"]
     codex_models = [lane["model"] for lane in lanes if lane["name"] == "codex"]
     assert len(codex_models) == len(set(codex_models))
-    assert set(codex_models) == {"sk-codex-mid", *namespace["_CODEX_LEVELS"].values()}
+    assert set(codex_models) == {"sk-codex-mid", *namespace["_SIZE_MODELS"].values()}
     model = namespace["_lane_model"](namespace["LANES"][0], {"title": f"[{size}] Work"})
-    assert model == namespace["_CODEX_LEVELS"][size]
+    assert model == namespace["_SIZE_MODELS"][size]
     snapshot = acquire_lane_snapshot(
         ENDPOINT,
         lanes,

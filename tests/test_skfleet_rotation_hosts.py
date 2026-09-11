@@ -119,3 +119,43 @@ def test_the_refusal_names_the_configured_fleet_not_a_stale_literal() -> None:
     source = ROTATE.read_text(encoding="utf-8")
     assert "chiap01-chiap03" not in source
     assert "host is outside this estate's worker fleet: %s" in source
+
+
+def test_unset_authority_configuration_keeps_the_historic_publisher() -> None:
+    """An estate that declares nothing publishes from the host it always did."""
+    resolve = _load_functions("_resolve_authority_host")["_resolve_authority_host"]
+    assert resolve({}, None) == "chiap08"
+    assert resolve({"SKFLEET_AUTHORITY_HOST": ""}, None) == "chiap08"
+    assert resolve({}, "") == "chiap08"
+    source = ROTATE.read_text(encoding="utf-8")
+    assert "AUTHORITY_HOST=_resolve_authority_host(declared=_estate_authority_host())" in source
+
+
+def test_a_second_estate_names_its_own_publisher() -> None:
+    """No estate hostname is baked into who may write the shared reports."""
+    resolve = _load_functions("_resolve_authority_host")["_resolve_authority_host"]
+    assert resolve({}, "noroc2027") == "noroc2027"
+    assert resolve({}, " NorWK01 ") == "norwk01"
+
+
+def test_the_variable_overrides_the_declared_publisher_and_is_normalized() -> None:
+    """A bootstrapping host may state the publisher before its record has synced."""
+    resolve = _load_functions("_resolve_authority_host")["_resolve_authority_host"]
+    assert resolve({"SKFLEET_AUTHORITY_HOST": " NOROC2027 "}, "chiap08") == "noroc2027"
+
+
+@pytest.mark.parametrize("value", ["bad host", "-nope", "a" * 65, "chiap01,chiap08"])
+def test_a_malformed_publisher_stops_the_cycle(value: str) -> None:
+    """A wrong publisher elects no writer, and the shared report then goes stale."""
+    resolve = _load_functions("_resolve_authority_host")["_resolve_authority_host"]
+    with pytest.raises(SystemExit) as excinfo:
+        resolve({"SKFLEET_AUTHORITY_HOST": value}, None)
+    assert "BLOCKED|SKFLEET_AUTHORITY_HOST" in str(excinfo.value)
+
+
+def test_both_fleet_roles_resolve_the_same_way() -> None:
+    """One pattern, not two near-identical helpers that drift apart later."""
+    source = ROTATE.read_text(encoding="utf-8")
+    for name in ("_resolve_rotation_hosts", "_resolve_authority_host"):
+        assert "def %s(env=None, declared=None" % name in source
+    assert 'if HOST != "chiap08"' not in source

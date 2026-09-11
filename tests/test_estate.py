@@ -7,6 +7,7 @@ import pytest
 
 from skcapstone.estate import (
     EstateConfigError,
+    estate_authority_host,
     estate_rotation_hosts,
     host_lifecycle_claim,
     load_estate_profile,
@@ -142,3 +143,39 @@ def test_a_malformed_rotation_roster_fails_closed(tmp_path: Path, declared: obje
     write_estate(tmp_path, rotation_hosts=declared)
     with pytest.raises(EstateConfigError):
         estate_rotation_hosts(tmp_path)
+
+
+def test_an_estate_that_declares_no_authority_host_answers_none(tmp_path: Path) -> None:
+    """Silence is silence, so the caller keeps the publisher it already had."""
+    assert estate_authority_host(tmp_path) is None
+    write_estate(tmp_path)
+    assert estate_authority_host(tmp_path) is None
+
+
+def test_the_estate_record_declares_its_reconciliation_publisher(tmp_path: Path) -> None:
+    """The publisher is named once, beside the roster, and normalised."""
+    write_estate(tmp_path, authority_host=" NorOC2027 ")
+    assert estate_authority_host(tmp_path) == "noroc2027"
+
+
+def test_cluster_json_is_the_fallback_authority_host_source(tmp_path: Path) -> None:
+    """The same document the operator and realm fall back to answers here too."""
+    (tmp_path / "cluster.json").write_text(
+        json.dumps({"operator": "chef", "realm": "skworld.io", "authority_host": "noroc2027"})
+    )
+    assert estate_authority_host(tmp_path) == "noroc2027"
+
+
+def test_the_estate_record_wins_over_cluster_json_for_the_publisher(tmp_path: Path) -> None:
+    """The explicit authority record is consulted first, as it is for the roster."""
+    write_estate(tmp_path, authority_host="norwk01")
+    (tmp_path / "cluster.json").write_text(json.dumps({"authority_host": "noroc2027"}))
+    assert estate_authority_host(tmp_path) == "norwk01"
+
+
+@pytest.mark.parametrize("declared", ["", "not a host", ["noroc2027"], {}, None])
+def test_a_malformed_authority_host_fails_closed(tmp_path: Path, declared: object) -> None:
+    """Electing the wrong publisher, or none, leaves a stale report saying nothing."""
+    write_estate(tmp_path, authority_host=declared)
+    with pytest.raises(EstateConfigError):
+        estate_authority_host(tmp_path)

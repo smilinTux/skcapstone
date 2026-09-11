@@ -286,7 +286,8 @@ def test_seraph_dispatch_is_bounded_claimed_live_and_seat_scoped(
     assert captured["SKFLEET_MAX_LAUNCH"] == "2"
     assert captured["SKFLEET_SEAT_TARGET"] == "2"
     assert "SKFLEET_TARGET" not in captured
-    assert captured["SKFLEET_CODEX_MODEL_S"] == "sk-codex-mid"
+    assert captured["SKFLEET_MODEL_S"] == "sk-s"
+    assert captured["SKFLEET_CODEX_MODEL_S"] == "sk-s"
     assert calls[1][-1] == "skfleet-worker-codex-review01.service"
 
 
@@ -968,9 +969,18 @@ def test_role_dispatch_is_bounded_and_seat_scoped(tmp_path, monkeypatch, seat) -
     assert captured["SKFLEET_SEAT_TARGET"] == "2"
     assert captured["SKFLEET_MAX_LAUNCH"] == "2"
     assert captured["SKFLEET_GLM_TARGET"] == "0"
-    assert {captured[f"SKFLEET_CODEX_MODEL_{size}"] for size in ("S", "M", "L", "XL")} == {
-        "sk-codex-mid"
-    }
+    assert [captured[f"SKFLEET_MODEL_{size}"] for size in ("S", "M", "L", "XL")] == [
+        "sk-s",
+        "sk-m",
+        "sk-l",
+        "sk-xl",
+    ]
+    assert [captured[f"SKFLEET_CODEX_MODEL_{size}"] for size in ("S", "M", "L", "XL")] == [
+        "sk-s",
+        "sk-m",
+        "sk-l",
+        "sk-xl",
+    ]
 
 
 @pytest.mark.parametrize("seat", ["tank", "atlas"])

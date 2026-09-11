@@ -482,3 +482,58 @@ def estate_rotation_hosts(home: Path | str | None = None) -> tuple[str, ...] | N
             raise EstateConfigError(f"estate {ROTATION_HOSTS_KEY} names a host twice in {path}")
         return hosts
     return None
+
+
+#: Key an estate uses to name the one host that publishes shared reconciliation
+#: output. It sits beside :data:`ROTATION_HOSTS_KEY` in the same documents
+#: because both answer the same kind of question: which machines in this estate
+#: hold which fleet role.
+AUTHORITY_HOST_KEY = "authority_host"
+
+
+def estate_authority_host(home: Path | str | None = None) -> str | None:
+    """Return the host this estate declares as its reconciliation publisher.
+
+    Several fleet outputs are shared, single-writer files in the synced tree:
+    the full lifecycle reassessment report, automatic parent closeout, and
+    finished review claim release. Every rotation host computes the same answer
+    from the same shared cards, so letting all of them write is N-way write
+    contention over identical bytes, and on a Syncthing folder that is how a
+    file ends up with conflict copies instead of content. Exactly one host
+    publishes and the rest read.
+
+    WHICH host holds that role is estate configuration, not a property of this
+    code. Resolution reads the same files :func:`load_estate_profile` and
+    :func:`estate_rotation_hosts` already consult, most explicit first:
+
+    1. ``<home>/config/estate.json``
+    2. ``<home>/cluster.json``
+    3. ``/etc/skcapstone/cluster.json``
+
+    The first file that declares the key answers. A file that is absent,
+    unreadable, or silent on the key is not an answer, so an estate that has
+    stated nothing gets ``None`` and the caller keeps its own default. That is
+    what leaves an existing estate publishing exactly as it did before this key
+    existed.
+
+    Args:
+        home: The estate home to read. Defaults to the sovereign home.
+
+    Returns:
+        The declared host, or ``None`` when no consulted file declares one.
+
+    Raises:
+        EstateConfigError: When a file declares the key but the value is not a
+            well formed short host name. Refusing a malformed operator is loud
+            and recoverable; accepting one silently elects the wrong publisher,
+            or no publisher at all, and the shared report then goes stale with
+            nothing to say so.
+    """
+
+    root = sovereign_home(home)
+    for path in (root / ESTATE_CONFIG_RELATIVE, root / "cluster.json", SYSTEM_CLUSTER_PATH):
+        document = _read_json(path)
+        if document is None or AUTHORITY_HOST_KEY not in document:
+            continue
+        return _name(document[AUTHORITY_HOST_KEY], AUTHORITY_HOST_KEY, path)
+    return None

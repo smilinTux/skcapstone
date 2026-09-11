@@ -212,6 +212,56 @@
 
 ## Unreleased
 
+- Seat dispatch now asks SKGateway for a SIZE instead of a provider. The tank
+  and ATLAS role-dispatch path in `src/skcapstone/seat_cycle_entrypoint.py`
+  copied the environment and then `env.update`d `SKFLEET_CODEX_MODEL_S/M/L/XL`
+  to `sk-codex-mid`, so an operator's systemd drop-in setting those variables
+  was silently defeated and every estate installing this fleet was pinned to one
+  subscription provider. The new `resolve_size_class_models()` resolves each
+  size class with operator configuration winning over the default, and the
+  defaults are the generic capability buckets `sk-s`, `sk-m`, `sk-l`, `sk-xl`.
+  The gateway picks a member by capability floor and trust zone, so an estate
+  can run Claude, an OpenRouter free tier, NIM, or a local backend with no code
+  change. `scripts/fleet/skfleet-rotate.py` gets the same neutral defaults for
+  its per-size buckets (`_CODEX_LEVELS` is now `_SIZE_MODELS`), and its codex
+  lane fallback model is configurable through `SKFLEET_CODEX_LANE_MODEL`
+  instead of being a literal.
+
+  A bucket with no qualifying member still fails closed at the gateway, and
+  that is deliberate: nothing substitutes a smaller bucket, because a silent
+  downgrade hides a real capability gap behind work that quietly got weaker.
+
+  **Env var rename, with a deprecated alias.** `SKFLEET_MODEL_<size>` is the
+  new, provider-neutral name. `SKFLEET_CODEX_MODEL_<size>` keeps working and is
+  read second, so a live estate configured through the old name keeps its exact
+  behaviour across the upgrade; both names are written into the dispatch child
+  environment so an older deployed rotation script still receives the value. An
+  empty or whitespace value counts as unset in both spellings, so a blank
+  `Environment=` line cannot blank a bucket. The deprecated name will be
+  dropped once no estate sets it.
+
+- `scripts/fleet/skfleet-rotate.py` no longer compares hostnames against the
+  literal `chiap08` to decide who publishes shared reconciliation output. The
+  three sites (the full lifecycle reassessment report, automatic parent
+  closeout, and finished review claim release) now read one documented
+  `AUTHORITY_HOST`. The role is single-writer by design because concurrent
+  publishers race over the same Syncthing-backed files, and on a Syncthing
+  folder that produces conflict copies rather than content; which host holds it
+  is estate configuration, not a property of the code.
+
+  It is declared and resolved exactly like the rotation roster added in #639,
+  deliberately so, rather than as a second near-identical mechanism:
+  `estate.estate_authority_host()` reads an `authority_host` key from
+  `config/estate.json`, then `cluster.json`, then `/etc/skcapstone/cluster.json`
+  (the same documents `load_estate_profile()` and `estate_rotation_hosts()`
+  consult), and `_resolve_authority_host()` takes `SKFLEET_AUTHORITY_HOST`
+  first for a host bootstrapping before its record has synced, then the estate
+  record, then the historic default. A declared value that is malformed fails
+  closed with a `BLOCKED|` line instead of silently electing no publisher and
+  letting the shared report go stale with nothing to say so. The default stays
+  `chiap08`, the chi estate's publisher, so live behaviour is unchanged where
+  nothing is declared.
+
 - Card `bf7317af`: filter fleet worker mail recipients through configured,
   case-insensitive exclusions and prohibit implicit all-recipient broadcasts.
 

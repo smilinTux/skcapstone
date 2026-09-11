@@ -35,20 +35,48 @@ def _report(**changes):
 
 def test_only_authority_host_gets_shared_full_report_path(tmp_path):
     function = _functions("_full_reassessment_path")["_full_reassessment_path"]
-    assert function("chiap08", tmp_path) == tmp_path / "lifecycle-reassessment.json"
+    assert function("chiap08", tmp_path, "chiap08") == tmp_path / "lifecycle-reassessment.json"
     for host in ("chiap01", "chiap02", "chiap03", "chiap04"):
-        assert function(host, tmp_path) is None
+        assert function(host, tmp_path, "chiap08") is None
+
+
+@pytest.mark.parametrize("authority", ["noroc2027", "zioap01"])
+def test_any_estate_can_name_its_own_publisher(tmp_path, authority):
+    """No estate's hostname is baked into the shared report decision."""
+    function = _functions("_full_reassessment_path")["_full_reassessment_path"]
+    assert function(authority, tmp_path, authority) == tmp_path / "lifecycle-reassessment.json"
+    assert function("chiap08", tmp_path, authority) is None
+
+
+@pytest.mark.parametrize("authority", [None, ""])
+def test_no_configured_publisher_writes_no_shared_report(tmp_path, authority):
+    function = _functions("_full_reassessment_path")["_full_reassessment_path"]
+    assert function("chiap08", tmp_path, authority) is None
+
+
+def test_rotation_resolves_its_authority_host_as_estate_configuration():
+    """The publisher resolves exactly like the rotation roster, not by a literal."""
+    source = ROTATE.read_text(encoding="utf-8")
+    assert "AUTHORITY_HOST=_resolve_authority_host(declared=_estate_authority_host())" in source
+    assert "_full_reassessment_path(HOST,EVID,AUTHORITY_HOST)" in source
+    assert 'if HOST != "chiap08"' not in source
 
 
 def test_non_authority_summary_is_compact_and_points_to_authority():
     function = _functions("_reassessment_summary")["_reassessment_summary"]
-    summary = function("chiap03", _report(counts={"stale_claims": 2}), None)
+    summary = function("chiap03", _report(counts={"stale_claims": 2}), None, "chiap08")
     assert summary == (
         "REASSESSMENT|chiap03|report=authority:chiap08 sha256="
         + "a" * 64
         + ' counts={"stale_claims":2} excluded=0'
     )
     assert "classes" not in summary
+
+
+def test_summary_says_unset_when_the_estate_named_no_publisher():
+    function = _functions("_reassessment_summary")["_reassessment_summary"]
+    summary = function("zioap01", _report(counts={}), None, None)
+    assert "report=authority:unset" in summary
 
 
 @pytest.mark.parametrize(

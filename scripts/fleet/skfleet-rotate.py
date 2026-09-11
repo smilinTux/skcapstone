@@ -43,7 +43,11 @@ from skcapstone.review_admission import (
     governed_review_gate_reasons,
 )
 from skcapstone.fleet.review_pool import elastic_reviewer_identity, review_fanout_limit
-from skcapstone.estate import EstateConfigError, estate_rotation_hosts
+from skcapstone.estate import (
+    EstateConfigError,
+    estate_authority_host,
+    estate_rotation_hosts,
+)
 from skcapstone.seat_boundaries import BoundaryError
 from skcapstone.niobe_fanout import (
     FanoutBoundaryError,
@@ -117,6 +121,52 @@ def _resolve_rotation_hosts(env=None, declared=None,
     return hosts
 
 
+def _estate_authority_host(home=None):
+    """Return the reconciliation publisher this estate declares, or None.
+
+    Same contract as :func:`_estate_rotation_hosts`, for the same reason: an
+    estate with no record at all is an ordinary state, so silence is silence
+    and the caller keeps its own default, while a record that exists and is
+    WRONG is refused here rather than quietly electing the wrong publisher.
+    """
+    try:
+        return estate_authority_host(home)
+    except EstateConfigError as exc:
+        raise SystemExit("BLOCKED|authority_host|%s" % exc)
+
+
+def _resolve_authority_host(env=None, declared=None, default="chiap08"):
+    """Return the one host that may publish this estate's shared reports.
+
+    Several fleet outputs are shared, single-writer files: the full lifecycle
+    reassessment report, automatic parent closeout, and finished review claim
+    release. Every rotation host computes the same answer from the same shared
+    cards, so letting all of them write is N-way contention over identical
+    bytes, and on a Syncthing folder that produces conflict copies rather than
+    content. Exactly one host publishes and the rest read.
+
+    Resolution is most explicit first, matching _resolve_rotation_hosts:
+    SKFLEET_AUTHORITY_HOST for a host bootstrapping before its estate record
+    has synced, then the estate's declared authority_host, then the default.
+    The default is the chi estate's publisher exactly as it was when it was a
+    literal in this file, so an estate that declares nothing publishes from the
+    same host it did before this was configurable.
+    """
+    values = os.environ if env is None else env
+    raw = str(values.get("SKFLEET_AUTHORITY_HOST", "") or "").strip()
+    if raw:
+        host, source = raw.lower(), "SKFLEET_AUTHORITY_HOST"
+    elif declared:
+        host, source = str(declared).strip().lower(), "estate authority_host"
+    else:
+        return default
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", host):
+        raise SystemExit(
+            "BLOCKED|%s|authority host must be one well formed host name" % source
+        )
+    return host
+
+
 def _slot_summary(lanes):
     slots = " ".join(
         "%s=%d/%d" % (lane["name"], len(lane["busy"]), lane["target"])
@@ -132,9 +182,25 @@ def _bounded_ids(card_ids, limit=12):
     return ",".join(shown) or "-", max(0, len(values) - len(shown))
 
 
-def _full_reassessment_path(host, evidence_root):
-    """Keep exactly one shared full report, written only by its authority host."""
-    if host != "chiap08":
+def _full_reassessment_path(host, evidence_root, authority_host=None):
+    """Keep exactly one shared full report, written only by its authority host.
+
+    Every rotation host assesses the same shared card store, so N hosts writing
+    one Syncthing-backed file is N-way write contention over identical bytes.
+    Exactly one host publishes it and the rest read it. WHICH host that is, is
+    estate configuration and not a property of this code, so it is passed in
+    rather than compared against a literal hostname.
+
+    Args:
+        host: Name of the host running this rotation.
+        evidence_root: Directory holding the estate's shared evidence files.
+        authority_host: Host authorized to publish the shared report. ``None``
+            means the estate named no publisher, so no host writes it.
+
+    Returns:
+        The report path on the authority host, otherwise ``None``.
+    """
+    if not authority_host or host != authority_host:
         return None
     return Path(evidence_root) / "lifecycle-reassessment.json"
 
@@ -156,8 +222,12 @@ def _validate_reassessment(report):
     return report
 
 
-def _reassessment_summary(host, report, report_path):
-    destination = str(report_path) if report_path is not None else "authority:chiap08"
+def _reassessment_summary(host, report, report_path, authority_host=None):
+    """Return one bounded log line naming where the full report actually lives."""
+    destination = (
+        str(report_path) if report_path is not None
+        else "authority:%s" % (authority_host or "unset")
+    )
     counts = json.dumps(report["counts"], sort_keys=True, separators=(",", ":"))
     return "REASSESSMENT|%s|report=%s sha256=%s counts=%s excluded=%d" % (
         host, destination, report["content_sha256"], counts,
@@ -356,6 +426,10 @@ HOST=os.uname().nodename
 # bootstrapping before that record has synced. Declaring nothing keeps the chi
 # fleet this file has always carried, unchanged in value and in order.
 ROTATION_HOSTS=_resolve_rotation_hosts(declared=_estate_rotation_hosts())
+# The reconciliation publisher is the same kind of estate configuration, so it
+# is declared the same way and resolved in the same order: authority_host in the
+# estate record, SKFLEET_AUTHORITY_HOST for a host bootstrapping ahead of it.
+AUTHORITY_HOST=_resolve_authority_host(declared=_estate_authority_host())
 SKC=os.path.expanduser("~/.skenv/bin/skcapstone")
 TARGET=_required_lane_target("SKFLEET_TARGET")
 GLM_TARGET=_required_lane_target("SKFLEET_GLM_TARGET")
@@ -915,7 +989,7 @@ try:
     if not _LIFECYCLE_OK:
         raise RuntimeError("lifecycle reassessment module unavailable")
     assessment=_validate_reassessment(assess(Path(CARDS),[Path(EVID)]))
-    report_path=_full_reassessment_path(HOST,EVID)
+    report_path=_full_reassessment_path(HOST,EVID,AUTHORITY_HOST)
     if report_path is not None:
         _write_bounded_report(assessment,report_path)
     # The lifecycle report's unclaimable_cards class is computed from HOST-LOCAL
@@ -936,7 +1010,7 @@ try:
     _tracking = {r.get("card_id") for r in _classes.get("volatile_ci_identity", [])
                  if r.get("card_id") and r.get("reason")=="tracking_card"}
     excluded=set(assessment["excluded_card_ids"]) - _local_only - _tracking
-    log(d,_reassessment_summary(HOST,assessment,report_path))
+    log(d,_reassessment_summary(HOST,assessment,report_path,AUTHORITY_HOST))
 except Exception as exc:
     log(d,"BLOCKED|%s|lifecycle reassessment failed: %s"%(HOST,exc))
     sys.exit(2)
@@ -1001,7 +1075,11 @@ def _beat_interval():
     return os.environ.get("SKFLEET_BEAT_INTERVAL", "60")
 
 LANES=[
-    {"name":"codex","prefix":"codex-auto-","model":"sk-codex-mid",
+    # The lane fallback covers a card carrying no [S]/[M]/[L]/[XL] marker, which
+    # the launch path skips anyway; a sized card resolves through _SIZE_MODELS.
+    # Configurable so no estate has to edit this file to drop the codex name.
+    {"name":"codex","prefix":"codex-auto-",
+     "model":os.environ.get("SKFLEET_CODEX_LANE_MODEL","sk-codex-mid"),
      "target":TARGET},
     {"name":"glm","prefix":"glm-auto-","model":os.environ.get("SKFLEET_GLM_MODEL","sk-glm-s"),
      "target":0 if glm_held or not glm_catalog_ready else GLM_TARGET},
@@ -1029,27 +1107,37 @@ _GLM_LEVELS={key:os.environ.get("SKFLEET_GLM_MODEL_"+key,value)
              for key,value in _GLM_LEVEL_DEFAULTS.items()}
 _GLM_SIZE_RE=re.compile(r"\[(S|M|XL|L)\]")
 _KIMI_SIZE_RE=re.compile(r"\[(S|M|L|XL)\]")
-# The codex lane used a single hardcoded role for every card. sk-codex is the
-# FRONTIER role (registry.yaml: sk-codex -> codex-frontier -> gpt-5.6-sol), so an
-# [S] card was being dispatched to the most expensive model in the estate. It is
-# the right default for a hand-run pi session, and the wrong one for a fleet that
-# sizes its own work. Roles are used rather than raw gpt names so the gateway can
-# re-point a bucket without a fleet redeploy.
-#   sk-codex-fast -> codex-fast -> gpt-5.4-mini
-#   sk-codex-mid  -> codex-mid  -> gpt-5.6-luna   (the operator default)
-#   sk-codex      -> codex-frontier -> gpt-5.6-sol
-_CODEX_LEVEL_DEFAULTS={"S":"sk-codex-fast","M":"sk-codex-mid",
-                       "L":"sk-codex","XL":"sk-codex"}
-_CODEX_LEVELS={key:os.environ.get("SKFLEET_CODEX_MODEL_"+key,value)
-               for key,value in _CODEX_LEVEL_DEFAULTS.items()}
 _LOGICAL_ROUTES={"S":"sk-s","M":"sk-m","L":"sk-l","XL":"sk-xl"}
+# A card size selects a CAPABILITY BUCKET, never a provider. SKGateway resolves
+# sk-s, sk-m, sk-l, and sk-xl to a member that meets the capability floor and the
+# trust zone of the request, so one estate can run Claude, an OpenRouter free
+# tier, or NIM while another runs a subscription lane, with no edit here and no
+# fleet redeploy. The earlier defaults named codex roles directly
+# (sk-codex-fast, sk-codex-mid, sk-codex), which pinned every estate installing
+# this fleet to one subscription provider.
+#
+# A provider-pinned id is still a perfectly good operator override: set
+# SKFLEET_MODEL_<size> to sk-codex-mid, sk-glm-l, or any advertised route.
+# A bucket with no qualifying member fails closed at the gateway, and that gap
+# stays visible: nothing here substitutes a smaller bucket, because a silent
+# downgrade hides lost capability behind work that quietly got weaker.
+_SIZE_MODEL_DEFAULTS=dict(_LOGICAL_ROUTES)
+# SKFLEET_CODEX_MODEL_<size> is the deprecated, provider-named spelling of
+# SKFLEET_MODEL_<size>. It is read second so an estate configured before the
+# rename keeps its exact behaviour across the upgrade. An empty value counts as
+# unset, so a blank systemd Environment= line cannot blank a bucket.
+_SIZE_MODELS={key:(os.environ.get("SKFLEET_MODEL_"+key)
+                   or os.environ.get("SKFLEET_CODEX_MODEL_"+key)
+                   or value).strip() or value
+              for key,value in _SIZE_MODEL_DEFAULTS.items()}
 def _logical_route_for(core):
     """Return the one job-sized gateway bucket without selecting a backend."""
     matches=_GLM_SIZE_RE.findall(str((core or {}).get("title") or ""))
     return _LOGICAL_ROUTES.get(matches[0]) if len(matches)==1 else None
-def _codex_model_for(core):
+def _size_model_for(core):
+    """Return the configured bucket for this card size, or None when unsized."""
     match=_GLM_SIZE_RE.search(str((core or {}).get("title") or ""))
-    return _CODEX_LEVELS.get(match.group(1)) if match else None
+    return _SIZE_MODELS.get(match.group(1)) if match else None
 def _glm_model_for(core):
     match=_GLM_SIZE_RE.search(str((core or {}).get("title") or ""))
     return _GLM_LEVELS.get(match.group(1)) if match else None
@@ -3978,7 +4066,7 @@ def open_provisional_reviews(capacity, dry_run=False):
 
 def close_reviewed_parents():
     """Complete cards whose independent review is complete and PASSED."""
-    if HOST != "chiap08":
+    if HOST != AUTHORITY_HOST:
         return 0
     outcomes = _load_outcomes()
     closed = 0
@@ -4073,7 +4161,7 @@ def _durable_review_outcome(cid):
 
 def release_finished_review_claims():
     """Release exact local review generations after durable terminal outcomes."""
-    if HOST != "chiap08" or DRY:
+    if HOST != AUTHORITY_HOST or DRY:
         return 0
     released = 0
     owner_pattern = re.compile(
@@ -4891,7 +4979,7 @@ def _lane_model(lane, core):
     if lane["name"]=="glm":
         return _glm_model_for(core) or lane["model"]
     if lane["name"]=="codex":
-        return _codex_model_for(core) or lane["model"]
+        return _size_model_for(core) or lane["model"]
     if lane["name"]=="kimi":
         return _kimi_model_for(core)
     return lane["model"]
@@ -4913,7 +5001,7 @@ _health_lanes=list(LANES)
 for _glm_model in sorted(set(_GLM_LEVELS.values())):
     if _glm_model!=next(lane for lane in LANES if lane["name"]=="glm")["model"]:
         _health_lanes.append({"name":"glm","model":_glm_model})
-for _codex_model in sorted(set(_CODEX_LEVELS.values())):
+for _codex_model in sorted(set(_SIZE_MODELS.values())):
     if _codex_model!=next(lane for lane in LANES if lane["name"]=="codex")["model"]:
         _health_lanes.append({"name":"codex","model":_codex_model})
 for _kimi_model in ("kimi-for-coding", "k3"):

@@ -32,6 +32,7 @@ def test_releases_four_finished_claims_with_exact_cas_and_keeps_evidence(tmp_pat
     calls = []
     namespace = {
         "HOST": "chiap08",
+        "AUTHORITY_HOST": "chiap08",
         "DRY": False,
         "CARDS": str(card_root),
         "SKC": "skcapstone",
@@ -129,6 +130,7 @@ def test_live_process_and_changed_generation_are_never_released(tmp_path: Path) 
     calls = []
     namespace = {
         "HOST": "chiap08",
+        "AUTHORITY_HOST": "chiap08",
         "DRY": False,
         "CARDS": str(card_root),
         "SKC": "skcapstone",

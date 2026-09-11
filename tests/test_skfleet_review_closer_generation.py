@@ -46,6 +46,7 @@ class Harness:
         self.ns = {
             "CARDS": str(self.cards),
             "HOST": "chiap08",
+            "AUTHORITY_HOST": "chiap08",
             "SKC": "skcapstone",
             "d": object(),
             "hashlib": hashlib,
