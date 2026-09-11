@@ -4,6 +4,9 @@
   per builder node while preserving exact-request idempotency and terminal
   capacity release.
 
+- Card `7f9751c7`: keep current available provider capacity eligible for Seraph
+  while excluding only current throttled or unavailable capacity.
+
 - Card `9012e178`: report the existing `do-not-claim` dispatcher exclusion in
   `coord gates` instead of incorrectly describing excluded cards as eligible.
 

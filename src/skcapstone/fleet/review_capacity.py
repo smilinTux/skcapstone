@@ -104,7 +104,11 @@ def acquire_review_route_snapshot(
             state = _domain_state(health, queue, domain, observed_at)
             health_row = health.get(domain, {})
             capacity = health_row.get("capacity") if isinstance(health_row, dict) else None
-            if isinstance(capacity, dict) and capacity.get("current") is True:
+            if (
+                isinstance(capacity, dict)
+                and capacity.get("current") is True
+                and capacity.get("state") in {"throttled", "unavailable"}
+            ):
                 state = {**state, "state": "owner-down"}
             queue_row = queue[domain]
             routes.append(
