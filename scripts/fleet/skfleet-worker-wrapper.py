@@ -155,9 +155,7 @@ def review_supersession(args: argparse.Namespace) -> dict[str, str] | None:
     claim_revision = str(card.meta.get("_claim_revision") or "")
     if card.owner != args.owner or claim_revision != args.claim_revision:
         return None
-    superseded_by = str(card.links.get("superseded_by") or "").strip()
-    if not superseded_by:
-        return None
+    superseded_by = str(card.links.get("superseded_by") or "source-head-mismatch").strip()
     source_card = str(card.meta.get("link_source_card") or "").strip()
     source_head = str(card.meta.get("link_head_revision") or "").strip().lower()
     source = CardStore(Path.home() / ".skcapstone").fold(source_card) if source_card else None
