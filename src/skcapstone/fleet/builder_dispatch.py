@@ -546,6 +546,23 @@ def consume_one(
             revision = str(card.meta.get("_claim_revision") or "") if card else ""
             if not card or card.owner != owner or not revision:
                 raise BuilderDispatchError("claimed generation is not authoritative")
+            try:
+                _request_matches_current_card(coordination_home, request)
+            except BuilderDispatchError:
+                released = _release_exact(
+                    coordination_home, request["card_id"], owner, revision, actor=owner
+                )
+                _write_status(
+                    paths,
+                    node,
+                    request,
+                    "blocked",
+                    owner=owner,
+                    claim_revision=revision,
+                    attempt=int(prior.get("attempt") or 0),
+                    claim_released=released,
+                )
+                raise
             frozen = _frozen_claim_status(
                 paths,
                 coordination_home,

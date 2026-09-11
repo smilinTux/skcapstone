@@ -152,6 +152,57 @@ def test_reoffer_after_source_amendment_mints_a_new_bound_request(
     )
 
 
+def test_amendment_during_claim_releases_generation_without_launch(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41)
+    request = builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+    )
+    folded = _folded()
+    releases = []
+
+    def claim(_self, owner, _card_id):
+        folded.owner = owner
+        folded.meta = dict(_card()["meta"], _claim_revision="amended-generation")
+        folded.labels.append("codex-only")
+
+    def release(_self, owner, card_id, **kwargs):
+        releases.append((owner, card_id, kwargs["expected_claim_revision"]))
+        folded.owner = None
+        return True
+
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: folded)
+    monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
+    monkeypatch.setattr(builder_dispatch.Board, "release_claim", release)
+    monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
+    with pytest.raises(builder_dispatch.BuilderDispatchError, match="changed after dispatch"):
+        builder_dispatch.consume_one(
+            paths,
+            tmp_path,
+            "node-ziowk01",
+            launcher=lambda *_args: pytest.fail("amended generation launched"),
+            materializer=lambda _request, workspace: workspace,
+        )
+
+    status = builder_dispatch._load(
+        builder_dispatch.status_path(paths, "node-ziowk01", request["card_id"])
+    )
+    assert releases == [
+        (
+            "pi-builder-standby-node-ziowk01-24b00003",
+            "24b00003",
+            "amended-generation",
+        )
+    ]
+    assert status["state"] == "blocked"
+    assert status["claim_released"] is True
+    assert status["attempt"] == 0
+
+
 def test_duplicate_node_daemons_share_one_request_generation(
     paths, operator, noded41, monkeypatch, tmp_path
 ) -> None:
@@ -179,7 +230,7 @@ def test_duplicate_node_daemons_share_one_request_generation(
         with guard:
             calls["claim"] += 1
         folded.owner = owner
-        folded.meta = {"_claim_revision": "one-generation"}
+        folded.meta = dict(_card()["meta"], _claim_revision="one-generation")
 
     def launch(_command, _workspace):
         with guard:
@@ -227,7 +278,7 @@ def test_consumer_claims_exact_generation_and_reports_running(
     def claim(_self, owner, card_id):
         assert card_id == "24b00003"
         folded.owner = owner
-        folded.meta = {"_claim_revision": "claim-1"}
+        folded.meta = dict(_card()["meta"], _claim_revision="claim-1")
 
     monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
     monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda _self, _card: folded)
@@ -306,7 +357,7 @@ def test_freeze_during_materialization_prevents_claim_and_remains_retryable(
     def claim(_self, owner, _card_id):
         claims.append(owner)
         folded.owner = owner
-        folded.meta = {"_claim_revision": "claim-after-freeze"}
+        folded.meta = dict(_card()["meta"], _claim_revision="claim-after-freeze")
 
     monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
     monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: folded)
@@ -340,7 +391,7 @@ def test_freeze_after_claim_releases_generation_and_prevents_launch(
     def claim(_self, owner, _card_id):
         claims.append(owner)
         folded.owner = owner
-        folded.meta = {"_claim_revision": f"claim-{len(claims)}"}
+        folded.meta = dict(_card()["meta"], _claim_revision=f"claim-{len(claims)}")
         if len(claims) == 1:
             store.set_frozen(paths, True, writer=operator, reason="synchronized test")
 
@@ -395,7 +446,7 @@ def test_freeze_winning_atomic_exclusion_prevents_process_creation(
 
     def claim(_self, owner, _card_id):
         folded.owner = owner
-        folded.meta = {"_claim_revision": "atomic-claim"}
+        folded.meta = dict(_card()["meta"], _claim_revision="atomic-claim")
 
     def release(_self, owner, _card_id, **kwargs):
         releases.append((owner, kwargs["expected_claim_revision"]))
@@ -440,7 +491,7 @@ def test_live_old_worker_refreshes_and_cannot_be_reaped(
 
     def claim(_self, owner, _card_id):
         folded.owner = owner
-        folded.meta = {"_claim_revision": "claim-live"}
+        folded.meta = dict(_card()["meta"], _claim_revision="claim-live")
 
     monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
     monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: folded)
@@ -549,7 +600,7 @@ def test_terminal_request_does_not_starve_next_request(
     def claim(_self, owner, card_id):
         assert card_id == "20000002"
         folded.owner = owner
-        folded.meta = {"_claim_revision": "claim-next"}
+        folded.meta = dict(_card()["meta"], _claim_revision="claim-next")
 
     monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
     monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: folded)
@@ -580,7 +631,7 @@ def test_launch_failure_releases_exact_claim_and_retries_once(
     def claim(_self, owner, _card_id):
         claims.append(owner)
         folded.owner = owner
-        folded.meta = {"_claim_revision": f"claim-{len(claims)}"}
+        folded.meta = dict(_card()["meta"], _claim_revision=f"claim-{len(claims)}")
 
     def release(_self, owner, _card_id, **kwargs):
         assert kwargs["expected_claim_revision"] == folded.meta["_claim_revision"]
@@ -644,7 +695,7 @@ def test_supervisor_records_completion_and_sends_mail(
 
     def claim(_self, owner, _card_id):
         folded.owner = owner
-        folded.meta = {"_claim_revision": "claim-complete"}
+        folded.meta = dict(_card()["meta"], _claim_revision="claim-complete")
 
     process = SimpleNamespace(pid=45, poll=lambda: None)
     monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
