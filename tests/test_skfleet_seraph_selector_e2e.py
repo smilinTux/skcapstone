@@ -79,6 +79,23 @@ class _HealthyGateway(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
+    def do_POST(self) -> None:  # noqa: N802
+        if self.path != "/v1/chat/completions":
+            self.send_error(404)
+            return
+        length = int(self.headers.get("Content-Length", "0"))
+        request = json.loads(self.rfile.read(length))
+        encoded = json.dumps(
+            {"model": request["model"], "choices": [{"message": {"content": "OK"}}]}
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.send_header("x-sk-model-served", request["model"])
+        self.send_header("x-sk-backend", "provider-alpha")
+        self.end_headers()
+        self.wfile.write(encoded)
+
     def log_message(self, _format: str, *_args: object) -> None:
         pass
 
