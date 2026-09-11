@@ -199,6 +199,7 @@ def append_review_launch_receipt(
     actor: str,
     claim_revision: str,
     launched: bool,
+    route_identity: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Record one governed reviewer's exact claim generation and result."""
 
@@ -215,17 +216,37 @@ def append_review_launch_receipt(
         or card.meta.get("_claim_revision") != claim_revision
     ):
         raise BoundaryError("review launch receipt does not match the exact claim")
+    route = dict(route_identity or {})
+    if route:
+        required = {"logical_route", "provider", "capacity_domains", "model_or_bucket"}
+        domains = route.get("capacity_domains")
+        if (
+            set(route) != required
+            or any(
+                not isinstance(route[key], str) or not route[key]
+                for key in required - {"capacity_domains"}
+            )
+            or not isinstance(domains, list)
+            or not domains
+            or any(not isinstance(domain, str) or not domain for domain in domains)
+        ):
+            raise BoundaryError("review launch route identity is incomplete")
     return store.append_event(
         handoff.card_id,
         "review_assignment_launch",
         actor,
         transition_id=(actor + "-" + handoff.recommendation_id + "-" + claim_revision),
-        schema="skfleet.review-assignment-launch/v1",
+        schema=(
+            "skfleet.review-assignment-launch/v2"
+            if route
+            else "skfleet.review-assignment-launch/v1"
+        ),
         recommendation_id=handoff.recommendation_id,
         reviewer=handoff.reviewer,
         observed_state_revision=handoff.state_revision,
         claim_revision=claim_revision,
         launched=bool(launched),
+        route_identity=route or None,
     )
 
 

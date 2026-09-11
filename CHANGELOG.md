@@ -3,6 +3,11 @@
 - Card `9012e178`: report the existing `do-not-claim` dispatcher exclusion in
   `coord gates` instead of incorrectly describing excluded cards as eligible.
 
+- Card `d180fcf7`: discover healthy review routes from SKGateway model and
+  capacity metadata, enforce size, policy, and reviewer independence, account
+  occupancy per capacity domain, and persist typed route identity through
+  launch receipts and worker runtime evidence.
+
 - Card `3b881689`: align governed review diagnostics with Seraph's packaged
   two-seat target, preserve nonterminal partial findings, and reject producer
   self-review at the claim boundary.

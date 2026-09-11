@@ -74,9 +74,53 @@ def test_link_recommends_and_exact_reviewer_authorizes_fresh_assignment(
         actor="reviewer-one",
         claim_revision="claim-revision-1",
         launched=True,
+        route_identity={
+            "logical_route": "review-medium",
+            "provider": "provider-a",
+            "capacity_domains": ["domain-a"],
+            "model_or_bucket": "review-medium",
+        },
     )
     assert receipt["claim_revision"] == "claim-revision-1"
     assert receipt["launched"] is True
+    assert receipt["schema"] == "skfleet.review-assignment-launch/v2"
+    assert receipt["route_identity"]["capacity_domains"] == ["domain-a"]
+
+
+def test_launch_receipt_rejects_incomplete_route_identity(tmp_path: Path) -> None:
+    card(tmp_path)
+    recommendation = recommend_reviewer(
+        tmp_path,
+        card_id="feedface",
+        recommendation_id="assignment-1",
+        author="producer",
+        candidates=["reviewer-one"],
+        observed_process={"sessions": []},
+        evidence_sha256=HASH,
+    )
+    handoff = authorize_review_launch(
+        tmp_path,
+        recommendation,
+        actor="reviewer-one",
+        current_process={"sessions": []},
+        used_recommendation_ids=set(),
+    )
+    CardStore(tmp_path).append_event(
+        "feedface",
+        "claim",
+        "reviewer-one",
+        owner="reviewer-one",
+        claim_revision="claim-revision-1",
+    )
+    with pytest.raises(BoundaryError, match="route identity is incomplete"):
+        append_review_launch_receipt(
+            tmp_path,
+            handoff,
+            actor="reviewer-one",
+            claim_revision="claim-revision-1",
+            launched=True,
+            route_identity={"provider": "provider-a"},
+        )
 
 
 @pytest.mark.parametrize("candidate", ["", " ", "producer", "link"])

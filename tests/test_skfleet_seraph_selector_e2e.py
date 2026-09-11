@@ -25,23 +25,49 @@ GATEWAY_REVISION = "d" * 40
 class _HealthyGateway(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         now = datetime.now(UTC)
-        if self.path == "/health":
+        if self.path == "/v1/models":
+            body = {
+                "data": [
+                    {
+                        "id": f"review-{provider}",
+                        "provider": provider,
+                        "advertised": True,
+                        "stale": False,
+                        "tools": True,
+                        "card": {
+                            "size_class": "M",
+                            "reasoning": True,
+                            "tier": "local" if provider == "provider-alpha" else "cloud",
+                        },
+                    }
+                    for provider in ("provider-alpha", "provider-beta")
+                ]
+            }
+        elif self.path == "/health":
             body = {
                 "status": "ok",
                 "backends": {
-                    "codex": {
+                    provider: {
                         "status": "up",
                         "observed": True,
                         "quarantined": False,
                         "lastCheck": int(now.timestamp() * 1000),
                     }
+                    for provider in ("provider-alpha", "provider-beta")
                 },
             }
         elif self.path == "/queue":
             body = {
                 "timestamp": now.isoformat(),
                 "pool": {},
-                "backends": {"codex": {"capacityDomain": "codex", "max": 3}},
+                "backends": {
+                    provider: {
+                        "capacityDomain": provider,
+                        "max": 1,
+                        "active": 0,
+                    }
+                    for provider in ("provider-alpha", "provider-beta")
+                },
             }
         else:
             self.send_error(404)
@@ -368,8 +394,16 @@ cycle("replay", "seraph")
     )
     assert lane_snapshot["runtime_revision"] == GATEWAY_REVISION
     assert lane_snapshot["errors"] == []
-    codex_lane = next(row for row in lane_snapshot["lanes"] if row["lane"] == "codex")
-    assert codex_lane["domains"] == [{"capacity_domain": "codex", "max": 3, "state": "healthy"}]
+    route_snapshot = json.loads(
+        (home / ".skcapstone" / "evidence" / "fleet-review-routes.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert route_snapshot["error"] is None
+    assert {route["capacity_domain"] for route in route_snapshot["routes"]} == {
+        "provider-alpha",
+        "provider-beta",
+    }
 
     folded_cards = [store.fold(card_id) for card_id in card_ids]
     assert all(folded is not None for folded in folded_cards)
@@ -408,10 +442,22 @@ cycle("replay", "seraph")
         ]
         assert len(claim_events) == 1
         assert len(receipt_events) == 1
+        route = receipt_events[0]["route_identity"]
+        assert receipt_events[0]["schema"] == "skfleet.review-assignment-launch/v2"
+        assert route["logical_route"] in {"review-provider-alpha", "review-provider-beta"}
+        assert route["provider"] in {"provider-alpha", "provider-beta"}
+        assert route["capacity_domains"] == [route["provider"]]
+        assert route["model_or_bucket"] == route["logical_route"]
         workspace = home / ".skcapstone" / "fleet" / "workspaces" / folded.owner
         assert (workspace / "REAL-GIT-WORKSPACE.txt").read_text(encoding="utf-8") == (
             "real Link to Seraph workspace\n"
         )
+    assert {
+        event["route_identity"]["provider"]
+        for card_id in card_ids
+        for event in store._read_events(card_id)
+        if event.get("action") == "review_assignment_launch" and event.get("launched") is True
+    } == {"provider-alpha", "provider-beta"}
     git_checks = {
         "origin": ["config", "--get", "remote.origin.url"],
         "branch": ["branch", "--show-current"],
