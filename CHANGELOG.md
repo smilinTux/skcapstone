@@ -1,5 +1,9 @@
 # Changelog
 
+- Card `733e74b0`: resolve manual and automatic fleet launches through the
+  current SKGateway catalog and probe the exact logical dispatch route before
+  worktree creation or claim.
+
 - Card `2dea585b`: use current advertised SKGateway routes and shared capacity
   domains for bounded ordinary producer selection instead of treating unrelated
   long-lived Pi sessions as active gateway work.
