@@ -20,7 +20,6 @@ from skcapstone.fleet import builder_dispatch, sknoded, store
 def _clear_process_registry(monkeypatch):
     builder_dispatch._PROCESSES.clear()
     monkeypatch.setenv("SKFLEET_PI", "/test/bin/pi")
-    monkeypatch.setenv("SKFLEET_PI_CARDSTORE_GUARD", "/test/bin/pi-cardstore-guard.mjs")
     monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: _folded())
     yield
     builder_dispatch._PROCESSES.clear()
@@ -109,12 +108,21 @@ def test_worker_command_is_pi_through_gateway_only(monkeypatch) -> None:
     assert "SKFLEET_CLAIM_REVISION=rev" in command
 
 
-def test_worker_command_fails_closed_without_mediated_runtime(monkeypatch) -> None:
-    monkeypatch.delenv("SKFLEET_PI", raising=False)
+def test_worker_command_uses_bundled_guard_in_isolated_environment(monkeypatch) -> None:
     monkeypatch.delenv("SKFLEET_PI_CARDSTORE_GUARD", raising=False)
     monkeypatch.setattr(builder_dispatch.shutil, "which", lambda *_args: None)
+    command = builder_dispatch.worker_command(
+        _card() | {"card_id": "24b00003"}, "owner", "rev", "/tmp/work"
+    )
 
-    with pytest.raises(builder_dispatch.BuilderDispatchError, match="mediated worker runtime"):
+    assert command[command.index("--extension") + 1] == str(builder_dispatch._BUNDLED_GUARD)
+    assert builder_dispatch._BUNDLED_GUARD.is_file()
+
+
+def test_worker_command_rejects_missing_configured_guard(monkeypatch) -> None:
+    monkeypatch.setenv("SKFLEET_PI_CARDSTORE_GUARD", "/missing/pi-cardstore-guard.mjs")
+
+    with pytest.raises(builder_dispatch.BuilderDispatchError, match="does not exist"):
         builder_dispatch.worker_command(
             _card() | {"card_id": "24b00003"}, "owner", "rev", "/tmp/work"
         )

@@ -30,6 +30,7 @@ TERMINAL_STATES = {"completed", "blocked", "failed", "stale"}
 MAX_ATTEMPTS = 2
 _PROCESSES: dict[str, object] = {}
 _WORKER_TOOLS = "read,bash,edit,write,grep,find,ls"
+_BUNDLED_GUARD = Path(__file__).resolve().parents[3] / "scripts/fleet/pi-cardstore-guard.mjs"
 
 
 class BuilderDispatchError(ValueError):
@@ -406,12 +407,27 @@ def _reconcile_running(
     )
 
 
+def _guard_path() -> str:
+    """Resolve the mediated write guard from configuration or this checkout."""
+    configured = os.environ.get("SKFLEET_PI_CARDSTORE_GUARD")
+    if configured:
+        if not Path(configured).is_file():
+            raise BuilderDispatchError("configured Pi CardStore write guard does not exist")
+        return configured
+    discovered = shutil.which("pi-cardstore-guard.mjs")
+    if discovered:
+        return discovered
+    if _BUNDLED_GUARD.is_file():
+        return str(_BUNDLED_GUARD)
+    raise BuilderDispatchError("mediated worker runtime is not installed")
+
+
 def worker_command(request: dict, owner: str, claim_revision: str, workspace: Path) -> list[str]:
     """Build the only permitted remote worker command."""
     worker = os.environ.get("SKFLEET_PI") or shutil.which("pi")
-    guard = os.environ.get("SKFLEET_PI_CARDSTORE_GUARD") or shutil.which("pi-cardstore-guard.mjs")
-    if not worker or not guard:
+    if not worker:
         raise BuilderDispatchError("mediated worker runtime is not installed")
+    guard = _guard_path()
     home = str(Path.home())
     return [
         "/usr/bin/env",
