@@ -142,9 +142,7 @@ def acquire_review_route_snapshot(
     return snapshot
 
 
-def load_route_occupancy(
-    home: Path, *, now: float | None = None
-) -> tuple[dict[str, int], bool]:
+def load_route_occupancy(home: Path, *, now: float | None = None) -> tuple[dict[str, int], bool]:
     """Read fresh typed runtime route identities; flag ambiguous live records."""
     current = time.time() if now is None else now
     occupancy: dict[str, int] = {}

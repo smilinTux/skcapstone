@@ -83,9 +83,7 @@ def _documents(now: float):
         },
     }
     queue = {
-        "timestamp": datetime.datetime.fromtimestamp(
-            now, datetime.timezone.utc
-        ).isoformat(),
+        "timestamp": datetime.datetime.fromtimestamp(now, datetime.timezone.utc).isoformat(),
         "pool": {},
         "backends": {
             "local-a": {
@@ -136,9 +134,12 @@ def test_provider_neutral_routes_tier_policy_and_shared_capacity(tmp_path):
     second = choose_review_route(routes, {first["capacity_domain"]: 1})
     assert first["capacity_domain"] == "cloud-b"
     assert second["capacity_domain"] == "local-a"
-    assert eligible_review_routes(
-        snapshot, "M", ["local-only"], "producer", "pi-seraph-review", {}
-    )[0]["logical_route"] == "route-local-large"
+    assert (
+        eligible_review_routes(snapshot, "M", ["local-only"], "producer", "pi-seraph-review", {})[
+            0
+        ]["logical_route"]
+        == "route-local-large"
+    )
     assert eligible_review_routes(snapshot, "XL", [], "producer", "reviewer", {}) == []
     assert eligible_review_routes(snapshot, "M", [], "same", "same", {}) == []
 
