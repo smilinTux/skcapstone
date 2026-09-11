@@ -14,7 +14,7 @@ from skcoord.card_store import CardStore
 from skcapstone.cli.coord import register_coord_commands
 from skcapstone.coordination import Board, Task
 from skcapstone.mcp_server import call_tool
-from tests.test_ci_applicability import completion_fixture, repository_fixture
+from tests.test_ci_applicability import completion_fixture, git, repository_fixture
 
 _REQUIRED = (
     "ci_check_docs",
@@ -281,3 +281,54 @@ async def test_nonreview_completion_remains_unchanged(tmp_path, entrypoint):
     home = _review_home(tmp_path, "ordinary implementation", None)
     ok, detail = await _invoke(home, entrypoint)
     assert ok, detail
+
+
+@pytest.mark.parametrize("missing", [None, "candidate", "base", "blob", "tree"])
+def test_promisor_profile_binding_never_attempts_transport(tmp_path, monkeypatch, missing):
+    """Local policy remains readable while missing promisor objects fail offline."""
+    import subprocess
+
+    from skcapstone.ci_applicability import bind_ci_profile
+
+    repo, _, meta, request = repository_fixture(tmp_path)
+    git(repo, "config", "remote.origin.promisor", "true")
+    git(repo, "config", "protocol.allow", "never")
+    monkeypatch.setenv("GIT_NO_LAZY_FETCH", "0")
+    monkeypatch.setenv("GIT_ALLOW_PROTOCOL", "https")
+    if missing == "candidate":
+        request["candidate_revision"] = "f" * 40
+    if missing == "base":
+        meta["base_revision"] = "f" * 40
+    if missing in {"blob", "tree"}:
+        suffix = ".skcapstone/ci-profile.json" if missing == "blob" else ".skcapstone"
+        oid = git(repo, "rev-parse", "HEAD:" + suffix)
+        (repo / ".git/objects" / oid[:2] / oid[2:]).unlink()
+    observed = []
+    actual_run = subprocess.run
+
+    def observe(*args, **kwargs):
+        """Record safe rejected subprocess stderr without permitting transport."""
+        kwargs["env"] = dict(kwargs["env"], GIT_TRACE="1")
+        try:
+            return actual_run(*args, **kwargs)
+        except subprocess.CalledProcessError as error:
+            observed.append(error.stderr.decode())
+            raise
+
+    with patch("skcapstone.ci_applicability.subprocess.run", side_effect=observe) as run:
+        if missing:
+            with pytest.raises(ValueError):
+                bind_ci_profile(meta, request)
+        else:
+            assert (
+                bind_ci_profile(meta, request)["candidate_revision"]
+                == request["candidate_revision"]
+            )
+    assert not any(
+        "transport" in error or ("run_command:" in line and "fetch" in line)
+        for error in observed
+        for line in error.splitlines()
+    ), observed
+    for call in run.call_args_list:
+        assert call.kwargs["env"]["GIT_NO_LAZY_FETCH"] == "1"
+        assert call.kwargs["env"]["GIT_ALLOW_PROTOCOL"] == ""

@@ -121,7 +121,14 @@ def _manifest(text: object) -> dict:
 def _git(repo: Path, *args: str) -> bytes:
     """Run bounded offline Git inspection without shell or ambient Git overrides."""
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
-    env.update(GIT_NO_REPLACE_OBJECTS="1", GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+    env.update(
+        GIT_NO_REPLACE_OBJECTS="1",
+        GIT_CONFIG_NOSYSTEM="1",
+        GIT_CONFIG_GLOBAL=os.devnull,
+        GIT_NO_LAZY_FETCH="1",
+        # An empty allowlist overrides repository-specific protocol permissions.
+        GIT_ALLOW_PROTOCOL="",
+    )
     try:
         return subprocess.run(
             ["git", "-C", str(repo), *args],
