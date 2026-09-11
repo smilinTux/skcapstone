@@ -154,13 +154,14 @@ def test_worker_scope_is_lane_and_generation_only() -> None:
 
 
 def test_exact_generation_claim_release_is_owned_by_the_wrapper() -> None:
-    """The child cannot release before wrapper snapshot invalidation."""
+    """The child cannot retire ownership before the wrapper's exact release."""
     source = _source()
 
     child = source[source.index("child=(") : source.index("wrapper=os.path")]
     assert "release-claim" not in child
-    assert 'trap "stop_beat; idle_agent; exit 143" HUP INT TERM' in source
-    assert 'trap "stop_beat; idle_agent" EXIT' in source
+    assert "idle_agent" not in child
+    assert 'trap "stop_beat; exit 143" HUP INT TERM' in source
+    assert 'trap "stop_beat" EXIT' in source
     assert '"--claim-revision",claimed_revision' in source
     # Launches still flow through the single detached launch command.
     assert "subprocess.run(_worker_launch_command(unit,workspace,inner)" in source

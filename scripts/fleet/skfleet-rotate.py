@@ -5349,13 +5349,6 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     _bi = _beat_interval()
     _bf_path = "~/.skcapstone/fleet/beats/" + name + ".json"
     child=(
-        "idle_agent() { python3 -c \"import json,datetime;from pathlib import Path;"
-        "p=Path.home()/'.skcapstone/coordination/agents'/('%s.json');"
-        "d=json.loads(p.read_text());"
-        "d.update(state='idle',current_task=None,claimed_tasks=[],"
-        "last_seen=datetime.datetime.now(datetime.timezone.utc).isoformat());"
-        "t=p.with_suffix('.json.tmp');t.write_text(json.dumps(d,indent=2)+chr(10));"
-        "t.replace(p)\" >/dev/null 2>&1 || true; }; "
         "beat() { while :; do "
         "trap 'trap - HUP INT TERM; "
         "for sleeper in $(jobs -pr); do kill \"$sleeper\" 2>/dev/null || true; done; "
@@ -5369,8 +5362,8 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         "sleep %s & wait $!; done; }; "
         "beat & BEAT=$!; "
         "stop_beat() { kill $BEAT 2>/dev/null || true; wait $BEAT 2>/dev/null || true; }; "
-        'trap "stop_beat; idle_agent; exit 143" HUP INT TERM; '
-        'trap "stop_beat; idle_agent" EXIT; '
+        'trap "stop_beat; exit 143" HUP INT TERM; '
+        'trap "stop_beat" EXIT; '
         "env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s "
         "SKFLEET_CARD_ID=%s SKFLEET_CLAIM_REVISION=%s SKFLEET_SESSION_ID=%s "
         "SKFLEET_FANOUT_REQUEST_ID=%s SKFLEET_FANOUT_REQUESTER=%s "
@@ -5378,9 +5371,8 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         "%s --approve --extension %s --name %s "
         "--provider skgateway --model %s --thinking off --no-context-files --no-skills --tools %s "
         '-p "$(cat %s)"; '
-        "rc=$?; trap - EXIT HUP INT TERM; stop_beat; idle_agent; exit $rc"
-        % (name,
-           name, cid, claimed_revision, sess,
+        "rc=$?; trap - EXIT HUP INT TERM; stop_beat; exit $rc"
+        % (name, cid, claimed_revision, sess,
            _bf_path, _bf_path, _bf_path,
            _bi,
            name, name, shlex.quote(workspace), cid, shlex.quote(claimed_revision),

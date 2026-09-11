@@ -8,6 +8,9 @@
   occupancy per capacity domain, and persist typed route identity through
   launch receipts and worker runtime evidence.
 
+- Card `f0e09b1d`: keep worker ownership projections intact until the wrapper
+  performs the exact-generation claim release and terminal capacity cleanup.
+
 - Card `3b881689`: align governed review diagnostics with Seraph's packaged
   two-seat target, preserve nonterminal partial findings, and reject producer
   self-review at the claim boundary.
