@@ -3,6 +3,7 @@
 import copy
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -89,6 +90,47 @@ def test_bind_exact_git_objects(tmp_path, kind):
     assert capsule["profile_sha256"] == hashlib.sha256(policy.read_bytes()).hexdigest()
     policy.write_text("mutable checkout is not trusted")
     assert bind_ci_profile(meta, request) == capsule
+
+
+@pytest.mark.parametrize("orphan", [False, True])
+@pytest.mark.parametrize("ambient_override", [False, True])
+def test_binding_ignores_mutable_graft_ancestry(tmp_path, monkeypatch, orphan, ambient_override):
+    """Only immutable parent headers determine ancestry, not local graft files."""
+    repo, _, meta, request = repository_fixture(tmp_path)
+    if orphan:
+        git(repo, "checkout", "--orphan", "unrelated")
+        git(repo, "commit", "-qm", "unrelated root")
+        request["candidate_revision"] = git(repo, "rev-parse", "HEAD")
+    candidate = request["candidate_revision"]
+    header = git(repo, "cat-file", "commit", candidate).split("\n\n", 1)[0]
+    assert any(line.startswith("parent ") for line in header.splitlines()) is not orphan
+    if orphan:
+        with pytest.raises(ValueError):
+            bind_ci_profile(meta, request)
+    else:
+        original = bind_ci_profile(meta, request)
+
+    # Forge a parent for the orphan, or remove a real descendant's parent.
+    graft = candidate + (" " + meta["base_revision"] if orphan else "") + "\n"
+    (repo / ".git/info/grafts").write_text(graft)
+    if ambient_override:
+        ambient = tmp_path / "ambient-grafts"
+        ambient.write_text(graft)
+        monkeypatch.setenv("GIT_GRAFT_FILE", str(ambient))
+    else:
+        monkeypatch.delenv("GIT_GRAFT_FILE", raising=False)
+    with patch("skcapstone.ci_applicability.subprocess.run", wraps=subprocess.run) as run:
+        if orphan:
+            with pytest.raises(ValueError):
+                bind_ci_profile(meta, request)
+        else:
+            assert bind_ci_profile(meta, request) == original
+    assert run.call_count
+    for call in run.call_args_list:
+        assert call.kwargs["env"]["GIT_GRAFT_FILE"] == os.devnull
+        assert call.kwargs["env"]["GIT_NO_REPLACE_OBJECTS"] == "1"
+        assert call.kwargs["env"]["GIT_NO_LAZY_FETCH"] == "1"
+        assert call.kwargs["env"]["GIT_ALLOW_PROTOCOL"] == ""
 
 
 @pytest.mark.parametrize(
