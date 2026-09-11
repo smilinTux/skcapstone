@@ -7,8 +7,13 @@ activation", and the repo "does not provide a scheduler". Activation is the
 adopter's job. This is that job, for one target, done the smallest honest way.
 
 WHAT IT MEASURES
-    Per fleet node, the age in milliseconds of its last self-report
-    (``fleet/status/<node>/node.json``). Heartbeat freshness is a real SLI: it
+    Per fleet node, the age in milliseconds of its last HEARTBEAT
+    (``fleet/status/<node>/heartbeat.json``), which is the file
+    ``fleet/node_controller.py`` reads to derive a node's phase. Not
+    ``node.json``: that is the fuller self-report and it lags. Observed on the
+    live estate, node-ollama's heartbeat was 24s old while its node.json was
+    6m 20s old, so measuring node.json would have reported a healthy node as
+    nearly six minutes stale. Heartbeat freshness is a real SLI: it
     is exactly what was silently wrong on node-41, which reported every 300s
     against a shorter liveness threshold and therefore read as Dead between
     beats while being perfectly healthy.
@@ -120,7 +125,14 @@ def node_observations(home: Path, now: datetime) -> list[dict]:
             data = json.loads(node_file.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             data = {}
-        reported = _iso(data.get("reportedAt") or data.get("updatedAt"))
+        # Liveness comes from heartbeat.json, the same file the fleet's own
+        # phase derivation reads. node.json is only consulted for the role
+        # label, because it lags the heartbeat by minutes.
+        try:
+            beat = json.loads((node_file.parent / "heartbeat.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            beat = {}
+        reported = _iso(beat.get("ts") or beat.get("updatedAt"))
         # Strictly increasing across this cycle AND every later cycle.
         cursor = f"{stamp:012d}{index:03d}"
         if reported is None:

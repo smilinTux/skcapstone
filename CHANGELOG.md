@@ -1,5 +1,12 @@
 # Changelog
 
+- The SKRSI fleet collector now measures `heartbeat.json`, the file the fleet's
+  own phase derivation reads, instead of `node.json`. The metric was named
+  heartbeat freshness while measuring the slower full self-report. Observed on
+  the live estate: node-ollama's heartbeat was 24s old while its node.json was
+  6m20s old, so the metric reported a healthy node as nearly six minutes stale.
+  It now agrees exactly with `skcapstone fleet nodes`.
+
 - SKRSI is activated for its first target on the nor estate:
   `scripts/skrsi/collect_fleet.py` emits fleet heartbeat-freshness
   observations into a host-local append-only outbox. SKRSI ships contracts and

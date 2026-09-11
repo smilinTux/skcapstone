@@ -21,16 +21,44 @@ def load_module():
     return module
 
 
-def make_home(tmp_path: Path, nodes: dict[str, str | None]) -> Path:
+def make_home(
+    tmp_path: Path, nodes: dict[str, str | None], *, node_json_ts: str | None = None
+) -> Path:
+    """Build a fleet store. ``nodes`` maps node -> heartbeat ts (None = absent).
+
+    ``node_json_ts`` optionally sets a DIFFERENT timestamp on node.json so a
+    test can prove which file the collector actually reads.
+    """
     home = tmp_path / "skcapstone"
     for node, reported in nodes.items():
         d = home / "fleet" / "status" / node
         d.mkdir(parents=True, exist_ok=True)
         body = {"spec": {"spec": {"role": "control"}}}
-        if reported is not None:
-            body["reportedAt"] = reported
+        if node_json_ts is not None:
+            body["reportedAt"] = node_json_ts
         (d / "node.json").write_text(json.dumps(body), encoding="utf-8")
+        if reported is not None:
+            (d / "heartbeat.json").write_text(
+                json.dumps({"node": node, "ts": reported}), encoding="utf-8"
+            )
     return home
+
+
+def test_measures_the_heartbeat_not_the_slower_self_report(tmp_path):
+    """Liveness must come from heartbeat.json, the file phase derivation reads.
+
+    node.json is the fuller self-report and lags by minutes. Observed live:
+    node-ollama's heartbeat was 24s old while its node.json was 6m20s old, so
+    reading node.json reported a healthy node as nearly six minutes stale.
+    """
+    cf = load_module()
+    home = make_home(
+        tmp_path,
+        {"node-a": "2026-09-11T11:59:30Z"},  # heartbeat: 30s old
+        node_json_ts="2026-09-11T11:54:00Z",  # self-report: 6m old
+    )
+    (envelope,) = cf.node_observations(home, NOW)
+    assert envelope["metadata"]["duration_ms"] == pytest.approx(30_000.0)
 
 
 def test_every_node_yields_one_accepted_observation(tmp_path):
