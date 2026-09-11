@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import errno
 import json
 import os
 import stat
@@ -80,16 +81,27 @@ def catalog_path() -> Path:
 
 
 def _secure_regular_file(path: Path) -> os.stat_result:
-    if path.is_symlink():
-        raise ValueError("catalog must not be a symlink")
-    info = path.stat()
-    if not stat.S_ISREG(info.st_mode):
-        raise ValueError("catalog must be a regular file")
-    if info.st_uid != os.getuid():
-        raise ValueError("catalog must be owned by the current user")
-    if stat.S_IMODE(info.st_mode) & 0o077:
-        raise ValueError("catalog must not be accessible by group or other")
-    return info
+    """Validate and normalize the catalog without ever following a symlink."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise ValueError("catalog must not be a symlink") from exc
+        raise
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("catalog must be a regular file")
+        if info.st_uid != os.getuid():
+            raise ValueError("catalog must be owned by the current user")
+        # Pi's catalog is user-owned data.  Normalize a live 0664 file before
+        # parsing or reconciling it, while retaining ownership and contents.
+        if stat.S_IMODE(info.st_mode) != 0o600:
+            os.fchmod(descriptor, 0o600)
+            info = os.fstat(descriptor)
+        return info
+    finally:
+        os.close(descriptor)
 
 
 def reconcile(document: dict) -> tuple[dict, list[str]]:

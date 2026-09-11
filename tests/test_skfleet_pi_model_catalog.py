@@ -144,13 +144,13 @@ def test_atomic_write_preserves_mode_and_unrelated_fields(tmp_path: Path):
     )
 
 
-def test_rejects_insecure_catalog(tmp_path: Path):
+def test_normalizes_insecure_catalog(tmp_path: Path):
     module = _module()
     path = tmp_path / "models.json"
     path.write_text(json.dumps(_document()), encoding="utf-8")
-    path.chmod(0o644)
-    with pytest.raises(ValueError, match="group or other"):
-        module.load_and_reconcile(path)
+    path.chmod(0o664)
+    module.load_and_reconcile(path)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
 def test_rejects_symlink(tmp_path: Path):
@@ -174,11 +174,10 @@ def test_cli_reports_one_sanitized_line_without_traceback_or_catalog(tmp_path: P
         text=True,
         check=False,
     )
-    assert result.returncode == 2
-    assert result.stdout == ""
-    assert result.stderr.splitlines() == [
-        "PI_MODEL_CATALOG_ERROR|ValueError|" "catalog must not be accessible by group or other"
-    ]
+    assert result.returncode == 0
+    assert result.stdout.startswith("PI_MODEL_CATALOG|changed|")
+    assert result.stderr == ""
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert "Traceback" not in result.stderr
     assert "preserve-me" not in result.stderr
 
