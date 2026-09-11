@@ -5057,6 +5057,12 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     _attempt_escalation=needs_escalation(cid,core,_labels)
     _attempt_health={lane["name"]:_health_for(
         lane["name"],_lane_model(lane,core)) for lane in LANES}
+    if not _ONLY_SEAT:
+        _producer_routes=_producer_routes_for(
+            core,_labels,"codex" if "codex-only" in {
+                str(label).strip().lower() for label in _labels} else None)
+        _attempt_health["codex"]=(
+            bool(_producer_routes),"gateway-route-capacity" if _producer_routes else "unknown")
     if _ONLY_SEAT=="seraph":
         _attempt_health["codex"]=(
             launch_remaining.get("codex",0)>0,"review-route-capacity")

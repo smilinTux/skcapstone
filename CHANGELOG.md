@@ -1,5 +1,8 @@
 # Changelog
 
+- Card `1cfb52d3`: keep provider-neutral gateway route health during the final
+  producer admission recheck so larger healthy routes can serve smaller cards.
+
 - Card `733e74b0`: resolve manual and automatic fleet launches through the
   current SKGateway catalog and probe the exact logical dispatch route before
   worktree creation or claim.
