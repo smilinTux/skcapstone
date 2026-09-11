@@ -27,6 +27,7 @@ LANES = [
     {"name": "codex", "model": "sk-codex"},
 ]
 DOMAINS = {"qwen": ("qwen-a", "qwen-b"), "codex": ("codex",)}
+LANE_SCRIPT = Path(__file__).parents[1] / "scripts/fleet/skfleet-rotate.py"
 
 
 class Response:
@@ -188,6 +189,42 @@ def test_rotator_codex_size_aliases_have_exact_health_admission(
     expected = (True, "healthy") if backend_status == "up" else (False, "model_owner_backend_down")
     assert _admit(snapshot, "codex", model) == expected
     assert _admit(snapshot, "codex", "unconfigured-alias") == (False, "model-mismatch")
+
+
+def test_configured_kimi_capacity_domain_matches_gateway_contract() -> None:
+    # The gateway calls the coding family kimi-coding, not kimi-for-coding.
+    # A label mismatch produces an unknown/mismatch row even when Kimi is up.
+    source = LANE_SCRIPT.read_text(encoding="utf-8")
+    assert '"SKFLEET_KIMI_CAPACITY_DOMAINS","kimi-coding,kimi-k3"' in source
+    assert '"SKFLEET_KIMI_CAPACITY_DOMAINS","kimi-for-coding,kimi-k3"' not in source
+
+
+def test_glm_and_kimi_snapshot_rows_are_attributable() -> None:
+    documents = _documents()
+    for name in ("zai", "kimi-coding"):
+        documents["/health"]["backends"][name] = {
+            "status": "up", "observed": True, "quarantined": False,
+            "lastCheck": 2_000_000_000_000,
+        }
+        documents["/queue"]["backends"][name] = {
+            "capacityDomain": name, "max": 4,
+        }
+    lanes = [
+        {"name": "glm", "model": "glm-4.6"},
+        {"name": "kimi", "model": "kimi-for-coding"},
+    ]
+    snapshot = acquire_lane_snapshot(
+        ENDPOINT,
+        lanes,
+        {"glm": ("zai",), "kimi": ("kimi-coding",)},
+        Path("/tmp/fleet-lane-health-test.json"),
+        "cycle-qualification",
+        opener=_opener(documents, []),
+        revision_resolver=lambda endpoint: REVISION,
+        now=lambda: 2_000_000_000.0,
+    )
+    assert snapshot["runtime_revision"] == REVISION
+    assert all(row["domains"][0]["state"] == "healthy" for row in snapshot["lanes"])
 
 
 def test_active_revision_is_bound_to_configured_endpoint_host_and_port() -> None:
