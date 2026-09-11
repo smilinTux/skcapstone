@@ -2018,6 +2018,13 @@ def _seat_is_provisioned(seat):
     return not _SEAT_PLACEMENT_ERROR and seat in _SEAT_PLACEMENT
 
 
+def _is_niobe_builder_host(host, placement=None, placement_error=None):
+    """Return whether this host carries the public Niobe dispatch placement."""
+    mapping = _SEAT_PLACEMENT if placement is None else placement
+    error = _SEAT_PLACEMENT_ERROR if placement_error is None else placement_error
+    return not error and host in tuple(mapping.get("niobe", ()))
+
+
 def _seat_owner(card_id, seat, pinned_host=None, placement=None, placement_error=None):
     """Return one seat host and a diagnostic without falling back to a lane."""
     if not seat:
@@ -4642,11 +4649,24 @@ def owns(cid):
     return owner_host(cid) == HOST
 owned=[x for x in pool if owns(x[2])]
 
+# Source-only logical-route cards belong to the Niobe builder path. Remove them
+# from every regular host before any lane can claim them, then let only the host
+# carrying Niobe's public placement publish the remote request.
+_builder_candidates = [
+    candidate
+    for candidate in pool
+    if builder_dispatch.eligible(
+        dict(candidate[3], id=candidate[2]), candidate[4]
+    )
+]
+_builder_candidate_ids = {candidate[2] for candidate in _builder_candidates}
+owned = [candidate for candidate in owned if candidate[2] not in _builder_candidate_ids]
+
 # Niobe may place one generic medium source card on a Ready builder standby.
 # The remote node claims the card itself, so the CardStore fence remains the
 # authority and this scheduler never impersonates a remote worker.
-if _ONLY_SEAT == "niobe":
-    for _candidate in tuple(owned):
+if _is_niobe_builder_host(HOST):
+    for _candidate in tuple(_builder_candidates):
         _remote_core = dict(_candidate[3], id=_candidate[2])
         try:
             _remote_request = builder_dispatch.offer(
@@ -4671,7 +4691,6 @@ if _ONLY_SEAT == "niobe":
                     _remote_request["request_id"],
                 ),
             )
-            owned.remove(_candidate)
             break
 
 # Never steal another host's hash slice without an authoritative shared lock.

@@ -1,5 +1,8 @@
 # Changelog
 
+- Card `c5a81d4b`: reserve source-only logical-route cards for the Niobe
+  builder queue and derive its sole offer host from public seat placement.
+
 - The SKRSI fleet collector now measures `heartbeat.json`, the file the fleet's
   own phase derivation reads, instead of `node.json`. The metric was named
   heartbeat freshness while measuring the slower full self-report. Observed on
