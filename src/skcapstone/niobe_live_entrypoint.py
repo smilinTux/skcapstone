@@ -46,7 +46,7 @@ _LANES = {
         "SKFLEET_ESC_TARGET",
         "SKFLEET_ESC_MODEL",
         "SKFLEET_ESC_CAPACITY_DOMAINS",
-        0,
+        2,
     ),
 }
 

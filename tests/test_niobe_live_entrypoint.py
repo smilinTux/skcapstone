@@ -328,6 +328,20 @@ def test_live_wrapper_rejects_unhealthy_escalation_before_launch(
     assert calls == []
 
 
+def test_live_wrapper_validates_dispatcher_default_escalation_target(
+    tmp_path: Path, monkeypatch
+) -> None:
+    revision = approval_card(tmp_path)
+    path = tmp_path / "home/coordination/niobe-activation.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(activation(revision)))
+    monkeypatch.setenv("SKFLEET_TARGET", "0")
+    monkeypatch.delenv("SKFLEET_ESC_TARGET")
+
+    with pytest.raises(ValueError, match="escalate model binding is missing"):
+        run_live(activation_path=path, dispatcher=tmp_path, local_host="chiap08")
+
+
 def test_live_wrapper_requires_active_lane_bindings(tmp_path: Path, monkeypatch) -> None:
     revision = approval_card(tmp_path)
     path = tmp_path / "home/coordination/niobe-activation.json"
