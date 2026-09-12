@@ -472,14 +472,26 @@ def zero_output_success(args: argparse.Namespace, rc: int) -> tuple[bool, str]:
     if not claims:
         return False, "claim_missing"
     later = events[claims[-1] + 1 :]
-    if any(event.get("action") in {"claim", "reopen"} for event in later):
-        return False, "stale_claim"
+    boundary = next(
+        (
+            index
+            for index, event in enumerate(later)
+            if event.get("action") in {"claim", "reopen", "release_claim", "void"}
+        ),
+        len(later),
+    )
+    window = later[:boundary]
     mutated = any(
         event.get("writer") == args.owner
         and event.get("action") in {"link", "move", "complete", "amend", "describe"}
-        for event in later
+        for event in window
     )
-    return (True, "exact_claim_mutated") if mutated else (False, "no_card_mutation")
+    if mutated:
+        return True, "exact_claim_mutated"
+    if boundary < len(later):
+        action = later[boundary].get("action")
+        return False, "claim_released" if action == "release_claim" else "stale_claim"
+    return False, "no_card_mutation"
 
 
 def record_terminal_exit(

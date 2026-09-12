@@ -83,6 +83,38 @@ def test_zero_output_success_requires_exact_claim_mutation(tmp_path, monkeypatch
 
     store.append_event("deadbeef", "link", "worker", link_key="evidence", link_value="evidence.md")
     assert module.zero_output_success(args, 0) == (True, "exact_claim_mutated")
+    store.append_event(
+        "deadbeef",
+        "release_claim",
+        "worker",
+        released_owner="worker",
+        expected_claim_revision="rev-7",
+    )
+    store.append_event("deadbeef", "link", "worker", link_key="evidence", link_value="late.md")
+    assert module.zero_output_success(args, 0) == (True, "exact_claim_mutated")
+
+
+def test_zero_output_success_does_not_attribute_mutation_after_release(
+    tmp_path, monkeypatch
+) -> None:
+    module = _wrapper()
+    home = tmp_path / ".skcapstone"
+    home.mkdir()
+    store = module.CardStore(home)
+    store.create(CardCore(id="deadbeef", title="synthetic"))
+    store.append_event("deadbeef", "claim", "worker", owner="worker", claim_revision="rev-7")
+    store.append_event(
+        "deadbeef",
+        "release_claim",
+        "worker",
+        released_owner="worker",
+        expected_claim_revision="rev-7",
+    )
+    store.append_event("deadbeef", "link", "worker", link_key="evidence", link_value="late.md")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    args = argparse.Namespace(card="deadbeef", owner="worker", claim_revision="rev-7")
+
+    assert module.zero_output_success(args, 0) == (False, "claim_released")
 
 
 def test_zero_output_retry_is_bounded(tmp_path: Path) -> None:

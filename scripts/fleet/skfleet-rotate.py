@@ -2919,7 +2919,13 @@ _COMPLETION_RETRY_COOLDOWN_S = float(
     os.environ.get("SKFLEET_COMPLETION_RETRY_COOLDOWN_S", "300")
 )
 _COMPLETION_FAILURE_CLASSES = frozenset(
-    {"no_card_mutation", "cardstore_unavailable", "claim_missing", "stale_claim"}
+    {
+        "no_card_mutation",
+        "cardstore_unavailable",
+        "claim_missing",
+        "claim_released",
+        "stale_claim",
+    }
 )
 _GATEWAY_ERROR_RE = re.compile(r"^\s*(404|408|429|502|504):\s*(\{.*\})\s*$", re.S)
 
