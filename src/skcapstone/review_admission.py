@@ -57,8 +57,11 @@ def reviewer_capacity(
         snapshot = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return 0, 0
-    occupancy, ambiguous = load_route_occupancy(home)
-    if match is None or ambiguous:
+    occupancy, _ambiguous = load_route_occupancy(home)
+    # Reason: untyped live seats must not erase healthy equal-or-larger gateway
+    # free capacity from the gate projection. Typed occupancy still reduces free
+    # per capacity domain; ambiguous records stay excluded from that count.
+    if match is None:
         return 0, 0
     routes = eligible_review_routes(
         snapshot,

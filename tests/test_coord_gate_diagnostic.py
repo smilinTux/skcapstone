@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 
 import pytest
@@ -318,6 +319,90 @@ def test_coord_gates_reports_live_review_contract_reasons(tmp_path, monkeypatch)
         "ownership",
         "capacity",
     ]
+
+
+def test_coord_gates_size_s_uses_healthy_larger_provider_slots(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    path = tmp_path / "evidence" / "fleet-review-routes.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "error": None,
+                "routes": [
+                    {
+                        "logical_route": "provider-large",
+                        "model_or_bucket": "provider-large",
+                        "provider": "configured-large",
+                        "capacity_domain": "configured-large",
+                        "size_class": "L",
+                        "policy_tier": "standard",
+                        "state": "healthy",
+                        "max": 4,
+                        "gateway_active": 1,
+                    },
+                    {
+                        "logical_route": "provider-xl",
+                        "model_or_bucket": "provider-xl",
+                        "provider": "configured-xl",
+                        "capacity_domain": "configured-xl",
+                        "size_class": "XL",
+                        "policy_tier": "standard",
+                        "state": "healthy",
+                        "max": 8,
+                        "gateway_active": 0,
+                    },
+                    {
+                        "logical_route": "provider-small-down",
+                        "model_or_bucket": "provider-small-down",
+                        "provider": "configured-small",
+                        "capacity_domain": "configured-small",
+                        "size_class": "S",
+                        "policy_tier": "standard",
+                        "state": "unknown",
+                        "max": 2,
+                        "gateway_active": 0,
+                    },
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    directory = tmp_path / "fleet" / "direct-seats"
+    directory.mkdir(parents=True)
+    directory.joinpath("untyped.json").write_text(
+        json.dumps(
+            {
+                "completion_state": "running",
+                "heartbeat_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    CardStore(tmp_path).create(
+        CardCore(
+            id="aabb00a1",
+            title="[S] seraph review with larger free buckets",
+            created_by="scheduler",
+            initial_labels=["review", "seat-seraph", "size-s"],
+            meta={
+                "producer_identity": "source-producer",
+                "candidate_evidence_sha256": "a" * 64,
+                "link_source_card": "sourcea1",
+                "link_head_revision": "b" * 40,
+            },
+        )
+    )
+
+    result = CliRunner().invoke(main, ["coord", "gates", "aabb00a1", "--home", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert report["capacity"] == {"busy": 0, "target": 11}
+    assert report["eligible"] is True
+    assert report["seat"] == "seraph"
 
 
 def test_coord_gates_aggregates_all_qualified_gateway_slots(tmp_path, monkeypatch) -> None:

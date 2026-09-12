@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Governed review capacity no longer projects `target=0` when the sealed
+  SKGateway inventory has healthy free L/XL (or other equal-or-larger) domains
+  but only an untyped live seat record is ambiguous. Size-S Seraph work keeps
+  consuming provider-neutral equal-or-larger logical buckets; typed per-domain
+  occupancy, policy, health, and reviewer independence stay fail-closed.
+
 - The shared fleet rotation lock now gives Niobe a bounded acquisition wait
   while Seraph and the other independent seats remain nonblocking. A
   240-second Seraph cycle can no longer turn every one-minute Niobe timer beat
