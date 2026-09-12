@@ -249,6 +249,57 @@ def test_failed_exact_release_preserves_owner_projection(monkeypatch) -> None:
     assert idled == []
 
 
+def test_board_lock_timeout_becomes_durable_exact_generation_retry(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    module = load_module()
+    values = args()
+    values.review_supersession = {"current_head": "2" * 40}
+    values.evidence_dir = tmp_path
+    values.live_snapshot = None
+    monkeypatch.setattr(
+        module,
+        "release_superseded_review_claim",
+        lambda *_args: (_ for _ in ()).throw(TimeoutError("board lock")),
+    )
+
+    assert module.finalize_terminal_capacity(values, None) is False
+    retry = next((tmp_path / "worker-finalization-retry").glob("*.json"))
+    row = json.loads(retry.read_text(encoding="utf-8"))
+    assert (row["card_id"], row["owner"], row["claim_revision"]) == (
+        values.card,
+        values.owner,
+        values.claim_revision,
+    )
+    assert "exact-generation retry" in capsys.readouterr().err
+
+
+def test_pending_finalization_retries_only_exact_generation(monkeypatch, tmp_path) -> None:
+    module = load_module()
+    values = args()
+    values.evidence_dir = tmp_path
+    values.live_snapshot = None
+    request = module.record_finalization_retry(values, TimeoutError("board lock"))
+    calls = []
+
+    class Board:
+        def __init__(self, _home):
+            pass
+
+        def release_claim(self, owner, card, *, actor, expected_claim_revision):
+            calls.append((owner, card, actor, expected_claim_revision))
+            return True
+
+    monkeypatch.setattr("skcoord.coordination.Board", Board)
+
+    assert module.reconcile_finalization_retries(tmp_path) == 1
+    assert calls == [(values.owner, values.card, values.owner, values.claim_revision)]
+    receipt = request.with_suffix(".reconciled.json")
+    assert json.loads(receipt.read_text(encoding="utf-8"))["request_sha256"]
+    assert module.reconcile_finalization_retries(tmp_path) == 0
+    assert len(calls) == 1
+
+
 def test_partial_publication_release_is_idempotent(monkeypatch) -> None:
     module = load_module()
 

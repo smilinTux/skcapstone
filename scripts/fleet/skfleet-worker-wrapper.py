@@ -141,6 +141,8 @@ def write_process_record(
         "card": args.card,
         "owner": args.owner,
         "claim_revision": args.claim_revision,
+        "host": args.host,
+        "live_snapshot": str(args.live_snapshot) if args.live_snapshot is not None else None,
         "heartbeat_at": heartbeat_at or datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "completion_state": completion_state,
         "pid": pid,
@@ -294,6 +296,98 @@ def release_superseded_review_claim(args: argparse.Namespace) -> bool:
     if not released:
         raise RuntimeError("terminal worker exact claim was not released")
     return True
+
+
+def record_finalization_retry(args: argparse.Namespace, error: BaseException) -> Path:
+    """Persist one immutable exact-generation release request for reconciliation."""
+    directory = args.evidence_dir / "worker-finalization-retry"
+    directory.mkdir(parents=True, exist_ok=True)
+    identity = f"{args.card}\0{args.owner}\0{args.claim_revision}".encode()
+    path = directory / f"{hashlib.sha256(identity).hexdigest()}.json"
+    payload = {
+        "schema": "skfleet.worker-finalization-retry/v1",
+        "card_id": args.card,
+        "owner": args.owner,
+        "claim_revision": args.claim_revision,
+        "recorded_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "reason": type(error).__name__,
+        "state": "release_pending",
+    }
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return path
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    return path
+
+
+def reconcile_finalization_retries(evidence_dir: Path, *, limit: int = 8) -> int:
+    """Retry bounded pending releases with their original CAS generation."""
+    from skcoord.coordination import Board
+
+    directory = evidence_dir / "worker-finalization-retry"
+    reconciled = 0
+    for path in sorted(directory.glob("*.json"))[:limit]:
+        receipt = path.with_suffix(".reconciled.json")
+        if receipt.exists():
+            continue
+        try:
+            row = json.loads(path.read_text(encoding="utf-8"))
+            if row.get("schema") != "skfleet.worker-finalization-retry/v1":
+                continue
+            home = Path.home() / ".skcapstone"
+            try:
+                released = Board(home).release_claim(
+                    row["owner"],
+                    row["card_id"],
+                    actor=row["owner"],
+                    expected_claim_revision=row["claim_revision"],
+                )
+            except (RuntimeError, ValueError):
+                released = False
+            if not released:
+                card = CardStore(home).fold(row["card_id"])
+                released = bool(
+                    card is not None
+                    and card.owner is None
+                    and not card.meta.get("_claim_revision")
+                    and any(
+                        event.get("action") == "release_claim"
+                        and event.get("released_owner") == row["owner"]
+                        and event.get("expected_claim_revision") == row["claim_revision"]
+                        for event in CardStore(home)._read_events(row["card_id"])
+                    )
+                )
+            if not released:
+                continue
+            if row.get("live_snapshot"):
+                retire_worker_generation(
+                    Path(row["live_snapshot"]),
+                    home,
+                    row["host"],
+                    row["card_id"],
+                    row["owner"],
+                    row["claim_revision"],
+                )
+            payload = {
+                "schema": "skfleet.worker-finalization-reconciled/v1",
+                "request_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "reconciled_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            }
+            fd = os.open(receipt, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            reconciled += 1
+        except (FileExistsError, KeyError, OSError, RuntimeError, TimeoutError, ValueError):
+            continue
+    return reconciled
 
 
 def write_startup_report(
@@ -596,7 +690,12 @@ def finalize_terminal_capacity(args: argparse.Namespace, child: subprocess.Popen
     """Release one exact Board generation before retiring snapshot capacity."""
     if not hasattr(args, "review_supersession") and args.live_snapshot is None:
         return True
-    released = release_superseded_review_claim(args)
+    try:
+        released = release_superseded_review_claim(args)
+    except TimeoutError as exc:
+        path = record_finalization_retry(args, exc)
+        sys.stderr.write(f"terminal release deferred for exact-generation retry: {path}\n")
+        return False
     try:
         publish_terminal_capacity(args, child)
     except (OSError, ValueError) as exc:
@@ -618,6 +717,7 @@ def main() -> int:
     """Run the child, tee stderr to the journal, and record terminal evidence."""
     args = parse_args()
     args.started_at = int(time.time())
+    reconcile_finalization_retries(args.evidence_dir)
     preflight = preflight_worktree()
     if preflight == 2:
         write_startup_report(args, os.getpid(), "startup-preflight-blocked")

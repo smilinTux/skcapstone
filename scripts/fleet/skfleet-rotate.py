@@ -18,6 +18,7 @@ from skcapstone.card_store import CardStore
 from skcapstone.fleet.worker_watchdog import StartupObservation, startup_actuation_fenced
 from skcapstone.fleet.worker_liveness_runtime import run_production_cycle
 from skcapstone.coord_eligibility import leaf_eligibility_counts
+from skcapstone.fleet_card_snapshot import acquire_fleet_card_snapshot, thaw_snapshot_value
 from skcapstone.fleet_lane_health import (
     acquire_lane_snapshot,
     cycle_id as new_cycle_id,
@@ -864,27 +865,9 @@ def _classify_claim_outcome(still_assignable, returncode=None,
 _rows={}
 def event_rows(cid):
     if cid in _rows: return _rows[cid]
-    ev=os.path.join(CARDS,cid,"events"); out=[]
-    if os.path.isdir(ev):
-        for f in os.listdir(ev):
-            try:
-                for l in open(os.path.join(ev,f),encoding="utf-8",errors="replace"):
-                    try:
-                        _o=json.loads(l)
-                    except:
-                        continue
-                    # A worker appended four bare JSON STRINGS into card 7b7c990f's
-                    # event log (prose like "Pushed branch to origin and opened PR
-                    # #2"). json.loads accepts those, and the sort below then called
-                    # .get() on a str, so ONE malformed line crashed the rotation on
-                    # ALL FIVE HOSTS for ~40 minutes on 2026-08-30: 46 failures,
-                    # zero dispatch, and nothing alerted. ~/.skcapstone is one
-                    # Syncthing folder, so the poison reached every host in minutes.
-                    # A reader must never let one bad line stop the fleet.
-                    if isinstance(_o, dict):
-                        out.append(_o)
-            except OSError: pass
-    out.sort(key=lambda e: (e.get("ts", ""), str(e.get("writer", "")), str(e.get("event_id", ""))))
+    if "_CARD_SNAPSHOT" not in globals():
+        return _acts_fresh(cid)
+    out=[thaw_snapshot_value(row) for row in _CARD_SNAPSHOT.events.get(cid, ())]
     _rows[cid]=out; return out
 
 def acts(cid):
@@ -900,8 +883,7 @@ def _dependency_value(event):
 
 def folded_dependencies(cid,core=None,fresh=False):
     if core is None:
-        try: core=json.load(open(os.path.join(CARDS,cid,"core.json")))
-        except Exception: core={}
+        core=_cycle_core(cid) or {}
     deps=[str(x) for x in (core.get("dependencies") or [])]
     rows=_acts_fresh(cid) if fresh else event_rows(cid)
     if fresh:
@@ -976,6 +958,25 @@ except BlockingIOError:
     log(d,"NOOP_RECEIPT|%s|reason=rotation_overlap|seat=%s"%
         (HOST,ONLY_SEAT or "niobe"))
     sys.exit(0)
+
+try:
+    _CARD_SNAPSHOT = acquire_fleet_card_snapshot(Path(CARDS))
+except (OSError, TypeError, ValueError) as exc:
+    log(d,"BLOCKED|%s|bounded card snapshot failed: %s"%(HOST,exc))
+    sys.exit(2)
+log(d,"CARD_SNAPSHOT|%s|generation=%s cards=%d bytes=%d" % (
+    HOST,_CARD_SNAPSHOT.generation,len(_CARD_SNAPSHOT.cores),_CARD_SNAPSHOT.byte_count))
+
+
+def _cycle_core(cid):
+    """Return a detached core from the immutable per-cycle snapshot."""
+    core = _CARD_SNAPSHOT.cores.get(cid)
+    return thaw_snapshot_value(core) if core is not None else None
+
+
+def _cycle_card_ids():
+    """Return the stable card population for this cycle."""
+    return tuple(_CARD_SNAPSHOT.cores)
 
 
 if HOST not in ROTATION_HOSTS:
@@ -1525,6 +1526,10 @@ def _strict_card_events(cid, fresh=False):
     """Read one native CardStore stream, failing closed on malformed data."""
     if not fresh and cid in _claim_rows:
         return _claim_rows[cid]
+    if not fresh and "_CARD_SNAPSHOT" in globals():
+        rows = [thaw_snapshot_value(row) for row in _CARD_SNAPSHOT.events.get(cid, ())]
+        _claim_rows[cid] = rows
+        return rows
     path = os.path.join(CARDS, cid, "events")
     rows = []
     if os.path.isdir(path):
@@ -1793,8 +1798,11 @@ def _claimability_reason(core, state):
 def _authoritative_card_snapshot(cid, core=None, fresh=False):
     """Read and fold one card from one core and event snapshot."""
     if core is None:
-        with open(os.path.join(CARDS, cid, "core.json"), encoding="utf-8") as fh:
-            core = json.load(fh)
+        if fresh or "_CARD_SNAPSHOT" not in globals():
+            with open(os.path.join(CARDS, cid, "core.json"), encoding="utf-8") as fh:
+                core = json.load(fh)
+        else:
+            core = _cycle_core(cid)
     if (not isinstance(core, dict) or not isinstance(core.get("id"), str) or
             core.get("id") != cid):
         raise ValueError("core identity mismatch")
@@ -2378,7 +2386,9 @@ def _authored_change_epoch(cid,threshold):
     return latest if latest>threshold else 0
 
 def _human_gate(cid):
-    try: core=json.load(open(os.path.join(CARDS,cid,"core.json")))
+    try:
+        core = (_cycle_core(cid) if "_CARD_SNAPSHOT" in globals() else
+                json.load(open(os.path.join(CARDS,cid,"core.json"))))
     except Exception: return False
     labels={str(x).strip().lower().replace("_","-") for x in folded_labels(cid,core)}
     return "human-gate" in labels or "[HUMAN]" in str(core.get("title") or "").upper()
@@ -3439,17 +3449,17 @@ def reap_dead_claims():
         return 0
     freed = 0
     _ineffective = _load_ineffective()
-    for cd in sorted(glob.glob(CARDS + "/*")):
-        cid = os.path.basename(cd)
-        if not os.path.exists(os.path.join(cd, "core.json")):
-            continue
+    card_ids = (_cycle_card_ids() if "_CARD_SNAPSHOT" in globals() else
+                tuple(os.path.basename(path) for path in glob.glob(CARDS + "/*")))
+    for cid in card_ids:
         if lifecycle_state(cid) != "claimed":
             continue
         owner, cts, claim_revision = _claim_identity(event_rows(cid))
         try:
-            with open(os.path.join(cd, "core.json"), encoding="utf-8") as fh:
-                expected_seat = seat_for(cid, json.load(fh))
-        except (OSError, ValueError):
+            core = (_cycle_core(cid) if "_CARD_SNAPSHOT" in globals() else
+                    json.load(open(os.path.join(CARDS, cid, "core.json"))))
+            expected_seat = seat_for(cid, core)
+        except (OSError, TypeError, ValueError):
             expected_seat = None
         if not _parse_worker_owner(owner, cid, expected_seat):
             continue
@@ -3617,12 +3627,14 @@ def _review_parent_ids(cid, core):
 def _reviews_by_parent():
     """Map parent card id to governed review cards that name it."""
     out = {}
-    for cd in glob.glob(CARDS + "/*"):
-        cid = os.path.basename(cd)
-        cp = os.path.join(cd, "core.json")
-        if not os.path.exists(cp): continue
-        try: core = json.load(open(cp))
-        except Exception: continue
+    card_ids = (_cycle_card_ids() if "_CARD_SNAPSHOT" in globals() else
+                tuple(os.path.basename(path) for path in glob.glob(CARDS + "/*")))
+    for cid in card_ids:
+        try:
+            core = (_cycle_core(cid) if "_CARD_SNAPSHOT" in globals() else
+                    json.load(open(os.path.join(CARDS, cid, "core.json"))))
+        except (OSError, TypeError, ValueError):
+            continue
         title = str(core.get("title") or "")
         if not _REVIEW_TITLE_RE.search(title): continue
         for pid in _review_parent_ids(cid, core):
@@ -4203,7 +4215,7 @@ def release_finished_review_claims():
     return released
 
 
-def _legacy_selector_decision(cid, core_p):
+def _legacy_selector_decision(cid, core_p, core=None):
     """Run the legacy selector's authoritative exclusion path for one card."""
     if cid in excluded:
         return {"eligible": False, "reason": "lifecycle_excluded"}
@@ -4229,11 +4241,12 @@ def _legacy_selector_decision(cid, core_p):
             "eligible": False,
             "reason": "awaiting_review" if awaiting_review(cid) else "backoff",
         }
-    try:
-        with open(core_p, encoding="utf-8") as handle:
-            core = json.load(handle)
-    except Exception:
-        return {"eligible": False, "reason": "malformed", "detail": "malformed-core"}
+    if core is None:
+        try:
+            with open(core_p, encoding="utf-8") as handle:
+                core = json.load(handle)
+        except Exception:
+            return {"eligible": False, "reason": "malformed", "detail": "malformed-core"}
     if terminal_review_verdict(cid, core):
         return {"eligible": False, "reason": "terminal_review"}
     decision=authoritative_claimability(cid,core)
@@ -4274,17 +4287,12 @@ structural_leaf=leaf_eligibility_counts(Path(HOME) / ".skcapstone").leaves
 human_gated=0
 ENG=("SKGW","SKCP","SKCOORD","SKHARNESS","SKMEM","CAPAUTH","FLEET","INC",
      "SKW","QWEN38","CARD-CORE","CARD-EVENT","SKDASH","SKGATEWAY","SKSEC","SKL-")
-for cd in sorted(glob.glob(CARDS+"/*")):
-    cid=os.path.basename(cd)
-    core_p=os.path.join(cd,"core.json")
-    if not os.path.exists(core_p): continue
-    try:
-        _structural_core = json.load(open(core_p))
-    except Exception:
-        _structural_core = {}
+for cid in _cycle_card_ids():
+    core_p=os.path.join(CARDS,cid,"core.json")
+    _structural_core = _cycle_core(cid) or {}
     if lifecycle_state(cid) == "open":
         human_gated += int(_human_gate(cid))
-    legacy = _legacy_selector_decision(cid, core_p)
+    legacy = _legacy_selector_decision(cid, core_p, _structural_core)
     legacy_reason = legacy["reason"]
     if legacy_reason == "selector_excluded" and cid in _REVIEW_READBACK_BLOCKED:
         if DRY:
@@ -4353,13 +4361,10 @@ for cd in sorted(glob.glob(CARDS+"/*")):
 # the head of a dependency chain is worth far more than an isolated one, because
 # finishing it converts dependency_blocked cards into assignable work.
 unblocks={}
-for cd in glob.glob(CARDS+"/*"):
-    ocid=os.path.basename(cd)
-    cp=os.path.join(cd,"core.json")
-    if not os.path.exists(cp): continue
+for ocid in _cycle_card_ids():
     if lifecycle_state(ocid) in ("complete","void"): continue
-    try: oc=json.load(open(cp))
-    except: continue
+    oc=_cycle_core(ocid)
+    if oc is None: continue
     for dep in folded_dependencies(ocid,oc):
         unblocks[str(dep)]=unblocks.get(str(dep),0)+1
 for row in pool: row.append(unblocks.get(row[2],0))
@@ -4617,17 +4622,14 @@ def _shadow_pool_v2():
     _POOL_V2_CLASSES = class_ids
     _POOL_V2_EXCLUDED = all_excluded
     population = []
-    for card_dir in sorted(glob.glob(CARDS + "/*")):
-        cid = os.path.basename(card_dir)
-        core_path = os.path.join(card_dir, "core.json")
-        if not os.path.exists(core_path):
-            continue
+    for cid in _cycle_card_ids():
         adapter_facets = tuple(
             sorted("skcoord:" + name for name, ids in class_ids.items() if cid in ids)
         )
         try:
-            with open(core_path, encoding="utf-8") as handle:
-                core = json.load(handle)
+            core = _cycle_core(cid)
+            if core is None:
+                continue
             lifecycle = lifecycle_state(cid)
             claimability = authoritative_claimability(cid, core)
             reason = str(claimability.get("reason") or "")

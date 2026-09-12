@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Fleet rotations now reuse one bounded immutable CardStore snapshot for
+  equivalent selector scans while retaining fresh, fail-closed pre-claim
+  checks. Terminal workers that time out on the board mutation lock preserve
+  their exact card, owner, and claim generation in a durable bounded retry
+  queue, and capacity is retired only after that generation is released. A
+  live fleet report also continues to fence claims during cross-host owner
+  projection publication lag.
+
 - The fleet rotation's worker roster was a literal tuple of one estate's five
   chi hosts, so on a second estate the live dispatcher exited immediately with
   `NOOP|noroc2027|host is outside the authorized chiap01-chiap03 worker fleet`.

@@ -330,6 +330,45 @@ def test_manual_ephemeral_claim_with_no_launch_generation_is_reaped(tmp_path: Pa
     assert not any("stale-claim path" in message for message in messages)
 
 
+def test_live_exact_generation_survives_claim_projection_publication_gap(tmp_path: Path) -> None:
+    """Fleet liveness fences a doing claim while its owner projection is still idle."""
+    card_id = "6dd138ad"
+    owner = "pi-codex-review-chiap03-6dd138ad"
+    revision = "258082bd2d6a4dc49c22577dc619e79b"
+    namespace, released, _messages = _reaper_fixture(
+        tmp_path,
+        card_id=card_id,
+        owner=owner,
+        claim_revision=revision,
+        launch_revision=revision,
+    )
+    projection = tmp_path / "coordination" / "agents" / f"{owner}.json"
+    projection.parent.mkdir(parents=True)
+    projection.write_text(
+        json.dumps(
+            {
+                "agent": owner,
+                "state": "active",
+                "current_task": None,
+                "claimed_tasks": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    namespace["live_report"] = lambda: {
+        "oldest": time.time(),
+        "running": {card_id},
+        "reporting": {"chiap01", "chiap02", "chiap03"},
+        "expected": {"chiap01", "chiap02", "chiap03"},
+        "faults": [],
+        "authoritative": True,
+    }
+
+    assert namespace["reap_dead_claims"]() == 0
+    assert released == []
+
+
 def test_missing_claim_revision_is_never_replaced_by_event_id(tmp_path: Path) -> None:
     """A legacy claim event ID is not an exact claim revision."""
     namespace, released, messages = _reaper_fixture(
