@@ -64,6 +64,11 @@ def _namespace() -> dict[str, object]:
             '502: {"message":"bad tool evidence",' '"code":"invalid_upstream_tool_calls"}',
             "invalid_upstream_tool_calls",
         ),
+        (
+            '400: {"code":400,"message":"Unable to generate parser for this template. '
+            'Automatic parser generation failed: while executing CallExpression"}',
+            "upstream_template_rejection",
+        ),
     ],
 )
 def test_exact_structured_pre_agent_failures(line: str, kind: str) -> None:
@@ -78,6 +83,8 @@ def test_exact_structured_pre_agent_failures(line: str, kind: str) -> None:
         '429: {"message":"cooldown","code":429}\nagent produced analysis',
         '200: {"message":"ok","code":200}',
         '502: {"message":"other upstream error","code":"upstream_error"}',
+        '400: {"message":"bad request","code":400}',
+        '400: {"message":"tool schema invalid","code":"invalid_tools"}',
     ],
 )
 def test_arbitrary_or_mixed_output_is_substantive(text: str) -> None:
@@ -127,6 +134,43 @@ def test_transport_log_overrides_shared_launch_receipt(tmp_path: Path) -> None:
     )
     assert namespace["_local_launch_evidence"](card)[:2] == (1, 0)
     assert namespace["launch_attempts"](card) == 0
+
+
+def test_parser_rejection_log_is_not_substantive_without_exit_json(tmp_path: Path) -> None:
+    """A strict 400 parser-rejection report must not consume the 3-attempt budget.
+
+    The attempt gate has no generation key and no bounded probe recovery, so
+    an unrecognized pre-agent rejection would park the card at attempt_limit.
+    Only the exact one-status-plus-JSON parser rejection is transport; mixed
+    or arbitrary 400 output below stays substantive.
+    """
+    namespace = _namespace()
+    card = "6dd138ad"
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    log = tmp_path / f"{card}-{stamp}.log"
+    log.write_text(
+        '400: {"code":400,"message":"Unable to generate parser for this template. '
+        'Automatic parser generation failed: while executing CallExpression"}',
+        encoding="utf-8",
+    )
+    namespace.update(
+        {
+            "_LAUNCH_TTL_H": 6,
+            "_LOGDIR": str(tmp_path),
+            "_shared_launch_attempts": lambda _cid: 1,
+            "event_rows": lambda _cid: [],
+            "_ts_epoch": lambda event_stamp: float(event_stamp or 0),
+        }
+    )
+    assert namespace["_local_launch_evidence"](card)[:2] == (1, 0)
+    assert namespace["launch_attempts"](card) == 0
+
+    log.write_text(
+        '400: {"code":400,"message":"Unable to generate parser for this template."}\n'
+        "agent output",
+        encoding="utf-8",
+    )
+    assert namespace["launch_attempts"](card) == 1
 
 
 def test_mixed_output_and_card_mutation_each_consume_attempt(tmp_path: Path) -> None:
