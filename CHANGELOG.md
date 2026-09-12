@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The shared fleet rotation lock now gives Niobe a bounded acquisition wait
+  while Seraph and the other independent seats remain nonblocking. A
+  240-second Seraph cycle can no longer turn every one-minute Niobe timer beat
+  into `rotation_overlap`; all mutations still use the same exclusive lock.
+
 - Governed review placement and atomic claim authorization now consume one
   host-neutral candidate contract. Qualified Link, Mero, Seraph, and
   configured logical reviewers share every healthy, policy-compatible
