@@ -244,6 +244,7 @@ def test_seraph_accepts_typed_launch_receipts_on_stderr(tmp_path, monkeypatch) -
 def test_seraph_dispatch_is_bounded_claimed_live_and_seat_scoped(
     tmp_path, monkeypatch, installed_dispatcher
 ) -> None:
+    monkeypatch.setenv("SKFLEET_SERAPH_BATCH_SIZE", "2")
     captured = {}
     calls = []
 
