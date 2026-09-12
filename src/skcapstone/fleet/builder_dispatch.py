@@ -549,6 +549,30 @@ def consume_one(
             ):
                 continue
             prior = _load(status_path(paths, node, request["card_id"])) or {}
+            if (
+                prior
+                and prior.get("request_id") != request.get("request_id")
+                and (prior.get("owner") or prior.get("claim_revision"))
+            ):
+                prior_owner = str(prior.get("owner") or "")
+                prior_revision = str(prior.get("claim_revision") or "")
+                released = bool(prior_owner and prior_revision) and _release_exact(
+                    coordination_home,
+                    request["card_id"],
+                    prior_owner,
+                    prior_revision,
+                    actor=prior_owner,
+                )
+                return _write_status(
+                    paths,
+                    node,
+                    request,
+                    "blocked",
+                    owner=prior_owner,
+                    claim_revision=prior_revision,
+                    attempt=int(prior.get("attempt") or 0),
+                    claim_released=released,
+                )
             if prior.get("request_id") == request.get("request_id"):
                 if prior.get("state") == "running":
                     return _reconcile_running(paths, coordination_home, node, request, prior)
