@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fleet workers now classify an empty code-0 exit without an attributable
+  exact-claim card mutation as ineffective, apply bounded retry suppression,
+  and retire that worker generation's liveness projection as inactive.
+
 - Builder dispatch now releases the prior exact claim and blocks without
   launching when a changed offer supersedes persisted status for the same card.
 

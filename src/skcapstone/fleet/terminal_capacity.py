@@ -131,4 +131,12 @@ def retire_worker_generation(
             )
         if not _generation_was_released(store, card, owner, claim_revision):
             return None
-        return invalidate_worker(path, host, card, owner, claim_revision)
+        snapshot = invalidate_worker(path, host, card, owner, claim_revision)
+        store.append_event(
+            card,
+            "link",
+            owner,
+            link_key="worker_liveness",
+            link_value=f"{owner}|{claim_revision}|inactive",
+        )
+        return snapshot
