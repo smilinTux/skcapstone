@@ -2655,7 +2655,7 @@ _LOGDIR = os.path.join(HOME, ".skcapstone/fleet/logs")
 _TRANSPORT_RETRY_COOLDOWN_S = float(
     os.environ.get("SKFLEET_TRANSPORT_RETRY_COOLDOWN_S", "60")
 )
-_GATEWAY_ERROR_RE = re.compile(r"^\s*(404|408|429|502|504):\s*(\{.*\})\s*$", re.S)
+_GATEWAY_ERROR_RE = re.compile(r"^\s*(400|404|408|429|502|504):\s*(\{.*\})\s*$", re.S)
 
 
 def _structured_transport_failure(text):
@@ -2675,6 +2675,10 @@ def _structured_transport_failure(text):
         return None
     status = int(match.group(1))
     code = payload.get("code")
+    if status == 400 and re.search(
+        r"system message.*\b(?:first|beginning)\b", payload["message"], re.I
+    ):
+        return "system_message_ordering"
     if status == 404 and code in (404, "404", "not_found", "route_not_found"):
         return "gateway_404"
     if status == 429 and code in (429, "429", "rate_limit", "cooldown"):
@@ -2793,6 +2797,10 @@ def _transport_retry_held(cid):
     failed_at = _latest_transport_failure_epoch(cid)
     return bool(failed_at and time.time() - failed_at < _TRANSPORT_RETRY_COOLDOWN_S)
 
+def _transport_retry_exhausted(cid):
+    """Stop after the initial transport failure and one recovery attempt."""
+    return sum(claim[0] == cid for claim in _transport_failure_claims()) >= 2
+
 def _reporting_launches(cid):
     """Launches whose worker actually produced output, within the TTL."""
     n = 0
@@ -2821,6 +2829,7 @@ def _reporting_launches(cid):
 _ROTATION_EVID = os.path.join(HOME, ".skcapstone/evidence/fleet-rotation")
 _shared_launch_cache = None
 _TRANSPORT_FAILURE_CLASSES = frozenset({
+    "system_message_ordering",
     "rate_limited",
     "model_owner_backend_down",
     "backend_claims_quarantined",
@@ -2932,7 +2941,9 @@ def launch_attempts(cid):
     return _shared_launch_attempts(cid)
 
 def unclaimable(cid):
-    return launch_attempts(cid) >= 2 and "claim" not in acts(cid)
+    return (
+        launch_attempts(cid) >= 2 or _transport_retry_exhausted(cid)
+    ) and "claim" not in acts(cid)
 
 # ITIL records keep state in events under kind=="status" with the target in "to",
 # NOT in core.json and NOT under the card vocabulary ("action"). A card-oriented

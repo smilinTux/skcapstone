@@ -23,9 +23,15 @@ FUNCTIONS = {
     "_local_launch_evidence",
     "_reporting_launches",
     "_transport_retry_held",
+    "_transport_retry_exhausted",
+    "_transport_failure_claims",
     "launch_attempts",
 }
-CONSTANTS = {"_TRANSPORT_RETRY_COOLDOWN_S", "_GATEWAY_ERROR_RE"}
+CONSTANTS = {
+    "_TRANSPORT_FAILURE_CLASSES",
+    "_TRANSPORT_RETRY_COOLDOWN_S",
+    "_GATEWAY_ERROR_RE",
+}
 
 
 def _namespace() -> dict[str, object]:
@@ -40,6 +46,7 @@ def _namespace() -> dict[str, object]:
                 nodes.append(node)
     namespace = {
         "datetime": __import__("datetime"),
+        "glob": __import__("glob"),
         "json": json,
         "os": os,
         "re": re,
@@ -64,6 +71,11 @@ def _namespace() -> dict[str, object]:
             '502: {"message":"bad tool evidence",' '"code":"invalid_upstream_tool_calls"}',
             "invalid_upstream_tool_calls",
         ),
+        (
+            '400: {"message":"System message must be the first message",'
+            '"code":"invalid_request"}',
+            "system_message_ordering",
+        ),
     ],
 )
 def test_exact_structured_pre_agent_failures(line: str, kind: str) -> None:
@@ -78,6 +90,7 @@ def test_exact_structured_pre_agent_failures(line: str, kind: str) -> None:
         '429: {"message":"cooldown","code":429}\nagent produced analysis',
         '200: {"message":"ok","code":200}',
         '502: {"message":"other upstream error","code":"upstream_error"}',
+        '400: {"message":"invalid request","code":"invalid_request"}',
     ],
 )
 def test_arbitrary_or_mixed_output_is_substantive(text: str) -> None:

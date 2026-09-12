@@ -360,6 +360,10 @@ def monitor_startup(
 
 STDERR_LIMIT = 2048
 TRANSPORT_PATTERNS = {
+    "system_message_ordering": re.compile(
+        r"(?:HTTP\s*)?400\b[\s\S]*system message[\s\S]*\b(?:first|beginning)\b",
+        re.I,
+    ),
     "rate_limited": re.compile(r"(?:\b429\b|rate.?limit)", re.I),
     "model_owner_backend_down": re.compile(r"model_owner_backend_down", re.I),
     "backend_claims_quarantined": re.compile(r"backend-claims-quarantined", re.I),
@@ -393,7 +397,7 @@ def classify_pre_agent_failure(stdout: bytes, stderr: bytes, rc: int) -> str | N
         return classify_transport_failure(redact_stderr(stderr))
     text = stdout.decode("utf-8", errors="replace").strip()
     if not re.match(
-        r"(?:HTTP\s+)?(?:429|5\d\d)\b|model_owner_backend_down\b|"
+        r"(?:HTTP\s+)?(?:400|429|5\d\d)\b|model_owner_backend_down\b|"
         r"backend-claims-quarantined\b|invalid_upstream_tool_calls\b|"
         r"connection (?:error|failed|failure|refused|reset|timed? ?out)\b|"
         r"failed to connect\b",
