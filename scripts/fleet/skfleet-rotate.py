@@ -2913,7 +2913,7 @@ _LOGDIR = os.path.join(HOME, ".skcapstone/fleet/logs")
 _TRANSPORT_RETRY_COOLDOWN_S = float(
     os.environ.get("SKFLEET_TRANSPORT_RETRY_COOLDOWN_S", "60")
 )
-_GATEWAY_ERROR_RE = re.compile(r"^\s*(404|408|429|502|504):\s*(\{.*\})\s*$", re.S)
+_GATEWAY_ERROR_RE = re.compile(r"^\s*(400|404|408|429|502|504):\s*(\{.*\})\s*$", re.S)
 
 
 def _structured_transport_failure(text):
@@ -2939,6 +2939,12 @@ def _structured_transport_failure(text):
         return "gateway_429"
     if status == 502 and code == "invalid_upstream_tool_calls":
         return "invalid_upstream_tool_calls"
+    message = payload["message"].casefold()
+    if status == 400 and (
+        "unable to generate parser" in message
+        or "automatic parser generation failed" in message
+    ):
+        return "upstream_template_rejection"
     timeout_codes = {
         "first_token_timeout",
         "gateway_timeout",

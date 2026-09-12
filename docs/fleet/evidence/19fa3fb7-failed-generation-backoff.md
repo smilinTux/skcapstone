@@ -58,6 +58,15 @@ keyed to the content generation.
     recovery probe is eligible and a failed probe starts a new bounded
     interval. No provider, model, or host is named anywhere in the change;
     exact claim fences (`--expected-claim-revision`) are untouched.
+  - `_GATEWAY_ERROR_RE`/`_structured_transport_failure` recognize the strict
+    one-status-plus-JSON `400` upstream template/parser rejection report as
+    `upstream_template_rejection`. This closes the log-side boundary of the
+    same family: without it, a pre-agent rejection printed to the worker
+    stdout log counted as a substantive report and consumed the coarse
+    3-attempt budget, which has no generation key and no bounded probe
+    recovery (it would park the card at `attempt_limit` until a material
+    change). Arbitrary or mixed `400` output stays substantive; the synced
+    worker-exit JSON remains the authoritative cross-host channel.
 
 ## Verification
 
@@ -67,12 +76,15 @@ keyed to the content generation.
   fresh rejection -> held, changed generation -> eligible, cooldown expired ->
   eligible.
 - Focused tests: `tests/test_skfleet_failed_generation_backoff.py`
-  10 passed; with `test_skfleet_transport_retry.py` and
-  `test_skfleet_worker_exit_evidence.py`: 44 passed.
-- Full fleet/scheduler sweep: 716 passed, 1 failed
+  10 passed; with `test_skfleet_transport_retry.py` (now also covering the
+  strict `400` log-side recognition and the no-JSON substantive boundary) and
+  `test_skfleet_worker_exit_evidence.py`: 48 passed.
+- Full fleet/scheduler sweep: 720 passed, 1 failed
   (`test_skfleet_pi_tool_allowlist.py::test_pi_denies_a_direct_mcp_tool_and_measures_schema_bytes`),
   which fails identically on the unmodified base (environment-dependent
-  allowlist, unrelated).
+  allowlist, unrelated). Occasional extra failures in the combined 700-test
+  run vary between invocations on baseline and branch alike (ordering
+  pollution); consecutive clean runs confirm they are not tied to this change.
 - Static checks: `py_compile` passed for both fleet scripts; black-clean for
   the wrapper and the new test file (rotate baseline was already unformatted;
   no new ruff errors — diff is pure line shift); `git diff --check` passed.
