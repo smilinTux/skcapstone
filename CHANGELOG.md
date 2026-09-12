@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Builder dispatch now releases the prior exact claim and blocks without
+  launching when a changed offer supersedes persisted status for the same card.
+
 - The shared fleet rotation lock now gives Niobe a bounded acquisition wait
   while Seraph and the other independent seats remain nonblocking. A
   240-second Seraph cycle can no longer turn every one-minute Niobe timer beat
