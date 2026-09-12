@@ -282,7 +282,11 @@ def _selection_diagnostic(pool, owned, lanes, owner_for, host_capacity=None):
     ) or "-"
     capacity = host_capacity or {}
     owner_free = ",".join(
-        "%s:%d" % (owner, int(capacity.get(owner, 0))) for owner in sorted(owners)
+        "%s:%s" % (
+            owner,
+            str(int(capacity[owner])) if owner in capacity else "unknown",
+        )
+        for owner in sorted(owners)
     ) or "-"
     return (
         "reason=%s pool=%d owned=%d target=%d free=%d ids=%s omitted=%d "
