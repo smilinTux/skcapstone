@@ -20,9 +20,9 @@ from __future__ import annotations
 import hashlib
 import re
 import time
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from collections.abc import Callable, Iterable, Mapping, Sequence
 
 _DIGEST_RE = re.compile(r"\b([0-9a-f]{64})\b", re.IGNORECASE)
 _PATH_RE = re.compile(
