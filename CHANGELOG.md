@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Card `f32a2001`: the fleet now builds an ordered provider-neutral route plan
+  from each card's T-shirt size and explicit semantic lane. S, M, L, and XL
+  resolve only to the reviewed `sk-s`, `sk-m`, and `sk-l` routes, with XL
+  folding onto L and fallbacks moving only to an equal or larger class.
+  `qwen-first` and `semantic-lane:sovereign-corpus` select the registry-backed
+  sovereign `sk-default` route. The dispatcher preflights candidates in order,
+  fails closed when none is available, and appends the selected route, fallback
+  reason, and exact preflight served-model attribution to the worker brief.
+
 - The fleet rotation's worker roster was a literal tuple of one estate's five
   chi hosts, so on a second estate the live dispatcher exited immediately with
   `NOOP|noroc2027|host is outside the authorized chiap01-chiap03 worker fleet`.

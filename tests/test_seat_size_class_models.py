@@ -15,7 +15,7 @@ from skcapstone.seat_cycle_entrypoint import (
 )
 
 SIZES = ("S", "M", "L", "XL")
-NEUTRAL = {"S": "sk-s", "M": "sk-m", "L": "sk-l", "XL": "sk-xl"}
+NEUTRAL = {"S": "sk-s", "M": "sk-m", "L": "sk-l", "XL": "sk-l"}
 
 
 @pytest.fixture(autouse=True)
@@ -117,14 +117,15 @@ def test_unknown_size_names_are_ignored() -> None:
     assert resolved == {"SKFLEET_MODEL_M": "sk-m", "SKFLEET_CODEX_MODEL_M": "sk-m"}
 
 
-def test_no_size_silently_downgrades_to_a_smaller_bucket() -> None:
-    """sk-l failing closed on an estate is correct; the gap must stay visible."""
+def test_four_card_sizes_use_exactly_three_reviewed_routes() -> None:
+    """XL folds onto L while S and M retain their own reviewed routes."""
 
     resolved = resolve_size_class_models({})
     buckets = [resolved[f"SKFLEET_MODEL_{size}"] for size in SIZES]
 
-    assert len(set(buckets)) == len(buckets)
+    assert set(buckets) == {"sk-s", "sk-m", "sk-l"}
     assert resolved["SKFLEET_MODEL_L"] == "sk-l"
+    assert resolved["SKFLEET_MODEL_XL"] == "sk-l"
 
 
 @pytest.mark.parametrize("seat", ["tank", "atlas"])
@@ -198,7 +199,7 @@ def _verify(monkeypatch, tmp_path: Path, seat: str, model: str) -> dict[str, obj
     return role_dispatch_operation(tmp_path, seat)
 
 
-@pytest.mark.parametrize("model", ["sk-s", "sk-m", "sk-l", "sk-xl"])
+@pytest.mark.parametrize("model", ["sk-s", "sk-m", "sk-l"])
 def test_verification_accepts_every_bucket_the_dispatch_asked_for(
     tmp_path, monkeypatch, model: str
 ) -> None:

@@ -974,13 +974,13 @@ def test_role_dispatch_is_bounded_and_seat_scoped(tmp_path, monkeypatch, seat) -
         "sk-s",
         "sk-m",
         "sk-l",
-        "sk-xl",
+        "sk-l",
     ]
     assert [captured[f"SKFLEET_CODEX_MODEL_{size}"] for size in ("S", "M", "L", "XL")] == [
         "sk-s",
         "sk-m",
         "sk-l",
-        "sk-xl",
+        "sk-l",
     ]
 
 

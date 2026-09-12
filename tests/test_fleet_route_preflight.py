@@ -81,7 +81,7 @@ def test_backend_rejection_is_concise_and_non_secret():
 
 def test_automatic_preflight_precedes_workspace_and_claim():
     source = ROTATE.read_text(encoding="utf-8")
-    probe = source.index("_route_preflight=resolve_and_preflight")
+    probe = source.index("_route_plan=build_worker_route_plan")
     workspace = source.index("default_workspace=os.path.join", probe)
     claim = source.index('claim=subprocess.run([SKC,"coord","claim"', workspace)
     assert probe < workspace < claim
