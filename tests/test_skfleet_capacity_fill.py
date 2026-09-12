@@ -73,9 +73,7 @@ def test_niobe_fills_five_slots_from_29_ready_after_three_rejections() -> None:
     ["preflight", "workspace", "claim", "launch", "review-metadata"],
 )
 def test_each_recoverable_rejection_allows_later_success(rejection: str) -> None:
-    assert _fill([(rejection, False), ("later", True)], seats=1, pool_bound=2) == [
-        "later"
-    ]
+    assert _fill([(rejection, False), ("later", True)], seats=1, pool_bound=2) == ["later"]
 
 
 @pytest.mark.parametrize(
