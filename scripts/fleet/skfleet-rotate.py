@@ -17,6 +17,12 @@ from urllib.parse import urlsplit
 from skcapstone.card_store import CardStore
 from skcapstone.fleet.worker_watchdog import StartupObservation, startup_actuation_fenced
 from skcapstone.fleet.worker_liveness_runtime import run_production_cycle
+from skcapstone.fleet.worker_brief import (
+    BriefEvidenceError,
+    format_work_envelope,
+    materialize_work_envelope,
+    write_missing_report,
+)
 from skcapstone.coord_eligibility import leaf_eligibility_counts
 from skcapstone.fleet_lane_health import (
     acquire_lane_snapshot,
@@ -1980,8 +1986,16 @@ def _fold_claimability(core, rows):
                 raise ValueError("amended acceptance criteria are malformed")
             state["acceptance_criteria"] = list(criteria)
         elif action == "link" and event.get("link_key") in {
-            "producer_identity", "candidate_evidence_sha256", "pr",
-            "pull_request", "open_pr", "evidence", "evidence_sha256",
+            "artifact_sha256", "artifacts_sha256", "candidate_commit",
+            "candidate_evidence_sha256", "candidate_patch_sha256",
+            "candidate_tree", "evidence", "evidence_path", "evidence_sha256",
+            "incident_receipt", "open_pr", "pr", "producer_identity",
+            "pull_request", "repository_scope", "source_manifest_sha256",
+            "source_scope", "supersedes",
+            # R3 conflict resolution: current main (card 1f1a9e21) fails
+            # closed on empty repository/base bindings; the reviewed key
+            # expansion above replaced rather than extended its set, so the
+            # union keeps both the reviewed additions and these keys.
             "repository", "base_ref", "base_revision",
             "link_source_card", "link_head_revision",
         }:
@@ -5524,7 +5538,6 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
             "UNSUPPORTED_CARD_ID|%s|%s|lane=%s|reason=%s"%
             (HOST,cid,_LANE["name"],exc))
         continue
-    ac="\n".join("  %d. %s"%(i+1,x) for i,x in enumerate(core.get("acceptance_criteria") or []))
     # PREFIX CACHE ORDERING. vLLM caches on a shared PROMPT PREFIX. This brief
     # used to open with the card id and the card body, so every request diverged
     # within a few tokens and the ~1,700 invariant tokens after it could never be
@@ -5624,6 +5637,8 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
       "If the card needs no repository change, say so explicitly in your verdict so the\n"
       "absence of a PR is a recorded decision rather than an omission.\n"
       "- Never use an em dash or en dash.\n")
+    # The card body and acceptance criteria travel in the materialized work
+    # envelope appended after the preclaim handoff below, not inline here.
     brief=_RAILS + ("Work only SKCapstone card %s. The fleet selector has already claimed it "
       "for your exact agent identity. Verify that ownership before working and never "
       "claim or substitute another card. If ownership is absent, or a dependency is "
@@ -5632,7 +5647,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
       "evidence, status, claim, label, dependency, and lifecycle write. Never create, "
       "append, rewrite, rename, or delete CardStore JSONL. Use CLI reads for normal "
       "verification; raw file inspection is emergency operator diagnostics only.\n\n"
-      "CARD %s (%s)\nTITLE: %s\nDESCRIPTION: %s\n\nACCEPTANCE CRITERIA:\n%s\n\n" % (cid,cid,core.get("kind"),core.get("title"),core.get("description"),ac))
+      % (cid,))
     _seat = None if _elastic_review else seat_for(cid, core)
     # A seat-owned card runs under the seat's identity, not the lane's. The
     # Worker identity stays lane-based so slot accounting, liveness, and reaping
@@ -5674,7 +5689,9 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         continue
     _review_recommendation = None
     _review_handoff = None
-    bf=os.path.join(logdir,"brief-%s.txt"%cid); open(bf,"w").write(brief)
+    # The brief file is written only after the work envelope is materialized
+    # below; workspace validation lives in the preclaim block (current main).
+    bf=os.path.join(logdir,"brief-%s.txt"%cid)
     lf=os.path.join(logdir,"%s-%s.log"%(cid,STAMP))
     # Last-moment re-check through the same fold that built the pool.
     with open(os.path.join(CARDS,cid,"core.json"),encoding="utf-8") as _handle:
@@ -5789,6 +5806,37 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
             _fanout_request.requester,
             _fanout_request.route,
         )
+    try:
+        envelope = materialize_work_envelope(
+            fresh_claimability["core"],
+            labels=fresh_claimability["labels"],
+            lane=_LANE["name"],
+            model=model,
+            seat=_seat,
+            evidence_root=Path(HOME) / ".skcapstone" / "evidence",
+        )
+    except BriefEvidenceError as exc:
+        report = json.dumps(exc.report, sort_keys=True, separators=(",", ":"))
+        try:
+            report_path, report_sha256 = write_missing_report(
+                exc.report, Path(HOME) / ".skcapstone" / "evidence"
+            )
+        except (OSError, ValueError):
+            log(d, "WORKER_BRIEF_BLOCKED|%s|%s|%s|report_write_failed"
+                % (HOST, cid, report))
+            continue
+        log(
+            d,
+            "WORKER_BRIEF_BLOCKED|%s|%s|%s|report=%s|sha256=%s"
+            % (HOST, cid, report, report_path, report_sha256),
+        )
+        continue
+    brief += (
+        "WORK ENVELOPE (canonical JSON):\n" + format_work_envelope(envelope)
+    )
+    with open(bf, "w", encoding="utf-8") as brief_handle:
+        brief_handle.write(brief)
+    if _fanout_request is not None:
         with open(bf,"a",encoding="utf-8") as _brief_handle:
             _brief_handle.write(
                 "\nNIOBE ROLE-BOUNDED FAN-OUT:\n"

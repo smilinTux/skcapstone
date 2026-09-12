@@ -494,6 +494,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   placement, a Seraph-only selector filter, and one-launch-per-cycle service
   and timer templates while preserving Link recommendation and claim fencing.
 
+- Card `4db732af`: fleet worker briefs now materialize the final authoritative
+  card evidence, model and seat policy, dependencies, and exact shared artifact
+  paths before claim execution, with immutable typed reports for missing bytes.
+
 - Card `c1a1c003`: atomic task creation resolves identity in the canonical
   `SKAGENT`, `SKCAPSTONE_AGENT`, `SKMEMORY_AGENT`, `SK_DEFAULT_AGENT`, then
   sole-installed-agent order and requires the published SKCoord atomic
