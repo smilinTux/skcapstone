@@ -203,3 +203,194 @@ def test_restore_refuses_digest_mismatch(tmp_path, monkeypatch, capsys) -> None:
     quarantined.write_text("tampered bytes", encoding="utf-8")
     assert tool.main(["--restore", "pi-a-host-aaaa1111.json"]) == 1
     assert quarantined.is_file()
+
+
+def test_provider_neutral_ephemeral_identities_retire_but_standing_and_young_stay(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    tool = load_tool()
+    agents = tmp_path / ".skcapstone" / "coordination" / "agents"
+    agents.mkdir(parents=True)
+    old_seen = (datetime.now(timezone.utc) - timedelta(days=40)).isoformat()
+    identities = (
+        ("pi-worker-a1b2c3d4", "pi-worker-01a1b2c3"),
+        ("codex-worker-b2c3d4e5", "codex-worker-02b2c3d4"),
+        ("glm-worker-c3d4e5f6", "glm-worker-03c3d4e5"),
+        ("kimi-worker-d4e5f6a7", "kimi-worker-04d4e5f6"),
+        ("cursor-worker-e5f6a7b8", "cursor-worker-05e5f6a7"),
+        ("logical-bucket-worker-f6a7b8c9", "logical-bucket-worker-06f6a7b8"),
+    )
+    for old_name, young_name in identities:
+        write_projection(
+            agents,
+            f"{old_name}.json",
+            {"agent": old_name, "current_task": None, "last_seen": old_seen},
+            40,
+        )
+        write_projection(
+            agents,
+            f"{young_name}.json",
+            {
+                "agent": young_name,
+                "current_task": None,
+                "last_seen": datetime.now(timezone.utc).isoformat(),
+            },
+            1,
+        )
+    for name in (
+        "jarvis",
+        "link",
+        "mero",
+        "niobe",
+        "seraph",
+        "tank",
+        "atlas",
+    ):
+        write_projection(
+            agents,
+            f"{name}.json",
+            {"agent": name, "current_task": None, "last_seen": old_seen},
+            40,
+        )
+    symlink = agents / "linked-worker-07a7b8c9.json"
+    symlink.symlink_to(agents / "pi-worker-a1b2c3d4.json")
+
+    assert tool.main([]) == 0
+    output = capsys.readouterr().out
+    for old_name, young_name in identities:
+        assert old_name in output
+        assert young_name not in output
+    for name in ("jarvis", "link", "mero", "niobe", "seraph", "tank", "atlas"):
+        assert f"{name}.json" not in output
+    assert symlink.is_symlink()
+
+
+def test_stale_task_requires_fresh_exact_four_way_mismatch_proof(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    tool = load_tool()
+    agents = tmp_path / ".skcapstone" / "coordination" / "agents"
+    agents.mkdir(parents=True)
+    now = datetime.now(timezone.utc)
+    old_seen = (now - timedelta(days=40)).isoformat()
+    path = write_projection(
+        agents,
+        "codex-worker-a1b2c3d4.json",
+        {
+            "agent": "codex-worker-a1b2c3d4",
+            "current_task": "a1b2c3d4",
+            "claimed_tasks": ["a1b2c3d4"],
+            "_claim_revision": "old-revision",
+            "last_seen": old_seen,
+        },
+        40,
+    )
+    key = ("codex-worker-a1b2c3d4", "a1b2c3d4", "old-revision")
+    proof = {
+        "owner": key[0],
+        "card_id": key[1],
+        "claim_revision": key[2],
+        "observed_at": now.isoformat(),
+        "process_alive": False,
+        "active_worker_unit": False,
+        "direct_seat_record": False,
+    }
+
+    def mismatch(_card):
+        return "new-owner", "new-revision"
+
+    assert tool.assess(path, now, {key: proof}, mismatch)[0] is True
+    for field in ("process_alive", "active_worker_unit", "direct_seat_record"):
+        ambiguous = dict(proof)
+        ambiguous[field] = True
+        assert tool.assess(path, now, {key: ambiguous}, mismatch)[0] is False
+    assert tool.assess(path, now, {}, mismatch)[0] is False
+
+    def exact(_card):
+        return key[0], key[2]
+
+    assert tool.assess(path, now, {key: proof}, exact)[0] is False
+
+
+def test_stale_task_apply_manifest_is_content_addressed_and_reversible(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    tool = load_tool()
+    agents = tmp_path / ".skcapstone" / "coordination" / "agents"
+    agents.mkdir(parents=True)
+    now = datetime.now(timezone.utc)
+    name = "future-worker-a1b2c3d4"
+    original = write_projection(
+        agents,
+        f"{name}.json",
+        {
+            "agent": name,
+            "current_task": "a1b2c3d4",
+            "claimed_tasks": ["a1b2c3d4"],
+            "_claim_revision": "stale-revision",
+            "last_seen": (now - timedelta(days=40)).isoformat(),
+        },
+        40,
+    )
+    proof_path = tmp_path / "proof.json"
+    proof_path.write_text(
+        json.dumps(
+            [
+                {
+                    "owner": name,
+                    "card_id": "a1b2c3d4",
+                    "claim_revision": "stale-revision",
+                    "observed_at": now.isoformat(),
+                    "process_alive": False,
+                    "active_worker_unit": False,
+                    "direct_seat_record": False,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(tool, "folded_claim_identity", lambda _card: (None, "new-revision"))
+    original_hash = tool.sha256_of(original)
+
+    assert tool.main(["--apply", "--stale-task-proof", str(proof_path)]) == 0
+    record = tool.moved_records()[original.name]
+    assert record["sha256"] == original_hash
+    assert record["disposition"] == "stale-task-non-exact"
+    assert record["observed_at"]
+    assert record["rollback"] == f"--restore {original.name}"
+    assert tool.main(["--apply", "--stale-task-proof", str(proof_path)]) == 0
+    assert tool.main(["--restore", original.name]) == 0
+    assert tool.sha256_of(original) == original_hash
+
+
+def test_stale_task_proof_refuses_stale_or_ambiguous_observations(tmp_path) -> None:
+    tool = load_tool()
+    now = datetime.now(timezone.utc)
+    proof = {
+        "owner": "worker-a1b2c3d4",
+        "card_id": "a1b2c3d4",
+        "claim_revision": "revision",
+        "observed_at": (now - timedelta(minutes=6)).isoformat(),
+        "process_alive": False,
+        "active_worker_unit": False,
+        "direct_seat_record": False,
+    }
+    path = tmp_path / "proof.json"
+    path.write_text(json.dumps([proof]), encoding="utf-8")
+    try:
+        tool.load_stale_task_proofs(path, now)
+    except tool.ProofError:
+        pass
+    else:
+        raise AssertionError("stale proof must fail closed")
+
+    proof["observed_at"] = now.isoformat()
+    proof.pop("process_alive")
+    path.write_text(json.dumps([proof]), encoding="utf-8")
+    try:
+        tool.load_stale_task_proofs(path, now)
+    except tool.ProofError:
+        pass
+    else:
+        raise AssertionError("ambiguous proof must fail closed")

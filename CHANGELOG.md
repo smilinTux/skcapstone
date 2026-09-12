@@ -188,6 +188,11 @@
 - Card `f0e09b1d`: keep worker ownership projections intact until the wrapper
   performs the exact-generation claim release and terminal capacity cleanup.
 
+- Card `55ce5c17`: retire old ephemeral worker projections by identity shape
+  instead of provider name, require fresh negative runtime evidence plus a
+  folded custody mismatch for stale task holders, and report bounded grouped
+  projection age diagnostics from `coord status`.
+
 - Card `3b881689`: align governed review diagnostics with Seraph's packaged
   two-seat target, preserve nonterminal partial findings, and reject producer
   self-review at the claim boundary.
