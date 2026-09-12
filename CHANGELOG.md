@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Card f573759b: validate child lifecycle inside terminal transactions.**
+  Parent completion now refuses nonterminal labeled children from inside the
+  shared skcoord mutation critical section for both supported terminal routes.
+
 - Builder dispatch now releases the prior exact claim and blocks without
   launching when a changed offer supersedes persisted status for the same card.
 
