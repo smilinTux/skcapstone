@@ -9,6 +9,109 @@ from pathlib import Path
 
 LOGICAL_REVIEWER_SEATS = frozenset({"link", "mero", "seraph"})
 
+_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$", re.IGNORECASE)
+_COMBINED_BLOCKED_ON_RE = re.compile(
+    r"^\s*(dependency|card|human|capability)\s+"
+    r"(?:referent\s*[=:]\s*)?(card:[0-9a-f]{8}|approval:[\w./:@-]+|"
+    r"ac:\d+|free|capability:[\w./:@-]+)\s*$",
+    re.IGNORECASE,
+)
+_CARD_REFERENT_RE = re.compile(r"^card:([0-9a-f]{8})$", re.IGNORECASE)
+
+
+def parse_blocked_on_link(value: object) -> tuple[str, str | None] | None:
+    """Return ``(category, referent)`` from a blocked_on link value.
+
+    Args:
+        value: Raw ``blocked_on`` link text.
+
+    Returns:
+        Category and optional referent, or None when the value is not actionable.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return None
+    lower = text.lower()
+    if lower in {"dependency", "card", "human", "capability"}:
+        return lower, None
+    combined = _COMBINED_BLOCKED_ON_RE.match(text)
+    if combined:
+        return combined.group(1).lower(), combined.group(2).lower()
+    return None
+
+
+def dependency_blocker_unresolved(
+    home: Path,
+    core: Mapping[str, object],
+    labels: Sequence[str] | None = None,
+) -> bool:
+    """True when a hashed dependency blocker still makes redispatch unsafe.
+
+    A machine-readable ``blocked_on=dependency`` plus ``evidence_sha256`` parks
+    the exact review generation until the named dependency publishes reachable
+    candidate bytes or completes with a non-BLOCKED verdict. Temporary labels
+    such as ``do-not-claim`` are not required once this gate is live.
+
+    Args:
+        home: Estate home containing CardStore and evidence roots.
+        core: Folded card core/links/meta mapping.
+        labels: Optional labels; unused for the hold itself, kept for callers.
+
+    Returns:
+        True when claim/dispatch must stay suppressed.
+    """
+    del labels  # Hold is driven by typed blocker links, not temporary fences.
+    links = core.get("links") if isinstance(core.get("links"), Mapping) else {}
+    meta = core.get("meta") if isinstance(core.get("meta"), Mapping) else {}
+    blocked_on = links.get("blocked_on") or meta.get("blocked_on")
+    evidence_sha = links.get("evidence_sha256") or meta.get("evidence_sha256")
+    parsed = parse_blocked_on_link(blocked_on)
+    if parsed is None or parsed[0] != "dependency" or not parsed[1]:
+        return False
+    if not _DIGEST_RE.fullmatch(str(evidence_sha or "").strip()):
+        return False
+    match = _CARD_REFERENT_RE.fullmatch(parsed[1])
+    if match is None:
+        return True
+    dep_id = match.group(1).lower()
+    from .card_store import CardStore
+
+    dependency = CardStore(Path(home).expanduser()).fold(dep_id)
+    if dependency is None:
+        return True
+    dep_links = dependency.links if isinstance(dependency.links, Mapping) else {}
+    dep_meta = dependency.meta if isinstance(dependency.meta, Mapping) else {}
+    verdict = str(
+        dep_links.get("verdict")
+        or dep_links.get("outcome")
+        or dep_meta.get("verdict")
+        or dep_meta.get("outcome")
+        or ""
+    )
+    if (
+        dependency.status.value == "done"
+        and verdict
+        and not re.match(r"^\s*BLOCKED\b", verdict, re.IGNORECASE)
+    ):
+        return False
+    work = Path(home).expanduser() / "evidence" / "work" / dep_id
+    if work.is_dir():
+        try:
+            # Bounded: only the dependency's own work root, shallow enough that
+            # resolution means published bytes rather than an estate walk.
+            for path in work.iterdir():
+                if path.is_symlink():
+                    continue
+                if path.is_file():
+                    return False
+                if path.is_dir():
+                    for child in path.iterdir():
+                        if child.is_file() and not child.is_symlink():
+                            return False
+        except OSError:
+            return True
+    return True
+
 
 def qualified_reviewer_seats(core: Mapping[str, object] | None = None) -> frozenset[str]:
     """Return default and configured logical reviewer seats, failing closed."""
@@ -170,6 +273,7 @@ def governed_review_gate_reasons(
     dependency_blocked: bool = False,
     owned: bool = False,
     capacity_available: bool = True,
+    dependency_blocker_holds: bool = False,
 ) -> tuple[str, ...]:
     """Return stable reason codes used by CLI and POOL_V2 diagnostics."""
     normalized = {str(label).strip().lower() for label in labels}
@@ -184,6 +288,8 @@ def governed_review_gate_reasons(
         reasons.append("absent-source-binding")
     if dependency_blocked:
         reasons.append("dependency")
+    if dependency_blocker_holds:
+        reasons.append("dependency-blocker")
     if owned:
         reasons.append("ownership")
     if not capacity_available:
@@ -207,7 +313,11 @@ def assert_governed_review_claim(home: Path, card_id: str, agent: str) -> None:
         "links": card.links,
         "meta": card.meta,
     }
-    reasons = governed_review_gate_reasons(core, labels)
+    reasons = governed_review_gate_reasons(
+        core,
+        labels,
+        dependency_blocker_holds=dependency_blocker_unresolved(home, core, labels),
+    )
     reviewer = agent.strip().lower()
     elastic = re.fullmatch(
         rf"pi-codex-review-[a-z0-9][a-z0-9-]*-{re.escape(card_id.lower())}", reviewer
