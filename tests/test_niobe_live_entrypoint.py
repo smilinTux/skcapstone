@@ -104,6 +104,7 @@ def test_live_wrapper_validates_then_runs_exact_dispatcher(tmp_path: Path, monke
     assert rc == 0
     assert calls[0][:2] == ([sys.executable, str(dispatcher), "--go"], False)
     assert calls[0][2]["SKFLEET_NIOBE_ACTIVATION"] == str(path.resolve())
+    assert calls[0][2]["SKFLEET_ROTATION_HOSTS"] == "chiap08"
     receipt = json.loads(
         (tmp_path / "home/coordination/seat-cycles/niobe.health.jsonl").read_text()
     )

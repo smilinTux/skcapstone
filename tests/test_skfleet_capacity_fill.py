@@ -50,6 +50,34 @@ def test_multiple_slots_fill_after_early_failures() -> None:
     assert _fill(outcomes, 2, 4) == ["later-a", "later-b"]
 
 
+def test_niobe_fills_five_slots_from_29_ready_after_three_rejections() -> None:
+    outcomes = [
+        ("workspace-origin-fail", False),
+        ("review-metadata-fail", False),
+        ("workspace-revision-fail", False),
+        *((f"later-{index}", True) for index in range(5)),
+        *((f"unscanned-{index}", True) for index in range(21)),
+    ]
+    assert len(outcomes) == 29
+    assert _fill(outcomes, seats=5, pool_bound=8) == [
+        "later-0",
+        "later-1",
+        "later-2",
+        "later-3",
+        "later-4",
+    ]
+
+
+@pytest.mark.parametrize(
+    "rejection",
+    ["preflight", "workspace", "claim", "launch", "review-metadata"],
+)
+def test_each_recoverable_rejection_allows_later_success(rejection: str) -> None:
+    assert _fill([(rejection, False), ("later", True)], seats=1, pool_bound=2) == [
+        "later"
+    ]
+
+
 @pytest.mark.parametrize(
     ("outcomes", "seats", "bound", "expected"),
     [
