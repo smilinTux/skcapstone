@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- Card `8daa0875`: read authoritative raw void events when determining leaf
+  eligibility and gate diagnostics, while preserving dependency and hold
+  admission checks.
+
 - Card `d2771026`: preserve executable startup evidence after the Pi Node
   process replaces its command line with its process title, while retaining
   exact descendant, interpreter, shebang, title, and fleet identity checks.
