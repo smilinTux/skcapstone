@@ -934,9 +934,24 @@ def _classify_claim_outcome(still_assignable, returncode=None,
 # deterministic, non-secret receipt naming the live holder. Stale recovery
 # requires fresh proof that no matching process, unit, or session identity is
 # still alive.
+#: An empty or partially written receipt stays "in flight" for this long
+#: before a contender may treat it as stale; stealing the create-to-write
+#: window admitted both launchers in the d11ca7ef race analysis.
+_ADMISSION_WRITE_WINDOW_S = 2.0
+_ADMISSION_WRITE_POLL_S = 0.05
+
+
 def _admission_lock_path(home, cid):
     """Return the per-card admission receipt path for one card id."""
     return os.path.join(home, ".skcapstone", "fleet", "admission", "%s.json" % cid)
+
+
+def _release_card_admission(home, cid):
+    """Remove one admission receipt; a missing file is not an error."""
+    try:
+        os.unlink(_admission_lock_path(home, cid))
+    except OSError:
+        pass
 
 
 def _read_admission_receipt(path):
@@ -1019,6 +1034,8 @@ def acquire_card_admission(
     runner=subprocess.run,
     now=None,
     pid=None,
+    sleep=time.sleep,
+    monotonic=time.monotonic,
 ):
     """Atomically admit one worker for an exact card on this host.
 
@@ -1040,6 +1057,8 @@ def acquire_card_admission(
         runner: Subprocess runner for liveness probes (tests inject fakes).
         now: Receipt timestamp override (tests inject for determinism).
         pid: Holder pid override (tests inject for determinism).
+        sleep: Sleep callable used while waiting out an in-flight write.
+        monotonic: Clock callable bounding the in-flight write window.
 
     Returns:
         ``{"admitted": True, "receipt": receipt}`` on admission, otherwise
@@ -1066,11 +1085,21 @@ def acquire_card_admission(
         try:
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
         except FileExistsError:
+            # The winner creates the file before writing it; a contender
+            # reading in that window must wait for the write to land, not
+            # mistake an empty file for a stale lock and steal it (that
+            # interleaving admitted BOTH launchers in the d11ca7ef race
+            # analysis). Only a receipt that stays unreadable for the whole
+            # window counts as stale.
+            deadline = monotonic() + _ADMISSION_WRITE_WINDOW_S
             holder = _read_admission_receipt(path)
+            while holder is None and monotonic() < deadline:
+                sleep(_ADMISSION_WRITE_POLL_S)
+                holder = _read_admission_receipt(path)
             if holder is not None and _admission_holder_live(holder, runner):
                 return {"admitted": False, "reason": "live-holder", "receipt": holder}
-            # Stale or unreadable receipt: recover once, then refuse rather
-            # than loop against a contended lock.
+            # Stale receipt: recover once, then refuse rather than loop
+            # against a contended lock.
             try:
                 os.unlink(path)
             except OSError:
@@ -5835,6 +5864,25 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
                 [SKC,"coord","release-claim",cid,"--owner",name,
                  "--expected-claim-revision",claimed_revision,"--agent","niobe"],
                 capture_output=True,text=True)
+        continue
+    # Recheck under the lock: the claim won before admission, but the
+    # authoritative fold can change underneath us (a concurrent owner's
+    # earlier claim syncs in and the CardStore fold resolves to them, the
+    # 0d7331e7 shape). This is the last point before process creation where
+    # the displacement can still be refused without killing a worker.
+    _final_owner,_final_at,_final_revision=_current_claim_identity_fresh(cid)
+    if _final_owner != name or _final_revision != claimed_revision:
+        admission_refused += 1
+        _release_card_admission(HOME,cid)
+        log(d,"ADMISSION_REFUSED|%s|%s|%s|reason=claim-displaced|"
+            "fold_owner=%s|fold_claim_revision=%s|expected_owner=%s|"
+            "expected_claim_revision=%s"%(
+                HOST,sess,cid,_final_owner,_final_revision,
+                name,claimed_revision))
+        subprocess.run(
+            [SKC,"coord","release-claim",cid,"--owner",name,
+             "--expected-claim-revision",claimed_revision,"--agent","niobe"],
+            capture_output=True,text=True)
         continue
     if _fanout_request is not None:
         try:
