@@ -968,9 +968,16 @@ def _log_once_per_hour(d, event, cid, message, state_dir=None, now=None):
     log(d, message)
     return True
 
+
+def _rotation_lock_path(home, seat):
+    """Return the lock owned by one standing seat or the generic rotation."""
+    name = "rotate-%s.lock" % seat if seat else "rotate.lock"
+    return os.path.join(home, ".skcapstone/fleet", name)
+
+
 os.makedirs(os.path.join(HOME,".skcapstone/fleet"),exist_ok=True)
 d=os.path.join(EVID,STAMP)
-lock=open(os.path.join(HOME,".skcapstone/fleet/rotate.lock"),"w")
+lock=open(_rotation_lock_path(HOME,ONLY_SEAT),"w")
 try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
 except BlockingIOError:
     log(d,"NOOP_RECEIPT|%s|reason=rotation_overlap|seat=%s"%
