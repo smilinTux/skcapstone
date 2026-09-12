@@ -174,9 +174,9 @@ def test_canonical_sovereign_semantic_marker_is_qwen_exclusive() -> None:
     namespace = _load_lane_helpers()
     namespace["event_rows"] = lambda cid: []
 
-    assert namespace["qwen_first_exclusive"](
-        "04acd4b0", ["semantic-lane:sovereign-corpus"]
-    ) is True
+    assert (
+        namespace["qwen_first_exclusive"]("04acd4b0", ["semantic-lane:sovereign-corpus"]) is True
+    )
 
 
 def test_qwen_suitable_is_nonexclusive() -> None:
