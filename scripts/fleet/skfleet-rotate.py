@@ -440,12 +440,20 @@ MAX_CANDIDATE_SCAN=max(
     MAX_LAUNCH,
     int(os.environ.get("SKFLEET_MAX_CANDIDATE_SCAN",str(MAX_LAUNCH*8))),
 )
-ONLY_SEAT=os.environ.get("SKFLEET_ONLY_SEAT","").strip().lower()
+_SEAT_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+
+def _validated_rotation_seat(value):
+    """Normalize one configured seat before it can influence the filesystem."""
+    seat=str(value or "").strip().lower()
+    if seat and not _SEAT_RE.fullmatch(seat):
+        raise SystemExit("BLOCKED|SKFLEET_ONLY_SEAT|invalid seat")
+    return seat
+
+ONLY_SEAT=_validated_rotation_seat(os.environ.get("SKFLEET_ONLY_SEAT",""))
 SEAT_TARGET=_required_lane_target("SKFLEET_SEAT_TARGET", default="0")
 CODEX_PHYSICAL_LIMIT=_required_lane_target(
     "SKFLEET_CODEX_PHYSICAL_LIMIT", default=str(TARGET))
 REVIEW_MAXIMUM=_required_lane_target("SKFLEET_REVIEW_MAXIMUM", default="2")
-_SEAT_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 DRY = "--go" not in sys.argv
 HOME=os.path.expanduser("~")
 CARDS=os.path.join(HOME,".skcapstone/cards")
@@ -968,9 +976,16 @@ def _log_once_per_hour(d, event, cid, message, state_dir=None, now=None):
     log(d, message)
     return True
 
+
+def _rotation_lock_path(home, seat):
+    """Return the lock owned by one standing seat or the generic rotation."""
+    name = "rotate-%s.lock" % seat if seat else "rotate.lock"
+    return os.path.join(home, ".skcapstone/fleet", name)
+
+
 os.makedirs(os.path.join(HOME,".skcapstone/fleet"),exist_ok=True)
 d=os.path.join(EVID,STAMP)
-lock=open(os.path.join(HOME,".skcapstone/fleet/rotate.lock"),"w")
+lock=open(_rotation_lock_path(HOME,ONLY_SEAT),"w")
 try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
 except BlockingIOError:
     log(d,"NOOP_RECEIPT|%s|reason=rotation_overlap|seat=%s"%
@@ -1169,7 +1184,7 @@ if not ONLY_SEAT:
     _codex["free"]=aggregate_review_capacity(
         _gateway_routes,min(TARGET,CODEX_PHYSICAL_LIMIT,MAX_LAUNCH))
 if ONLY_SEAT:
-    if not _SEAT_RE.fullmatch(ONLY_SEAT) or SEAT_TARGET < 1:
+    if SEAT_TARGET < 1:
         raise SystemExit("BLOCKED|SKFLEET_SEAT_TARGET|seat dispatch requires a positive target")
     _codex=next(lane for lane in LANES if lane["name"]=="codex")
     _busy_cards=_worker_cards(sessions,worker_units,[_codex])
@@ -2123,8 +2138,6 @@ def _load_seat_placement(path=None):
 
 _SEAT_PLACEMENT, _SEAT_PLACEMENT_ERROR = _load_seat_placement()
 _ONLY_SEAT = ONLY_SEAT
-if _ONLY_SEAT and not _SEAT_RE.fullmatch(_ONLY_SEAT):
-    raise SystemExit("BLOCKED|SKFLEET_ONLY_SEAT|invalid seat")
 
 def seat_for(cid, core):
     """Return the named seat this card belongs to, or None.
