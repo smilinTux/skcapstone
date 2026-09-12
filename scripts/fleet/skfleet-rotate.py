@@ -34,6 +34,7 @@ from skcapstone.fleet.review_capacity import (
     load_route_occupancy,
 )
 from skcapstone.fleet.paths import default_paths as default_fleet_paths
+from skcapstone.fleet.rotation_lock import acquire_rotation_lock
 from skcapstone.scheduler_decision import (
     SchedulerFacts,
     classify_scheduler_population,
@@ -1225,9 +1226,11 @@ def _log_once_per_hour(d, event, cid, message, state_dir=None, now=None):
 
 os.makedirs(os.path.join(HOME,".skcapstone/fleet"),exist_ok=True)
 d=os.path.join(EVID,STAMP)
-lock=open(os.path.join(HOME,".skcapstone/fleet/rotate.lock"),"w")
-try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-except BlockingIOError:
+lock=acquire_rotation_lock(
+    Path(HOME)/".skcapstone/fleet/rotate.lock",
+    seat=ONLY_SEAT or "niobe",
+)
+if lock is None:
     log(d,"NOOP_RECEIPT|%s|reason=rotation_overlap|seat=%s"%
         (HOST,ONLY_SEAT or "niobe"))
     sys.exit(0)
