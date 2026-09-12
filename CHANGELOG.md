@@ -10,6 +10,14 @@
   240-second Seraph cycle can no longer turn every one-minute Niobe timer beat
   into `rotation_overlap`; all mutations still use the same exclusive lock.
 
+- Bound fleet review evidence discovery to explicit card references and
+  `evidence/work/<card_id>/` roots with deterministic time and file-count
+  budgets, and suppress Seraph/elastic redispatch while a machine-readable
+  dependency blocker remains unresolved. Re-eligibility returns only after the
+  named dependency publishes shared work-root bytes or completes with a
+  non-BLOCKED verdict, so temporary `do-not-claim` fences are no longer required
+  for that failure mode (card 4cd4dd63 / PR662).
+
 - Governed review placement and atomic claim authorization now consume one
   host-neutral candidate contract. Qualified Link, Mero, Seraph, and
   configured logical reviewers share every healthy, policy-compatible

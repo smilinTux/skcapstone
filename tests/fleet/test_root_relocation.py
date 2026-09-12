@@ -195,6 +195,11 @@ _SKCAPSTONE_PATH_EXEMPT = {
         "audits, which is the fleet tree's parent, not fleet state; read-only, and "
         "overridable by the syncfolder object's spec.root"
     ),
+    "bounded_artifact_discovery.py": (
+        "reads estate evidence under ~/.skcapstone/evidence/work/<card>/ (and "
+        "explicit card-referenced paths), which is coordination evidence, not "
+        "fleet state under SKFLEET_ROOT; relocating the fleet tree must not move it"
+    ),
 }
 
 
