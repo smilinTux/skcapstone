@@ -130,7 +130,8 @@ def stale_projection(monitor, **changes):
     return worker(monitor, **values)
 
 
-def test_live_herdr_clears_only_exact_stale_projection(monkeypatch):
+@pytest.mark.parametrize("projection_state", ["stale", "valid"])
+def test_live_herdr_clears_only_exact_projection(monkeypatch, projection_state):
     """Current Herdr evidence supplements an exact owner and claim join."""
     monitor = load_monitor()
     monkeypatch.setattr(
@@ -142,7 +143,9 @@ def test_live_herdr_clears_only_exact_stale_projection(monkeypatch):
         ),
     )
 
-    joined = monitor.join_herdr_evidence([stale_projection(monitor)])
+    joined = monitor.join_herdr_evidence(
+        [stale_projection(monitor, projection_state=projection_state)]
+    )
 
     assert joined[0].projection_state == "valid"
     assert joined[0].evidence_source.endswith("+herdr")
