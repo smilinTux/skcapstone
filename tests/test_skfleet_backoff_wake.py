@@ -24,12 +24,14 @@ FUNCTIONS = {
     "_ts_epoch",
     "_label_value",
     "_blocked_reason",
+    "_parse_blocked_on_link",
     "_latest_blocked_reason",
     "_completion_epoch",
     "_material_label",
     "_authored_change_epoch",
     "_human_gate",
     "_human_resolution_epoch",
+    "_dependency_state_change_epoch",
     "_blocker_change_epoch",
     "_wake_retry_available",
     "blocked_backoff",
@@ -50,6 +52,7 @@ CONSTANTS = {
     "_CARD_REFERENT_RE",
     "_AC_REFERENT_RE",
     "_AC_MENTION_RE",
+    "_COMBINED_BLOCKED_ON_RE",
     "_WAKE_RETRY_LIMIT",
     "_PASS_RE",
     "_ESCALATE_LABEL",
@@ -715,21 +718,24 @@ def test_exact_567_timeline_wakes_then_exhausts_one_generation(board: BackoffHar
     assert board.blocked(card) is True
 
 
-def test_dependency_requires_exact_edge_and_satisfied_referent(board: BackoffHarness) -> None:
+def test_dependency_wake_requires_referent_state_change(board: BackoffHarness) -> None:
+    """Unresolved dependency blockers stay parked until the referent changes."""
     card = "83e04cf1"
     dep = "2076c423"
     board.core(dep)
-    board.states[dep] = "complete"
-    board.satisfied[dep] = True
-    board.event(dep, "2026-08-28T02:00:00Z", "complete")
     board.outcome(card, "2026-08-28T01:00:00Z", f"BLOCKED|dependency|card:{dep}")
     assert board.blocked(card) is True
 
     board.dependencies[card] = [dep]
     board.event(card, "2026-08-28T01:30:00Z", "add_dependency", dependency=dep)
+    assert board.blocked(card) is True
+
+    board.states[dep] = "complete"
+    board.satisfied[dep] = True
+    board.event(dep, "2026-08-28T02:00:00Z", "complete")
     assert board.blocked(card) is False
 
-    board.satisfied[dep] = False
+    board.ns["_wake_launch_times"][card] = [board.epoch("2026-08-28T02:05:00Z")]
     assert board.blocked(card) is True
 
 
@@ -823,3 +829,85 @@ def test_no_change_and_unrelated_traffic_do_not_wake(board: BackoffHarness) -> N
         "66666666", "2026-08-28T03:00:00Z", "add_label", label="needs-stronger-model"
     )
     assert board.blocked(card) is True
+
+
+def test_regression_4cd4dd62_combined_dependency_blocker_suppresses_redispatch(
+    tmp_path: Path,
+) -> None:
+    """Combined blocked_on values park the exact review until the dependency changes."""
+    card = "4cd4dd62"
+    dep = "383a7834"
+    legacy = [
+        {
+            "card_id": card,
+            "action": "link",
+            "writer": "pi-seraph-chiap08-4cd4dd62",
+            "ts": "2026-09-12T09:27:47+00:00",
+            "link_key": "blocked_on",
+            "link_value": f"dependency card:{dep}",
+        },
+        {
+            "card_id": card,
+            "action": "link",
+            "writer": "pi-seraph-chiap08-4cd4dd62",
+            "ts": "2026-09-12T09:28:30+00:00",
+            "link_key": "evidence",
+            "link_value": f"/home/skuser01/.skcapstone/evidence/work/{card}/BLOCKED-report.json",
+        },
+        {
+            "card_id": card,
+            "action": "link",
+            "writer": "pi-seraph-chiap08-4cd4dd62",
+            "ts": "2026-09-12T09:28:31+00:00",
+            "link_key": "evidence_sha256",
+            "link_value": "5658c6eed5fae206138d6adfc7daf45602899ee78f78e8e34ac1716059f3c2f1",
+        },
+    ]
+    namespace = _native_namespace(tmp_path, {card: [], dep: []}, legacy)
+    namespace.update(
+        {
+            "folded_dependencies": lambda cid, core=None: [],
+            "_dep_satisfied": lambda cid: False,
+            "_wake_launch_times": __import__("collections").defaultdict(list),
+        }
+    )
+    assert namespace["_load_outcomes"]()[card][1] == (
+        f"BLOCKED blocked_on=dependency referent=card:{dep}"
+    )
+    assert namespace["blocked_backoff"](card) is True
+
+    # Unrelated noise must not restore eligibility.
+    namespace["_evidence_events"] = None
+    namespace["_outcomes"] = None
+    legacy.append(
+        {
+            "card_id": "deadbeef",
+            "action": "link",
+            "writer": "noise",
+            "ts": "2026-09-12T10:00:00+00:00",
+            "link_key": "evidence",
+            "link_value": "/tmp/noise.json",
+        }
+    )
+    (tmp_path / "coordination-events" / "writer.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in legacy), encoding="utf-8"
+    )
+    assert namespace["blocked_backoff"](card) is True
+
+    # Publishing reachable dependency evidence restores one wake generation.
+    namespace["_evidence_events"] = None
+    namespace["_outcomes"] = None
+    legacy.append(
+        {
+            "card_id": dep,
+            "action": "link",
+            "writer": "codex-resume-383a7834",
+            "ts": "2026-09-12T11:00:00+00:00",
+            "link_key": "candidate_evidence_sha256",
+            "link_value": "a" * 64,
+        }
+    )
+    (tmp_path / "coordination-events" / "writer.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in legacy), encoding="utf-8"
+    )
+    assert namespace["blocked_backoff"](card) is False
