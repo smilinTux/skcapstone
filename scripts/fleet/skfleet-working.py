@@ -42,6 +42,11 @@ def is_ephemeral_worker_agent(agent: str, card: str) -> bool:
     return bool(agent) and bool(card) and (agent.endswith("-" + card) or agent == card)
 
 
+def canonical_host(host: str) -> str:
+    """Return the case-insensitive short hostname used by fleet observations."""
+    return host.strip().lower().split(".", 1)[0]
+
+
 @dataclass(frozen=True)
 class Worker:
     host: str
@@ -341,8 +346,11 @@ def assess(worker: Worker, samples: dict[str, dict[str, int]], now: int) -> tupl
 def collect(host: str) -> list[Worker]:
     encoded = base64.b64encode(REMOTE.encode()).decode("ascii")
     remote_command = f"import base64;exec(base64.b64decode({encoded!r}))"
-    result = subprocess.run(
-        [
+    local = canonical_host(host) == canonical_host(os.uname().nodename)
+    command = (
+        [sys.executable, "-c", remote_command]
+        if local
+        else [
             "ssh",
             "-o",
             "BatchMode=yes",
@@ -352,7 +360,10 @@ def collect(host: str) -> list[Worker]:
             "python3",
             "-c",
             shlex.quote(remote_command),
-        ],
+        ]
+    )
+    result = subprocess.run(
+        command,
         capture_output=True,
         text=True,
         timeout=25,
@@ -370,6 +381,10 @@ def collect(host: str) -> list[Worker]:
             diagnostics[str(parsed.get("host", host))] = parsed["projection_diagnostics"]
             continue
         try:
+            if local:
+                parsed["evidence_source"] = (
+                    parsed.get("evidence_source", "systemd+proc+cardstore") + "+local"
+                )
             rows.append(Worker(**parsed))
         except TypeError:
             continue
