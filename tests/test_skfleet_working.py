@@ -6,7 +6,9 @@ import importlib.machinery
 import importlib.util
 import io
 import json
+import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -98,6 +100,138 @@ def worker(monitor, **changes):
     )
     values.update(changes)
     return monitor.Worker(**values)
+
+
+def herdr_agent(card="deadbeef", **changes):
+    """Build current Herdr evidence for one bounded coworktree."""
+    values = {
+        "name": f"repair-{card}-codex",
+        "agent_status": "working",
+        "cwd": f"/work/skcapstone-{card}-herdr",
+    }
+    values.update(changes)
+    return values
+
+
+def stale_projection(monitor, **changes):
+    """Build a projection-only row eligible for Herdr corroboration."""
+    values = dict(
+        agent="pi-herdr-deadbeef",
+        pid=0,
+        unit="not-found",
+        unit_load="not-found",
+        unit_active="inactive",
+        unit_sub="dead",
+        claim_state="exact",
+        projection_state="stale",
+        evidence_source="agent-projection+systemd+proc",
+    )
+    values.update(changes)
+    return worker(monitor, **values)
+
+
+def test_live_herdr_clears_only_exact_stale_projection(monkeypatch):
+    """Current Herdr evidence supplements an exact owner and claim join."""
+    monitor = load_monitor()
+    monkeypatch.setattr(
+        monitor.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"result": {"agents": [herdr_agent()]}}),
+        ),
+    )
+
+    joined = monitor.join_herdr_evidence([stale_projection(monitor)])
+
+    assert joined[0].projection_state == "valid"
+    assert joined[0].evidence_source.endswith("+herdr")
+    assert monitor.assess(joined[0], {}, 100)[0] == "OK"
+
+
+@pytest.mark.parametrize(
+    ("row_changes", "agent_changes"),
+    [
+        ({"claim_state": "mismatch"}, {}),
+        ({"card": "feedface"}, {}),
+        ({}, {"cwd": "/work/skcapstone-feedface-herdr"}),
+        ({}, {"agent_status": "done"}),
+        ({}, {"agent_status": "unknown"}),
+    ],
+)
+def test_herdr_mismatch_or_dead_evidence_remains_stale(monkeypatch, row_changes, agent_changes):
+    """Owner/revision, card, coworktree, and live status all fail closed."""
+    monitor = load_monitor()
+    monkeypatch.setattr(
+        monitor.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"result": {"agents": [herdr_agent(**agent_changes)]}}),
+        ),
+    )
+
+    assert (
+        monitor.join_herdr_evidence([stale_projection(monitor, **row_changes)])[0].projection_state
+        == "stale"
+    )
+
+
+def test_historical_pane_remains_stale(monkeypatch):
+    """Pane history outside the current agent list never becomes liveness."""
+    monitor = load_monitor()
+    historical_only = {"result": {"agents": [], "panes": [herdr_agent()]}}
+    monkeypatch.setattr(
+        monitor.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=json.dumps(historical_only)),
+    )
+    projection = stale_projection(monitor)
+
+    assert monitor.join_herdr_evidence([projection])[0].projection_state == "stale"
+
+
+@pytest.mark.parametrize(
+    "contradiction", [{"pid": 321}, {"unit": "skfleet-worker-pi-deadbeef.service"}]
+)
+def test_authoritative_contradiction_remains_stale(monkeypatch, contradiction):
+    """Observed systemd or proc evidence remains authoritative over Herdr."""
+    monitor = load_monitor()
+    monkeypatch.setattr(
+        monitor.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"result": {"agents": [herdr_agent()]}}),
+        ),
+    )
+    authoritative = replace(stale_projection(monitor), **contradiction)
+
+    assert monitor.join_herdr_evidence([authoritative])[0].projection_state == "stale"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        FileNotFoundError(),
+        subprocess.TimeoutExpired(["herdr"], 2),
+        SimpleNamespace(returncode=1, stdout=""),
+        SimpleNamespace(returncode=0, stdout="not-json"),
+        SimpleNamespace(returncode=0, stdout=json.dumps({"result": {}})),
+    ],
+)
+def test_herdr_unavailable_timeout_or_malformed_fails_closed(monkeypatch, failure):
+    """Every unavailable or incomplete Herdr result preserves stale truth."""
+    monitor = load_monitor()
+
+    def run(*args, **kwargs):
+        if isinstance(failure, BaseException):
+            raise failure
+        return failure
+
+    monkeypatch.setattr(monitor.subprocess, "run", run)
+
+    assert monitor.join_herdr_evidence([stale_projection(monitor)])[0].projection_state == "stale"
 
 
 def run_report(monkeypatch, tmp_path, capsys, monitor, rows, samples=None, now=100):
