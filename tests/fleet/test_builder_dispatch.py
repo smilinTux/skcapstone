@@ -244,6 +244,58 @@ def test_reoffer_after_source_amendment_mints_a_new_bound_request(
     )
 
 
+@pytest.mark.parametrize("release_result", [True, False])
+def test_changed_offer_releases_prior_exact_claim_without_launch(
+    paths, operator, noded41, monkeypatch, tmp_path, release_result
+) -> None:
+    _node(paths, operator, noded41)
+    writer = store.Writer(role="scheduler", node="niobe", identity="")
+    first = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
+    builder_dispatch._write_status(
+        paths,
+        "node-ziowk01",
+        first,
+        "blocked",
+        owner="prior-owner",
+        claim_revision="prior-revision",
+        claim_released=False,
+        attempt=0,
+    )
+    amended = _card()
+    amended["meta"]["base_ref"] = "release"
+    second = builder_dispatch.offer(paths, amended, ["sk-m", "source-only"], writer=writer)
+    folded = _folded(
+        owner="prior-owner", meta=dict(amended["meta"], _claim_revision="prior-revision")
+    )
+    releases = []
+
+    def release(_self, owner, card_id, **kwargs):
+        releases.append((owner, card_id, kwargs["expected_claim_revision"]))
+        if release_result:
+            folded.owner = None
+        return release_result
+
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: folded)
+    monkeypatch.setattr(builder_dispatch.Board, "release_claim", release)
+    monkeypatch.setattr(
+        builder_dispatch.Board,
+        "claim_task",
+        lambda *_args: pytest.fail("replacement offer was claimed"),
+    )
+    result = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=lambda *_args: pytest.fail("replacement offer launched"),
+        materializer=lambda *_args: pytest.fail("replacement offer materialized"),
+    )
+
+    assert releases == [("prior-owner", "24b00003", "prior-revision")]
+    assert result["request_id"] == second["request_id"]
+    assert result["state"] == "blocked"
+    assert result["claim_released"] is release_result
+
+
 def test_amendment_during_claim_releases_generation_without_launch(
     paths, operator, noded41, monkeypatch, tmp_path
 ) -> None:
