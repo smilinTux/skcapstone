@@ -44,6 +44,11 @@
 - Builder source reconstruction failures now write request-bound, retry-bounded
   status and continue to later queued work instead of terminating `sknoded`.
 
+- Fleet hosts can publish exact local worker and claim-generation liveness
+  through a dedicated read-only timer, without restoring per-host dispatch.
+  Reaper authority still requires fresh, valid evidence from every configured
+  host; centralized Niobe remains the only launch authority.
+
 - Builder dispatch now releases the prior exact claim and blocks without
   launching when a changed offer supersedes persisted status for the same card.
 
