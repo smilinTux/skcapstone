@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Activation-validated Niobe cycles now pass their authorized host to the
+  existing rotation dispatcher as the complete rotation roster. This lets the
+  bounded, duplicate-free candidate scan continue past recoverable preflight,
+  workspace, review metadata, claim, and launch rejections instead of stopping
+  after the local host-hash slice is exhausted. Ordinary rotation hosts retain
+  the existing stable hash partition, and every per-card safety gate remains in
+  force.
+
 - The fleet rotation's worker roster was a literal tuple of one estate's five
   chi hosts, so on a second estate the live dispatcher exited immediately with
   `NOOP|noroc2027|host is outside the authorized chiap01-chiap03 worker fleet`.

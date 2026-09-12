@@ -111,6 +111,7 @@ def run_live(
     mailbox = poll_mail("niobe")
     environment = os.environ.copy()
     environment["SKFLEET_NIOBE_ACTIVATION"] = str(activation_path.resolve())
+    environment["SKFLEET_ROTATION_HOSTS"] = host
     invocation = os.environ.get("INVOCATION_ID", "").lower()
     cycle_id = (
         invocation
