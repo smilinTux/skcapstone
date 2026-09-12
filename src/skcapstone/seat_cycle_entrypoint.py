@@ -47,17 +47,17 @@ _NOOP = re.compile(
 )
 
 # A seat asks SKGateway for a SIZE, never for a provider. The gateway resolves
-# sk-s, sk-m, sk-l, or sk-xl to a member that meets the capability floor and the
-# trust zone of the request, so one estate can run Claude, an OpenRouter free
-# tier, NIM, or a local backend while another runs a subscription lane, with no
-# code change on either. Provider-pinned ids (sk-codex-mid, sk-glm-l, sk-kimi-*)
+# sk-s, sk-m, or sk-l to a member that meets the capability floor and the trust
+# zone of the request. XL folds onto the reviewed L route. One estate can run
+# Claude, an OpenRouter free tier, NIM, or a local backend while another runs a
+# subscription lane, with no code change on either. Provider-pinned ids
+# (sk-codex-mid, sk-glm-l, sk-kimi-*)
 # stay valid operator overrides; they are no longer the built-in default.
 #
-# A size with no qualifying member fails closed at the gateway. That is correct
-# and deliberate: nothing here substitutes a smaller bucket, because a silent
-# downgrade hides a real capability gap behind work that quietly got weaker.
+# A resolved route with no qualifying member fails closed at the gateway. The
+# route-selector may move only to an equal or larger reviewed route.
 _SIZE_CLASSES: tuple[str, ...] = ("S", "M", "L", "XL")
-_SIZE_MODEL_DEFAULTS: dict[str, str] = {"S": "sk-s", "M": "sk-m", "L": "sk-l", "XL": "sk-xl"}
+_SIZE_MODEL_DEFAULTS: dict[str, str] = {"S": "sk-s", "M": "sk-m", "L": "sk-l", "XL": "sk-l"}
 _SIZE_MODEL_ENV = "SKFLEET_MODEL_{size}"
 # Deprecated provider-named spelling, still read so an estate configured before
 # the rename keeps its exact behaviour across the upgrade.

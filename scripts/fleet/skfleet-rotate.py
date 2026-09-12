@@ -24,6 +24,11 @@ from skcapstone.fleet_lane_health import (
     lane_health,
 )
 from skcapstone.fleet_route_preflight import resolve_and_preflight
+from skcapstone.fleet.route_selector import (
+    RouteSelectionError,
+    build_worker_route_plan,
+    format_worker_route_brief,
+)
 from skcapstone.fleet import builder_dispatch, store as fleet_store
 from skcapstone.fleet.review_capacity import (
     acquire_review_route_snapshot,
@@ -1107,14 +1112,14 @@ _GLM_LEVELS={key:os.environ.get("SKFLEET_GLM_MODEL_"+key,value)
              for key,value in _GLM_LEVEL_DEFAULTS.items()}
 _GLM_SIZE_RE=re.compile(r"\[(S|M|XL|L)\]")
 _KIMI_SIZE_RE=re.compile(r"\[(S|M|L|XL)\]")
-_LOGICAL_ROUTES={"S":"sk-s","M":"sk-m","L":"sk-l","XL":"sk-xl"}
+_LOGICAL_ROUTES={"S":"sk-s","M":"sk-m","L":"sk-l","XL":"sk-l"}
 # A card size selects a CAPABILITY BUCKET, never a provider. SKGateway resolves
-# sk-s, sk-m, sk-l, and sk-xl to a member that meets the capability floor and the
-# trust zone of the request, so one estate can run Claude, an OpenRouter free
-# tier, or NIM while another runs a subscription lane, with no edit here and no
-# fleet redeploy. The earlier defaults named codex roles directly
-# (sk-codex-fast, sk-codex-mid, sk-codex), which pinned every estate installing
-# this fleet to one subscription provider.
+# sk-s, sk-m, and sk-l to a member that meets the capability floor and the
+# trust zone of the request. XL folds onto the reviewed L route. One estate can
+# run Claude, an OpenRouter free tier, or NIM while another runs a subscription
+# lane, with no edit here and no fleet redeploy. The earlier defaults named
+# codex roles directly (sk-codex-fast, sk-codex-mid, sk-codex), which pinned
+# every estate installing this fleet to one subscription provider.
 #
 # A provider-pinned id is still a perfectly good operator override: set
 # SKFLEET_MODEL_<size> to sk-codex-mid, sk-glm-l, or any advertised route.
@@ -1149,8 +1154,10 @@ def _kimi_model_for(core):
 def _producer_routes_for(core, labels, lane=None):
     """Return current gateway routes for one producer card and optional lane pin."""
     match=_GLM_SIZE_RE.search(str((core or {}).get("title") or ""))
-    routes=([] if _review_route_ambiguous or match is None else eligible_gateway_routes(
-        _review_route_snapshot or {},match.group(1),labels,_review_route_occupancy))
+    required_size=("L" if match and match.group(1)=="XL"
+                   else match.group(1) if match else None)
+    routes=([] if _review_route_ambiguous or required_size is None else eligible_gateway_routes(
+        _review_route_snapshot or {},required_size,labels,_review_route_occupancy))
     if lane is None:
         return routes
     token=str(lane).lower()
@@ -4887,7 +4894,8 @@ def semantic_stage_completed(cid):
 
 def qwen_first_exclusive(cid,labels):
     normalized={str(label).strip().lower() for label in (labels or [])}
-    return "qwen-first" in normalized and not semantic_stage_completed(cid)
+    markers={"qwen-first","semantic-lane:sovereign-corpus"}
+    return bool(normalized & markers) and not semantic_stage_completed(cid)
 
 
 def lane_compatibility(labels, escalation_required=False, qwen_allowed=True,
@@ -5398,11 +5406,17 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
             "- Do not deploy, dispatch, invoke an actuator, or change the target.\n"
         ) % (_verification_target, _verification_evidence_sha256)
     sess="%s%s"%(_LANE["prefix"],cid)
-    model=_logical_route_for(core)
-    if model is None:
-        log(d,"SKIPPED_LOGICAL_ROUTE|%s|%s|reason=missing-or-ambiguous-size"%
-            (HOST,cid))
+    _route_labels=(_labels if qwen_first_exclusive(cid,_labels) else [
+        label for label in _labels if str(label).strip().lower() not in {
+            "qwen-first","semantic-lane:sovereign-corpus"}])
+    try:
+        _route_plan=build_worker_route_plan(
+            str(core.get("title") or ""),_route_labels)
+    except RouteSelectionError as exc:
+        log(d,"SKIPPED_LOGICAL_ROUTE|%s|%s|reason=%s|detail=%s"%
+            (HOST,cid,exc.code,str(exc)[:140]))
         continue
+    model=_route_plan.selected_route
     pi_tools=pi_tool_allowlist(_labels)
     if DRY:
         log(d,"WOULD_LAUNCH|%s|%s|%s|lane=%s|model=%s|%s"%(HOST,sess,cid,_LANE["name"],model,str(core.get("title"))[:40]))
@@ -5433,12 +5447,23 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         log(d,"SKIPPED_LANE_RACE|%s|%s|%s|selected=%s|reason=%s"%
             (HOST,sess,cid,_LANE["name"],affinity_reason))
         continue
-    model=_logical_route_for(fresh_claimability["core"])
-    if model is None:
+    _fresh_route_labels=(fresh_claimability["labels"]
+                         if qwen_first_exclusive(cid,fresh_claimability["labels"])
+                         else [label for label in fresh_claimability["labels"]
+                               if str(label).strip().lower() not in {
+                                   "qwen-first","semantic-lane:sovereign-corpus"}])
+    try:
+        _route_plan=build_worker_route_plan(
+            str(fresh_claimability["core"].get("title") or ""),
+            _fresh_route_labels,
+            preflight=lambda route: resolve_and_preflight(_GATEWAY_ENDPOINT,route),
+        )
+    except RouteSelectionError as exc:
         lane_drift += 1
-        log(d,"SKIPPED_LOGICAL_ROUTE_RACE|%s|%s|reason=missing-or-ambiguous-size"%
-            (HOST,cid))
+        log(d,"ROUTE_PREFLIGHT_BLOCKED|%s|%s|reason=%s|detail=%s"%
+            (HOST,cid,exc.code,str(exc)[:140]))
         continue
+    model=_route_plan.selected_route
     _route_identity={
         "logical_route":model,
         "provider":"skgateway",
@@ -5526,15 +5551,11 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
                 "- request_id=%s\n- requester=%s\n- allowed_route=%s\n"
                 "- Your authority is limited to this route and the card criteria.\n"
                 % _fanout_env)
-    try:
-        _route_preflight=resolve_and_preflight(_GATEWAY_ENDPOINT,model)
-    except ValueError as exc:
-        log(d,"ROUTE_PREFLIGHT_BLOCKED|%s|%s|requested=%s|reason=%s"%
-            (HOST,cid,model,str(exc)[:140]))
-        continue
     log(d,"ROUTE_PREFLIGHT_OK|%s|%s|requested=%s|served=%s|provider=%s"%
-        (HOST,cid,_route_preflight.requested_identity,
-         _route_preflight.served_identity,_route_preflight.provider or "unknown"))
+        (HOST,cid,_route_plan.selected_route,
+         _route_plan.served_model,_route_plan.served_provider))
+    with open(bf,"a",encoding="utf-8") as _brief_handle:
+        _brief_handle.write("\n"+format_worker_route_brief(_route_plan))
     default_workspace=os.path.join(HOME,".skcapstone/fleet/workspaces",name)
     try:
         _source_spec = _source_workspace_spec(

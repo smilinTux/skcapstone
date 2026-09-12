@@ -33,7 +33,7 @@ def _helpers() -> dict[str, object]:
 
 @pytest.mark.parametrize(
     ("size", "route"),
-    [("S", "sk-s"), ("M", "sk-m"), ("L", "sk-l"), ("XL", "sk-xl")],
+    [("S", "sk-s"), ("M", "sk-m"), ("L", "sk-l"), ("XL", "sk-l")],
 )
 def test_tshirt_size_maps_only_to_logical_gateway_route(size: str, route: str) -> None:
     helper = _helpers()["_logical_route_for"]
@@ -54,3 +54,10 @@ def test_launch_never_replaces_logical_route_with_selected_member() -> None:
     assert 'model=str(_selected_route["model_or_bucket"])' not in source
     assert '"provider":"skgateway"' in source
     assert '"logical_route":model' in source
+
+
+def test_launch_uses_the_route_plan_and_appends_it_to_the_worker_brief() -> None:
+    source = ROTATE.read_text(encoding="utf-8")
+    assert "_route_plan=build_worker_route_plan(" in source
+    assert "format_worker_route_brief(_route_plan)" in source
+    assert "model=_route_plan.selected_route" in source

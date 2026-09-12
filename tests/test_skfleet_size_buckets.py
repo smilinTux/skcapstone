@@ -34,7 +34,7 @@ def _namespace() -> dict[str, object]:
 
 @pytest.mark.parametrize(
     ("size", "bucket"),
-    [("S", "sk-s"), ("M", "sk-m"), ("L", "sk-l"), ("XL", "sk-xl")],
+    [("S", "sk-s"), ("M", "sk-m"), ("L", "sk-l"), ("XL", "sk-l")],
 )
 def test_each_card_size_defaults_to_its_generic_capability_bucket(
     monkeypatch: pytest.MonkeyPatch, size: str, bucket: str
@@ -99,7 +99,7 @@ def test_a_blank_override_cannot_blank_a_bucket(
     monkeypatch.delenv("SKFLEET_CODEX_MODEL_XL", raising=False)
     namespace = _namespace()
 
-    assert namespace["_size_model_for"]({"title": "[CARD][XL] Work"}) == "sk-xl"
+    assert namespace["_size_model_for"]({"title": "[CARD][XL] Work"}) == "sk-l"
 
 
 def test_an_unsized_title_falls_back_to_the_lane_default() -> None:
@@ -113,8 +113,8 @@ def test_an_unsized_title_falls_back_to_the_lane_default() -> None:
     )
 
 
-def test_a_missing_bucket_never_silently_downgrades(monkeypatch: pytest.MonkeyPatch) -> None:
-    """sk-l failing closed at the gateway is correct: the gap must stay visible."""
+def test_xl_uses_the_reviewed_large_route(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fleet exposes three reviewed T-shirt routes, so XL folds onto L."""
 
     for level in ("S", "M", "L", "XL"):
         monkeypatch.delenv("SKFLEET_MODEL_" + level, raising=False)
@@ -122,9 +122,9 @@ def test_a_missing_bucket_never_silently_downgrades(monkeypatch: pytest.MonkeyPa
     namespace = _namespace()
     buckets = namespace["_SIZE_MODELS"]
 
-    assert len(set(buckets.values())) == len(buckets)
+    assert set(buckets.values()) == {"sk-s", "sk-m", "sk-l"}
     assert namespace["_size_model_for"]({"title": "[CARD][L] Work"}) == "sk-l"
-    assert namespace["_size_model_for"]({"title": "[CARD][XL] Work"}) == "sk-xl"
+    assert namespace["_size_model_for"]({"title": "[CARD][XL] Work"}) == "sk-l"
 
 
 def test_the_codex_lane_fallback_is_operator_configurable() -> None:
