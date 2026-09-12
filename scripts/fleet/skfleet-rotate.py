@@ -3101,16 +3101,51 @@ def _local_launch_evidence(cid):
 
 _WORKER_EXIT_DIR = os.path.join(HOME, ".skcapstone/evidence/fleet-worker-exits")
 
-def _latest_transport_failure_epoch(cid):
-    """Return the latest claim-scoped pre-agent transport failure time."""
+def _card_description_generation(cid):
+    """Return the content generation one offer generation was minted against.
+
+    The folded description carries the exact candidate identity (reviewed head,
+    outcome generation, candidate digest) and is stable across the claim/release
+    churn of one relaunch cycle. An empty result fails closed to the legacy
+    card-level hold instead of fencing.
+    """
+    try:
+        card = CardStore(Path(HOME) / ".skcapstone").fold(cid)
+    except (OSError, ValueError):
+        return ""
+    description = str(getattr(card, "description", "") or "")
+    if not description:
+        return ""
+    return hashlib.sha256(description.encode("utf-8")).hexdigest()
+
+def _latest_transport_failure_epoch(cid, generation=""):
+    """Return the latest claim-scoped pre-agent transport failure time.
+
+    Stamped evidence is fenced to one exact offer generation: a record whose
+    ``card_generation`` differs from the card's current content generation
+    (changed candidate revision) does not hold the current generation.
+    Unstamped legacy evidence, or a generation that cannot be determined,
+    keeps the legacy card-level hold.
+    """
     latest = 0.0
+    resolve_generation = None
     for path in glob.glob(os.path.join(_WORKER_EXIT_DIR, cid + "-*.json")):
         try:
             event = json.load(open(path, encoding="utf-8"))
-            if event.get("card_id") == cid and event.get("transport_failure"):
-                latest = max(latest, _ts_epoch(event.get("attempted_at")))
         except (OSError, TypeError, ValueError):
             continue
+        if event.get("card_id") != cid or not event.get("transport_failure"):
+            continue
+        recorded = str(event.get("card_generation") or "")
+        if recorded:
+            if resolve_generation is None:
+                resolve_generation = globals().get("_card_description_generation")
+                generation = generation or (
+                    resolve_generation(cid) if callable(resolve_generation) else ""
+                )
+            if generation and recorded != generation:
+                continue
+        latest = max(latest, _ts_epoch(event.get("attempted_at")))
     return latest
 
 def _transport_failure_logs(cid):
@@ -3126,7 +3161,13 @@ def _transport_failure_logs(cid):
     return logs
 
 def _transport_retry_held(cid):
-    """Hold a failed transport until the bounded recovery interval opens."""
+    """Hold one exact unchanged generation until the bounded interval opens.
+
+    A classified pre-agent rejection holds the card for the bounded recovery
+    interval. Stamped evidence is keyed to the card's content generation, so a
+    changed candidate revision is not suppressed by stale evidence and stays
+    eligible under the existing one-probe recovery policy.
+    """
     failed_at = _latest_transport_failure_epoch(cid)
     return bool(failed_at and time.time() - failed_at < _TRANSPORT_RETRY_COOLDOWN_S)
 
@@ -3163,6 +3204,7 @@ _TRANSPORT_FAILURE_CLASSES = frozenset({
     "backend_claims_quarantined",
     "invalid_upstream_tool_calls",
     "connection_failure",
+    "upstream_template_rejection",
 })
 
 def _transport_failure_claims():

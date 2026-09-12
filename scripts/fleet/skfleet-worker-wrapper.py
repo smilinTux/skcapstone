@@ -369,6 +369,9 @@ TRANSPORT_PATTERNS = {
         r"failed to connect|network is unreachable|temporary failure in name resolution",
         re.I,
     ),
+    "upstream_template_rejection": re.compile(
+        r"unable to generate parser\b|automatic parser generation failed", re.I
+    ),
 }
 SECRET_RE = re.compile(
     r"(?i)(authorization:\s*(?:bearer|basic)\s+|"
@@ -396,12 +399,31 @@ def classify_pre_agent_failure(stdout: bytes, stderr: bytes, rc: int) -> str | N
         r"(?:HTTP\s+)?(?:429|5\d\d)\b|model_owner_backend_down\b|"
         r"backend-claims-quarantined\b|invalid_upstream_tool_calls\b|"
         r"connection (?:error|failed|failure|refused|reset|timed? ?out)\b|"
-        r"failed to connect\b",
+        r"failed to connect\b|unable to generate parser\b|"
+        r"automatic parser generation failed\b",
         text,
         re.I,
     ):
         return None
     return classify_transport_failure(text)
+
+
+def card_description_generation(card_id: str) -> str:
+    """Return the immutable content generation one offer was minted against.
+
+    The folded description carries the exact candidate identity (reviewed head,
+    outcome generation, candidate digest) and never changes across the
+    claim/release churn of one relaunch cycle. A changed description is a new
+    generation and must not inherit an older generation's rejection hold.
+    """
+    try:
+        card = CardStore(Path.home() / ".skcapstone").fold(card_id)
+    except (OSError, ValueError):
+        return ""
+    description = str(getattr(card, "description", "") or "")
+    if not description:
+        return ""
+    return hashlib.sha256(description.encode("utf-8")).hexdigest()
 
 
 def redact_stderr(stderr: bytes) -> str:
@@ -460,6 +482,7 @@ def record_terminal_exit(args: argparse.Namespace, stderr: bytes, rc: int) -> No
     payload = {
         "attempted_at": attempted_at,
         "card_id": args.card,
+        "card_generation": card_description_generation(args.card),
         "child_exit_code": rc,
         "claim_revision": args.claim_revision,
         "host": args.host,
