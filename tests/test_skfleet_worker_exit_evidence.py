@@ -80,9 +80,7 @@ def test_known_transport_failures_are_classified(diagnostic: str, kind: str) -> 
 
 
 def test_system_message_ordering_http_400_is_classified() -> None:
-    diagnostic = (
-        '400: {"error":{"message":"System message must be the first message"}}'
-    )
+    diagnostic = '400: {"error":{"message":"System message must be the first message"}}'
     assert _wrapper().classify_transport_failure(diagnostic) == "system_message_ordering"
 
 
