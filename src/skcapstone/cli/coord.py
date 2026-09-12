@@ -515,9 +515,14 @@ def register_coord_commands(main: click.Group) -> None:
         board = Board(home_path)
         try:
             from ..review_admission import assert_governed_review_claim
+            from skcoord.card_store import current_claim_precondition
+
+            from ..agent_projection import project_claim_revision
 
             assert_governed_review_claim(home_path, task_id, agent)
             ag = board.claim_task(agent, task_id, force=force)
+            revision = current_claim_precondition(home_path, task_id, agent)
+            project_claim_revision(home_path, agent, task_id, revision)
             console.print(f"\n  [green]Claimed:[/] [{task_id}] by [bold]{ag.agent}[/]\n")
         except ValueError as e:
             console.print(f"\n  [red]Error:[/] {e}\n")

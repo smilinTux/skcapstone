@@ -1,6 +1,7 @@
 """Tests for dependency enforcement on `coord claim` and the blocked/unblocked
 distinction in `coord status` (card 34be7725)."""
 
+import json
 from pathlib import Path
 
 import click
@@ -97,6 +98,22 @@ def test_claim_unblocked_after_dependency_done(tmp_path: Path):
         ["coord", "claim", "bb000002", "--home", str(tmp_path), "--agent", "opus"],
     )
     assert result.exit_code == 0, result.output
+
+
+def test_claim_projects_exact_current_revision(tmp_path: Path, monkeypatch) -> None:
+    """The CLI projection carries the exact CardStore claim generation."""
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    board = _chain_board(tmp_path)
+
+    result = CliRunner().invoke(
+        _main(),
+        ["coord", "claim", "cc000003", "--home", str(tmp_path), "--agent", "worker"],
+    )
+
+    assert result.exit_code == 0, result.output
+    revision = current_claim_precondition(tmp_path, "cc000003", "worker")
+    projection = json.loads(board.agent_projection_path("worker").read_text(encoding="utf-8"))
+    assert revision and projection["_claim_revision"] == revision
 
 
 def test_status_distinguishes_blocked_from_open(tmp_path: Path):
