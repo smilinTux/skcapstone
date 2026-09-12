@@ -470,9 +470,15 @@ def test_configured_empty_review_workspace_materializes_reviewed_head(
     )
 
     assert result == str(target)
-    assert ["git", "-C", str(target.with_name(
-        ".configured.materializing-" + str(os.getpid())
-    )), "checkout", "--quiet", "--detach", reviewed] in calls
+    assert [
+        "git",
+        "-C",
+        str(target.with_name(".configured.materializing-" + str(os.getpid()))),
+        "checkout",
+        "--quiet",
+        "--detach",
+        reviewed,
+    ] in calls
     assert target.is_dir()
 
 
