@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Card `f0272d6f`: add a read-only reviewer quality projection over immutable
+  CardStore events and hashed successor findings. It reports reproducibility,
+  first-pass accuracy, false results, latency, stale-feed blocks, duplicate
+  assignments, and repair recurrence by logical size bucket. Missing,
+  conflicting, or superseded evidence remains explicitly unavailable, and
+  improvement proposals require an existing owner card.
+
 - The fleet rotation's worker roster was a literal tuple of one estate's five
   chi hosts, so on a second estate the live dispatcher exited immediately with
   `NOOP|noroc2027|host is outside the authorized chiap01-chiap03 worker fleet`.
