@@ -2,19 +2,16 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from .card_store import CardStore
-from .review_admission import governed_review_gate_reasons
-
-
-def seraph_capacity_target() -> int:
-    """Return the same effective target used by the Seraph seat cycle."""
-    raw = os.environ.get("SKFLEET_SEAT_TARGET")
-    if raw is None:
-        raw = os.environ.get("SKFLEET_SERAPH_BATCH_SIZE", "2")
-    return max(0, int(raw))
+from .review_admission import (
+    governed_review_gate_reasons,
+    governed_review_metadata,
+    governed_review_seat,
+    qualified_reviewer_seats,
+    reviewer_capacity,
+)
 
 
 def diagnose(home: Path, card_id: str) -> dict[str, object]:
@@ -29,24 +26,21 @@ def diagnose(home: Path, card_id: str) -> dict[str, object]:
         dependency not in cards or cards[dependency].status.value != "done"
         for dependency in card.dependencies
     )
-    target = seraph_capacity_target()
-    busy = sum(
-        row.id != card.id
-        and row.owner is not None
-        and row.status.value in {"ready", "doing", "review"}
-        and "seat-seraph" in {str(label).strip().lower() for label in row.labels}
-        for row in cards.values()
+    core = {
+        "id": card.id,
+        "title": card.title,
+        "description": card.description,
+        "links": card.links,
+        "meta": card.meta,
+    }
+    metadata = governed_review_metadata(core, card.labels)
+    busy, target = reviewer_capacity(
+        home, core, card.labels, metadata[0] if metadata else "", "diagnostic-reviewer"
     )
     labels = {str(label).strip().lower() for label in card.labels}
     reasons = list(
         governed_review_gate_reasons(
-            {
-                "id": card.id,
-                "title": card.title,
-                "description": card.description,
-                "links": card.links,
-                "meta": card.meta,
-            },
+            core,
             card.labels,
             dependency_blocked=dependency_blocked,
             owned=card.owner is not None,
@@ -61,6 +55,6 @@ def diagnose(home: Path, card_id: str) -> dict[str, object]:
         "card_id": card.id,
         "eligible": not reasons,
         "reasons": list(dict.fromkeys(reasons)),
-        "seat": ("seraph" if "seat-seraph" in labels else None),
+        "seat": governed_review_seat(card.labels, qualified_reviewer_seats(core)),
         "capacity": {"busy": busy, "target": target},
     }

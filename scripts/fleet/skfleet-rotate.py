@@ -41,6 +41,8 @@ from skcapstone.scheduler_decision import (
 )
 from skcapstone.review_admission import (
     governed_review_gate_reasons,
+    governed_review_seat,
+    qualified_reviewer_seats,
 )
 from skcapstone.fleet.review_pool import elastic_reviewer_identity, review_fanout_limit
 from skcapstone.estate import (
@@ -1024,7 +1026,7 @@ _GATEWAY_ENDPOINT=os.environ.get("SKFLEET_GATEWAY_URL","http://chiap01:18790").r
 _review_route_snapshot=None
 _review_route_occupancy={}
 _review_route_ambiguous=False
-if ONLY_SEAT in {"", "seraph"}:
+if ONLY_SEAT in {"", "link", "mero", "seraph"}:
     _review_route_snapshot=acquire_review_route_snapshot(
         _GATEWAY_ENDPOINT,
         Path(HOME)/".skcapstone/evidence/fleet-review-routes.json",
@@ -1173,7 +1175,7 @@ if ONLY_SEAT:
         raise SystemExit("BLOCKED|SKFLEET_SEAT_TARGET|seat dispatch requires a positive target")
     _codex=next(lane for lane in LANES if lane["name"]=="codex")
     _busy_cards=_worker_cards(sessions,worker_units,[_codex])
-    if ONLY_SEAT=="seraph":
+    if ONLY_SEAT in {"link","mero","seraph"}:
         _capacity_routes=([] if _review_route_ambiguous else eligible_review_routes(
             _review_route_snapshot or {},"S",[],"producer","pi-seraph-capacity",
             _review_route_occupancy))
@@ -4480,19 +4482,20 @@ def _pool_v2_admission(cid, core, claimability, fresh=False):
     folded_core = claimability.get("core") or core
     labels = claimability.get("labels") or ()
     governed_review = _governed_review_metadata(folded_core, labels) is not None
+    review_seat = governed_review_seat(labels,qualified_reviewer_seats(folded_core))
     seraph_review_admitted = bool(
-        globals().get("_ONLY_SEAT", "") == "seraph"
+        globals().get("_ONLY_SEAT", "") == review_seat
+        and review_seat is not None
         and reason == "review"
         and claimability.get("claimable") is False
         and governed_review
-        and seat_for(cid, folded_core) == "seraph"
     )
     elastic_review_admitted = bool(
         not globals().get("_ONLY_SEAT", "")
         and reason == "review"
         and claimability.get("claimable") is False
         and governed_review
-        and seat_for(cid, folded_core) == "seraph"
+        and review_seat is not None
     )
     return {
         "card_id": cid,
@@ -5075,7 +5078,7 @@ while _i<len(owned) and _i<len(_candidate_scan):
                 str(label).strip().lower() for label in _labels} else None)
         _card_lane_health["codex"]=(
             bool(_producer_routes),"gateway-route-capacity" if _producer_routes else "unknown")
-    if _ONLY_SEAT=="seraph":
+    if _ONLY_SEAT in {"link","mero","seraph"}:
         _card_lane_health["codex"]=(
             remaining.get("codex",0)>0,"review-route-capacity")
     _lane_name,_defer=select_compatible_lane(
@@ -5236,7 +5239,11 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
                 str(label).strip().lower() for label in _labels} else None)
         _attempt_health["codex"]=(
             bool(_producer_routes),"gateway-route-capacity" if _producer_routes else "unknown")
-    if _ONLY_SEAT=="seraph":
+    _review_seat=governed_review_seat(
+        _labels,
+        qualified_reviewer_seats(core),
+    )
+    if _review_seat is not None:
         _attempt_health["codex"]=(
             launch_remaining.get("codex",0)>0,"review-route-capacity")
     _elastic_review = _POOL_V2_ADMISSIONS.get(cid, {}).get("elastic_review_admitted") is True
@@ -5445,7 +5452,11 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         "capacity_domains":[],
         "model_or_bucket":model,
     }
-    if _ONLY_SEAT=="seraph":
+    _review_seat=governed_review_seat(
+        fresh_claimability["labels"],
+        qualified_reviewer_seats(fresh_claimability["core"]),
+    )
+    if _review_seat is not None:
         _metadata=_governed_review_metadata(
             fresh_claimability["core"],fresh_claimability["labels"])
         _size_match=_GLM_SIZE_RE.search(
@@ -5454,7 +5465,9 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
                  else eligible_review_routes(
                      _review_route_snapshot or {},_size_match.group(1),
                      fresh_claimability["labels"],_metadata[0],name,
-                     _review_route_occupancy))
+                     _review_route_occupancy,declared_seat=_review_seat,
+                     qualified_seats=qualified_reviewer_seats(
+                         fresh_claimability["core"])))
         _selected_route=choose_review_route(_routes,_review_route_reservations)
         if _selected_route is None:
             lane_drift += 1

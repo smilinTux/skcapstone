@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from skcoord.card_store import CardCore, CardStore
 
+from skcapstone.review_admission import governed_review_seat, qualified_reviewer_seats
 from skcapstone.scheduler_decision import (
     SchedulerDecision,
     SchedulerFacts,
@@ -121,7 +122,7 @@ def test_pool_v2_is_a_complete_partition() -> None:
     assert report.population == report.ready + report.ineligible == 3
     assert report.reasons == {"dependency": 2}
     assert report.render() == (
-        "POOL_V2|chiap01|population=3 ready=1 ineligible=2 " 'reasons={"dependency":2}'
+        'POOL_V2|chiap01|population=3 ready=1 ineligible=2 reasons={"dependency":2}'
     )
 
 
@@ -369,6 +370,8 @@ def test_legacy_8_pool_v2_8_excludes_review_rows_from_authority(tmp_path) -> Non
         "_pool_v2_admission",
         {
             "_governed_review_metadata": metadata,
+            "governed_review_seat": governed_review_seat,
+            "qualified_reviewer_seats": qualified_reviewer_seats,
             "_pool_v2_overlay": lambda cid, core, reason: {"reason": reason},
         },
     )
