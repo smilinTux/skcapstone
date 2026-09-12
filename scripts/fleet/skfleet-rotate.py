@@ -2261,18 +2261,31 @@ def _load_outcomes():
             if not writer:
                 continue
             if fk=="blocked_on":
-                if val.lower() in _BLOCKED_CATEGORIES:
-                    blocked_parts[writer]={"blocked_on":val.lower()}
-                else:
+                parsed=_parse_blocked_on_link(val)
+                if not parsed:
                     blocked_parts.pop(writer,None)
+                    continue
+                category,referent=parsed
+                part={"blocked_on":category}
+                if referent:
+                    part["referent"]=referent
+                blocked_parts[writer]=part
                 continue
             field=("referent" if fk=="referent" or "blocked_referent" in fk else
                    "evidence" if fk in ("evidence","blocked_evidence") else
                    "evidence_sha256" if fk in (
                        "evidence_sha256","blocked_evidence_sha256") else None)
             part=blocked_parts.get(writer)
-            expected=("referent","evidence","evidence_sha256")
-            if not part or field!=expected[len(part)-1] or not val:
+            if not part or field is None or not val:
+                if field is not None:
+                    blocked_parts.pop(writer,None)
+                continue
+            if field in part:
+                blocked_parts.pop(writer,None)
+                continue
+            expected_order=("blocked_on","referent","evidence","evidence_sha256")
+            next_needed=expected_order[len(part)]
+            if field!=next_needed:
                 blocked_parts.pop(writer,None)
                 continue
             if field=="evidence_sha256" and not re.fullmatch(r"[0-9a-fA-F]{64}",val):
@@ -2555,6 +2568,32 @@ _CARD_REFERENT_RE = re.compile(r"^card:([0-9a-f]{8})$", re.I)
 _AC_REFERENT_RE = re.compile(r"^ac:(\d+)$", re.I)
 _AC_MENTION_RE = re.compile(r"\bac:(\d+)\b", re.I)
 _WAKE_RETRY_LIMIT = 1
+_COMBINED_BLOCKED_ON_RE = re.compile(
+    r"^\s*(dependency|card|human|capability)\s+"
+    r"(?:referent\s*[=:]\s*)?(card:[0-9a-f]{8}|approval:[\w./:@-]+|"
+    r"ac:\d+|free|capability:[\w./:@-]+)\s*$",
+    re.I,
+)
+
+def _parse_blocked_on_link(val):
+    """Return (category, referent_or_None) from a blocked_on link value.
+
+    Workers often write the category and referent into one link value
+    (``dependency card:383a7834``). Accept that shape so a machine-readable
+    dependency blocker still parks the exact review generation.
+    """
+    text=str(val or "").strip()
+    if not text: return None
+    lower=text.lower()
+    if lower in _BLOCKED_CATEGORIES:
+        return lower, None
+    combined=_COMBINED_BLOCKED_ON_RE.match(text)
+    if combined:
+        return combined.group(1).lower(), combined.group(2).lower()
+    fragment=_blocked_reason("BLOCKED blocked_on="+text)
+    if fragment and len(fragment[1])==1:
+        return fragment[0], fragment[1][0]
+    return None
 
 def _blocked_reason(val):
     """Return one actionable (category, referents), or None.
@@ -2573,10 +2612,20 @@ def _blocked_reason(val):
     for anchor in _BLOCKED_ON_RE.finditer(text):
         match=_BLOCKED_CAT_RE.search(text[anchor.end():anchor.end()+80])
         if match: categories.append(match.group(1).lower())
+        window=text[anchor.end():anchor.end()+120].lstrip(" \t=\"':")
+        combined=_COMBINED_BLOCKED_ON_RE.match(window)
+        if combined:
+            categories.append(combined.group(1).lower())
+            direct.append(combined.group(2).strip())
     categories=list(dict.fromkeys(categories))
     if len(categories)!=1: return None
     refs=[m.group(1).rstrip(".,;|\"'") for m in _REFERENT_RE.finditer(text)]
     refs.extend(x.rstrip(".,;|\"'") for x in direct)
+    # Accept bare card:<id> tokens after the category for combined link values.
+    if not refs:
+        bare=_CARD_REFERENT_RE.search(text)
+        if bare:
+            refs=["card:"+bare.group(1).lower()]
     refs=[x.lower() for x in dict.fromkeys(x for x in refs if x)]
     if not refs:
         refs=["ac:"+m.group(1) for m in _AC_MENTION_RE.finditer(text)]
@@ -2666,6 +2715,35 @@ def _human_resolution_epoch(cid,referent,threshold):
             latest=max(latest,_ts_epoch(event.get("ts")))
     return latest if latest>threshold else 0
 
+def _dependency_state_change_epoch(dep, threshold):
+    """Return the latest material change on a dependency card after threshold.
+
+    Publishing reachable candidate bytes, linking evidence, or completing the
+    dependency are all wake signals. Exact unresolved dependency blockers must
+    stay ineligible until one of those changes lands.
+    """
+    latest=_completion_epoch(dep)
+    material_keys={
+        "evidence","evidence_sha256","candidate_evidence_sha256","candidate_path",
+        "artifact_path","artifact_sha256","pr","pull_request","open_pr",
+        "source_commit","reverse_patch_sha256",
+    }
+    for event in _load_evidence_events().get(dep,[]):
+        if event.get("action")!="link":
+            continue
+        key=_fold_key(event.get("link_key"))
+        if key in material_keys or any(token in key for token in (
+                "evidence","candidate","artifact","patch","commit","pr")):
+            latest=max(latest,_ts_epoch(event.get("ts")))
+    for event in event_rows(dep):
+        if event.get("action") in (
+                "complete","describe","amend_criteria","add_dependency",
+                "remove_dependency") or (
+                event.get("action")=="move" and
+                str(event.get("column") or "").lower()=="done"):
+            latest=max(latest,_ts_epoch(event.get("ts")))
+    return latest if latest>threshold else 0
+
 def _blocker_change_epoch(cid,verdict_ts,val):
     """Return the exact blocker generation that can fund one retry."""
     reason=_latest_blocked_reason(cid,verdict_ts,val)
@@ -2682,12 +2760,13 @@ def _blocker_change_epoch(cid,verdict_ts,val):
                       and str(_dependency_value(event) or "").lower()==dep]
         removed=max((_ts_epoch(event.get("ts")) for event in exact_events
                      if event.get("action")=="remove_dependency"),default=0)
-        if dep not in {str(x).lower() for x in folded_dependencies(cid)}:
-            return removed if removed>threshold else 0
-        if not _dep_satisfied(dep): return 0
-        changed=max(_completion_epoch(dep),*(
-            [_ts_epoch(event.get("ts")) for event in exact_events] or [0]))
-        return changed if changed>threshold else 0
+        folded={str(x).lower() for x in folded_dependencies(cid)}
+        if dep not in folded and removed>threshold:
+            return removed
+        # Named dependency blockers wake when the referent card itself changes,
+        # even when the review card never recorded an add_dependency edge.
+        # add_dependency alone is not a wake: the unresolved referent must move.
+        return _dependency_state_change_epoch(dep,threshold)
     if category=="human":
         if not referents: return 0
         changes=[_human_resolution_epoch(cid,ref,threshold) for ref in referents]
@@ -4666,6 +4745,15 @@ def _pool_v2_dispatchable(admission):
     """Allow only explicitly claimable work from the bounded snapshot."""
     if not isinstance(admission, dict):
         return False
+    overlay = admission.get("overlay")
+    if not isinstance(overlay, dict):
+        return False
+    # Unresolved BLOCKED dependency holds must not reach Seraph/elastic review
+    # even when the seat admission bit is set. Measured 2026-09-12: 4cd4dd62
+    # claim_revision 47e420668e074c8098f1cc0688f489c3 relaunched after an
+    # unchanged blocked_on dependency because dispatchable ignored backoff.
+    if overlay.get("backoff") is True:
+        return False
     ordinary = (
         admission.get("claimable") is True
         and admission.get("reason") == "claimable"
@@ -4686,7 +4774,6 @@ def _pool_v2_dispatchable(admission):
         and admission["core"].get("id") == admission["card_id"]
         and isinstance(admission.get("title"), str)
         and isinstance(admission.get("labels"), list)
-        and isinstance(admission.get("overlay"), dict)
         and re.fullmatch(r"[0-9a-f]{64}", str(admission.get("source_revision") or ""))
         and (ordinary or seraph_review or elastic_review)
     )
@@ -4739,12 +4826,14 @@ def _pool_v2_admission(cid, core, claimability, fresh=False):
     labels = claimability.get("labels") or ()
     governed_review = _governed_review_metadata(folded_core, labels) is not None
     review_seat = governed_review_seat(labels,qualified_reviewer_seats(folded_core))
+    hold = blocked_backoff(cid)
     seraph_review_admitted = bool(
         globals().get("_ONLY_SEAT", "") == review_seat
         and review_seat is not None
         and reason == "review"
         and claimability.get("claimable") is False
         and governed_review
+        and not hold
     )
     elastic_review_admitted = bool(
         not globals().get("_ONLY_SEAT", "")
@@ -4752,6 +4841,7 @@ def _pool_v2_admission(cid, core, claimability, fresh=False):
         and claimability.get("claimable") is False
         and governed_review
         and review_seat is not None
+        and not hold
     )
     return {
         "card_id": cid,
@@ -5377,6 +5467,7 @@ for _cid,_admission in sorted(_POOL_V2_ADMISSIONS.items()):
         dependency_blocked=_overlay.get("reason")=="dependency",
         owned=str(_overlay.get("reason") or "").startswith("owned-"),
         capacity_available=_cid not in _lane_deferred_cards,
+        dependency_blocker_holds=_overlay.get("backoff") is True,
     )
     if _cid in _SEAT_BLOCKED:
         _reasons=tuple((*_reasons,"wrong-seat"))
@@ -5586,6 +5677,14 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
       "  forever, which is the worst outcome available to you.\n"
       "- Choose card only when you can quote the criterion and state the contradiction.\n"
       "- Say what you attempted, so the next attempt does not re-pay your discovery.\n"
+      "\n"
+      "BOUNDED EVIDENCE DISCOVERY, mandatory when verifying sha256 digests:\n"
+      "Do NOT recursively hash ~/.skcapstone, worktrees, /tmp, or the host.\n"
+      "Card 4cd4dd62 burned 9h51m doing exactly that after a dependency blocker.\n"
+      "Use only explicit card-referenced paths and evidence/work/<card_id>/ roots\n"
+      "through skcapstone.fleet.bounded_artifact_discovery (time and file budgets).\n"
+      "If the digest is absent inside those bounds, record BLOCKED on the producer\n"
+      "dependency and stop. Never widen the search.\n"
       "\n"
       "IF YOUR WORK PRODUCES A CANDIDATE SOMEONE ELSE MUST REVIEW, PUBLISH THE BYTES:\n"
       "Recording a commit SHA is NOT publishing. Reviews in this estate are often\n"
