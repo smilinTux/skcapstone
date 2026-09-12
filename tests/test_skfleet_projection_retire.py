@@ -312,6 +312,36 @@ def test_stale_task_requires_fresh_exact_four_way_mismatch_proof(tmp_path, monke
     assert tool.assess(path, now, {key: proof}, exact)[0] is False
 
 
+def test_stale_task_with_contradictory_custody_stays_diagnostic(tmp_path) -> None:
+    tool = load_tool()
+    now = datetime.now(timezone.utc)
+    key = ("codex-worker-a1b2c3d4", "a1b2c3d4", "old-revision")
+    proof = {
+        "process_alive": False,
+        "active_worker_unit": False,
+        "direct_seat_record": False,
+    }
+    for claimed_tasks in ([], [key[1], key[1]]):
+        path = write_projection(
+            tmp_path,
+            f"{key[0]}.json",
+            {
+                "agent": key[0],
+                "current_task": key[1],
+                "claimed_tasks": claimed_tasks,
+                "_claim_revision": key[2],
+                "last_seen": (now - timedelta(days=40)).isoformat(),
+            },
+            40,
+        )
+
+        assert tool.assess(path, now, {key: proof}, lambda _: (None, "new-revision")) == (
+            False,
+            "task identity is ambiguous",
+            "diagnostic",
+        )
+
+
 def test_stale_task_apply_manifest_is_content_addressed_and_reversible(
     tmp_path, monkeypatch
 ) -> None:

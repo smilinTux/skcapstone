@@ -161,8 +161,7 @@ def assess(
             or not re.fullmatch(r"[0-9a-f]{8}", task, re.IGNORECASE)
             or not isinstance(revision, str)
             or not revision
-            or not isinstance(claimed, list)
-            or any(item != task for item in claimed)
+            or claimed != [task]
         ):
             return False, "task identity is ambiguous", "diagnostic"
         key = (agent, task, revision)
