@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .ci_profile_registry import INITIAL_PROFILE_DIGESTS
+from .ci_profile_registry import INITIAL_PROFILE_DIGESTS, LEGACY_CI_CHECKS
 
 _LIMIT = 64 * 1024
 _MANIFEST = ".skcapstone/ci-profile.json"
@@ -409,6 +409,69 @@ def _evidence(value: object) -> bool:
         )
     except ValueError:
         return False
+
+
+def _github_job_evidence(value: object, repository: str) -> bool:
+    """Require an exact GitHub Actions job URL for the bound repository."""
+    if not isinstance(value, str) or any(c.isspace() for c in value):
+        return False
+    try:
+        evidence = urlsplit(value)
+        source = urlsplit(_repository(repository))
+        return (
+            evidence.scheme == "https"
+            and evidence.hostname == "github.com"
+            and evidence.username is None
+            and evidence.password is None
+            and not evidence.query
+            and not evidence.fragment
+            and re.fullmatch(
+                re.escape(source.path) + r"/actions/runs/[0-9]+/job/[0-9]+",
+                evidence.path,
+            )
+            is not None
+        )
+    except ValueError:
+        return False
+
+
+def validate_legacy_completion(card_id: str, home: Path, core: dict) -> bool:
+    """Validate a governed legacy repository receipt, or report no policy."""
+    meta = _object(_object(core).get("meta"))
+    raw_repository = meta.get("repository")
+    if raw_repository is None:
+        return False
+    repository = _repository(raw_repository)
+    required = LEGACY_CI_CHECKS.get(repository)
+    if required is None:
+        return False
+    head = _hex(meta.get("link_head_revision"), 40)
+    evidence_digest = _hex(meta.get("candidate_evidence_sha256"), 64)
+    receipt = _object(
+        _latest_receipt(card_id, Path(home), "legacy_ci_applicability"),
+        {
+            "schema_version",
+            "repository",
+            "candidate_revision",
+            "candidate_evidence_sha256",
+            "checks",
+        },
+    )
+    _version(receipt["schema_version"])
+    if (
+        receipt["repository"] != raw_repository
+        or receipt["candidate_revision"] != head
+        or receipt["candidate_evidence_sha256"] != evidence_digest
+    ):
+        raise ValueError("legacy CI applicability receipt does not match immutable card pins")
+    checks = _object(receipt["checks"], set(required))
+    for name in required:
+        result = _object(checks[name], {"state", "evidence"})
+        if result["state"] != "SUCCESS":
+            raise ValueError(f"legacy hosted check {name} is not successful")
+        if not _github_job_evidence(result["evidence"], repository):
+            raise ValueError(f"legacy hosted check {name} evidence does not match repository")
+    return True
 
 
 def validate_profile_completion(card_id: str, home: Path, core: dict) -> None:

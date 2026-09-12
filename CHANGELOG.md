@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Card `10a1018b`: allow profile-less legacy review cards to use only a
+  checked-in repository hosted-check policy and one exact append-only receipt
+  bound to immutable repository, candidate head, and evidence digest metadata.
+
 - Card `a5bf5e69`: mark centrally registered manifest-only enrollment in the
   immutable capsule and require its own exact-card `ci_profile_enrollment`
   receipt. Enrollment evidence makes no repository CI success claims;

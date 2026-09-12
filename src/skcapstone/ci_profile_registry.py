@@ -11,3 +11,16 @@ INITIAL_PROFILE_DIGESTS: Mapping[str, str] = MappingProxyType(
         ),
     }
 )
+
+# Review cards born before immutable CI profiles may use only these exact
+# repository-wide hosted check names. Registry changes require independent
+# review and cannot be supplied through mutable card links.
+LEGACY_CI_CHECKS: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        "https://github.com/smilinTux/skgateway": (
+            "test (22)",
+            "docs / docs-check",
+            "gitleaks",
+        ),
+    }
+)

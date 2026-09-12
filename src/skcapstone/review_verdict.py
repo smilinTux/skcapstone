@@ -165,7 +165,11 @@ def validate_review_completion(card_id: str, title: str, home: Path) -> None:
         return
     verdict = recorded_verdict(card_id, home)
     if verdict == "PASS":
-        from .ci_applicability import _json, validate_profile_completion
+        from .ci_applicability import (
+            _json,
+            validate_legacy_completion,
+            validate_profile_completion,
+        )
 
         try:
             core = _json(
@@ -182,6 +186,8 @@ def validate_review_completion(card_id: str, title: str, home: Path) -> None:
             raise ValueError(f"review card {card_id} has malformed immutable metadata")
         if "ci_profile" in meta:
             validate_profile_completion(card_id, home, core)
+            return
+        if validate_legacy_completion(card_id, home, core):
             return
         checks = unsuccessful_checks(card_id, home)
         if not checks:
