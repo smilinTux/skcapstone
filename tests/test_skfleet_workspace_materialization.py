@@ -43,9 +43,21 @@ def _helpers() -> dict[str, object]:
     return _load(
         "_resolve_workspace_root",
         "_source_workspace_spec",
+        "_normalize_credential_free_https_remote",
+        "_select_matching_source_remote",
         "_verify_source_workspace",
         "_materialize_worker_workspace",
     )
+
+
+def _remote_listing(remotes: dict[str, str]) -> str:
+    """Format git config --get-regexp remote URL output."""
+    return "".join(f"remote.{name}.url {url}\n" for name, url in remotes.items())
+
+
+def _is_remote_listing(command: list[str]) -> bool:
+    """Return True when command lists configured remote URLs."""
+    return len(command) >= 2 and command[-2] == "--get-regexp"
 
 
 def test_preclaim_source_ref_accepts_only_remote_exact_ref() -> None:
@@ -155,8 +167,8 @@ def test_exact_revision_is_checked_out_after_named_ref_clone(tmp_path: Path) -> 
             checkout.mkdir()
             (checkout / ".git").mkdir()
             return subprocess.CompletedProcess(command, 0, "", "")
-        if command[-2:] == ["--get", "remote.origin.url"]:
-            output = "https://github.com/smilinTux/sklegal\n"
+        if _is_remote_listing(command):
+            output = _remote_listing({"origin": "https://github.com/smilinTux/sklegal"})
         elif "status" in command or "fetch" in command or "checkout" in command:
             output = ""
         elif "rev-parse" in command:
@@ -211,9 +223,12 @@ def test_source_checkout_is_cloned_atomically(tmp_path: Path) -> None:
             checkout.mkdir()
             (checkout / ".git").mkdir()
             return subprocess.CompletedProcess(command, 0, "", "")
-        if command[-2:] == ["--get", "remote.origin.url"]:
+        if _is_remote_listing(command):
             return subprocess.CompletedProcess(
-                command, 0, "https://github.com/smilinTux/sklegal\n", ""
+                command,
+                0,
+                _remote_listing({"origin": "https://github.com/smilinTux/sklegal"}),
+                "",
             )
         if "status" in command:
             return subprocess.CompletedProcess(command, 0, "", "")
@@ -299,8 +314,8 @@ def test_interrupted_clone_cleans_up_and_can_retry(tmp_path: Path) -> None:
             checkout.mkdir()
             (checkout / ".git").mkdir()
             return subprocess.CompletedProcess(command, 0, "", "")
-        if command[-2:] == ["--get", "remote.origin.url"]:
-            output = "https://github.com/smilinTux/sklegal\n"
+        if _is_remote_listing(command):
+            output = _remote_listing({"origin": "https://github.com/smilinTux/sklegal"})
         elif "status" in command or "fetch" in command:
             output = ""
         else:
@@ -317,8 +332,8 @@ def test_existing_dirty_workspace_is_preserved_and_rejected(tmp_path: Path) -> N
     (target / ".git").mkdir(parents=True)
 
     def dirty(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-        if command[-2:] == ["--get", "remote.origin.url"]:
-            output = "https://github.com/smilinTux/sklegal\n"
+        if _is_remote_listing(command):
+            output = _remote_listing({"origin": "https://github.com/smilinTux/sklegal"})
         elif "status" in command:
             output = " M preserved.py\n"
         else:
@@ -347,8 +362,8 @@ def test_existing_clean_source_workspace_is_reused(tmp_path: Path) -> None:
     (target / ".git").mkdir(parents=True)
 
     def clean(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-        if command[-2:] == ["--get", "remote.origin.url"]:
-            output = "https://github.com/smilinTux/sklegal\n"
+        if _is_remote_listing(command):
+            output = _remote_listing({"origin": "https://github.com/smilinTux/sklegal"})
         elif "status" in command or "fetch" in command:
             output = ""
         else:
@@ -379,8 +394,8 @@ def test_configured_source_workspace_is_still_verified(
     monkeypatch.setenv("SKFLEET_WORKSPACE", str(target))
 
     def wrong_origin(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-        if command[-2:] == ["--get", "remote.origin.url"]:
-            output = "https://github.com/example/wrong\n"
+        if _is_remote_listing(command):
+            output = _remote_listing({"origin": "https://github.com/example/wrong"})
         elif "status" in command or "fetch" in command:
             output = ""
         else:
@@ -400,6 +415,105 @@ def test_configured_source_workspace_is_still_verified(
             ["source-only"],
             runner=wrong_origin,
         )
+
+
+def test_matching_non_origin_remote_passes_repository_verification() -> None:
+    """Accept the unique alias remote when origin is an unrelated mirror."""
+    verify = _helpers()["_verify_source_workspace"]
+    calls: list[list[str]] = []
+    revision = "a" * 40
+
+    def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if _is_remote_listing(command):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                _remote_listing(
+                    {
+                        "origin": "https://git.example.internal/sklegal.git",
+                        "github": "https://github.com/smilinTux/sklegal.git",
+                    }
+                ),
+                "",
+            )
+        if "status" in command or "fetch" in command or "merge-base" in command:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if "rev-parse" in command:
+            return subprocess.CompletedProcess(command, 0, revision + "\n", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    verify(
+        "/tmp/workspace",
+        "https://github.com/smilinTux/sklegal",
+        "main",
+        revision,
+        runner=runner,
+    )
+    assert [
+        "git",
+        "-C",
+        "/tmp/workspace",
+        "fetch",
+        "--quiet",
+        "github",
+        "main",
+    ] in calls
+
+
+def test_ambiguous_matching_remotes_fail_closed() -> None:
+    select = _helpers()["_select_matching_source_remote"]
+
+    def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            _remote_listing(
+                {
+                    "origin": "https://github.com/smilinTux/sklegal",
+                    "github": "https://github.com/smilinTux/sklegal.git",
+                }
+            ),
+            "",
+        )
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        select("/tmp/workspace", "https://github.com/smilinTux/sklegal", runner=runner)
+
+
+def test_credential_bearing_matching_remote_fails_closed() -> None:
+    select = _helpers()["_select_matching_source_remote"]
+
+    def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            _remote_listing(
+                {
+                    "origin": "https://mirror.example/sklegal",
+                    "github": "https://token@github.com/smilinTux/sklegal",
+                }
+            ),
+            "",
+        )
+
+    with pytest.raises(ValueError, match="credential-free"):
+        select("/tmp/workspace", "https://github.com/smilinTux/sklegal", runner=runner)
+
+
+def test_no_matching_remote_fails_closed() -> None:
+    select = _helpers()["_select_matching_source_remote"]
+
+    def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            _remote_listing({"origin": "https://github.com/example/wrong"}),
+            "",
+        )
+
+    with pytest.raises(ValueError, match="does not match"):
+        select("/tmp/workspace", "https://github.com/smilinTux/sklegal", runner=runner)
 
 
 def test_materialization_precedes_claim_in_scheduler_source() -> None:
