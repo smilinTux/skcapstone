@@ -834,7 +834,13 @@ def test_no_change_and_unrelated_traffic_do_not_wake(board: BackoffHarness) -> N
 def test_regression_4cd4dd62_combined_dependency_blocker_suppresses_redispatch(
     tmp_path: Path,
 ) -> None:
-    """Combined blocked_on values park the exact review until the dependency changes."""
+    """Combined blocked_on values park the exact review until the dependency changes.
+
+    Live generations that redispatched despite an unchanged blocker:
+    - 5f28f62031cd4212a721c8b7fa51ad1b (10h estate SHA256 scan)
+    - 47e420668e074c8098f1cc0688f489c3 (Seraph redispatch 2026-09-12T20:19Z;
+      Jarvis stopped exact unit, released exact claim, temporary do-not-claim)
+    """
     card = "4cd4dd62"
     dep = "383a7834"
     legacy = [
@@ -894,6 +900,26 @@ def test_regression_4cd4dd62_combined_dependency_blocker_suppresses_redispatch(
     )
     assert namespace["blocked_backoff"](card) is True
 
+    # Generation 47e42066: Link recommended and Seraph claimed while blocker unchanged.
+    # Exact claim/release fence must still leave the hold in place.
+    namespace["_evidence_events"] = None
+    namespace["_outcomes"] = None
+    for stamp, action, revision in (
+        ("2026-09-12T20:19:29+00:00", "claim", "47e420668e074c8098f1cc0688f489c3"),
+        ("2026-09-12T20:21:06+00:00", "release_claim", "47e420668e074c8098f1cc0688f489c3"),
+    ):
+        namespace["event_rows"] = lambda cid, _rows={
+            card: [
+                {
+                    "action": action,
+                    "ts": stamp,
+                    "claim_revision": revision,
+                    "owner": "pi-seraph-chiap08-4cd4dd62",
+                }
+            ]
+        }: _rows.get(cid, [])
+    assert namespace["blocked_backoff"](card) is True
+
     # Publishing reachable dependency evidence restores one wake generation.
     namespace["_evidence_events"] = None
     namespace["_outcomes"] = None
@@ -902,7 +928,7 @@ def test_regression_4cd4dd62_combined_dependency_blocker_suppresses_redispatch(
             "card_id": dep,
             "action": "link",
             "writer": "codex-resume-383a7834",
-            "ts": "2026-09-12T11:00:00+00:00",
+            "ts": "2026-09-12T21:00:00+00:00",
             "link_key": "candidate_evidence_sha256",
             "link_value": "a" * 64,
         }

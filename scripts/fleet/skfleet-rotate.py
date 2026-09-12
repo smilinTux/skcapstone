@@ -4742,6 +4742,15 @@ def _pool_v2_dispatchable(admission):
     """Allow only explicitly claimable work from the bounded snapshot."""
     if not isinstance(admission, dict):
         return False
+    overlay = admission.get("overlay")
+    if not isinstance(overlay, dict):
+        return False
+    # Unresolved BLOCKED dependency holds must not reach Seraph/elastic review
+    # even when the seat admission bit is set. Measured 2026-09-12: 4cd4dd62
+    # claim_revision 47e420668e074c8098f1cc0688f489c3 relaunched after an
+    # unchanged blocked_on dependency because dispatchable ignored backoff.
+    if overlay.get("backoff") is True:
+        return False
     ordinary = (
         admission.get("claimable") is True
         and admission.get("reason") == "claimable"
@@ -4762,7 +4771,6 @@ def _pool_v2_dispatchable(admission):
         and admission["core"].get("id") == admission["card_id"]
         and isinstance(admission.get("title"), str)
         and isinstance(admission.get("labels"), list)
-        and isinstance(admission.get("overlay"), dict)
         and re.fullmatch(r"[0-9a-f]{64}", str(admission.get("source_revision") or ""))
         and (ordinary or seraph_review or elastic_review)
     )
@@ -4815,12 +4823,14 @@ def _pool_v2_admission(cid, core, claimability, fresh=False):
     labels = claimability.get("labels") or ()
     governed_review = _governed_review_metadata(folded_core, labels) is not None
     review_seat = governed_review_seat(labels,qualified_reviewer_seats(folded_core))
+    hold = blocked_backoff(cid)
     seraph_review_admitted = bool(
         globals().get("_ONLY_SEAT", "") == review_seat
         and review_seat is not None
         and reason == "review"
         and claimability.get("claimable") is False
         and governed_review
+        and not hold
     )
     elastic_review_admitted = bool(
         not globals().get("_ONLY_SEAT", "")
@@ -4828,6 +4838,7 @@ def _pool_v2_admission(cid, core, claimability, fresh=False):
         and claimability.get("claimable") is False
         and governed_review
         and review_seat is not None
+        and not hold
     )
     return {
         "card_id": cid,
@@ -5453,6 +5464,7 @@ for _cid,_admission in sorted(_POOL_V2_ADMISSIONS.items()):
         dependency_blocked=_overlay.get("reason")=="dependency",
         owned=str(_overlay.get("reason") or "").startswith("owned-"),
         capacity_available=_cid not in _lane_deferred_cards,
+        dependency_blocker_holds=_overlay.get("backoff") is True,
     )
     if _cid in _SEAT_BLOCKED:
         _reasons=tuple((*_reasons,"wrong-seat"))

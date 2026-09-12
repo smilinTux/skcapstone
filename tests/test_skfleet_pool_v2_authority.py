@@ -32,6 +32,7 @@ def _load_helpers(*names: str) -> dict[str, object]:
         "re": re,
         "governed_review_seat": governed_review_seat,
         "qualified_reviewer_seats": qualified_reviewer_seats,
+        "blocked_backoff": lambda _cid: False,
     }
     exec(compile(module, str(ROTATE), "exec"), namespace)
     return namespace
@@ -49,6 +50,80 @@ def _admission(card_id: str, *, claimable: object = True) -> dict[str, object]:
         "overlay": {},
         "source_revision": "a" * 64,
     }
+
+
+def test_pool_v2_dispatchable_refuses_backoff_overlay() -> None:
+    """Seraph review admission cannot bypass an unresolved dependency backoff."""
+    dispatchable = _load_helpers("_pool_v2_dispatchable")["_pool_v2_dispatchable"]
+    card_id = "4cd4dd62"
+    admission = {
+        "card_id": card_id,
+        "claimable": False,
+        "reason": "review",
+        "title": "[W72][M][REVIEW] blocked dependency",
+        "labels": ["review", "seat-seraph"],
+        "core": {"id": card_id},
+        "seraph_review_admitted": True,
+        "elastic_review_admitted": False,
+        "overlay": {"backoff": True, "reason": "review"},
+        "source_revision": "c" * 64,
+    }
+    assert dispatchable(admission) is False
+    admission["overlay"] = {"backoff": False, "reason": "review"}
+    assert dispatchable(admission) is True
+
+
+def test_seraph_admission_clears_when_blocked_backoff_holds() -> None:
+    """Unresolved blockers clear Seraph/elastic bits so do-not-claim is unnecessary."""
+    helpers = _load_helpers(
+        "_governed_review_metadata",
+        "_pool_v2_admission",
+        "_pool_v2_dispatchable",
+        "_pool_v2_ready_ids",
+    )
+    helpers.update(
+        {
+            "_ONLY_SEAT": "seraph",
+            "_pool_v2_overlay": lambda _cid, _core, reason: {
+                "reason": reason,
+                "backoff": True,
+            },
+            "blocked_backoff": lambda _cid: True,
+            "seat_for": lambda _cid, _core: "seraph",
+        }
+    )
+    card_id = "4cd4dd62"
+    core = {
+        "id": card_id,
+        "kind": "task",
+        "title": "[W72-COMM01-R][M][REVIEW] Independently verify",
+        "initial_priority": "high",
+        "links": {
+            "producer_identity": "codex-resume-383a7834",
+            "candidate_evidence_sha256": "a" * 64,
+            "blocked_on": "dependency card:383a7834",
+            "evidence_sha256": "5658c6eed5fae206138d6adfc7daf45602899ee78f78e8e34ac1716059f3c2f1",
+        },
+        "meta": {
+            "link_source_card": "383a7834",
+            "link_head_revision": "b" * 40,
+        },
+    }
+    claimability = {
+        "claimable": False,
+        "reason": "review",
+        "host_pin": None,
+        "title": core["title"],
+        "labels": ["review", "seat-seraph", "parent-383a7834"],
+        "core": core,
+        "source_revision": "b" * 64,
+    }
+    admission = helpers["_pool_v2_admission"](card_id, core, claimability)
+    decisions = [SimpleNamespace(card_id=card_id, eligible=True)]
+    assert admission["seraph_review_admitted"] is False
+    assert admission["elastic_review_admitted"] is False
+    assert helpers["_pool_v2_dispatchable"](admission) is False
+    assert helpers["_pool_v2_ready_ids"](decisions, {card_id: admission}) == set()
 
 
 def test_pool_v2_is_authoritative_for_large_only_v2_population() -> None:
