@@ -172,10 +172,12 @@ def validate_review_completion(card_id: str, title: str, home: Path) -> None:
             f"review card {card_id} has required checks that are not successful: "
             + ", ".join(checks)
         )
+    if verdict and _is_terminal_verdict(verdict):
+        return
     if verdict:
         raise ValueError(
             f"review card {card_id} has nonterminal verdict {verdict!r}; "
-            "record canonical PASS before completion"
+            "record a canonical terminal verdict before completion"
         )
     raise ValueError(
         f"review card {card_id} has recorded no verdict, so it cannot be "
