@@ -75,6 +75,18 @@ def test_missing_owner_capacity_is_unknown_not_zero() -> None:
     assert "owner_free=chiap04:0" not in detail
 
 
+def test_reported_zero_owner_capacity_remains_zero() -> None:
+    helpers = _load_helpers()
+    pool = [_row("deadbeef")]
+
+    detail = helpers["_selection_diagnostic"](
+        pool, [], _lanes(target=4, free=4), lambda _card_id: "chiap04", {"chiap04": 0}
+    )
+
+    assert "owner_free=chiap04:0" in detail
+    assert "owner_free=chiap04:unknown" not in detail
+
+
 @pytest.mark.parametrize(
     ("pool", "owned", "lanes", "expected"),
     [

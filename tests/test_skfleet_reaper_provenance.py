@@ -734,6 +734,27 @@ def test_report_hosts_deduplicates_conflicts_and_rejects_unknown_hosts(
     assert namespace["report_hosts"](1800) == {"chiap04"}
 
 
+def test_stale_report_remains_known_but_is_not_fresh(tmp_path: Path) -> None:
+    live = tmp_path / "live"
+    live.mkdir()
+    stale = time.time() - 3600
+    (live / "chiap04.json").write_text(
+        json.dumps({"host": "chiap04", "ts": stale}) + "\n", encoding="utf-8"
+    )
+    namespace = _load_functions("report_hosts")
+    namespace.update(
+        {
+            "LIVE": str(live),
+            "ROTATION_HOSTS": ("chiap01", "chiap02", "chiap03", "chiap04", "chiap08"),
+            "Path": Path,
+            "time": time,
+        }
+    )
+
+    assert namespace["report_hosts"](86400) == {"chiap04"}
+    assert namespace["report_hosts"](1800) == set()
+
+
 def test_newer_same_owner_recent_claim_gets_its_own_grace(tmp_path: Path) -> None:
     """A fresh same-owner generation cannot inherit the cached generation's age."""
     owner = "pi-codex-chiap02-deadbeef"
