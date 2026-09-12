@@ -60,6 +60,7 @@ def test_preclaim_source_ref_accepts_only_remote_exact_ref() -> None:
         "https://github.com/smilinTux/sklegal",
         "refs/heads/main",
         "a" * 40,
+        "a" * 40,
         runner=present,
     )
     assert calls == [
@@ -80,7 +81,13 @@ def test_preclaim_source_ref_blocks_before_workspace_creation() -> None:
         return subprocess.CompletedProcess(command, 2, "", "not found")
 
     with pytest.raises(ValueError, match="reconstructability_blocked"):
-        preflight("https://github.com/smilinTux/sklegal", "missing", absent)
+        preflight(
+            "https://github.com/smilinTux/sklegal",
+            "missing",
+            "a" * 40,
+            "a" * 40,
+            runner=absent,
+        )
 
 
 def test_source_card_requires_exact_repository_and_base() -> None:
@@ -124,7 +131,25 @@ def test_legacy_sha_base_ref_normalizes_to_default_ref_and_exact_revision() -> N
             "meta": {"base_ref": "main", "base_revision": revision},
         },
         ["source-only"],
-    ) == ("https://github.com/smilinTux/sklegal", "main", revision)
+    ) == ("https://github.com/smilinTux/sklegal", "main", revision, revision)
+
+
+def test_review_source_binding_checks_out_reviewed_head_not_producer_base() -> None:
+    spec = _helpers()["_source_workspace_spec"]
+    base = "a" * 40
+    reviewed = "b" * 40
+
+    assert spec(
+        {
+            "links": {
+                "repository": "https://github.com/smilinTux/sklegal",
+                "base_ref": "main",
+                "base_revision": base,
+                "link_head_revision": reviewed,
+            }
+        },
+        ["source-only", "review"],
+    ) == ("https://github.com/smilinTux/sklegal", "main", base, reviewed)
 
 
 def test_legacy_sha_base_ref_rejects_conflicting_exact_revision() -> None:
@@ -400,6 +425,80 @@ def test_configured_source_workspace_is_still_verified(
             ["source-only"],
             runner=wrong_origin,
         )
+
+
+def test_configured_empty_review_workspace_materializes_reviewed_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    materialize = _helpers()["_materialize_worker_workspace"]
+    target = tmp_path / "configured"
+    target.mkdir()
+    monkeypatch.setenv("SKFLEET_WORKSPACE", str(target))
+    base = "a" * 40
+    reviewed = "b" * 40
+    calls: list[list[str]] = []
+
+    def clone(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if command[1] == "clone":
+            checkout = Path(command[-1])
+            checkout.mkdir()
+            (checkout / ".git").mkdir()
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command[-2:] == ["--get", "remote.origin.url"]:
+            output = "https://github.com/smilinTux/sklegal\n"
+        elif "status" in command or "fetch" in command or "checkout" in command:
+            output = ""
+        elif "rev-parse" in command:
+            output = reviewed + "\n"
+        else:
+            output = ""
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    result = materialize(
+        str(tmp_path / "unused"),
+        {
+            "links": {
+                "repository": "https://github.com/smilinTux/sklegal",
+                "base_ref": "main",
+                "base_revision": base,
+                "link_head_revision": reviewed,
+            }
+        },
+        ["source-only", "review"],
+        runner=clone,
+    )
+
+    assert result == str(target)
+    assert ["git", "-C", str(target.with_name(
+        ".configured.materializing-" + str(os.getpid())
+    )), "checkout", "--quiet", "--detach", reviewed] in calls
+    assert target.is_dir()
+
+
+def test_configured_unknown_workspace_is_preserved_and_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    materialize = _helpers()["_materialize_worker_workspace"]
+    target = tmp_path / "configured"
+    target.mkdir()
+    marker = target / "preserved.txt"
+    marker.write_text("custody", encoding="utf-8")
+    monkeypatch.setenv("SKFLEET_WORKSPACE", str(target))
+
+    with pytest.raises(ValueError, match="exactly one Git checkout"):
+        materialize(
+            str(tmp_path / "unused"),
+            {
+                "links": {
+                    "repository": "https://github.com/smilinTux/sklegal",
+                    "base_ref": "main",
+                    "base_revision": "a" * 40,
+                }
+            },
+            ["source-only"],
+        )
+    assert marker.read_text(encoding="utf-8") == "custody"
 
 
 def test_materialization_precedes_claim_in_scheduler_source() -> None:

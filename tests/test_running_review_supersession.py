@@ -91,7 +91,7 @@ def test_two_repairs_supersede_old_review_but_preserve_current_review() -> None:
     assert module.review_supersession(args()) is None
 
 
-def test_source_head_mismatch_supersedes_review_without_manual_link() -> None:
+def test_producer_commit_mismatch_does_not_supersede_reviewed_pr_head() -> None:
     module = load_module()
     cards = {
         "3a11f071": review("1" * 40),
@@ -99,11 +99,7 @@ def test_source_head_mismatch_supersedes_review_without_manual_link() -> None:
     }
     install_store(module, cards)
 
-    evidence = module.review_supersession(args())
-
-    assert evidence["reviewed_head"] == "1" * 40
-    assert evidence["current_head"] == "2" * 40
-    assert evidence["superseded_by"] == "source-head-mismatch"
+    assert module.review_supersession(args()) is None
 
 
 def test_stale_claim_cannot_stop_newer_review_generation(monkeypatch) -> None:
