@@ -889,9 +889,8 @@ def test_unit_templates_preserve_limits_and_disabled_install_contract() -> None:
     assert "Environment=SKFLEET_TARGET=2" in seraph
     assert "Environment=SKFLEET_SERAPH_BATCH_SIZE=2" in seraph
     assert "Environment=SKFLEET_CODEX_PHYSICAL_LIMIT=3" in seraph
-    assert "Environment=SKFLEET_TARGET=3" in niobe
-    assert "Environment=SKFLEET_GLM_TARGET=0" in niobe
-    assert "Environment=SKFLEET_KIMI_TARGET=0" in niobe
+    assert "EnvironmentFile=%h/.config/skcapstone/skfleet-niobe-live.env" in niobe
+    assert "Environment=SKFLEET_TARGET=" not in niobe
     assert "skfleet-seraph.service" in seraph_timer
     assert "--seat tank" in tank and "TimeoutStartSec=300" in tank
     assert "SKFLEET_TANK_BATCH_SIZE=2" in tank

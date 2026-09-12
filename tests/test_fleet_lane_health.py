@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import os
 import re
 import subprocess
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -202,6 +205,35 @@ def test_active_revision_is_bound_to_configured_endpoint_host_and_port() -> None
     assert calls[0][0][-3:] == ["python3", "-", "18790"]
     assert calls[0][0][0] == "ssh"
     assert "/proc" in calls[0][1]
+
+
+def test_packaged_gateway_revision_requires_matching_immutable_manifest(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    entrypoint = source / "index.mjs"
+    entrypoint.write_text("import time; time.sleep(30)\n")
+    port = str(49000 + os.getpid() % 1000)
+    manifest = tmp_path / ".skgateway-release.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": "skgateway.release-custody/v1",
+                "source_revision": REVISION,
+                "entrypoint_sha256": hashlib.sha256(entrypoint.read_bytes()).hexdigest(),
+            }
+        )
+    )
+    manifest.chmod(0o644)
+    process = subprocess.Popen([sys.executable, str(entrypoint), "--port", port], cwd=tmp_path)
+    try:
+        time.sleep(0.1)
+        assert active_gateway_revision(f"http://localhost:{port}") == REVISION
+        entrypoint.write_text("import time; time.sleep(31)\n")
+        with pytest.raises(ValueError, match="revision unavailable"):
+            active_gateway_revision(f"http://localhost:{port}")
+    finally:
+        process.terminate()
+        process.wait(timeout=3)
 
 
 def test_oversized_endpoint_fails_closed_with_bounded_evidence(tmp_path: Path) -> None:

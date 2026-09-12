@@ -121,6 +121,25 @@ def test_rotation_launcher_is_installed_by_the_wheel() -> None:
         assert "%h/.local/bin/skfleet-rotate.py" not in text
 
 
+def test_niobe_lane_configuration_is_required_and_host_neutral() -> None:
+    """Packaged units require explicit logical lane bindings."""
+    unit = ROOT / "systemd/skfleet-niobe-live.service"
+    packaged_unit = ROOT / "src/skcapstone/data/systemd/skfleet-niobe-live.service"
+    example = ROOT / "systemd/skfleet-niobe-live.env.example"
+    packaged_example = ROOT / "src/skcapstone/data/systemd/skfleet-niobe-live.env.example"
+    assert unit.read_bytes() == packaged_unit.read_bytes()
+    assert example.read_bytes() == packaged_example.read_bytes()
+    assert "EnvironmentFile=%h/.config/skcapstone/skfleet-niobe-live.env" in unit.read_text()
+    values = dict(
+        line.split("=", 1)
+        for line in example.read_text().splitlines()
+        if line and not line.startswith("#")
+    )
+    assert values["SKFLEET_TARGET"] == "0"
+    assert values["SKFLEET_ESC_TARGET"] == "0"
+    assert all(not value for key, value in values.items() if key.endswith(("MODEL", "DOMAINS")))
+
+
 def test_tank_and_atlas_prompts_preserve_role_fences() -> None:
     """Seat prompts bind exact metadata and never grant ATLAS actuation."""
     source = (ROOT / "scripts/fleet/skfleet-rotate.py").read_text()

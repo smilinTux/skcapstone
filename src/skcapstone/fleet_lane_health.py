@@ -38,7 +38,7 @@ def _fetch_json(
 
 
 _REMOTE_REVISION_PROGRAM = r"""
-import os, subprocess, sys
+import hashlib, json, os, stat, subprocess, sys
 port = sys.argv[1]
 matches = []
 for name in os.listdir('/proc'):
@@ -62,15 +62,52 @@ cwd = os.path.realpath('/proc/%s/cwd' % matches[0])
 result = subprocess.run(
     ['git', '-C', cwd, 'rev-parse', 'HEAD'], text=True, capture_output=True, timeout=3
 )
-if result.returncode:
-    raise SystemExit(3)
-dirty = subprocess.run(
-    ['git', '-C', cwd, 'status', '--porcelain', '--untracked-files=all', '--', 'src'],
-    text=True, capture_output=True, timeout=3
-)
-if dirty.returncode or dirty.stdout.strip():
-    raise SystemExit(4)
-print(result.stdout.strip())
+if not result.returncode:
+    dirty = subprocess.run(
+        ['git', '-C', cwd, 'status', '--porcelain', '--untracked-files=all', '--', 'src'],
+        text=True, capture_output=True, timeout=3
+    )
+    if dirty.returncode or dirty.stdout.strip():
+        raise SystemExit(4)
+    print(result.stdout.strip())
+    raise SystemExit(0)
+manifest_path = os.path.join(cwd, '.skgateway-release.json')
+flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)
+try:
+    descriptor = os.open(manifest_path, flags)
+    details = os.fstat(descriptor)
+    cwd_details = os.stat(cwd)
+    process_details = os.stat('/proc/%s' % matches[0])
+    if not stat.S_ISREG(details.st_mode) or details.st_uid != cwd_details.st_uid:
+        raise ValueError
+    if details.st_uid != process_details.st_uid:
+        raise ValueError
+    if details.st_mode & (stat.S_IWGRP | stat.S_IWOTH) or details.st_size > 4096:
+        raise ValueError
+    raw = os.read(descriptor, 4097)
+finally:
+    if 'descriptor' in locals():
+        os.close(descriptor)
+try:
+    manifest = json.loads(raw)
+    if set(manifest) != {'schema', 'source_revision', 'entrypoint_sha256'}:
+        raise ValueError
+    if manifest['schema'] != 'skgateway.release-custody/v1':
+        raise ValueError
+    revision = manifest['source_revision']
+    expected = manifest['entrypoint_sha256']
+    if not isinstance(revision, str) or len(revision) != 40:
+        raise ValueError
+    int(revision, 16)
+    if not isinstance(expected, str) or len(expected) != 64:
+        raise ValueError
+    entrypoint = os.path.join(cwd, 'src', 'index.mjs')
+    actual = hashlib.sha256(open(entrypoint, 'rb').read()).hexdigest()
+    if actual != expected:
+        raise ValueError
+except (OSError, ValueError, TypeError, json.JSONDecodeError):
+    raise SystemExit(5)
+print(revision)
 """
 
 
@@ -80,7 +117,7 @@ def active_gateway_revision(
     timeout: float = 6,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> str:
-    """Return the Git revision of the unique process serving the endpoint port."""
+    """Return verified Git or packaged-release custody for the serving process."""
     parsed = urllib.parse.urlsplit(base_url)
     host = parsed.hostname or ""
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
