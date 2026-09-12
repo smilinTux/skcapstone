@@ -19,6 +19,7 @@ def test_waiting_niobe_gets_next_dispatch_without_concurrent_mutation(tmp_path: 
     order: list[str] = []
     state_lock = threading.Lock()
     seraph_started = threading.Event()
+    release_seraph = threading.Event()
 
     def mutate(seat: str, hold_seconds: float, wait_seconds: float) -> None:
         nonlocal active, peak
@@ -33,7 +34,10 @@ def test_waiting_niobe_gets_next_dispatch_without_concurrent_mutation(tmp_path: 
                 order.append(seat)
                 if seat == "seraph":
                     seraph_started.set()
-            time.sleep(hold_seconds)
+            if seat == "seraph" and hold_seconds:
+                assert release_seraph.wait(timeout=1)
+            else:
+                time.sleep(hold_seconds)
             with state_lock:
                 active -= 1
         finally:
@@ -46,13 +50,13 @@ def test_waiting_niobe_gets_next_dispatch_without_concurrent_mutation(tmp_path: 
 
     niobe = threading.Thread(target=mutate, args=("niobe", 0.01, 0.5))
     niobe.start()
-    time.sleep(0.02)  # scaled one-minute timer beat during a 240-second cycle
     repeated_seraph = threading.Thread(target=mutate, args=("seraph", 0, 0))
     repeated_seraph.start()
+    repeated_seraph.join(timeout=1)
+    release_seraph.set()
 
     long_seraph.join(timeout=1)
     niobe.join(timeout=1)
-    repeated_seraph.join(timeout=1)
 
     assert not long_seraph.is_alive() and not niobe.is_alive()
     assert order == ["seraph", "seraph:overlap", "niobe"]
