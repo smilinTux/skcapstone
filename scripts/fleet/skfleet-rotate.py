@@ -603,10 +603,20 @@ def _source_workspace_spec(core, labels):
         raise ValueError("source card requires a bounded base_ref link")
     if not re.fullmatch(r"[0-9a-f]{40}", base_revision):
         raise ValueError("source card requires an exact 40-hex base_revision")
-    return repository, base_ref, base_revision
+    checkout_revision = base_revision
+    if "review" in normalized:
+        link_head = str(links.get("link_head_revision") or "").strip().lower()
+        meta_head = str(meta.get("link_head_revision") or "").strip().lower()
+        if link_head and meta_head and link_head != meta_head:
+            raise ValueError("source binding conflict: link_head_revision")
+        checkout_revision = link_head or meta_head
+        if not re.fullmatch(r"[0-9a-f]{40}", checkout_revision):
+            raise ValueError("review card requires an exact 40-hex link_head_revision")
+    return repository, base_ref, base_revision, checkout_revision
 
 
 def _verify_source_workspace(path, repository, base_ref, base_revision,
+                             checkout_revision,
                              checkout=False, runner=subprocess.run):
     """Fetch a named ref and verify one clean checkout at its exact revision."""
     def run(command, name):
@@ -640,23 +650,31 @@ def _verify_source_workspace(path, repository, base_ref, base_revision,
          base_revision, "FETCH_HEAD"],
         "base_revision reachability",
     )
+    if checkout_revision != base_revision:
+        run(
+            ["git", "-C", str(path), "fetch", "--quiet", "origin",
+             checkout_revision],
+            "reviewed head fetch",
+        )
     if checkout:
         run(
-            ["git", "-C", str(path), "checkout", "--quiet", "--detach", base_revision],
-            "exact base_revision checkout",
+            ["git", "-C", str(path), "checkout", "--quiet", "--detach",
+             checkout_revision],
+            "exact checkout revision",
         )
         if run(["git", "-C", str(path), "status", "--porcelain=v1"], "clean"):
             raise ValueError("workspace contains uncommitted custody state")
     head = run(["git", "-C", str(path), "rev-parse", "HEAD^{commit}"], "head")
     exact = run(
-        ["git", "-C", str(path), "rev-parse", f"{base_revision}^{{commit}}"],
-        "base_revision",
+        ["git", "-C", str(path), "rev-parse", f"{checkout_revision}^{{commit}}"],
+        "checkout_revision",
     )
     if not head or head != exact:
-        raise ValueError("workspace HEAD does not match exact base_revision")
+        raise ValueError("workspace HEAD does not match exact checkout revision")
 
 
-def _preclaim_source_ref(repository, base_ref, base_revision, runner=subprocess.run):
+def _preclaim_source_ref(repository, base_ref, base_revision, checkout_revision,
+                         runner=subprocess.run):
     """Check reconstructability before creating a reviewer workspace."""
     candidates = [base_ref] if base_ref.startswith("refs/") else [
         f"refs/heads/{base_ref}", f"refs/tags/{base_ref}"
@@ -676,20 +694,18 @@ def _materialize_worker_workspace(default, core, labels, runner=subprocess.run):
     """Materialize one source checkout atomically before a worker is claimed."""
     configured = os.environ.get("SKFLEET_WORKSPACE")
     spec = _source_workspace_spec(core, labels)
-    if configured:
-        checkout = _resolve_workspace_root(configured)
-        if spec is not None:
-            _verify_source_workspace(checkout, *spec, runner=runner)
-        return checkout
+    if configured and spec is None:
+        return _resolve_workspace_root(configured)
     if spec is None:
         os.makedirs(default, exist_ok=True)
         return default
-    repository, base_ref, base_revision = spec
-    target = Path(default)
+    repository, base_ref, base_revision, checkout_revision = spec
+    target = Path(configured or default).expanduser()
     if target.exists() and any(target.iterdir()):
         checkout = _resolve_workspace_root(target)
         _verify_source_workspace(
-            checkout, repository, base_ref, base_revision, runner=runner
+            checkout, repository, base_ref, base_revision, checkout_revision,
+            runner=runner
         )
         return checkout
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -713,7 +729,8 @@ def _materialize_worker_workspace(default, core, labels, runner=subprocess.run):
             raise ValueError(f"workspace materialization failed: {detail[:160]}")
         _resolve_workspace_root(temporary)
         _verify_source_workspace(
-            temporary, repository, base_ref, base_revision, checkout=True, runner=runner
+            temporary, repository, base_ref, base_revision, checkout_revision,
+            checkout=True, runner=runner
         )
         if target.exists():
             target.rmdir()
