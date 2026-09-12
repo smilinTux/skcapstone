@@ -523,6 +523,7 @@ def test_shadow_partition_executes_real_legacy_path_on_same_population(tmp_path)
         "ready000": {},
         "excluded": {"excluded": True, "dependency": True},
         "terminal": {"lifecycle": "complete", "awaiting_review": True},
+        "voided00": {"lifecycle": "void", "awaiting_review": True},
         "owned00": {"lifecycle": "claimed", "dependency": True},
         "review00": {"awaiting_review": True, "backoff": True},
         "blocked0": {"dependency": True, "backoff": True},
@@ -581,7 +582,7 @@ def test_shadow_partition_executes_real_legacy_path_on_same_population(tmp_path)
         SchedulerFacts(
             cid,
             lifecycle_excluded=facts.get("excluded", False),
-            terminal_cardstore=facts.get("lifecycle") == "complete",
+            terminal_cardstore=facts.get("lifecycle") in {"complete", "void"},
             owner_health="live" if facts.get("lifecycle") == "claimed" else None,
             dependency=facts.get("dependency", False),
             awaiting_review=facts.get("awaiting_review", False),
@@ -604,7 +605,7 @@ def test_shadow_partition_executes_real_legacy_path_on_same_population(tmp_path)
         "host_pin_elsewhere": 1,
         "lifecycle_excluded": 1,
         "owned_live": 1,
-        "terminal_cardstore": 1,
+        "terminal_cardstore": 2,
     }
 
 
