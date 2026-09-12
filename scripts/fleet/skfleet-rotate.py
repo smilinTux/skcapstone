@@ -1291,6 +1291,9 @@ if ONLY_SEAT in {"", "link", "mero", "seraph"}:
     _review_route_occupancy,_review_route_ambiguous=load_route_occupancy(
         Path(HOME)/".skcapstone"
     )
+    if _review_route_ambiguous:
+        log(d,"REVIEW_ROUTE_OCCUPANCY|%s|ambiguous=1|typed=%s"%
+            (HOST,json.dumps(_review_route_occupancy,sort_keys=True)))
 GLM_HOLD_PATH=os.path.join(HOME,".skcapstone/evidence/fleet-glm-dispatch-hold.json")
 glm_held=False
 try:
@@ -1407,7 +1410,8 @@ def _kimi_model_for(core):
 def _producer_routes_for(core, labels, lane=None):
     """Return current gateway routes for one producer card and optional lane pin."""
     match=_GLM_SIZE_RE.search(str((core or {}).get("title") or ""))
-    routes=([] if _review_route_ambiguous or match is None else eligible_gateway_routes(
+    # Reason: ambiguous untyped seats must not zero provider-neutral free capacity.
+    routes=([] if match is None else eligible_gateway_routes(
         _review_route_snapshot or {},match.group(1),labels,_review_route_occupancy))
     if lane is None:
         return routes
@@ -1421,8 +1425,8 @@ for _L in LANES:
     _L["busy"]=_lane_busy(_L,sessions,worker_units)
     _L["free"]=max(0,_L["target"]-len(_L["busy"]))
 if not ONLY_SEAT:
-    _gateway_routes=([] if _review_route_ambiguous else eligible_gateway_routes(
-        _review_route_snapshot or {},"S",[],_review_route_occupancy))
+    _gateway_routes=eligible_gateway_routes(
+        _review_route_snapshot or {},"S",[],_review_route_occupancy)
     _codex=next(lane for lane in LANES if lane["name"]=="codex")
     _codex["free"]=aggregate_review_capacity(
         _gateway_routes,min(TARGET,CODEX_PHYSICAL_LIMIT,MAX_LAUNCH))
@@ -1432,9 +1436,11 @@ if ONLY_SEAT:
     _codex=next(lane for lane in LANES if lane["name"]=="codex")
     _busy_cards=_worker_cards(sessions,worker_units,[_codex])
     if ONLY_SEAT in {"link","mero","seraph"}:
-        _capacity_routes=([] if _review_route_ambiguous else eligible_review_routes(
+        # Reason: Seraph S work consumes healthy equal-or-larger buckets; do not
+        # wipe that projection when an untyped seat record is merely ambiguous.
+        _capacity_routes=eligible_review_routes(
             _review_route_snapshot or {},"S",[],"producer","pi-seraph-capacity",
-            _review_route_occupancy))
+            _review_route_occupancy)
         _codex["free"]=aggregate_review_capacity(_capacity_routes,SEAT_TARGET)
     else:
         _codex["free"]=_seat_capacity(

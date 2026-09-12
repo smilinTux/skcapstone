@@ -147,6 +147,79 @@ def test_provider_neutral_routes_tier_policy_and_shared_capacity(tmp_path):
     assert eligible_review_routes(snapshot, "M", [], "same", "same", {}) == []
 
 
+def test_size_s_consumes_healthy_equal_or_larger_buckets_only(tmp_path):
+    """S work must use healthy L/XL free domains when no healthy S route exists."""
+    now = 2_000_000_000.0
+    models, health, queue = _documents(now)
+    models["data"] = [
+        row
+        for row in models["data"]
+        if isinstance(row, dict) and (row.get("card") or {}).get("size_class") in {"L", "XL"}
+    ]
+    documents = dict(zip(("/v1/models", "/health", "/queue"), (models, health, queue)))
+
+    def opener(url, timeout):
+        assert timeout == 8
+        suffix = next(key for key in documents if url.endswith(key))
+        return _Response(json.dumps(documents[suffix]).encode())
+
+    snapshot = acquire_review_route_snapshot(
+        "https://gateway", tmp_path / "snapshot.json", "cycle-1", opener=opener, now=lambda: now
+    )
+    assert {row["size_class"] for row in snapshot["routes"]} <= {"L", "XL"}
+    routes = eligible_review_routes(snapshot, "S", [], "producer", "pi-seraph-review", {})
+    assert [row["logical_route"] for row in routes] == ["route-local-large"]
+    assert aggregate_review_capacity(routes, 8) == 1
+    assert choose_review_route(routes, {})["capacity_domain"] == "local-a"
+    exact = [row for row in routes if row["size_class"] == "S"]
+    assert exact == []
+
+
+def test_ambiguous_untyped_seat_keeps_compatible_free_capacity(tmp_path):
+    """Ambiguous live records must not project target=0 over healthy larger buckets."""
+    now = 2_000_000_000.0
+    models, health, queue = _documents(now)
+    models["data"] = [
+        row
+        for row in models["data"]
+        if isinstance(row, dict) and (row.get("card") or {}).get("size_class") in {"L", "XL"}
+    ]
+    documents = dict(zip(("/v1/models", "/health", "/queue"), (models, health, queue)))
+
+    def opener(url, timeout):
+        del timeout
+        suffix = next(key for key in documents if url.endswith(key))
+        return _Response(json.dumps(documents[suffix]).encode())
+
+    snapshot = acquire_review_route_snapshot(
+        "https://gateway", tmp_path / "snapshot.json", "cycle-1", opener=opener, now=lambda: now
+    )
+    directory = tmp_path / "fleet" / "direct-seats"
+    directory.mkdir(parents=True)
+    stamp = datetime.datetime.fromtimestamp(now, datetime.timezone.utc).isoformat()
+    (directory / "untyped.json").write_text(
+        json.dumps({"completion_state": "running", "heartbeat_at": stamp})
+    )
+    (tmp_path / "evidence").mkdir(parents=True)
+    (tmp_path / "evidence" / "fleet-review-routes.json").write_text(
+        json.dumps(snapshot) + "\n", encoding="utf-8"
+    )
+    occupancy, ambiguous = load_route_occupancy(tmp_path, now=now)
+    assert occupancy == {}
+    assert ambiguous is True
+    from skcapstone.review_admission import reviewer_capacity
+
+    busy, target = reviewer_capacity(
+        tmp_path,
+        {"title": "[S] review larger buckets"},
+        ["review", "seat-seraph"],
+        "producer",
+        "pi-seraph-review",
+    )
+    assert busy == 0
+    assert target == 1
+
+
 @pytest.mark.parametrize(
     ("current", "capacity_state", "eligible"),
     [
