@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .card_store import CardStore
 from .review_admission import (
+    dependency_blocker_unresolved,
     governed_review_gate_reasons,
     governed_review_metadata,
     governed_review_seat,
@@ -45,6 +46,7 @@ def diagnose(home: Path, card_id: str) -> dict[str, object]:
             dependency_blocked=dependency_blocked,
             owned=card.owner is not None,
             capacity_available=busy < target,
+            dependency_blocker_holds=dependency_blocker_unresolved(home, core, card.labels),
         )
     )
     if "do-not-claim" in labels:
