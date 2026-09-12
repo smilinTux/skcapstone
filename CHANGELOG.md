@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Python wheels and source distributions now include the existing host-neutral
+  `skfleet-niobe-live.env.example` template for reviewable logical lane setup.
+
 - Niobe now accepts nonnegative configured Codex, Qwen, GLM, and Kimi lane
   targets only when every active logical lane matches a fresh SKGateway health
   snapshot, exact runtime revision, model, endpoint, and capacity domain.
