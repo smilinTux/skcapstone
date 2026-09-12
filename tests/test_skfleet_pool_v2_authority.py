@@ -10,6 +10,8 @@ import re
 from pathlib import Path
 from types import SimpleNamespace
 
+from skcapstone.review_admission import governed_review_seat, qualified_reviewer_seats
+
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 
@@ -28,6 +30,8 @@ def _load_helpers(*names: str) -> dict[str, object]:
         "hashlib": hashlib,
         "json": json,
         "re": re,
+        "governed_review_seat": governed_review_seat,
+        "qualified_reviewer_seats": qualified_reviewer_seats,
     }
     exec(compile(module, str(ROTATE), "exec"), namespace)
     return namespace
@@ -139,6 +143,16 @@ def test_canonical_review_card_enters_seraph_or_elastic_codex_selector() -> None
     assert generic["seraph_review_admitted"] is False
     assert generic["elastic_review_admitted"] is True
     assert helpers["_pool_v2_ready_ids"](decisions, {card_id: generic}) == {card_id}
+
+    link_claimability = dict(claimability, labels=["review", "seat-link"])
+    link_generic = helpers["_pool_v2_admission"](card_id, core, link_claimability)
+    assert link_generic["elastic_review_admitted"] is True
+    assert helpers["_pool_v2_ready_ids"](decisions, {card_id: link_generic}) == {card_id}
+
+    helpers["_pool_v2_admission"].__globals__["_ONLY_SEAT"] = "link"
+    link_direct = helpers["_pool_v2_admission"](card_id, core, link_claimability)
+    assert link_direct["seraph_review_admitted"] is True
+    assert helpers["_pool_v2_ready_ids"](decisions, {card_id: link_direct}) == {card_id}
 
     source = ROTATE.read_text(encoding="utf-8")
     assert "not (seraph_review_admitted or elastic_review_admitted)" in source

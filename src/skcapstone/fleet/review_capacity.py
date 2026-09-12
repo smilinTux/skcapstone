@@ -10,6 +10,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from skcapstone.review_admission import LOGICAL_REVIEWER_SEATS, reviewer_candidate_reasons
 from skcapstone.seat_boundaries import canonical_principal
 
 from ..fleet_lane_health import MAX_AGE_SECONDS, _domain_state
@@ -217,9 +218,21 @@ def eligible_review_routes(
     producer: str,
     reviewer: str,
     occupancy: Mapping[str, int],
+    *,
+    declared_seat: str | None = None,
+    qualified_seats: set[str] | frozenset[str] = LOGICAL_REVIEWER_SEATS,
+    available: bool = True,
 ) -> list[dict[str, Any]]:
     """Return eligible gateway routes after enforcing reviewer independence."""
     if canonical_principal(producer) == canonical_principal(reviewer):
+        return []
+    if declared_seat is not None and reviewer_candidate_reasons(
+        reviewer,
+        producer=producer,
+        declared_seat=declared_seat,
+        qualified_seats=qualified_seats,
+        available=available,
+    ):
         return []
     return eligible_gateway_routes(snapshot, required_size, labels, occupancy)
 

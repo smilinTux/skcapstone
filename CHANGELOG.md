@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Governed review placement and atomic claim authorization now consume one
+  host-neutral candidate contract. Qualified Link, Mero, Seraph, and
+  configured logical reviewers share every healthy, policy-compatible
+  SKGateway capacity domain that satisfies the card's size bucket. Producer
+  identities, unqualified or unavailable reviewers, exhausted capacity, and
+  stale claim generations remain fail-closed. Card metadata retains only
+  logical seats and size buckets, never a host, provider, or concrete model.
+
 - The fleet rotation's worker roster was a literal tuple of one estate's five
   chi hosts, so on a second estate the live dispatcher exited immediately with
   `NOOP|noroc2027|host is outside the authorized chiap01-chiap03 worker fleet`.
