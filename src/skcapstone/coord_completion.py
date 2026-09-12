@@ -2,8 +2,21 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
+
+
+def _completion_title(home: Path, task_id: str) -> str:
+    """Require readable immutable identity before selecting completion policy."""
+    from .ci_applicability import _json
+
+    try:
+        core = _json((home / "cards" / task_id / "core.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise ValueError(f"card {task_id} has unreadable immutable core metadata") from None
+    title = core.get("title")
+    if not isinstance(title, str) or not title.strip():
+        raise ValueError(f"card {task_id} has no valid immutable core title")
+    return title
 
 
 def complete_coord_task(home: Path, agent_name: str, task_id: str):
@@ -12,13 +25,7 @@ def complete_coord_task(home: Path, agent_name: str, task_id: str):
     from .review_verdict import validate_review_completion
 
     home_path = Path(home).expanduser()
-    title = ""
-    core = home_path / "cards" / task_id / "core.json"
-    if core.exists():
-        try:
-            title = str(json.loads(core.read_text()).get("title") or "")
-        except (OSError, ValueError):
-            title = ""
+    title = _completion_title(home_path, task_id)
     validate_review_completion(task_id, title, home_path)
     return Board(home_path).complete_task(agent_name, task_id)
 
@@ -37,13 +44,7 @@ def move_coord_task(
 
     home_path = Path(home).expanduser()
     if column == "done":
-        title = ""
-        core = home_path / "cards" / task_id / "core.json"
-        if core.exists():
-            try:
-                title = str(json.loads(core.read_text()).get("title") or "")
-            except (OSError, ValueError):
-                title = ""
+        title = _completion_title(home_path, task_id)
         validate_review_completion(task_id, title, home_path)
     return transition_task(
         home_path,

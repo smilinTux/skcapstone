@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Card `10a1018b`: allow profile-less legacy review cards to use only a
+  checked-in repository hosted-check policy and one exact append-only receipt
+  bound to immutable repository, candidate head, and evidence digest metadata.
+
+- Card `a5bf5e69`: mark centrally registered manifest-only enrollment in the
+  immutable capsule and require its own exact-card `ci_profile_enrollment`
+  receipt. Enrollment evidence makes no repository CI success claims;
+  established profiles retain every declared CI check requirement.
+
+- Card `48f0ae70`: read CI receipts only from bounded, strict exact-card event
+  streams; route CLI/MCP receipts through CardStore; allow manifest-only initial
+  enrollment only for a centrally approved repository policy digest.
+
+- Cards `c0ee3907`, `0e849032`: bind review CI applicability to immutable
+  repository policy and candidate receipts while preserving the six-check
+  legacy gate. Local Git verification forbids promisor lazy fetch and transport.
+
 - The fleet rotation's worker roster was a literal tuple of one estate's five
   chi hosts, so on a second estate the live dispatcher exited immediately with
   `NOOP|noroc2027|host is outside the authorized chiap01-chiap03 worker fleet`.
@@ -119,7 +136,6 @@
   string naming the removed timer, and every activation record on disk
   carries it, so repointing it needs its own migration rather than a silent
   edit here. See docs/fleet/activation-runbook.md.
-
 - Card `c5a81d4b`: reserve source-only logical-route cards for the Niobe
   builder queue and derive its sole offer host from public seat placement.
 

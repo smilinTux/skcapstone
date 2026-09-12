@@ -26,9 +26,9 @@ written. Asking reviewers to remember does not work; the worker brief has always
 told them to return an exact PASS or BLOCKED, and 39 did not.
 
 DELIBERATELY NARROW. Only cards that identify themselves as reviews or
-rereviews are checked. PASS additionally requires the complete protected-branch
-CI set. FAIL and structured BLOCKED remain terminal without waiting for CI,
-because a reviewer must be able to stop an unsafe candidate immediately.
+rereviews are checked. Only canonical PASS can complete, with the immutable
+repository CI policy or the legacy six-check set fully satisfied. Negative
+verdicts remain open for remediation.
 """
 
 from __future__ import annotations
@@ -165,6 +165,30 @@ def validate_review_completion(card_id: str, title: str, home: Path) -> None:
         return
     verdict = recorded_verdict(card_id, home)
     if verdict == "PASS":
+        from .ci_applicability import (
+            _json,
+            validate_legacy_completion,
+            validate_profile_completion,
+        )
+
+        try:
+            core = _json(
+                (Path(home) / "cards" / card_id / "core.json").read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            raise ValueError(
+                f"review card {card_id} has unreadable immutable core metadata"
+            ) from None
+        meta = core.get("meta", {})
+        if not isinstance(core.get("title"), str) or not core["title"].strip():
+            raise ValueError(f"review card {card_id} has no valid immutable core title")
+        if not isinstance(meta, dict):
+            raise ValueError(f"review card {card_id} has malformed immutable metadata")
+        if "ci_profile" in meta:
+            validate_profile_completion(card_id, home, core)
+            return
+        if validate_legacy_completion(card_id, home, core):
+            return
         checks = unsuccessful_checks(card_id, home)
         if not checks:
             return
