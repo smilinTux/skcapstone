@@ -29,6 +29,9 @@ LOGICAL_ROUTES = frozenset({"sk-s", "sk-m", "sk-l", "sk-xl"})
 LEASE_SECONDS = 900
 TERMINAL_STATES = {"completed", "blocked", "failed", "stale"}
 MAX_ATTEMPTS = 2
+# Reason: CardStore folds can lag the offered request for one generation.
+# Bound the re-fold so a later matching fold does not burn launch attempts.
+MATCH_RETRY_LIMIT = 3
 BUILDER_CAPACITY = 4
 _PROCESSES: dict[str, object] = {}
 _WORKER_TOOLS = "read,bash,edit,write,grep,find,ls"
@@ -133,6 +136,25 @@ def _request_matches_current_card(coordination_home: Path, request: dict) -> Non
         or labels != expected_labels
     ):
         raise BuilderDispatchError("offered card changed after dispatch request")
+
+
+def _ensure_request_matches_current_card(
+    coordination_home: Path,
+    request: dict,
+    *,
+    retries: int = MATCH_RETRY_LIMIT,
+) -> None:
+    """Re-fold one exact request generation before treating mismatch as durable."""
+    limit = max(1, int(retries))
+    last_error: BuilderDispatchError | None = None
+    for _ in range(limit):
+        try:
+            _request_matches_current_card(coordination_home, request)
+            return
+        except BuilderDispatchError as exc:
+            last_error = exc
+    assert last_error is not None
+    raise last_error
 
 
 def _ready_builders(paths: FleetPaths) -> list[NodeView]:
@@ -586,40 +608,78 @@ def consume_one(
             workspace = paths.root / "workspaces" / owner
             if not store.actuation_allowed(paths):
                 return None
-            _request_matches_current_card(coordination_home, request)
-            materializer(request, workspace)
+            prior_attempt = int(prior.get("attempt") or 0)
+            try:
+                _ensure_request_matches_current_card(coordination_home, request)
+            except BuilderDispatchError as exc:
+                # Reason: durable mismatch is generation-bound and must not burn
+                # the launch attempt budget while remaining non-fatal to sknoded.
+                return _write_status(
+                    paths,
+                    node,
+                    request,
+                    "blocked",
+                    attempt=prior_attempt,
+                    error=str(exc),
+                    claim_released=False,
+                )
+            try:
+                materializer(request, workspace)
+            except BuilderDispatchError as exc:
+                # Reason: source reconstruction stays retryable and non-fatal;
+                # only process creation may consume a substantive attempt.
+                return _write_status(
+                    paths,
+                    node,
+                    request,
+                    "failed",
+                    attempt=prior_attempt,
+                    error=str(exc),
+                    claim_released=False,
+                )
             if not store.actuation_allowed(paths):
                 return _write_status(
                     paths,
                     node,
                     request,
                     "frozen",
-                    attempt=int(prior.get("attempt") or 0),
+                    attempt=prior_attempt,
                     claim_released=False,
                 )
-            _request_matches_current_card(coordination_home, request)
+            try:
+                _ensure_request_matches_current_card(coordination_home, request)
+            except BuilderDispatchError as exc:
+                return _write_status(
+                    paths,
+                    node,
+                    request,
+                    "blocked",
+                    attempt=prior_attempt,
+                    error=str(exc),
+                    claim_released=False,
+                )
             Board(coordination_home).claim_task(owner, request["card_id"])
             card = CardStore(coordination_home).fold(request["card_id"])
             revision = str(card.meta.get("_claim_revision") or "") if card else ""
             if not card or card.owner != owner or not revision:
                 raise BuilderDispatchError("claimed generation is not authoritative")
             try:
-                _request_matches_current_card(coordination_home, request)
-            except BuilderDispatchError:
+                _ensure_request_matches_current_card(coordination_home, request)
+            except BuilderDispatchError as exc:
                 released = _release_exact(
                     coordination_home, request["card_id"], owner, revision, actor=owner
                 )
-                _write_status(
+                return _write_status(
                     paths,
                     node,
                     request,
                     "blocked",
                     owner=owner,
                     claim_revision=revision,
-                    attempt=int(prior.get("attempt") or 0),
+                    attempt=prior_attempt,
                     claim_released=released,
+                    error=str(exc),
                 )
-                raise
             frozen = _frozen_claim_status(
                 paths,
                 coordination_home,
@@ -627,7 +687,7 @@ def consume_one(
                 request,
                 owner,
                 revision,
-                int(prior.get("attempt") or 0),
+                prior_attempt,
             )
             if frozen is not None:
                 return frozen
@@ -640,7 +700,7 @@ def consume_one(
                 request,
                 owner,
                 revision,
-                int(prior.get("attempt") or 0),
+                prior_attempt,
             )
             if frozen is not None:
                 return frozen
@@ -656,7 +716,7 @@ def consume_one(
                         request,
                         owner,
                         revision,
-                        int(prior.get("attempt") or 0),
+                        prior_attempt,
                     )
                     if frozen is not None:
                         return frozen
@@ -673,7 +733,7 @@ def consume_one(
                     state,
                     owner=owner,
                     claim_revision=revision,
-                    attempt=attempt if exclusion_acquired else int(prior.get("attempt") or 0),
+                    attempt=attempt if exclusion_acquired else prior_attempt,
                     claim_released=released,
                     mail_sent=_send_status(owner, request, state),
                 )
