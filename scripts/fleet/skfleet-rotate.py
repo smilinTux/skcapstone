@@ -606,6 +606,69 @@ def _source_workspace_spec(core, labels):
     return repository, base_ref, base_revision
 
 
+def _normalize_credential_free_https_remote(url):
+    """Return a normalized credential-free HTTPS remote URL, or None."""
+    parsed = urlsplit(str(url or "").strip())
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    path = parsed.path.rstrip("/").removesuffix(".git")
+    netloc = parsed.hostname.lower()
+    if parsed.port:
+        netloc = f"{netloc}:{parsed.port}"
+    return f"https://{netloc}{path}"
+
+
+def _select_matching_source_remote(path, repository, runner=subprocess.run):
+    """Return the unique remote whose credential-free URL matches repository."""
+    expected = _normalize_credential_free_https_remote(repository)
+    if expected is None:
+        raise ValueError("workspace repository does not match card binding")
+    result = runner(
+        ["git", "-C", str(path), "config", "--get-regexp", r"^remote\..*\.url$"],
+        capture_output=True,
+        text=True,
+    )
+    lines = result.stdout.splitlines() if result.returncode == 0 else []
+    matches = []
+    credential_matches = False
+    for line in lines:
+        key, sep, url = line.partition(" ")
+        if not sep or not (key.startswith("remote.") and key.endswith(".url")):
+            continue
+        name = key[len("remote.") : -len(".url")]
+        normalized = _normalize_credential_free_https_remote(url)
+        if normalized == expected:
+            matches.append(name)
+            continue
+        parsed = urlsplit(str(url or "").strip())
+        if parsed.scheme != "https" or not parsed.hostname:
+            continue
+        if not (parsed.username or parsed.password or parsed.query or parsed.fragment):
+            continue
+        # Reason: strip only enough to detect a credential-bearing alias of the
+        # card binding; never accept that remote as a match.
+        host = parsed.hostname.lower()
+        if parsed.port:
+            host = f"{host}:{parsed.port}"
+        stripped = f"https://{host}{parsed.path.rstrip('/').removesuffix('.git')}"
+        if stripped == expected:
+            credential_matches = True
+    if credential_matches:
+        raise ValueError("workspace remote URL must be credential-free")
+    if not matches:
+        raise ValueError("workspace repository does not match card binding")
+    if len(matches) > 1:
+        raise ValueError("workspace repository remote match is ambiguous")
+    return matches[0]
+
+
 def _verify_source_workspace(path, repository, base_ref, base_revision,
                              checkout=False, runner=subprocess.run):
     """Fetch a named ref and verify one clean checkout at its exact revision."""
@@ -620,19 +683,13 @@ def _verify_source_workspace(path, repository, base_ref, base_revision,
             raise ValueError(f"workspace {name} verification failed")
         return result.stdout.strip()
 
-    origin = run(
-        ["git", "-C", str(path), "config", "--get", "remote.origin.url"], "origin"
-    )
-    expected = repository.rstrip("/").removesuffix(".git")
-    observed = origin.rstrip("/").removesuffix(".git")
-    if observed != expected:
-        raise ValueError("workspace repository does not match card binding")
+    remote = _select_matching_source_remote(path, repository, runner=runner)
     if not checkout and run(
         ["git", "-C", str(path), "status", "--porcelain=v1"], "clean"
     ):
         raise ValueError("workspace contains uncommitted custody state")
     run(
-        ["git", "-C", str(path), "fetch", "--quiet", "origin", base_ref],
+        ["git", "-C", str(path), "fetch", "--quiet", remote, base_ref],
         "fetch",
     )
     run(
