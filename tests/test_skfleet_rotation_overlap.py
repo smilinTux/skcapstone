@@ -12,16 +12,51 @@ ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 
 
-def _load_lock_path():
+def _load_functions(*names: str):
     tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
-    node = next(
+    nodes = [
+        item for item in tree.body if isinstance(item, ast.FunctionDef) and item.name in names
+    ]
+    namespace = {"os": __import__("os"), "re": __import__("re"), "_SEAT_RE": None}
+    seat_re = next(
         item
         for item in tree.body
-        if isinstance(item, ast.FunctionDef) and item.name == "_rotation_lock_path"
+        if isinstance(item, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "_SEAT_RE" for target in item.targets
+        )
     )
-    namespace = {"os": __import__("os")}
-    exec(compile(ast.Module(body=[node], type_ignores=[]), str(ROTATE), "exec"), namespace)
-    return namespace["_rotation_lock_path"]
+    exec(
+        compile(ast.Module(body=[seat_re, *nodes], type_ignores=[]), str(ROTATE), "exec"),
+        namespace,
+    )
+    return tuple(namespace[name] for name in names)
+
+
+def _load_lock_path():
+    return _load_functions("_rotation_lock_path")[0]
+
+
+@pytest.mark.parametrize("seat", ["bad/name", "../escape", "_invalid", "seat name"])
+def test_invalid_seat_is_rejected_before_lock_path_access(seat: str) -> None:
+    """Invalid identity cannot influence a lock path or filesystem open."""
+    validate, lock_path = _load_functions("_validated_rotation_seat", "_rotation_lock_path")
+    with pytest.raises(SystemExit, match=r"BLOCKED\|SKFLEET_ONLY_SEAT\|invalid seat"):
+        lock_path("/must-not-be-used", validate(seat))
+
+    source = ROTATE.read_text(encoding="utf-8")
+    assert source.index("ONLY_SEAT=_validated_rotation_seat(") < source.index(
+        "lock=open(_rotation_lock_path(HOME,ONLY_SEAT)"
+    )
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("", ""), ("  SERAPH  ", "seraph"), ("link", "link"), ("mero-2", "mero-2")],
+)
+def test_validated_seat_normalizes_only_valid_identity(raw: str, expected: str) -> None:
+    validate = _load_functions("_validated_rotation_seat")[0]
+    assert validate(raw) == expected
 
 
 def test_niobe_does_not_collide_with_other_standing_seat_timers(tmp_path: Path) -> None:
