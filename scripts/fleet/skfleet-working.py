@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import shlex
 import sqlite3
 import subprocess
@@ -19,7 +20,7 @@ import sys
 import tempfile
 import time
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -291,6 +292,63 @@ def save_samples(samples: dict[str, dict[str, int]], path: Path = STATE_PATH) ->
             os.unlink(temporary)
 
 
+def join_herdr_evidence(rows: list[Worker]) -> list[Worker]:
+    """Clear stale projection state only for an exact current Herdr join."""
+    try:
+        result = subprocess.run(
+            ["herdr", "agent", "list"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        payload = json.loads(result.stdout) if result.returncode == 0 else {}
+        agents = payload.get("result", {}).get("agents")
+        if not isinstance(agents, list) or not all(isinstance(item, dict) for item in agents):
+            return rows
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, AttributeError):
+        return rows
+
+    live = []
+    for item in agents:
+        name = item.get("name")
+        cwd = item.get("cwd")
+        if (
+            item.get("agent_status") in {"working", "idle", "blocked"}
+            and isinstance(name, str)
+            and isinstance(cwd, str)
+            and Path(cwd).is_absolute()
+        ):
+            live.append((name, Path(cwd).name))
+
+    joined = []
+    for row in rows:
+        card_pattern = rf"(?:^|[^0-9a-f]){re.escape(row.card)}(?:$|[^0-9a-f])"
+        exact_herdr = any(
+            re.search(card_pattern, name) and re.search(card_pattern, coworktree)
+            for name, coworktree in live
+        )
+        eligible = (
+            row.projection_state == "stale"
+            and row.claim_state == "exact"
+            and is_ephemeral_worker_agent(row.agent, row.card)
+            and row.pid == 0
+            and row.unit in {"", "not-found"}
+            and row.unit_active == "inactive"
+            and row.unit_sub == "dead"
+            and row.evidence_source.startswith("agent-projection")
+        )
+        joined.append(
+            replace(
+                row,
+                projection_state="valid",
+                evidence_source=f"{row.evidence_source}+herdr",
+            )
+            if eligible and exact_herdr
+            else row
+        )
+    return joined
+
+
 def assess(worker: Worker, samples: dict[str, dict[str, int]], now: int) -> tuple[str, int]:
     """Classify joined evidence without treating lifecycle state as a verdict."""
     key = f"{worker.host}/{worker.unit}"
@@ -315,6 +373,9 @@ def assess(worker: Worker, samples: dict[str, dict[str, int]], now: int) -> tupl
         or not worker.process_record
     ):
         return "STALE PROJECTION", now
+    if worker.evidence_source.endswith("+herdr"):
+        samples.pop(key, None)
+        return "OK", now
     if worker.unit in {"", "not-found"}:
         samples.pop(key, None)
         if worker.claim_state == "exact":
@@ -387,6 +448,7 @@ def main() -> int:
             host_diagnostics.update(diagnostics)
         except (subprocess.TimeoutExpired, OSError):
             unreachable.append(host)
+    rows = join_herdr_evidence(rows)
     rows.sort(key=lambda row: (-row.elapsed, row.host, row.agent))
     now = int(time.time())
     samples = load_samples()
