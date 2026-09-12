@@ -4826,7 +4826,12 @@ def _pool_v2_admission(cid, core, claimability, fresh=False):
     labels = claimability.get("labels") or ()
     governed_review = _governed_review_metadata(folded_core, labels) is not None
     review_seat = governed_review_seat(labels,qualified_reviewer_seats(folded_core))
-    hold = blocked_backoff(cid)
+    # Reason: overlay.backoff is the single admission hold bit (from
+    # blocked_backoff in production). Read it here so Seraph/elastic bits and
+    # _pool_v2_dispatchable share one source of truth, and extracted test
+    # namespaces that stub only _pool_v2_overlay do not NameError.
+    overlay = _pool_v2_overlay(cid, core, reason)
+    hold = overlay.get("backoff") is True
     seraph_review_admitted = bool(
         globals().get("_ONLY_SEAT", "") == review_seat
         and review_seat is not None
@@ -4854,7 +4859,7 @@ def _pool_v2_admission(cid, core, claimability, fresh=False):
         "governed_review": governed_review,
         "seraph_review_admitted": seraph_review_admitted,
         "elastic_review_admitted": elastic_review_admitted,
-        "overlay": _pool_v2_overlay(cid, core, reason),
+        "overlay": overlay,
         "source_revision": claimability.get("source_revision"),
     }
 
