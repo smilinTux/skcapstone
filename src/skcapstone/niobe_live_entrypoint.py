@@ -13,8 +13,113 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .fleet_lane_health import MAX_SNAPSHOT_BYTES, active_gateway_revision, lane_health
 from .niobe_activation import LIVE_UNIT, parse_activation
 from .seat_mail import poll_mail, startup_hello
+
+_LANES = {
+    "codex": (
+        "SKFLEET_TARGET",
+        "SKFLEET_CODEX_LANE_MODEL",
+        "SKFLEET_CODEX_CAPACITY_DOMAINS",
+        3,
+    ),
+    "glm": (
+        "SKFLEET_GLM_TARGET",
+        "SKFLEET_GLM_MODEL",
+        "SKFLEET_GLM_CAPACITY_DOMAINS",
+        0,
+    ),
+    "qwen": (
+        "SKFLEET_QWEN_TARGET",
+        "SKFLEET_QWEN_MODEL",
+        "SKFLEET_QWEN_CAPACITY_DOMAINS",
+        0,
+    ),
+    "kimi": (
+        "SKFLEET_KIMI_TARGET",
+        "SKFLEET_KIMI_MODEL",
+        "SKFLEET_KIMI_CAPACITY_DOMAINS",
+        0,
+    ),
+    "escalate": (
+        "SKFLEET_ESC_TARGET",
+        "SKFLEET_ESC_MODEL",
+        "SKFLEET_ESC_CAPACITY_DOMAINS",
+        2,
+    ),
+}
+
+
+def _validated_lane_targets(home: Path) -> dict[str, int]:
+    """Return configured targets only when every active lane is exactly healthy."""
+
+    targets: dict[str, int] = {}
+    bindings: dict[str, tuple[str, tuple[str, ...]]] = {}
+    for lane, (
+        target_key,
+        model_key,
+        domains_key,
+        default,
+    ) in _LANES.items():
+        raw_target = os.environ.get(target_key, str(default))
+        try:
+            target = int(raw_target)
+        except ValueError as exc:
+            raise ValueError(f"Niobe {lane} target must be a nonnegative integer") from exc
+        if target < 0 or str(target) != raw_target.strip():
+            raise ValueError(f"Niobe {lane} target must be a nonnegative integer")
+        targets[lane] = target
+        if not target:
+            continue
+        model = os.environ.get(model_key, "").strip()
+        if not model:
+            raise ValueError(f"Niobe {lane} model binding is missing")
+        domains = tuple(
+            value.strip() for value in os.environ.get(domains_key, "").split(",") if value.strip()
+        )
+        if not domains:
+            raise ValueError(f"Niobe {lane} capacity domains are missing")
+        bindings[lane] = (model, domains)
+
+    if not any(targets.values()):
+        return targets
+    snapshot_path = Path(
+        os.environ.get(
+            "SKFLEET_LANE_HEALTH_PATH",
+            str(home / "evidence" / "fleet-lane-health.json"),
+        )
+    )
+    try:
+        raw = snapshot_path.read_bytes()
+        if len(raw) > MAX_SNAPSHOT_BYTES:
+            raise ValueError("snapshot exceeds bound")
+        snapshot = json.loads(raw)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("Niobe lane health snapshot is unavailable") from exc
+    if not isinstance(snapshot, dict) or snapshot.get("errors") != []:
+        raise ValueError("Niobe lane health snapshot is invalid")
+    endpoint = os.environ.get("SKFLEET_GATEWAY_URL", "").rstrip("/")
+    if not endpoint:
+        raise ValueError("Niobe gateway endpoint is missing")
+    revision = active_gateway_revision(endpoint)
+    cycle_id = str(snapshot.get("cycle_id") or "")
+    for lane, target in targets.items():
+        if not target:
+            continue
+        model, domains = bindings[lane]
+        healthy, reason = lane_health(
+            snapshot,
+            lane,
+            model,
+            cycle_id=cycle_id,
+            endpoint=endpoint,
+            capacity_domains=domains,
+            active_revision=revision,
+        )
+        if not healthy:
+            raise ValueError(f"Niobe {lane} lane is not healthy: {reason}")
+    return targets
 
 
 def _append_health(
@@ -97,14 +202,7 @@ def run_live(
     # the record authorizes, using the estate's own operator and product scope.
     activation = parse_activation(value, home=home, host=host)
     started_at = datetime.now(timezone.utc).isoformat()
-    required_environment = {
-        "SKFLEET_TARGET": "3",
-        "SKFLEET_QWEN_TARGET": "0",
-        "SKFLEET_GLM_TARGET": "0",
-        "SKFLEET_KIMI_TARGET": "0",
-    }
-    if any(os.environ.get(key) != expected for key, expected in required_environment.items()):
-        raise ValueError("Niobe live unit requires effective Codex-only target 3")
+    _validated_lane_targets(home)
     if not dispatcher.is_file():
         raise ValueError("Niobe dispatcher is missing")
     startup_hello(home, "niobe", host=host)
