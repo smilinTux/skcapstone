@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Card f573759b: validate child lifecycle inside terminal transactions.**
+- **Card 21a71835: validate child lifecycle inside terminal transactions.**
   Parent completion now refuses nonterminal labeled children from inside the
   shared skcoord mutation critical section for both supported terminal routes.
 
