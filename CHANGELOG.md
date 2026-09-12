@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Niobe now accepts nonnegative configured Codex, Qwen, GLM, and Kimi lane
+  targets only when every active logical lane matches a fresh SKGateway health
+  snapshot, exact runtime revision, model, endpoint, and capacity domain.
+  Invalid, unhealthy, unknown, or mismatched lanes fail before dispatch.
+
 - The fleet rotation's worker roster was a literal tuple of one estate's five
   chi hosts, so on a second estate the live dispatcher exited immediately with
   `NOOP|noroc2027|host is outside the authorized chiap01-chiap03 worker fleet`.
