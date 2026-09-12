@@ -21,33 +21,31 @@ _LANES = {
     "codex": (
         "SKFLEET_TARGET",
         "SKFLEET_CODEX_LANE_MODEL",
-        "sk-codex-mid",
         "SKFLEET_CODEX_CAPACITY_DOMAINS",
-        "codex",
         3,
     ),
     "glm": (
         "SKFLEET_GLM_TARGET",
         "SKFLEET_GLM_MODEL",
-        "sk-glm-s",
         "SKFLEET_GLM_CAPACITY_DOMAINS",
-        "zai",
         0,
     ),
     "qwen": (
         "SKFLEET_QWEN_TARGET",
         "SKFLEET_QWEN_MODEL",
-        "qwen3.8-27b-huihui-abliterated-q4_k_m",
         "SKFLEET_QWEN_CAPACITY_DOMAINS",
-        "chiap01-qwen38,chiap08-qwen38",
         0,
     ),
     "kimi": (
         "SKFLEET_KIMI_TARGET",
         "SKFLEET_KIMI_MODEL",
-        "kimi-for-coding",
         "SKFLEET_KIMI_CAPACITY_DOMAINS",
-        "kimi-for-coding,kimi-k3",
+        0,
+    ),
+    "escalate": (
+        "SKFLEET_ESC_TARGET",
+        "SKFLEET_ESC_MODEL",
+        "SKFLEET_ESC_CAPACITY_DOMAINS",
         0,
     ),
 }
@@ -61,9 +59,7 @@ def _validated_lane_targets(home: Path) -> dict[str, int]:
     for lane, (
         target_key,
         model_key,
-        model_default,
         domains_key,
-        domains_default,
         default,
     ) in _LANES.items():
         raw_target = os.environ.get(target_key, str(default))
@@ -73,15 +69,18 @@ def _validated_lane_targets(home: Path) -> dict[str, int]:
             raise ValueError(f"Niobe {lane} target must be a nonnegative integer") from exc
         if target < 0 or str(target) != raw_target.strip():
             raise ValueError(f"Niobe {lane} target must be a nonnegative integer")
-        domains = tuple(
-            value.strip()
-            for value in os.environ.get(domains_key, domains_default).split(",")
-            if value.strip()
-        )
-        if target and not domains:
-            raise ValueError(f"Niobe {lane} capacity domains are missing")
         targets[lane] = target
-        bindings[lane] = (os.environ.get(model_key, model_default).strip(), domains)
+        if not target:
+            continue
+        model = os.environ.get(model_key, "").strip()
+        if not model:
+            raise ValueError(f"Niobe {lane} model binding is missing")
+        domains = tuple(
+            value.strip() for value in os.environ.get(domains_key, "").split(",") if value.strip()
+        )
+        if not domains:
+            raise ValueError(f"Niobe {lane} capacity domains are missing")
+        bindings[lane] = (model, domains)
 
     if not any(targets.values()):
         return targets
@@ -100,7 +99,9 @@ def _validated_lane_targets(home: Path) -> dict[str, int]:
         raise ValueError("Niobe lane health snapshot is unavailable") from exc
     if not isinstance(snapshot, dict) or snapshot.get("errors") != []:
         raise ValueError("Niobe lane health snapshot is invalid")
-    endpoint = os.environ.get("SKFLEET_GATEWAY_URL", "http://chiap01:18790").rstrip("/")
+    endpoint = os.environ.get("SKFLEET_GATEWAY_URL", "").rstrip("/")
+    if not endpoint:
+        raise ValueError("Niobe gateway endpoint is missing")
     revision = active_gateway_revision(endpoint)
     cycle_id = str(snapshot.get("cycle_id") or "")
     for lane, target in targets.items():

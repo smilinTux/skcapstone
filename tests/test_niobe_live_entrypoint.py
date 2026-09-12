@@ -28,6 +28,9 @@ def codex_only_environment(monkeypatch) -> None:
         "SKFLEET_QWEN_TARGET": "0",
         "SKFLEET_GLM_TARGET": "0",
         "SKFLEET_KIMI_TARGET": "0",
+        "SKFLEET_ESC_TARGET": "0",
+        "SKFLEET_CODEX_LANE_MODEL": "route-primary",
+        "SKFLEET_CODEX_CAPACITY_DOMAINS": "capacity-primary",
     }.items():
         monkeypatch.setenv(key, value)
 
@@ -38,7 +41,9 @@ def estate_record(tmp_path: Path, monkeypatch) -> None:
     path = tmp_path / "home/config/estate.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(ESTATE))
-    gateway_revision = write_lane_health(tmp_path, ("codex", "sk-codex-mid", ["codex"]))
+    gateway_revision = write_lane_health(
+        tmp_path, ("codex", "route-primary", ["capacity-primary"])
+    )
     monkeypatch.setenv("SKFLEET_GATEWAY_URL", "http://gateway.test:18790")
     monkeypatch.setattr(
         "skcapstone.niobe_live_entrypoint.active_gateway_revision",
@@ -186,6 +191,8 @@ def test_live_wrapper_refuses_unhealthy_non_codex_lane(tmp_path: Path, monkeypat
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(activation(revision)))
     monkeypatch.setenv("SKFLEET_GLM_TARGET", "2")
+    monkeypatch.setenv("SKFLEET_GLM_MODEL", "route-secondary")
+    monkeypatch.setenv("SKFLEET_GLM_CAPACITY_DOMAINS", "capacity-secondary")
     with pytest.raises(ValueError, match="glm lane is not healthy: unknown"):
         run_live(activation_path=path, dispatcher=tmp_path, local_host="chiap08")
 
@@ -202,16 +209,16 @@ def test_live_wrapper_passes_healthy_mixed_lane_targets_unchanged(
     monkeypatch.setenv("SKFLEET_TARGET", "1")
     monkeypatch.setenv("SKFLEET_GLM_TARGET", "2")
     monkeypatch.setenv("SKFLEET_QWEN_TARGET", "1")
+    monkeypatch.setenv("SKFLEET_GLM_MODEL", "route-secondary")
+    monkeypatch.setenv("SKFLEET_GLM_CAPACITY_DOMAINS", "capacity-secondary")
+    monkeypatch.setenv("SKFLEET_QWEN_MODEL", "route-local")
+    monkeypatch.setenv("SKFLEET_QWEN_CAPACITY_DOMAINS", "capacity-local-a,capacity-local-b")
     monkeypatch.setenv("SKFLEET_GATEWAY_URL", "http://gateway.test:18790")
     gateway_revision = write_lane_health(
         tmp_path,
-        ("codex", "sk-codex-mid", ["codex"]),
-        ("glm", "sk-glm-s", ["zai"]),
-        (
-            "qwen",
-            "qwen3.8-27b-huihui-abliterated-q4_k_m",
-            ["chiap01-qwen38", "chiap08-qwen38"],
-        ),
+        ("codex", "route-primary", ["capacity-primary"]),
+        ("glm", "route-secondary", ["capacity-secondary"]),
+        ("qwen", "route-local", ["capacity-local-a", "capacity-local-b"]),
     )
     monkeypatch.setattr(
         "skcapstone.niobe_live_entrypoint.active_gateway_revision",
@@ -244,6 +251,114 @@ def test_live_wrapper_passes_healthy_mixed_lane_targets_unchanged(
     assert calls[0]["SKFLEET_TARGET"] == "1"
     assert calls[0]["SKFLEET_GLM_TARGET"] == "2"
     assert calls[0]["SKFLEET_QWEN_TARGET"] == "1"
+
+
+def test_live_wrapper_accepts_healthy_kimi_and_escalation_routes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    revision = approval_card(tmp_path)
+    path = tmp_path / "home/coordination/niobe-activation.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(activation(revision)))
+    dispatcher = tmp_path / "skfleet-rotate.py"
+    dispatcher.write_text("#!/bin/sh\n")
+    monkeypatch.setenv("SKFLEET_TARGET", "0")
+    monkeypatch.setenv("SKFLEET_KIMI_TARGET", "1")
+    monkeypatch.setenv("SKFLEET_KIMI_MODEL", "route-economy")
+    monkeypatch.setenv("SKFLEET_KIMI_CAPACITY_DOMAINS", "capacity-economy")
+    monkeypatch.setenv("SKFLEET_ESC_TARGET", "1")
+    monkeypatch.setenv("SKFLEET_ESC_MODEL", "route-escalation")
+    monkeypatch.setenv("SKFLEET_ESC_CAPACITY_DOMAINS", "capacity-escalation")
+    gateway_revision = write_lane_health(
+        tmp_path,
+        ("kimi", "route-economy", ["capacity-economy"]),
+        ("escalate", "route-escalation", ["capacity-escalation"]),
+    )
+    monkeypatch.setattr(
+        "skcapstone.niobe_live_entrypoint.active_gateway_revision",
+        lambda endpoint: gateway_revision,
+    )
+    monkeypatch.setattr("skcapstone.niobe_live_entrypoint.startup_hello", lambda *a, **k: True)
+    mailbox = SimpleNamespace(as_dict=lambda: {"mailbox_ok": True})
+    monkeypatch.setattr("skcapstone.niobe_live_entrypoint.poll_mail", lambda *a, **k: mailbox)
+    calls = []
+
+    def run_dispatcher(command, check, env):
+        calls.append(env)
+        evidence = (
+            tmp_path / "home/evidence/fleet-rotation" / env["SKFLEET_ROTATION_ID"] / "actions.log"
+        )
+        evidence.parent.mkdir(parents=True)
+        evidence.write_text("NOOP_RECEIPT|test-host|reason=rotation_overlap|seat=niobe\n")
+        return SimpleNamespace(returncode=0)
+
+    assert (
+        run_live(
+            activation_path=path,
+            dispatcher=dispatcher,
+            local_host="chiap08",
+            runner=run_dispatcher,
+        )
+        == 0
+    )
+    assert calls[0]["SKFLEET_KIMI_TARGET"] == "1"
+    assert calls[0]["SKFLEET_ESC_TARGET"] == "1"
+
+
+def test_live_wrapper_rejects_unhealthy_escalation_before_launch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    revision = approval_card(tmp_path)
+    path = tmp_path / "home/coordination/niobe-activation.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(activation(revision)))
+    monkeypatch.setenv("SKFLEET_TARGET", "0")
+    monkeypatch.setenv("SKFLEET_ESC_TARGET", "1")
+    monkeypatch.setenv("SKFLEET_ESC_MODEL", "route-escalation")
+    monkeypatch.setenv("SKFLEET_ESC_CAPACITY_DOMAINS", "capacity-escalation")
+    calls = []
+
+    with pytest.raises(ValueError, match="escalate lane is not healthy: unknown"):
+        run_live(
+            activation_path=path,
+            dispatcher=tmp_path,
+            local_host="chiap08",
+            runner=lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
+    assert calls == []
+
+
+def test_live_wrapper_requires_active_lane_bindings(tmp_path: Path, monkeypatch) -> None:
+    revision = approval_card(tmp_path)
+    path = tmp_path / "home/coordination/niobe-activation.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(activation(revision)))
+    monkeypatch.delenv("SKFLEET_CODEX_LANE_MODEL")
+
+    with pytest.raises(ValueError, match="codex model binding is missing"):
+        run_live(activation_path=path, dispatcher=tmp_path, local_host="chiap08")
+
+
+def test_live_wrapper_requires_active_lane_capacity_domains(tmp_path: Path, monkeypatch) -> None:
+    revision = approval_card(tmp_path)
+    path = tmp_path / "home/coordination/niobe-activation.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(activation(revision)))
+    monkeypatch.delenv("SKFLEET_CODEX_CAPACITY_DOMAINS")
+
+    with pytest.raises(ValueError, match="codex capacity domains are missing"):
+        run_live(activation_path=path, dispatcher=tmp_path, local_host="chiap08")
+
+
+def test_live_wrapper_requires_configured_gateway_endpoint(tmp_path: Path, monkeypatch) -> None:
+    revision = approval_card(tmp_path)
+    path = tmp_path / "home/coordination/niobe-activation.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(activation(revision)))
+    monkeypatch.delenv("SKFLEET_GATEWAY_URL")
+
+    with pytest.raises(ValueError, match="gateway endpoint is missing"):
+        run_live(activation_path=path, dispatcher=tmp_path, local_host="chiap08")
 
 
 @pytest.mark.parametrize("value", ["-1", "one", "1.0", "+1"])
@@ -292,6 +407,8 @@ def test_live_wrapper_rejects_kimi_with_unknown_health_before_launch(
     path.write_text(json.dumps(activation(revision)))
     monkeypatch.setenv("SKFLEET_TARGET", "0")
     monkeypatch.setenv("SKFLEET_KIMI_TARGET", "1")
+    monkeypatch.setenv("SKFLEET_KIMI_MODEL", "route-economy")
+    monkeypatch.setenv("SKFLEET_KIMI_CAPACITY_DOMAINS", "capacity-economy")
     calls = []
 
     with pytest.raises(ValueError, match="kimi lane is not healthy: unknown"):
