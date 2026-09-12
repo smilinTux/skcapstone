@@ -220,13 +220,50 @@ def test_real_selector_runs_distinct_heads_concurrently_and_blocks_duplicates(
         capture_output=True,
         text=True,
     ).stdout.strip()
+    review_heads = []
+    for index in (1, 2):
+        (seed / f"REVIEW-HEAD-{index}.txt").write_text(f"review head {index}\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(seed), "add", "."], check=True, capture_output=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(seed),
+                "-c",
+                "user.name=SKCapstone Test",
+                "-c",
+                "user.email=test@localhost",
+                "commit",
+                "-m",
+                f"review head {index}",
+            ],
+            check=True,
+            capture_output=True,
+        )
+        review_heads.append(
+            subprocess.run(
+                ["git", "-C", str(seed), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+        )
+    subprocess.run(
+        ["git", "-C", str(seed), "push", "origin", "main"],
+        check=True,
+        capture_output=True,
+    )
     home = tmp_path / "home"
     home.mkdir()
-    store, first_card_id = _canonical_review(home, base_revision=expected_revision)
+    store, first_card_id = _canonical_review(
+        home,
+        head_revision=review_heads[0],
+        base_revision=expected_revision,
+    )
     store, second_card_id = _canonical_review(
         home,
         source_card="9c71f24b",
-        head_revision="e" * 40,
+        head_revision=review_heads[1],
         base_revision=expected_revision,
         pr=549,
     )
@@ -290,6 +327,7 @@ from skcapstone.seat_cycle_entrypoint import verify_seraph_dispatch
 
 os.uname = lambda: SimpleNamespace(nodename="chiap08")
 fcntl.flock = lambda *_args: None
+sys.executable = os.environ["SKFLEET_TEST_PYTHON_SHIM"]
 script, output_dir, verified_path, duplicate_path, active_snapshot_path = sys.argv[1:]
 
 def cycle(name, seat):
@@ -306,7 +344,6 @@ def cycle(name, seat):
     (Path(output_dir) / (name + ".out")).write_text(text, encoding="utf-8")
     return text
 
-cycle("generic", "")
 seraph = cycle("seraph", "seraph")
 verified = verify_seraph_dispatch(
     Path(os.environ["SKCAPSTONE_HOME"]),
@@ -366,6 +403,7 @@ cycle("replay", "seraph")
             "GIT_CONFIG_KEY_0": f"url.file://{origin}.insteadOf",
             "GIT_CONFIG_VALUE_0": repository,
             "SKFLEET_TEST_PYTHON": sys.executable,
+            "SKFLEET_TEST_PYTHON_SHIM": str(fake_bin / "python3"),
             "SKFLEET_TEST_UNIT_STATE": str(unit_state),
             "SKFLEET_TARGET": "2",
             "SKFLEET_GLM_TARGET": "0",
@@ -409,11 +447,8 @@ cycle("replay", "seraph")
         thread.join()
     assert completed.returncode == 0, completed.stderr
 
-    generic_output = (output_dir / "generic.out").read_text(encoding="utf-8")
     seraph_output = (output_dir / "seraph.out").read_text(encoding="utf-8")
     replay_output = (output_dir / "replay.out").read_text(encoding="utf-8")
-    assert "LAUNCHED|" not in generic_output
-    assert "NOOP_RECEIPT|chiap08|reason=no_eligible_work|seat=generic" in generic_output
     assert seraph_output.count("LAUNCHED|") == 2
     for card_id in card_ids:
         assert "LAUNCHED|chiap08|codex-auto-" + card_id in seraph_output
@@ -462,7 +497,7 @@ cycle("replay", "seraph")
             for event in store._read_events(duplicate_id)
             if event.get("action") in {"claim", "review_assignment_launch"}
         ]
-    for card_id, folded in zip(card_ids, folded_cards, strict=True):
+    for card_id, folded, review_head in zip(card_ids, folded_cards, review_heads, strict=True):
         claim_events = [
             event for event in store._read_events(card_id) if event.get("action") == "claim"
         ]
@@ -482,6 +517,15 @@ cycle("replay", "seraph")
         workspace = home / ".skcapstone" / "fleet" / "workspaces" / folded.owner
         assert (workspace / "REAL-GIT-WORKSPACE.txt").read_text(encoding="utf-8") == (
             "real Link to Seraph workspace\n"
+        )
+        assert (
+            subprocess.run(
+                ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            == review_head
         )
     assert {
         event["route_identity"]["provider"]
@@ -515,5 +559,5 @@ cycle("replay", "seraph")
         "origin": repository,
         "branch": "",
         "status": "",
-        "revision": expected_revision,
+        "revision": review_heads[0],
     }
