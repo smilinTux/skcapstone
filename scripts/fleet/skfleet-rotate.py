@@ -920,6 +920,202 @@ def _classify_claim_outcome(still_assignable, returncode=None,
         return "claim_refused"
     return "claimed"
 
+# ---- exact-card worker admission (card d11ca7ed) ---------------------------
+# Duplicate exact-card admission was observed twice: c32a1001 (two Pi PIDs
+# simultaneously ran one card under one owner in one worktree) and 0d7331e7
+# (a fleet worker unit launched for a card whose authoritative owner,
+# cursor-w105-focus, already existed). rotate.lock serializes whole rotations
+# and systemd unit names are unique per lane, but nothing stopped two live
+# workers for the SAME card from coexisting across lanes or across launcher
+# generations. This is the host-safe atomic admission gate: one receipt per
+# exact card, bound to card ID, claim revision, normalized worktree, and
+# worker owner, acquired AFTER the claim wins and BEFORE the worker process
+# is created. A second launcher fails before process creation and emits a
+# deterministic, non-secret receipt naming the live holder. Stale recovery
+# requires fresh proof that no matching process, unit, or session identity is
+# still alive.
+#: An empty or partially written receipt stays "in flight" for this long
+#: before a contender may treat it as stale; stealing the create-to-write
+#: window admitted both launchers in the d11ca7ef race analysis.
+_ADMISSION_WRITE_WINDOW_S = 2.0
+_ADMISSION_WRITE_POLL_S = 0.05
+
+
+def _admission_lock_path(home, cid):
+    """Return the per-card admission receipt path for one card id."""
+    return os.path.join(home, ".skcapstone", "fleet", "admission", "%s.json" % cid)
+
+
+def _release_card_admission(home, cid):
+    """Remove one admission receipt; a missing file is not an error."""
+    try:
+        os.unlink(_admission_lock_path(home, cid))
+    except OSError:
+        pass
+
+
+def _read_admission_receipt(path):
+    """Parse one admission receipt; None when missing or malformed."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            receipt = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    return receipt if isinstance(receipt, dict) else None
+
+
+def _pid_alive(pid):
+    """True when *pid* names a live process; ambiguous cases count as alive."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _unit_active(unit, runner=subprocess.run):
+    """True when the named systemd user unit is active."""
+    if not isinstance(unit, str) or not unit:
+        return False
+    try:
+        result = runner(
+            ["systemctl", "--user", "is-active", "--quiet", unit],
+            capture_output=True,
+            timeout=10,
+        )
+    except Exception:
+        return False
+    return result.returncode == 0
+
+
+def _session_active(session, runner=subprocess.run):
+    """True when the named tmux session still exists (migration-era workers)."""
+    if not isinstance(session, str) or not session:
+        return False
+    try:
+        result = runner(
+            ["tmux", "has-session", "-t", session],
+            capture_output=True,
+            timeout=10,
+        )
+    except Exception:
+        return False
+    return result.returncode == 0
+
+
+def _admission_holder_live(receipt, runner=subprocess.run):
+    """Fresh liveness proof for one recorded admission holder."""
+    if _pid_alive(receipt.get("pid")):
+        return True
+    if _unit_active(receipt.get("unit"), runner):
+        return True
+    if _session_active(receipt.get("session"), runner):
+        return True
+    return False
+
+
+def acquire_card_admission(
+    home,
+    cid,
+    *,
+    owner,
+    claim_revision,
+    workspace,
+    unit,
+    session,
+    runner=subprocess.run,
+    now=None,
+    pid=None,
+    sleep=time.sleep,
+    monotonic=time.monotonic,
+):
+    """Atomically admit one worker for an exact card on this host.
+
+    Uses O_CREAT|O_EXCL on one receipt file per card so two launchers racing
+    for the same card agree on exactly one holder. An existing receipt is
+    authoritative until proven stale: recovery unlinks and retries once only
+    when no matching process, unit, or session identity is alive. The receipt
+    carries only non-secret deterministic fields and is emitted in refusal
+    logs so the conflict is named without widening disclosure.
+
+    Args:
+        home: Estate home containing ``.skcapstone/fleet/admission/``.
+        cid: Exact card id (also the receipt file name).
+        owner: Exact claim owner about to be launched.
+        claim_revision: Exact claim generation about to be launched.
+        workspace: Worker worktree; stored normalized (realpath).
+        unit: Transient worker unit name that will own the process.
+        session: Worker session name (migration-era liveness witness).
+        runner: Subprocess runner for liveness probes (tests inject fakes).
+        now: Receipt timestamp override (tests inject for determinism).
+        pid: Holder pid override (tests inject for determinism).
+        sleep: Sleep callable used while waiting out an in-flight write.
+        monotonic: Clock callable bounding the in-flight write window.
+
+    Returns:
+        ``{"admitted": True, "receipt": receipt}`` on admission, otherwise
+        ``{"admitted": False, "reason": str, "receipt": holder-or-None}``
+        with reason ``live-holder`` or ``contended-recovery``.
+    """
+    receipt = {
+        "schema_version": 1,
+        "host": HOST,
+        "card_id": cid,
+        "owner": owner,
+        "claim_revision": claim_revision,
+        "workspace": os.path.realpath(str(workspace)),
+        "unit": unit,
+        "session": session,
+        "pid": os.getpid() if pid is None else pid,
+        "acquired_at": (
+            now or datetime.datetime.now(datetime.timezone.utc).isoformat()
+        ),
+    }
+    path = _admission_lock_path(home, cid)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    for attempt in (1, 2):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            # The winner creates the file before writing it; a contender
+            # reading in that window must wait for the write to land, not
+            # mistake an empty file for a stale lock and steal it (that
+            # interleaving admitted BOTH launchers in the d11ca7ef race
+            # analysis). Only a receipt that stays unreadable for the whole
+            # window counts as stale.
+            deadline = monotonic() + _ADMISSION_WRITE_WINDOW_S
+            holder = _read_admission_receipt(path)
+            while holder is None and monotonic() < deadline:
+                sleep(_ADMISSION_WRITE_POLL_S)
+                holder = _read_admission_receipt(path)
+            if holder is not None and _admission_holder_live(holder, runner):
+                return {"admitted": False, "reason": "live-holder", "receipt": holder}
+            # Stale receipt: recover once, then refuse rather than loop
+            # against a contended lock.
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            if attempt == 2:
+                return {
+                    "admitted": False,
+                    "reason": "contended-recovery",
+                    "receipt": holder,
+                }
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(receipt, handle, sort_keys=True)
+        return {"admitted": True, "receipt": receipt}
+    return {"admitted": False, "reason": "contended-recovery", "receipt": None}
+
 _rows={}
 def event_rows(cid):
     if cid in _rows: return _rows[cid]
@@ -5276,7 +5472,7 @@ if not picks:
         (HOST,_noop_reason(pool,owned,_lane_deferred),_ONLY_SEAT or "generic"))
     sys.exit(0)
 
-raced=0; _raced_ids=[]; lane_drift=0; claim_refused=0
+raced=0; _raced_ids=[]; lane_drift=0; claim_refused=0; admission_refused=0
 launched=0
 launch_receipts=0
 processed_picks=0
@@ -5641,6 +5837,53 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
                 "claim not visible with an explicit revision in CardStore fold").strip()[:140]
         log(d,"CLAIM_REFUSED|%s|%s|%s|owner=%s|%s"%(HOST,sess,cid,claimed_owner,detail))
         continue
+    # Atomic exact-card admission: a live holder for this card (another
+    # authoritative owner, whatever lane or launcher generation created it)
+    # refuses this launch BEFORE any worker process is created. The receipt
+    # names the conflict deterministically and carries no secrets.
+    _admission=acquire_card_admission(
+        HOME,cid,owner=name,claim_revision=claimed_revision,
+        workspace=workspace,unit=unit,session=sess)
+    if not _admission["admitted"]:
+        admission_refused += 1
+        _holder=_admission.get("receipt") or {}
+        log(d,"ADMISSION_REFUSED|%s|%s|%s|reason=%s|holder_owner=%s|"
+            "holder_claim_revision=%s|holder_workspace=%s|holder_pid=%s|"
+            "holder_unit=%s"%(
+                HOST,sess,cid,_admission["reason"],
+                _holder.get("owner"),_holder.get("claim_revision"),
+                _holder.get("workspace"),_holder.get("pid"),
+                _holder.get("unit")))
+        # Release only when our fresh generation is the duplicate; a live
+        # holder of the SAME generation is our own worker and is untouched.
+        _same_generation=(
+            _holder.get("owner") == name and
+            _holder.get("claim_revision") == claimed_revision)
+        if not _same_generation:
+            subprocess.run(
+                [SKC,"coord","release-claim",cid,"--owner",name,
+                 "--expected-claim-revision",claimed_revision,"--agent","niobe"],
+                capture_output=True,text=True)
+        continue
+    # Recheck under the lock: the claim won before admission, but the
+    # authoritative fold can change underneath us (a concurrent owner's
+    # earlier claim syncs in and the CardStore fold resolves to them, the
+    # 0d7331e7 shape). This is the last point before process creation where
+    # the displacement can still be refused without killing a worker.
+    _final_owner,_final_at,_final_revision=_current_claim_identity_fresh(cid)
+    if _final_owner != name or _final_revision != claimed_revision:
+        admission_refused += 1
+        _release_card_admission(HOME,cid)
+        log(d,"ADMISSION_REFUSED|%s|%s|%s|reason=claim-displaced|"
+            "fold_owner=%s|fold_claim_revision=%s|expected_owner=%s|"
+            "expected_claim_revision=%s"%(
+                HOST,sess,cid,_final_owner,_final_revision,
+                name,claimed_revision))
+        subprocess.run(
+            [SKC,"coord","release-claim",cid,"--owner",name,
+             "--expected-claim-revision",claimed_revision,"--agent","niobe"],
+            capture_output=True,text=True)
+        continue
     if _fanout_request is not None:
         try:
             append_fanout_receipt(
@@ -5818,5 +6061,9 @@ if lane_drift:
 if claim_refused:
     log(d,"CLAIM_REFUSED_TOTAL|%s|%d claim command(s) refused or not visible "
         "in the authoritative fold"%(HOST,claim_refused))
+if admission_refused:
+    log(d,"ADMISSION_REFUSED_TOTAL|%s|%d launch(es) refused before process "
+        "creation: a live authoritative owner already holds the exact card"%(
+        HOST,admission_refused))
 log(d,"CYCLE_RECEIPT|%s|seat=%s|launched=%d|attempted=%d|receipts=%d"%
     (HOST,_ONLY_SEAT or "niobe",launched,processed_picks,launch_receipts))
