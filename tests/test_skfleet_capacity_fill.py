@@ -1,4 +1,4 @@
-"""Bounded fleet capacity-fill regressions for card 0abd9b3c."""
+"""Bounded fleet capacity-fill regressions for cards 0abd9b3c and 24b00002."""
 
 from __future__ import annotations
 
@@ -48,6 +48,29 @@ def test_multiple_slots_fill_after_early_failures() -> None:
         ("later-b", True),
     ]
     assert _fill(outcomes, 2, 4) == ["later-a", "later-b"]
+
+
+def test_reconstructability_failures_do_not_starve_two_valid_cards() -> None:
+    outcomes = [
+        ("missing-review-metadata", False),
+        ("missing-source-ref", False),
+        ("workspace-verification-failed", False),
+        ("workspace-materialization-failed", False),
+        ("valid-a", True),
+        ("valid-b", True),
+    ]
+
+    assert _fill(outcomes, seats=2, pool_bound=6) == ["valid-a", "valid-b"]
+
+
+def test_reconstructability_scan_stops_at_numeric_ceiling() -> None:
+    outcomes = [
+        ("missing-review-metadata", False),
+        ("missing-source-ref", False),
+        ("valid-outside-ceiling", True),
+    ]
+
+    assert _fill(outcomes, seats=1, pool_bound=2) == []
 
 
 @pytest.mark.parametrize(
