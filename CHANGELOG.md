@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Builder dispatch now releases the prior exact claim and blocks without
+  launching when a changed offer supersedes persisted status for the same card.
+
 - Governed review placement and atomic claim authorization now consume one
   host-neutral candidate contract. Qualified Link, Mero, Seraph, and
   configured logical reviewers share every healthy, policy-compatible
