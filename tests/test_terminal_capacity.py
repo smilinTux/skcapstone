@@ -102,6 +102,7 @@ def test_current_generation_is_released_and_retired_together(tmp_path):
         is not None
     )
     assert store.fold("feedbeef").owner is None
+    assert store.fold("feedbeef").links["worker_liveness"] == "worker|rev-1|inactive"
     assert json.loads(snapshot.read_text())["cards"] == []
 
 

@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from skcapstone.card_store import CardCore
+
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 WRAPPER = ROOT / "scripts" / "fleet" / "skfleet-worker-wrapper.py"
@@ -27,6 +29,7 @@ def _wrapper():
 
 def _scheduler_namespace() -> dict[str, object]:
     wanted = {
+        "_completion_retry_held",
         "_latest_transport_failure_epoch",
         "_transport_failure_logs",
         "_transport_failure_claims",
@@ -43,6 +46,8 @@ def _scheduler_namespace() -> dict[str, object]:
         "_ROTATION_EVID",
         "_TRANSPORT_FAILURE_CLASSES",
         "_TRANSPORT_RETRY_COOLDOWN_S",
+        "_COMPLETION_RETRY_COOLDOWN_S",
+        "_COMPLETION_FAILURE_CLASSES",
     }
     nodes = []
     for node in ast.parse(ROTATE.read_text(encoding="utf-8")).body:
@@ -62,6 +67,57 @@ def _scheduler_namespace() -> dict[str, object]:
     }
     exec(compile(ast.Module(nodes, type_ignores=[]), str(ROTATE), "exec"), namespace)
     return namespace
+
+
+def test_zero_output_success_requires_exact_claim_mutation(tmp_path, monkeypatch) -> None:
+    module = _wrapper()
+    home = tmp_path / ".skcapstone"
+    home.mkdir()
+    store = module.CardStore(home)
+    store.create(CardCore(id="deadbeef", title="synthetic"))
+    store.append_event("deadbeef", "claim", "worker", owner="worker", claim_revision="rev-7")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    args = argparse.Namespace(card="deadbeef", owner="worker", claim_revision="rev-7")
+
+    assert module.zero_output_success(args, 0) == (False, "no_card_mutation")
+
+    store.append_event("deadbeef", "link", "worker", link_key="evidence", link_value="evidence.md")
+    assert module.zero_output_success(args, 0) == (True, "exact_claim_mutated")
+
+
+def test_zero_output_retry_is_bounded(tmp_path: Path) -> None:
+    namespace = _scheduler_namespace()
+    evidence = tmp_path / "worker-exits"
+    evidence.mkdir()
+    (evidence / "deadbeef-one.json").write_text(
+        json.dumps(
+            {
+                "card_id": "deadbeef",
+                "attempted_at": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+                "completion_failure": "no_card_mutation",
+            }
+        ),
+        encoding="utf-8",
+    )
+    namespace.update(
+        {
+            "_WORKER_EXIT_DIR": str(evidence),
+            "_COMPLETION_RETRY_COOLDOWN_S": 300,
+        }
+    )
+
+    assert namespace["_completion_retry_held"]("deadbeef") is True
+    (evidence / "deadbeef-one.json").write_text(
+        json.dumps(
+            {
+                "card_id": "deadbeef",
+                "attempted_at": "2000-01-01T00:00:00+00:00",
+                "completion_failure": "no_card_mutation",
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert namespace["_completion_retry_held"]("deadbeef") is False
 
 
 @pytest.mark.parametrize(
