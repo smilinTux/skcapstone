@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import stat
@@ -146,6 +147,16 @@ def _canonical_review(
         link_value="https://github.com/smilinTux/skcapstone",
     )
     store.append_event(source_card, "link", "mero", link_key="base_ref", link_value="main")
+    # R3: the reviewed worker-brief gate requires the linked candidate evidence
+    # bytes to exist under evidence/work/<source_card>, so fixtures materialize
+    # real bytes with a real digest instead of a placeholder digest.
+    evidence_dir = card_home / "evidence" / "work" / source_card
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    evidence_body = (
+        f"candidate evidence for {source_card} head {head_revision} pr {pr}\n"
+    ).encode()
+    (evidence_dir / "candidate-evidence.txt").write_bytes(evidence_body)
+    evidence_digest = hashlib.sha256(evidence_body).hexdigest()
     result = reconcile_review_work(
         card_home,
         {
@@ -169,7 +180,7 @@ def _canonical_review(
                 }
             ],
         },
-        evidence_sha256="c" * 64,
+        evidence_sha256=evidence_digest,
     )
     assert result.created is True
     assert result.launchable is True
@@ -276,6 +287,7 @@ def test_real_selector_runs_distinct_heads_concurrently_and_blocks_duplicates(
     harness = """
 import contextlib
 import fcntl
+import hashlib
 import io
 import json
 import os
@@ -334,14 +346,19 @@ candidate = {
         "eligible": True,
     }],
 }
-duplicate_ids = [
-    reconcile_review_work(
-        Path(os.environ["SKCAPSTONE_HOME"]),
-        candidate,
-        evidence_sha256=digest * 64,
-    ).review_card_id
-    for digest in ("d", "e")
-]
+duplicate_ids = []
+for tag in ("d", "e"):
+    body = f"duplicate candidate evidence {tag} for head f\\n".encode()
+    dup_dir = Path(os.environ["SKCAPSTONE_HOME"]) / "evidence" / "work" / "9c71f24a"
+    dup_dir.mkdir(parents=True, exist_ok=True)
+    (dup_dir / f"duplicate-evidence-{tag}.txt").write_bytes(body)
+    duplicate_ids.append(
+        reconcile_review_work(
+            Path(os.environ["SKCAPSTONE_HOME"]),
+            candidate,
+            evidence_sha256=hashlib.sha256(body).hexdigest(),
+        ).review_card_id
+    )
 Path(duplicate_path).write_text(json.dumps(duplicate_ids), encoding="utf-8")
 unit_state = Path(os.environ["SKFLEET_TEST_UNIT_STATE"])
 Path(active_snapshot_path).write_text(unit_state.read_text(encoding="utf-8"), encoding="utf-8")
