@@ -469,7 +469,12 @@ def idle_owner_projection(
 
 
 def record_terminal_exit(args: argparse.Namespace, stderr: bytes, rc: int) -> None:
-    """Create one immutable, claim-scoped terminal evidence record."""
+    """Create one immutable, claim-scoped terminal evidence record.
+
+    ``card_generation`` must be the launch-time capture on ``args`` so a stale
+    candidate-A rejection that finishes after the card advances to B stays
+    attributed to A and cannot hold B.
+    """
     stdout_size = args.stdout.stat().st_size
     stdout_tail = b""
     if stdout_size <= STDERR_LIMIT:
@@ -482,7 +487,7 @@ def record_terminal_exit(args: argparse.Namespace, stderr: bytes, rc: int) -> No
     payload = {
         "attempted_at": attempted_at,
         "card_id": args.card,
-        "card_generation": card_description_generation(args.card),
+        "card_generation": str(getattr(args, "card_generation", "") or ""),
         "child_exit_code": rc,
         "claim_revision": args.claim_revision,
         "host": args.host,
@@ -649,6 +654,9 @@ def main() -> int:
         write_startup_report(args, os.getpid(), "startup-mailbox-unavailable")
         return 2
     args.stdout.parent.mkdir(parents=True, exist_ok=True)
+    # Capture before child launch: exit recording must not re-fold a later
+    # candidate generation if the card advances while this worker is running.
+    args.card_generation = card_description_generation(args.card)
 
     def _stop(signum: int, _frame: object) -> None:
         raise SystemExit(128 + signum)
