@@ -623,6 +623,36 @@ def test_invalid_live_report_timestamp_cannot_bypass_claim_grace(
     assert released == []
 
 
+def test_live_report_health_names_missing_and_stale_reporters(tmp_path: Path) -> None:
+    """Fixed quorum diagnostics retain the all-known-host safety fence."""
+    live = tmp_path / "live"
+    live.mkdir()
+    now = time.time()
+    (live / "chiap02.json").write_text(
+        json.dumps({"host": "chiap02", "ts": now - 3600, "cards": []}) + "\n",
+        encoding="utf-8",
+    )
+    namespace = _load_functions("live_report_health")
+    namespace.update(
+        {
+            "LIVE": str(live),
+            "LIVE_FRESH": 1800,
+            "LIVE_TIMER_CYCLE": 360,
+            "ROTATION_HOSTS": ("chiap01", "chiap02"),
+            "time": time,
+        }
+    )
+
+    health = namespace["live_report_health"](now=now)
+
+    assert health["authoritative"] is False
+    assert health["reporting"] == set()
+    assert {(fault["host"], fault["reason"]) for fault in health["faults"]} == {
+        ("chiap01", "missing"),
+        ("chiap02", "stale"),
+    }
+
+
 def test_conflicting_existing_outcome_id_prevents_release(tmp_path: Path) -> None:
     """An event ID collision cannot stand in for the canonical worker verdict."""
     owner = "pi-codex-chiap02-deadbeef"
