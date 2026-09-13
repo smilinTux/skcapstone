@@ -12,7 +12,7 @@ Host-neutral source-only governed workspace runtime bootstrap:
 
 - isolated per-card worktree create/retire with shared-checkout refusal
 - Herdr reclaim limited to exact terminal (`done`) unchanged generations
-- capacity admission from live mem/swap/active work/logical bucket limits
+- capacity admission via fleet.capacity.admit_headroom plus logical bucket occupancy
 - exact claim/unit mapping, concurrency, rollback, successor safety
 - no deployment, no literal host/model bindings, no SKLegal touch, no e91a20f5 activation
 
@@ -22,7 +22,7 @@ Host-neutral source-only governed workspace runtime bootstrap:
 - `tests/test_workspace_runtime.py`: `83dafea33a4fe46cfc87cfbc2f43671c0c85b2a676cd82b78e0209b4c86adce9`
 - `tests/test_workspace_runtime_integration.py`: `41c5222193c1074e62855eb85e82778f6d0684faa102d431a8a5a6f1edd32ede`
 
-Artifact digest (paths+bytes): `8fef2f0e668c6b904be1a8d89d0744c56b953ccc61ef47759499a31e50b13354`
+Artifact digest (paths+bytes): `be80cfbaaa07483b4ecf6cbbb86a07dacaa31c6cf84eac0f347fa28e8d81dbc6`
 
 ## Verification
 

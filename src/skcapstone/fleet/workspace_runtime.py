@@ -19,6 +19,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from skcapstone.fleet.capacity import RESERVE_RAM_KB, RESERVE_SWAP_KB, admit_headroom
+
 _CARD_RE = re.compile(r"^[0-9a-f]{8}$")
 _LANE_RE = re.compile(r"^(?:codex|glm|qwen|kimi|escalate)$")
 _BUCKET_RE = re.compile(r"^(?:S|M|L|XL)$")
@@ -164,8 +166,8 @@ def advertise_runtime(
     *,
     workspaces_root: Path,
     buckets: Mapping[str, int],
-    mem_reserve_kb: int = 1_048_576,
-    swap_reserve_kb: int = 262_144,
+    mem_reserve_kb: int = RESERVE_RAM_KB,
+    swap_reserve_kb: int = RESERVE_SWAP_KB,
 ) -> RuntimeAdvertisement:
     """Return a host-neutral runtime advertisement for one node root."""
     if not Path(workspaces_root).is_absolute():
@@ -186,67 +188,31 @@ def advertise_runtime(
     )
 
 
-def parse_meminfo(text: str) -> dict[str, int]:
-    """Parse Linux meminfo keys required for fail-closed admission."""
-    values: dict[str, int] = {}
-    for line in text.splitlines():
-        if ":" not in line:
-            continue
-        key, rest = line.split(":", 1)
-        fields = rest.split()
-        if not fields:
-            continue
-        try:
-            values[key] = int(fields[0])
-        except ValueError as exc:
-            raise WorkspaceRuntimeError(f"meminfo field {key} is not an integer") from exc
-    required = ("MemAvailable", "SwapTotal", "SwapFree")
-    missing = [key for key in required if key not in values]
-    if missing:
-        raise WorkspaceRuntimeError("meminfo is missing required fields: " + ",".join(missing))
-    return values
-
-
 def admit_capacity(
     *,
     meminfo_text: str,
     active_work: int,
     bucket: str,
     bucket_capacity: int,
-    mem_reserve_kb: int = 1_048_576,
-    swap_reserve_kb: int = 262_144,
+    mem_reserve_kb: int = RESERVE_RAM_KB,
+    swap_reserve_kb: int = RESERVE_SWAP_KB,
 ) -> AdmissionDecision:
-    """Admit one seat only when live headroom and bucket capacity are safe."""
+    """Admit one seat using capacity headroom plus logical bucket occupancy."""
     if not _BUCKET_RE.fullmatch(bucket):
         return AdmissionDecision(False, "invalid-bucket")
     if active_work < 0 or bucket_capacity < 0:
         return AdmissionDecision(False, "invalid-capacity")
-    try:
-        meminfo = parse_meminfo(meminfo_text)
-    except WorkspaceRuntimeError as exc:
-        return AdmissionDecision(False, str(exc))
-    mem_available = meminfo["MemAvailable"]
-    swap_total = meminfo["SwapTotal"]
-    swap_free = meminfo["SwapFree"]
-    if mem_available < mem_reserve_kb:
+    ok, reason, meminfo = admit_headroom(
+        meminfo_text,
+        mem_reserve_kb=mem_reserve_kb,
+        swap_reserve_kb=swap_reserve_kb,
+    )
+    if not ok or meminfo is None:
         return AdmissionDecision(
             False,
-            "unsafe-memory",
-            mem_available_kb=mem_available,
-            swap_free_kb=swap_free,
-            active_work=active_work,
-            bucket_capacity=bucket_capacity,
-        )
-    # Reason: swap must stay readable and leave configured free headroom when
-    # present; missing swap (total 0) is allowed only when free is also 0.
-    if swap_total < 0 or swap_free < 0 or swap_free > swap_total:
-        return AdmissionDecision(False, "unsafe-swap")
-    if swap_total > 0 and swap_free < swap_reserve_kb:
-        return AdmissionDecision(
-            False,
-            "unsafe-swap",
-            mem_available_kb=mem_available,
-            swap_free_kb=swap_free,
+            reason,
+            mem_available_kb=None if meminfo is None else meminfo["MemAvailable"],
+            swap_free_kb=None if meminfo is None else meminfo["SwapFree"],
             active_work=active_work,
             bucket_capacity=bucket_capacity,
         )
@@ -254,16 +220,16 @@ def admit_capacity(
         return AdmissionDecision(
             False,
             "bucket-full",
-            mem_available_kb=mem_available,
-            swap_free_kb=swap_free,
+            mem_available_kb=meminfo["MemAvailable"],
+            swap_free_kb=meminfo["SwapFree"],
             active_work=active_work,
             bucket_capacity=bucket_capacity,
         )
     return AdmissionDecision(
         True,
         "admitted",
-        mem_available_kb=mem_available,
-        swap_free_kb=swap_free,
+        mem_available_kb=meminfo["MemAvailable"],
+        swap_free_kb=meminfo["SwapFree"],
         active_work=active_work,
         bucket_capacity=bucket_capacity,
     )
