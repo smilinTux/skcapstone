@@ -31,6 +31,7 @@ def _scheduler_namespace() -> dict[str, object]:
         "_transport_failure_logs",
         "_transport_failure_claims",
         "_transport_retry_held",
+        "_transport_retry_exhausted",
         "_reporting_launches",
         "_shared_launch_attempts",
         "launch_attempts",
@@ -76,6 +77,15 @@ def _scheduler_namespace() -> dict[str, object]:
 )
 def test_known_transport_failures_are_classified(diagnostic: str, kind: str) -> None:
     assert _wrapper().classify_transport_failure(diagnostic) == kind
+
+
+def test_system_message_ordering_http_400_is_classified() -> None:
+    diagnostic = '400: {"error":{"message":"System message must be the first message"}}'
+    assert _wrapper().classify_transport_failure(diagnostic) == "system_message_ordering"
+
+
+def test_unrelated_http_400_is_not_classified() -> None:
+    assert _wrapper().classify_transport_failure("400: invalid request") is None
 
 
 def test_scheduler_transport_classes_match_wrapper_exactly() -> None:
@@ -190,7 +200,32 @@ def test_transport_exit_is_held_then_does_not_consume_attempt(tmp_path: Path) ->
     assert namespace["_transport_retry_held"](card) is True
 
 
-def test_three_shared_transport_failures_do_not_consume_attempts(tmp_path: Path) -> None:
+def test_second_transport_failure_exhausts_retry(tmp_path: Path) -> None:
+    namespace = _scheduler_namespace()
+    card = "deadbeef"
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    for index in range(2):
+        (evidence / f"{card}-{index}.json").write_text(
+            json.dumps(
+                {
+                    "card_id": card,
+                    "claim_revision": f"revision-{index}",
+                    "host": "chiap01",
+                    "owner": f"owner-{index}",
+                    "transport_failure": "system_message_ordering",
+                }
+            ),
+            encoding="utf-8",
+        )
+    namespace["_WORKER_EXIT_DIR"] = str(evidence)
+    assert namespace["_transport_retry_exhausted"](card) is True
+    namespace["acts"] = lambda _cid: set()
+    namespace["launch_attempts"] = lambda _cid: 0
+    assert namespace["unclaimable"](card) is True
+
+
+def test_repeated_shared_transport_failures_exhaust_retry(tmp_path: Path) -> None:
     namespace = _scheduler_namespace()
     card = "deadbeef"
     evidence = tmp_path / "worker-exits"
@@ -235,7 +270,7 @@ def test_three_shared_transport_failures_do_not_consume_attempts(tmp_path: Path)
         }
     )
     assert namespace["launch_attempts"](card) == 0
-    assert namespace["unclaimable"](card) is False
+    assert namespace["unclaimable"](card) is True
 
 
 @pytest.mark.parametrize(
