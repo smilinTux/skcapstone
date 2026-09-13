@@ -6,6 +6,9 @@
   repositories instead of imposing SKCapstone's Python check names. Missing,
   partial, non-success, and stale hosted evidence still fail closed.
 
+- Builder source reconstruction failures now write request-bound, retry-bounded
+  status and continue to later queued work instead of terminating `sknoded`.
+
 - Builder dispatch now releases the prior exact claim and blocks without
   launching when a changed offer supersedes persisted status for the same card.
 
