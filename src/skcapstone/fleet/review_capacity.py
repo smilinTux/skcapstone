@@ -237,6 +237,56 @@ def eligible_review_routes(
     return eligible_gateway_routes(snapshot, required_size, labels, occupancy)
 
 
+def review_route_diagnostic(
+    snapshot: Mapping[str, Any],
+    required_size: str,
+    labels: Sequence[str],
+    producer: str,
+    reviewer: str,
+    occupancy: Mapping[str, int],
+    *,
+    physical_free: int,
+    occupancy_ambiguous: bool = False,
+) -> str:
+    """Classify a review-capacity refusal without collapsing its cause."""
+    if snapshot.get("schema_version") != 1 or snapshot.get("error") is not None:
+        return "route-snapshot-ambiguity"
+    if occupancy_ambiguous:
+        return "occupancy-ambiguity"
+    if physical_free <= 0:
+        return "physical-exhaustion"
+    if eligible_review_routes(snapshot, required_size, labels, producer, reviewer, occupancy):
+        return "eligible"
+    if eligible_gateway_routes(snapshot, required_size, (), occupancy):
+        return "policy-incompatibility"
+    return "route-exhaustion"
+
+
+def eligible_review_launch_lanes(
+    lanes: Sequence[Mapping[str, Any]],
+    routes: Sequence[Mapping[str, Any]],
+    reservations: Mapping[str, int],
+    physical_limit: int,
+) -> list[str]:
+    """Return physical launch lanes backed by eligible logical-route domains."""
+    route_domains = {
+        str(route.get("capacity_domain") or "")
+        for route in routes
+        if int(route.get("free", 0))
+        > int(reservations.get(str(route.get("capacity_domain") or ""), 0))
+    }
+    candidates = [
+        lane
+        for lane in lanes
+        if route_domains.intersection(str(domain) for domain in lane.get("capacity_domains", ()))
+    ]
+    if sum(len(lane.get("busy", ())) for lane in candidates) + sum(
+        int(value) for value in reservations.values()
+    ) >= int(physical_limit):
+        return []
+    return [str(lane["name"]) for lane in candidates if int(lane.get("free", 0)) > 0]
+
+
 def aggregate_review_capacity(routes: Sequence[Mapping[str, Any]], target: int) -> int:
     """Aggregate free capacity once per shared capacity domain."""
     domains: dict[str, int] = {}

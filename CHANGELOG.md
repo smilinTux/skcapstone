@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Governed size-S and size-M review selection now derives physical launch lanes
+  from healthy, policy-compatible logical route capacity domains. An empty or
+  ambiguous ordinary route snapshot no longer overwrites real Codex headroom,
+  and durable diagnostics distinguish snapshot ambiguity, occupancy ambiguity,
+  policy incompatibility, route exhaustion, and physical exhaustion.
+
 - Builder dispatch now releases the prior exact claim and blocks without
   launching when a changed offer supersedes persisted status for the same card.
 
