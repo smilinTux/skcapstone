@@ -328,7 +328,7 @@ def join_herdr_evidence(rows: list[Worker]) -> list[Worker]:
             for name, coworktree in live
         )
         eligible = (
-            row.projection_state == "stale"
+            row.projection_state in {"stale", "valid"}
             and row.claim_state == "exact"
             and is_ephemeral_worker_agent(row.agent, row.card)
             and row.pid == 0
