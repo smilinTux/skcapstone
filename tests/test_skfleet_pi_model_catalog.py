@@ -191,6 +191,44 @@ def test_fingerprint_changes_when_health_or_metadata_changes_not_only_ids():
     assert same_ids == first
 
 
+def test_pi_name_or_context_window_change_invalidates_catalog_with_same_ids():
+    """Identical logical IDs/revision with changed Pi name/context must rewrite models.json."""
+    module = _module()
+    revision = "a" * 40
+    first, _ = module.reconcile(_document(), _view(), gateway_revision=revision)
+    assert {item["id"] for item in first["providers"]["skgateway"]["models"]} == {
+        "sk-s",
+        "sk-m",
+        "sk-l",
+    }
+    stable, unchanged = module.reconcile(first, _view(), gateway_revision=revision)
+    assert unchanged == []
+    assert (
+        stable["providers"]["skgateway"][module.SYNC_KEY]["inventory_fingerprint"]
+        == first["providers"]["skgateway"][module.SYNC_KEY]["inventory_fingerprint"]
+    )
+
+    renamed = _inventory_rows()
+    for row in renamed:
+        if row["id"] == "sk-m":
+            row["name"] = "SK-M renamed via SKGateway"
+            row["contextWindow"] = 123456
+    second, changed = module.reconcile(first, _view(models=renamed), gateway_revision=revision)
+    assert changed
+    assert (
+        second["providers"]["skgateway"][module.SYNC_KEY]["inventory_fingerprint"]
+        != first["providers"]["skgateway"][module.SYNC_KEY]["inventory_fingerprint"]
+    )
+    by_id = {item["id"]: item for item in second["providers"]["skgateway"]["models"]}
+    assert by_id["sk-m"]["name"] == "SK-M renamed via SKGateway"
+    assert by_id["sk-m"]["contextWindow"] == 123456
+    assert {item["id"] for item in second["providers"]["skgateway"]["models"]} == {
+        "sk-s",
+        "sk-m",
+        "sk-l",
+    }
+
+
 def test_reconcile_requires_gateway_revision_and_invalidates_on_change():
     module = _module()
     with pytest.raises(ValueError, match="gateway revision is required"):
