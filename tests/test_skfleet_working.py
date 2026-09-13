@@ -516,3 +516,49 @@ def test_collect_parses_unit_diagnostic_and_ignores_noise(monkeypatch):
     rows, diagnostics = monitor.collect("host-a")
     assert rows == [row]
     assert diagnostics == {"host-a": {"idle_projections": 3}}
+
+
+def test_collect_observes_local_canonical_host_without_ssh(monkeypatch):
+    """A broken self-SSH path cannot erase authoritative local worker evidence."""
+    monitor = load_monitor()
+    row = worker(
+        monitor,
+        host="chiap08",
+        agent="pi-codex-chiap08-a8100e12",
+        card="a8100e12",
+        unit="skfleet-worker-codex-a8100e12.service",
+        pid=810012,
+        claim_owner="pi-codex-chiap08-a8100e12",
+        claim_revision="claim-a8100e12",
+    )
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout=json.dumps(vars(row)))
+
+    monkeypatch.setattr(monitor.os, "uname", lambda: SimpleNamespace(nodename="chiap08.local"))
+    monkeypatch.setattr(monitor.subprocess, "run", run)
+
+    rows, _diagnostics = monitor.collect("CHIAP08")
+
+    assert calls[0][:2] == [sys.executable, "-c"]
+    assert "ssh" not in calls[0]
+    assert rows[0].pid == 810012
+    assert rows[0].unit == "skfleet-worker-codex-a8100e12.service"
+    assert rows[0].claim_owner == "pi-codex-chiap08-a8100e12"
+    assert rows[0].claim_revision == "claim-a8100e12"
+    assert rows[0].evidence_source == "systemd+proc+cardstore+local"
+
+
+def test_collect_keeps_remote_transport_fail_closed(monkeypatch):
+    monitor = load_monitor()
+    monkeypatch.setattr(monitor.os, "uname", lambda: SimpleNamespace(nodename="chiap08"))
+    monkeypatch.setattr(
+        monitor.subprocess,
+        "run",
+        lambda command, **kwargs: SimpleNamespace(returncode=255, stdout=""),
+    )
+
+    with pytest.raises(OSError, match="chiap04: ssh collector failed with rc=255"):
+        monitor.collect("chiap04")
