@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Card `d6c08352`: preserve complete typed single-seat review markers across
+  executable lifecycle transitions, and resolve empty-title review routes from
+  exactly one canonical logical size label so released reviews can relaunch.
+
 - Card `0c678c8e`: include Pi-emitted `name` and `contextWindow` in the catalog
   inventory fingerprint so identical logical IDs with metadata drift rewrite
   `models.json` instead of reporting `changed=[]`.
