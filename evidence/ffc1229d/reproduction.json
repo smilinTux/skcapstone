@@ -10,5 +10,7 @@
   "fleet_live_codex_free": 3,
   "note": "Foreground Herdr status idle while owned pytest descendants remain live; card absent from capacity snapshot.",
   "refreshed_onto_main": "f1c2e766304acba4d3f85fbbb109e02cbee6c70f",
-  "decision": "FAIL_CLOSED_UPSTREAM"
+  "decision": "FAIL_CLOSED_UPSTREAM",
+  "lint_fix": "black assert one-liner on test_idle_herdr_without_exact_card_ownership_stays_stale",
+  "updated_at": "2026-09-13T02:12:23Z"
 }
