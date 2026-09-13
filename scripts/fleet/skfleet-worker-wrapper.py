@@ -446,7 +446,60 @@ def idle_owner_projection(
     del owner, card_id, claim_revision
 
 
-def record_terminal_exit(args: argparse.Namespace, stderr: bytes, rc: int) -> None:
+def zero_output_success(args: argparse.Namespace, rc: int) -> tuple[bool, str]:
+    """Accept an empty successful exit only after this claim mutated its card."""
+    if rc != 0:
+        return False, "child_exit"
+    try:
+        store = CardStore(Path.home() / ".skcapstone")
+        events = store._read_events(args.card) + store._legacy_events(args.card)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return False, "cardstore_unavailable"
+    events.sort(
+        key=lambda event: (
+            str(event.get("ts") or ""),
+            str(event.get("writer") or ""),
+            event.get("seq", 0),
+        )
+    )
+    claims = [
+        index
+        for index, event in enumerate(events)
+        if event.get("action") == "claim"
+        and event.get("owner") == args.owner
+        and event.get("claim_revision") == args.claim_revision
+    ]
+    if not claims:
+        return False, "claim_missing"
+    later = events[claims[-1] + 1 :]
+    boundary = next(
+        (
+            index
+            for index, event in enumerate(later)
+            if event.get("action") in {"claim", "reopen", "release_claim", "void"}
+        ),
+        len(later),
+    )
+    window = later[:boundary]
+    mutated = any(
+        event.get("writer") == args.owner
+        and event.get("action") in {"link", "move", "complete", "amend", "describe"}
+        for event in window
+    )
+    if mutated:
+        return True, "exact_claim_mutated"
+    if boundary < len(later):
+        action = later[boundary].get("action")
+        return False, "claim_released" if action == "release_claim" else "stale_claim"
+    return False, "no_card_mutation"
+
+
+def record_terminal_exit(
+    args: argparse.Namespace,
+    stderr: bytes,
+    rc: int,
+    completion_failure: str | None = None,
+) -> None:
     """Create one immutable, claim-scoped terminal evidence record."""
     stdout_size = args.stdout.stat().st_size
     stdout_tail = b""
@@ -470,6 +523,7 @@ def record_terminal_exit(args: argparse.Namespace, stderr: bytes, rc: int) -> No
         "stderr": redacted,
         "stdout_log": args.stdout.name,
         "transport_failure": failure,
+        "completion_failure": completion_failure,
     }
     digest = hashlib.sha256(
         f"{args.card}\0{args.claim_revision}\0{attempted_at}".encode()
@@ -669,7 +723,13 @@ def main() -> int:
             args.review_supersession = final_supersession
         record_review_supersession(args, stderr)
         result_code = 75 if hasattr(args, "review_supersession") else child.returncode
-        record_terminal_exit(args, stderr, result_code)
+        completion_failure = None
+        if result_code == 0 and args.stdout.stat().st_size == 0:
+            valid, reason = zero_output_success(args, result_code)
+            if not valid:
+                result_code = 75
+                completion_failure = reason
+        record_terminal_exit(args, stderr, result_code, completion_failure)
         write_process_record(
             args,
             pid=child.pid,
