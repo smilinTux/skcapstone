@@ -127,9 +127,8 @@ def test_zero_exit_never_classified() -> None:
 # ---- wrapper generation stamp ------------------------------------------------
 
 
-def test_terminal_record_stamps_card_generation(tmp_path: Path, monkeypatch) -> None:
+def test_terminal_record_stamps_card_generation(tmp_path: Path) -> None:
     module = _wrapper()
-    monkeypatch.setattr(module, "card_description_generation", lambda card_id: "gen-" + card_id)
     stdout = tmp_path / "deadbeef-20260912T000000Z.log"
     stdout.write_bytes(b"")
     args = argparse.Namespace(
@@ -141,6 +140,7 @@ def test_terminal_record_stamps_card_generation(tmp_path: Path, monkeypatch) -> 
         model="model",
         stdout=stdout,
         evidence_dir=tmp_path / "evidence",
+        card_generation="gen-deadbeef",
     )
     module.record_terminal_exit(args, LIVE_PARSER_REJECTION, 1)
     records = list(args.evidence_dir.glob("*.json"))
@@ -148,6 +148,79 @@ def test_terminal_record_stamps_card_generation(tmp_path: Path, monkeypatch) -> 
     payload = json.loads(records[0].read_text(encoding="utf-8"))
     assert payload["transport_failure"] == "upstream_template_rejection"
     assert payload["card_generation"] == "gen-deadbeef"
+
+
+def test_stale_a_rejection_after_card_advances_to_b_stays_attributed_to_a(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Race from review 003f3e6e: exit must stamp launch-time A, never live B."""
+    module = _wrapper()
+    descriptions = {"value": "candidate-A description"}
+
+    def _generation(_card_id: str) -> str:
+        return hashlib.sha256(descriptions["value"].encode("utf-8")).hexdigest()
+
+    monkeypatch.setattr(module, "card_description_generation", _generation)
+    gen_a = _generation("card")
+    # Exact launch-time capture (main does this before Popen).
+    launch_generation = module.card_description_generation("card")
+    assert launch_generation == gen_a
+    # Card advances to candidate B while the child is still running.
+    descriptions["value"] = "candidate-B description"
+    gen_b = _generation("card")
+    assert gen_a != gen_b
+    stdout = tmp_path / "race-card.log"
+    stdout.write_bytes(b"")
+    args = argparse.Namespace(
+        card="race-card",
+        owner="owner",
+        claim_revision="claim-from-candidate-A",
+        host="host",
+        lane="codex",
+        model="model",
+        stdout=stdout,
+        evidence_dir=tmp_path / "evidence",
+        card_generation=launch_generation,
+    )
+    module.record_terminal_exit(args, LIVE_PARSER_REJECTION, 1)
+    payload = json.loads(next(args.evidence_dir.glob("*.json")).read_text(encoding="utf-8"))
+    assert payload["card_generation"] == gen_a
+    assert payload["card_generation"] != gen_b
+    assert payload["claim_revision"] == "claim-from-candidate-A"
+
+    namespace = _scheduler_namespace()
+    namespace["_WORKER_EXIT_DIR"] = str(args.evidence_dir)
+    namespace["_card_description_generation"] = lambda _cid: gen_b
+    # Stale A rejection must never hold changed candidate B.
+    assert namespace["_transport_retry_held"]("race-card") is False
+    namespace["_card_description_generation"] = lambda _cid: gen_a
+    assert namespace["_transport_retry_held"]("race-card") is True
+
+
+def test_exit_recorder_never_refolds_live_description(tmp_path: Path, monkeypatch) -> None:
+    """record_terminal_exit must not call card_description_generation."""
+    module = _wrapper()
+
+    def _boom(_card_id: str) -> str:
+        raise AssertionError("exit path must not re-fold card generation")
+
+    monkeypatch.setattr(module, "card_description_generation", _boom)
+    stdout = tmp_path / "nofold.log"
+    stdout.write_bytes(b"")
+    args = argparse.Namespace(
+        card="nofold",
+        owner="owner",
+        claim_revision="rev-a",
+        host="host",
+        lane="codex",
+        model="model",
+        stdout=stdout,
+        evidence_dir=tmp_path / "evidence",
+        card_generation="immutable-launch-gen",
+    )
+    module.record_terminal_exit(args, LIVE_PARSER_REJECTION, 1)
+    payload = json.loads(next(args.evidence_dir.glob("*.json")).read_text(encoding="utf-8"))
+    assert payload["card_generation"] == "immutable-launch-gen"
 
 
 # ---- scheduler generation-keyed hold ------------------------------------------
