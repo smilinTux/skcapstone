@@ -3,9 +3,12 @@ docs/superpowers/specs/2026-08-16-skfleet-install-orchestrator-design.md."""
 
 from __future__ import annotations
 
+import os
+import subprocess
 from dataclasses import dataclass, field
+from pathlib import Path
 
-from . import converge, install_backends, nodeinventory, profile_doctor, store
+from . import converge, install_backends, nodeinventory, profile_doctor, store, timer_enablement
 from .profile_doctor import DriftReport
 
 
@@ -124,7 +127,11 @@ def apply(
             continue
 
         try:
-            status, detail = fn([step.name], dry_run=dry_run, enable=enable, start=start)
+            # Required timers are enabled below through the provenance-aware
+            # convergence boundary. Let the backend install their unit files,
+            # but never let it perform an unattributed enable mutation first.
+            backend_enable = enable and not step.name.endswith(".timer")
+            status, detail = fn([step.name], dry_run=dry_run, enable=backend_enable, start=start)
         except Exception as exc:
             status, detail = "failed", str(exc)
 
@@ -221,6 +228,14 @@ def _result_dict(result: InstallResult) -> dict:
 _OK_STEP_STATUSES = frozenset({"ok", "would-write"})
 
 
+def _profile_spec(paths, role: str) -> dict:
+    """Read the applied profile, degrading to no timer policy in test shims."""
+    try:
+        return (store.read_spec(paths, "profile", role) or {}).get("spec") or {}
+    except (AttributeError, TypeError):
+        return {}
+
+
 def _refresh_inventory(paths) -> None:
     """Re-observe this node and republish node.json (best-effort).
 
@@ -253,6 +268,7 @@ def run_install(
     start: bool,
     only: list[str] | None,
     backends: dict,
+    timer_runner=None,
 ) -> dict:
     """Top-level entry point: diff, gate, and (in apply mode) actuate.
 
@@ -307,7 +323,21 @@ def run_install(
             {"grade": grade, "category": category, "name": name}
             for grade, category, name in drift.findings()
         ]
-        ok = not (drift.missing_required_units or drift.missing_required_packages)
+        profile = _profile_spec(paths, role)
+        config_home = Path(os.environ.get("XDG_CONFIG_HOME", "~/.config")).expanduser()
+        runner = timer_runner or subprocess.run
+        timer_drift = [
+            row
+            for unit in timer_enablement.required_timers(profile)
+            if (row := timer_enablement.audit_timer(unit, runner=runner, config_home=config_home))[
+                "drift"
+            ]
+        ]
+        results.extend(
+            {"grade": "warn", "category": "missing_required_timer_enablement", "name": row["unit"]}
+            for row in timer_drift
+        )
+        ok = not (drift.missing_required_units or drift.missing_required_packages or timer_drift)
         return {"role": role, "mode": "check", "results": results, "ok": ok}
 
     # mode == "apply": gate BEFORE computing drift. is_frozen/actuation_enabled
@@ -325,6 +355,52 @@ def run_install(
     install_results = apply(install_plan, backends, dry_run=dry_run, enable=enable, start=start)
     results = [_result_dict(r) for r in install_results]
     ok = all(r["status"] in _OK_STEP_STATUSES for r in results)
+
+    if ok and enable and not dry_run:
+        profile = _profile_spec(paths, role)
+        selected = set(only) if only is not None else None
+        required = timer_enablement.required_timers(profile)
+        if selected is not None:
+            required = [unit for unit in required if unit in selected]
+        timer_profile = {"units": {"required": required}}
+        config_home = Path(os.environ.get("XDG_CONFIG_HOME", "~/.config")).expanduser()
+        timer_rows = timer_enablement.converge_required_timers(
+            timer_profile,
+            runner=timer_runner or subprocess.run,
+            config_home=config_home,
+            evidence_path=paths.root.parent / "evidence" / "timer-enablement.jsonl",
+            actor=(
+                os.environ.get("SKAGENT")
+                or os.environ.get("SKCAPSTONE_AGENT")
+                or "skfleet-install"
+            ),
+            source_revision=timer_enablement.policy_revision(profile),
+        )
+        by_unit = {row["unit"]: row for row in timer_rows}
+        reported = {result["name"] for result in results}
+        for result in results:
+            timer = by_unit.get(result["name"])
+            if timer is not None and timer["drift"]:
+                result["status"] = "failed"
+                result["detail"] = "required timer did not converge enabled and active/waiting"
+                ok = False
+        for unit, timer in by_unit.items():
+            if unit in reported:
+                continue
+            landed = not timer["drift"]
+            results.append(
+                {
+                    "name": unit,
+                    "kind": "unit",
+                    "tier": install_backends.tier_of("core"),
+                    "backend_id": "timer-enablement",
+                    "status": "ok" if landed else "failed",
+                    "detail": (
+                        "required timer enablement converged" if landed else "timer drift remains"
+                    ),
+                }
+            )
+            ok = ok and landed
 
     if ok and not dry_run:
         _refresh_inventory(paths)

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Card `b35fdf93`: audit profile-required timers through their exact
+  `timers.target.wants` links and active waiting state, converge missing
+  enablement without activating allowed-only timers, and record every enable
+  or disable attempt in append-only attributable evidence.
+
 - Card `d49c82a1`: bound stale source-ref probes so selectable Niobe
   candidates cannot consume the cycle deadline, and terminate and reap the
   dispatcher process group before recording timeout rc=70 diagnostics.
