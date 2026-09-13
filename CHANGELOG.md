@@ -2,9 +2,59 @@
 
 ## Unreleased
 
+- Card `0c678c8e`: include Pi-emitted `name` and `contextWindow` in the catalog
+  inventory fingerprint so identical logical IDs with metadata drift rewrite
+  `models.json` instead of reporting `changed=[]`.
+
+- Card `75de8848`: close Pi catalog review FAIL findings from `e1f4321e` /
+  PR 699 — no size downgrade, healthy logical routes only, health-aware
+  fingerprint, required `SKFLEET_GATEWAY_URL`, and gateway revision passed into
+  reconciliation.
+
+- Card `075a8493`: Pi's SKGateway catalog reconciler now selects only currently
+  advertised gateway routes, invalidates stale served-model names when the
+  gateway revision or inventory fingerprint changes, and falls a stale
+  `defaultModel` back across policy-compatible logical size capacity without
+  hardcoding host targets or concrete served model names.
+
+- Added an exact, reversible coordination command for quarantining one stale
+  ownerless projection bound to a voided card. Card-generation and projection
+  SHA-256 fences prevent stale or broadened mutations, and restoration verifies
+  both the quarantined bytes and the original retirement receipt.
+
+- The fleet liveness publisher now reads pane evidence only through an
+  explicit namespace-safe tmux socket (`SKFLEET_TMUX_SOCKET`, set to
+  `%t/skfleet/tmux.sock` by its `PrivateTmp=yes` unit). A missing, non-socket,
+  or unreachable socket fails closed without replacing the last published
+  snapshot; `failed to connect` is no longer accepted as empty-success
+  evidence.
+
 - Review completion now uses exact-head hosted check totals for non-SKCapstone
   repositories instead of imposing SKCapstone's Python check names. Missing,
   partial, non-success, and stale hosted evidence still fail closed.
+
+- Card `353e53d2`: the lifecycle seat manifest audit
+  (`scripts/fleet/seat-manifest-audit.py`) now validates the documented
+  canonical seat schema (`sk.lifecycle-seat/v1`) instead of three obsolete
+  fields. The Link activation preflight had reported 18 false findings (3 per
+  seat) because the audit required `mail_protocol.read_all_recipient` (the
+  canonical field is `read_direct_and_all`), a `model_policy` block (canonical
+  manifests carry top-level `model_route`/`model_profile`), and a
+  `card_contract` block no canonical manifest carries. The audit now checks
+  the documented mailbox, logical route, and lifecycle fields
+  (`read_direct_and_all`, `model_route`/`model_profile` with card-scoped
+  opt-in escalation, `schema`, `activation_state`, `safe_retirement`,
+  `lifecycle_beat`) and still fails closed for genuinely missing
+  requirements. Identity, estate, duplicate-fingerprint, and required-file
+  checks are unchanged. Read-only toward operator manifests.
+
+- Builder source reconstruction failures now write request-bound, retry-bounded
+  status and continue to later queued work instead of terminating `sknoded`.
+
+- Fleet hosts can publish exact local worker and claim-generation liveness
+  through a dedicated read-only timer, without restoring per-host dispatch.
+  Reaper authority still requires fresh, valid evidence from every configured
+  host; centralized Niobe remains the only launch authority.
 
 - Builder dispatch now releases the prior exact claim and blocks without
   launching when a changed offer supersedes persisted status for the same card.

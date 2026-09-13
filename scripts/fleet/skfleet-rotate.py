@@ -891,6 +891,17 @@ def _worker_mail_instructions(recipients):
     )
 
 
+def _worker_search_instructions():
+    """Build the fail-closed filesystem search policy for every worker brief."""
+    return (
+        "FILESYSTEM SEARCH BOUNDARY, mandatory for repository and evidence discovery:\n"
+        "- Start every search at the exact authorized repository or evidence root.\n"
+        "- Prefer rg or rg --files, with bounded filters, result limits, and timeouts.\n"
+        "- Never run find /, find /home, or equivalent broad traversal. Never widen\n"
+        "  a search beyond an authorized root; report BLOCKED if the target is absent.\n\n"
+    )
+
+
 def _seraph_terminal_noop(
     host, only_seat, dry, pick_count, processed_picks, launch_receipts
 ):
@@ -1278,11 +1289,13 @@ except Exception as exc:
 # new workers are transient user services and never enter this oneshot's cgroup.
 sessions=sh("tmux","ls","-F","#{session_name}").split()
 worker_units=active_worker_units()
-_GATEWAY_ENDPOINT=os.environ.get("SKFLEET_GATEWAY_URL","http://chiap01:18790").rstrip("/")
+_GATEWAY_ENDPOINT=(os.environ.get("SKFLEET_GATEWAY_URL") or "").strip().rstrip("/")
 _review_route_snapshot=None
 _review_route_occupancy={}
 _review_route_ambiguous=False
 if ONLY_SEAT in {"", "link", "mero", "seraph"}:
+    if not _GATEWAY_ENDPOINT:
+        raise SystemExit("SKFLEET_GATEWAY_URL is required")
     _review_route_snapshot=acquire_review_route_snapshot(
         _GATEWAY_ENDPOINT,
         Path(HOME)/".skcapstone/evidence/fleet-review-routes.json",
@@ -1300,16 +1313,25 @@ except (OSError,ValueError,TypeError):
     pass
 
 def _prepare_pi_glm_catalog():
-    """Install logical GLM metadata before any live alias can be selected."""
+    """Sync Pi's SKGateway catalog to healthy advertised logical routes."""
     installed=Path(HOME)/".local/bin/skfleet-pi-model-catalog.py"
     bundled=Path(__file__).with_name("skfleet-pi-model-catalog.py")
     helper=installed if installed.exists() else bundled
     if not helper.is_file():
         return False,"catalog reconciler missing"
+    if not _GATEWAY_ENDPOINT:
+        return False,"SKFLEET_GATEWAY_URL is required"
+    try:
+        from skcapstone.fleet_lane_health import active_gateway_revision
+        revision=active_gateway_revision(_GATEWAY_ENDPOINT)
+    except Exception as exc:
+        return False,"active gateway revision unavailable: %s"%type(exc).__name__
+    env=dict(os.environ)
+    env["SKFLEET_GATEWAY_URL"]=_GATEWAY_ENDPOINT
     try:
         result=subprocess.run(
-            [sys.executable,str(helper),"--apply"],
-            capture_output=True,text=True,timeout=15,check=False,
+            [sys.executable,str(helper),"--apply","--gateway-revision",revision],
+            capture_output=True,text=True,timeout=15,check=False,env=env,
         )
     except (OSError,subprocess.TimeoutExpired) as exc:
         return False,"catalog reconciliation failed: %s"%type(exc).__name__
@@ -2992,7 +3014,7 @@ _LOGDIR = os.path.join(HOME, ".skcapstone/fleet/logs")
 _TRANSPORT_RETRY_COOLDOWN_S = float(
     os.environ.get("SKFLEET_TRANSPORT_RETRY_COOLDOWN_S", "60")
 )
-_GATEWAY_ERROR_RE = re.compile(r"^\s*(404|408|429|502|504):\s*(\{.*\})\s*$", re.S)
+_GATEWAY_ERROR_RE = re.compile(r"^\s*(400|404|408|429|502|504):\s*(\{.*\})\s*$", re.S)
 
 
 def _structured_transport_failure(text):
@@ -3018,6 +3040,12 @@ def _structured_transport_failure(text):
         return "gateway_429"
     if status == 502 and code == "invalid_upstream_tool_calls":
         return "invalid_upstream_tool_calls"
+    message = payload["message"].casefold()
+    if status == 400 and (
+        "unable to generate parser" in message
+        or "automatic parser generation failed" in message
+    ):
+        return "upstream_template_rejection"
     timeout_codes = {
         "first_token_timeout",
         "gateway_timeout",
@@ -3101,16 +3129,51 @@ def _local_launch_evidence(cid):
 
 _WORKER_EXIT_DIR = os.path.join(HOME, ".skcapstone/evidence/fleet-worker-exits")
 
-def _latest_transport_failure_epoch(cid):
-    """Return the latest claim-scoped pre-agent transport failure time."""
+def _card_description_generation(cid):
+    """Return the content generation one offer generation was minted against.
+
+    The folded description carries the exact candidate identity (reviewed head,
+    outcome generation, candidate digest) and is stable across the claim/release
+    churn of one relaunch cycle. An empty result fails closed to the legacy
+    card-level hold instead of fencing.
+    """
+    try:
+        card = CardStore(Path(HOME) / ".skcapstone").fold(cid)
+    except (OSError, ValueError):
+        return ""
+    description = str(getattr(card, "description", "") or "")
+    if not description:
+        return ""
+    return hashlib.sha256(description.encode("utf-8")).hexdigest()
+
+def _latest_transport_failure_epoch(cid, generation=""):
+    """Return the latest claim-scoped pre-agent transport failure time.
+
+    Stamped evidence is fenced to one exact offer generation: a record whose
+    ``card_generation`` differs from the card's current content generation
+    (changed candidate revision) does not hold the current generation.
+    Unstamped legacy evidence, or a generation that cannot be determined,
+    keeps the legacy card-level hold.
+    """
     latest = 0.0
+    resolve_generation = None
     for path in glob.glob(os.path.join(_WORKER_EXIT_DIR, cid + "-*.json")):
         try:
             event = json.load(open(path, encoding="utf-8"))
-            if event.get("card_id") == cid and event.get("transport_failure"):
-                latest = max(latest, _ts_epoch(event.get("attempted_at")))
         except (OSError, TypeError, ValueError):
             continue
+        if event.get("card_id") != cid or not event.get("transport_failure"):
+            continue
+        recorded = str(event.get("card_generation") or "")
+        if recorded:
+            if resolve_generation is None:
+                resolve_generation = globals().get("_card_description_generation")
+                generation = generation or (
+                    resolve_generation(cid) if callable(resolve_generation) else ""
+                )
+            if generation and recorded != generation:
+                continue
+        latest = max(latest, _ts_epoch(event.get("attempted_at")))
     return latest
 
 def _transport_failure_logs(cid):
@@ -3126,7 +3189,13 @@ def _transport_failure_logs(cid):
     return logs
 
 def _transport_retry_held(cid):
-    """Hold a failed transport until the bounded recovery interval opens."""
+    """Hold one exact unchanged generation until the bounded interval opens.
+
+    A classified pre-agent rejection holds the card for the bounded recovery
+    interval. Stamped evidence is keyed to the card's content generation, so a
+    changed candidate revision is not suppressed by stale evidence and stays
+    eligible under the existing one-probe recovery policy.
+    """
     failed_at = _latest_transport_failure_epoch(cid)
     return bool(failed_at and time.time() - failed_at < _TRANSPORT_RETRY_COOLDOWN_S)
 
@@ -3163,6 +3232,7 @@ _TRANSPORT_FAILURE_CLASSES = frozenset({
     "backend_claims_quarantined",
     "invalid_upstream_tool_calls",
     "connection_failure",
+    "upstream_template_rejection",
 })
 
 def _transport_failure_claims():
@@ -5632,6 +5702,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
       "- Join structural CardStore events with separate evidence events. Never infer a verdict from lifecycle state or from links alone.\n"
       + _worker_mail_instructions(
           _worker_mail_routing(os.environ, core.get("originator"))) +
+      _worker_search_instructions() +
       "MAIL CHECK CADENCE. Check mail after startup, before each major phase, and\n"
       "at least every five minutes during a long-running task. Mail does not interrupt\n"
       "a tool call, so process new instructions at the next safe boundary. Never\n"

@@ -263,20 +263,43 @@ def record_review_supersession(args: argparse.Namespace, stderr: bytes) -> Path 
     return path
 
 
+LOCK_RELEASE_ATTEMPTS = 3
+LOCK_RELEASE_RETRY_BACKOFF_SECONDS = 0.5
+
+
 def release_superseded_review_claim(args: argparse.Namespace) -> bool:
-    """CAS-release this exact terminal generation through the locked Board."""
+    """CAS-release this exact terminal generation through the locked Board.
+
+    Board and card lock contention is transient: the locks are held only for
+    the duration of one mutation. Retry the exact CAS release a bounded
+    number of times so a temporarily contended lock cannot convert completed
+    worker work into a failed process. Every retry carries the same
+    ``expected_claim_revision``, so a release that landed before a timeout
+    folds to the idempotent already-released check below instead of a second
+    mutation. After the bound, fail truthfully with the contention chained.
+    """
     from skcoord.coordination import Board
 
     home = Path.home() / ".skcapstone"
-    try:
-        released = Board(home).release_claim(
-            args.owner,
-            args.card,
-            actor=args.owner,
-            expected_claim_revision=args.claim_revision,
-        )
-    except (RuntimeError, ValueError):
-        released = False
+    released = False
+    contention: TimeoutError | None = None
+    for attempt in range(LOCK_RELEASE_ATTEMPTS):
+        try:
+            released = Board(home).release_claim(
+                args.owner,
+                args.card,
+                actor=args.owner,
+                expected_claim_revision=args.claim_revision,
+            )
+            contention = None
+            break
+        except TimeoutError as exc:
+            contention = exc
+            if attempt + 1 < LOCK_RELEASE_ATTEMPTS:
+                time.sleep(LOCK_RELEASE_RETRY_BACKOFF_SECONDS)
+        except (RuntimeError, ValueError):
+            released = False
+            break
     if not released:
         store = CardStore(home)
         card = store.fold(args.card)
@@ -292,7 +315,7 @@ def release_superseded_review_claim(args: argparse.Namespace) -> bool:
             )
         )
     if not released:
-        raise RuntimeError("terminal worker exact claim was not released")
+        raise RuntimeError("terminal worker exact claim was not released") from contention
     return True
 
 
@@ -369,6 +392,9 @@ TRANSPORT_PATTERNS = {
         r"failed to connect|network is unreachable|temporary failure in name resolution",
         re.I,
     ),
+    "upstream_template_rejection": re.compile(
+        r"unable to generate parser\b|automatic parser generation failed", re.I
+    ),
 }
 SECRET_RE = re.compile(
     r"(?i)(authorization:\s*(?:bearer|basic)\s+|"
@@ -396,12 +422,31 @@ def classify_pre_agent_failure(stdout: bytes, stderr: bytes, rc: int) -> str | N
         r"(?:HTTP\s+)?(?:429|5\d\d)\b|model_owner_backend_down\b|"
         r"backend-claims-quarantined\b|invalid_upstream_tool_calls\b|"
         r"connection (?:error|failed|failure|refused|reset|timed? ?out)\b|"
-        r"failed to connect\b",
+        r"failed to connect\b|unable to generate parser\b|"
+        r"automatic parser generation failed\b",
         text,
         re.I,
     ):
         return None
     return classify_transport_failure(text)
+
+
+def card_description_generation(card_id: str) -> str:
+    """Return the immutable content generation one offer was minted against.
+
+    The folded description carries the exact candidate identity (reviewed head,
+    outcome generation, candidate digest) and never changes across the
+    claim/release churn of one relaunch cycle. A changed description is a new
+    generation and must not inherit an older generation's rejection hold.
+    """
+    try:
+        card = CardStore(Path.home() / ".skcapstone").fold(card_id)
+    except (OSError, ValueError):
+        return ""
+    description = str(getattr(card, "description", "") or "")
+    if not description:
+        return ""
+    return hashlib.sha256(description.encode("utf-8")).hexdigest()
 
 
 def redact_stderr(stderr: bytes) -> str:
@@ -447,7 +492,12 @@ def idle_owner_projection(
 
 
 def record_terminal_exit(args: argparse.Namespace, stderr: bytes, rc: int) -> None:
-    """Create one immutable, claim-scoped terminal evidence record."""
+    """Create one immutable, claim-scoped terminal evidence record.
+
+    ``card_generation`` must be the launch-time capture on ``args`` so a stale
+    candidate-A rejection that finishes after the card advances to B stays
+    attributed to A and cannot hold B.
+    """
     stdout_size = args.stdout.stat().st_size
     stdout_tail = b""
     if stdout_size <= STDERR_LIMIT:
@@ -460,6 +510,7 @@ def record_terminal_exit(args: argparse.Namespace, stderr: bytes, rc: int) -> No
     payload = {
         "attempted_at": attempted_at,
         "card_id": args.card,
+        "card_generation": str(getattr(args, "card_generation", "") or ""),
         "child_exit_code": rc,
         "claim_revision": args.claim_revision,
         "host": args.host,
@@ -605,8 +656,15 @@ def finalize_terminal_capacity(args: argparse.Namespace, child: subprocess.Popen
 
 
 def finalize_worker_exit(args: argparse.Namespace, child: subprocess.Popen | None) -> None:
-    """Release exact custody before removing the worker projection."""
-    terminalized = not hasattr(args, "review_supersession")
+    """Release exact custody before removing the worker projection.
+
+    Only a release that actually succeeded proves the terminal transition, so
+    the projection may be idled solely on that success. When the release fails
+    truthfully (for example persistent board lock contention exhausting the
+    bounded retries), the exception propagates and the projection stays
+    active for fenced reconciliation.
+    """
+    terminalized = False
     try:
         terminalized = finalize_terminal_capacity(args, child)
     finally:
@@ -626,6 +684,9 @@ def main() -> int:
         write_startup_report(args, os.getpid(), "startup-mailbox-unavailable")
         return 2
     args.stdout.parent.mkdir(parents=True, exist_ok=True)
+    # Capture before child launch: exit recording must not re-fold a later
+    # candidate generation if the card advances while this worker is running.
+    args.card_generation = card_description_generation(args.card)
 
     def _stop(signum: int, _frame: object) -> None:
         raise SystemExit(128 + signum)

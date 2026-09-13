@@ -1,0 +1,20 @@
+{
+  "card": "ffc1229d",
+  "decision": "FAIL_CLOSED_UPSTREAM",
+  "reason": "Herdr does not expose stable owned-background process evidence for lifecycle or capacity.",
+  "observed": {
+    "pane_id": "wQ:p3E",
+    "agent_status": "idle",
+    "cwd": "/mnt/cloud/onedrive/projects/DAVE-AI/sklegal",
+    "name": null,
+    "process_info": "foreground-only (kimi-code + shell_pid); no owned background children",
+    "screen": "Waiting Ns / 10m \u00b7 2 background tasks still running",
+    "owned_live_worktree": "/home/skuser01/work/skcapstone-47cf2443-herdr",
+    "fleet_live_omits_card": true
+  },
+  "skcapstone_policy": "Exact Herdr join remains name+cwd card identity only. No host process heuristics.",
+  "upstream_need": "Herdr must publish exact pane-owned background work (or upgrade agent_status to working while owned background tasks remain) in agent list and/or pane process-info.",
+  "refreshed_onto_main": "f1c2e766304acba4d3f85fbbb109e02cbee6c70f",
+  "lint_fix_head_note": "black reformat of fail-closed regression assert only",
+  "updated_at": "2026-09-13T02:12:23Z"
+}

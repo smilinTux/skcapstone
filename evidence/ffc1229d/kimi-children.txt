@@ -1,0 +1,7 @@
+    PID    PPID %CPU CMD
+2675341 2674730  0.0 /home/skuser01/.skenv/bin/python /home/skuser01/.skenv/bin/skmemory-mcp
+2675342 2674730  1.0 /home/skuser01/.skenv/bin/python /home/skuser01/.skenv/bin/skcapstone-mcp
+2675343 2674730  0.0 /home/skuser01/.skenv/bin/python /home/skuser01/.skenv/bin/skcomms-mcp
+2675344 2674730  0.0 /home/skuser01/.skenv/bin/python /home/skuser01/.skenv/bin/skchat-mcp
+3089001 2674730  0.0 /bin/bash -c cd '/mnt/cloud/onedrive/projects/DAVE-AI/sklegal' && cd /home/skuser01/work/skcapstone-47cf2443-herdr && PYTHONPATH=src ~/.skenv/bin/python -m pytest -q --continue-on-collection-errors 2>&1 | tail -15
+3118542 2674730  0.0 /bin/bash -c cd '/mnt/cloud/onedrive/projects/DAVE-AI/sklegal' && cd /home/skuser01/work/skcapstone-47cf2443-herdr && gh pr checks 693 --repo smilinTux/skcapstone --watch --interval 30 2>&1 | tail -20
