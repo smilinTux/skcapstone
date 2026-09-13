@@ -628,8 +628,15 @@ def finalize_terminal_capacity(args: argparse.Namespace, child: subprocess.Popen
 
 
 def finalize_worker_exit(args: argparse.Namespace, child: subprocess.Popen | None) -> None:
-    """Release exact custody before removing the worker projection."""
-    terminalized = not hasattr(args, "review_supersession")
+    """Release exact custody before removing the worker projection.
+
+    Only a release that actually succeeded proves the terminal transition, so
+    the projection may be idled solely on that success. When the release fails
+    truthfully (for example persistent board lock contention exhausting the
+    bounded retries), the exception propagates and the projection stays
+    active for fenced reconciliation.
+    """
+    terminalized = False
     try:
         terminalized = finalize_terminal_capacity(args, child)
     finally:

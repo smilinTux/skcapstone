@@ -5,7 +5,9 @@ but the wrapper exited failure when ``release_superseded_review_claim``
 raised ``TimeoutError`` from the shared board mutation lock. These tests pin
 the bounded retry contract: transient contention never changes the child
 outcome, retries stay idempotent, and persistent contention still fails
-truthfully.
+truthfully. Successor card a49d8603 pins the projection contract on top: a
+failed release keeps the owner projection active for fenced reconciliation,
+while only a successful release may idle it.
 """
 
 from __future__ import annotations
@@ -158,7 +160,8 @@ def test_release_fails_truthfully_after_bounded_lock_timeouts(claimed_board, mon
     assert len(sleeps) == module.LOCK_RELEASE_ATTEMPTS - 1
 
 
-def _run_main_with_flaky_release(monkeypatch, tmp_path, failures, evidence):
+def _terminal_board_setup(tmp_path):
+    """Install a claimed card, active projection, and live snapshot."""
     module = load_module()
     home = tmp_path / ".skcapstone"
     home.mkdir()
@@ -212,8 +215,10 @@ def _run_main_with_flaky_release(monkeypatch, tmp_path, failures, evidence):
         command=[sys.executable, "-c", "pass"],
         evidence_dir=tmp_path / "evidence",
     )
-    flaky, state = make_flaky_board(failures=failures)
-    monkeypatch.setattr("skcoord.coordination.Board", flaky)
+    return module, store, projection, values
+
+
+def _patch_finalize_dependencies(module, monkeypatch, tmp_path, values, evidence):
     monkeypatch.setattr(module.Path, "home", classmethod(lambda _cls: tmp_path))
     monkeypatch.setattr(module, "parse_args", lambda: values)
     monkeypatch.setattr(module, "preflight_worktree", lambda: 0)
@@ -222,6 +227,20 @@ def _run_main_with_flaky_release(monkeypatch, tmp_path, failures, evidence):
     monkeypatch.setattr(module, "review_supersession", lambda _args: evidence)
     monkeypatch.setattr(module, "terminal_local_evidence", lambda child: child.poll() is not None)
     monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+    idle_calls = []
+    monkeypatch.setattr(
+        module, "idle_owner_projection", lambda *call, **_kw: idle_calls.append(call)
+    )
+    return idle_calls
+
+
+def _run_main_with_flaky_release(monkeypatch, tmp_path, failures, evidence):
+    module, store, projection, values = _terminal_board_setup(tmp_path)
+    flaky, state = make_flaky_board(failures=failures)
+    monkeypatch.setattr("skcoord.coordination.Board", flaky)
+    idle_calls = _patch_finalize_dependencies(
+        module, monkeypatch, tmp_path, values, evidence
+    )
 
     result = module.main()
 
@@ -236,11 +255,13 @@ def _run_main_with_flaky_release(monkeypatch, tmp_path, failures, evidence):
         and event.get("expected_claim_revision") == values.claim_revision
     ]
     assert len(releases) == 1
-    return result, state
+    return result, state, idle_calls
 
 
 def test_successful_child_exit_survives_transient_lock_timeout(monkeypatch, tmp_path) -> None:
-    result, state = _run_main_with_flaky_release(monkeypatch, tmp_path, failures=1, evidence=None)
+    result, state, _idle_calls = _run_main_with_flaky_release(
+        monkeypatch, tmp_path, failures=1, evidence=None
+    )
 
     assert result == 0
     assert len(state["calls"]) == 2
@@ -255,9 +276,50 @@ def test_superseded_terminal_verdict_survives_transient_lock_timeout(
         "owner": args().owner,
         "current_head": "2" * 40,
     }
-    result, state = _run_main_with_flaky_release(
+    result, state, _idle_calls = _run_main_with_flaky_release(
         monkeypatch, tmp_path, failures=1, evidence=evidence
     )
 
     assert result == 75
     assert len(state["calls"]) == 2
+
+
+def test_successful_terminal_release_idles_owner_projection(
+    monkeypatch, tmp_path
+) -> None:
+    result, _state, idle_calls = _run_main_with_flaky_release(
+        monkeypatch, tmp_path, failures=0, evidence=None
+    )
+
+    assert result == 0
+    assert len(idle_calls) == 1
+    assert idle_calls[0] == (args().owner, args().card, args().claim_revision)
+
+
+def test_persistent_release_failure_keeps_owner_projection_active(
+    monkeypatch, tmp_path
+) -> None:
+    module, store, projection, values = _terminal_board_setup(tmp_path)
+    flaky, state = make_flaky_board(failures=module.LOCK_RELEASE_ATTEMPTS + 1)
+    monkeypatch.setattr("skcoord.coordination.Board", flaky)
+    idle_calls = _patch_finalize_dependencies(module, monkeypatch, tmp_path, values, None)
+
+    with pytest.raises(RuntimeError, match="exact claim was not released") as excinfo:
+        module.main()
+
+    assert isinstance(excinfo.value.__cause__, TimeoutError)
+    assert len(state["calls"]) == module.LOCK_RELEASE_ATTEMPTS
+    # The failed release must not idle the projection: fenced reconciliation
+    # still needs to see the owner and the unreleased claim.
+    assert idle_calls == []
+    assert store.fold(values.card).owner == values.owner
+    folded_projection = json.loads(projection.read_text(encoding="utf-8"))
+    assert folded_projection["current_task"] == values.card
+    assert folded_projection["claimed_tasks"] == [values.card]
+    releases = [
+        event
+        for event in store._read_events(values.card)
+        if event.get("action") == "release_claim"
+        and event.get("expected_claim_revision") == values.claim_revision
+    ]
+    assert releases == []
