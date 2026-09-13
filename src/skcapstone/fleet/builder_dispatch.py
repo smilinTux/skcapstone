@@ -587,7 +587,20 @@ def consume_one(
             if not store.actuation_allowed(paths):
                 return None
             _request_matches_current_card(coordination_home, request)
-            materializer(request, workspace)
+            try:
+                materializer(request, workspace)
+            except BuilderDispatchError as exc:
+                _write_status(
+                    paths,
+                    node,
+                    request,
+                    "failed",
+                    attempt=attempt,
+                    retryable=attempt < MAX_ATTEMPTS,
+                    claim_released=False,
+                    error=str(exc),
+                )
+                continue
             if not store.actuation_allowed(paths):
                 return _write_status(
                     paths,
