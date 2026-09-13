@@ -11,8 +11,10 @@ from skcapstone.fleet.review_capacity import (
     aggregate_review_capacity,
     choose_review_route,
     eligible_gateway_routes,
+    eligible_review_launch_lanes,
     eligible_review_routes,
     load_route_occupancy,
+    review_route_diagnostic,
 )
 
 
@@ -248,3 +250,48 @@ def test_snapshot_fetch_failure_has_no_routes(tmp_path):
     assert snapshot["routes"] == []
     assert snapshot["error"] == "OSError"
     assert eligible_review_routes(snapshot, "S", [], "producer", "reviewer", {}) == []
+
+
+def test_review_route_diagnostics_are_durable_and_distinct(tmp_path):
+    now = 2_000_000_000.0
+    models, health, queue = _documents(now)
+    documents = dict(zip(("/v1/models", "/health", "/queue"), (models, health, queue)))
+
+    def opener(url, timeout):
+        assert timeout == 8
+        suffix = next(key for key in documents if url.endswith(key))
+        return _Response(json.dumps(documents[suffix]).encode())
+
+    snapshot = acquire_review_route_snapshot(
+        "https://gateway", tmp_path / "snapshot.json", "cycle-1", opener=opener, now=lambda: now
+    )
+    common = (snapshot, "M", [], "producer", "reviewer", {})
+    assert review_route_diagnostic(*common, physical_free=1) == "eligible"
+    assert review_route_diagnostic(*common, physical_free=0) == "physical-exhaustion"
+    assert review_route_diagnostic(*common, physical_free=1, occupancy_ambiguous=True) == (
+        "occupancy-ambiguity"
+    )
+    assert (
+        review_route_diagnostic(
+            {**snapshot, "error": "OSError"}, "M", [], "producer", "reviewer", {}, physical_free=1
+        )
+        == "route-snapshot-ambiguity"
+    )
+    assert (
+        review_route_diagnostic(
+            snapshot, "M", ["local-only"], "producer", "reviewer", {"local-a": 1}, physical_free=1
+        )
+        == "policy-incompatibility"
+    )
+
+
+def test_launch_lanes_follow_capacity_domains_not_lane_names():
+    routes = [{"capacity_domain": "review-domain", "free": 1}]
+    lanes = [
+        {"name": "ordinary", "capacity_domains": ["review-domain"], "busy": ["one"], "free": 2},
+        {"name": "strong", "capacity_domains": ["review-domain"], "busy": [], "free": 2},
+        {"name": "unrelated", "capacity_domains": ["other"], "busy": [], "free": 9},
+    ]
+    assert eligible_review_launch_lanes(lanes, routes, {}, 3) == ["ordinary", "strong"]
+    assert eligible_review_launch_lanes(lanes, routes, {}, 1) == []
+    assert eligible_review_launch_lanes(lanes, routes, {"review-domain": 2}, 3) == []

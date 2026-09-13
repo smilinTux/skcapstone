@@ -30,8 +30,10 @@ from skcapstone.fleet.review_capacity import (
     aggregate_review_capacity,
     choose_review_route,
     eligible_gateway_routes,
+    eligible_review_launch_lanes,
     eligible_review_routes,
     load_route_occupancy,
+    review_route_diagnostic,
 )
 from skcapstone.fleet.paths import default_paths as default_fleet_paths
 from skcapstone.fleet.rotation_lock import acquire_rotation_lock
@@ -835,8 +837,16 @@ def _noop_reason(pool, owned, lane_deferred):
     """Classify a zero-launch cycle without treating an honest no-op as failure."""
     if not pool or not owned:
         return "no_eligible_work"
+    capacity_reasons = {
+        "route-snapshot-ambiguity",
+        "occupancy-ambiguity",
+        "policy-incompatibility",
+        "physical-exhaustion",
+        "route-exhaustion",
+    }
     if lane_deferred and all(
-        reason.startswith(("no-free-lane:", "no-compatible-healthy-lane:"))
+        reason in capacity_reasons
+        or reason.startswith(("no-free-lane:", "no-compatible-healthy-lane:"))
         for reason in lane_deferred
     ):
         return "no_available_capacity"
@@ -1420,12 +1430,6 @@ if glm_held:
 for _L in LANES:
     _L["busy"]=_lane_busy(_L,sessions,worker_units)
     _L["free"]=max(0,_L["target"]-len(_L["busy"]))
-if not ONLY_SEAT:
-    _gateway_routes=([] if _review_route_ambiguous else eligible_gateway_routes(
-        _review_route_snapshot or {},"S",[],_review_route_occupancy))
-    _codex=next(lane for lane in LANES if lane["name"]=="codex")
-    _codex["free"]=aggregate_review_capacity(
-        _gateway_routes,min(TARGET,CODEX_PHYSICAL_LIMIT,MAX_LAUNCH))
 if ONLY_SEAT:
     if not _SEAT_RE.fullmatch(ONLY_SEAT) or SEAT_TARGET < 1:
         raise SystemExit("BLOCKED|SKFLEET_SEAT_TARGET|seat dispatch requires a positive target")
@@ -5293,6 +5297,16 @@ def select_compatible_lane(
     return None,"no-free-lane:%s"%",".join(compatible)
 
 
+def select_elastic_review_lane(lanes, routes, physical_limit, reservations):
+    """Choose a launch lane from eligible logical-route capacity domains."""
+    eligible = eligible_review_launch_lanes(
+        lanes, routes, reservations, physical_limit
+    )
+    if eligible:
+        return eligible[0], "eligible"
+    return None, "physical-exhaustion"
+
+
 def needs_escalation(cid, core=None, labels=None):
     """True if this card has exhausted the ordinary lanes and needs a stronger model.
 
@@ -5351,6 +5365,8 @@ _CAPACITY_DOMAINS={
         "SKFLEET_KIMI_CAPACITY_DOMAINS","kimi-for-coding,kimi-k3").split(",")),
     "escalate":tuple(os.environ.get("SKFLEET_ESC_CAPACITY_DOMAINS","codex").split(",")),
 }
+for _lane in LANES:
+    _lane["capacity_domains"]=_CAPACITY_DOMAINS.get(_lane["name"], ())
 _health_lanes=list(LANES)
 for _glm_model in sorted(set(_GLM_LEVELS.values())):
     if _glm_model!=next(lane for lane in LANES if lane["name"]=="glm")["model"]:
@@ -5420,6 +5436,39 @@ while _i<len(owned) and _i<len(_candidate_scan):
     _labels=_card[4]
     _esc=needs_escalation(_card[2], _card[3], _labels)
     _qwen_exclusive=qwen_first_exclusive(_card[2],_labels)
+    _elastic_review = _POOL_V2_ADMISSIONS.get(
+        _card[2], {}
+    ).get("elastic_review_admitted") is True
+    if _elastic_review:
+        _metadata=_governed_review_metadata(_card[3],_labels)
+        _size_match=_GLM_SIZE_RE.search(str(_card[3].get("title") or ""))
+        _reviewer=elastic_reviewer_identity(HOST,_card[2])
+        _routes=([] if _metadata is None or _size_match is None
+                 else eligible_review_routes(
+                     _review_route_snapshot or {},_size_match.group(1),_labels,
+                     _metadata[0],_reviewer,_review_route_occupancy,
+                     declared_seat=governed_review_seat(
+                         _labels,qualified_reviewer_seats(_card[3])),
+                     qualified_seats=qualified_reviewer_seats(_card[3])))
+        _lane_name,_defer=select_elastic_review_lane(
+            lane_order,_routes,CODEX_PHYSICAL_LIMIT,{})
+        if _lane_name is None:
+            _defer=review_route_diagnostic(
+                _review_route_snapshot or {},
+                _size_match.group(1) if _size_match else "",
+                _labels,_metadata[0] if _metadata else "",_reviewer,
+                _review_route_occupancy,
+                physical_free=0 if _routes else 1,
+                occupancy_ambiguous=_review_route_ambiguous)
+            _lane_deferred[_defer]+=1
+            _lane_deferred_cards[_card[2]]=_defer
+            log(d,"REVIEW_ROUTE_BLOCKED|%s|%s|reason=%s|snapshot=%s"%
+                (HOST,_card[2],_defer,
+                 Path(HOME)/".skcapstone/evidence/fleet-review-routes.json"))
+            continue
+        _lane=next(lane for lane in LANES if lane["name"]==_lane_name)
+        picks.append((_lane,_card))
+        continue
     _card_lane_health={lane["name"]:_health_for(
         lane["name"],_lane_model(lane,_card[3]))
         for lane in LANES}
@@ -5599,15 +5648,37 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         _attempt_health["codex"]=(
             launch_remaining.get("codex",0)>0,"review-route-capacity")
     _elastic_review = _POOL_V2_ADMISSIONS.get(cid, {}).get("elastic_review_admitted") is True
-    _attempt_remaining = (
-        {name: slots if name == "codex" else 0 for name, slots in launch_remaining.items()}
-        if _elastic_review else launch_remaining
-    )
-    _attempt_lane_name,_attempt_defer=select_compatible_lane(
-        _labels,_attempt_escalation,lane_order,_attempt_remaining,
-        qwen_suitable(core),qwen_first_exclusive(cid,_labels),_attempt_health,
-        QWEN_TARGET>0,GLM_TARGET>0)
+    _attempt_remaining = launch_remaining
+    if _elastic_review:
+        _metadata=_governed_review_metadata(core,_labels)
+        _size_match=_GLM_SIZE_RE.search(str(core.get("title") or ""))
+        _reviewer=elastic_reviewer_identity(HOST,cid)
+        _routes=([] if _metadata is None or _size_match is None
+                 else eligible_review_routes(
+                     _review_route_snapshot or {},_size_match.group(1),_labels,
+                     _metadata[0],_reviewer,_review_route_occupancy,
+                     declared_seat=governed_review_seat(
+                         _labels,qualified_reviewer_seats(core)),
+                     qualified_seats=qualified_reviewer_seats(core)))
+        _attempt_lanes=[{**lane,"free":launch_remaining.get(lane["name"],0)}
+                        for lane in lane_order]
+        _attempt_lane_name,_attempt_defer=select_elastic_review_lane(
+            _attempt_lanes,_routes,CODEX_PHYSICAL_LIMIT,
+            _review_route_reservations)
+    else:
+        _attempt_lane_name,_attempt_defer=select_compatible_lane(
+            _labels,_attempt_escalation,lane_order,_attempt_remaining,
+            qwen_suitable(core),qwen_first_exclusive(cid,_labels),_attempt_health,
+            QWEN_TARGET>0,GLM_TARGET>0)
     if _attempt_lane_name is None:
+        if _elastic_review:
+            _attempt_defer=review_route_diagnostic(
+                _review_route_snapshot or {},
+                _size_match.group(1) if _size_match else "",
+                _labels,_metadata[0] if _metadata else "",_reviewer,
+                _review_route_occupancy,
+                physical_free=0 if _routes else 1,
+                occupancy_ambiguous=_review_route_ambiguous)
         log(d,"SKIPPED_ATTEMPT_ADMISSION|%s|%s|reason=%s"%
             (HOST,cid,_attempt_defer))
         continue

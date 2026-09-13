@@ -20,6 +20,7 @@ def _load_lane_helpers() -> dict[str, object]:
         "qwen_first_exclusive",
         "lane_compatibility",
         "select_compatible_lane",
+        "select_elastic_review_lane",
     }
     body = [
         node
@@ -44,6 +45,9 @@ def _load_lane_helpers() -> dict[str, object]:
         "CARDS": "/missing",
         "event_rows": lambda cid: [],
         "_load_evidence_events": lambda: {},
+        "eligible_review_launch_lanes": __import__(
+            "skcapstone.fleet.review_capacity", fromlist=["eligible_review_launch_lanes"]
+        ).eligible_review_launch_lanes,
         "_fold_key": lambda value: str(value),
     }
     exec(compile(ast.Module(body=body, type_ignores=[]), str(ROTATE), "exec"), namespace)
@@ -118,6 +122,43 @@ def test_no_compatible_slot_does_not_consume_another_lane() -> None:
     assert selected is None
     assert reason == "no-free-lane:codex"
     assert remaining == {"codex": 0, "glm": 3, "escalate": 2}
+
+
+def test_niobe_review_uses_logical_route_without_overwriting_physical_capacity() -> None:
+    namespace = _load_lane_helpers()
+    lanes = [
+        {
+            "name": "codex",
+            "target": 3,
+            "busy": ["existing"],
+            "free": 2,
+            "capacity_domains": ["review-domain"],
+        },
+        {
+            "name": "escalate",
+            "target": 2,
+            "busy": [],
+            "free": 2,
+            "capacity_domains": ["review-domain"],
+        },
+    ]
+    route = {"logical_route": "sk-m", "capacity_domain": "review-domain", "free": 1}
+
+    selected, reason = namespace["select_elastic_review_lane"](
+        lanes, [route], physical_limit=3, reservations={}
+    )
+
+    assert selected == "codex"
+    assert reason == "eligible"
+    assert sum(len(lane["busy"]) for lane in lanes) + 1 <= 3
+    source = ROTATE.read_text(encoding="utf-8")
+    assert "if not ONLY_SEAT:\n    _gateway_routes=" not in source
+    assert (
+        'name == "escalate"'
+        not in source[
+            source.index("def select_elastic_review_lane") : source.index("def needs_escalation")
+        ]
+    )
 
 
 def test_ordinary_card_reassigns_only_to_compatible_healthy_lane() -> None:
