@@ -759,6 +759,77 @@ def test_terminal_request_does_not_starve_next_request(
     assert result["request_id"] == second_request["request_id"]
 
 
+def test_reconstruction_failure_records_retry_and_continues_queue(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41)
+    writer = store.Writer(role="scheduler", node="niobe", identity="")
+    first = _card() | {"id": "10000001"}
+    first_request = builder_dispatch.offer(paths, first, ["sk-m", "source-only"], writer=writer)
+    second = _card() | {"id": "20000002"}
+    second_request = builder_dispatch.offer(paths, second, ["sk-m", "source-only"], writer=writer)
+    folded = {"10000001": _folded(id="10000001"), "20000002": _folded(id="20000002")}
+
+    def claim(_self, owner, card_id):
+        folded[card_id].owner = owner
+        folded[card_id].meta = dict(_card()["meta"], _claim_revision="claim-next")
+
+    def materialize(request, workspace):
+        if request["card_id"] == "10000001":
+            raise builder_dispatch.BuilderDispatchError("exact source reconstruction failed")
+        return workspace
+
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda _self, card_id: folded[card_id])
+    monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
+    monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
+    result = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=lambda *_args: SimpleNamespace(pid=43, poll=lambda: None),
+        materializer=materialize,
+    )
+
+    first_status = builder_dispatch._load(
+        builder_dispatch.status_path(paths, "node-ziowk01", first_request["card_id"])
+    )
+    assert first_status["request_id"] == first_request["request_id"]
+    assert first_status["state"] == "failed"
+    assert first_status["attempt"] == 1
+    assert first_status["retryable"] is True
+    assert first_status["claim_released"] is False
+    assert first_status["error"] == "exact source reconstruction failed"
+    assert result["request_id"] == second_request["request_id"]
+    assert result["state"] == "running"
+
+    builder_dispatch.consume_one(paths, tmp_path, "node-ziowk01", materializer=materialize)
+    exhausted = builder_dispatch._load(
+        builder_dispatch.status_path(paths, "node-ziowk01", first_request["card_id"])
+    )
+    assert exhausted["attempt"] == 2
+    assert exhausted["retryable"] is False
+
+
+def test_unexpected_materializer_failure_still_escapes(paths, operator, noded41, tmp_path) -> None:
+    _node(paths, operator, noded41)
+    builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+    )
+
+    with pytest.raises(RuntimeError, match="unexpected materializer failure"):
+        builder_dispatch.consume_one(
+            paths,
+            tmp_path,
+            "node-ziowk01",
+            materializer=lambda *_args: (_ for _ in ()).throw(
+                RuntimeError("unexpected materializer failure")
+            ),
+        )
+
+
 def test_launch_failure_releases_exact_claim_and_retries_once(
     paths, operator, noded41, monkeypatch, tmp_path
 ) -> None:
