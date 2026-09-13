@@ -185,9 +185,17 @@ def restore_projection(
             and item.get("projection_agent") == projection_agent
             and item.get("receipt_sha256") == expected_receipt_sha256
         ]
+        recomputed_receipt_sha256 = (
+            _canonical_sha256(
+                {key: value for key, value in matching[0].items() if key != "receipt_sha256"}
+            )
+            if len(matching) == 1
+            else None
+        )
         if (
             len(matching) != 1
             or matching[0].get("projection_sha256") != expected_quarantine_sha256
+            or recomputed_receipt_sha256 != expected_receipt_sha256
         ):
             raise ValueError("retirement receipt conflict")
         os.replace(source, target)
