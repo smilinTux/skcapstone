@@ -263,3 +263,92 @@ def test_receipt_failure_compensates_rename_without_stranding(tmp_path, monkeypa
     assert hashlib.sha256(source.read_bytes()).hexdigest() == digest
     quarantine = home / "coordination" / "recovery" / "sync-conflict-quarantine"
     assert not (quarantine / source.name).exists()
+
+
+def test_receipt_failure_with_source_collision_keeps_durable_rollback(
+    tmp_path, monkeypatch
+) -> None:
+    """A compensation collision preserves bytes plus a durable rollback receipt."""
+    tool = load_tool()
+    home, source, digest = world(tmp_path)
+    relative = f"coordination/agents/{source.name}"
+    monkeypatch.setattr(tool, "matching_processes", lambda *args: [])
+    original_append = tool._append_conflict_receipt
+    calls = 0
+
+    def fail_final_receipt(*args):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            source.write_text("new occupant", encoding="utf-8")
+            raise OSError("injected post-rename fsync failure")
+        return original_append(*args)
+
+    monkeypatch.setattr(tool, "_append_conflict_receipt", fail_final_receipt)
+
+    assert (
+        tool.main(
+            [
+                "--home",
+                str(home),
+                "--quarantine-malformed",
+                relative,
+                "--expected-sha256",
+                digest,
+                "--actor",
+                "jarvis",
+            ]
+        )
+        == 1
+    )
+    assert source.read_text(encoding="utf-8") == "new occupant"
+    quarantine = home / "coordination" / "recovery" / "sync-conflict-quarantine"
+    assert hashlib.sha256((quarantine / source.name).read_bytes()).hexdigest() == digest
+    receipts = [
+        json.loads(line) for line in (quarantine / "manifest.jsonl").read_text().splitlines()
+    ]
+    assert receipts[-1]["event"] == "prepared"
+    assert receipts[-1]["sha256"] == digest
+    assert "--restore-malformed" in receipts[-1]["rollback_command"]
+
+
+def test_coordination_symlink_swap_cannot_redirect_mutation(tmp_path, monkeypatch) -> None:
+    """Pinned directory descriptors defeat a post-validation symlink swap."""
+    tool = load_tool()
+    home, source, digest = world(tmp_path)
+    relative = f"coordination/agents/{source.name}"
+    outside = tmp_path / "outside"
+    (outside / "agents").mkdir(parents=True)
+    (outside / "recovery" / "sync-conflict-quarantine").mkdir(parents=True)
+    held = home / "coordination-held"
+    monkeypatch.setattr(tool, "matching_processes", lambda *args: [])
+    original_rename = tool.rename_no_replace_at
+    swapped = False
+
+    def swap_then_rename(*args):
+        nonlocal swapped
+        if not swapped:
+            (home / "coordination").rename(held)
+            (home / "coordination").symlink_to(outside, target_is_directory=True)
+            swapped = True
+        return original_rename(*args)
+
+    monkeypatch.setattr(tool, "rename_no_replace_at", swap_then_rename)
+
+    assert (
+        tool.main(
+            [
+                "--home",
+                str(home),
+                "--quarantine-malformed",
+                relative,
+                "--expected-sha256",
+                digest,
+                "--actor",
+                "jarvis",
+            ]
+        )
+        == 0
+    )
+    assert not (outside / "recovery" / "sync-conflict-quarantine" / source.name).exists()
+    assert (held / "recovery" / "sync-conflict-quarantine" / source.name).exists()

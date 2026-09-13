@@ -20,6 +20,7 @@ import os
 import shutil
 import stat
 import sys
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -84,24 +85,100 @@ def matching_processes(*identifiers: str) -> list[str]:
     return matches
 
 
-def rename_no_replace(source: Path, destination: Path) -> None:
-    """Atomically rename source without replacing an existing destination."""
+def rename_no_replace_at(
+    source: str, source_fd: int, destination: str, destination_fd: int
+) -> None:
+    """Atomically rename between pinned directories without replacing."""
     libc = ctypes.CDLL(None, use_errno=True)
     renameat2 = getattr(libc, "renameat2", None)
     if renameat2 is None:
         raise OSError(errno.ENOSYS, "renameat2(RENAME_NOREPLACE) is required")
-    result = renameat2(-100, os.fsencode(source), -100, os.fsencode(destination), 1)
+    result = renameat2(source_fd, os.fsencode(source), destination_fd, os.fsencode(destination), 1)
     if result != 0:
         code = ctypes.get_errno()
-        raise OSError(code, os.strerror(code), str(destination))
+        raise OSError(code, os.strerror(code), destination)
 
 
-def _conflict_receipts(home: Path) -> list[dict]:
-    path = recovery_dir(home) / "manifest.jsonl"
-    if not path.exists():
+def rename_no_replace(source: Path, destination: Path) -> None:
+    """Compatibility wrapper for the legacy absolute-path caller."""
+    rename_no_replace_at(str(source), -100, str(destination), -100)
+
+
+def _open_dir(name: str | Path, parent_fd: int | None = None) -> int:
+    """Open and pin one real directory without following its final component."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    return os.open(name, flags, dir_fd=parent_fd)
+
+
+def _open_or_create_dir(name: str, parent_fd: int) -> int:
+    """Open or create one directory below a pinned parent."""
+    try:
+        return _open_dir(name, parent_fd)
+    except FileNotFoundError:
+        os.mkdir(name, dir_fd=parent_fd)
+        os.fsync(parent_fd)
+        return _open_dir(name, parent_fd)
+
+
+@contextmanager
+def _agent_directories(home: Path):
+    """Yield pinned coordination and agents directories rooted below home."""
+    opened: list[int] = []
+    try:
+        home_fd = _open_dir(home)
+        opened.append(home_fd)
+        coordination_fd = _open_dir("coordination", home_fd)
+        opened.append(coordination_fd)
+        agents_fd = _open_dir("agents", coordination_fd)
+        opened.append(agents_fd)
+        yield coordination_fd, agents_fd
+    finally:
+        for descriptor in reversed(opened):
+            os.close(descriptor)
+
+
+def _open_quarantine(coordination_fd: int) -> tuple[int, int]:
+    """Open or create pinned recovery and quarantine directories."""
+    recovery_fd = _open_or_create_dir("recovery", coordination_fd)
+    try:
+        quarantine_fd = _open_or_create_dir("sync-conflict-quarantine", recovery_fd)
+    except Exception:
+        os.close(recovery_fd)
+        raise
+    return recovery_fd, quarantine_fd
+
+
+@contextmanager
+def _conflict_directories(home: Path):
+    """Yield pinned agents and quarantine directories rooted below home."""
+    with _agent_directories(home) as (coordination_fd, agents_fd):
+        recovery_fd, quarantine_fd = _open_quarantine(coordination_fd)
+        try:
+            yield agents_fd, quarantine_fd
+        finally:
+            os.close(quarantine_fd)
+            os.close(recovery_fd)
+
+
+def _read_at(directory_fd: int, name: str) -> bytes:
+    """Read one regular file through a pinned directory without following links."""
+    descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory_fd)
+    try:
+        chunks = []
+        while chunk := os.read(descriptor, 65536):
+            chunks.append(chunk)
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+def _conflict_receipts(quarantine_fd: int) -> list[dict]:
+    try:
+        content = _read_at(quarantine_fd, "manifest.jsonl").decode("utf-8")
+    except FileNotFoundError:
         return []
     records = []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for number, line in enumerate(content.splitlines(), 1):
         try:
             record = json.loads(line)
         except json.JSONDecodeError as exc:
@@ -112,14 +189,24 @@ def _conflict_receipts(home: Path) -> list[dict]:
     return records
 
 
-def _append_conflict_receipt(home: Path, record: dict) -> None:
-    _conflict_receipts(home)
-    directory = recovery_dir(home)
-    directory.mkdir(parents=True, exist_ok=True)
-    with (directory / "manifest.jsonl").open("a", encoding="utf-8") as stream:
-        stream.write(json.dumps(record, sort_keys=True) + "\n")
-        stream.flush()
-        os.fsync(stream.fileno())
+def _append_conflict_receipt(quarantine_fd: int, record: dict) -> None:
+    """Durably append one receipt through a pinned quarantine directory."""
+    _conflict_receipts(quarantine_fd)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC
+    descriptor = os.open("manifest.jsonl", flags, 0o600, dir_fd=quarantine_fd)
+    start = os.lseek(descriptor, 0, os.SEEK_END)
+    payload = (json.dumps(record, sort_keys=True) + "\n").encode()
+    try:
+        if os.write(descriptor, payload) != len(payload):
+            raise OSError(errno.EIO, "short receipt write")
+        os.fsync(descriptor)
+        os.fsync(quarantine_fd)
+    except Exception:
+        os.ftruncate(descriptor, start)
+        os.fsync(descriptor)
+        raise
+    finally:
+        os.close(descriptor)
 
 
 def quarantine_malformed(home: Path, relative: str, expected: str, actor: str) -> None:
@@ -127,99 +214,103 @@ def quarantine_malformed(home: Path, relative: str, expected: str, actor: str) -
     rel = Path(relative)
     if rel.parts[:2] != ("coordination", "agents") or len(rel.parts) != 3 or rel.is_absolute():
         raise ValueError("path must be coordination/agents/<filename>")
-    validate_directory_chain(home, "coordination")
-    agents = validate_directory_chain(home, "coordination", "agents")
-    validate_directory_chain(home, "coordination", "recovery", "sync-conflict-quarantine")
-    if not agents.is_dir():
-        raise ValueError("coordination projection or recovery directory is unsafe")
-    source = home / rel
-    info = source.lstat()
-    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or source.is_symlink():
-        raise ValueError("source must be one regular, non-symlinked, singly linked file")
-    digest = sha256_of(source)
-    if digest != expected or len(expected) != 64:
-        raise ValueError("source SHA256 changed or is invalid")
-    if CONFLICT_MARKER not in source.name or not source.name.endswith(".json"):
+    filename = rel.name
+    if CONFLICT_MARKER not in filename or not filename.endswith(".json"):
         raise ValueError("source is not a JSON sync-conflict projection")
-    payload = json.loads(source.read_text(encoding="utf-8"))
-    agent = payload.get("agent") if isinstance(payload, dict) else None
-    base = source.name.split(CONFLICT_MARKER, 1)[0]
-    if not isinstance(agent, str) or agent != base or agent == source.stem:
-        raise ValueError("filename/payload mismatch proof failed")
-    task = payload.get("current_task")
-    claims = payload.get("claimed_tasks", [])
-    if task not in (None, "") or claims not in (None, []):
-        raise ValueError("projection carries a live exact generation")
-    if matching_processes(agent, str(task or ""), *(str(item) for item in claims or [])):
-        raise ValueError("matching live process or session exists")
-    destination = recovery_dir(home) / source.name
-    recovery_dir(home).mkdir(parents=True, exist_ok=True)
-    _conflict_receipts(home)
-    final_info = source.lstat()
-    if (final_info.st_dev, final_info.st_ino, final_info.st_size) != (
-        info.st_dev,
-        info.st_ino,
-        info.st_size,
-    ) or sha256_of(source) != expected:
-        raise ValueError("source changed during preflight")
-    rename_no_replace(source, destination)
-    if sha256_of(destination) != expected:
-        rename_no_replace(destination, source)
-        raise ValueError("moved bytes do not match expected SHA256")
-    now = datetime.now(timezone.utc).isoformat()
-    try:
-        _append_conflict_receipt(
-            home,
-            {
-                "event": "moved",
+    with _agent_directories(home) as (coordination_fd, agents_fd):
+        info = os.stat(filename, dir_fd=agents_fd, follow_symlinks=False)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise ValueError("source must be one regular, non-symlinked, singly linked file")
+        content = _read_at(agents_fd, filename)
+        digest = hashlib.sha256(content).hexdigest()
+        if digest != expected or len(expected) != 64:
+            raise ValueError("source SHA256 changed or is invalid")
+        payload = json.loads(content.decode("utf-8"))
+        agent = payload.get("agent") if isinstance(payload, dict) else None
+        base = filename.split(CONFLICT_MARKER, 1)[0]
+        if not isinstance(agent, str) or agent != base or agent == Path(filename).stem:
+            raise ValueError("filename/payload mismatch proof failed")
+        task = payload.get("current_task")
+        claims = payload.get("claimed_tasks", [])
+        if task not in (None, "") or claims not in (None, []):
+            raise ValueError("projection carries a live exact generation")
+        if matching_processes(agent, str(task or ""), *(str(item) for item in claims or [])):
+            raise ValueError("matching live process or session exists")
+        final_info = os.stat(filename, dir_fd=agents_fd, follow_symlinks=False)
+        if (final_info.st_dev, final_info.st_ino, final_info.st_size) != (
+            info.st_dev,
+            info.st_ino,
+            info.st_size,
+        ) or hashlib.sha256(_read_at(agents_fd, filename)).hexdigest() != expected:
+            raise ValueError("source changed during preflight")
+        recovery_fd, quarantine_fd = _open_quarantine(coordination_fd)
+        try:
+            _conflict_receipts(quarantine_fd)
+            now = datetime.now(timezone.utc).isoformat()
+            receipt = {
+                "event": "prepared",
                 "actor": actor,
                 "moved_at": now,
                 "original_path": relative,
-                "quarantine_path": str(destination.relative_to(home)),
-                "filename": source.name,
+                "quarantine_path": (f"coordination/recovery/sync-conflict-quarantine/{filename}"),
+                "filename": filename,
                 "sha256": digest,
                 "bytes": info.st_size,
                 "rollback_command": (
                     f"skfleet-projection-retire --home {home} "
-                    f"--restore-malformed {source.name} "
+                    f"--restore-malformed {filename} "
                     f"--expected-sha256 {digest} --actor {actor}"
                 ),
-            },
-        )
-    except Exception:
-        rename_no_replace(destination, source)
-        raise
+            }
+            _append_conflict_receipt(quarantine_fd, receipt)
+            rename_no_replace_at(filename, agents_fd, filename, quarantine_fd)
+            if hashlib.sha256(_read_at(quarantine_fd, filename)).hexdigest() != expected:
+                rename_no_replace_at(filename, quarantine_fd, filename, agents_fd)
+                raise ValueError("moved bytes do not match expected SHA256")
+            try:
+                _append_conflict_receipt(quarantine_fd, {**receipt, "event": "moved"})
+            except Exception:
+                try:
+                    rename_no_replace_at(filename, quarantine_fd, filename, agents_fd)
+                except OSError as compensation_error:
+                    if compensation_error.errno != errno.EEXIST:
+                        raise
+                raise
+        finally:
+            os.close(quarantine_fd)
+            os.close(recovery_fd)
 
 
 def restore_malformed(home: Path, filename: str, expected: str, actor: str) -> None:
     """Restore one quarantined projection against its durable receipt."""
-    validate_directory_chain(home, "coordination")
-    validate_directory_chain(home, "coordination", "agents")
-    validate_directory_chain(home, "coordination", "recovery", "sync-conflict-quarantine")
     if Path(filename).name != filename:
         raise ValueError("restore filename or recovery directory is unsafe")
-    records = [r for r in _conflict_receipts(home) if r.get("filename") == filename]
-    if not records or records[-1].get("event") != "moved" or records[-1].get("sha256") != expected:
-        raise ValueError("no matching active rollback receipt")
-    record = records[-1]
-    source = recovery_dir(home) / filename
-    destination = home / str(record["original_path"])
-    agents = home / "coordination" / "agents"
-    if destination.parent != agents or agents.is_symlink() or not agents.is_dir():
-        raise ValueError("rollback destination is outside coordination/agents")
-    if sha256_of(source) != expected:
-        raise ValueError("quarantine SHA256 changed")
-    rename_no_replace(source, destination)
-    _append_conflict_receipt(
-        home,
-        {
-            "event": "restored",
-            "actor": actor,
-            "filename": filename,
-            "sha256": expected,
-            "restored_at": datetime.now(timezone.utc).isoformat(),
-        },
-    )
+    with _conflict_directories(home) as (agents_fd, quarantine_fd):
+        records = [
+            record
+            for record in _conflict_receipts(quarantine_fd)
+            if record.get("filename") == filename
+        ]
+        if (
+            not records
+            or records[-1].get("event") not in ("prepared", "moved")
+            or records[-1].get("sha256") != expected
+            or records[-1].get("original_path") != f"coordination/agents/{filename}"
+        ):
+            raise ValueError("no matching active rollback receipt")
+        if hashlib.sha256(_read_at(quarantine_fd, filename)).hexdigest() != expected:
+            raise ValueError("quarantine SHA256 changed")
+        rename_no_replace_at(filename, quarantine_fd, filename, agents_fd)
+        _append_conflict_receipt(
+            quarantine_fd,
+            {
+                "event": "restored",
+                "actor": actor,
+                "filename": filename,
+                "sha256": expected,
+                "restored_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
 
 
 def parse_last_seen(value: object) -> datetime | None:
