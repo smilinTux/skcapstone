@@ -236,6 +236,20 @@ def _patch_finalize_dependencies(module, monkeypatch, tmp_path, values, evidence
 
 def _run_main_with_flaky_release(monkeypatch, tmp_path, failures, evidence):
     module, store, projection, values = _terminal_board_setup(tmp_path)
+    store.append_event(
+        values.card,
+        "claim",
+        values.owner,
+        owner=values.owner,
+        claim_revision=values.claim_revision,
+    )
+    store.append_event(
+        values.card,
+        "link",
+        values.owner,
+        link_key="evidence",
+        link_value="synthetic-evidence.md",
+    )
     flaky, state = make_flaky_board(failures=failures)
     monkeypatch.setattr("skcoord.coordination.Board", flaky)
     idle_calls = _patch_finalize_dependencies(module, monkeypatch, tmp_path, values, evidence)
