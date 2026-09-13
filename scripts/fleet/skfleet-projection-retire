@@ -45,6 +45,18 @@ def recovery_dir(home: Path) -> Path:
     return home / "coordination" / "recovery" / "sync-conflict-quarantine"
 
 
+def validate_directory_chain(home: Path, *parts: str) -> Path:
+    """Resolve no links while validating every directory below home."""
+    current = home
+    if current.is_symlink() or not current.is_dir():
+        raise ValueError("--home must be a real directory")
+    for part in parts:
+        current = current / part
+        if current.exists() and (current.is_symlink() or not current.is_dir()):
+            raise ValueError(f"unsafe intermediate coordination directory: {part}")
+    return current
+
+
 def matching_processes(*identifiers: str) -> list[str]:
     """Return live process command lines matching an exact projection identity."""
     wanted = tuple(value for value in identifiers if value)
@@ -115,8 +127,10 @@ def quarantine_malformed(home: Path, relative: str, expected: str, actor: str) -
     rel = Path(relative)
     if rel.parts[:2] != ("coordination", "agents") or len(rel.parts) != 3 or rel.is_absolute():
         raise ValueError("path must be coordination/agents/<filename>")
-    agents = home / "coordination" / "agents"
-    if agents.is_symlink() or not agents.is_dir() or recovery_dir(home).is_symlink():
+    validate_directory_chain(home, "coordination")
+    agents = validate_directory_chain(home, "coordination", "agents")
+    validate_directory_chain(home, "coordination", "recovery", "sync-conflict-quarantine")
+    if not agents.is_dir():
         raise ValueError("coordination projection or recovery directory is unsafe")
     source = home / rel
     info = source.lstat()
@@ -153,28 +167,36 @@ def quarantine_malformed(home: Path, relative: str, expected: str, actor: str) -
         rename_no_replace(destination, source)
         raise ValueError("moved bytes do not match expected SHA256")
     now = datetime.now(timezone.utc).isoformat()
-    _append_conflict_receipt(
-        home,
-        {
-            "event": "moved",
-            "actor": actor,
-            "moved_at": now,
-            "original_path": relative,
-            "quarantine_path": str(destination.relative_to(home)),
-            "filename": source.name,
-            "sha256": digest,
-            "bytes": info.st_size,
-            "rollback_command": (
-                f"skfleet-projection-retire --home {home} --restore-malformed {source.name} "
-                f"--expected-sha256 {digest} --actor {actor}"
-            ),
-        },
-    )
+    try:
+        _append_conflict_receipt(
+            home,
+            {
+                "event": "moved",
+                "actor": actor,
+                "moved_at": now,
+                "original_path": relative,
+                "quarantine_path": str(destination.relative_to(home)),
+                "filename": source.name,
+                "sha256": digest,
+                "bytes": info.st_size,
+                "rollback_command": (
+                    f"skfleet-projection-retire --home {home} "
+                    f"--restore-malformed {source.name} "
+                    f"--expected-sha256 {digest} --actor {actor}"
+                ),
+            },
+        )
+    except Exception:
+        rename_no_replace(destination, source)
+        raise
 
 
 def restore_malformed(home: Path, filename: str, expected: str, actor: str) -> None:
     """Restore one quarantined projection against its durable receipt."""
-    if Path(filename).name != filename or recovery_dir(home).is_symlink():
+    validate_directory_chain(home, "coordination")
+    validate_directory_chain(home, "coordination", "agents")
+    validate_directory_chain(home, "coordination", "recovery", "sync-conflict-quarantine")
+    if Path(filename).name != filename:
         raise ValueError("restore filename or recovery directory is unsafe")
     records = [r for r in _conflict_receipts(home) if r.get("filename") == filename]
     if not records or records[-1].get("event") != "moved" or records[-1].get("sha256") != expected:
