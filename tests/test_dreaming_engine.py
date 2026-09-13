@@ -146,3 +146,44 @@ class TestCallOllama:
 
         monkeypatch.setattr(d.http.client, "HTTPConnection", Bad)
         assert _bare_engine(DreamingConfig())._call_ollama("x") is None
+
+
+# --------------------------------------------------------------------------- #
+# Agent-name resolution guard
+# --------------------------------------------------------------------------- #
+class TestAgentNameGuard:
+    """An unresolvable agent name must fail fast, not silently use ``agents/``.
+
+    Regression: when SKCAPSTONE_AGENT was empty and no agent could be detected,
+    ``_agent_name`` fell back to ``""``. Every path then collapsed one level -
+    ``home/agents//memory/dream-log.json`` became ``home/agents/memory/...`` -
+    so ``cooldown_remaining()`` and ``_dreams_today()`` read a phantom file that
+    never existed, reported "no cooldown, no dreams today", and let the engine
+    run the full LLM cycle on *every* 15-minute scheduler tick. Each of those
+    ticks then died deep inside skmemory with the opaque
+    "No valid registered memory profile is available", because ``agent=""`` is
+    not a registered profile. 1864 consecutive failures were logged this way.
+    """
+
+    def test_empty_agent_name_raises(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SKCAPSTONE_AGENT", "")
+        monkeypatch.setattr("skcapstone.active_agent_name", lambda: None)
+        try:
+            DreamingEngine(home=tmp_path)
+        except ValueError as exc:
+            assert "agent" in str(exc).lower()
+        else:
+            raise AssertionError("expected ValueError for unresolvable agent name")
+
+    def test_explicit_agent_name_is_used(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SKCAPSTONE_AGENT", "lumina")
+        engine = DreamingEngine(home=tmp_path)
+        assert engine._agent_name == "lumina"
+        # The agent segment must be present - never collapsed away.
+        assert engine._log_path == tmp_path / "agents" / "lumina" / "memory" / "dream-log.json"
+
+    def test_falls_back_to_detected_agent(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SKCAPSTONE_AGENT", raising=False)
+        monkeypatch.setattr("skcapstone.active_agent_name", lambda: "jarvis")
+        engine = DreamingEngine(home=tmp_path)
+        assert engine._agent_name == "jarvis"
