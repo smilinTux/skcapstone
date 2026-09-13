@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Builder dispatch binds transient `_request_matches_current_card` mismatches to the exact offered request generation with a bounded re-fold. Durable mismatch and source-reconstruction failures stay non-fatal to sknoded and do not consume a launch attempt until process creation begins.
+
 - Builder dispatch now releases the prior exact claim and blocks without
   launching when a changed offer supersedes persisted status for the same card.
 
