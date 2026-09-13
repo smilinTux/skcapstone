@@ -75,24 +75,24 @@ backends:
 
 ### pi (`~/.pi/agent/models.json`)
 
-Pi's local SKGateway catalog is a cache of the gateway's currently advertised
-`/v1/models` inventory. Workers and interactive Herdr Pi sessions must only
-select routes that the live gateway still advertises. A stale served-model name
+Pi's local SKGateway catalog is a cache of currently advertised **healthy
+logical** routes (`sk-s`..`sk-xl`) from the gateway inventory. Workers and
+interactive Herdr Pi sessions must only select those routes. Concrete served
+model names and undersized downgrades are refused. A stale served-model name
 left in `models.json` or `settings.json` `defaultModel` after a gateway
-revision or inventory change fails closed with HTTP 404 `unknown_model` before
-claim.
+revision or inventory/health fingerprint change fails closed with HTTP 404
+`unknown_model` before claim.
 
-`skfleet-pi-model-catalog.py --apply` owns that boundary. It reads
-`SKFLEET_GATEWAY_URL` (no hardcoded host target), replaces
-`providers.skgateway.models` with currently advertised routes, records the
-gateway revision and inventory fingerprint under `skfleet_catalog_sync`, and
-invalidates removed served-model entries when either changes. If
-`defaultModel` is absent from the current inventory, it falls back across
-policy-compatible logical size capacity (`sk-s` → `sk-m` → `sk-l` → `sk-xl`)
-without naming concrete served models in the product contract. Unrelated
-provider fields are preserved. The catalog and settings files must be
-current-user mode-0600 regular files; writes are atomic. Run without `--apply`
-as the post-install drift check.
+`skfleet-pi-model-catalog.py --apply` owns that boundary. It requires
+`SKFLEET_GATEWAY_URL` and `--gateway-revision` (no hardcoded host target),
+reads `/v1/models`, `/health`, and `/queue`, keeps only healthy logical size
+routes, records revision plus a fingerprint over route metadata and health,
+and invalidates removed entries when either changes. If `defaultModel` is
+absent, non-logical, or below the required size floor, it falls forward across
+`sk-s` → `sk-m` → `sk-l` → `sk-xl` without ever downgrading. Unrelated provider
+fields are preserved. The catalog and settings files must be current-user
+mode-0600 regular files; writes are atomic. Run without `--apply` as the
+post-install drift check.
 
 #### Five-host installation contract
 
@@ -117,9 +117,10 @@ For each host, the installer must perform these steps in order:
    failure stops installation on that host.
 3. Invoke `skfleet-pi-model-catalog.py --apply` and verify a subsequent
    read-only invocation reports the catalog current. The reconciler keeps only
-   currently advertised gateway routes, invalidates stale served-model names
-   after gateway revision or inventory changes, and repairs a stale
-   `defaultModel` onto policy-compatible size capacity.
+   currently advertised healthy logical routes, refuses concrete served-model
+   IDs and size downgrades, invalidates stale entries after gateway revision or
+   health/metadata fingerprint changes, and repairs a stale `defaultModel`
+   onto policy-compatible size capacity.
 4. Only after reconciliation succeeds, install or activate the alias-selecting
    launcher and verify its exact host-specific expected hash.
 
