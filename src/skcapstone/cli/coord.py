@@ -620,6 +620,80 @@ def register_coord_commands(main: click.Group) -> None:
         outcome = "Released" if changed else "Already released"
         console.print(f"\n  [green]{outcome} claim on {task_id} owned by {owner}.[/]\n")
 
+    @coord.command("retire-ownerless-projection")
+    @click.argument("task_id")
+    @click.option("--projection-agent", required=True)
+    @click.option("--expected-card-sha256", required=True)
+    @click.option("--expected-projection-sha256", required=True)
+    @click.option("--agent", required=True, help="Audited retirement actor.")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    def coord_retire_ownerless_projection(
+        task_id,
+        projection_agent,
+        expected_card_sha256,
+        expected_projection_sha256,
+        agent,
+        home,
+    ):
+        """Reversibly quarantine one exact stale ownerless projection."""
+        from ..projection_retirement import retire_projection
+
+        validate_task_id(task_id)
+        validate_agent_name(projection_agent)
+        validate_agent_name(agent)
+        try:
+            receipt = retire_projection(
+                Path(home).expanduser(),
+                task_id=task_id,
+                projection_agent=projection_agent,
+                expected_card_sha256=expected_card_sha256,
+                expected_projection_sha256=expected_projection_sha256,
+                actor=agent,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from None
+        console.print(
+            json.dumps(
+                {
+                    "projection_agent": receipt.projection_agent,
+                    "quarantined_path": str(receipt.quarantined_path),
+                    "projection_sha256": receipt.projection_sha256,
+                    "receipt_sha256": receipt.receipt_sha256,
+                },
+                indent=2,
+            )
+        )
+
+    @coord.command("restore-retired-projection")
+    @click.argument("projection_agent")
+    @click.option("--expected-quarantine-sha256", required=True)
+    @click.option("--expected-receipt-sha256", required=True)
+    @click.option("--agent", required=True, help="Audited restore actor.")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    def coord_restore_retired_projection(
+        projection_agent,
+        expected_quarantine_sha256,
+        expected_receipt_sha256,
+        agent,
+        home,
+    ):
+        """Restore one exact hash-fenced retired projection."""
+        from ..projection_retirement import restore_projection
+
+        validate_agent_name(projection_agent)
+        validate_agent_name(agent)
+        try:
+            restored = restore_projection(
+                Path(home).expanduser(),
+                projection_agent=projection_agent,
+                expected_quarantine_sha256=expected_quarantine_sha256,
+                expected_receipt_sha256=expected_receipt_sha256,
+                actor=agent,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from None
+        console.print(json.dumps({"restored_path": str(restored)}, indent=2))
+
     @coord.command("score")
     @click.argument("task_id")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
