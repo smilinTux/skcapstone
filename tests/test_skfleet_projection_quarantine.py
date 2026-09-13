@@ -198,3 +198,68 @@ def test_restore_refuses_original_path_collision(tmp_path, monkeypatch) -> None:
         == 1
     )
     assert source.read_text() == "new occupant"
+
+
+def test_quarantine_refuses_intermediate_coordination_symlink(tmp_path, monkeypatch) -> None:
+    """An intermediate coordination symlink cannot redirect containment."""
+    tool = load_tool()
+    home = tmp_path / ".skcapstone"
+    outside = tmp_path / "outside"
+    agents = outside / "agents"
+    agents.mkdir(parents=True)
+    home.mkdir()
+    (home / "coordination").symlink_to(outside, target_is_directory=True)
+    source = agents / "worker.sync-conflict-20260912-010203-DEVICE.json"
+    source.write_text('{"agent":"worker","current_task":null,"claimed_tasks":[]}\n')
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    monkeypatch.setattr(tool, "matching_processes", lambda *args: [])
+
+    assert (
+        tool.main(
+            [
+                "--home",
+                str(home),
+                "--quarantine-malformed",
+                f"coordination/agents/{source.name}",
+                "--expected-sha256",
+                digest,
+                "--actor",
+                "jarvis",
+            ]
+        )
+        == 1
+    )
+    assert source.exists()
+    assert not (outside / "recovery").exists()
+
+
+def test_receipt_failure_compensates_rename_without_stranding(tmp_path, monkeypatch) -> None:
+    """A failed durable receipt atomically restores the exact source."""
+    tool = load_tool()
+    home, source, digest = world(tmp_path)
+    relative = f"coordination/agents/{source.name}"
+    monkeypatch.setattr(tool, "matching_processes", lambda *args: [])
+    monkeypatch.setattr(
+        tool,
+        "_append_conflict_receipt",
+        lambda *args: (_ for _ in ()).throw(OSError("injected fsync failure")),
+    )
+
+    assert (
+        tool.main(
+            [
+                "--home",
+                str(home),
+                "--quarantine-malformed",
+                relative,
+                "--expected-sha256",
+                digest,
+                "--actor",
+                "jarvis",
+            ]
+        )
+        == 1
+    )
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == digest
+    quarantine = home / "coordination" / "recovery" / "sync-conflict-quarantine"
+    assert not (quarantine / source.name).exists()
