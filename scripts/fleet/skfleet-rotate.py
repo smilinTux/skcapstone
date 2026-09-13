@@ -46,6 +46,7 @@ from skcapstone.review_admission import (
     qualified_reviewer_seats,
 )
 from skcapstone.fleet.review_pool import elastic_reviewer_identity, review_fanout_limit
+from skcapstone.fleet.search_bound import search_policy_block, enforce_search_policy, LIVE_EVIDENCE_SHA256
 from skcapstone.estate import (
     EstateConfigError,
     estate_authority_host,
@@ -5624,6 +5625,10 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
       "If the card needs no repository change, say so explicitly in your verdict so the\n"
       "absence of a PR is a recorded decision rather than an omission.\n"
       "- Never use an em dash or en dash.\n")
+    # Card f96b1fd2: bound worker filesystem searches. The policy text is a
+    # shared invariant prefix (cacheable) and is fail-closed-validated by
+    # skcapstone.fleet.search_bound.enforce_search_policy before a brief ships.
+    _RAILS += search_policy_block()
     brief=_RAILS + ("Work only SKCapstone card %s. The fleet selector has already claimed it "
       "for your exact agent identity. Verify that ownership before working and never "
       "claim or substitute another card. If ownership is absent, or a dependency is "
@@ -5674,6 +5679,12 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         continue
     _review_recommendation = None
     _review_handoff = None
+    # Card f96b1fd2: fail-closed search-boundary gate. A brief that does not
+    # forbid unbounded root/home searches is a regression; reject it before it
+    # is ever written to disk or handed to a worker.
+    if not enforce_search_policy(brief):
+        log(d,"BRIEF_SEARCH_POLICY_MISSING|%s|%s"%(HOST,cid))
+        continue
     bf=os.path.join(logdir,"brief-%s.txt"%cid); open(bf,"w").write(brief)
     lf=os.path.join(logdir,"%s-%s.log"%(cid,STAMP))
     # Last-moment re-check through the same fold that built the pool.
