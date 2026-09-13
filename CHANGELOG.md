@@ -6,6 +6,21 @@
   repositories instead of imposing SKCapstone's Python check names. Missing,
   partial, non-success, and stale hosted evidence still fail closed.
 
+- Card `353e53d2`: the lifecycle seat manifest audit
+  (`scripts/fleet/seat-manifest-audit.py`) now validates the documented
+  canonical seat schema (`sk.lifecycle-seat/v1`) instead of three obsolete
+  fields. The Link activation preflight had reported 18 false findings (3 per
+  seat) because the audit required `mail_protocol.read_all_recipient` (the
+  canonical field is `read_direct_and_all`), a `model_policy` block (canonical
+  manifests carry top-level `model_route`/`model_profile`), and a
+  `card_contract` block no canonical manifest carries. The audit now checks
+  the documented mailbox, logical route, and lifecycle fields
+  (`read_direct_and_all`, `model_route`/`model_profile` with card-scoped
+  opt-in escalation, `schema`, `activation_state`, `safe_retirement`,
+  `lifecycle_beat`) and still fails closed for genuinely missing
+  requirements. Identity, estate, duplicate-fingerprint, and required-file
+  checks are unchanged. Read-only toward operator manifests.
+
 - Builder dispatch now releases the prior exact claim and blocks without
   launching when a changed offer supersedes persisted status for the same card.
 
