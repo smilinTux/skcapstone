@@ -11,10 +11,12 @@
   recommendation, and launch admission; exact governed-review claim release
   restores review while a later explicit backlog move suspends dispatch.
 
-- Card `e058c2c8`: add a host-neutral workspace-runtime orchestration seam that
-  composes `fleet.capacity.admit_headroom` with exact claim/unit mapping,
-  isolated path planning, successor occupancy checks, and terminal-only Herdr
-  generation reclaim selection, without host or model contract bindings.
+- Card `e058c2c8`: add a host-neutral workspace-runtime bootstrap seam that
+  atomically admits under a registry lock using live meminfo and exact
+  per-bucket occupancy via `fleet.capacity.admit_headroom`, then registers
+  isolated path plans with exact claim/unit mapping, successor checks, and
+  terminal-only Herdr generation reclaim selection, without host or model
+  contract bindings.
 
 - Card `d49c82a1`: bound stale source-ref probes so selectable Niobe
   candidates cannot consume the cycle deadline, and terminate and reap the

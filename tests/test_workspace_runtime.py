@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -12,10 +13,13 @@ from skcapstone.fleet.workspace_runtime import (
     activate_successor,
     admit_capacity,
     advertise_runtime,
+    create_isolated_workspace,
     exact_claim_unit_mapping,
     herdr_generation,
+    list_bindings,
     plan_isolated_workspace,
     retire_binding,
+    retire_workspace,
     select_herdr_reclaims,
     worker_unit_name,
 )
@@ -34,16 +38,14 @@ def _meminfo(
     )
 
 
-def _binding(tmp_path: Path, card: str = "e058c2c8", rev: str = "rev-aaaaaaaaaaaa") -> object:
-    return plan_isolated_workspace(
-        workspaces_root=tmp_path / "workspaces",
-        card_id=card,
-        claim_revision=rev,
-        owner="worker-a",
-        lane="codex",
-        bucket="M",
-        base_revision="a" * 40,
-        shared_checkouts=[tmp_path / "shared"],
+def _advert(tmp_path: Path, **buckets: int):
+    root = tmp_path / "workspaces"
+    root.mkdir(exist_ok=True)
+    return advertise_runtime(
+        workspaces_root=root,
+        buckets=buckets or {"M": 2},
+        mem_reserve_kb=1_000,
+        swap_reserve_kb=100,
     )
 
 
@@ -143,6 +145,63 @@ def test_admission_fails_closed_on_unsafe_memory_swap_and_capacity() -> None:
     )
 
 
+def test_bootstrap_refuses_unsafe_headroom_before_registration(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    advert = _advert(tmp_path, M=2)
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text(_meminfo(available=10), encoding="utf-8")
+    with pytest.raises(WorkspaceRuntimeError, match="unsafe-memory"):
+        create_isolated_workspace(
+            home,
+            advertisement=advert,
+            card_id="e058c2c8",
+            claim_revision="rev-aaaaaaaaaaaa",
+            owner="worker-a",
+            lane="codex",
+            bucket="M",
+            base_revision="a" * 40,
+            meminfo_path=meminfo,
+        )
+    assert list_bindings(home) == []
+
+
+def test_concurrent_same_bucket_bootstrap_cannot_exceed_capacity(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    advert = _advert(tmp_path, M=1)
+    safe = _meminfo()
+
+    def attempt(card: str, rev: str) -> object:
+        return create_isolated_workspace(
+            home,
+            advertisement=advert,
+            card_id=card,
+            claim_revision=rev,
+            owner=f"owner-{card}",
+            lane="codex",
+            bucket="M",
+            base_revision="a" * 40,
+            meminfo_reader=lambda: safe,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(attempt, "aaaaaaa1", "rev-oneeeeeeee"),
+            pool.submit(attempt, "aaaaaaa2", "rev-twooooooooo"),
+        ]
+        results = []
+        for future in futures:
+            try:
+                results.append(future.result(timeout=30))
+            except WorkspaceRuntimeError as exc:
+                results.append(exc)
+    successes = [row for row in results if not isinstance(row, Exception)]
+    failures = [row for row in results if isinstance(row, Exception)]
+    assert len(successes) == 1
+    assert len(failures) == 1
+    assert "admission refused" in str(failures[0])
+    assert list_bindings(home) == successes
+
+
 def test_exact_claim_unit_mapping() -> None:
     assert exact_claim_unit_mapping(
         card_id="e058c2c8",
@@ -161,44 +220,51 @@ def test_exact_claim_unit_mapping() -> None:
 
 
 def test_concurrency_occupancy_and_rollback_successor(tmp_path: Path) -> None:
-    first = _binding(tmp_path)
-    second_plan = plan_isolated_workspace(
-        workspaces_root=tmp_path / "workspaces",
+    home = tmp_path / "home"
+    advert = _advert(tmp_path, M=2, S=2)
+    first = create_isolated_workspace(
+        home,
+        advertisement=advert,
+        card_id="e058c2c8",
+        claim_revision="rev-aaaaaaaaaaaa",
+        owner="worker-a",
+        lane="codex",
+        bucket="M",
+        base_revision="a" * 40,
+        meminfo_reader=lambda: _meminfo(),
+    )
+    second = create_isolated_workspace(
+        home,
+        advertisement=advert,
         card_id="feedbeef",
         claim_revision="rev-oneeeeeeee",
         owner="owner-1",
         lane="codex",
         bucket="S",
         base_revision="c" * 40,
-        occupied=[first],
+        meminfo_reader=lambda: _meminfo(),
     )
-    # Only one binding per card: a racing second plan for the same card fails.
-    with pytest.raises(WorkspaceRuntimeError, match="card already"):
-        plan_isolated_workspace(
-            workspaces_root=tmp_path / "workspaces",
-            card_id="e058c2c8",
-            claim_revision="rev-twooooooooo",
-            owner="owner-2",
-            lane="codex",
-            bucket="S",
-            base_revision="c" * 40,
-            occupied=[first, second_plan],
-        )
     with pytest.raises(WorkspaceRuntimeError, match="successor blocked"):
-        activate_successor(previous=first, next_binding=first, occupied=[first])
-    cleared = retire_binding(first, [first, second_plan])
-    assert cleared == [second_plan]
-    successor = plan_isolated_workspace(
-        workspaces_root=tmp_path / "workspaces",
+        activate_successor(previous=first, next_binding=first, occupied=list_bindings(home))
+    retire_workspace(home, first)
+    cleared = retire_binding(first, [first, second])
+    assert cleared == [second]
+    successor = create_isolated_workspace(
+        home,
+        advertisement=advert,
         card_id="e058c2c8",
         claim_revision="rev-newnewnewnew",
         owner="owner-3",
         lane="codex",
         bucket="M",
         base_revision="a" * 40,
-        occupied=cleared,
+        meminfo_reader=lambda: _meminfo(),
     )
-    activate_successor(previous=first, next_binding=successor, occupied=[*cleared, successor])
+    activate_successor(
+        previous=first,
+        next_binding=successor,
+        occupied=list_bindings(home),
+    )
 
 
 def test_source_module_has_no_literal_host_or_model_bindings() -> None:
