@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-
 ROTATE = Path(__file__).parents[1] / "scripts" / "fleet" / "skfleet-rotate.py"
 
 
@@ -15,8 +14,7 @@ def _search_instructions() -> str:
     node = next(
         item
         for item in tree.body
-        if isinstance(item, ast.FunctionDef)
-        and item.name == "_worker_search_instructions"
+        if isinstance(item, ast.FunctionDef) and item.name == "_worker_search_instructions"
     )
     namespace: dict[str, object] = {}
     exec(compile(ast.Module([node], []), str(ROTATE), "exec"), namespace)
