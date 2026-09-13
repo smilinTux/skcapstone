@@ -5257,13 +5257,7 @@ _elastic_limit = review_fanout_limit(
     ),
     REVIEW_MAXIMUM,
 )
-_elastic_ids = {row[2] for row in _elastic_rows[:_elastic_limit]}
-pool = [
-    row
-    for row in pool
-    if not _POOL_V2_ADMISSIONS[row[2]].get("elastic_review_admitted")
-    or row[2] in _elastic_ids
-]
+elastic_launch_remaining = _elastic_limit
 for _source_head in sorted(_DUPLICATE_SERAPH_SOURCE_HEADS):
     log(
         d,
@@ -5577,10 +5571,12 @@ while _i<len(owned) and _i<len(_candidate_scan):
         _card_lane_health["codex"]=(
             remaining.get("codex",0)>0,"review-route-capacity")
     if _elastic_review:
+        _elastic_available = min(remaining.get("codex", 0), elastic_launch_remaining)
         _card_lane_health["codex"]=(
-            remaining.get("codex",0)>0,"review-route-capacity")
+            _elastic_available>0,"review-route-capacity")
     _selection_remaining=(
-        {name:slots if name=="codex" else 0 for name,slots in remaining.items()}
+        {name:_elastic_available if name=="codex" else 0
+         for name in remaining}
         if _elastic_review else remaining)
     _lane_name,_defer=select_compatible_lane(
         _labels,_esc,lane_order,_selection_remaining,qwen_suitable(_card[3]),_qwen_exclusive,
@@ -5741,16 +5737,20 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
                 str(label).strip().lower() for label in _labels} else None)
         _attempt_health["codex"]=(
             bool(_producer_routes),"gateway-route-capacity" if _producer_routes else "unknown")
+    _elastic_review = _POOL_V2_ADMISSIONS.get(cid, {}).get("elastic_review_admitted") is True
     _review_seat=governed_review_seat(
         _labels,
         qualified_reviewer_seats(core),
     )
     if _review_seat is not None:
+        _elastic_available = min(
+            launch_remaining.get("codex", 0), elastic_launch_remaining
+        ) if _elastic_review else launch_remaining.get("codex", 0)
         _attempt_health["codex"]=(
-            launch_remaining.get("codex",0)>0,"review-route-capacity")
-    _elastic_review = _POOL_V2_ADMISSIONS.get(cid, {}).get("elastic_review_admitted") is True
+            _elastic_available>0,"review-route-capacity")
     _attempt_remaining = (
-        {name: slots if name == "codex" else 0 for name, slots in launch_remaining.items()}
+        {name: _elastic_available if name == "codex" else 0
+         for name in launch_remaining}
         if _elastic_review else launch_remaining
     )
     _attempt_lane_name,_attempt_defer=select_compatible_lane(
@@ -5926,6 +5926,8 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         log(d,"WOULD_LAUNCH|%s|%s|%s|lane=%s|model=%s|%s"%(HOST,sess,cid,_LANE["name"],model,str(core.get("title"))[:40]))
         launched+=1
         launch_remaining[_LANE["name"]]-=1
+        if _elastic_review:
+            elastic_launch_remaining-=1
         continue
     _review_recommendation = None
     _review_handoff = None
@@ -6273,6 +6275,8 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     else:
         launched+=1
         launch_remaining[_LANE["name"]]-=1
+        if _elastic_review:
+            elastic_launch_remaining-=1
         if _route_identity.get("capacity_domains"):
             _domain=_route_identity["capacity_domains"][0]
             _review_route_reservations[_domain]=(

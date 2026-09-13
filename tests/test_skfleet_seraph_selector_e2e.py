@@ -658,7 +658,11 @@ def test_generic_niobe_launches_seraph_review_through_codex(tmp_path: Path) -> N
     )
     _executable(
         fake_bin / "systemctl",
-        'if [ "$1" = "--user" ] && [ "$2" = "list-units" ]; then exit 0; fi\nexit 1',
+        'if [ "$1" = "--user" ] && [ "$2" = "list-units" ]; then\n'
+        '  printf "%s\\n" "skfleet-worker-codex-deadbeef.service loaded active running"\n'
+        "  exit 0\n"
+        "fi\n"
+        "exit 1",
     )
     _executable(fake_bin / "systemd-run", f'printf "%s\\n" "$@" >> {launch_argv}')
     skc = home / ".skenv" / "bin" / "skcapstone"
@@ -708,7 +712,7 @@ print(output.getvalue(), end="")
             "SKFLEET_ESC_TARGET": "0",
             "SKFLEET_CODEX_PHYSICAL_LIMIT": "3",
             "SKFLEET_MAX_LAUNCH": "1",
-            "SKFLEET_REVIEW_MAXIMUM": "3",
+            "SKFLEET_REVIEW_MAXIMUM": "2",
             "SKFLEET_PI_CARDSTORE_GUARD": str(
                 ROOT / "scripts" / "fleet" / "pi-cardstore-guard.mjs"
             ),
@@ -748,6 +752,9 @@ print(output.getvalue(), end="")
     assert completed.stdout.count(launch) == 1
     assert completed.stdout.index(first_blocked) < completed.stdout.index(second_blocked)
     assert completed.stdout.index(second_blocked) < completed.stdout.index(launch)
+    assert "CYCLE_RECEIPT|chiap08|seat=niobe|launched=1|attempted=3|receipts=1" in (
+        completed.stdout
+    )
     assert "SKIPPED_LOGICAL_ROUTE_RACE" not in completed.stdout
     assert "LANE_DEFER|" not in completed.stdout
     assert elapsed < 15

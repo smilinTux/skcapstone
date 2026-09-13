@@ -99,3 +99,16 @@ def test_first_pass_elastic_review_uses_codex_health_and_capacity_only() -> None
     assert '_card_lane_health["codex"]=(' in block
     assert 'remaining.get("codex",0)>0,"review-route-capacity"' in block
     assert "if _elastic_review else remaining" in block
+
+
+def test_elastic_review_limit_counts_successes_not_preflight_candidates() -> None:
+    source = ROTATE.read_text(encoding="utf-8")
+
+    assert "_elastic_rows[:_elastic_limit]" not in source
+    assert "elastic_launch_remaining = _elastic_limit" in source
+    assert source.count('min(remaining.get("codex", 0), elastic_launch_remaining)') == 1
+    assert source.count("elastic_launch_remaining-=1") == 2
+
+    workspace_block = source.index('log(d,"WORKSPACE_BLOCKED|')
+    successful_launch = source.index("elastic_launch_remaining-=1", workspace_block)
+    assert successful_launch > source.index("else:\n        launched+=1", workspace_block)
