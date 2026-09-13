@@ -1410,10 +1410,18 @@ _SIZE_MODELS={key:(os.environ.get("SKFLEET_MODEL_"+key)
                    or os.environ.get("SKFLEET_CODEX_MODEL_"+key)
                    or value).strip() or value
               for key,value in _SIZE_MODEL_DEFAULTS.items()}
-def _logical_route_for(core):
+def _size_class_for(core, labels=()):
+    """Return one title size, or one canonical label when the title is empty."""
+    title=str((core or {}).get("title") or "")
+    matches=_GLM_SIZE_RE.findall(title)
+    if title:
+        return matches[0] if len(matches)==1 else None
+    label_sizes={size for size,route in _LOGICAL_ROUTES.items() if route in {
+        str(label).strip().lower() for label in labels}}
+    return next(iter(label_sizes)) if len(label_sizes)==1 else None
+def _logical_route_for(core, labels=()):
     """Return the one job-sized gateway bucket without selecting a backend."""
-    matches=_GLM_SIZE_RE.findall(str((core or {}).get("title") or ""))
-    return _LOGICAL_ROUTES.get(matches[0]) if len(matches)==1 else None
+    return _LOGICAL_ROUTES.get(_size_class_for(core,labels))
 def _size_model_for(core):
     """Return the configured bucket for this card size, or None when unsized."""
     match=_GLM_SIZE_RE.search(str((core or {}).get("title") or ""))
@@ -1428,9 +1436,9 @@ def _kimi_model_for(core):
 
 def _producer_routes_for(core, labels, lane=None):
     """Return current gateway routes for one producer card and optional lane pin."""
-    match=_GLM_SIZE_RE.search(str((core or {}).get("title") or ""))
-    routes=([] if _review_route_ambiguous or match is None else eligible_gateway_routes(
-        _review_route_snapshot or {},match.group(1),labels,_review_route_occupancy))
+    size=_size_class_for(core,labels)
+    routes=([] if _review_route_ambiguous or size is None else eligible_gateway_routes(
+        _review_route_snapshot or {},size,labels,_review_route_occupancy))
     if lane is None:
         return routes
     token=str(lane).lower()
@@ -1880,6 +1888,28 @@ def _legacy_claimability_events(fresh=False):
     return out
 
 
+def _complete_governed_review(core, state):
+    """Return whether the current fold is one typed, single-seat review."""
+    labels={str(label).strip().lower() for label in state["labels"]}
+    meta=core.get("meta") if isinstance(core.get("meta"),dict) else {}
+    links={**meta,**state["links"]}
+    configured=meta.get("qualified_reviewer_seats",[])
+    qualified={"link","mero","seraph"} | ({
+        str(value).strip().lower() for value in configured
+        if isinstance(value,str) and re.fullmatch(r"[a-z][a-z0-9-]*",value.strip())
+    } if isinstance(configured,list) else set())
+    seats={label.removeprefix("seat-") for label in labels if label.startswith("seat-")}
+    return bool(
+        "review" in labels and len(seats)==1 and seats <= qualified
+        and str(links.get("producer_identity") or "").strip()
+        and re.fullmatch(r"[0-9a-f]{64}",str(
+            links.get("candidate_evidence_sha256") or "").strip().lower())
+        and str(links.get("link_source_card") or "").strip()
+        and re.fullmatch(r"[0-9a-f]{40}",str(
+            links.get("link_head_revision") or "").strip().lower())
+    )
+
+
 def _fold_claimability(core, rows):
     """Fold only fields used by Board.claim_task and scheduler policy."""
     core_links = core.get("links") if isinstance(core.get("links"), dict) else {}
@@ -1925,7 +1955,8 @@ def _fold_claimability(core, rows):
             if column in _COLUMNS:
                 state["status"] = column
                 state["review_seen"] = column == "review"
-                if column in {"backlog", "ready", "doing"}:
+                if (column in {"backlog", "ready", "doing"}
+                        and not _complete_governed_review(core,state)):
                     markers.clear()
         elif action == "assign":
             state["owner"] = event.get("owner")
@@ -1975,7 +2006,8 @@ def _fold_claimability(core, rows):
             if column in _COLUMNS:
                 state["status"] = column
                 state["review_seen"] = column == "review"
-                if column in {"backlog", "ready", "doing"}:
+                if (column in {"backlog", "ready", "doing"}
+                        and not _complete_governed_review(core,state)):
                     markers.clear()
         elif action == "add_label":
             label = event.get("label")
@@ -5844,7 +5876,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
             "- Do not deploy, dispatch, invoke an actuator, or change the target.\n"
         ) % (_verification_target, _verification_evidence_sha256)
     sess="%s%s"%(_LANE["prefix"],cid)
-    model=_logical_route_for(core)
+    model=_logical_route_for(core,_labels)
     if model is None:
         log(d,"SKIPPED_LOGICAL_ROUTE|%s|%s|reason=missing-or-ambiguous-size"%
             (HOST,cid))
@@ -5879,7 +5911,8 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
         log(d,"SKIPPED_LANE_RACE|%s|%s|%s|selected=%s|reason=%s"%
             (HOST,sess,cid,_LANE["name"],affinity_reason))
         continue
-    model=_logical_route_for(fresh_claimability["core"])
+    model=_logical_route_for(
+        fresh_claimability["core"],fresh_claimability["labels"])
     if model is None:
         lane_drift += 1
         log(d,"SKIPPED_LOGICAL_ROUTE_RACE|%s|%s|reason=missing-or-ambiguous-size"%
@@ -5898,11 +5931,11 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
     if _review_seat is not None:
         _metadata=_governed_review_metadata(
             fresh_claimability["core"],fresh_claimability["labels"])
-        _size_match=_GLM_SIZE_RE.search(
-            str(fresh_claimability["core"].get("title") or ""))
-        _routes=([] if _metadata is None or _size_match is None
+        _size=_size_class_for(
+            fresh_claimability["core"],fresh_claimability["labels"])
+        _routes=([] if _metadata is None or _size is None
                  else eligible_review_routes(
-                     _review_route_snapshot or {},_size_match.group(1),
+                     _review_route_snapshot or {},_size,
                      fresh_claimability["labels"],_metadata[0],name,
                      _review_route_occupancy,declared_seat=_review_seat,
                      qualified_seats=qualified_reviewer_seats(

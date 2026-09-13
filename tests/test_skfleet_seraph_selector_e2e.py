@@ -566,6 +566,22 @@ def test_generic_niobe_launches_seraph_review_through_codex(tmp_path: Path) -> N
     home.mkdir()
     store, card_id = _canonical_review(home, base_revision=revision)
     store.append_event(card_id, "add_label", "mero", label="codex-only")
+    store.append_event(card_id, "add_label", "mero", label="sk-s")
+    claim = store.append_event(
+        card_id,
+        "claim",
+        "prior-reviewer",
+        owner="prior-reviewer",
+    )
+    store.append_event(card_id, "move", "prior-reviewer", column="doing")
+    store.append_event(card_id, "describe", "prior-reviewer", title="")
+    store.append_event(
+        card_id,
+        "release_claim",
+        "prior-reviewer",
+        released_owner="prior-reviewer",
+        expected_claim_revision=claim["event_id"],
+    )
     assert "codex-only" in store.fold(card_id).labels
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -659,6 +675,7 @@ print(output.getvalue(), end="")
     assert env["SKFLEET_GLM_TARGET"] == env["SKFLEET_QWEN_TARGET"] == "0"
     assert env["SKFLEET_KIMI_TARGET"] == env["SKFLEET_ESC_TARGET"] == "0"
     assert f"LAUNCHED|chiap08|codex-auto-{card_id}|{card_id}|lane=codex" in completed.stdout
+    assert "SKIPPED_LOGICAL_ROUTE_RACE" not in completed.stdout
     assert "LANE_DEFER|" not in completed.stdout
     route_snapshot = json.loads(
         (home / ".skcapstone/evidence/fleet-review-routes.json").read_text(encoding="utf-8")

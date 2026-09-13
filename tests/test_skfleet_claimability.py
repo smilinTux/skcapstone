@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from skcapstone.review_admission import governed_review_seat, qualified_reviewer_seats
+
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 
@@ -21,10 +23,13 @@ def _load_claimability() -> dict[str, object]:
         "_coord_task_claimable",
         "_dependency_value",
         "_fold_claimability",
+        "_complete_governed_review",
         "_claimability_reason",
         "_authoritative_card_snapshot",
         "_authoritative_card_state",
         "authoritative_claimability",
+        "_governed_review_metadata",
+        "_pool_v2_admission",
     }
     tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
     nodes = {
@@ -55,6 +60,13 @@ def _load_claimability() -> dict[str, object]:
         "os": os,
         "_legacy_claimability_events": lambda fresh=False: {},
         "_strict_card_events": lambda _cid, fresh=False: [],
+        "_ONLY_SEAT": "",
+        "_pool_v2_overlay": lambda _cid, _core, reason: {
+            "reason": reason,
+            "backoff": False,
+        },
+        "governed_review_seat": governed_review_seat,
+        "qualified_reviewer_seats": qualified_reviewer_seats,
     }
     module = ast.Module(body=[nodes[name] for name in names], type_ignores=[])
     exec(compile(module, str(ROTATE), "exec"), namespace)
@@ -355,6 +367,41 @@ def test_review_markers_are_not_executable_after_claim_release() -> None:
         core = {**_core("review-marker", labels=labels), "description": description}
         state = namespace["_fold_claimability"](core, [])
         assert namespace["_claimability_reason"](core, state) == "review"
+
+
+def test_released_64c201a1_review_keeps_elastic_admission_after_empty_title() -> None:
+    """Exact claim, move-doing, describe-empty, release review regression."""
+    namespace = _load_claimability()
+    core = {
+        **_core("64c201a1", labels=["review", "seat-seraph", "sk-s"]),
+        "title": "[REVIEW][S] Verify candidate",
+        "links": {
+            "producer_identity": "producer",
+            "candidate_evidence_sha256": "a" * 64,
+            "link_source_card": "source01",
+            "link_head_revision": "b" * 40,
+        },
+    }
+    events = [
+        _claim("2026-09-13T01:00:00Z", "reviewer", "revision-1"),
+        _event("2026-09-13T01:01:00Z", "reviewer", "move", column="doing"),
+        _event("2026-09-13T01:02:00Z", "reviewer", "describe", title=""),
+        _release("2026-09-13T01:03:00Z", "reviewer", "reviewer", "revision-1"),
+    ]
+
+    state = namespace["_fold_claimability"](core, events)
+    reason = namespace["_claimability_reason"](core, state)
+    state.update(
+        claimable=False,
+        reason=reason,
+        core={**core, "title": state["title"], "links": state["links"]},
+        source_revision="c" * 64,
+        host_pin=None,
+    )
+    admission = namespace["_pool_v2_admission"]("64c201a1", core, state)
+
+    assert reason == "review"
+    assert admission["elastic_review_admitted"] is True
 
 
 @pytest.mark.parametrize(
