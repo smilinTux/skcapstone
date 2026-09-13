@@ -1,0 +1,13 @@
+[Unit]
+Description=Publish host-local SKFleet worker liveness
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.skenv/bin/python3 -m skcapstone.fleet_live_publisher --home %h/.skcapstone
+TimeoutStartSec=30
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target
