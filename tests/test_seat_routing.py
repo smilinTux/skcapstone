@@ -29,6 +29,7 @@ def _load(home, placement=None, placement_error=None):
         "seat_for",
         "_seat_is_provisioned",
         "_seat_owner",
+        "_pool_v2_owner_map",
         "_worker_owner",
     }
     fns = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
@@ -133,6 +134,64 @@ def test_seat_owner_one_multiple_missing_pin_and_ordinary(tmp_path: Path) -> Non
     ordinary = owner("ordinary-card", None, placement={})
     assert ordinary[0] in HOSTS
     assert ordinary[1] == "ordinary"
+
+
+def test_elastic_review_owner_requires_one_clean_niobe_placement(tmp_path: Path) -> None:
+    ns, _ = _load(str(tmp_path), {"niobe": ("chiap08",)})
+    card_id = "64c201a1"
+    row = [2, 4, card_id, {}, [], 0]
+    admission = {"elastic_review_admitted": True, "host_pin": None}
+    ns["_POOL_V2_ADMISSIONS"] = {card_id: admission}
+
+    assert ns["_partition_owner"](card_id, HOSTS) == "chiap03"
+    assert ns["_pool_v2_owner_map"]([row], "chiap08", set()) == (
+        {card_id: "chiap08"},
+        {},
+    )
+    admission["host_pin"] = "chiap08"
+    assert ns["_pool_v2_owner_map"]([row], "chiap08", set()) == (
+        {card_id: "chiap08"},
+        {},
+    )
+    admission["host_pin"] = None
+
+    for placement, error, reason in (
+        ({}, None, "seat-unprovisioned:niobe"),
+        ({"niobe": ("chiap03", "chiap08")}, None, "seat-nonunique:niobe"),
+        ({"niobe": ("chiap08",)}, "manifest-schema", "seat-manifest:manifest-schema"),
+    ):
+        ns["_SEAT_PLACEMENT"] = placement
+        ns["_SEAT_PLACEMENT_ERROR"] = error
+        assert ns["_pool_v2_owner_map"]([row], "chiap08", set()) == (
+            {card_id: "unassigned:" + reason},
+            {card_id: reason},
+        )
+
+    ns["_SEAT_PLACEMENT"] = {"niobe": ("chiap08",)}
+    ns["_SEAT_PLACEMENT_ERROR"] = None
+    admission["host_pin"] = "chiap03"
+    assert ns["_pool_v2_owner_map"]([row], "chiap08", set()) == (
+        {card_id: "unassigned:seat-pin-conflict:niobe:chiap03"},
+        {card_id: "seat-pin-conflict:niobe:chiap03"},
+    )
+
+
+def test_pool_owner_map_preserves_ordinary_and_seat_ownership(tmp_path: Path) -> None:
+    ns, labels = _load(str(tmp_path), {"link": ("chiap08",), "niobe": ("chiap08",)})
+    labels["00000001"] = ["seat-link"]
+    rows = [
+        [2, 4, "00000001", {}, [], 0],
+        [2, 4, "00000002", {}, [], 0],
+        [2, 4, "00000003", {}, [], 0],
+    ]
+    ns["_POOL_V2_ADMISSIONS"] = {}
+
+    owners, blocked = ns["_pool_v2_owner_map"](rows, "chiap08", {"00000003"})
+
+    assert owners["00000001"] == "chiap08"
+    assert owners["00000002"] == ns["_partition_owner"]("00000002", HOSTS)
+    assert owners["00000003"] == "chiap08"
+    assert blocked == {}
 
 
 def test_runtime_places_seats_before_generic_partitioning() -> None:

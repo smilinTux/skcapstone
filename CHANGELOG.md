@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Card `fe620f49`: route elastic governed reviews to the single configured
+  Niobe placement host, failing closed on missing, ambiguous, dirty, or
+  conflicting pinned placement while preserving ordinary and seat ownership.
+
 - Card `d6c08352`: preserve complete typed single-seat review markers across
   executable lifecycle transitions, and resolve empty-title review routes from
   exactly one canonical logical size label so released reviews can relaunch.

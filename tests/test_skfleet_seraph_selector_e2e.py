@@ -133,6 +133,7 @@ def _canonical_review(
     head_revision: str = "a" * 40,
     base_revision: str = "b" * 40,
     pr: int = 548,
+    review_card_id_override: str | None = None,
 ) -> tuple[CardStore, str]:
     card_home = home / ".skcapstone"
     card_home.mkdir(exist_ok=True)
@@ -153,6 +154,46 @@ def _canonical_review(
         link_value="https://github.com/smilinTux/skcapstone",
     )
     store.append_event(source_card, "link", "mero", link_key="base_ref", link_value="main")
+    if review_card_id_override is not None:
+        generation = card_generation(store.fold(source_card))
+        store.create(
+            CardCore(
+                id=review_card_id_override,
+                title=(
+                    f"[LINK-{source_card}-{head_revision[:8]}][S][REVIEW] Review exact source head"
+                ),
+                description="Producer identity: mero. Candidate evidence sha256=" + "c" * 64 + ".",
+                created_by="link",
+                initial_labels=["review", "seat-seraph", "source-only", f"parent-{source_card}"],
+                acceptance_criteria=[
+                    f"Review source card {source_card} at exact head {head_revision}.",
+                    "Return a terminal PASS, FAIL, or BLOCKED verdict with evidence.",
+                ],
+                meta={
+                    "link_source_card": source_card,
+                    "link_head_revision": head_revision,
+                    "link_card_generation": generation,
+                    "link_evidence_sha256": "c" * 64,
+                    "link_review_class": "review",
+                    "base_revision": base_revision,
+                },
+            )
+        )
+        for key, value in {
+            "producer_identity": "mero",
+            "candidate_evidence_sha256": "c" * 64,
+            "repository": "https://github.com/smilinTux/skcapstone",
+            "base_ref": "main",
+            "base_revision": base_revision,
+        }.items():
+            store.append_event(
+                review_card_id_override,
+                "link",
+                "link",
+                link_key=key,
+                link_value=value,
+            )
+        return store, review_card_id_override
     result = reconcile_review_work(
         card_home,
         {
@@ -564,7 +605,11 @@ def test_generic_niobe_launches_seraph_review_through_codex(tmp_path: Path) -> N
     ).stdout.strip()
     home = tmp_path / "home"
     home.mkdir()
-    store, card_id = _canonical_review(home, base_revision=revision)
+    store, card_id = _canonical_review(
+        home,
+        base_revision=revision,
+        review_card_id_override="64c201a1",
+    )
     store.append_event(card_id, "add_label", "mero", label="codex-only")
     store.append_event(card_id, "add_label", "mero", label="sk-s")
     claim = store.append_event(
@@ -583,6 +628,11 @@ def test_generic_niobe_launches_seraph_review_through_codex(tmp_path: Path) -> N
         expected_claim_revision=claim["event_id"],
     )
     assert "codex-only" in store.fold(card_id).labels
+    placement = home / ".skcapstone" / "coordination" / "seat-placement.json"
+    placement.write_text(
+        json.dumps({"schema_version": 1, "seats": {"niobe": ["chiap08"]}}),
+        encoding="utf-8",
+    )
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     launch_argv = tmp_path / "systemd-run.argv"
@@ -636,7 +686,7 @@ print(output.getvalue(), end="")
             "GIT_CONFIG_KEY_0": f"url.file://{origin}.insteadOf",
             "GIT_CONFIG_VALUE_0": repository,
             "SKFLEET_TEST_PYTHON": sys.executable,
-            "SKFLEET_ROTATION_HOSTS": "chiap08",
+            "SKFLEET_ROTATION_HOSTS": "chiap01,chiap02,chiap03,chiap04,chiap08",
             "SKFLEET_TARGET": "1",
             "SKFLEET_GLM_TARGET": "0",
             "SKFLEET_QWEN_TARGET": "0",
@@ -674,6 +724,7 @@ print(output.getvalue(), end="")
     assert completed.returncode == 0, completed.stderr
     assert env["SKFLEET_GLM_TARGET"] == env["SKFLEET_QWEN_TARGET"] == "0"
     assert env["SKFLEET_KIMI_TARGET"] == env["SKFLEET_ESC_TARGET"] == "0"
+    assert "reason=foreign-hash-partition" not in completed.stdout
     assert f"LAUNCHED|chiap08|codex-auto-{card_id}|{card_id}|lane=codex" in completed.stdout
     assert "SKIPPED_LOGICAL_ROUTE_RACE" not in completed.stdout
     assert "LANE_DEFER|" not in completed.stdout

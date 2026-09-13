@@ -5019,10 +5019,25 @@ def _pool_v2_owner_map(rows, host, pinned_ids):
     blocked = {}
     for row in rows:
         cid, core = row[2], row[3]
-        elastic = _POOL_V2_ADMISSIONS.get(cid, {}).get("elastic_review_admitted") is True
-        owner, reason = _seat_owner(
-            cid, None if elastic else seat_for(cid, core), host if cid in pinned_ids else None
+        admission = _POOL_V2_ADMISSIONS.get(cid, {})
+        elastic = admission.get("elastic_review_admitted") is True
+        seat = "niobe" if elastic else seat_for(cid, core)
+        pinned_host = (
+            admission.get("host_pin") if elastic else host if cid in pinned_ids else None
         )
+        if elastic and not _SEAT_PLACEMENT_ERROR and len(
+            _SEAT_PLACEMENT.get("niobe", ())
+        ) != 1:
+            owner = None
+            reason = (
+                "seat-unprovisioned:niobe"
+                if not _SEAT_PLACEMENT.get("niobe")
+                else "seat-nonunique:niobe"
+            )
+        else:
+            owner, reason = _seat_owner(
+                cid, seat, pinned_host
+            )
         owners[cid] = owner if owner is not None else "unassigned:%s" % reason
         if owner is None:
             blocked[cid] = reason
