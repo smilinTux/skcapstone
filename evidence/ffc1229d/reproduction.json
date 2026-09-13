@@ -1,0 +1,14 @@
+{
+  "reproduced_at": "2026-09-13T02:03:15Z",
+  "pane_id": "wQ:p3E",
+  "herdr_agent_status": "idle",
+  "herdr_cwd": "/mnt/cloud/onedrive/projects/DAVE-AI/sklegal",
+  "herdr_name": null,
+  "owned_background_card": "47cf2443",
+  "owned_background_worktree": "/home/skuser01/work/skcapstone-47cf2443-herdr",
+  "fleet_live_cards_include_47cf2443": false,
+  "fleet_live_codex_free": 3,
+  "note": "Foreground Herdr status idle while owned pytest descendants remain live; card absent from capacity snapshot.",
+  "refreshed_onto_main": "f1c2e766304acba4d3f85fbbb109e02cbee6c70f",
+  "decision": "FAIL_CLOSED_UPSTREAM"
+}
