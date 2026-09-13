@@ -238,9 +238,7 @@ def _run_main_with_flaky_release(monkeypatch, tmp_path, failures, evidence):
     module, store, projection, values = _terminal_board_setup(tmp_path)
     flaky, state = make_flaky_board(failures=failures)
     monkeypatch.setattr("skcoord.coordination.Board", flaky)
-    idle_calls = _patch_finalize_dependencies(
-        module, monkeypatch, tmp_path, values, evidence
-    )
+    idle_calls = _patch_finalize_dependencies(module, monkeypatch, tmp_path, values, evidence)
 
     result = module.main()
 
@@ -284,9 +282,7 @@ def test_superseded_terminal_verdict_survives_transient_lock_timeout(
     assert len(state["calls"]) == 2
 
 
-def test_successful_terminal_release_idles_owner_projection(
-    monkeypatch, tmp_path
-) -> None:
+def test_successful_terminal_release_idles_owner_projection(monkeypatch, tmp_path) -> None:
     result, _state, idle_calls = _run_main_with_flaky_release(
         monkeypatch, tmp_path, failures=0, evidence=None
     )
@@ -296,9 +292,7 @@ def test_successful_terminal_release_idles_owner_projection(
     assert idle_calls[0] == (args().owner, args().card, args().claim_revision)
 
 
-def test_persistent_release_failure_keeps_owner_projection_active(
-    monkeypatch, tmp_path
-) -> None:
+def test_persistent_release_failure_keeps_owner_projection_active(monkeypatch, tmp_path) -> None:
     module, store, projection, values = _terminal_board_setup(tmp_path)
     flaky, state = make_flaky_board(failures=module.LOCK_RELEASE_ATTEMPTS + 1)
     monkeypatch.setattr("skcoord.coordination.Board", flaky)
