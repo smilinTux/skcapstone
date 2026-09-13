@@ -256,7 +256,7 @@ def test_real_child_startup_requires_matching_proofs(tmp_path, monkeypatch, faul
         child.wait(timeout=5)
 
 
-@pytest.mark.parametrize("preflight", [0, 2])
+@pytest.mark.parametrize("preflight", [0, 2, 3])
 def test_wrapper_reports_early_child_exit_without_waiting_for_deadline(
     tmp_path, monkeypatch, preflight
 ):

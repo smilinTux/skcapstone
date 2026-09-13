@@ -619,9 +619,9 @@ def main() -> int:
     args = parse_args()
     args.started_at = int(time.time())
     preflight = preflight_worktree()
-    if preflight == 2:
+    if preflight in {2, 3}:
         write_startup_report(args, os.getpid(), "startup-preflight-blocked")
-        return 2
+        return preflight
     if not preflight_mailbox(args):
         write_startup_report(args, os.getpid(), "startup-mailbox-unavailable")
         return 2

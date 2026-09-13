@@ -560,9 +560,9 @@ def _worker_workspace(default):
 
 
 def _source_workspace_spec(core, labels):
-    """Return the authenticated source binding required by a source card."""
+    """Return the authenticated source binding required by governed work."""
     normalized = {str(label).strip().lower() for label in labels}
-    if "source-only" not in normalized:
+    if not {"source-only", "review", "seat-seraph"} & normalized:
         return None
     links = core.get("links") if isinstance(core.get("links"), dict) else {}
     meta = core.get("meta") if isinstance(core.get("meta"), dict) else {}
