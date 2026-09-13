@@ -263,20 +263,43 @@ def record_review_supersession(args: argparse.Namespace, stderr: bytes) -> Path 
     return path
 
 
+LOCK_RELEASE_ATTEMPTS = 3
+LOCK_RELEASE_RETRY_BACKOFF_SECONDS = 0.5
+
+
 def release_superseded_review_claim(args: argparse.Namespace) -> bool:
-    """CAS-release this exact terminal generation through the locked Board."""
+    """CAS-release this exact terminal generation through the locked Board.
+
+    Board and card lock contention is transient: the locks are held only for
+    the duration of one mutation. Retry the exact CAS release a bounded
+    number of times so a temporarily contended lock cannot convert completed
+    worker work into a failed process. Every retry carries the same
+    ``expected_claim_revision``, so a release that landed before a timeout
+    folds to the idempotent already-released check below instead of a second
+    mutation. After the bound, fail truthfully with the contention chained.
+    """
     from skcoord.coordination import Board
 
     home = Path.home() / ".skcapstone"
-    try:
-        released = Board(home).release_claim(
-            args.owner,
-            args.card,
-            actor=args.owner,
-            expected_claim_revision=args.claim_revision,
-        )
-    except (RuntimeError, ValueError):
-        released = False
+    released = False
+    contention: TimeoutError | None = None
+    for attempt in range(LOCK_RELEASE_ATTEMPTS):
+        try:
+            released = Board(home).release_claim(
+                args.owner,
+                args.card,
+                actor=args.owner,
+                expected_claim_revision=args.claim_revision,
+            )
+            contention = None
+            break
+        except TimeoutError as exc:
+            contention = exc
+            if attempt + 1 < LOCK_RELEASE_ATTEMPTS:
+                time.sleep(LOCK_RELEASE_RETRY_BACKOFF_SECONDS)
+        except (RuntimeError, ValueError):
+            released = False
+            break
     if not released:
         store = CardStore(home)
         card = store.fold(args.card)
@@ -292,7 +315,7 @@ def release_superseded_review_claim(args: argparse.Namespace) -> bool:
             )
         )
     if not released:
-        raise RuntimeError("terminal worker exact claim was not released")
+        raise RuntimeError("terminal worker exact claim was not released") from contention
     return True
 
 
@@ -605,8 +628,15 @@ def finalize_terminal_capacity(args: argparse.Namespace, child: subprocess.Popen
 
 
 def finalize_worker_exit(args: argparse.Namespace, child: subprocess.Popen | None) -> None:
-    """Release exact custody before removing the worker projection."""
-    terminalized = not hasattr(args, "review_supersession")
+    """Release exact custody before removing the worker projection.
+
+    Only a release that actually succeeded proves the terminal transition, so
+    the projection may be idled solely on that success. When the release fails
+    truthfully (for example persistent board lock contention exhausting the
+    bounded retries), the exception propagates and the projection stays
+    active for fenced reconciliation.
+    """
+    terminalized = False
     try:
         terminalized = finalize_terminal_capacity(args, child)
     finally:
