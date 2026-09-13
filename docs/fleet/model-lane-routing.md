@@ -75,43 +75,30 @@ backends:
 
 ### pi (`~/.pi/agent/models.json`)
 
-The provider entry must declare every model the lanes can select, or workers
-boot as undeclared custom model ids with no metadata:
+Pi's local SKGateway catalog is a cache of currently advertised **healthy
+logical** routes (`sk-s`..`sk-xl`) from the gateway inventory. Workers and
+interactive Herdr Pi sessions must only select those routes. Concrete served
+model names and undersized downgrades are refused. A stale served-model name
+left in `models.json` or `settings.json` `defaultModel` after a gateway
+revision or inventory/health fingerprint change fails closed with HTTP 404
+`unknown_model` before claim.
 
-```json
-{
-  "skgateway": {
-    "baseUrl": "http://chiap01:18790/v1",
-    "api": "openai-completions",
-    "apiKey": "skgateway",
-    "models": [
-      { "id": "glm-4.6", "name": "GLM-4.6 via SKGateway (z.ai)",
-        "reasoning": true, "input": ["text"], "contextWindow": 200000 },
-      { "id": "glm-4.7", "name": "GLM-4.7 via SKGateway (z.ai)",
-        "reasoning": true, "input": ["text"], "contextWindow": 200000 },
-      { "id": "glm-5.3", "name": "GLM-5.3 via SKGateway (z.ai)",
-        "reasoning": true, "input": ["text"], "contextWindow": 200000 }
-    ]
-  }
-}
-```
-
-Installers reconcile the six non-secret logical aliases with
-`skfleet-pi-model-catalog.py --apply`. The command carries reviewed metadata
-for only the three GLM and four Kimi source models used by fleet routes. It
-adds a missing managed source model, refuses conflicting metadata already
-present under a managed id, and then derives each GLM alias from that local
-source record. Conflicting aliases and duplicate managed ids also stop the
-operation. It preserves every unrelated field, requires a current-user
-mode-0600 regular file, and replaces it atomically. Run the command without
-`--apply` as the post-install drift check. Both `sk-glm-{s,m,l}` and canonical
-`sk-zai-{s,m,l}` are installed. Fleet workers use only the `sk-glm-*` names.
+`skfleet-pi-model-catalog.py --apply` owns that boundary. It requires
+`SKFLEET_GATEWAY_URL` and `--gateway-revision` (no hardcoded host target),
+reads `/v1/models`, `/health`, and `/queue`, keeps only healthy logical size
+routes, records revision plus a fingerprint over route metadata and health,
+and invalidates removed entries when either changes. If `defaultModel` is
+absent, non-logical, or below the required size floor, it falls forward across
+`sk-s` → `sk-m` → `sk-l` → `sk-xl` without ever downgrading. Unrelated provider
+fields are preserved. The catalog and settings files must be current-user
+mode-0600 regular files; writes are atomic. Run without `--apply` as the
+post-install drift check.
 
 #### Five-host installation contract
 
-Alias installation is ordered and fail closed on every host. It is not valid
-to install a launcher that can select an alias before that host's Pi catalog
-has been reconciled.
+Catalog sync is ordered and fail closed on every host. It is not valid to
+install a launcher that can select a route before that host's Pi catalog has
+been reconciled against currently advertised inventory.
 
 The fresh preflight must record the full SHA256, owner, and mode of both the
 host-local Pi catalog and installed launcher. The observed catalog mode
@@ -129,9 +116,11 @@ For each host, the installer must perform these steps in order:
    Any other insecure mode, symlink, wrong owner, byte drift, or verification
    failure stops installation on that host.
 3. Invoke `skfleet-pi-model-catalog.py --apply` and verify a subsequent
-   read-only invocation reports the catalog current. Missing managed GLM or
-   Kimi source records are bootstrapped from the reviewed script. Existing
-   conflicting managed records stop installation rather than being replaced.
+   read-only invocation reports the catalog current. The reconciler keeps only
+   currently advertised healthy logical routes, refuses concrete served-model
+   IDs and size downgrades, invalidates stale entries after gateway revision or
+   health/metadata fingerprint changes, and repairs a stale `defaultModel`
+   onto policy-compatible size capacity.
 4. Only after reconciliation succeeds, install or activate the alias-selecting
    launcher and verify its exact host-specific expected hash.
 

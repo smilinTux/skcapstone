@@ -1278,11 +1278,13 @@ except Exception as exc:
 # new workers are transient user services and never enter this oneshot's cgroup.
 sessions=sh("tmux","ls","-F","#{session_name}").split()
 worker_units=active_worker_units()
-_GATEWAY_ENDPOINT=os.environ.get("SKFLEET_GATEWAY_URL","http://chiap01:18790").rstrip("/")
+_GATEWAY_ENDPOINT=(os.environ.get("SKFLEET_GATEWAY_URL") or "").strip().rstrip("/")
 _review_route_snapshot=None
 _review_route_occupancy={}
 _review_route_ambiguous=False
 if ONLY_SEAT in {"", "link", "mero", "seraph"}:
+    if not _GATEWAY_ENDPOINT:
+        raise SystemExit("SKFLEET_GATEWAY_URL is required")
     _review_route_snapshot=acquire_review_route_snapshot(
         _GATEWAY_ENDPOINT,
         Path(HOME)/".skcapstone/evidence/fleet-review-routes.json",
@@ -1300,16 +1302,25 @@ except (OSError,ValueError,TypeError):
     pass
 
 def _prepare_pi_glm_catalog():
-    """Install logical GLM metadata before any live alias can be selected."""
+    """Sync Pi's SKGateway catalog to healthy advertised logical routes."""
     installed=Path(HOME)/".local/bin/skfleet-pi-model-catalog.py"
     bundled=Path(__file__).with_name("skfleet-pi-model-catalog.py")
     helper=installed if installed.exists() else bundled
     if not helper.is_file():
         return False,"catalog reconciler missing"
+    if not _GATEWAY_ENDPOINT:
+        return False,"SKFLEET_GATEWAY_URL is required"
+    try:
+        from skcapstone.fleet_lane_health import active_gateway_revision
+        revision=active_gateway_revision(_GATEWAY_ENDPOINT)
+    except Exception as exc:
+        return False,"active gateway revision unavailable: %s"%type(exc).__name__
+    env=dict(os.environ)
+    env["SKFLEET_GATEWAY_URL"]=_GATEWAY_ENDPOINT
     try:
         result=subprocess.run(
-            [sys.executable,str(helper),"--apply"],
-            capture_output=True,text=True,timeout=15,check=False,
+            [sys.executable,str(helper),"--apply","--gateway-revision",revision],
+            capture_output=True,text=True,timeout=15,check=False,env=env,
         )
     except (OSError,subprocess.TimeoutExpired) as exc:
         return False,"catalog reconciliation failed: %s"%type(exc).__name__
