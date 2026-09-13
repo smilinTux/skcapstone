@@ -2,9 +2,21 @@
 
 ## Unreleased
 
+- The fleet liveness publisher now reads pane evidence only through an
+  explicit namespace-safe tmux socket (`SKFLEET_TMUX_SOCKET`, set to
+  `%t/skfleet/tmux.sock` by its `PrivateTmp=yes` unit). A missing, non-socket,
+  or unreachable socket fails closed without replacing the last published
+  snapshot; `failed to connect` is no longer accepted as empty-success
+  evidence.
+
 - Review completion now uses exact-head hosted check totals for non-SKCapstone
   repositories instead of imposing SKCapstone's Python check names. Missing,
   partial, non-success, and stale hosted evidence still fail closed.
+
+- Fleet hosts can publish exact local worker and claim-generation liveness
+  through a dedicated read-only timer, without restoring per-host dispatch.
+  Reaper authority still requires fresh, valid evidence from every configured
+  host; centralized Niobe remains the only launch authority.
 
 - Builder dispatch now releases the prior exact claim and blocks without
   launching when a changed offer supersedes persisted status for the same card.
