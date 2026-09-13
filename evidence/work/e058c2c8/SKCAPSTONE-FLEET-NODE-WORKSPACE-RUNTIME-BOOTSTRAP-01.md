@@ -6,28 +6,30 @@ Verdict candidate: `PASS_FOR_REVIEW`
 
 ## Scope
 
-Atomic bootstrap under registry lock:
+Atomic create/retire bootstrap under registry lock:
 
 - live meminfo via injectable path/reader
 - exact active binding count for the logical bucket
 - `capacity.admit_headroom` + advertised reserves/capacity
-- register only after admission; pure `admit_capacity` / `plan_isolated_workspace` helpers retained
-- no subprocess/git actuator; no host/model bindings
+- thin injected or default git materialize/retire actuators with exact path checks and rollback
+- claim/unit mapping, successor safety, terminal Herdr reclaim
+- no host/model bindings; no e91a20f5 activation
 
 ## Files and SHA-256
 
-- `CHANGELOG.md`: `9797a2e4e3c05c589062aa3e0f188e7cf9dd9859b134cad678c6b08546c42b38`
+- `CHANGELOG.md`: `00077f20b96d83a00d00a3e1d9db077fc80a28eb87c8f2462e2e6a2f2bebcf33`
 - `src/skcapstone/fleet/capacity.py`: `fea752425341a3ae13fa1fcd2cc6ba902894f52d8ae865abc9e684599e6c83b2`
-- `src/skcapstone/fleet/workspace_runtime.py`: `2c26f7107fb57a913b9dac87c38ef664ba2ca65c49a24746be64bc930a87147a`
+- `src/skcapstone/fleet/workspace_runtime.py`: `bacc6984a669b9a4f115210a019a1d1cc790520c566a02b1fd0c5990f854c0cd`
 - `tests/fleet/test_allocatable.py`: `2419dcfa7d26736d9eddb71c7317c665ceeb760ece2778ecf9fe2fd83018b254`
-- `tests/test_workspace_runtime.py`: `cc12770ec39fbdf843470033bbdf9bc3670eb8ecff375498c4e51cfbe263dfcf`
+- `tests/test_workspace_runtime.py`: `3eee96a5dd55c83c07d572eca2bdd05f80fdee89ba52cb33d032b4061a701e7b`
+- `tests/test_workspace_runtime_integration.py`: `77c6243d5b48c495d181fed42c2d22f5032e1e6cc19d592d7c9ba8d5eec8ec54`
 
-Artifact digest: `bff83c181ec5085a8490eafe1b77e9cdbcd2b33d329a4ae4731bdc5bf0f02118`
+Artifact digest: `5c8438e52a61b26d6987c4d79cf61e16505b9f1c3f694dee090e0e9018d26364`
 
 ## Verification
 
-- pytest focused: 14 passed
-- docs_check tiers 1-3: pass (CHANGELOG included)
+- `python -m pytest -q tests/test_workspace_runtime.py tests/test_workspace_runtime_integration.py tests/fleet/test_allocatable.py` → 15 passed
+- docs_check tiers 1-3 with CHANGELOG in changed set → pass
 
 ## Rollback
 

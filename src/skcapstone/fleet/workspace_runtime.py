@@ -1,9 +1,9 @@
 """Governed workspace-runtime seam over fleet capacity (host-neutral).
 
-Pure helpers decide admission and path plans. The bootstrap path
-``create_isolated_workspace`` serializes under a registry lock, reads live
-meminfo through an injectable reader, counts exact active bindings for the
-logical bucket, and only then registers a binding. No git or subprocess.
+Pure helpers decide admission and path plans. ``create_isolated_workspace``
+and ``retire_workspace`` serialize under a registry lock, admit from live
+meminfo and exact per-bucket occupancy, then invoke injected (or default git)
+materialize/retire actuators at the exact bound path with rollback.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import fcntl
 import json
 import os
 import re
+import subprocess
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -28,6 +29,8 @@ _PRESERVE = frozenset({"idle", "working", "blocked", "unknown"})
 SCHEMA = "skfleet.workspace-runtime/v1"
 
 MeminfoReader = Callable[[], str]
+Materializer = Callable[["WorkspaceBinding"], Path]
+Retirer = Callable[["WorkspaceBinding"], None]
 
 
 class WorkspaceRuntimeError(ValueError):
@@ -265,6 +268,65 @@ def read_meminfo(path: Path = Path("/proc/meminfo")) -> str:
         raise WorkspaceRuntimeError("meminfo is unreadable") from exc
 
 
+def git_materialize(repo: Path) -> Materializer:
+    """Return a thin git worktree materializer for ``repo``."""
+
+    def materialize(binding: WorkspaceBinding) -> Path:
+        target = Path(binding.workspace)
+        if target.exists() or target.is_symlink():
+            raise WorkspaceRuntimeError("workspace path already exists")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo),
+                "worktree",
+                "add",
+                "--detach",
+                str(target),
+                binding.base_revision,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode:
+            detail = (result.stderr or result.stdout or "git worktree add failed").strip()[:160]
+            raise WorkspaceRuntimeError(f"materialize failed: {detail}")
+        return target.resolve(strict=True)
+
+    return materialize
+
+
+def git_retire(repo: Path) -> Retirer:
+    """Return a thin git worktree retirer for ``repo``."""
+
+    def retire(binding: WorkspaceBinding) -> None:
+        target = Path(binding.workspace)
+        if not target.exists():
+            return
+        result = subprocess.run(
+            ["git", "-C", str(repo), "worktree", "remove", "--force", str(target)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode and target.exists():
+            detail = (result.stderr or result.stdout or "git worktree remove failed").strip()[:160]
+            raise WorkspaceRuntimeError(f"retire failed: {detail}")
+
+    return retire
+
+
+def _confirm_materialized(binding: WorkspaceBinding, created: Path) -> None:
+    """Require the actuator to land exactly on the planned binding path."""
+    try:
+        resolved = created.resolve(strict=True)
+    except OSError as exc:
+        raise WorkspaceRuntimeError("materialize did not produce a workspace") from exc
+    if resolved != Path(binding.workspace).resolve():
+        raise WorkspaceRuntimeError("materialize path does not match binding")
+
+
 def create_isolated_workspace(
     home: Path,
     *,
@@ -275,18 +337,28 @@ def create_isolated_workspace(
     lane: str,
     bucket: str,
     base_revision: str,
+    repo: Path | None = None,
     shared_checkouts: Sequence[Path] = (),
     meminfo_path: Path | None = None,
     meminfo_reader: MeminfoReader | None = None,
+    materialize: Materializer | None = None,
+    retire: Retirer | None = None,
 ) -> WorkspaceBinding:
-    """Atomically admit and register one workspace binding under the registry lock.
+    """Admit, materialize, and register one workspace under the registry lock.
 
-    Counts exact active bindings for ``bucket``, reads live meminfo through the
+    Counts exact active bindings for ``bucket``, reads live meminfo through an
     injectable reader/path, enforces advertised reserves and bucket capacity,
-    then plans and registers. Callers supply actuators separately.
+    materializes at the exact planned path, then registers. Materialize failure
+    leaves the registry untouched; registration failure rolls back via retire.
     """
     if bucket not in advertisement.buckets:
         raise WorkspaceRuntimeError("logical bucket is not advertised")
+    if materialize is None:
+        if repo is None:
+            raise WorkspaceRuntimeError("repo or materialize actuator is required")
+        materialize = git_materialize(Path(repo))
+    if retire is None and repo is not None:
+        retire = git_retire(Path(repo))
     if meminfo_reader is None:
         path = Path("/proc/meminfo") if meminfo_path is None else Path(meminfo_path)
 
@@ -325,22 +397,43 @@ def create_isolated_workspace(
             shared_checkouts=shared_checkouts,
             occupied=occupied,
         )
-        registry["bindings"][binding.card_id] = asdict(binding)
-        _write_registry(home, registry)
+        created = materialize(binding)
+        try:
+            _confirm_materialized(binding, created)
+            registry["bindings"][binding.card_id] = asdict(binding)
+            _write_registry(home, registry)
+        except Exception:
+            if retire is not None:
+                try:
+                    retire(binding)
+                except WorkspaceRuntimeError:
+                    pass
+            raise
         return binding
     finally:
         fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
         lock.close()
 
 
-def retire_workspace(home: Path, binding: WorkspaceBinding) -> None:
-    """Retire one exact registered binding under the registry lock."""
+def retire_workspace(
+    home: Path,
+    binding: WorkspaceBinding,
+    *,
+    repo: Path | None = None,
+    retire: Retirer | None = None,
+) -> None:
+    """Retire the exact workspace then drop the matching registry binding."""
+    if retire is None:
+        if repo is None:
+            raise WorkspaceRuntimeError("repo or retire actuator is required")
+        retire = git_retire(Path(repo))
     lock = _with_registry_lock(home)
     try:
         registry = _load_registry(home)
         current = registry["bindings"].get(binding.card_id)
         if current != asdict(binding):
             raise WorkspaceRuntimeError("binding does not match active registry generation")
+        retire(binding)
         del registry["bindings"][binding.card_id]
         _write_registry(home, registry)
     finally:

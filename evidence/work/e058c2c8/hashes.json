@@ -1,11 +1,12 @@
 {
   "sha256": {
-    "CHANGELOG.md": "9797a2e4e3c05c589062aa3e0f188e7cf9dd9859b134cad678c6b08546c42b38",
+    "CHANGELOG.md": "00077f20b96d83a00d00a3e1d9db077fc80a28eb87c8f2462e2e6a2f2bebcf33",
     "src/skcapstone/fleet/capacity.py": "fea752425341a3ae13fa1fcd2cc6ba902894f52d8ae865abc9e684599e6c83b2",
-    "src/skcapstone/fleet/workspace_runtime.py": "2c26f7107fb57a913b9dac87c38ef664ba2ca65c49a24746be64bc930a87147a",
+    "src/skcapstone/fleet/workspace_runtime.py": "bacc6984a669b9a4f115210a019a1d1cc790520c566a02b1fd0c5990f854c0cd",
     "tests/fleet/test_allocatable.py": "2419dcfa7d26736d9eddb71c7317c665ceeb760ece2778ecf9fe2fd83018b254",
-    "tests/test_workspace_runtime.py": "cc12770ec39fbdf843470033bbdf9bc3670eb8ecff375498c4e51cfbe263dfcf",
-    "evidence/work/e058c2c8/SKCAPSTONE-FLEET-NODE-WORKSPACE-RUNTIME-BOOTSTRAP-01.md": "f24e515696d5aa1109fa35ba4f67d6596680ac400095ac2e42dbcc82e570273a"
+    "tests/test_workspace_runtime.py": "3eee96a5dd55c83c07d572eca2bdd05f80fdee89ba52cb33d032b4061a701e7b",
+    "tests/test_workspace_runtime_integration.py": "77c6243d5b48c495d181fed42c2d22f5032e1e6cc19d592d7c9ba8d5eec8ec54",
+    "evidence/work/e058c2c8/SKCAPSTONE-FLEET-NODE-WORKSPACE-RUNTIME-BOOTSTRAP-01.md": "6ceb8e89002b4a823c046fcd47fe634f679dc68a6da7e373c56e657cb30d51ab"
   },
-  "artifact_sha256": "bff83c181ec5085a8490eafe1b77e9cdbcd2b33d329a4ae4731bdc5bf0f02118"
+  "artifact_sha256": "5c8438e52a61b26d6987c4d79cf61e16505b9f1c3f694dee090e0e9018d26364"
 }

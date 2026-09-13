@@ -49,6 +49,18 @@ def _advert(tmp_path: Path, **buckets: int):
     )
 
 
+def _materialize(binding):
+    target = Path(binding.workspace)
+    target.mkdir(parents=True, exist_ok=False)
+    return target.resolve()
+
+
+def _retire(binding):
+    target = Path(binding.workspace)
+    if target.exists():
+        target.rmdir()
+
+
 def test_advertise_runtime_is_host_and_model_neutral(tmp_path: Path) -> None:
     advert = advertise_runtime(workspaces_root=tmp_path / "workspaces", buckets={"S": 1, "M": 2})
     blob = str(advert.__dict__).lower()
@@ -161,6 +173,8 @@ def test_bootstrap_refuses_unsafe_headroom_before_registration(tmp_path: Path) -
             bucket="M",
             base_revision="a" * 40,
             meminfo_path=meminfo,
+            materialize=_materialize,
+            retire=_retire,
         )
     assert list_bindings(home) == []
 
@@ -181,6 +195,8 @@ def test_concurrent_same_bucket_bootstrap_cannot_exceed_capacity(tmp_path: Path)
             bucket="M",
             base_revision="a" * 40,
             meminfo_reader=lambda: safe,
+            materialize=_materialize,
+            retire=_retire,
         )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -232,6 +248,8 @@ def test_concurrency_occupancy_and_rollback_successor(tmp_path: Path) -> None:
         bucket="M",
         base_revision="a" * 40,
         meminfo_reader=lambda: _meminfo(),
+        materialize=_materialize,
+        retire=_retire,
     )
     second = create_isolated_workspace(
         home,
@@ -243,10 +261,12 @@ def test_concurrency_occupancy_and_rollback_successor(tmp_path: Path) -> None:
         bucket="S",
         base_revision="c" * 40,
         meminfo_reader=lambda: _meminfo(),
+        materialize=_materialize,
+        retire=_retire,
     )
     with pytest.raises(WorkspaceRuntimeError, match="successor blocked"):
         activate_successor(previous=first, next_binding=first, occupied=list_bindings(home))
-    retire_workspace(home, first)
+    retire_workspace(home, first, retire=_retire)
     cleared = retire_binding(first, [first, second])
     assert cleared == [second]
     successor = create_isolated_workspace(
@@ -259,6 +279,8 @@ def test_concurrency_occupancy_and_rollback_successor(tmp_path: Path) -> None:
         bucket="M",
         base_revision="a" * 40,
         meminfo_reader=lambda: _meminfo(),
+        materialize=_materialize,
+        retire=_retire,
     )
     activate_successor(
         previous=first,
@@ -273,5 +295,3 @@ def test_source_module_has_no_literal_host_or_model_bindings() -> None:
     source = Path(runtime.__file__).read_text(encoding="utf-8").lower()
     for token in ("ziowk01", "chiap08", "lumina", "sk-codex", "openai", "anthropic"):
         assert token not in source, token
-    assert "import subprocess" not in source
-    assert "worktree add" not in source
