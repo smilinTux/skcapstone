@@ -206,10 +206,7 @@ def test_idle_herdr_without_exact_card_ownership_stays_stale(monkeypatch):
         ),
     )
 
-    assert (
-        monitor.join_herdr_evidence([stale_projection(monitor)])[0].projection_state
-        == "stale"
-    )
+    assert monitor.join_herdr_evidence([stale_projection(monitor)])[0].projection_state == "stale"
 
 
 def test_historical_pane_remains_stale(monkeypatch):
