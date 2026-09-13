@@ -414,9 +414,15 @@ class DreamingEngine:
         prompt = self._build_prompt(short_term, established, diversity_forced)
         response = self._call_llm(prompt)
         if response is None:
+            # A provider outage is a skip, not a dream. Calling _save_state()
+            # here used to bump dream_count and stamp last_dream_at, arming the
+            # cooldown off a dream that never happened and leaving no dream-log
+            # entry -- so a 19-day outage (2026-08-25) read as an idle stretch.
+            # Record the failure instead, and leave state alone so the next
+            # scheduled cycle retries as soon as a provider comes back.
             result.skipped_reason = "all LLM providers unreachable"
             result.duration_seconds = time.monotonic() - start
-            self._save_state()
+            self._record_dream(result)
             return result
 
         result.raw_response = response

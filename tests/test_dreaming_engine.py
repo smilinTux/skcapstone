@@ -146,3 +146,64 @@ class TestCallOllama:
 
         monkeypatch.setattr(d.http.client, "HTTPConnection", Bad)
         assert _bare_engine(DreamingConfig())._call_ollama("x") is None
+
+
+# --------------------------------------------------------------------------- #
+# Provider outage accounting - 2026-09-13
+#
+# An unreachable provider used to call _save_state(), which bumped dream_count
+# and stamped last_dream_at. That armed the 2h cooldown off a dream that never
+# happened and wrote no dream-log entry, so a 19-day outage looked like an idle
+# stretch instead of a failure.
+# --------------------------------------------------------------------------- #
+class TestProviderOutageIsNotADream:
+    @staticmethod
+    def _engine(tmp_path, monkeypatch):
+        monkeypatch.setenv("SKCAPSTONE_AGENT", "testagent")
+        memory = tmp_path / "agents" / "testagent" / "memory"
+        memory.mkdir(parents=True)
+        config = DreamingConfig()
+        config.enabled = True
+        engine = DreamingEngine(home=tmp_path, config=config, consciousness_loop=None)
+        monkeypatch.setattr(engine, "is_idle", lambda: True)
+        monkeypatch.setattr(engine, "cooldown_remaining", lambda: 0.0)
+        monkeypatch.setattr(engine, "_should_force_diversity", lambda: False)
+        monkeypatch.setattr(engine, "_gather_memories", lambda: ([{"content": "a"}], []))
+        monkeypatch.setattr(engine, "_call_llm", lambda prompt: None)
+        monkeypatch.setattr(engine, "_build_prompt", lambda *a, **k: "prompt")
+        return engine
+
+    def test_outage_reports_skipped_reason(self, tmp_path, monkeypatch):
+        engine = self._engine(tmp_path, monkeypatch)
+
+        result = engine.dream()
+
+        assert result.skipped_reason == "all LLM providers unreachable"
+
+    def test_outage_does_not_advance_dream_state(self, tmp_path, monkeypatch):
+        engine = self._engine(tmp_path, monkeypatch)
+        engine._state_path.write_text(
+            json.dumps({"dream_count": 568, "last_dream_at": "2026-08-25T07:11:51+00:00"})
+        )
+
+        engine.dream()
+
+        state = json.loads(engine._state_path.read_text())
+        assert state["dream_count"] == 568
+        assert state["last_dream_at"] == "2026-08-25T07:11:51+00:00"
+
+    def test_outage_does_not_arm_the_cooldown(self, tmp_path, monkeypatch):
+        engine = self._engine(tmp_path, monkeypatch)
+
+        engine.dream()
+
+        assert not engine._state_path.exists()
+
+    def test_outage_is_recorded_in_the_dream_log(self, tmp_path, monkeypatch):
+        engine = self._engine(tmp_path, monkeypatch)
+
+        engine.dream()
+
+        log = json.loads(engine._log_path.read_text())
+        assert log[-1]["skipped_reason"] == "all LLM providers unreachable"
+        assert log[-1]["insights"] == []
