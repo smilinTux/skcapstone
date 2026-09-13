@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Review completion now uses exact-head hosted check totals for non-SKCapstone
+  repositories instead of imposing SKCapstone's Python check names. Missing,
+  partial, non-success, and stale hosted evidence still fail closed.
+
 - Builder dispatch now releases the prior exact claim and blocks without
   launching when a changed offer supersedes persisted status for the same card.
 

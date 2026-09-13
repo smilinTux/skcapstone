@@ -49,6 +49,11 @@ _OUTCOME_KEY_RE = re.compile(
 )
 _CHECK_KEY_RE = re.compile(r"(?:^|_)(?:check|checks|ci)(?:_|$)", re.IGNORECASE)
 _SUCCESS_CHECK_STATE = "SUCCESS"
+_SKCAPSTONE_REPOSITORY = "https://github.com/smilinTux/skcapstone"
+_HOSTED_CHECKS_RE = re.compile(
+    r"(?P<passed>[1-9][0-9]*)/(?P<total>[1-9][0-9]*) SUCCESS at exact head "
+    r"(?P<head>[0-9a-f]{40})"
+)
 _REQUIRED_CI_LINK_KEYS = frozenset(
     {
         "ci_check_docs",
@@ -150,6 +155,51 @@ def unsuccessful_checks(card_id: str, home: Path) -> list[str]:
     )
 
 
+def _uses_repository_hosted_checks(card_id: str, home: Path) -> bool:
+    """Validate exact hosted check evidence for non-SKCapstone repositories."""
+    try:
+        core = json.loads(
+            (Path(home) / "cards" / card_id / "core.json").read_text(encoding="utf-8")
+        )
+        meta = core["meta"]
+        repository = meta.get("repository")
+    except (OSError, ValueError, TypeError, KeyError):
+        return False
+    if not isinstance(repository, str):
+        return False
+    if repository.rstrip("/").removesuffix(".git") == _SKCAPSTONE_REPOSITORY:
+        return False
+    head = meta.get("link_head_revision")
+    if not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}", head):
+        raise ValueError(f"review card {card_id} has no exact hosted checks head")
+
+    evidence_dir = Path(home) / "coordination" / "card_events"
+    latest: tuple[str, str] | None = None
+    for path in sorted(glob.glob(str(evidence_dir / "*.jsonl"))):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    try:
+                        row = json.loads(line)
+                    except ValueError:
+                        continue
+                    key = row.get("link_key") or row.get("key")
+                    if row.get("card_id") != card_id or key != "hosted_checks":
+                        continue
+                    candidate = (
+                        str(row.get("ts") or ""),
+                        str(row.get("link_value") or row.get("value") or ""),
+                    )
+                    if latest is None or candidate[0] >= latest[0]:
+                        latest = candidate
+        except OSError:
+            continue
+    match = _HOSTED_CHECKS_RE.fullmatch(latest[1]) if latest else None
+    if match is None or match["passed"] != match["total"] or match["head"] != head:
+        raise ValueError(f"review card {card_id} has missing, incomplete, or stale hosted checks")
+    return True
+
+
 def validate_review_completion(card_id: str, title: str, home: Path) -> None:
     """Raise ValueError if a review card is being completed with no verdict.
 
@@ -165,6 +215,8 @@ def validate_review_completion(card_id: str, title: str, home: Path) -> None:
         return
     verdict = recorded_verdict(card_id, home)
     if verdict == "PASS":
+        if _uses_repository_hosted_checks(card_id, home):
+            return
         checks = unsuccessful_checks(card_id, home)
         if not checks:
             return
