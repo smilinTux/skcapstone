@@ -203,7 +203,7 @@ def test_post_offer_card_amendment_blocks_materialization_and_claim(
     paths, operator, noded41, monkeypatch, tmp_path
 ) -> None:
     _node(paths, operator, noded41)
-    builder_dispatch.offer(
+    request = builder_dispatch.offer(
         paths,
         _card(),
         ["sk-m", "source-only"],
@@ -217,13 +217,18 @@ def test_post_offer_card_amendment_blocks_materialization_and_claim(
         "claim_task",
         lambda *_args: pytest.fail("amended card was claimed"),
     )
-    with pytest.raises(builder_dispatch.BuilderDispatchError, match="changed after dispatch"):
-        builder_dispatch.consume_one(
-            paths,
-            tmp_path,
-            "node-ziowk01",
-            materializer=lambda *_args: pytest.fail("amended source was materialized"),
-        )
+    result = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        materializer=lambda *_args: pytest.fail("amended source was materialized"),
+    )
+
+    assert result["request_id"] == request["request_id"]
+    assert result["state"] == "blocked"
+    assert result["attempt"] == 0
+    assert result["claim_released"] is False
+    assert result["error"] == "offered card changed after dispatch request"
 
 
 def test_reoffer_after_source_amendment_mints_a_new_bound_request(
@@ -323,18 +328,14 @@ def test_amendment_during_claim_releases_generation_without_launch(
     monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
     monkeypatch.setattr(builder_dispatch.Board, "release_claim", release)
     monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
-    with pytest.raises(builder_dispatch.BuilderDispatchError, match="changed after dispatch"):
-        builder_dispatch.consume_one(
-            paths,
-            tmp_path,
-            "node-ziowk01",
-            launcher=lambda *_args: pytest.fail("amended generation launched"),
-            materializer=lambda _request, workspace: workspace,
-        )
-
-    status = builder_dispatch._load(
-        builder_dispatch.status_path(paths, "node-ziowk01", request["card_id"])
+    status = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=lambda *_args: pytest.fail("amended generation launched"),
+        materializer=lambda _request, workspace: workspace,
     )
+
     assert releases == [
         (
             "pi-builder-standby-node-ziowk01-24b00003",
@@ -342,9 +343,195 @@ def test_amendment_during_claim_releases_generation_without_launch(
             "amended-generation",
         )
     ]
+    assert status["request_id"] == request["request_id"]
     assert status["state"] == "blocked"
     assert status["claim_released"] is True
     assert status["attempt"] == 0
+    assert status["error"] == "offered card changed after dispatch request"
+
+
+def _mismatching_fold():
+    amended = _folded()
+    amended.meta["base_revision"] = "b" * 40
+    return amended
+
+
+def test_transient_mismatch_before_materialization_does_not_consume_attempt(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41)
+    request = builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+    )
+    matching = _folded()
+    phase = {"pre_match_failures": 1}
+
+    def fold(*_args):
+        if phase["pre_match_failures"] > 0:
+            phase["pre_match_failures"] -= 1
+            return _mismatching_fold()
+        return matching
+
+    def claim(_self, owner, _card_id):
+        matching.owner = owner
+        matching.meta = dict(_card()["meta"], _claim_revision="transient-before")
+
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", fold)
+    monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
+    monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
+    result = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=lambda *_args: SimpleNamespace(pid=501, poll=lambda: None),
+        materializer=lambda _request, workspace: workspace,
+    )
+
+    assert phase["pre_match_failures"] == 0
+    assert result["state"] == "running"
+    assert result["request_id"] == request["request_id"]
+    assert result["attempt"] == 1
+
+
+def test_transient_mismatch_after_materialization_does_not_consume_attempt(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41)
+    request = builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+    )
+    matching = _folded()
+    phase = {"materialized": False, "post_mat_failures": 1}
+
+    def fold(*_args):
+        if phase["materialized"] and phase["post_mat_failures"] > 0:
+            phase["post_mat_failures"] -= 1
+            return _mismatching_fold()
+        return matching
+
+    def materialize(_request, workspace):
+        phase["materialized"] = True
+        return workspace
+
+    def claim(_self, owner, _card_id):
+        matching.owner = owner
+        matching.meta = dict(_card()["meta"], _claim_revision="transient-after-mat")
+
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", fold)
+    monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
+    monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
+    result = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=lambda *_args: SimpleNamespace(pid=502, poll=lambda: None),
+        materializer=materialize,
+    )
+
+    assert phase["post_mat_failures"] == 0
+    assert result["state"] == "running"
+    assert result["request_id"] == request["request_id"]
+    assert result["attempt"] == 1
+
+
+def test_transient_mismatch_after_claim_does_not_consume_attempt(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41)
+    request = builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+    )
+    matching = _folded()
+    phase = {"claimed": False, "post_claim_failures": 1, "revision_fold_done": False}
+    releases = []
+
+    def fold(*_args):
+        if not phase["claimed"]:
+            return matching
+        if not phase["revision_fold_done"]:
+            phase["revision_fold_done"] = True
+            return matching
+        if phase["post_claim_failures"] > 0:
+            phase["post_claim_failures"] -= 1
+            return _mismatching_fold()
+        return matching
+
+    def claim(_self, owner, _card_id):
+        matching.owner = owner
+        matching.meta = dict(_card()["meta"], _claim_revision="transient-after-claim")
+        phase["claimed"] = True
+
+    def release(_self, owner, card_id, **kwargs):
+        releases.append((owner, card_id, kwargs["expected_claim_revision"]))
+        return True
+
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", fold)
+    monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
+    monkeypatch.setattr(builder_dispatch.Board, "release_claim", release)
+    monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
+    result = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=lambda *_args: SimpleNamespace(pid=503, poll=lambda: None),
+        materializer=lambda _request, workspace: workspace,
+    )
+
+    assert releases == []
+    assert phase["post_claim_failures"] == 0
+    assert result["state"] == "running"
+    assert result["request_id"] == request["request_id"]
+    assert result["attempt"] == 1
+
+
+def test_durable_mismatch_after_materialization_blocks_without_attempt(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41)
+    request = builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+    )
+    phase = {"materialized": False}
+
+    def fold(*_args):
+        if phase["materialized"]:
+            return _mismatching_fold()
+        return _folded()
+
+    def materialize(_request, workspace):
+        phase["materialized"] = True
+        return workspace
+
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", fold)
+    monkeypatch.setattr(
+        builder_dispatch.Board,
+        "claim_task",
+        lambda *_args: pytest.fail("durable post-materialization mismatch claimed"),
+    )
+    result = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        materializer=materialize,
+    )
+
+    assert result["state"] == "blocked"
+    assert result["request_id"] == request["request_id"]
+    assert result["attempt"] == 0
+    assert result["claim_released"] is False
+    assert result["error"] == "offered card changed after dispatch request"
 
 
 def test_duplicate_node_daemons_share_one_request_generation(
