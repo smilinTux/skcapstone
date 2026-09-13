@@ -12,15 +12,20 @@ JSONL manifest and reversible with --restore.
 from __future__ import annotations
 
 import argparse
+import ctypes
+import errno
 import hashlib
 import json
+import os
 import shutil
+import stat
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 RETIRE_AFTER_DAYS = 30
 GLOB = "pi-*.json"
+CONFLICT_MARKER = ".sync-conflict-"
 
 
 def agents_dir() -> Path:
@@ -33,6 +38,188 @@ def quarantine_dir() -> Path:
 
 def manifest_path() -> Path:
     return quarantine_dir() / "manifest.jsonl"
+
+
+def recovery_dir(home: Path) -> Path:
+    """Return the established reversible conflict quarantine directory."""
+    return home / "coordination" / "recovery" / "sync-conflict-quarantine"
+
+
+def validate_directory_chain(home: Path, *parts: str) -> Path:
+    """Resolve no links while validating every directory below home."""
+    current = home
+    if current.is_symlink() or not current.is_dir():
+        raise ValueError("--home must be a real directory")
+    for part in parts:
+        current = current / part
+        if current.exists() and (current.is_symlink() or not current.is_dir()):
+            raise ValueError(f"unsafe intermediate coordination directory: {part}")
+    return current
+
+
+def matching_processes(*identifiers: str) -> list[str]:
+    """Return live process command lines matching an exact projection identity."""
+    wanted = tuple(value for value in identifiers if value)
+    ancestors: set[int] = set()
+    pid = os.getpid()
+    while pid > 1 and pid not in ancestors:
+        ancestors.add(pid)
+        try:
+            status = Path(f"/proc/{pid}/status").read_text(encoding="utf-8")
+            pid = int(
+                next(line.split()[1] for line in status.splitlines() if line.startswith("PPid:"))
+            )
+        except (OSError, StopIteration, ValueError):
+            break
+    matches = []
+    for cmdline in Path("/proc").glob("[0-9]*/cmdline"):
+        if int(cmdline.parent.name) in ancestors:
+            continue
+        try:
+            command = cmdline.read_bytes().replace(b"\0", b" ").decode(errors="replace")
+        except OSError:
+            continue
+        if command and any(value in command for value in wanted):
+            matches.append(command)
+    return matches
+
+
+def rename_no_replace(source: Path, destination: Path) -> None:
+    """Atomically rename source without replacing an existing destination."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    renameat2 = getattr(libc, "renameat2", None)
+    if renameat2 is None:
+        raise OSError(errno.ENOSYS, "renameat2(RENAME_NOREPLACE) is required")
+    result = renameat2(-100, os.fsencode(source), -100, os.fsencode(destination), 1)
+    if result != 0:
+        code = ctypes.get_errno()
+        raise OSError(code, os.strerror(code), str(destination))
+
+
+def _conflict_receipts(home: Path) -> list[dict]:
+    path = recovery_dir(home) / "manifest.jsonl"
+    if not path.exists():
+        return []
+    records = []
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ManifestError(f"conflict manifest line {number} is malformed") from exc
+        if not isinstance(record, dict):
+            raise ManifestError(f"conflict manifest line {number} is not an object")
+        records.append(record)
+    return records
+
+
+def _append_conflict_receipt(home: Path, record: dict) -> None:
+    _conflict_receipts(home)
+    directory = recovery_dir(home)
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / "manifest.jsonl").open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(record, sort_keys=True) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def quarantine_malformed(home: Path, relative: str, expected: str, actor: str) -> None:
+    """Move one hash-bound malformed conflict projection into recovery."""
+    rel = Path(relative)
+    if rel.parts[:2] != ("coordination", "agents") or len(rel.parts) != 3 or rel.is_absolute():
+        raise ValueError("path must be coordination/agents/<filename>")
+    validate_directory_chain(home, "coordination")
+    agents = validate_directory_chain(home, "coordination", "agents")
+    validate_directory_chain(home, "coordination", "recovery", "sync-conflict-quarantine")
+    if not agents.is_dir():
+        raise ValueError("coordination projection or recovery directory is unsafe")
+    source = home / rel
+    info = source.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or source.is_symlink():
+        raise ValueError("source must be one regular, non-symlinked, singly linked file")
+    digest = sha256_of(source)
+    if digest != expected or len(expected) != 64:
+        raise ValueError("source SHA256 changed or is invalid")
+    if CONFLICT_MARKER not in source.name or not source.name.endswith(".json"):
+        raise ValueError("source is not a JSON sync-conflict projection")
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    agent = payload.get("agent") if isinstance(payload, dict) else None
+    base = source.name.split(CONFLICT_MARKER, 1)[0]
+    if not isinstance(agent, str) or agent != base or agent == source.stem:
+        raise ValueError("filename/payload mismatch proof failed")
+    task = payload.get("current_task")
+    claims = payload.get("claimed_tasks", [])
+    if task not in (None, "") or claims not in (None, []):
+        raise ValueError("projection carries a live exact generation")
+    if matching_processes(agent, str(task or ""), *(str(item) for item in claims or [])):
+        raise ValueError("matching live process or session exists")
+    destination = recovery_dir(home) / source.name
+    recovery_dir(home).mkdir(parents=True, exist_ok=True)
+    _conflict_receipts(home)
+    final_info = source.lstat()
+    if (final_info.st_dev, final_info.st_ino, final_info.st_size) != (
+        info.st_dev,
+        info.st_ino,
+        info.st_size,
+    ) or sha256_of(source) != expected:
+        raise ValueError("source changed during preflight")
+    rename_no_replace(source, destination)
+    if sha256_of(destination) != expected:
+        rename_no_replace(destination, source)
+        raise ValueError("moved bytes do not match expected SHA256")
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        _append_conflict_receipt(
+            home,
+            {
+                "event": "moved",
+                "actor": actor,
+                "moved_at": now,
+                "original_path": relative,
+                "quarantine_path": str(destination.relative_to(home)),
+                "filename": source.name,
+                "sha256": digest,
+                "bytes": info.st_size,
+                "rollback_command": (
+                    f"skfleet-projection-retire --home {home} "
+                    f"--restore-malformed {source.name} "
+                    f"--expected-sha256 {digest} --actor {actor}"
+                ),
+            },
+        )
+    except Exception:
+        rename_no_replace(destination, source)
+        raise
+
+
+def restore_malformed(home: Path, filename: str, expected: str, actor: str) -> None:
+    """Restore one quarantined projection against its durable receipt."""
+    validate_directory_chain(home, "coordination")
+    validate_directory_chain(home, "coordination", "agents")
+    validate_directory_chain(home, "coordination", "recovery", "sync-conflict-quarantine")
+    if Path(filename).name != filename:
+        raise ValueError("restore filename or recovery directory is unsafe")
+    records = [r for r in _conflict_receipts(home) if r.get("filename") == filename]
+    if not records or records[-1].get("event") != "moved" or records[-1].get("sha256") != expected:
+        raise ValueError("no matching active rollback receipt")
+    record = records[-1]
+    source = recovery_dir(home) / filename
+    destination = home / str(record["original_path"])
+    agents = home / "coordination" / "agents"
+    if destination.parent != agents or agents.is_symlink() or not agents.is_dir():
+        raise ValueError("rollback destination is outside coordination/agents")
+    if sha256_of(source) != expected:
+        raise ValueError("quarantine SHA256 changed")
+    rename_no_replace(source, destination)
+    _append_conflict_receipt(
+        home,
+        {
+            "event": "restored",
+            "actor": actor,
+            "filename": filename,
+            "sha256": expected,
+            "restored_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
 
 
 def parse_last_seen(value: object) -> datetime | None:
@@ -147,9 +334,33 @@ def main(argv: list[str] | None = None) -> int:
         "--apply", action="store_true", help="perform the moves (default: dry run)"
     )
     parser.add_argument("--restore", metavar="FILENAME", help="move one quarantined file back")
+    parser.add_argument("--home", type=Path, default=Path.home() / ".skcapstone")
+    parser.add_argument("--quarantine-malformed", metavar="RELATIVE_PATH")
+    parser.add_argument("--restore-malformed", metavar="FILENAME")
+    parser.add_argument("--expected-sha256")
+    parser.add_argument("--actor")
     args = parser.parse_args(argv)
 
     now = datetime.now(timezone.utc)
+
+    if args.quarantine_malformed or args.restore_malformed:
+        if not args.expected_sha256 or not args.actor:
+            parser.error("exact quarantine/restore requires --expected-sha256 and --actor")
+        try:
+            if args.quarantine_malformed:
+                quarantine_malformed(
+                    args.home, args.quarantine_malformed, args.expected_sha256, args.actor
+                )
+                print(f"quarantined {args.quarantine_malformed}")
+            else:
+                restore_malformed(
+                    args.home, args.restore_malformed, args.expected_sha256, args.actor
+                )
+                print(f"restored {args.restore_malformed}")
+        except (OSError, ValueError, json.JSONDecodeError, ManifestError) as exc:
+            print(f"refusing exact projection mutation: {exc}")
+            return 1
+        return 0
 
     if args.restore:
         try:
