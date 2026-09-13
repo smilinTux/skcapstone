@@ -361,13 +361,35 @@ class DreamingEngine:
         home: Path,
         config: Optional[DreamingConfig] = None,
         consciousness_loop: object = None,
+        agent_name: Optional[str] = None,
     ) -> None:
         self._home = home
         self._config = config or DreamingConfig()
         self._consciousness_loop = consciousness_loop
         from . import active_agent_name
 
-        self._agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name() or ""
+        # Resolve the owning agent strictly. An empty name used to be tolerated
+        # here, and it was silently corrosive: every path below collapses a
+        # level ("agents" / "" / "memory" -> "agents/memory"), so the engine read
+        # cooldown and dream-count state out of a phantom file that never
+        # existed. Both gates then answered "nothing yet", so the full LLM cycle
+        # ran on every scheduler tick instead of once a day, and each one died
+        # deep in skmemory with "No valid registered memory profile is
+        # available" - because "" is not a registered profile. Fail loudly at
+        # construction instead: a clear error once is worth more than an opaque
+        # one every 15 minutes.
+        resolved = (
+            (agent_name or "").strip()
+            or (os.environ.get("SKCAPSTONE_AGENT") or "").strip()
+            or active_agent_name()
+        )
+        if not resolved:
+            raise ValueError(
+                "DreamingEngine: cannot resolve the owning agent. Set "
+                "SKCAPSTONE_AGENT (or SKAGENT), or ensure an agent directory "
+                "exists under the shared home."
+            )
+        self._agent_name = resolved
         self._state_path = home / "agents" / self._agent_name / "memory" / "dreaming-state.json"
         self._log_path = home / "agents" / self._agent_name / "memory" / "dream-log.json"
         self._graduated_path = (
