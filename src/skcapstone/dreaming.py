@@ -1513,8 +1513,18 @@ class DreamingEngine:
                 except (json.JSONDecodeError, OSError):
                     pass
 
-        bloom_matches = match_blooms_for_feb(feb, agent=self._agent_name, top_k=3)
-        entangle_matches = match_entanglements_for_feb(feb, agent=self._agent_name, top_k=2)
+        # "" is not a profile id - skmemory rejects it and raises. None is the
+        # documented "resolve the active agent" value. Anchor seeds are optional
+        # inspiration, so a skmemory failure degrades to no seeds rather than
+        # killing the dream (dreams stalled 2026-08-25 -> 2026-09-13 on exactly
+        # this path).
+        agent = self._agent_name or None
+        try:
+            bloom_matches = match_blooms_for_feb(feb, agent=agent, top_k=3)
+            entangle_matches = match_entanglements_for_feb(feb, agent=agent, top_k=2)
+        except Exception as exc:
+            logger.warning("Anchor seeding unavailable - dreaming without seeds: %s", exc)
+            return ""
 
         if not bloom_matches and not entangle_matches:
             return ""

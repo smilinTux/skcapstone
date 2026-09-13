@@ -207,3 +207,58 @@ class TestProviderOutageIsNotADream:
         log = json.loads(engine._log_path.read_text())
         assert log[-1]["skipped_reason"] == "all LLM providers unreachable"
         assert log[-1]["insights"] == []
+
+
+# --------------------------------------------------------------------------- #
+# Anchor-seed enrichment must never stall the dream cycle
+#
+# Regression: dreams stopped for ~19 days (2026-08-25 -> 2026-09-13). The
+# daemon resolved an empty agent name, and `_build_anchor_seeds_context`
+# forwarded that "" straight into skmemory's `get_agent_paths`, which rejects
+# an empty profile id with "No valid registered memory profile is available".
+# The exception escaped _build_prompt() and killed every single dream run.
+# Anchor seeds are optional inspiration - they must degrade to "".
+# --------------------------------------------------------------------------- #
+class TestAnchorSeedsNeverStallDreaming:
+    def _engine(self, tmp_path, monkeypatch, agent_env):
+        monkeypatch.setenv("SKCAPSTONE_AGENT", agent_env)
+        return DreamingEngine(home=tmp_path, config=DreamingConfig())
+
+    def test_blank_agent_env_does_not_forward_empty_agent_id(self, tmp_path, monkeypatch):
+        """An unresolved agent name must become None, never ""."""
+        seen = {}
+
+        def fake_match_blooms(feb, agent=None, top_k=3):
+            seen["agent"] = agent
+            return []
+
+        def fake_match_entanglements(feb, agent=None, top_k=2):
+            return []
+
+        import skmemory.entanglements as ent
+        import skmemory.peaks as peaks
+
+        monkeypatch.setattr(peaks, "match_blooms_for_feb", fake_match_blooms)
+        monkeypatch.setattr(ent, "match_entanglements_for_feb", fake_match_entanglements)
+
+        engine = self._engine(tmp_path, monkeypatch, "")
+        engine._agent_name = ""  # the exact daemon state that caused the outage
+
+        assert engine._build_anchor_seeds_context(tmp_path) == ""
+        # "" is not a valid profile id; None means "resolve the active agent".
+        assert seen["agent"] is None
+
+    def test_anchor_seed_failure_degrades_instead_of_raising(self, tmp_path, monkeypatch):
+        """Any skmemory failure is optional-enrichment loss, not a dead dream."""
+
+        def boom(*args, **kwargs):
+            raise ValueError("No valid registered memory profile is available")
+
+        import skmemory.entanglements as ent
+        import skmemory.peaks as peaks
+
+        monkeypatch.setattr(peaks, "match_blooms_for_feb", boom)
+        monkeypatch.setattr(ent, "match_entanglements_for_feb", boom)
+
+        engine = self._engine(tmp_path, monkeypatch, "lumina")
+        assert engine._build_anchor_seeds_context(tmp_path) == ""
