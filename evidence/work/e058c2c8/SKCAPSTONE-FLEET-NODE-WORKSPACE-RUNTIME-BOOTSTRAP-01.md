@@ -3,47 +3,30 @@
 Card: `e058c2c8`
 Producer: `cursor-e058c2c8`
 Verdict candidate: `PASS_FOR_REVIEW`
-Base at edit: `c591542354ac38922d92a93eee4448f655b16d95`
-Checkout: `/home/skuser01/work/skcapstone-e058c2c8-herdr`
+Base at edit: `a04952cddd3e9f7d6d2ef5def079419c0acad0a9`
 
 ## Scope
 
-Host-neutral source-only governed workspace runtime bootstrap:
+Thin host-neutral orchestration seam only:
 
-- isolated per-card worktree create/retire with shared-checkout refusal
-- Herdr reclaim limited to exact terminal (`done`) unchanged generations
-- capacity admission via fleet.capacity.admit_headroom plus logical bucket occupancy
-- exact claim/unit mapping, concurrency, rollback, successor safety
-- no deployment, no literal host/model bindings, no SKLegal touch, no e91a20f5 activation
+- `capacity.admit_headroom` for fail-closed mem/swap
+- pure plan/retire/successor occupancy checks (no git actuator)
+- exact claim/unit mapping and terminal Herdr reclaim selection
+- no host/model literals, no deployment, no e91a20f5 activation
 
 ## Files and SHA-256
 
-- `src/skcapstone/fleet/workspace_runtime.py`: `423edc81959ded1c775ce6fc7e593882ac025e42033a44a610986ed18c898e15`
-- `tests/test_workspace_runtime.py`: `83dafea33a4fe46cfc87cfbc2f43671c0c85b2a676cd82b78e0209b4c86adce9`
-- `tests/test_workspace_runtime_integration.py`: `41c5222193c1074e62855eb85e82778f6d0684faa102d431a8a5a6f1edd32ede`
+- `src/skcapstone/fleet/capacity.py`: `fea752425341a3ae13fa1fcd2cc6ba902894f52d8ae865abc9e684599e6c83b2`
+- `src/skcapstone/fleet/workspace_runtime.py`: `1a65945b6f26d235911725f30984ce3323a74d3e6e5addb6c3a498b1f25c6ac4`
+- `tests/fleet/test_allocatable.py`: `2419dcfa7d26736d9eddb71c7317c665ceeb760ece2778ecf9fe2fd83018b254`
+- `tests/test_workspace_runtime.py`: `8a184b4173b48869d4517cf9c4b9e77fe97c5d1c10f567dc08e68a919b1bc8b9`
 
-Artifact digest (paths+bytes): `be80cfbaaa07483b4ecf6cbbb86a07dacaa31c6cf84eac0f347fa28e8d81dbc6`
+Artifact digest: `80c953b9c42379ba579a8b01613df18146d5751473c2bacc04239a3ff1cb5aab`
 
 ## Verification
 
-```text
-python -m pytest -q tests/test_workspace_runtime.py tests/test_workspace_runtime_integration.py
-```
-
-Result: 9 passed.
-
-```text
-ruff check src/skcapstone/fleet/workspace_runtime.py tests/test_workspace_runtime.py tests/test_workspace_runtime_integration.py
-```
-
-Result: All checks passed.
+`python -m pytest -q tests/test_workspace_runtime.py tests/fleet/test_allocatable.py` → 12 passed.
 
 ## Rollback
 
-Remove the three added paths. No runtime deployment or registry mutation was performed on live nodes.
-
-## Non-goals preserved
-
-- e91a20f5 not claimed, deployed, or activated
-- SKLegal and protected live worktrees untouched
-- no Lumina or direct CardStore JSONL edits
+Revert the listed paths. No live node mutation.

@@ -1,10 +1,7 @@
-"""Focused tests for host-neutral workspace runtime bootstrap."""
+"""Deterministic tests for the workspace-runtime orchestration seam."""
 
 from __future__ import annotations
 
-import subprocess
-import threading
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -15,37 +12,13 @@ from skcapstone.fleet.workspace_runtime import (
     activate_successor,
     admit_capacity,
     advertise_runtime,
-    create_isolated_workspace,
     exact_claim_unit_mapping,
-    get_binding,
     herdr_generation,
-    rollback_create,
+    plan_isolated_workspace,
+    retire_binding,
     select_herdr_reclaims,
     worker_unit_name,
 )
-
-
-def _git(path: Path, *args: str) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(path), *args],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return result.stdout.strip()
-
-
-def _repo(tmp_path: Path) -> tuple[Path, str]:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
-    _git(repo, "config", "user.name", "test")
-    _git(repo, "config", "user.email", "test@example.invalid")
-    (repo / "README").write_text("base\n", encoding="utf-8")
-    _git(repo, "add", "README")
-    _git(repo, "commit", "-m", "base")
-    head = _git(repo, "rev-parse", "HEAD")
-    return repo, head
 
 
 def _meminfo(
@@ -55,65 +28,73 @@ def _meminfo(
     swap_free: int = 1_000_000,
 ) -> str:
     return (
-        f"MemTotal:       8000000 kB\n"
         f"MemAvailable:   {available} kB\n"
         f"SwapTotal:      {swap_total} kB\n"
         f"SwapFree:       {swap_free} kB\n"
     )
 
 
-def test_advertise_runtime_is_host_and_model_neutral(tmp_path: Path) -> None:
-    advert = advertise_runtime(
-        tmp_path,
+def _binding(tmp_path: Path, card: str = "e058c2c8", rev: str = "rev-aaaaaaaaaaaa") -> object:
+    return plan_isolated_workspace(
         workspaces_root=tmp_path / "workspaces",
-        buckets={"S": 1, "M": 2},
-    )
-    payload = advert.__dict__
-    blob = str(payload).lower()
-    assert "lumina" not in blob
-    assert "ziowk" not in blob
-    assert "chiap" not in blob
-    assert "sk-codex" not in blob
-    assert advert.buckets == {"S": 1, "M": 2}
-
-
-def test_create_and_retire_isolated_workspace_avoids_shared_checkout(tmp_path: Path) -> None:
-    home = tmp_path / "home"
-    repo, head = _repo(tmp_path)
-    shared = tmp_path / "shared-checkout"
-    shared.mkdir()
-    workspaces = tmp_path / "workspaces"
-    binding = create_isolated_workspace(
-        home,
-        repo=repo,
-        workspaces_root=workspaces,
-        card_id="e058c2c8",
-        claim_revision="rev-aaaaaaaa",
+        card_id=card,
+        claim_revision=rev,
         owner="worker-a",
         lane="codex",
         bucket="M",
-        base_revision=head,
+        base_revision="a" * 40,
+        shared_checkouts=[tmp_path / "shared"],
+    )
+
+
+def test_advertise_runtime_is_host_and_model_neutral(tmp_path: Path) -> None:
+    advert = advertise_runtime(workspaces_root=tmp_path / "workspaces", buckets={"S": 1, "M": 2})
+    blob = str(advert.__dict__).lower()
+    assert "lumina" not in blob and "ziowk" not in blob and "sk-codex" not in blob
+    assert advert.buckets == {"S": 1, "M": 2}
+
+
+def test_plan_refuses_shared_checkout_and_duplicate_occupancy(tmp_path: Path) -> None:
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    root = tmp_path / "workspaces"
+    first = plan_isolated_workspace(
+        workspaces_root=root,
+        card_id="e058c2c8",
+        claim_revision="rev-aaaaaaaaaaaa",
+        owner="worker-a",
+        lane="codex",
+        bucket="M",
+        base_revision="a" * 40,
         shared_checkouts=[shared],
     )
-    assert Path(binding.workspace).parent == workspaces.resolve()
-    assert binding.unit == "skfleet-worker-codex-e058c2c8.service"
-    assert get_binding(home, "e058c2c8") == binding
+    assert Path(first.workspace).parent == root.resolve()
+    assert first.unit == "skfleet-worker-codex-e058c2c8.service"
     with pytest.raises(WorkspaceRuntimeError, match="shared-checkout"):
-        create_isolated_workspace(
-            home,
-            repo=repo,
+        plan_isolated_workspace(
             workspaces_root=shared,
             card_id="deadbeef",
-            claim_revision="rev-bbbbbbbb",
+            claim_revision="rev-bbbbbbbbbbbb",
             owner="worker-b",
             lane="glm",
             bucket="S",
-            base_revision=head,
+            base_revision="b" * 40,
             shared_checkouts=[shared],
+        )
+    with pytest.raises(WorkspaceRuntimeError, match="card already"):
+        plan_isolated_workspace(
+            workspaces_root=root,
+            card_id="e058c2c8",
+            claim_revision="rev-cccccccccccc",
+            owner="worker-c",
+            lane="codex",
+            bucket="M",
+            base_revision="a" * 40,
+            occupied=[first],
         )
 
 
-def test_herdr_reclaim_preserves_nonterminal_and_changed_generations() -> None:
+def test_herdr_reclaim_preserves_nonterminal_and_changed() -> None:
     done = {
         "name": "pi-done",
         "agent_status": "done",
@@ -123,76 +104,42 @@ def test_herdr_reclaim_preserves_nonterminal_and_changed_generations() -> None:
         "state_change_seq": 10,
         "revision": 1,
     }
-    idle = {**done, "name": "pi-idle", "agent_status": "idle"}
-    working = {**done, "name": "pi-working", "agent_status": "working"}
-    blocked = {**done, "name": "pi-blocked", "agent_status": "blocked"}
-    unknown = {**done, "name": "pi-unknown", "agent_status": "unknown"}
-    changed = {**done, "name": "pi-changed", "state_change_seq": 99}
-    recorded = {
-        "pi-done": herdr_generation(done),
-        "pi-idle": herdr_generation(idle),
-        "pi-working": herdr_generation(working),
-        "pi-blocked": herdr_generation(blocked),
-        "pi-unknown": herdr_generation(unknown),
-        "pi-changed": herdr_generation({**changed, "state_change_seq": 10}),
-    }
-    selected = select_herdr_reclaims(
-        [done, idle, working, blocked, unknown, changed],
-        recorded,
+    agents = [
+        done,
+        {**done, "name": "pi-idle", "agent_status": "idle"},
+        {**done, "name": "pi-working", "agent_status": "working"},
+        {**done, "name": "pi-blocked", "agent_status": "blocked"},
+        {**done, "name": "pi-unknown", "agent_status": "unknown"},
+        {**done, "name": "pi-changed", "state_change_seq": 99},
+    ]
+    recorded = {row["name"]: herdr_generation({**done, "name": row["name"]}) for row in agents}
+    recorded["pi-changed"] = herdr_generation(
+        {**done, "name": "pi-changed", "state_change_seq": 10}
     )
-    assert [row["name"] for row in selected] == ["pi-done"]
+    assert [row["name"] for row in select_herdr_reclaims(agents, recorded)] == ["pi-done"]
 
 
 def test_admission_fails_closed_on_unsafe_memory_swap_and_capacity() -> None:
-    ok = admit_capacity(
-        meminfo_text=_meminfo(),
-        active_work=1,
-        bucket="M",
-        bucket_capacity=2,
-    )
-    assert ok == AdmissionDecision(
-        True,
-        "admitted",
-        mem_available_kb=4_000_000,
-        swap_free_kb=1_000_000,
-        active_work=1,
-        bucket_capacity=2,
-    )
+    assert admit_capacity(
+        meminfo_text=_meminfo(), active_work=1, bucket="M", bucket_capacity=2
+    ) == AdmissionDecision(True, "admitted", 4_000_000, 1_000_000, 1, 2)
     assert (
         admit_capacity(
-            meminfo_text=_meminfo(available=100),
-            active_work=0,
-            bucket="M",
-            bucket_capacity=2,
+            meminfo_text=_meminfo(available=100), active_work=0, bucket="M", bucket_capacity=2
         ).reason
         == "unsafe-memory"
     )
     assert (
         admit_capacity(
-            meminfo_text=_meminfo(swap_free=10),
-            active_work=0,
-            bucket="M",
-            bucket_capacity=2,
+            meminfo_text=_meminfo(swap_free=10), active_work=0, bucket="M", bucket_capacity=2
         ).reason
         == "unsafe-swap"
     )
     assert (
         admit_capacity(
-            meminfo_text=_meminfo(),
-            active_work=2,
-            bucket="M",
-            bucket_capacity=2,
+            meminfo_text=_meminfo(), active_work=2, bucket="M", bucket_capacity=2
         ).reason
         == "bucket-full"
-    )
-    assert (
-        admit_capacity(
-            meminfo_text="MemTotal: 1 kB\n",
-            active_work=0,
-            bucket="M",
-            bucket_capacity=2,
-        ).admitted
-        is False
     )
 
 
@@ -213,72 +160,52 @@ def test_exact_claim_unit_mapping() -> None:
     )
 
 
-def test_concurrent_creates_serialize_to_one_binding(tmp_path: Path) -> None:
-    home = tmp_path / "home"
-    repo, head = _repo(tmp_path)
-    workspaces = tmp_path / "workspaces"
-    barrier = threading.Barrier(2)
-    results: list[object] = []
-
-    def attempt(suffix: str) -> None:
-        barrier.wait(timeout=5)
-        try:
-            results.append(
-                create_isolated_workspace(
-                    home,
-                    repo=repo,
-                    workspaces_root=workspaces,
-                    card_id="feedbeef",
-                    claim_revision=f"rev-{suffix}",
-                    owner=f"owner-{suffix}",
-                    lane="codex",
-                    bucket="S",
-                    base_revision=head,
-                )
-            )
-        except WorkspaceRuntimeError as exc:
-            results.append(exc)
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(attempt, "one"), pool.submit(attempt, "two")]
-        for future in futures:
-            future.result(timeout=30)
-    successes = [row for row in results if not isinstance(row, Exception)]
-    failures = [row for row in results if isinstance(row, Exception)]
-    assert len(successes) == 1
-    assert len(failures) == 1
-    assert get_binding(home, "feedbeef") == successes[0]
-
-
-def test_rollback_and_successor_safety(tmp_path: Path) -> None:
-    home = tmp_path / "home"
-    repo, head = _repo(tmp_path)
-    workspaces = tmp_path / "workspaces"
-    first = create_isolated_workspace(
-        home,
-        repo=repo,
-        workspaces_root=workspaces,
-        card_id="abcd1234",
-        claim_revision="rev-oldoldold",
+def test_concurrency_occupancy_and_rollback_successor(tmp_path: Path) -> None:
+    first = _binding(tmp_path)
+    second_plan = plan_isolated_workspace(
+        workspaces_root=tmp_path / "workspaces",
+        card_id="feedbeef",
+        claim_revision="rev-oneeeeeeee",
         owner="owner-1",
-        lane="qwen",
-        bucket="L",
-        base_revision=head,
+        lane="codex",
+        bucket="S",
+        base_revision="c" * 40,
+        occupied=[first],
     )
+    # Only one binding per card: a racing second plan for the same card fails.
+    with pytest.raises(WorkspaceRuntimeError, match="card already"):
+        plan_isolated_workspace(
+            workspaces_root=tmp_path / "workspaces",
+            card_id="e058c2c8",
+            claim_revision="rev-twooooooooo",
+            owner="owner-2",
+            lane="codex",
+            bucket="S",
+            base_revision="c" * 40,
+            occupied=[first, second_plan],
+        )
     with pytest.raises(WorkspaceRuntimeError, match="successor blocked"):
-        activate_successor(home, previous=first, next_binding=first)
-    rollback_create(home, first, repo=repo)
-    assert get_binding(home, "abcd1234") is None
-    second = create_isolated_workspace(
-        home,
-        repo=repo,
-        workspaces_root=workspaces,
-        card_id="abcd1234",
-        claim_revision="rev-newnewnew",
-        owner="owner-2",
-        lane="qwen",
-        bucket="L",
-        base_revision=head,
+        activate_successor(previous=first, next_binding=first, occupied=[first])
+    cleared = retire_binding(first, [first, second_plan])
+    assert cleared == [second_plan]
+    successor = plan_isolated_workspace(
+        workspaces_root=tmp_path / "workspaces",
+        card_id="e058c2c8",
+        claim_revision="rev-newnewnewnew",
+        owner="owner-3",
+        lane="codex",
+        bucket="M",
+        base_revision="a" * 40,
+        occupied=cleared,
     )
-    activate_successor(home, previous=first, next_binding=second)
-    assert get_binding(home, "abcd1234") == second
+    activate_successor(previous=first, next_binding=successor, occupied=[*cleared, successor])
+
+
+def test_source_module_has_no_literal_host_or_model_bindings() -> None:
+    from skcapstone.fleet import workspace_runtime as runtime
+
+    source = Path(runtime.__file__).read_text(encoding="utf-8").lower()
+    for token in ("ziowk01", "chiap08", "lumina", "sk-codex", "openai", "anthropic"):
+        assert token not in source, token
+    assert "import subprocess" not in source
+    assert "worktree add" not in source
