@@ -17,6 +17,11 @@
   `defaultModel` back across policy-compatible logical size capacity without
   hardcoding host targets or concrete served model names.
 
+- Added an exact, reversible coordination command for quarantining one stale
+  ownerless projection bound to a voided card. Card-generation and projection
+  SHA-256 fences prevent stale or broadened mutations, and restoration verifies
+  both the quarantined bytes and the original retirement receipt.
+
 - Review completion now uses exact-head hosted check totals for non-SKCapstone
   repositories instead of imposing SKCapstone's Python check names. Missing,
   partial, non-success, and stale hosted evidence still fail closed.
