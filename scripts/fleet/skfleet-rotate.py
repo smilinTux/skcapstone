@@ -891,6 +891,17 @@ def _worker_mail_instructions(recipients):
     )
 
 
+def _worker_search_instructions():
+    """Build the fail-closed filesystem search policy for every worker brief."""
+    return (
+        "FILESYSTEM SEARCH BOUNDARY, mandatory for repository and evidence discovery:\n"
+        "- Start every search at the exact authorized repository or evidence root.\n"
+        "- Prefer rg or rg --files, with bounded filters, result limits, and timeouts.\n"
+        "- Never run find /, find /home, or equivalent broad traversal. Never widen\n"
+        "  a search beyond an authorized root; report BLOCKED if the target is absent.\n\n"
+    )
+
+
 def _seraph_terminal_noop(
     host, only_seat, dry, pick_count, processed_picks, launch_receipts
 ):
@@ -5632,6 +5643,7 @@ for _LANE,(_,_,cid,core,_labels,_nb) in picks:
       "- Join structural CardStore events with separate evidence events. Never infer a verdict from lifecycle state or from links alone.\n"
       + _worker_mail_instructions(
           _worker_mail_routing(os.environ, core.get("originator"))) +
+      _worker_search_instructions() +
       "MAIL CHECK CADENCE. Check mail after startup, before each major phase, and\n"
       "at least every five minutes during a long-running task. Mail does not interrupt\n"
       "a tool call, so process new instructions at the next safe boundary. Never\n"
