@@ -246,6 +246,7 @@ def test_seraph_dispatch_is_bounded_claimed_live_and_seat_scoped(
 ) -> None:
     captured = {}
     calls = []
+    monkeypatch.setenv("SKFLEET_GLM_TARGET", "2")
 
     def run(command, **kwargs):
         calls.append(command)
@@ -285,6 +286,9 @@ def test_seraph_dispatch_is_bounded_claimed_live_and_seat_scoped(
     assert captured["SKFLEET_ONLY_SEAT"] == "seraph"
     assert captured["SKFLEET_MAX_LAUNCH"] == "2"
     assert captured["SKFLEET_SEAT_TARGET"] == "2"
+    assert captured["SKFLEET_GLM_TARGET"] == "2"
+    assert captured["SKFLEET_QWEN_TARGET"] == "0"
+    assert captured["SKFLEET_KIMI_TARGET"] == "0"
     assert "SKFLEET_TARGET" not in captured
     assert captured["SKFLEET_MODEL_S"] == "sk-s"
     assert captured["SKFLEET_CODEX_MODEL_S"] == "sk-s"

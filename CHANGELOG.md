@@ -209,6 +209,9 @@
 - Card `7f9751c7`: keep current available provider capacity eligible for Seraph
   while excluding only current throttled or unavailable capacity.
 
+- Card `12196d2b`: preserve configured GLM review capacity in Seraph child
+  dispatch while keeping QWEN and KIMI lanes forced to zero.
+
 - Card `9012e178`: report the existing `do-not-claim` dispatcher exclusion in
   `coord gates` instead of incorrectly describing excluded cards as eligible.
 

@@ -544,7 +544,6 @@ def seraph_operation(home: Path) -> dict[str, int | str]:
             "SKFLEET_ONLY_SEAT": "seraph",
             "SKFLEET_SEAT_TARGET": str(batch_size),
             "SKFLEET_QWEN_TARGET": "0",
-            "SKFLEET_GLM_TARGET": "0",
             "SKFLEET_KIMI_TARGET": "0",
             "SKFLEET_MAX_LAUNCH": str(batch_size),
         }
