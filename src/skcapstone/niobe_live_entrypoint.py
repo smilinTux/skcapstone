@@ -16,6 +16,8 @@ from pathlib import Path
 from .niobe_activation import LIVE_UNIT, parse_activation
 from .seat_mail import poll_mail, startup_hello
 
+_DISPATCH_TIMEOUT_SECONDS = 270
+
 
 def _append_health(
     home: Path,
@@ -125,6 +127,7 @@ def run_live(
             [sys.executable, str(dispatcher), "--go"],
             check=False,
             env=environment,
+            timeout=_DISPATCH_TIMEOUT_SECONDS,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         _append_health(

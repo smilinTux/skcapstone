@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import fcntl
+import inspect
 import threading
 import time
 from pathlib import Path
 
 from skcapstone.fleet.rotation_lock import acquire_rotation_lock
+from skcapstone.niobe_live_entrypoint import _DISPATCH_TIMEOUT_SECONDS
 
 
 def test_waiting_niobe_gets_next_dispatch_without_concurrent_mutation(tmp_path: Path) -> None:
@@ -85,11 +87,24 @@ def test_dispatcher_routes_only_niobe_through_bounded_wait() -> None:
 
     root = Path(__file__).parents[1]
     source = (root / "scripts/fleet/skfleet-rotate.py").read_text(encoding="utf-8")
-    service = (root / "src/skcapstone/data/systemd/skfleet-niobe-live.service").read_text()
+    services = [
+        (root / "systemd/skfleet-niobe-live.service").read_text(),
+        (root / "src/skcapstone/data/systemd/skfleet-niobe-live.service").read_text(),
+    ]
+    timers = [
+        (root / "systemd/skfleet-niobe-live.timer").read_text(),
+        (root / "src/skcapstone/data/systemd/skfleet-niobe-live.timer").read_text(),
+    ]
     seraph = (root / "src/skcapstone/data/systemd/skfleet-seraph.service").read_text()
     assert 'Path(HOME)/".skcapstone/fleet/rotate.lock"' in source
     assert 'seat=ONLY_SEAT or "niobe"' in source
-    assert "TimeoutStartSec=300" in service
+    lock_wait = inspect.signature(acquire_rotation_lock).parameters["wait_seconds"].default
+    dispatcher_deadline = _DISPATCH_TIMEOUT_SECONDS
+    service_deadline = 300
+    assert lock_wait < dispatcher_deadline < service_deadline
+    assert all(f"TimeoutStartSec={service_deadline}" in service for service in services)
+    assert all("Persistent=false" in timer for timer in timers)
+    assert all("Unit=skfleet-niobe-live.service" in timer for timer in timers)
     assert "timeout=240" in (root / "src/skcapstone/seat_cycle_entrypoint.py").read_text(
         encoding="utf-8"
     )

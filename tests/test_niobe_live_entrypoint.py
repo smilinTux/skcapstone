@@ -82,8 +82,8 @@ def test_live_wrapper_validates_then_runs_exact_dispatcher(tmp_path: Path, monke
     mailbox = SimpleNamespace(as_dict=lambda: {"mailbox_ok": True})
     monkeypatch.setattr("skcapstone.niobe_live_entrypoint.poll_mail", lambda *a, **k: mailbox)
 
-    def run_dispatcher(command, check, env):
-        calls.append((command, check, env))
+    def run_dispatcher(command, check, env, timeout):
+        calls.append((command, check, env, timeout))
         evidence = (
             tmp_path / "home/evidence/fleet-rotation" / env["SKFLEET_ROTATION_ID"] / "actions.log"
         )
@@ -104,6 +104,7 @@ def test_live_wrapper_validates_then_runs_exact_dispatcher(tmp_path: Path, monke
     assert rc == 0
     assert calls[0][:2] == ([sys.executable, str(dispatcher), "--go"], False)
     assert calls[0][2]["SKFLEET_NIOBE_ACTIVATION"] == str(path.resolve())
+    assert calls[0][3] == 270
     receipt = json.loads(
         (tmp_path / "home/coordination/seat-cycles/niobe.health.jsonl").read_text()
     )
@@ -290,7 +291,10 @@ def test_live_wrapper_records_dispatch_exception(
     monkeypatch.setattr("skcapstone.niobe_live_entrypoint.startup_hello", lambda *a, **k: True)
     monkeypatch.setattr("skcapstone.niobe_live_entrypoint.poll_mail", lambda *a, **k: mailbox)
 
+    calls = []
+
     def fail(*args, **kwargs):
+        calls.append((args, kwargs))
         raise error
 
     with pytest.raises(type(error)):
@@ -304,6 +308,7 @@ def test_live_wrapper_records_dispatch_exception(
     receipt = json.loads(
         (tmp_path / "home/coordination/seat-cycles/niobe.health.jsonl").read_text()
     )
+    assert calls[0][1]["timeout"] == 270
     assert receipt["result"] == "dispatch_failed"
     assert receipt["exception_type"] == type(error).__name__
 

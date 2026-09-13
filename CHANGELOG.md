@@ -5,6 +5,10 @@
 - Builder dispatch now releases the prior exact claim and blocks without
   launching when a changed offer supersedes persisted status for the same card.
 
+- Card `7a13d0e1`: bound the Niobe dispatcher to 270 seconds, preserving its
+  240-second fair lock wait while leaving 30 seconds for cleanup before the
+  systemd service deadline.
+
 - The shared fleet rotation lock now gives Niobe a bounded acquisition wait
   while Seraph and the other independent seats remain nonblocking. A
   240-second Seraph cycle can no longer turn every one-minute Niobe timer beat
