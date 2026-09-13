@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Claim now projects its exact current CardStore revision atomically, and the
+  fleet monitor accepts matching live Herdr evidence for valid or stale worker
+  projections without relaxing owner, claim, or ephemeral-worker checks.
+
 - Builder dispatch now releases the prior exact claim and blocks without
   launching when a changed offer supersedes persisted status for the same card.
 
