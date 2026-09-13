@@ -57,6 +57,28 @@ def test_retires_exact_ownerless_void_projection_and_restores(tmp_path):
     assert projection.is_file()
 
 
+def test_restore_rejects_tampered_receipt_and_preserves_quarantine(tmp_path):
+    store, projection = _world(tmp_path)
+    result = retire_projection(
+        tmp_path,
+        task_id="deadbeef",
+        projection_agent="pi-test-deadbeef",
+        expected_card_sha256=card_generation_sha256(store.fold("deadbeef")),
+        expected_projection_sha256=_sha(projection),
+        actor="repair",
+    )
+    manifest = tmp_path / "agents-quarantine" / "manifest.jsonl"
+    record = json.loads(manifest.read_text())
+    record.update(task_id="cafebabe", card_sha256="0" * 64, actor="attacker")
+    manifest.write_text(json.dumps(record) + "\n")
+
+    with pytest.raises(ValueError, match="retirement receipt conflict"):
+        result.restore(expected_quarantine_sha256=result.projection_sha256)
+
+    assert result.quarantined_path.is_file()
+    assert not projection.exists()
+
+
 @pytest.mark.parametrize("fence", ["card", "projection"])
 def test_stale_hash_fence_refuses_without_mutation(tmp_path, fence):
     store, projection = _world(tmp_path)
