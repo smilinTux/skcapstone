@@ -12,7 +12,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from ..agent_projection import display_state
+from ..agent_projection import display_state, projection_summary
 from ._common import AGENT_HOME, console
 from ._validators import validate_agent_name, validate_task_id
 
@@ -134,7 +134,10 @@ def register_coord_commands(main: click.Group) -> None:
             console.print("\n  [dim]No tasks match the given filters.[/]\n")
             return
 
-        if not views and not agents:
+        projection_files = (
+            tuple(board.agents_dir.glob("*.json")) if board.agents_dir.is_dir() else ()
+        )
+        if not views and not agents and not projection_files:
             console.print("\n  [dim]Board is empty. Create tasks with:[/]")
             console.print("  [cyan]skcapstone coord create --title 'My Task'[/]\n")
             return
@@ -220,6 +223,25 @@ def register_coord_commands(main: click.Group) -> None:
                     f"  [dim]({hidden} idle/stale agent projections hidden; "
                     f"--include-idle-agents to show)[/]"
                 )
+        from skcoord.card_store import CardStore
+
+        store = CardStore(home_path)
+
+        def _folded_claim(card_id: str) -> tuple[str | None, str]:
+            card = store.fold(card_id)
+            if card is None:
+                raise ValueError("card absent")
+            return card.owner, str(card.meta.get("_claim_revision") or "")
+
+        grouped = projection_summary(
+            board.agents_dir,
+            folded_claim=_folded_claim,
+        )
+        fields = []
+        for group, buckets in grouped.items():
+            ages = ",".join(f"{name}:{count}" for name, count in sorted(buckets.items()))
+            fields.append(f"{group.replace('_', '-')}={sum(buckets.values())}[{ages}]")
+        console.print("  [dim]Projection diagnostics: " + " ".join(fields) + "[/]")
         console.print()
 
     @coord.command("gates")

@@ -63,6 +63,8 @@ def test_coord_status_preserves_and_ignores_conflict_copy(tmp_path):
     assert result.exit_code == 0, result.output
     assert "ghost" not in result.output
     assert conflict.exists()
+    assert "projection diagnostics" in result.output.lower()
+    assert "malformed=1" in result.output
 
 
 def test_coord_archive_done_dry_run(tmp_path):

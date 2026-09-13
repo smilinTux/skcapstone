@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Retire stale idle agent projections into a reversible quarantine.
 
-A projection is retired only when it is idle (null or empty current_task),
-identity-valid (payload agent equals the filename stem), and has had no
-last_seen or file modification within RETIRE_AFTER_DAYS. Active, malformed,
-identity-mismatched, and Syncthing conflict files are never touched; the
-monitor keeps reporting those as diagnostics. Moves are recorded in a
-JSONL manifest and reversible with --restore.
+A projection is retired only when its identity-valid filename has an ephemeral
+worker generation suffix and it has had no last_seen or file modification
+within RETIRE_AFTER_DAYS. A stale task holder additionally requires fresh exact
+negative process, unit, and direct-seat observations plus folded CardStore
+custody mismatch. Ambiguous, identity-mismatched, standing, and Syncthing
+conflict files are never touched. Moves are recorded in a JSONL manifest and
+reversible with --restore.
 """
 
 from __future__ import annotations
@@ -14,13 +15,17 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Callable
 
 RETIRE_AFTER_DAYS = 30
-GLOB = "pi-*.json"
+PROOF_MAX_AGE = timedelta(minutes=5)
+GLOB = "*.json"
+EPHEMERAL_SUFFIX = re.compile(r"(?:^|[-_.])[0-9a-f]{8}$", re.IGNORECASE)
 
 
 def agents_dir() -> Path:
@@ -63,37 +68,138 @@ def canonical_agent(path: Path, agent: str) -> bool:
     return path.name == f"{agent}.json"
 
 
-def eligible(path: Path, now: datetime) -> tuple[bool, str]:
-    """Return (retire, reason) for one projection file, failing closed."""
+def ephemeral_agent(agent: str) -> bool:
+    """Recognize a bounded worker generation without naming its provider."""
+
+    return EPHEMERAL_SUFFIX.search(agent) is not None
+
+
+def folded_claim_identity(card_id: str) -> tuple[str | None, str]:
+    """Return authoritative folded owner and claim revision for one card."""
+
+    from skcoord.card_store import CardStore
+
+    card = CardStore(Path.home() / ".skcapstone").fold(card_id)
+    if card is None:
+        raise ValueError("card is absent")
+    return card.owner, str(card.meta.get("_claim_revision") or "")
+
+
+class ProofError(RuntimeError):
+    """Raised when stale-task proof is absent or ambiguous."""
+
+
+def load_stale_task_proofs(path: Path | None, now: datetime) -> dict[tuple[str, str, str], dict]:
+    """Load fresh, exact negative runtime observations for stale task holders."""
+
+    if path is None:
+        return {}
+    if path.is_symlink() or not path.is_file():
+        raise ProofError("stale-task proof must be a regular file")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ProofError(f"stale-task proof is unreadable: {type(exc).__name__}") from exc
+    if not isinstance(payload, list) or len(payload) > 1000:
+        raise ProofError("stale-task proof must be a bounded list")
+    proofs: dict[tuple[str, str, str], dict] = {}
+    for record in payload:
+        if not isinstance(record, dict):
+            raise ProofError("stale-task proof record is not an object")
+        owner, card_id, claim_revision = (
+            record.get(key) for key in ("owner", "card_id", "claim_revision")
+        )
+        if not all(isinstance(value, str) and value for value in (owner, card_id, claim_revision)):
+            raise ProofError("stale-task proof identity is incomplete")
+        observed = parse_last_seen(record.get("observed_at"))
+        if observed is None or not timedelta(0) <= now - observed <= PROOF_MAX_AGE:
+            raise ProofError("stale-task proof observation is not fresh")
+        if any(
+            type(record.get(key)) is not bool
+            for key in ("process_alive", "active_worker_unit", "direct_seat_record")
+        ):
+            raise ProofError("stale-task runtime proof is ambiguous")
+        key = str(owner), str(card_id), str(claim_revision)
+        if key in proofs:
+            raise ProofError("duplicate stale-task proof identity")
+        proofs[key] = record
+    return proofs
+
+
+def assess(
+    path: Path,
+    now: datetime,
+    stale_task_proofs: dict[tuple[str, str, str], dict] | None = None,
+    claim_lookup: Callable[[str], tuple[str | None, str]] | None = None,
+) -> tuple[bool, str, str]:
+    """Classify one projection and return retirement disposition."""
+
+    if path.is_symlink() or not path.is_file():
+        return False, "non-regular projection stays diagnostic", "diagnostic"
     if ".sync-conflict-" in path.name:
-        return False, "sync-conflict copy stays for monitor diagnostics"
+        return False, "sync-conflict copy stays for monitor diagnostics", "diagnostic"
     try:
         projection = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        return False, f"malformed stays: {type(exc).__name__}"
+        return False, f"malformed stays: {type(exc).__name__}", "diagnostic"
     if not isinstance(projection, dict):
-        return False, "malformed stays: not an object"
+        return False, "malformed stays: not an object", "diagnostic"
     agent = projection.get("agent", "")
     if not isinstance(agent, str) or not agent or agent != path.stem:
-        return False, "identity mismatch stays diagnostic"
+        return False, "identity mismatch stays diagnostic", "diagnostic"
     if not canonical_agent(path, agent):
-        return False, "non-canonical filename stays diagnostic"
+        return False, "non-canonical filename stays diagnostic", "diagnostic"
+    if not ephemeral_agent(agent):
+        return False, "standing or non-ephemeral identity stays", "standing"
     task = projection.get("current_task", "")
+    disposition = "stale-idle"
     if task not in (None, ""):
-        return False, "active or holding a task is never retired"
+        claimed = projection.get("claimed_tasks", [])
+        revision = projection.get("_claim_revision", "")
+        if (
+            not isinstance(task, str)
+            or not re.fullmatch(r"[0-9a-f]{8}", task, re.IGNORECASE)
+            or not isinstance(revision, str)
+            or not revision
+            or claimed != [task]
+        ):
+            return False, "task identity is ambiguous", "diagnostic"
+        key = (agent, task, revision)
+        proof = (stale_task_proofs or {}).get(key)
+        if proof is None:
+            return False, "task holder lacks exact runtime proof", "diagnostic"
+        if any(
+            proof.get(field) is not False
+            for field in ("process_alive", "active_worker_unit", "direct_seat_record")
+        ):
+            return False, "task holder has live or ambiguous runtime evidence", "diagnostic"
+        try:
+            folded_owner, folded_revision = (claim_lookup or folded_claim_identity)(task)
+        except (OSError, ValueError, TypeError):
+            return False, "folded CardStore custody is ambiguous", "diagnostic"
+        if folded_owner == agent and folded_revision == revision:
+            return False, "task holder still matches folded custody", "active"
+        disposition = "stale-task-non-exact"
     observed = parse_last_seen(projection.get("last_seen"))
     if observed is None:
-        return False, "unreadable last_seen stays"
+        return False, "unreadable last_seen stays", "diagnostic"
     modified = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
     cutoff = now - timedelta(days=RETIRE_AFTER_DAYS)
     if observed >= cutoff:
-        return False, f"seen {int((now - observed).total_seconds() // 3600)}h ago"
+        return False, f"seen {int((now - observed).total_seconds() // 3600)}h ago", "young"
     if modified >= cutoff:
-        return False, "file modified inside the retirement window"
+        return False, "file modified inside the retirement window", "young"
     # ponytail: 300s tolerates filesystem timestamp granularity, nothing wider.
     if (observed - modified).total_seconds() > 300:
-        return False, "last_seen newer than mtime stays (rollback evidence)"
-    return True, f"idle since {observed.isoformat()}"
+        return False, "last_seen newer than mtime stays (rollback evidence)", "diagnostic"
+    return True, f"inactive since {observed.isoformat()}", disposition
+
+
+def eligible(path: Path, now: datetime) -> tuple[bool, str]:
+    """Return the legacy two-field idle-retirement decision."""
+
+    retire, reason, _disposition = assess(path, now)
+    return retire, reason
 
 
 class ManifestError(RuntimeError):
@@ -147,9 +253,19 @@ def main(argv: list[str] | None = None) -> int:
         "--apply", action="store_true", help="perform the moves (default: dry run)"
     )
     parser.add_argument("--restore", metavar="FILENAME", help="move one quarantined file back")
+    parser.add_argument(
+        "--stale-task-proof",
+        type=Path,
+        help="fresh bounded runtime proof for non-exact task holders",
+    )
     args = parser.parse_args(argv)
 
     now = datetime.now(timezone.utc)
+    try:
+        stale_task_proofs = load_stale_task_proofs(args.stale_task_proof, now)
+    except ProofError as exc:
+        print(f"refusing stale-task reconciliation: {exc}")
+        return 1
 
     if args.restore:
         try:
@@ -197,7 +313,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"refusing to apply: {exc}")
             return 1
     for path in sorted(agents_dir().glob(GLOB)):
-        ok, reason = eligible(path, now)
+        ok, reason, disposition = assess(path, now, stale_task_proofs)
         if not ok:
             skipped += 1
             continue
@@ -221,7 +337,10 @@ def main(argv: list[str] | None = None) -> int:
                 "original_path": str(path),
                 "sha256": digest,
                 "bytes": size,
+                "disposition": disposition,
+                "observed_at": now.isoformat(),
                 "moved_at": now.isoformat(),
+                "rollback": f"--restore {path.name}",
             }
         )
         print(f"MOVED {path.name} ({reason})")
