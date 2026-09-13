@@ -22,6 +22,13 @@
   SHA-256 fences prevent stale or broadened mutations, and restoration verifies
   both the quarantined bytes and the original retirement receipt.
 
+- The fleet liveness publisher now reads pane evidence only through an
+  explicit namespace-safe tmux socket (`SKFLEET_TMUX_SOCKET`, set to
+  `%t/skfleet/tmux.sock` by its `PrivateTmp=yes` unit). A missing, non-socket,
+  or unreachable socket fails closed without replacing the last published
+  snapshot; `failed to connect` is no longer accepted as empty-success
+  evidence.
+
 - Review completion now uses exact-head hosted check totals for non-SKCapstone
   repositories instead of imposing SKCapstone's Python check names. Missing,
   partial, non-success, and stale hosted evidence still fail closed.
