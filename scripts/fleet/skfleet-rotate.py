@@ -5776,21 +5776,21 @@ processed_picks=0
 launch_remaining={lane["name"]:lane["free"] for lane in LANES}
 _review_route_reservations={}
 logdir=os.path.join(HOME,".skcapstone/fleet/logs"); os.makedirs(logdir,exist_ok=True)
-import time as _time
 #: Keep the launch budget inside the Niobe wrapper's 270-second deadline: reserve
 #: 20 seconds for cleanup and the final CYCLE_RECEIPT before it fires.
 _CYCLE_DEADLINE_RESERVE_S = 20
-_cycle_deadline = _time.monotonic() + 270 - _CYCLE_DEADLINE_RESERVE_S
+_cycle_deadline = time.monotonic() + 270 - _CYCLE_DEADLINE_RESERVE_S
 #: Per-cycle cache: equivalent logical routes are resolved and prefilled exactly once.
 _route_preflight_cache = {}
 for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
     if launched>=MAX_LAUNCH:
         break
-    if _time.monotonic() >= _cycle_deadline:
+    if time.monotonic() >= _cycle_deadline:
         _deferred_ids,_deferred_omitted=_bounded_ids(
             candidate[1][2] for candidate in picks[_pick_index:])
         log(d,"CYCLE_DEADLINE_REACHED|%s|processed=%d remaining=%d deferred=%d ids=%s omitted=%d"%
-            (HOST,processed_picks,len(picks)-_pick_index,_deferred_ids,_deferred_omitted))
+            (HOST,processed_picks,len(picks)-_pick_index,len(_deferred_ids),
+             _deferred_ids,_deferred_omitted))
         break
     if not _has_launchable_pick(
             picks[_pick_index:],launch_remaining,elastic_launch_remaining,

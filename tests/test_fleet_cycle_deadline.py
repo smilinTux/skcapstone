@@ -16,7 +16,7 @@ ROTATE = Path(__file__).resolve().parents[1] / "scripts" / "fleet" / "skfleet-ro
 def test_cycle_deadline_reserves_receipt_window() -> None:
     source = ROTATE.read_text()
     assert "_CYCLE_DEADLINE_RESERVE_S = 20" in source
-    assert "_cycle_deadline = _time.monotonic() + 270 - _CYCLE_DEADLINE_RESERVE_S" in source
+    assert "_cycle_deadline = time.monotonic() + 270 - _CYCLE_DEADLINE_RESERVE_S" in source
     # On reaching the inner deadline the loop stops launching and logs the
     # deferral so the final receipt still gets written before the wrapper
     # timeout.
