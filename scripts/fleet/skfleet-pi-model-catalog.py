@@ -230,35 +230,6 @@ def route_health_state(
     return "unhealthy"
 
 
-def _route_metadata(row: Mapping[str, Any], health_state: str) -> dict[str, Any]:
-    card = row.get("card") if isinstance(row.get("card"), dict) else {}
-    route = str(row["id"]).strip()
-    return {
-        "id": route,
-        "advertised": False if row.get("advertised") is False else True,
-        "stale": True if row.get("stale") is True else False,
-        "provider": str(row.get("provider") or row.get("owned_by") or ""),
-        "size_class": str(card.get("size_class") or _ROUTE_SIZE.get(route) or ""),
-        "tools": True if row.get("tools") is True else False,
-        "reasoning": True if card.get("reasoning") is True else False,
-        "health": health_state,
-    }
-
-
-def inventory_fingerprint(view: GatewayView) -> str:
-    """Digest of logical-route metadata and health, not IDs alone."""
-    rows = []
-    for row in view.models:
-        route = str(row.get("id") or "").strip()
-        if not is_logical_route(route):
-            continue
-        rows.append(_route_metadata(row, route_health_state(row, view)))
-    payload = json.dumps(
-        sorted(rows, key=lambda item: item["id"]), separators=(",", ":"), sort_keys=True
-    )
-    return hashlib.sha256(payload.encode()).hexdigest()
-
-
 def _pi_model_record(row: Mapping[str, Any]) -> dict[str, Any]:
     route = str(row["id"]).strip()
     card = row.get("card") if isinstance(row.get("card"), dict) else {}
@@ -275,6 +246,38 @@ def _pi_model_record(row: Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(context, int) and not isinstance(context, bool) and context > 0:
         record["contextWindow"] = context
     return record
+
+
+def _route_metadata(row: Mapping[str, Any], health_state: str) -> dict[str, Any]:
+    """Fingerprint fields including Pi-emitted name/contextWindow."""
+    card = row.get("card") if isinstance(row.get("card"), dict) else {}
+    pi = _pi_model_record(row)
+    return {
+        "id": pi["id"],
+        "name": pi["name"],
+        "contextWindow": pi.get("contextWindow"),
+        "advertised": False if row.get("advertised") is False else True,
+        "stale": True if row.get("stale") is True else False,
+        "provider": str(row.get("provider") or row.get("owned_by") or ""),
+        "size_class": str(card.get("size_class") or _ROUTE_SIZE.get(pi["id"]) or ""),
+        "tools": True if row.get("tools") is True else False,
+        "reasoning": True if card.get("reasoning") is True else False,
+        "health": health_state,
+    }
+
+
+def inventory_fingerprint(view: GatewayView) -> str:
+    """Digest of logical-route metadata, Pi fields, and health — not IDs alone."""
+    rows = []
+    for row in view.models:
+        route = str(row.get("id") or "").strip()
+        if not is_logical_route(route):
+            continue
+        rows.append(_route_metadata(row, route_health_state(row, view)))
+    payload = json.dumps(
+        sorted(rows, key=lambda item: item["id"]), separators=(",", ":"), sort_keys=True
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 def healthy_logical_records(view: GatewayView) -> list[dict[str, Any]]:
