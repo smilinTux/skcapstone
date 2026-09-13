@@ -1311,16 +1311,18 @@ except (OSError,ValueError,TypeError):
     pass
 
 def _prepare_pi_glm_catalog():
-    """Install logical GLM metadata before any live alias can be selected."""
+    """Sync Pi's SKGateway catalog to currently advertised gateway routes."""
     installed=Path(HOME)/".local/bin/skfleet-pi-model-catalog.py"
     bundled=Path(__file__).with_name("skfleet-pi-model-catalog.py")
     helper=installed if installed.exists() else bundled
     if not helper.is_file():
         return False,"catalog reconciler missing"
+    env=dict(os.environ)
+    env["SKFLEET_GATEWAY_URL"]=_GATEWAY_ENDPOINT
     try:
         result=subprocess.run(
             [sys.executable,str(helper),"--apply"],
-            capture_output=True,text=True,timeout=15,check=False,
+            capture_output=True,text=True,timeout=15,check=False,env=env,
         )
     except (OSError,subprocess.TimeoutExpired) as exc:
         return False,"catalog reconciliation failed: %s"%type(exc).__name__

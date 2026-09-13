@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import stat
 import subprocess
 from pathlib import Path
@@ -22,22 +23,21 @@ def _module():
     return module
 
 
-def _document():
+def _document(models=None):
     return {
         "providers": {
             "skgateway": {
                 "opaqueReference": "preserve-me",
-                "models": [
+                "models": models
+                or [
+                    {
+                        "id": "qwen3.8-chiap08",
+                        "name": "stale served model",
+                        "contextWindow": 131072,
+                    },
                     {
                         "id": "glm-4.6",
                         "name": "GLM-4.6 via SKGateway (z.ai)",
-                        "reasoning": True,
-                        "input": ["text"],
-                        "contextWindow": 200000,
-                    },
-                    {
-                        "id": "glm-4.7",
-                        "name": "GLM-4.7 via SKGateway (z.ai)",
                         "reasoning": True,
                         "input": ["text"],
                         "contextWindow": 200000,
@@ -48,86 +48,98 @@ def _document():
     }
 
 
-def test_reconcile_adds_managed_sources_and_six_routes_preserving_secret_fields():
+def _inventory():
+    return [
+        {
+            "id": "sk-s",
+            "advertised": True,
+            "stale": False,
+            "tools": True,
+            "card": {"size_class": "S", "reasoning": True},
+        },
+        {
+            "id": "sk-m",
+            "advertised": True,
+            "stale": False,
+            "tools": True,
+            "card": {"size_class": "M", "reasoning": True},
+        },
+        {
+            "id": "route-removed",
+            "advertised": False,
+            "stale": True,
+            "tools": True,
+            "card": {"size_class": "L", "reasoning": True},
+        },
+        {
+            "id": "glm-4.6",
+            "advertised": True,
+            "stale": False,
+            "tools": True,
+            "name": "GLM-4.6 via SKGateway (z.ai)",
+            "card": {"size_class": "M", "reasoning": True, "context_window": 200000},
+        },
+    ]
+
+
+def test_reconcile_keeps_only_currently_advertised_routes_and_drops_stale_served_names():
     module = _module()
     original = _document()
-    updated, changed = module.reconcile(original)
+    updated, changed = module.reconcile(original, _inventory(), gateway_revision="a" * 40)
     models = updated["providers"]["skgateway"]["models"]
     by_id = {item["id"]: item for item in models}
-    assert changed == [
-        "glm-5.3",
-        "kimi-for-coding",
-        "kimi-for-coding-highspeed",
-        "k3",
-        "k3-256k",
-        *module.ALIASES,
-    ]
+    assert "qwen3.8-chiap08" not in by_id
+    assert "route-removed" not in by_id
+    assert set(by_id) == {"glm-4.6", "sk-m", "sk-s"}
     assert updated["providers"]["skgateway"]["opaqueReference"] == "preserve-me"
     assert original == _document()
-    assert set(module.ALIASES) <= by_id.keys()
-    assert by_id["sk-glm-l"]["contextWindow"] == 200000
-    assert by_id["sk-zai-s"]["reasoning"] is True
-    assert len(models) == 13
+    assert "qwen3.8-chiap08" in changed
+    sync = updated["providers"]["skgateway"][module.SYNC_KEY]
+    assert sync["gateway_revision"] == "a" * 40
+    assert sync["invalidated"] is True
+    assert by_id["sk-s"]["reasoning"] is True
 
 
-def test_reconcile_bootstraps_chiap04_like_catalog_without_copying_host_state():
+def test_reconcile_invalidates_when_gateway_revision_or_inventory_changes():
     module = _module()
-    document = _document()
-    document["providers"]["skgateway"]["models"] = [
-        {
-            "id": "host-only-model",
-            "opaqueHostField": "preserve-me-too",
-        }
-    ]
-    updated, changed = module.reconcile(document)
-    by_id = {item["id"]: item for item in updated["providers"]["skgateway"]["models"]}
-    assert changed == [item["id"] for item in module.SOURCE_MODELS] + list(module.ALIASES)
-    assert by_id["host-only-model"] == {
-        "id": "host-only-model",
-        "opaqueHostField": "preserve-me-too",
-    }
-    assert by_id["glm-4.6"]["contextWindow"] == 200000
-    assert by_id["kimi-for-coding"]["contextWindow"] == 262144
-    assert by_id["k3"]["contextWindow"] == 1000000
+    first, _ = module.reconcile(_document(), _inventory(), gateway_revision="a" * 40)
+    second, changed = module.reconcile(first, _inventory(), gateway_revision="b" * 40)
+    assert changed
+    assert second["providers"]["skgateway"][module.SYNC_KEY]["gateway_revision"] == "b" * 40
+    slim = [row for row in _inventory() if row["id"] in {"sk-s", "sk-m"}]
+    third, removed = module.reconcile(second, slim, gateway_revision="b" * 40)
+    assert "glm-4.6" not in {item["id"] for item in third["providers"]["skgateway"]["models"]}
+    assert "glm-4.6" in removed
 
 
-def test_reconcile_refuses_conflicting_managed_source_metadata():
+def test_choose_fallback_route_walks_size_capacity_without_served_names():
     module = _module()
-    document = _document()
-    document["providers"]["skgateway"]["models"][0]["contextWindow"] = 1
-    with pytest.raises(ValueError, match="conflicting source model metadata: glm-4.6"):
-        module.reconcile(document)
+    assert module.choose_fallback_route(["glm-4.6", "sk-m", "sk-xl"], required_size="S") == "sk-m"
+    assert module.choose_fallback_route(["sk-xl", "sk-l"], required_size="M") == "sk-l"
+    assert module.choose_fallback_route(["served-old"], required_size="S") == "served-old"
+    assert module.choose_fallback_route([], required_size="S") is None
 
 
-@pytest.mark.parametrize("model_id", [[], {}])
-def test_reconcile_refuses_non_string_model_ids(model_id):
+def test_repair_default_model_replaces_stale_selection():
     module = _module()
+    settings = {"defaultProvider": "skgateway", "defaultModel": "qwen3.8-chiap08"}
+    updated, fallback = module.repair_default_model(settings, ["sk-s", "sk-m"], required_size="S")
+    assert fallback == "sk-s"
+    assert updated["defaultModel"] == "sk-s"
+    assert settings["defaultModel"] == "qwen3.8-chiap08"
+    same, again = module.repair_default_model(updated, ["sk-s", "sk-m"], required_size="S")
+    assert again is None
+    assert same["defaultModel"] == "sk-s"
+
+
+def test_reconcile_refuses_empty_or_malformed_inventory_and_ids():
+    module = _module()
+    with pytest.raises(ValueError, match="no selectable routes"):
+        module.reconcile(_document(), [{"id": "dead", "advertised": False, "stale": True}])
     document = _document()
-    document["providers"]["skgateway"]["models"].append({"id": model_id})
+    document["providers"]["skgateway"]["models"].append({"id": []})
     with pytest.raises(ValueError, match="every model id must be a non-empty string"):
-        module.reconcile(document)
-
-
-def test_reconcile_is_idempotent_and_refuses_alias_drift():
-    module = _module()
-    updated, _ = module.reconcile(_document())
-    second, changed = module.reconcile(updated)
-    assert changed == []
-    assert second == updated
-    by_id = {item["id"]: item for item in second["providers"]["skgateway"]["models"]}
-    by_id["sk-zai-l"]["contextWindow"] = 1
-    with pytest.raises(ValueError, match="conflicting logical alias metadata: sk-zai-l"):
-        module.reconcile(second)
-
-
-@pytest.mark.parametrize("model_id", ["glm-4.6", "sk-glm-s"])
-def test_reconcile_refuses_duplicate_managed_ids(model_id: str):
-    module = _module()
-    updated, _ = module.reconcile(_document())
-    models = updated["providers"]["skgateway"]["models"]
-    models.append(next(item.copy() for item in models if item["id"] == model_id))
-    with pytest.raises(ValueError, match=f"duplicate managed model id: {model_id}"):
-        module.reconcile(updated)
+        module.reconcile(document, _inventory())
 
 
 def test_atomic_write_preserves_mode_and_unrelated_fields(tmp_path: Path):
@@ -135,13 +147,17 @@ def test_atomic_write_preserves_mode_and_unrelated_fields(tmp_path: Path):
     path = tmp_path / "models.json"
     path.write_text(json.dumps(_document()), encoding="utf-8")
     path.chmod(0o600)
-    updated, changed, info = module.load_and_reconcile(path)
+    updated, changed, info = module.load_and_reconcile(
+        path, _inventory(), gateway_revision="c" * 40
+    )
     assert changed
     module.write_atomic(path, updated, info)
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert (
-        json.loads(path.read_text())["providers"]["skgateway"]["opaqueReference"] == "preserve-me"
-    )
+    saved = json.loads(path.read_text())
+    assert saved["providers"]["skgateway"]["opaqueReference"] == "preserve-me"
+    assert "qwen3.8-chiap08" not in {
+        item["id"] for item in saved["providers"]["skgateway"]["models"]
+    }
 
 
 def test_rejects_insecure_catalog(tmp_path: Path):
@@ -150,7 +166,7 @@ def test_rejects_insecure_catalog(tmp_path: Path):
     path.write_text(json.dumps(_document()), encoding="utf-8")
     path.chmod(0o644)
     with pytest.raises(ValueError, match="group or other"):
-        module.load_and_reconcile(path)
+        module.load_and_reconcile(path, _inventory())
 
 
 def test_rejects_symlink(tmp_path: Path):
@@ -161,15 +177,84 @@ def test_rejects_symlink(tmp_path: Path):
     link = tmp_path / "models.json"
     link.symlink_to(target)
     with pytest.raises(ValueError, match="symlink"):
-        module.load_and_reconcile(link)
+        module.load_and_reconcile(link, _inventory())
+
+
+def test_cli_reproduces_stale_default_404_path_and_repairs_without_host_literals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    catalog = tmp_path / "models.json"
+    settings = tmp_path / "settings.json"
+    inventory = tmp_path / "inventory.json"
+    catalog.write_text(json.dumps(_document()), encoding="utf-8")
+    catalog.chmod(0o600)
+    settings.write_text(
+        json.dumps({"defaultProvider": "skgateway", "defaultModel": "qwen3.8-chiap08"}),
+        encoding="utf-8",
+    )
+    settings.chmod(0o600)
+    inventory.write_text(json.dumps({"data": _inventory()}), encoding="utf-8")
+    monkeypatch.delenv("SKFLEET_GATEWAY_URL", raising=False)
+    dry = subprocess.run(
+        [
+            str(SCRIPT),
+            "--catalog",
+            str(catalog),
+            "--settings",
+            str(settings),
+            "--inventory",
+            str(inventory),
+            "--gateway-revision",
+            "d" * 40,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert dry.returncode == 1
+    assert dry.stderr == ""
+    assert "PI_MODEL_CATALOG|changed|" in dry.stdout
+    assert "qwen3.8-chiap08" in catalog.read_text()
+    assert json.loads(settings.read_text())["defaultModel"] == "qwen3.8-chiap08"
+
+    applied = subprocess.run(
+        [
+            str(SCRIPT),
+            "--catalog",
+            str(catalog),
+            "--settings",
+            str(settings),
+            "--inventory",
+            str(inventory),
+            "--gateway-revision",
+            "d" * 40,
+            "--apply",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert applied.returncode == 0
+    saved_catalog = json.loads(catalog.read_text())
+    saved_settings = json.loads(settings.read_text())
+    assert {item["id"] for item in saved_catalog["providers"]["skgateway"]["models"]} == {
+        "glm-4.6",
+        "sk-m",
+        "sk-s",
+    }
+    assert saved_settings["defaultModel"] == "sk-s"
+    assert "chiap01" not in SCRIPT.read_text(encoding="utf-8")
+    assert "qwen3.8-chiap08" not in SCRIPT.read_text(encoding="utf-8")
 
 
 def test_cli_reports_one_sanitized_line_without_traceback_or_catalog(tmp_path: Path):
     path = tmp_path / "models.json"
     path.write_text(json.dumps(_document()), encoding="utf-8")
     path.chmod(0o664)
+    inventory = tmp_path / "inventory.json"
+    inventory.write_text(json.dumps({"data": _inventory()}), encoding="utf-8")
     result = subprocess.run(
-        [str(SCRIPT), "--catalog", str(path), "--apply"],
+        [str(SCRIPT), "--catalog", str(path), "--inventory", str(inventory), "--apply"],
         capture_output=True,
         text=True,
         check=False,
@@ -183,31 +268,12 @@ def test_cli_reports_one_sanitized_line_without_traceback_or_catalog(tmp_path: P
     assert "preserve-me" not in result.stderr
 
 
-def test_cli_sanitizes_non_string_model_id_without_traceback(tmp_path: Path):
-    document = _document()
-    document["providers"]["skgateway"]["models"].append({"id": []})
-    path = tmp_path / "models.json"
-    path.write_text(json.dumps(document), encoding="utf-8")
-    path.chmod(0o600)
-    result = subprocess.run(
-        [str(SCRIPT), "--catalog", str(path), "--apply"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 2
-    assert result.stdout == ""
-    assert result.stderr.splitlines() == [
-        "PI_MODEL_CATALOG_ERROR|ValueError|every model id must be a non-empty string"
-    ]
-    assert "Traceback" not in result.stderr
-
-
 def test_launcher_reconciles_before_logical_alias_activation(monkeypatch, tmp_path: Path):
     source = (ROOT / "scripts/fleet/skfleet-rotate.py").read_text(encoding="utf-8")
     assert source.index("def _prepare_pi_glm_catalog") < source.index("LANES=[")
     assert source.index("_prepare_pi_glm_catalog()") < source.index("LANES=[")
     assert '"target":0 if glm_held or not glm_catalog_ready else GLM_TARGET' in source
+    assert "SKFLEET_GATEWAY_URL" in source[source.index("def _prepare_pi_glm_catalog") :]
 
     calls = []
 
@@ -222,6 +288,8 @@ def test_launcher_reconciles_before_logical_alias_activation(monkeypatch, tmp_pa
         "__file__": str(ROOT / "scripts/fleet/skfleet-rotate.py"),
         "subprocess": subprocess,
         "sys": __import__("sys"),
+        "os": os,
+        "_GATEWAY_ENDPOINT": "https://gateway.example/v1",
     }
     tree = __import__("ast").parse(source)
     function = next(
@@ -239,6 +307,7 @@ def test_launcher_reconciles_before_logical_alias_activation(monkeypatch, tmp_pa
         "PI_MODEL_CATALOG|current",
     )
     assert calls[0][0][-1] == "--apply"
+    assert calls[0][1]["env"]["SKFLEET_GATEWAY_URL"] == "https://gateway.example/v1"
 
     def refuse(argv, **kwargs):
         return SimpleNamespace(
@@ -265,16 +334,14 @@ def test_launcher_disables_only_glm_when_catalog_reconciliation_fails():
     assert '"target":TARGET' in codex_stanza
 
 
-def test_five_host_install_contract_hardens_before_reconcile_and_activation():
+def test_install_contract_requires_current_advertised_inventory_before_activation():
     contract = ROUTING_DOC.read_text(encoding="utf-8")
     preserve = contract.index("Preserve the exact catalog bytes and original mode")
     harden = contract.index("atomically replace it with the")
     reconcile = contract.index("Invoke `skfleet-pi-model-catalog.py --apply`")
     activate = contract.index("install or activate the alias-selecting")
     assert preserve < harden < reconcile < activate
-    assert "chiap01, chiap02, chiap03, and chiap08" in contract
-    assert "`0600` on\nchiap04" in contract
-    assert "launcher baseline on chiap02 is distinct" in contract
-    assert "exact catalog bytes and original mode" in contract
-    assert "must not substitute the chiap02 launcher" in contract
+    assert "currently advertised" in contract
+    assert "gateway revision" in contract
+    assert "defaultModel" in contract
     assert "never\nnormalizes unsafe input itself" in contract
