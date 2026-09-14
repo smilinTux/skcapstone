@@ -5983,6 +5983,19 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             "generic no-deploy worker rail.\n"
             "- Do not author source, merge, approve your own work, or review this release.\n"
         ) % _artifact_sha256
+    elif _seat == "link":
+        brief += (
+            "\nLINK INTEGRATION PREFLIGHT:\n"
+            "- Before any GitHub merge mutation, read the target protected-branch "
+            "merge policy and pass it through "
+            "skcapstone.link_merge_authority.resolve_protected_merge_method.\n"
+            "- Repository allow flags only narrow policy; they never prove protected "
+            "branch permission. If protected policy is unreadable, incomplete, or "
+            "allows no shared method, stop before mutation.\n"
+            "- Select only the resolver result: squash, then rebase, then merge. Keep "
+            "required checks green and bind the command to the reviewed exact head "
+            "with --match-head-commit.\n"
+        )
     elif _seat == "atlas":
         _verification_target, _verification_evidence_sha256 = _role_seat_metadata(
             core, "atlas"

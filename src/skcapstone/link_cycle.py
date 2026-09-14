@@ -13,7 +13,7 @@ import re
 from dataclasses import asdict, dataclass, field, replace
 from typing import Iterable, Mapping, Sequence
 
-from .link_merge_authority import IndependentReview, MergeCandidate
+from .link_merge_authority import IndependentReview, MergeCandidate, ProtectedMergePolicy
 from .seat_boundaries import BoundaryError, canonical_principal, evaluate_merge_as_link
 
 _GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -305,6 +305,7 @@ class MergeEligibilityRecommendation:
     classification: str
     eligible: bool
     failures: tuple[str, ...]
+    merge_method: str | None
     observation_revision: str
     evidence_sha256: str
     authority: str = "recommendation-only"
@@ -313,6 +314,7 @@ class MergeEligibilityRecommendation:
 def join_review_evidence(
     observation: PullRequestObservation,
     evidence: TerminalReviewEvidence | None,
+    merge_policy: ProtectedMergePolicy | None = None,
 ) -> MergeEligibilityRecommendation:
     """Join explicit evidence to exact head and generation, never lifecycle."""
 
@@ -346,6 +348,7 @@ def join_review_evidence(
         failed_checks=0 if observation.ci_state.lower() in {"success", "passing"} else 1,
         review=independent,
         lineage_outcomes=observation.lineage_outcomes,
+        merge_policy=merge_policy,
     )
     decision = evaluate_merge_as_link("link", candidate)
     combined = tuple(dict.fromkeys([*failures, *decision.failures]))
@@ -353,6 +356,7 @@ def join_review_evidence(
     payload = {
         "classification": classification,
         "failures": combined,
+        "merge_method": decision.merge_method,
         "observation_revision": observation.observation_revision,
         "review_evidence_sha256": evidence.evidence_sha256 if evidence else None,
         "authority": "recommendation-only",
@@ -361,6 +365,7 @@ def join_review_evidence(
         classification=classification,
         eligible=not combined,
         failures=combined,
+        merge_method=decision.merge_method,
         observation_revision=observation.observation_revision,
         evidence_sha256=_digest(payload),
     )
