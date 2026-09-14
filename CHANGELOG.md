@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Card `27fd3463`: preflight repository and protected-branch merge policy,
+  select an allowed merge method deterministically, and fail closed before
+  mutation when policy is unavailable or disjoint.
+
 - Card `b35fdf93`: audit profile-required timers through their exact
   `timers.target.wants` links and active waiting state, converge missing
   enablement without activating allowed-only timers, and record every enable
