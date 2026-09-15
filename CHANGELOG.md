@@ -12,6 +12,8 @@
   reject a manager environment that omits the required general target, and
   provision Seraph with Niobe's existing configured gateway-route drop-in.
 
+- Card `4d90bd7a`: ship the host-neutral `skfleet-niobe-live.env.example` template in Python wheels and source distributions so packaged Niobe lane setup stays reviewable and content-free.
+
 - Card `5245b3a5`: bound both gateway route-preflight requests to Niobe's
   inner cycle deadline and stop selection before workspace, claim, or launch
   when the terminal-receipt reserve begins, preserving fail-closed routing and
