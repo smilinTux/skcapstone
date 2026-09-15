@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Card `5245b3a5`: bound both gateway route-preflight requests to Niobe's
+  inner cycle deadline and stop selection before workspace, claim, or launch
+  when the terminal-receipt reserve begins, preserving fail-closed routing and
+  a terminal cycle receipt before the outer dispatcher timeout.
+
 - Card `964aa0ae`: preserve the pre-claim lifecycle column when a claim is
   released, so review-shaped backlog, ready, and doing cards remain withheld
   until an explicit move to review; exclude `do-not-claim` reviews while

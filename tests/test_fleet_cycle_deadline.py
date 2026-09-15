@@ -30,7 +30,10 @@ def test_route_preflight_caches_rejected_routes_per_cycle() -> None:
     # not re-invoke the gateway for later compatible candidates.
     assert "_route_preflight_cache = {}" in source
     assert "reason=cached-failure" in source
-    assert "resolve_and_preflight(\n                _GATEWAY_ENDPOINT,model,deadline=_cycle_deadline)" in source
+    assert (
+        "resolve_and_preflight(\n                _GATEWAY_ENDPOINT,model,deadline=_cycle_deadline)"
+        in source
+    )
 
 
 def test_route_preflight_cannot_consume_receipt_reserve_or_reach_launch() -> None:
