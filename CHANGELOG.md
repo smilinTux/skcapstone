@@ -115,6 +115,22 @@
   identities, unqualified or unavailable reviewers, exhausted capacity, and
   stale claim generations remain fail-closed. Card metadata retains only
   logical seats and size buckets, never a host, provider, or concrete model.
+- Dreaming stopped for 19 days (2026-08-25 to 2026-09-13) and the stack read the
+  silence as a quiet week. Three things were wrong at once. The "all LLM
+  providers unreachable" path called `_save_state()`, which bumps `dream_count`
+  and stamps `last_dream_at`, but never called `_record_dream()`, so a failure
+  armed the 2h cooldown off a dream that never happened and left no dream-log
+  entry. Separately, `_build_anchor_seeds_context` forwarded `self._agent_name`
+  straight into skmemory's `match_blooms_for_feb`; when the daemon could not
+  resolve an agent that value is `""`, which `get_agent_paths` rejects as an
+  unregistered profile id, and the `ValueError` escaped `_build_prompt` and
+  killed all 1864 scheduled runs before the LLM was ever called. A provider
+  outage is now recorded to `dream-log.json` with its `skipped_reason` and
+  leaves state untouched, so the next cycle retries immediately; anchor seeding
+  passes `None` (skmemory's documented "resolve the active agent" value) and
+  degrades to a blander dream instead of raising; and `dream-week-prep.sh`
+  splits dreams from skipped cycles behind an ENGINE HEALTH block so the weekly
+  reflection can no longer read an outage as steady state.
 
 - The fleet rotation's worker roster was a literal tuple of one estate's five
   chi hosts, so on a second estate the live dispatcher exited immediately with
