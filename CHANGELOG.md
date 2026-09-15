@@ -4,7 +4,8 @@
 
 - Card `9150a101`: propagate the bounded Seraph batch size through both
   `SKFLEET_TARGET` and `SKFLEET_SEAT_TARGET` so the shared dispatcher does not
-  reject a manager environment that omits the required general target.
+  reject a manager environment that omits the required general target, and
+  provision Seraph with Niobe's existing configured gateway-route drop-in.
 
 - Card `5245b3a5`: bound both gateway route-preflight requests to Niobe's
   inner cycle deadline and stop selection before workspace, claim, or launch

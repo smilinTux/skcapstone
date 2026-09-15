@@ -321,6 +321,15 @@ elif [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
             fi
         done
 
+        _NIOBE_GATEWAY_DROPIN="$_UNIT_DIR/skfleet-niobe-live.service.d/70-gateway-endpoint.conf"
+        _SERAPH_GATEWAY_DROPIN="$_UNIT_DIR/skfleet-seraph.service.d/70-gateway-endpoint.conf"
+        if [[ -f "$_NIOBE_GATEWAY_DROPIN" ]]; then
+            mkdir -p "$(dirname "$_SERAPH_GATEWAY_DROPIN")"
+            cp "$_NIOBE_GATEWAY_DROPIN" "$_SERAPH_GATEWAY_DROPIN"
+            echo "  [OK] skfleet-seraph.service.d/70-gateway-endpoint.conf"
+            (( _installed++ ))
+        fi
+
         # skcomms services (sibling repo)
         _SKCOMMS_DIR="$(dirname "$REPO_ROOT")/skcomms/systemd"
         for _unit in skcomms.service skcomms-daemon.service; do

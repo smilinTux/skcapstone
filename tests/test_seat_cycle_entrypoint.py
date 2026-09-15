@@ -245,6 +245,7 @@ def test_seraph_dispatch_is_bounded_claimed_live_and_seat_scoped(
     tmp_path, monkeypatch, installed_dispatcher
 ) -> None:
     monkeypatch.delenv("SKFLEET_TARGET", raising=False)
+    monkeypatch.setenv("SKFLEET_GATEWAY_URL", "https://gateway.example")
     captured = {}
     calls = []
 
@@ -287,6 +288,7 @@ def test_seraph_dispatch_is_bounded_claimed_live_and_seat_scoped(
     assert captured["SKFLEET_MAX_LAUNCH"] == "2"
     assert captured["SKFLEET_SEAT_TARGET"] == "2"
     assert captured["SKFLEET_TARGET"] == captured["SKFLEET_SEAT_TARGET"]
+    assert captured["SKFLEET_GATEWAY_URL"] == "https://gateway.example"
     assert captured["SKFLEET_MODEL_S"] == "sk-s"
     assert captured["SKFLEET_CODEX_MODEL_S"] == "sk-s"
     assert calls[1][-1] == "skfleet-worker-codex-review01.service"
@@ -909,6 +911,14 @@ def test_unit_templates_preserve_limits_and_disabled_install_contract() -> None:
         assert (root / "systemd" / f"skfleet-{seat}.service").read_bytes() == (
             root / "src" / "skcapstone" / "data" / "systemd" / f"skfleet-{seat}.service"
         ).read_bytes()
+
+
+def test_installer_reuses_configured_niobe_gateway_route_for_seraph() -> None:
+    installer = (Path(__file__).parents[1] / "scripts/install.sh").read_text()
+
+    assert "skfleet-niobe-live.service.d/70-gateway-endpoint.conf" in installer
+    assert "skfleet-seraph.service.d/70-gateway-endpoint.conf" in installer
+    assert 'cp "$_NIOBE_GATEWAY_DROPIN" "$_SERAPH_GATEWAY_DROPIN"' in installer
 
 
 def test_tank_and_atlas_presence_cycles_do_not_run_link_work(tmp_path: Path) -> None:
