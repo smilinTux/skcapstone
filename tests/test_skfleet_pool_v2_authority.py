@@ -119,6 +119,30 @@ def test_governed_review_admission_is_dispatchable_not_review_withheld() -> None
     assert dispatchable(ungoverned) is False
 
 
+def test_invalid_reviews_are_removed_before_bounded_truncation() -> None:
+    """Nine late-rejected reviews cannot hide valid later ordinary work."""
+    helpers = _load_helpers("_pool_v2_dispatchable", "_pool_v2_ready_ids")
+    decisions = [
+        SimpleNamespace(card_id=f"dead{index:04x}", eligible=True) for index in range(9)
+    ] + [SimpleNamespace(card_id="feedface", eligible=True)]
+    admissions = {
+        row.card_id: {
+            **_admission(row.card_id),
+            "governed_review": True,
+            "claimable": False,
+            "reason": "review",
+            "elastic_review_admitted": False,
+            "seraph_review_admitted": False,
+        }
+        for row in decisions[:-1]
+    }
+    admissions["feedface"] = _admission("feedface")
+
+    ready = helpers["_pool_v2_ready_ids"](decisions, admissions)
+
+    assert ready == {"feedface"}
+
+
 def test_seraph_admission_clears_when_blocked_backoff_holds() -> None:
     """Unresolved blockers clear Seraph/elastic bits so do-not-claim is unnecessary."""
     helpers = _load_helpers(

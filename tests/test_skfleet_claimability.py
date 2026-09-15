@@ -369,8 +369,8 @@ def test_review_markers_are_not_executable_after_claim_release() -> None:
         assert namespace["_claimability_reason"](core, state) == "review"
 
 
-def test_released_64c201a1_review_keeps_governed_admission_after_empty_title() -> None:
-    """Exact claim, move-doing, describe-empty, release governed review regression."""
+def test_released_64c201a1_review_stays_withheld_until_explicit_move_review() -> None:
+    """A release cannot manufacture governed review lifecycle authority."""
     namespace = _load_claimability()
     core = {
         **_core("64c201a1", labels=["review", "seat-seraph", "sk-s"]),
@@ -400,9 +400,28 @@ def test_released_64c201a1_review_keeps_governed_admission_after_empty_title() -
     )
     admission = namespace["_pool_v2_admission"]("64c201a1", core, state)
 
-    assert reason == "governed-review"
+    assert state["status"] == "doing"
+    assert reason == "review"
     assert admission["governed_review"] is True
-    assert admission["elastic_review_admitted"] is True
+    assert admission["elastic_review_admitted"] is False
+
+    reviewed = namespace["_fold_claimability"](
+        core,
+        [*events, _event("2026-09-13T01:04:00Z", "operator", "move", column="review")],
+    )
+    reviewed_reason = namespace["_claimability_reason"](core, reviewed)
+    reviewed.update(
+        claimable=reviewed_reason in {"claimable", "governed-review"},
+        reason=reviewed_reason,
+        core={**core, "title": reviewed["title"], "links": reviewed["links"]},
+        source_revision="e" * 64,
+        host_pin=None,
+    )
+    assert reviewed_reason == "governed-review"
+    assert (
+        namespace["_pool_v2_admission"]("64c201a1", core, reviewed)["elastic_review_admitted"]
+        is True
+    )
 
     paused = namespace["_fold_claimability"](
         core,
@@ -419,6 +438,35 @@ def test_released_64c201a1_review_keeps_governed_admission_after_empty_title() -
         namespace["_pool_v2_admission"]("64c201a1", core, paused)["elastic_review_admitted"]
         is False
     )
+
+
+@pytest.mark.parametrize("column", ["backlog", "ready", "doing"])
+def test_release_claim_preserves_nonreview_column(column: str) -> None:
+    """Ownership release never changes lifecycle without an explicit move."""
+    namespace = _load_claimability()
+    core = {
+        **_core("deadbeef", labels=["review", "seat-seraph", "sk-s"]),
+        "links": {
+            "producer_identity": "producer",
+            "candidate_evidence_sha256": "a" * 64,
+            "link_source_card": "source01",
+            "link_head_revision": "b" * 40,
+        },
+    }
+    events = []
+    if column != "backlog":
+        events.append(_event("2026-09-15T01:00:00Z", "owner", "move", column=column))
+    events.extend(
+        [
+            _claim("2026-09-15T01:01:00Z", "owner", "revision-1"),
+            _release("2026-09-15T01:02:00Z", "owner", "owner", "revision-1"),
+        ]
+    )
+
+    state = namespace["_fold_claimability"](core, events)
+
+    assert state["status"] == column
+    assert namespace["_claimability_reason"](core, state) == "review"
 
 
 @pytest.mark.parametrize(

@@ -13,6 +13,7 @@ from skcapstone.seat_runtime import (
     ReviewAssignmentRecommendation,
     append_review_launch_receipt,
     authorize_review_launch,
+    governed_review_assignment_ready,
     recommend_reviewer,
     review_state_revision,
 )
@@ -53,6 +54,23 @@ def test_backlog_review_label_is_not_admitted(tmp_path: Path) -> None:
             observed_process={"sessions": []},
             evidence_sha256=HASH,
         )
+
+
+def test_governed_review_assignment_ready_matches_downstream_contract(
+    tmp_path: Path,
+) -> None:
+    """Preselection and downstream authorization share one lifecycle contract."""
+
+    card(tmp_path)
+    store = CardStore(tmp_path)
+    assert governed_review_assignment_ready(store.fold("feedface")) is True
+
+    store.append_event("feedface", "add_label", "producer", label="do-not-claim")
+    assert governed_review_assignment_ready(store.fold("feedface")) is False
+
+    store.append_event("feedface", "remove_label", "producer", label="do-not-claim")
+    store.append_event("feedface", "move", "producer", column="backlog")
+    assert governed_review_assignment_ready(store.fold("feedface")) is False
 
 
 def test_link_recommends_and_exact_reviewer_authorizes_fresh_assignment(

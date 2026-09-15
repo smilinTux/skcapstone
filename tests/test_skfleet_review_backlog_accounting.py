@@ -75,7 +75,9 @@ def test_governed_review_is_the_only_executable_review_state() -> None:
         source.index("def authoritative_claimability") : source.index("def lifecycle_state")
     ]
 
-    assert 'state["status"] == "review" and "review" in normalized_labels' in reason
+    assert 'state["status"] == "review"' in reason
+    assert '"review" in normalized_labels' in reason
+    assert "not (_NOT_CLAIMABLE & normalized_labels)" in reason
     assert 'return "governed-review"' in reason
     assert 'reason in {"claimable", "governed-review"}' in decision
     assert reason.index('return "governed-review"') < reason.index('return "review"')

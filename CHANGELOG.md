@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Card `964aa0ae`: preserve the pre-claim lifecycle column when a claim is
+  released, so review-shaped backlog, ready, and doing cards remain withheld
+  until an explicit move to review; exclude `do-not-claim` reviews while
+  preserving governed review admission and success-only launch budgeting.
+
 - Card `83754e0e`: unify the governed review lifecycle so an unowned
   review-column card carrying the exact `review` label folds to claimable
   reason `governed-review` and dispatches through the bounded POOL_V2

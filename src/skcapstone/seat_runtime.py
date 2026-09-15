@@ -33,6 +33,20 @@ def review_state_revision(card: Card) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def governed_review_assignment_ready(card: Card | None) -> bool:
+    """Return whether a card may enter the governed review assignment path."""
+
+    if card is None:
+        return False
+    labels = {str(label).strip().lower() for label in card.labels}
+    return bool(
+        card.owner is None
+        and getattr(card.status, "value", card.status) == "review"
+        and "review" in labels
+        and "do-not-claim" not in labels
+    )
+
+
 @dataclass(frozen=True)
 class ReviewAssignmentRecommendation:
     """Link advice that Jarvis may turn into one exact review launch."""
@@ -97,12 +111,7 @@ def recommend_reviewer(
 
     store = CardStore(home)
     card = store.fold(card_id)
-    if (
-        card is None
-        or card.owner is not None
-        or getattr(card.status, "value", card.status) != "review"
-        or "review" not in {str(label).strip().lower() for label in card.labels}
-    ):
+    if not governed_review_assignment_ready(card):
         raise BoundaryError("review card is not unclaimed governed review work")
     state_revision = review_state_revision(card)
     if expected_state_revision is not None and expected_state_revision != state_revision:
@@ -172,12 +181,7 @@ def authorize_review_launch(
     if not recorded:
         raise BoundaryError("review recommendation is not recorded exactly")
     card = store.fold(recommendation.card_id)
-    if (
-        card is None
-        or card.owner is not None
-        or getattr(card.status, "value", card.status) != "review"
-        or "review" not in {str(label).strip().lower() for label in card.labels}
-    ):
+    if not governed_review_assignment_ready(card):
         raise BoundaryError("review card is no longer unclaimed governed review work")
     current_revision = review_state_revision(card)
     if current_revision != recommendation.observed_state_revision:

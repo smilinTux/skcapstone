@@ -1931,6 +1931,7 @@ def _fold_claimability(core, rows):
     core_links = core.get("links") if isinstance(core.get("links"), dict) else {}
     state = {
         "status": "backlog", "owner": None, "claim_revision": None,
+        "claim_origin_status": None,
         "archived": False, "voided": False, "terminal": False,
         "review_seen": False,
         "title": str(core.get("title") or ""),
@@ -1970,6 +1971,8 @@ def _fold_claimability(core, rows):
             column = str(event.get("column") or "").strip().lower()
             if column in _COLUMNS:
                 state["status"] = column
+                if state["owner"] is not None:
+                    state["claim_origin_status"] = column
                 state["review_seen"] = column == "review"
                 if (column in {"backlog", "ready", "doing"}
                         and not _complete_governed_review(core,state)):
@@ -1991,10 +1994,8 @@ def _fold_claimability(core, rows):
             ):
                 state["owner"] = None
                 state["claim_revision"] = None
-                if not state["terminal"]:
-                    state["status"] = (
-                        "review" if _complete_governed_review(core,state) else "backlog"
-                    )
+                state["status"] = state["claim_origin_status"] or state["status"]
+                state["claim_origin_status"] = None
         elif action == "claim":
             owner = event.get("owner")
             if not isinstance(owner, str) or not owner:
@@ -2005,6 +2006,7 @@ def _fold_claimability(core, rows):
                     state["status"] in {"ready", "doing", "review"}):
                 continue
             state["owner"] = owner
+            state["claim_origin_status"] = state["status"]
             state["status"] = "doing"
             state["claim_revision"] = event.get("claim_revision") or event.get("event_id")
         elif action == "complete":
@@ -2106,7 +2108,11 @@ def _claimability_reason(core, state):
     # in the review column, and carry the exact review label. All other review
     # markers remain diagnostic only and fail closed.
     normalized_labels = {str(x).strip().lower() for x in labels}
-    if state["status"] == "review" and "review" in normalized_labels:
+    if (
+        state["status"] == "review"
+        and "review" in normalized_labels
+        and not (_NOT_CLAIMABLE & normalized_labels)
+    ):
         return "governed-review"
     if non_implementation(folded_core, labels):
         return "human-gate"
