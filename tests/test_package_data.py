@@ -37,24 +37,24 @@ _IGNORE = shutil.ignore_patterns(
 )
 
 
-def _clear_poisoned_egg_info() -> None:
-    """Remove live-tree egg-info only when it carries the scm 0.0.0 fallback."""
+def _egg_info_fingerprint() -> tuple[bool, str | None]:
+    """Return whether live egg-info exists and its Version line, if any."""
     pkg_info = EGG_INFO / "PKG-INFO"
     if not pkg_info.is_file():
-        return
-    text = pkg_info.read_text(encoding="utf-8")
-    if "\nVersion: 0.0.0\n" in f"\n{text}\n" or text.startswith("Version: 0.0.0\n"):
-        shutil.rmtree(EGG_INFO)
+        return False, None
+    for line in pkg_info.read_text(encoding="utf-8").splitlines():
+        if line.startswith("Version:"):
+            return True, line.removeprefix("Version:").strip()
+    return True, None
 
 
 def test_niobe_environment_template_ships_in_wheel_and_sdist(tmp_path: Path) -> None:
     """Built distributions preserve the exact host-neutral template bytes.
 
-    Builds in an isolated staging tree so the live checkout is not rewritten with
-    a ``0.0.0`` egg-info. The CI py3.11 compat lane may already leave a
-    correctly versioned ``src/skcapstone.egg-info`` from its own ``pip wheel``;
-    that is allowed. Only a poisoned ``Version: 0.0.0`` egg-info is removed.
+    Builds in an isolated staging tree so the live checkout is never rewritten.
+    This test must not repair or delete live-tree egg-info left by other steps.
     """
+    before = _egg_info_fingerprint()
     staging = tmp_path / "project"
     outdir = tmp_path / "dist"
     outdir.mkdir()
@@ -64,51 +64,47 @@ def test_niobe_environment_template_ships_in_wheel_and_sdist(tmp_path: Path) -> 
     env = os.environ.copy()
     env["SETUPTOOLS_SCM_PRETEND_VERSION_FOR_SKCAPSTONE"] = pretend
 
-    _clear_poisoned_egg_info()
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            "--no-deps",
+            "--no-cache-dir",
+            "--wheel-dir",
+            str(outdir),
+            str(staging),
+        ],
+        cwd=staging,
+        env=env,
+        check=True,
+    )
+
+    previous = Path.cwd()
+    previous_pretend = os.environ.get("SETUPTOOLS_SCM_PRETEND_VERSION_FOR_SKCAPSTONE")
+    os.environ["SETUPTOOLS_SCM_PRETEND_VERSION_FOR_SKCAPSTONE"] = pretend
     try:
-        subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "pip",
-                "wheel",
-                "--no-deps",
-                "--no-cache-dir",
-                "--wheel-dir",
-                str(outdir),
-                str(staging),
-            ],
-            cwd=staging,
-            env=env,
-            check=True,
-        )
-
-        previous = Path.cwd()
-        previous_pretend = os.environ.get("SETUPTOOLS_SCM_PRETEND_VERSION_FOR_SKCAPSTONE")
-        os.environ["SETUPTOOLS_SCM_PRETEND_VERSION_FOR_SKCAPSTONE"] = pretend
-        try:
-            os.chdir(staging)
-            build_meta.build_sdist(str(outdir), config_settings={})
-        finally:
-            os.chdir(previous)
-            if previous_pretend is None:
-                os.environ.pop("SETUPTOOLS_SCM_PRETEND_VERSION_FOR_SKCAPSTONE", None)
-            else:
-                os.environ["SETUPTOOLS_SCM_PRETEND_VERSION_FOR_SKCAPSTONE"] = previous_pretend
-
-        expected = (ROOT / "systemd" / TEMPLATE).read_bytes()
-
-        wheel = next(outdir.glob("*.whl"))
-        with zipfile.ZipFile(wheel) as archive:
-            assert archive.read(PACKAGE_PATH) == expected
-
-        sdist = next(outdir.glob("*.tar.gz"))
-        with tarfile.open(sdist, "r:gz") as archive:
-            member = next(
-                item for item in archive.getmembers() if item.name.endswith(PACKAGE_PATH)
-            )
-            extracted = archive.extractfile(member)
-            assert extracted is not None
-            assert extracted.read() == expected
+        os.chdir(staging)
+        build_meta.build_sdist(str(outdir), config_settings={})
     finally:
-        _clear_poisoned_egg_info()
+        os.chdir(previous)
+        if previous_pretend is None:
+            os.environ.pop("SETUPTOOLS_SCM_PRETEND_VERSION_FOR_SKCAPSTONE", None)
+        else:
+            os.environ["SETUPTOOLS_SCM_PRETEND_VERSION_FOR_SKCAPSTONE"] = previous_pretend
+
+    expected = (ROOT / "systemd" / TEMPLATE).read_bytes()
+
+    wheel = next(outdir.glob("*.whl"))
+    with zipfile.ZipFile(wheel) as archive:
+        assert archive.read(PACKAGE_PATH) == expected
+
+    sdist = next(outdir.glob("*.tar.gz"))
+    with tarfile.open(sdist, "r:gz") as archive:
+        member = next(item for item in archive.getmembers() if item.name.endswith(PACKAGE_PATH))
+        extracted = archive.extractfile(member)
+        assert extracted is not None
+        assert extracted.read() == expected
+
+    assert _egg_info_fingerprint() == before
