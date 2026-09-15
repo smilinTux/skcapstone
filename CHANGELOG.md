@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Card `7240a106`: durably reserve caller-supplied card IDs rejected by CLI
+  creation validation under the CardStore creation governor, preventing later
+  corrected or different reuse without producing a foldable operational card.
+
 - Card `b35fdf93`: audit profile-required timers through their exact
   `timers.target.wants` links and active waiting state, converge missing
   enablement without activating allowed-only timers, and record every enable
