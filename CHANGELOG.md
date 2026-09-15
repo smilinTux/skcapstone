@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Card `bd197700`: defer Mero when its next half-open recurring cycle window
+  overlaps Link's higher-priority cycle, and log only the actual deferral.
+
 - Card `27fd3463`: preflight repository and protected-branch merge policy,
   select an allowed merge method deterministically, and fail closed before
   mutation when policy is unavailable or disjoint.
