@@ -6226,7 +6226,8 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
              _route_preflight.served_identity,_route_preflight.provider or "unknown"))
     else:
         try:
-            _route_preflight=resolve_and_preflight(_GATEWAY_ENDPOINT,model)
+            _route_preflight=resolve_and_preflight(
+                _GATEWAY_ENDPOINT,model,deadline=_cycle_deadline)
         except ValueError as exc:
             log(d,"ROUTE_PREFLIGHT_BLOCKED|%s|%s|requested=%s|reason=%s"%
                 (HOST,cid,model,str(exc)[:140]))
@@ -6236,6 +6237,13 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         log(d,"ROUTE_PREFLIGHT_OK|%s|%s|requested=%s|served=%s|provider=%s"%
             (HOST,cid,_route_preflight.requested_identity,
              _route_preflight.served_identity,_route_preflight.provider or "unknown"))
+    if time.monotonic() >= _cycle_deadline:
+        _deferred_ids,_deferred_omitted=_bounded_ids(
+            candidate[1][2] for candidate in picks[_pick_index:])
+        log(d,"CYCLE_DEADLINE_REACHED|%s|processed=%d remaining=%d deferred=%d ids=%s omitted=%d"%
+            (HOST,processed_picks,len(picks)-_pick_index,len(_deferred_ids),
+             _deferred_ids,_deferred_omitted))
+        break
     default_workspace=os.path.join(HOME,".skcapstone/fleet/workspaces",name)
     try:
         _source_spec = _source_workspace_spec(

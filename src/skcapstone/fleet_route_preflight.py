@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
@@ -37,6 +38,8 @@ def resolve_and_preflight(
     logical_route: str,
     *,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    deadline: float | None = None,
+    clock: Callable[[], float] = time.monotonic,
     opener: Callable[..., Any] = urllib.request.urlopen,
 ) -> RoutePreflight:
     """Require current advertisement, then exercise that exact dispatch route."""
@@ -44,8 +47,18 @@ def resolve_and_preflight(
     if not route:
         raise ValueError("logical route is required")
     base = gateway_url.rstrip("/")
+
+    def request_timeout() -> float:
+        """Return a per-request timeout bounded by the shared deadline."""
+        if deadline is None:
+            return timeout
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise TimeoutError("gateway preflight deadline exhausted")
+        return min(timeout, remaining)
+
     try:
-        with opener(base + "/v1/models", timeout=timeout) as response:
+        with opener(base + "/v1/models", timeout=request_timeout()) as response:
             catalog = _json_response(response)
         rows = catalog.get("data")
         current = (
@@ -73,7 +86,7 @@ def resolve_and_preflight(
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with opener(request, timeout=timeout) as response:
+        with opener(request, timeout=request_timeout()) as response:
             body = _json_response(response)
             headers = response.headers
         served = str(headers.get("x-sk-model-served") or body.get("model") or "").strip()

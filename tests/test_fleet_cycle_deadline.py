@@ -30,7 +30,18 @@ def test_route_preflight_caches_rejected_routes_per_cycle() -> None:
     # not re-invoke the gateway for later compatible candidates.
     assert "_route_preflight_cache = {}" in source
     assert "reason=cached-failure" in source
-    assert "resolve_and_preflight(_GATEWAY_ENDPOINT,model)" in source
+    assert "resolve_and_preflight(\n                _GATEWAY_ENDPOINT,model,deadline=_cycle_deadline)" in source
+
+
+def test_route_preflight_cannot_consume_receipt_reserve_or_reach_launch() -> None:
+    source = ROTATE.read_text()
+    probe = source.index("_route_preflight=resolve_and_preflight")
+    post_probe_deadline = source.index("time.monotonic() >= _cycle_deadline", probe)
+    workspace = source.index("default_workspace=os.path.join", probe)
+    receipt = source.index('log(d,"CYCLE_RECEIPT|')
+
+    assert probe < post_probe_deadline < workspace < receipt
+    assert "CYCLE_DEADLINE_REACHED" in source[post_probe_deadline:workspace]
 
 
 def test_cycle_receipt_remains_writable_after_deadline_stop() -> None:
