@@ -244,6 +244,7 @@ def test_seraph_accepts_typed_launch_receipts_on_stderr(tmp_path, monkeypatch) -
 def test_seraph_dispatch_is_bounded_claimed_live_and_seat_scoped(
     tmp_path, monkeypatch, installed_dispatcher
 ) -> None:
+    monkeypatch.delenv("SKFLEET_TARGET", raising=False)
     captured = {}
     calls = []
 
@@ -285,7 +286,7 @@ def test_seraph_dispatch_is_bounded_claimed_live_and_seat_scoped(
     assert captured["SKFLEET_ONLY_SEAT"] == "seraph"
     assert captured["SKFLEET_MAX_LAUNCH"] == "2"
     assert captured["SKFLEET_SEAT_TARGET"] == "2"
-    assert "SKFLEET_TARGET" not in captured
+    assert captured["SKFLEET_TARGET"] == captured["SKFLEET_SEAT_TARGET"]
     assert captured["SKFLEET_MODEL_S"] == "sk-s"
     assert captured["SKFLEET_CODEX_MODEL_S"] == "sk-s"
     assert calls[1][-1] == "skfleet-worker-codex-review01.service"
