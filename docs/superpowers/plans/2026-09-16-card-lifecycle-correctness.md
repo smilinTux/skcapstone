@@ -37,6 +37,7 @@ Plan B. An executor can check this table before starting.
 | 3.7 | cycle rejection at write time | 7 |
 | 3.7 | break the 23 existing cycles | 8 |
 | 4 | backfill the measured tail | 9 |
+| 3.3 | callers can supply a real reason | 10 |
 | 3.5 | PR policy | **deferred to Plan B** |
 | 3.6 | seat topology, niobe, mero cap | **deferred to Plan B** |
 
@@ -256,6 +257,7 @@ def test_vocabulary_is_exactly_the_five_specified_reasons():
             "capability-missing",
             "error",
             "superseded",
+            "unspecified",
         }
     )
 
@@ -277,11 +279,10 @@ def test_unknown_reason_is_rejected_with_the_vocabulary_in_the_message():
     assert "criteria-unsatisfiable" in message
 
 
-def test_missing_reason_is_rejected():
-    with pytest.raises(ValueError):
-        validate_abandon_reason(None)
-    with pytest.raises(ValueError):
-        validate_abandon_reason("")
+def test_missing_reason_defaults_to_unspecified_and_never_raises():
+    """The worker exit trap cannot know why it fired and must never fail."""
+    assert validate_abandon_reason(None) == "unspecified"
+    assert validate_abandon_reason("") == "unspecified"
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -319,13 +320,28 @@ ABANDON_REASONS = frozenset(
         "error",
         # Another worker or a human took the work.
         "superseded",
+        # The caller did not say. Explicit sentinel, NOT a silent default.
+        # The worker shell trap (skfleet-rotate.py L2367) fires on EXIT, HUP,
+        # INT and TERM and cannot know why it fired, so a path that must always
+        # succeed needs a representable answer. Measuring the share of this
+        # value is how we know the migration is working.
+        "unspecified",
     }
 )
 
 
 def validate_abandon_reason(value: str | None) -> str:
-    """Return the normalised reason, or raise ValueError naming the vocabulary."""
-    normalised = str(value or "").strip().lower()
+    """Return the normalised reason. Absent becomes "unspecified", never raises.
+
+    An UNKNOWN non-empty value still raises, because that is a caller bug worth
+    surfacing. An ABSENT value does not, because the worker shell trap fires on
+    EXIT, HUP, INT and TERM and cannot know why. Making that path raise would
+    strand every claim it failed to release, which is worse than the defect this
+    module exists to fix.
+    """
+    if value is None or not str(value).strip():
+        return "unspecified"
+    normalised = str(value).strip().lower()
     if normalised not in ABANDON_REASONS:
         raise ValueError(
             f"abandon_reason {value!r} is not in the closed vocabulary: "
@@ -376,17 +392,16 @@ current situation with extra steps."
 Append to `skcoord/tests/test_abandon_reason.py`:
 
 ```python
-def test_release_claim_requires_a_reason(tmp_path):
-    """A release without a reason is the defect this task removes."""
+def test_release_claim_without_a_reason_records_unspecified(tmp_path):
+    """MUST NOT raise. The worker exit trap supplies no reason and must succeed."""
     from skcoord.card_store import CardStore
 
     store = CardStore(tmp_path)
     store.create(title="probe card", kind="task", agent="tester")
     card_id = sorted(p.name for p in (tmp_path / "cards").iterdir())[0]
 
-    with pytest.raises(ValueError) as excinfo:
-        store.append_event(card_id, "release_claim", "worker-1")
-    assert "abandon_reason" in str(excinfo.value)
+    event = store.append_event(card_id, "release_claim", "worker-1")
+    assert event["abandon_reason"] == "unspecified"
 
 
 def test_release_claim_with_a_valid_reason_is_recorded(tmp_path):
@@ -417,7 +432,7 @@ def test_other_actions_do_not_require_a_reason(tmp_path):
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `cd skcoord && python -m pytest tests/test_abandon_reason.py -k release_claim -v`
-Expected: FAIL. `test_release_claim_requires_a_reason` fails because no `ValueError` is raised.
+Expected: FAIL with `KeyError: 'abandon_reason'`, because the event carries no such field yet.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -434,6 +449,12 @@ Then in `append_event`, immediately after the existing `validate_card_lock_ident
             # Every stop must be attributable. Without this the ledger records
             # THAT a worker gave up and never WHY, which left 53 percent of the
             # open residue unexplainable when measured on 2026-09-16.
+            #
+            # This NORMALISES, it does not reject. skfleet-rotate.py L2367 wraps
+            # every worker in a shell trap that releases on EXIT/HUP/INT/TERM
+            # with no reason. Rejecting here would strand every claim that trap
+            # failed to release. Enforcement tightens only after Task 10 raises
+            # reason coverage.
             payload["abandon_reason"] = validate_abandon_reason(
                 payload.get("abandon_reason")
             )
@@ -447,16 +468,21 @@ Expected: PASS, all tests
 - [ ] **Step 5: Run the full CardStore suite for regressions**
 
 Run: `cd skcoord && python -m pytest tests/ -q`
-Expected: PASS. Any existing test that calls `append_event(..., "release_claim", ...)` without a reason will now fail; fix each by passing the reason that test's scenario actually models, not by weakening the check.
+Expected: PASS with no changes to existing tests. Because absence normalises rather than raising, no existing caller breaks. If any test DOES fail, stop: that means the normalising path is raising somewhere it must not.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add src/skcoord/card_store.py tests/test_abandon_reason.py
-git commit -m "feat(cardstore): release_claim must carry an abandon_reason
+git commit -m "feat(cardstore): record abandon_reason on release_claim
 
-Closes the 53 percent unattributable residue measured 2026-09-16. Only
-release_claim is constrained; claim and complete are unchanged."
+Closes the 53 percent unattributable residue measured 2026-09-16.
+
+Normalises rather than rejects. skfleet-rotate.py L2367 wraps every
+worker in a shell trap releasing on EXIT/HUP/INT/TERM with no reason;
+rejecting would strand every claim that trap failed to release. Absent
+becomes the explicit sentinel unspecified, whose share is the migration
+metric."
 ```
 
 ---
@@ -1503,6 +1529,121 @@ language. Closed cards are never touched and the ledger is append-only,
 so the pre-split state stays recoverable.
 
 The split moves criteria; it never rewrites or drops one."
+```
+
+---
+
+### Task 10: Let callers supply a real reason
+
+Task 3 records `unspecified` when no reason is given. This task gives the two
+real callers a way to say something better, which is what moves coverage off the
+sentinel.
+
+**Files:**
+- Modify: `skcapstone/src/skcapstone/cli/coord.py` (the `release-claim` command)
+- Modify: `skcapstone/scripts/fleet/skfleet-rotate.py:2367` (the worker shell trap)
+- Test: `skcapstone/tests/test_coord_release_reason.py` (create)
+
+**Interfaces:**
+- Consumes: `validate_abandon_reason(value) -> str` from Task 2.
+- Produces: `skcapstone coord release-claim <cid> --owner <w> --abandon-reason <r>`. The flag is optional; omitting it preserves today's behaviour exactly.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `skcapstone/tests/test_coord_release_reason.py`:
+
+```python
+"""release-claim accepts an optional reason and passes it through."""
+
+from __future__ import annotations
+
+from click.testing import CliRunner
+
+from skcapstone.cli.coord import coord
+
+
+def test_release_claim_accepts_an_abandon_reason():
+    result = CliRunner().invoke(coord, ["release-claim", "--help"])
+    assert result.exit_code == 0
+    assert "--abandon-reason" in result.output
+
+
+def test_abandon_reason_is_optional():
+    """Omitting the flag must stay valid; the worker trap does not pass one."""
+    result = CliRunner().invoke(coord, ["release-claim", "--help"])
+    assert "[required]" not in result.output.split("--abandon-reason")[1][:120]
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `cd skcapstone && python -m pytest tests/test_coord_release_reason.py -v`
+Expected: FAIL. `--abandon-reason` is not in the help output.
+
+- [ ] **Step 3: Add the flag**
+
+In `src/skcapstone/cli/coord.py`, on the `release-claim` command, add:
+
+```python
+@click.option(
+    "--abandon-reason",
+    default=None,
+    help=(
+        "Why the worker stopped: criteria-unsatisfiable, dependency-unsatisfied, "
+        "capability-missing, error, superseded. Omit and it records unspecified."
+    ),
+)
+```
+
+Pass it through to the `append_event` call as `abandon_reason=abandon_reason`.
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `cd skcapstone && python -m pytest tests/test_coord_release_reason.py -v`
+Expected: PASS, 2 tests
+
+- [ ] **Step 5: Make the trap say why it fired**
+
+In `scripts/fleet/skfleet-rotate.py` at L2367, the trap currently reads:
+
+```
+release_claim() { %s coord release-claim %s --owner %s
+trap "release_claim; exit 143" HUP INT TERM; trap release_claim EXIT;
+```
+
+A trap cannot know the worker's intent, but it DOES know the signal. Give the
+signal traps `error` and leave the normal EXIT path as today:
+
+```
+trap "release_claim --abandon-reason error; exit 143" HUP INT TERM;
+trap release_claim EXIT;
+```
+
+Only the signal path changes. A clean EXIT still records `unspecified`, which is
+honest: a worker that exited normally without saying why genuinely did not say.
+
+- [ ] **Step 6: Verify the launcher string still parses**
+
+Run: `cd skcapstone && python -c "import ast; ast.parse(open('scripts/fleet/skfleet-rotate.py').read()); print('parses')"`
+Expected: `parses`
+
+- [ ] **Step 7: Run the fleet suite**
+
+Run: `cd skcapstone && python -m pytest tests/ -k skfleet -q`
+Expected: PASS
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add src/skcapstone/cli/coord.py scripts/fleet/skfleet-rotate.py tests/test_coord_release_reason.py
+git commit -m "feat(coord): optional --abandon-reason on release-claim
+
+Task 3 records unspecified when no reason is given. This gives callers a
+way to say something better.
+
+The worker shell trap cannot know intent, but it knows the signal, so
+the HUP/INT/TERM path now records error. A clean exit still records
+unspecified, which is honest: a worker that exited without saying why
+did not say."
 ```
 
 ---
