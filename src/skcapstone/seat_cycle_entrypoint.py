@@ -42,6 +42,7 @@ _LAUNCH = re.compile(
 )
 _MAX_SERAPH_BATCH = 8
 _MAX_ROLE_BATCH = 8
+_SERAPH_DISPATCH_TIMEOUT_SECONDS = 180
 _NOOP = re.compile(
     r"^NOOP_RECEIPT\|(?P<host>[^|]+)\|reason=(?P<reason>[^|]+)" r"\|seat=(?P<seat>[^|]+)$"
 )
@@ -553,7 +554,11 @@ def seraph_operation(home: Path) -> dict[str, int | str]:
     # Seraph reviews only [S] work, so only that bucket is resolved here.
     env.update(resolve_size_class_models(env, sizes=("S",)))
     completed = subprocess.run(
-        [str(dispatcher), "--go"], env=env, capture_output=True, text=True, timeout=240
+        [str(dispatcher), "--go"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=_SERAPH_DISPATCH_TIMEOUT_SECONDS,
     )
     return verify_seraph_dispatch(home, completed)
 
