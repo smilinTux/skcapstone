@@ -12,7 +12,10 @@
 
 ## Global Constraints
 
-- Python 3.12. Format with `black`, lint with `ruff check src/`. CI runs `black --check src/ tests/` and `ruff check src/`; `scripts/fleet/` is outside both.
+- Python 3.12. **Linting differs by repo, do not cross them over:**
+  - `skcapstone`: CI runs `black --check src/ tests/` AND `ruff check src/`. Black is pinned to `26.5.1` and a `[tool.black]` section exists, so use that exact version; a different local black produces a different diff and a red build.
+  - `skcoord`: CI runs ONLY `ruff check src/ tests/`. There is NO `[tool.black]` section, and `line-length = 99` lives under `[tool.ruff]`. **Never run black in skcoord**: its 88-column default reformats 66 unrelated files.
+  - `skcapstone/scripts/fleet/` is outside both tools; match the file's local style instead.
 - `skfleet-rotate.py` is a **script, not an importable module**. Tests extract functions from it via `ast` (see Task 1 harness). Never add an import-time side effect.
 - The CardStore event ledger is **append-only**. Never rewrite or delete an event. Corrections are new events.
 - Existing cards have no `spec_version`. Absent means v1 legacy behaviour and no new gate applies. Never infer v2.
@@ -357,8 +360,10 @@ Expected: PASS, 9 tests (5 parametrised plus 4)
 
 - [ ] **Step 5: Format and lint**
 
-Run: `cd skcoord && black src/skcoord/abandon_reason.py tests/test_abandon_reason.py && ruff check src/`
-Expected: reformatted or unchanged, and no ruff findings
+Run: `cd skcoord && ruff check src/ tests/`
+Expected: no findings.
+
+Do NOT run `black`. This repo has no `[tool.black]` section, its `line-length = 99` is under `[tool.ruff]`, and CI runs only `ruff check src/ tests/`. Running black reformats 66 unrelated files.
 
 - [ ] **Step 6: Commit**
 
@@ -489,90 +494,97 @@ metric."
 ### Task 4: Schema fields for the worker/other-seat split
 
 **Files:**
-- Modify: `skcoord/src/skcoord/card_store.py` (the `create` method, near `mirror_coord_create` L1454)
+- Modify: `skcoord/src/skcoord/card_store.py` (the `CardCore` pydantic model, and `abandon_reason.py` for the validator)
 - Test: `skcoord/tests/test_exit_gates_schema.py` (create)
 
 **Interfaces:**
-- Produces: `core.json` may now carry `exit_gates: list[dict]`, `non_goals: list[str]`, `spec_version: int`. All optional. Absent `spec_version` means v1.
+- `CardCore` is a **pydantic BaseModel** defined in `card_store.py`, NOT a dataclass, and `CardStore.create` takes it as a single positional argument: `def create(self, core: CardCore) -> str`.
+- Existing call pattern, copy it: `store.create(CardCore(id="probe01", title="probe card"))`.
+- Produces: `CardCore` gains three optional fields, `exit_gates: list[dict] = []`, `non_goals: list[str] = []`, `spec_version: int | None = None`. Absent `spec_version` means v1.
+- Produces: `validate_exit_gates(gates: object) -> list[dict]` in `abandon_reason.py`.
 
 - [ ] **Step 1: Write the failing test**
 
 Create `skcoord/tests/test_exit_gates_schema.py`:
 
 ```python
-"""exit_gates, non_goals and spec_version round-trip through create()."""
+"""exit_gates, non_goals and spec_version round-trip through CardCore."""
 
 from __future__ import annotations
 
 import json
 
-from skcoord.card_store import CardStore
+import pytest
+
+from skcoord.card_store import CardCore, CardStore
 
 
-def _core(tmp_path, card_id):
+def _core_json(tmp_path, card_id):
     return json.loads((tmp_path / "cards" / card_id / "core.json").read_text())
-
-
-def _only_card(tmp_path):
-    return sorted(p.name for p in (tmp_path / "cards").iterdir())[0]
 
 
 def test_legacy_card_has_no_spec_version(tmp_path):
     """Absent means v1. Never infer v2."""
     store = CardStore(tmp_path)
-    store.create(title="legacy", kind="task", agent="tester")
-    core = _core(tmp_path, _only_card(tmp_path))
-    assert "spec_version" not in core or core["spec_version"] == 1
+    card_id = store.create(CardCore(id="legacy01", title="legacy"))
+    core = _core_json(tmp_path, card_id)
+    assert core.get("spec_version") in (None, 1)
 
 
 def test_exit_gates_round_trip(tmp_path):
     store = CardStore(tmp_path)
     gates = [{"gate": "independent-review", "owner": "seraph", "ref": "parent-5a7e5f41"}]
-    store.create(
-        title="v2 card",
-        kind="task",
-        agent="tester",
-        exit_gates=gates,
-        non_goals=["no deployment"],
-        spec_version=2,
+    card_id = store.create(
+        CardCore(
+            id="v2card01",
+            title="v2 card",
+            exit_gates=gates,
+            non_goals=["no deployment"],
+            spec_version=2,
+        )
     )
-    core = _core(tmp_path, _only_card(tmp_path))
+    core = _core_json(tmp_path, card_id)
     assert core["exit_gates"] == gates
     assert core["non_goals"] == ["no deployment"]
     assert core["spec_version"] == 2
 
 
-def test_exit_gate_entries_must_be_objects_with_gate_and_owner(tmp_path):
+def test_prose_exit_gate_is_rejected(tmp_path):
     """A prose string cannot be checked mechanically, so it is rejected."""
-    import pytest
+    from skcoord.abandon_reason import validate_exit_gates
 
-    store = CardStore(tmp_path)
     with pytest.raises(ValueError):
-        store.create(
-            title="bad gate",
-            kind="task",
-            agent="tester",
-            exit_gates=["independent review PASS before merge"],
-            spec_version=2,
-        )
+        validate_exit_gates(["independent review PASS before merge"])
+
+
+def test_exit_gate_without_owner_is_rejected():
+    from skcoord.abandon_reason import validate_exit_gates
+
     with pytest.raises(ValueError):
-        store.create(
-            title="missing owner",
-            kind="task",
-            agent="tester",
-            exit_gates=[{"gate": "independent-review"}],
-            spec_version=2,
-        )
+        validate_exit_gates([{"gate": "independent-review"}])
+
+
+def test_valid_exit_gate_passes_validation():
+    from skcoord.abandon_reason import validate_exit_gates
+
+    gates = [{"gate": "independent-review", "owner": "seraph"}]
+    assert validate_exit_gates(gates) == gates
+
+
+def test_none_exit_gates_is_an_empty_list():
+    from skcoord.abandon_reason import validate_exit_gates
+
+    assert validate_exit_gates(None) == []
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd skcoord && python -m pytest tests/test_exit_gates_schema.py -v`
-Expected: FAIL. `test_exit_gates_round_trip` fails with a `KeyError` or `TypeError` because `create` does not accept the new keywords.
+Run: `cd skcoord && python3 -m pytest tests/test_exit_gates_schema.py -v`
+Expected: FAIL. `validate_exit_gates` does not exist, and `CardCore` rejects the unknown keyword arguments.
 
 - [ ] **Step 3: Write the validator**
 
-Add to `skcoord/src/skcoord/abandon_reason.py` (it is the schema-vocabulary module):
+Add to `skcoord/src/skcoord/abandon_reason.py`:
 
 ```python
 def validate_exit_gates(gates: object) -> list[dict]:
@@ -599,31 +611,44 @@ def validate_exit_gates(gates: object) -> list[dict]:
     return validated
 ```
 
-- [ ] **Step 4: Wire it into create**
+- [ ] **Step 4: Add the fields to CardCore**
 
-In `CardStore.create`, accept and persist the three fields. Add the keyword parameters to the signature and write them into the core dict before it is serialised:
+In `card_store.py`, on the `CardCore` pydantic model, add three optional fields
+alongside the existing ones. Match the model's existing field style:
 
 ```python
-        if spec_version is not None:
-            core["spec_version"] = int(spec_version)
-        if exit_gates is not None:
-            core["exit_gates"] = validate_exit_gates(exit_gates)
-        if non_goals is not None:
-            core["non_goals"] = [str(x) for x in non_goals]
+    exit_gates: list[dict] = []
+    non_goals: list[str] = []
+    spec_version: int | None = None
 ```
 
-Import `validate_exit_gates` alongside `validate_abandon_reason`.
+If the model uses pydantic validators for other fields, add one for `exit_gates`
+that calls `validate_exit_gates`, so a bad gate is rejected at construction. If it
+does not use validators, leave the function available for callers and note that in
+your report.
 
 - [ ] **Step 5: Run the test to verify it passes**
 
-Run: `cd skcoord && python -m pytest tests/test_exit_gates_schema.py -v`
-Expected: PASS, 4 tests
+Run: `cd skcoord && python3 -m pytest tests/test_exit_gates_schema.py -v`
+Expected: PASS, 6 tests
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Run the full suite**
+
+Run: `cd skcoord && python3 -m pytest tests/ -q`
+Expected: PASS. Adding optional fields with defaults must not change any existing
+card's serialisation. If an existing test asserts an exact `core.json` key set,
+that is a real finding: report it rather than editing the assertion.
+
+- [ ] **Step 7: Lint**
+
+Run: `cd skcoord && ruff check src/ tests/`
+Expected: no findings. Do NOT run `black`.
+
+- [ ] **Step 8: Commit**
 
 ```bash
 git add src/skcoord/card_store.py src/skcoord/abandon_reason.py tests/test_exit_gates_schema.py
-git commit -m "feat(cardstore): exit_gates, non_goals and spec_version
+git commit -m "feat(cardstore): exit_gates, non_goals and spec_version on CardCore
 
 Separates what the worker owns from what another seat owns. exit_gates
 entries are objects because the dispatcher needs owner to route them; a
