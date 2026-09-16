@@ -119,6 +119,7 @@ def test_source_preserves_admission_and_reports_selection_races() -> None:
     assert "_current_claim_identity_fresh(cid)" in source
     assert "claimed_owner," in source
     assert "name)" in source
-    assert "_bounded_candidate_sequence(owned, MAX_CANDIDATE_SCAN)" in source
+    assert "(candidate for candidate in owned" in source
+    assert "if _logical_route_for(candidate[3],candidate[4]) is not None)" in source
     assert "launched>=MAX_LAUNCH" in source
     assert "RACED|%s|count=%d ids=%s omitted=%d" in source

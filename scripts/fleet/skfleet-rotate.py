@@ -5691,7 +5691,10 @@ _lane_deferred_cards={}
 # card queued behind it.
 # Scan a bounded, deterministic sequence once per cycle.  Rejected candidates
 # are consumed by the scan and cannot be selected again during this rotation.
-_candidate_scan = _bounded_candidate_sequence(owned, MAX_CANDIDATE_SCAN)
+_candidate_scan = _bounded_candidate_sequence(
+    (candidate for candidate in owned
+     if _logical_route_for(candidate[3],candidate[4]) is not None),
+    MAX_CANDIDATE_SCAN)
 while _i<len(owned) and _i<len(_candidate_scan):
     _card=_candidate_scan[_i]; _i+=1
     _labels=_card[4]
