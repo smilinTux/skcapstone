@@ -4900,7 +4900,7 @@ for cd in sorted(glob.glob(CARDS+"/*")):
     else: lane=2
     pool.append([lane,PRI.get(str(core.get("initial_priority")),4),cid,core,labels])
     if cid not in _pool_v2_input_ids:
-        _pool_v2_inputs.append((cid, core))
+        _pool_v2_inputs.append((cid, legacy["core"]))
         _pool_v2_input_ids.add(cid)
 
 # How many OTHER cards would this card unblock if it completed? A card sitting at
@@ -5797,8 +5797,16 @@ def _observe_assigned_reviews():
     live_sessions = set(sh("tmux", "ls", "-F", "#{session_name}").split())
     live_units = active_worker_units()
     outcomes = _load_outcomes()
-    for card_dir in glob.glob(os.path.join(CARDS, "*")):
-        cid = os.path.basename(card_dir)
+    review_ids = sorted(
+        cid
+        for cid, admission in _POOL_V2_ADMISSIONS.items()
+        if "review"
+        in {
+            str(label).strip().lower()
+            for label in (admission.get("labels") or ())
+        }
+    )
+    for cid in review_ids:
         rows = event_rows(cid)
         try:
             reconciled = reconcile_fanout_receipt(

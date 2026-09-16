@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import textwrap
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -35,6 +36,8 @@ def _load_claimability() -> dict[str, object]:
         "_pool_v2_candidate_allowed",
         "_pool_v2_dispatchable",
         "_pool_v2_ready_ids",
+        "_pool_v2_fingerprint",
+        "_pool_v2_preclaim_matches",
     }
     tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
     nodes = {
@@ -685,6 +688,81 @@ def test_refreshed_description_criteria_and_review_links_are_folded() -> None:
         "producer_identity": "producer-new",
         "candidate_evidence_sha256": digest,
     }
+
+
+def test_legacy_pool_input_preserves_raw_core_revision_after_criteria_amendment(
+    tmp_path: Path,
+) -> None:
+    """The real legacy selection path must agree with a fresh raw preclaim."""
+    namespace = _load_claimability()
+    card_id = "cdf59956"
+    raw_core = {
+        **_core(card_id),
+        "acceptance_criteria": ["original criterion"],
+    }
+    core_path = tmp_path / "core.json"
+    core_path.write_text(json.dumps(raw_core), encoding="utf-8")
+    events = [
+        _event(
+            "2026-09-16T01:00:00Z",
+            "dev208",
+            "amend_criteria",
+            criteria=["amended criterion"],
+        )
+    ]
+    namespace["_strict_card_events"] = lambda _cid, fresh=False: list(events)
+    namespace.update(
+        excluded=set(),
+        _REVIEW_READBACK_BLOCKED=set(),
+        unclaimable=lambda _cid: False,
+        itil_terminal=lambda _cid: False,
+        lifecycle_state=lambda _cid: "open",
+        outcome_lifecycle_bucket=lambda _state, _review: "open",
+        awaiting_review=lambda _cid: False,
+        blocked_backoff=lambda _cid: False,
+        terminal_review_verdict=lambda _cid, _core: False,
+    )
+    source = ROTATE.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    selector = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_legacy_selector_decision"
+    )
+    exec(compile(ast.Module(body=[selector], type_ignores=[]), str(ROTATE), "exec"), namespace)
+    legacy = namespace["_legacy_selector_decision"](card_id, str(core_path))
+    assert legacy["eligible"] is True
+    assert legacy["core"] == raw_core
+    assert legacy["decision"]["core"]["acceptance_criteria"] == ["amended criterion"]
+
+    selection = source.split('    core=legacy["core"]', 1)[1].split("# How many OTHER cards", 1)[0]
+    namespace.update(
+        cid=card_id,
+        legacy=legacy,
+        HOST="chiap03",
+        _PINNED_IDS=set(),
+        ENG=(),
+        PRI={"None": 4},
+        pool=[],
+        _pool_v2_inputs=[],
+        _pool_v2_input_ids=set(),
+    )
+    exec('core=legacy["core"]\n' + textwrap.dedent(selection), namespace)
+    assert namespace["pool"][0][3]["acceptance_criteria"] == ["amended criterion"]
+    selected_core = namespace["_pool_v2_inputs"][0][1]
+    selected = namespace["authoritative_claimability"](card_id, selected_core)
+    fresh = namespace["authoritative_claimability"](card_id, raw_core, fresh=True)
+    assert selected["source_revision"] == fresh["source_revision"]
+    assert selected["core"] == fresh["core"]
+    selected_admission = namespace["_pool_v2_admission"](card_id, selected_core, selected)
+    fresh_admission = namespace["_pool_v2_admission"](card_id, raw_core, fresh)
+    assert namespace["_pool_v2_preclaim_matches"](selected_admission, fresh_admission)
+
+    changed = {**raw_core, "acceptance_criteria": ["external change"]}
+    changed_fresh = namespace["authoritative_claimability"](card_id, changed, fresh=True)
+    assert selected["source_revision"] != changed_fresh["source_revision"]
+    changed_admission = namespace["_pool_v2_admission"](card_id, changed, changed_fresh)
+    assert not namespace["_pool_v2_preclaim_matches"](selected_admission, changed_admission)
 
 
 def test_malformed_lifecycle_fails_closed_with_reason() -> None:

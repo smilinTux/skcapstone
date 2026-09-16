@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Card `53009558`: keep POOL_V2 source revisions anchored to raw `core.json`
+  when criteria events change the folded card, so unchanged preclaim snapshots
+  match while real source changes still fail closed.
+
+- Card `81da24f6`: bound assigned-review observation to the immutable POOL_V2
+  review snapshot so an empty Seraph selection emits its typed no-op before the
+  service deadline, and terminate and reap the dispatcher process group on
+  timeout while preserving diagnostics in an auditable health receipt.
+
 - Card `4dcb5258`: preserve canonical and Syncthing conflict files verbatim
   instead of promoting, replacing, or deleting them by mtime; emit
   hash-bound diagnostics without declaring either copy authoritative.
