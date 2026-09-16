@@ -124,9 +124,7 @@ def test_niobe_service_loads_documented_environment_file() -> None:
 def test_niobe_template_uses_dispatcher_lane_model_names() -> None:
     """Advertised Qwen, GLM, and Kimi model keys match dispatcher consumers."""
     source = (ROOT / "systemd" / TEMPLATE).read_bytes()
-    packaged = (
-        ROOT / "src" / "skcapstone" / "data" / "systemd" / TEMPLATE
-    ).read_bytes()
+    packaged = (ROOT / "src" / "skcapstone" / "data" / "systemd" / TEMPLATE).read_bytes()
 
     assert source == packaged
     for lane in ("QWEN", "GLM", "KIMI"):
