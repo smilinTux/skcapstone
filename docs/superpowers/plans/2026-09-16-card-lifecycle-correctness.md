@@ -48,8 +48,8 @@ Two repos are involved. Clone or worktree both before starting.
 ```
 skcapstone   scripts/fleet/skfleet-rotate.py     dispatcher (2409 lines)
              tests/test_skfleet_backoff_wake.py  existing AST-extraction harness
-skcoord      src/skcoord/card_store.py           CardStore.append_event L533,
-                                                 add_dependency L1438
+skcoord      src/skcoord/card_store.py           CardStore.append_event,
+                                                 add_dependency
              tests/                              pytest, fixtures/ dir present
 ```
 
@@ -74,11 +74,11 @@ skcoord      src/skcoord/card_store.py           CardStore.append_event L533,
 Card `06a95c23` recorded 402 claims and zero completions. `blocked_backoff()` did not stop it because `launch_attempts()` reads worker logs and the outcomes store, and that card produced zero worker logs. The ledger recorded all 402 claim events reliably. Key the ceiling on claims.
 
 **Files:**
-- Modify: `skcapstone/scripts/fleet/skfleet-rotate.py` (add constant near `MAX_LAUNCH` L62; add function before `blocked_backoff` L1130; call inside `blocked_backoff`)
+- Modify: `skcapstone/scripts/fleet/skfleet-rotate.py` (add constant near the `MAX_LAUNCH=` assignment; add function before `blocked_backoff`; call inside `blocked_backoff`)
 - Test: `skcapstone/tests/test_skfleet_claim_ceiling.py` (create)
 
 **Interfaces:**
-- Consumes: `acts(cid) -> collections.Counter` (existing, L115) returning action counts for a card.
+- Consumes: `acts(cid) -> collections.Counter` (existing) returning action counts for a card.
 - Produces: `_claim_ceiling_hit(cid) -> bool`, and constant `_MAX_CLAIMS: int`.
 
 - [ ] **Step 1: Write the failing test**
@@ -158,7 +158,7 @@ Expected: FAIL with `AssertionError: ceiling seam missing from script`
 
 - [ ] **Step 3: Add the constant**
 
-In `scripts/fleet/skfleet-rotate.py`, immediately after the `MAX_LAUNCH` line (L62):
+In `scripts/fleet/skfleet-rotate.py`, immediately after the `MAX_LAUNCH=` assignment:
 
 ```python
 _MAX_CLAIMS=int(os.environ.get("SKFLEET_MAX_CLAIMS","5"))
@@ -166,7 +166,7 @@ _MAX_CLAIMS=int(os.environ.get("SKFLEET_MAX_CLAIMS","5"))
 
 - [ ] **Step 4: Add the function**
 
-Immediately before `def blocked_backoff(cid):` (L1130):
+Immediately before `def blocked_backoff(cid):`:
 
 ```python
 def _claim_ceiling_hit(cid):
@@ -280,7 +280,7 @@ def test_unknown_reason_is_rejected_with_the_vocabulary_in_the_message():
 
 
 def test_missing_reason_defaults_to_unspecified_and_never_raises():
-    """The worker exit trap cannot know why it fired and must never fail."""
+    """Reaper and sweep paths must always succeed, even without a reason."""
     assert validate_abandon_reason(None) == "unspecified"
     assert validate_abandon_reason("") == "unspecified"
 ```
@@ -321,10 +321,10 @@ ABANDON_REASONS = frozenset(
         # Another worker or a human took the work.
         "superseded",
         # The caller did not say. Explicit sentinel, NOT a silent default.
-        # The worker shell trap (skfleet-rotate.py L2367) fires on EXIT, HUP,
-        # INT and TERM and cannot know why it fired, so a path that must always
-        # succeed needs a representable answer. Measuring the share of this
-        # value is how we know the migration is working.
+        # Reaper and stale-claim paths must always succeed and often cannot know
+        # why a worker stopped, so a path that must not fail needs a
+        # representable answer. Measuring the share of this value is how we know
+        # the migration is working.
         "unspecified",
     }
 )
@@ -334,9 +334,9 @@ def validate_abandon_reason(value: str | None) -> str:
     """Return the normalised reason. Absent becomes "unspecified", never raises.
 
     An UNKNOWN non-empty value still raises, because that is a caller bug worth
-    surfacing. An ABSENT value does not, because the worker shell trap fires on
-    EXIT, HUP, INT and TERM and cannot know why. Making that path raise would
-    strand every claim it failed to release, which is worse than the defect this
+    surfacing. An ABSENT value does not, because several dispatcher release paths
+    (reapers, stale-claim sweeps) must always succeed. Making those raise would
+    strand the claims they exist to free, which is worse than the defect this
     module exists to fix.
     """
     if value is None or not str(value).strip():
@@ -379,7 +379,7 @@ current situation with extra steps."
 ### Task 3: Require abandon_reason on release_claim
 
 **Files:**
-- Modify: `skcoord/src/skcoord/card_store.py` (`append_event`, L533)
+- Modify: `skcoord/src/skcoord/card_store.py` (`append_event`)
 - Test: `skcoord/tests/test_abandon_reason.py` (extend)
 
 **Interfaces:**
@@ -393,7 +393,7 @@ Append to `skcoord/tests/test_abandon_reason.py`:
 
 ```python
 def test_release_claim_without_a_reason_records_unspecified(tmp_path):
-    """MUST NOT raise. The worker exit trap supplies no reason and must succeed."""
+    """MUST NOT raise. Dispatcher reaper paths supply no reason and must succeed."""
     from skcoord.card_store import CardStore
 
     store = CardStore(tmp_path)
@@ -450,11 +450,10 @@ Then in `append_event`, immediately after the existing `validate_card_lock_ident
             # THAT a worker gave up and never WHY, which left 53 percent of the
             # open residue unexplainable when measured on 2026-09-16.
             #
-            # This NORMALISES, it does not reject. skfleet-rotate.py L2367 wraps
-            # every worker in a shell trap that releases on EXIT/HUP/INT/TERM
-            # with no reason. Rejecting here would strand every claim that trap
-            # failed to release. Enforcement tightens only after Task 10 raises
-            # reason coverage.
+            # This NORMALISES, it does not reject. Several dispatcher call sites
+            # release claims today with no reason, and a reaper path that cannot
+            # release is worse than one that releases without saying why.
+            # Enforcement tightens only after Task 10 raises reason coverage.
             payload["abandon_reason"] = validate_abandon_reason(
                 payload.get("abandon_reason")
             )
@@ -478,7 +477,7 @@ git commit -m "feat(cardstore): record abandon_reason on release_claim
 
 Closes the 53 percent unattributable residue measured 2026-09-16.
 
-Normalises rather than rejects. skfleet-rotate.py L2367 wraps every
+Normalises rather than rejects. the worker launch string wraps every
 worker in a shell trap releasing on EXIT/HUP/INT/TERM with no reason;
 rejecting would strand every claim that trap failed to release. Absent
 becomes the explicit sentinel unspecified, whose share is the migration
@@ -640,7 +639,7 @@ reversible rather than a flag day across 7,147 cards."
 ### Task 5: The awaiting-gates state
 
 **Files:**
-- Modify: `skcapstone/scripts/fleet/skfleet-rotate.py` (`_fold_claimability` L500, `_claimability_reason` L576)
+- Modify: `skcapstone/scripts/fleet/skfleet-rotate.py` (`_fold_claimability`, `_claimability_reason`)
 - Test: `skcapstone/tests/test_skfleet_awaiting_gates.py` (create)
 
 **Interfaces:**
@@ -722,7 +721,7 @@ Expected: FAIL with `KeyError: 'awaiting_gates'`
 
 - [ ] **Step 3: Fold the new action**
 
-In `_fold_claimability`, add `"awaiting_gates": False,` to the initial `state` dict (alongside the existing `"dependencies"` key at L507). Then in the action loop, alongside the existing `elif action == "release_claim":` branch at L523:
+In `_fold_claimability`, add `"awaiting_gates": False,` to the initial `state` dict (alongside the existing `"dependencies"` key at L507). Then in the action loop, alongside the existing `elif action == "release_claim":` branch in the action loop:
 
 ```python
         elif action == "await_gates":
@@ -793,7 +792,7 @@ finished and stops being re-dispatched."
 Applies only to `spec_version >= 2`. Legacy cards are untouched.
 
 **Files:**
-- Modify: `skcapstone/scripts/fleet/skfleet-rotate.py` (`_claimability_reason` L576)
+- Modify: `skcapstone/scripts/fleet/skfleet-rotate.py` (`_claimability_reason`)
 - Test: `skcapstone/tests/test_skfleet_awaiting_gates.py` (extend)
 
 **Interfaces:**
@@ -875,7 +874,7 @@ Expected: FAIL. The reviewer-criterion test returns `"claimable"` instead of `"c
 
 - [ ] **Step 3: Add the pattern**
 
-In `skfleet-rotate.py`, immediately after `_SENSITIVE_CATEGORY` (L408):
+In `skfleet-rotate.py`, immediately after the `_SENSITIVE_CATEGORY` assignment:
 
 ```python
 # Criteria a worker CANNOT satisfy alone: they name another seat's verdict or a
@@ -925,7 +924,7 @@ Applies only to spec_version 2 and above. Legacy cards are untouched."
 
 **Files:**
 - Create: `skcoord/src/skcoord/dependency_graph.py`
-- Modify: `skcoord/src/skcoord/card_store.py` (`amend_dependency`, reached via `add_dependency` L1438)
+- Modify: `skcoord/src/skcoord/card_store.py` (`amend_dependency`, reached via `add_dependency`)
 - Test: `skcoord/tests/test_dependency_cycles.py` (create)
 
 **Interfaces:**
@@ -1097,7 +1096,7 @@ Task 7 prevents new cycles. The 23 already in the store still block 35 cards.
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks. Task 7's `would_create_cycle` answers "would this ONE edge close a cycle", which is the write-time question. This task needs to ENUMERATE existing cycles, which is a different algorithm, so it implements its own.
-- Consumes: `remove_dependency(home, card_id, dependency_id, agent="", reason="") -> bool` from `skcoord.card_store` (existing, L1445).
+- Consumes: `remove_dependency(home, card_id, dependency_id, agent="", reason="") -> bool` from `skcoord.card_store` (existing).
 - Produces: `find_cycles(edges: dict[str, list[str]]) -> list[list[str]]`, and `plan_breaks(cycles: list[list[str]], parents: dict[str, str]) -> list[tuple[str, str]]` returning the `(card_id, dependency_id)` edges to remove.
 
 - [ ] **Step 1: Write the failing test**
@@ -1541,7 +1540,7 @@ sentinel.
 
 **Files:**
 - Modify: `skcapstone/src/skcapstone/cli/coord.py` (the `release-claim` command)
-- Modify: `skcapstone/scripts/fleet/skfleet-rotate.py:2367` (the worker shell trap)
+- Modify: `skcapstone/scripts/fleet/the worker launch string` (the worker shell trap)
 - Test: `skcapstone/tests/test_coord_release_reason.py` (create)
 
 **Interfaces:**
@@ -1601,25 +1600,36 @@ Pass it through to the `append_event` call as `abandon_reason=abandon_reason`.
 Run: `cd skcapstone && python -m pytest tests/test_coord_release_reason.py -v`
 Expected: PASS, 2 tests
 
-- [ ] **Step 5: Make the trap say why it fired**
+- [ ] **Step 5: Give the dispatcher's release calls a reason**
 
-In `scripts/fleet/skfleet-rotate.py` at L2367, the trap currently reads:
+IMPORTANT: on `origin/main` the worker does NOT release its own claim. The
+launch string comments say "one CardStore fence. The child must never release
+independently" and the child trap only runs `stop_beat`. The DISPATCHER releases,
+at several `coord release-claim` call sites.
 
-```
-release_claim() { %s coord release-claim %s --owner %s
-trap "release_claim; exit 143" HUP INT TERM; trap release_claim EXIT;
-```
+Find them:
 
-A trap cannot know the worker's intent, but it DOES know the signal. Give the
-signal traps `error` and leave the normal EXIT path as today:
-
-```
-trap "release_claim --abandon-reason error; exit 143" HUP INT TERM;
-trap release_claim EXIT;
+```bash
+grep -n '"coord", *"release-claim"\|"coord","release-claim"' scripts/fleet/skfleet-rotate.py
 ```
 
-Only the signal path changes. A clean EXIT still records `unspecified`, which is
-honest: a worker that exited normally without saying why genuinely did not say.
+Each call is a list passed to subprocess, shaped like:
+
+```python
+[SKC, "coord", "release-claim", cid, "--owner", owner, ...]
+```
+
+For each one, append the reason that call site actually models. Do not use a
+single blanket value: the whole point is attribution. Read the surrounding code
+to decide, and record your mapping in the report file. Expected shapes:
+
+- a reaper or stale-claim sweep releasing a dead worker: `"--abandon-reason", "error"`
+- a reassignment handing work to another owner: `"--abandon-reason", "superseded"`
+- a dependency or eligibility refusal: `"--abandon-reason", "dependency-unsatisfied"`
+
+If a call site's intent is genuinely unclear from its context, use
+`"--abandon-reason", "unspecified"` and say so in the report. An honest
+`unspecified` is better than a confident wrong label.
 
 - [ ] **Step 6: Verify the launcher string still parses**
 
