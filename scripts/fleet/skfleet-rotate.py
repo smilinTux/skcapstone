@@ -5146,10 +5146,11 @@ def _pool_v2_authority_rows(decisions, admissions, failed, unblocks, priorities,
     return rows, pinned
 
 
-def _pool_v2_owner_map(rows, host, pinned_ids):
+def _pool_v2_owner_map(rows, host, pinned_ids, host_capacity=None):
     """Return exact stable host ownership for the authoritative rows."""
     owners = {}
     blocked = {}
+    capacity = host_capacity or {}
     for row in rows:
         cid, core = row[2], row[3]
         admission = _POOL_V2_ADMISSIONS.get(cid, {})
@@ -5167,6 +5168,18 @@ def _pool_v2_owner_map(rows, host, pinned_ids):
                 if not _SEAT_PLACEMENT.get("niobe")
                 else "seat-nonunique:niobe"
             )
+        elif (
+            not seat
+            and not pinned_host
+            and any(int(value) > 0 for value in capacity.values())
+        ):
+            available_hosts = tuple(
+                candidate
+                for candidate in ROTATION_HOSTS
+                if int(capacity.get(candidate, 0)) > 0
+            )
+            owner = _partition_owner(cid, available_hosts or ROTATION_HOSTS)
+            reason = "ordinary"
         else:
             owner, reason = _seat_owner(
                 cid, seat, pinned_host
@@ -5393,7 +5406,9 @@ log(d, "POOL_AUTHORITY|%s|source=POOL_V2|ready=%d|legacy_ready=%d" %
 # A hash partition is stable no matter what the local pool looks like.
 off = ROTATION_HOSTS.index(HOST) if HOST in ROTATION_HOSTS else 0
 _NHOST = len(ROTATION_HOSTS)
-_OWNER_BY_ID, _SEAT_BLOCKED = _pool_v2_owner_map(pool, HOST, _PINNED_IDS)
+_HOST_CAPACITY = reporting_capacity()
+_OWNER_BY_ID, _SEAT_BLOCKED = _pool_v2_owner_map(
+    pool, HOST, _PINNED_IDS, _HOST_CAPACITY)
 for _cid, _reason in sorted(_SEAT_BLOCKED.items()):
     log(d, "SEAT_PLACEMENT_BLOCKED|%s|%s|%s" % (HOST, _cid, _reason))
 
@@ -5856,7 +5871,7 @@ def _observe_assigned_reviews():
 if not picks:
     _observe_assigned_reviews()
     detail = _selection_diagnostic(
-        pool, owned, LANES, owner_host, reporting_capacity())
+        pool, owned, LANES, owner_host, _HOST_CAPACITY)
     log(d,"SELECTION_EMPTY|%s|%s"%(HOST,detail))
     log(d,"NOOP|%s|selection empty: %s"%(HOST,detail))
     log(d,"NOOP_RECEIPT|%s|reason=%s|seat=%s"%
