@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -81,3 +82,20 @@ def test_missing_rollback_is_rejected():
 def test_activation_card_and_unit_fence_is_exact(field, value):
     with pytest.raises(ActivationError):
         parse_activation(record(**{field: value}), now=NOW)
+
+
+def test_live_and_shadow_timers_are_mutually_exclusive():
+    root = Path(__file__).parents[1] / "systemd"
+    live = (root / "skfleet-niobe-live.timer").read_text()
+    shadow = (root / "skfleet-niobe-shadow.timer").read_text()
+    assert "Conflicts=skfleet-niobe-shadow.timer" in live
+    assert "Conflicts=skfleet-niobe-live.timer" in shadow
+
+
+def test_rollback_contract_selects_shadow_as_the_only_fallback_mode():
+    value = record()
+    parse_activation(value, now=NOW)
+    assert value["rollback"] == {
+        "owner": "casey",
+        "action": "disable_skfleet-niobe-live.timer_enable_skfleet-niobe-shadow.timer",
+    }

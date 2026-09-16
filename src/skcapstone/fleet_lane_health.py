@@ -17,13 +17,14 @@ from typing import Any, Callable
 MAX_ENDPOINT_BYTES = 65_536
 MAX_SNAPSHOT_BYTES = 65_536
 MAX_AGE_SECONDS = 120
+ENDPOINT_TIMEOUT_SECONDS = 8
 REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 def _fetch_json(
     url: str,
     *,
-    timeout: float = 5,
+    timeout: float = ENDPOINT_TIMEOUT_SECONDS,
     opener: Callable[..., Any] = urllib.request.urlopen,
 ) -> dict[str, Any]:
     with opener(url, timeout=timeout) as response:

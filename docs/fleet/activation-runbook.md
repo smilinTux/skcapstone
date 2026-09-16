@@ -68,13 +68,15 @@ PYTHONPATH=src python3 -m skcapstone.link_observation_producer \
   --dry-run
 ```
 
-Require a healthy feed with record count equal to the open-PR inventory. Only
-then may the Link timer be enabled. Link still has no GitHub credentials and
-consumes only this mediated feed.
+Require a healthy feed whose actionable record count plus exact-head,
+classifier-certified exclusions equals the open-PR inventory. Excluded PRs are
+not emitted as actionable Link observations. Only then may the Link timer be
+enabled. Link still has no GitHub credentials and consumes only this mediated
+feed.
 
 ## 3. Niobe bounded live transition
 
-Niobe continues shadow beats automatically. Casey approval is required only
+Niobe remains shadow-only before activation. Casey approval is required only
 to change authority from `shadow_only` to live mutation. The approval record
 must state:
 
@@ -132,7 +134,8 @@ The initial review `c4e7a9b3` failed closed on a stale-card fence. Rereview
 `c4e7a9b4` passed that repair, and exact target-parity review `c4e7a9b6`
 passed the final candidate. The 2026-09-06 cutover disabled the legacy
 `skfleet-rotate.timer` before enabling `skfleet-niobe-live.timer`, so there is
-only one live dispatcher. The read-only shadow timer remains enabled. Tank
+only one live dispatcher. The read-only shadow timer is installed but disabled
+and conflicts with the live timer, so both modes cannot remain enabled. Tank
 and Seraph roll back through their card-pinned artifact procedure. A feed
 failure disables Link's eligibility input; it does not trigger GitHub
 mutations.

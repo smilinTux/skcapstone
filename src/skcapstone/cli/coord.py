@@ -86,7 +86,9 @@ def register_coord_commands(main: click.Group) -> None:
             card = store.fold(task_id)
             if card is None:
                 raise click.ClickException(f"unknown card: {task_id}")
-            truth = evaluate_scheduler_truth(home_path, cards=[task_id])
+            truth = evaluate_scheduler_truth(
+                home_path, cards=[task_id], policy_labels=("foreign-project",)
+            )
             facts = next(
                 (item for item in truth.cards if item.card_id == task_id), None
             )

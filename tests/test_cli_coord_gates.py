@@ -66,6 +66,13 @@ def test_gates_reports_identity_revision_and_eligible_without_mutation(tmp_path:
     assert before == sorted((p, p.read_bytes()) for p in tmp_path.rglob("*") if p.is_file())
 
 
+def test_gates_uses_canonical_foreign_project_policy(tmp_path: Path) -> None:
+    _card(tmp_path, "faa00001", tags=["foreign-project"])
+    payload = _payload(_run(tmp_path, "faa00001"))
+    assert payload["eligible"] is False
+    assert payload["primary_reason"] == "foreign_project"
+
+
 def test_gates_reports_dependency_block(tmp_path: Path) -> None:
     _card(tmp_path, "dea00001")
     _card(tmp_path, "cad00001", dependencies=["dea00001"])

@@ -159,6 +159,56 @@ def test_orphaned_pr_is_blocked(tmp_path: Path) -> None:
     assert result.reason == "lineage_incomplete"
 
 
+def test_classifier_certified_exclusion_is_omitted_from_actionable_feed() -> None:
+    value = lineage()
+    value["records"] = {}
+    value["coverage"] = {"unresolved": 0, "lineage-complete": 0, "excluded": 1}
+    value["diagnostics"] = [{
+        "classification": "excluded",
+        "repository": "smilinTux/skcapstone",
+        "pr": 17,
+        "head_revision": HEAD,
+        "base_revision": BASE,
+        "owner": "link",
+        "reason": "bounded unmanaged PR",
+        "expires_at": "2099-01-01T00:00:00+00:00",
+    }]
+    payload, result = build_feed(
+        FakeConnector([row()]),
+        repositories=["smilinTux/skcapstone"],
+        lineage=value,
+        producer=producer(),
+    )
+    assert result.healthy is True
+    assert result.records == 1
+    assert payload is not None
+    assert payload["records"] == []
+
+
+def test_exclusion_head_mismatch_fails_closed() -> None:
+    value = lineage()
+    value["records"] = {}
+    value["coverage"] = {"unresolved": 0, "lineage-complete": 0, "excluded": 1}
+    value["diagnostics"] = [{
+        "classification": "excluded",
+        "repository": "smilinTux/skcapstone",
+        "pr": 17,
+        "head_revision": "f" * 40,
+        "base_revision": BASE,
+        "owner": "link",
+        "reason": "bounded unmanaged PR",
+        "expires_at": "2099-01-01T00:00:00+00:00",
+    }]
+    payload, result = build_feed(
+        FakeConnector([row()]),
+        repositories=["smilinTux/skcapstone"],
+        lineage=value,
+        producer=producer(),
+    )
+    assert payload is None
+    assert result.reason == "lineage_incomplete"
+
+
 def test_stale_snapshot_connector_data_is_rejected(tmp_path: Path) -> None:
     old = (datetime.now(timezone.utc) - timedelta(minutes=16)).isoformat()
     lineage_path = tmp_path / "lineage.json"

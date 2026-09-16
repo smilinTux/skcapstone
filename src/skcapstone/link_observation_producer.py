@@ -217,6 +217,29 @@ def _lineage_record(lineage: Mapping[str, Any], key: str) -> Mapping[str, Any] |
     return value if isinstance(value, dict) else None
 
 
+def _lineage_exclusions(lineage: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    diagnostics = lineage.get("diagnostics", [])
+    if not isinstance(diagnostics, list):
+        raise ProducerError("lineage_malformed")
+    result: dict[str, Mapping[str, Any]] = {}
+    for value in diagnostics:
+        row = _mapping(value, "lineage_diagnostic")
+        if row.get("classification") != "excluded":
+            continue
+        try:
+            key = _key(str(row["repository"]), int(row["pr"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ProducerError("lineage_exclusion_malformed") from exc
+        required = ("head_revision", "base_revision", "owner", "reason", "expires_at")
+        if key in result or any(not str(row.get(field) or "").strip() for field in required):
+            raise ProducerError("lineage_exclusion_malformed")
+        result[key] = row
+    coverage = lineage.get("coverage", {})
+    if int(coverage.get("excluded", -1)) != len(result):
+        raise ProducerError("lineage_exclusion_mismatch")
+    return result
+
+
 def _mapping_evidence(repository: str, number: int, head: str, base: str, source: str, generation: str, review: str, review_revision: str, review_verdict: str) -> str:
     value = {
         "repository": repository,
@@ -249,6 +272,7 @@ def build_feed(
     if not isinstance(coverage, dict) or int(coverage.get("unresolved", -1)) != 0:
         return None, ProducerResult(healthy=False, reason="lineage_incomplete", records=0)
     timestamp = now or _now()
+    exclusions = _lineage_exclusions(lineage)
     raw_rows: list[dict[str, Any]] = []
     for repository in repositories:
         try:
@@ -285,6 +309,9 @@ def build_feed(
             raise ProducerError("pr_sha_malformed")
         metadata = _lineage_record(lineage, key)
         if metadata is None:
+            exclusion = exclusions.get(key)
+            if exclusion is not None and exclusion["head_revision"] == head and exclusion["base_revision"] == base:
+                continue
             missing.append(key)
             continue
         required = (
@@ -359,7 +386,7 @@ def build_feed(
     return payload, ProducerResult(
         healthy=True,
         reason="complete",
-        records=len(records),
+        records=len(raw_rows),
         source_revision=source_revision,
         evidence_sha256=str(payload["evidence_sha256"]),
     )

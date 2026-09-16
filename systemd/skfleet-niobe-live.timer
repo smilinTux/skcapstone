@@ -1,5 +1,6 @@
 [Unit]
 Description=Run bounded Niobe fleet dispatch every five minutes
+Conflicts=skfleet-niobe-shadow.timer
 
 [Timer]
 OnCalendar=*-*-* *:3,8,13,18,23,28,33,38,43,48,53,58:00

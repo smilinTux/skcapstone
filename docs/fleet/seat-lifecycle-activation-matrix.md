@@ -13,7 +13,7 @@ and evidence contract remain authoritative.
 | --- | --- | --- | --- | --- |
 | Link | `provisioned` | Bounded recurring cycle on chiap08, feed-gated and currently disabled | PR triage, independent reviewer assignment, merge eligibility recommendation, bounded merge queue | Fleet claims, worker launch or release, deployment, credentials, protected data, application actuation |
 | Mero | `provisioned` | Bounded read-only census timer enabled on chiap08 | Convergence observation, drift measurement, blocker detection, typed recommendations | Claims, reassignment, fleet mutation, merge, deployment, or actuation |
-| Niobe | `active_bounded` | Five-minute live dispatcher and read-only shadow beat enabled on chiap08 under Casey decision `casey-c4e7a9b2-20260906`, expiring 2026-10-06T22:00:00+00:00 | Claim, release, launch, stop, and reassign only for SKCapstone, SKDashboard, and SKWorld lifecycle cards | Merge, deploy, application actuation, and external dispatch always denied |
+| Niobe | `active_bounded` | Five-minute live dispatcher enabled on chiap08 under Casey decision `casey-c4e7a9b2-20260906`, expiring 2026-10-06T22:00:00+00:00. Shadow is installed and disabled for rollback | Claim, release, launch, stop, and reassign only for SKCapstone, SKDashboard, and SKWorld lifecycle cards | Merge, deploy, application actuation, and external dispatch always denied |
 | Tank | `provisioned_not_activated` | Card-scoped worker only | Exact approved artifact install, release receipt, behavioral deployment verification, pinned rollback | Self-approval, arbitrary claims, artifact substitution, independent review of its own work, application actuation |
 | Seraph | `provisioned_not_activated` | Card-scoped worker only | Exact candidate, release, deployment, health, and rollback verification | Merge, dispatch, deployment, release, claim, approval, or actuation |
 | ATLAS | `frozen` | No healthy lifecycle beat | Typed operations observation only until separately authorized | Coordination-board ownership, card claims, review, merge, release, or action while frozen |
@@ -119,7 +119,8 @@ Every seat with an active identity:
    poll time, and status.
 
 Link and Mero emit one beat per short cycle. Tank and Seraph emit beats only
-while executing a card. Niobe emits shadow beats without mutation. Frozen ATLAS
+while executing a card. Niobe emits bounded live status beats while activated.
+Frozen ATLAS
 does not emit a healthy lifecycle beat. Missing beats create an observation;
 they do not automatically release a claim or wake Casey.
 
@@ -153,9 +154,10 @@ change:
 python3 scripts/fleet/seat-manifest-audit.py
 python3 -m pytest -q tests/fleet/test_seat_boundaries.py tests/fleet/test_seat_runtime.py
 python3 -m pytest -q tests/test_seat_cycle_entrypoint.py tests/test_link_observation_feed.py tests/test_link_observation_producer.py
-systemd-analyze verify systemd/skfleet-link.service systemd/skfleet-link.timer systemd/skfleet-mero.service systemd/skfleet-mero.timer systemd/skfleet-niobe-shadow.service systemd/skfleet-niobe-shadow.timer
+systemd-analyze verify systemd/skfleet-link.service systemd/skfleet-link.timer systemd/skfleet-mero.service systemd/skfleet-mero.timer systemd/skfleet-niobe-live.service systemd/skfleet-niobe-live.timer systemd/skfleet-niobe-shadow.service systemd/skfleet-niobe-shadow.timer
 ```
 
 The Link timer remains disabled until the reviewed producer has a complete live
 lineage manifest and a dry run has produced a fresh valid feed. Mero and the
-Niobe shadow beat may run because they are bounded read-only observation paths.
+activated bounded Niobe live dispatcher may run. Niobe shadow remains the
+disabled rollback path.

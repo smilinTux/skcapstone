@@ -1,5 +1,6 @@
 [Unit]
 Description=Run the SKFleet Niobe shadow beat every five minutes
+Conflicts=skfleet-niobe-live.timer
 
 [Timer]
 OnBootSec=6min

@@ -16,7 +16,7 @@ The current operating posture is deliberately uneven:
 | --- | --- | --- |
 | Link | Integrator and trunk owner | Recurring bounded cycle on chiap08 |
 | Mero | Oversight, blocker census, and drift control | Recurring bounded cycle on chiap08 |
-| Niobe | Successor dispatcher and transition shadow | Shadow-only until transition criteria pass |
+| Niobe | Bounded fleet dispatcher | Live on chiap08 under an expiring Casey decision; shadow installed for rollback |
 | Tank | Release, install, and behavioral deployment verification | Card-scoped worker only |
 | Seraph | Independent review and lifecycle verification | Card-scoped worker only |
 | ATLAS | Operations-plane identity and emergency continuity | Frozen, no healthy beat |

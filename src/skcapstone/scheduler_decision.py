@@ -124,9 +124,21 @@ def card_scheduler_facts(
     accepted only from explicit evidence events, never lifecycle or links alone.
     Invalid evidence fails closed as malformed.
     """
+    from .coord_eligibility import dispatch_policy_facts
+
     labels = {str(label).strip().lower().replace("_", "-") for label in card.labels}
     title = str(card.title or "")
-    malformed = not card.id.strip() or not title.strip() or title.strip().lower() == "x"
+    policy = dispatch_policy_facts(
+        card,
+        dict(cards),
+        {
+            label.removeprefix("parent-")
+            for candidate in cards.values()
+            for label in candidate.labels
+            if label.lower().startswith("parent-")
+        },
+    )
+    malformed = policy["malformed"]
     verdict = None
     for event in evidence_events:
         if not isinstance(event, dict):
@@ -148,8 +160,8 @@ def card_scheduler_facts(
         dependency not in cards or cards[dependency].status != Column.DONE
         for dependency in card.dependencies
     )
-    human_gate = "human-gate" in labels or "[HUMAN]" in title.upper()
-    not_claimable = bool(labels & {"not-claimable", "sprint-container", "do-not-claim"})
+    human_gate = policy["human_gate"]
+    not_claimable = policy["excluded"] or policy["container"] or not policy["task"]
     owner_health = "live" if card.owner else None
     terminal = card.status == Column.DONE or card.archived
     awaiting_review = card.status == Column.REVIEW or bool(
@@ -161,8 +173,9 @@ def card_scheduler_facts(
         terminal_cardstore=terminal,
         owner_health=owner_health,
         human_gate=human_gate,
+        foreign_project=policy["foreign_project"],
         not_claimable=not_claimable or card.kind not in {Kind.TASK, Kind.EPIC},
-        dependency=missing_dependency,
+        dependency=policy["missing_dependency"],
         awaiting_review=awaiting_review,
         backoff=bool(verdict and verdict.startswith("BLOCKED")),
     )

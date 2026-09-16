@@ -55,7 +55,8 @@ commitment, an irreversible material effect, or a role-contract exception.
 
 The Link, Mero, and Niobe unit templates are present under `systemd/` and are
 designed for chiap08 as the active host. Mero's ten-minute bounded census timer
-and Niobe's five-minute shadow timer are enabled on chiap08. Link remains
+and Niobe's five-minute live timer are enabled on chiap08. Niobe's shadow timer
+is installed but disabled and is reserved for rollback. Link remains
 installed but disabled because it consumes the mediated PR observation feed and
 must record `observation_feed_missing` or another bounded rejection until a
 fresh valid feed is present; it must not read GitHub credentials directly. The
@@ -68,7 +69,8 @@ The seat preflight is:
 
 ```bash
 python3 scripts/fleet/seat-manifest-audit.py --home "$HOME/.skcapstone"
-systemctl --user is-active skfleet-mero.timer skfleet-niobe-shadow.timer
+systemctl --user is-active skfleet-mero.timer skfleet-niobe-live.timer
+systemctl --user is-enabled skfleet-niobe-shadow.timer
 systemctl --user is-enabled skfleet-link.timer
 ```
 

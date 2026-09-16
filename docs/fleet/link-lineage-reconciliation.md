@@ -7,17 +7,17 @@
 ## Current coverage
 
 The mediated producer was run against the live open pull-request inventory on
-2026-09-06. It observed 165 open `smilinTux/skcapstone` pull requests. The
+2026-09-06. It observed 164 open `smilinTux/skcapstone` pull requests. The
 current report is preserved in the live evidence record for this run.
 
 | Classification | Count | Meaning |
 | --- | ---: | --- |
-| Complete source and review lineage | 29 | Exactly one source card and one terminal independent review card with an explicit PASS, FAIL, or BLOCKED verdict resolves through authoritative review-card labels, with current card revisions and PR head/base binding. |
-| Unresolved lineage | 136 | The PR has missing, ambiguous, or incomplete or non-terminal review lineage and remains blocked from the healthy feed. |
+| Complete source and review lineage | 32 | Exactly one source card and one terminal independent review card with an explicit PASS, FAIL, or BLOCKED verdict resolves through authoritative review-card labels, with current card revisions and PR head/base binding. |
+| Unresolved lineage | 132 | The PR has missing, ambiguous, incomplete, non-terminal, or mismatched PR/head review lineage and remains blocked from the healthy feed. |
 | Explicit exclusions | 0 | No bounded exclusion record was accepted in this run. |
 | Published healthy feed | 0 | Deliberately none. The producer requires complete source and review lineage before publication. |
 
-The 136 unresolved PRs are not silently discarded. They remain part of the
+The 132 unresolved PRs are not silently discarded. They remain part of the
 producer inventory and keep the output blocked until each one is either
 reconciled to authoritative lineage or explicitly classified as stale or
 unmanaged work by a bounded exclusion record. Earlier counts were based on
@@ -54,15 +54,50 @@ blocks publication until the manifest is refreshed. FAIL and BLOCKED are
 reconciled observations, but Link merge eligibility still requires exact
 independent PASS.
 
+## Exclusion contract
+
+The optional `--exclude` input is a JSON object with schema
+`skfleet.link-lineage-exclusion/v1` and a `records` array. Every record must
+contain exactly these fields:
+
+```json
+{
+  "repository": "org/repo",
+  "pr": 123,
+  "head_sha": "<exact observed 40-character head SHA>",
+  "base_sha": "<exact observed 40-character base SHA>",
+  "owner": "link",
+  "reason": "short evidence-backed reason",
+  "classification": "unmanaged",
+  "source_evidence_sha256": "<64 lowercase hexadecimal characters>",
+  "expires_at": "2099-01-01T00:00:00+00:00"
+}
+```
+
+The only classifications are `unmanaged`, `review-artifact`, and
+`superseded`. The repository, PR number, head SHA, and base SHA must match the
+current open-PR inventory exactly. The owner, reason, source evidence hash,
+and timezone-bearing expiry are required, and expiry must be in the future.
+Duplicate, stale, malformed, mismatched, unknown, expired, or otherwise
+invalid records fail closed. They cannot remove a PR from unresolved lineage.
+The validator rejects the legacy PR-to-reason map so an unbound exclusion
+cannot weaken live producer input. A standalone template is
+`scripts/fleet/link-exclusions.example.json`.
+
 Historical reviews remain preserved. When several terminal reviews share one
 source card, only a single review whose `pr` and `commit` links match the live
 PR number and exact head may resolve that ambiguity. A unique terminal review
-may supersede historical non-terminal records. Multiple unbound terminal
-reviews remain unresolved.
+may supersede historical non-terminal records. A review carrying any PR or
+commit binding is never reused for a different PR or head. Multiple unbound
+terminal reviews remain unresolved.
 
 ## Safe reconciliation order
 
-1. Extract candidate card IDs from each PR title and body.
+1. Extract candidate card IDs from each PR title and body, then add only source
+   cards whose folded `pr` link identifies the exact repository and PR number
+   and whose folded `commit` link is the full exact observed head SHA. PR-only,
+   abbreviated, stale, mismatched, malformed, and duplicate source links stay
+   unresolved.
 2. Resolve candidates through the authoritative CardStore fold, not a stale
    board rendering or filename alone.
 3. Find the independent review card through the folded source-card links or an

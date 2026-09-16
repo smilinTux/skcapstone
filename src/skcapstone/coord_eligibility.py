@@ -9,8 +9,9 @@ from typing import Collection
 from .card import Column, Kind
 from .card_store import CardStore
 
-_EXCLUDED_LABELS = frozenset({"do-not-claim", "human-gate", "not-claimable", "superseded"})
+_EXCLUDED_LABELS = frozenset({"do-not-claim", "not-claimable", "superseded"})
 _CONTAINER_LABELS = frozenset({"parent-container", "sprint-container"})
+_FOREIGN_LABELS = frozenset({"foreign-project"})
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,28 @@ def _is_container(card, labels: set[str], parent_ids: set[str]) -> bool:
     )
 
 
+def dispatch_policy_facts(card, by_id: dict[str, object], parent_ids: set[str]) -> dict[str, bool]:
+    """Return the canonical claimability predicates for one folded card.
+
+    This is the single dispatch policy surface. Diagnostics and selectors must
+    consume these predicates instead of re-deriving eligibility independently.
+    """
+    labels = {str(label).lower() for label in card.labels}
+    missing_dependency = any(
+        dependency not in by_id or by_id[dependency].status != Column.DONE
+        for dependency in card.dependencies
+    )
+    return {
+        "container": _is_container(card, labels, parent_ids),
+        "excluded": _has_excluded_label(labels),
+        "foreign_project": bool(labels & _FOREIGN_LABELS),
+        "human_gate": "human-gate" in labels or "[human]" in card.title.lower(),
+        "missing_dependency": missing_dependency,
+        "task": card.kind == Kind.TASK,
+        "malformed": not card.id.strip() or card.title.strip().lower() in {"", "x"},
+    }
+
+
 def leaf_eligibility_counts(
     home: Path, selected_ids: Collection[str] | None = None
 ) -> LeafEligibilityCounts:
@@ -69,22 +92,20 @@ def leaf_eligibility_counts(
         labels = {label.lower() for label in card.labels}
         if selected is not None and card.id not in selected:
             continue
-        if card.kind not in {Kind.TASK, Kind.EPIC}:
+        facts = dispatch_policy_facts(card, by_id, parent_ids)
+        if not facts["task"]:
             continue
         if card.status not in {Column.BACKLOG, Column.REVIEW} or card.owner:
             continue
         if (
-            _is_container(card, labels, parent_ids)
-            or _has_excluded_label(labels)
-            or "[human]" in card.title.lower()
+            facts["container"]
+            or facts["excluded"]
+            or facts["foreign_project"]
+            or facts["human_gate"]
+            or facts["missing_dependency"]
         ):
             continue
-        if any(
-            dependency not in by_id or by_id[dependency].status != Column.DONE
-            for dependency in card.dependencies
-        ):
-            continue
-        if not card.id.strip() or card.title.strip().lower() in {"", "x"}:
+        if facts["malformed"]:
             malformed += 1
         elif card.status == Column.REVIEW:
             review += 1
