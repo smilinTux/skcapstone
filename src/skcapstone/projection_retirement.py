@@ -1,12 +1,11 @@
-"""Exact, reversible retirement for stale ownerless agent projections."""
+"""Fail-closed compatibility adapter for immutable agent retirement."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from importlib import import_module
 from pathlib import Path
 
 from skcoord.card_store import CardStore, card_mutation_lock
@@ -15,13 +14,6 @@ from skcoord.lifecycle import _lifecycle_lock
 
 from .coord_amendments import is_voided
 from .coordination import Board
-
-_STALE_SECONDS = 15 * 60
-
-
-def _sha256(path: Path) -> str:
-    """Return the SHA-256 digest of one file."""
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _canonical_sha256(value: dict) -> str:
@@ -47,16 +39,23 @@ def _projection_path(home: Path, projection_agent: str) -> Path:
     return path
 
 
-def _append_manifest(path: Path, record: dict) -> None:
-    """Append one durable quarantine event."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = (json.dumps(record, sort_keys=True) + "\n").encode()
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+def _require_unambiguous_projection(path: Path) -> None:
+    """Refuse a canonical cache with unresolved Syncthing sibling bytes."""
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ValueError("projection is unsafe or ambiguous")
+    if any(path.parent.glob(f"{path.stem}.sync-conflict-*.json")):
+        raise ValueError("projection generation is ambiguous")
+
+
+def _generation_broker():
+    """Load the SKCoord authority, if this installation supports generations."""
     try:
-        os.write(descriptor, payload)
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+        broker = import_module("skcoord.projection_generation")
+    except ModuleNotFoundError as exc:
+        if exc.name != "skcoord.projection_generation":
+            raise
+        return None
+    return broker if getattr(broker, "IMMUTABLE_GENERATION_CONTRACT_VERSION", None) == 1 else None
 
 
 @dataclass(frozen=True)
@@ -89,12 +88,9 @@ def retire_projection(
     expected_projection_sha256: str,
     actor: str,
 ) -> RetirementReceipt:
-    """Quarantine one stale projection bound to one ownerless voided card."""
+    """Retire one exact immutable generation through the SKCoord authority."""
     root = Path(home)
     source = _projection_path(root, projection_agent)
-    quarantine = root / "agents-quarantine"
-    destination = quarantine / source.name
-    manifest = quarantine / "manifest.jsonl"
     with (
         _board_mutation_lock(root),
         card_mutation_lock(root, task_id),
@@ -105,54 +101,21 @@ def retire_projection(
             raise ValueError("card hash conflict")
         if card.owner is not None:
             raise ValueError("card must be ownerless")
+        if not card.archived or card.status.value == "done":
+            raise ValueError("card must be archived and not done")
         if not is_voided(root, task_id):
             raise ValueError("card must be voided")
-        if not source.is_file() or source.is_symlink():
-            raise ValueError("projection is missing or ambiguous")
-        if _sha256(source) != expected_projection_sha256:
-            raise ValueError("projection hash conflict")
-        try:
-            payload = json.loads(source.read_text(encoding="utf-8"))
-            observed = datetime.fromisoformat(str(payload["last_seen"]).replace("Z", "+00:00"))
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise ValueError("projection is malformed or has ambiguous liveness") from exc
-        if payload.get("agent") != projection_agent:
-            raise ValueError("projection identity does not match payload")
-        if payload.get("current_task") != task_id:
-            raise ValueError("projection task mismatch")
-        if observed.tzinfo is None:
-            raise ValueError("projection has ambiguous liveness")
-        age = (datetime.now(timezone.utc) - observed).total_seconds()
-        if age < _STALE_SECONDS:
-            raise ValueError("projection is live or has future liveness")
-        if destination.exists():
-            raise ValueError("quarantine destination exists")
-
-        record = {
-            "event": "ownerless_projection_retired",
-            "task_id": task_id,
-            "projection_agent": projection_agent,
-            "original_path": str(source),
-            "quarantined_path": str(destination),
-            "projection_sha256": expected_projection_sha256,
-            "card_sha256": expected_card_sha256,
-            "actor": actor,
-            "retired_at": datetime.now(timezone.utc).isoformat(),
-        }
-        record["receipt_sha256"] = _canonical_sha256(record)
-        quarantine.mkdir(parents=True, exist_ok=True)
-        os.replace(source, destination)
-        try:
-            _append_manifest(manifest, record)
-        except Exception:
-            os.replace(destination, source)
-            raise
-        return RetirementReceipt(
-            home=root,
+        _require_unambiguous_projection(source)
+        broker = _generation_broker()
+        if broker is None or not callable(getattr(broker, "retire_projection", None)):
+            raise RuntimeError("immutable generation broker unavailable")
+        return broker.retire_projection(
+            root,
+            task_id=task_id,
             projection_agent=projection_agent,
-            quarantined_path=destination,
-            projection_sha256=expected_projection_sha256,
-            receipt_sha256=record["receipt_sha256"],
+            expected_card_sha256=expected_card_sha256,
+            expected_generation_sha256=expected_projection_sha256,
+            actor=actor,
         )
 
 
@@ -164,54 +127,18 @@ def restore_projection(
     expected_receipt_sha256: str,
     actor: str,
 ) -> Path:
-    """Restore one exact retired projection after verifying its receipt and hash."""
+    """Restore through the immutable generation authority, never the cache."""
     root = Path(home)
     target = _projection_path(root, projection_agent)
-    quarantine = root / "agents-quarantine"
-    source = quarantine / target.name
-    manifest = quarantine / "manifest.jsonl"
     with _board_mutation_lock(root), _lifecycle_lock(root, exclusive=True):
-        if target.exists():
-            raise ValueError("projection restore target exists")
-        if not source.is_file() or source.is_symlink():
-            raise ValueError("quarantined projection is missing or ambiguous")
-        if _sha256(source) != expected_quarantine_sha256:
-            raise ValueError("quarantine hash conflict")
-        records = [json.loads(line) for line in manifest.read_text().splitlines() if line.strip()]
-        matching = [
-            item
-            for item in records
-            if item.get("event") == "ownerless_projection_retired"
-            and item.get("projection_agent") == projection_agent
-            and item.get("receipt_sha256") == expected_receipt_sha256
-        ]
-        recomputed_receipt_sha256 = (
-            _canonical_sha256(
-                {key: value for key, value in matching[0].items() if key != "receipt_sha256"}
-            )
-            if len(matching) == 1
-            else None
+        _require_unambiguous_projection(target)
+        broker = _generation_broker()
+        if broker is None or not callable(getattr(broker, "restore_projection", None)):
+            raise RuntimeError("immutable generation broker unavailable")
+        return broker.restore_projection(
+            root,
+            projection_agent=projection_agent,
+            expected_generation_sha256=expected_quarantine_sha256,
+            expected_receipt_sha256=expected_receipt_sha256,
+            actor=actor,
         )
-        if (
-            len(matching) != 1
-            or matching[0].get("projection_sha256") != expected_quarantine_sha256
-            or recomputed_receipt_sha256 != expected_receipt_sha256
-        ):
-            raise ValueError("retirement receipt conflict")
-        os.replace(source, target)
-        try:
-            _append_manifest(
-                manifest,
-                {
-                    "event": "ownerless_projection_restored",
-                    "projection_agent": projection_agent,
-                    "projection_sha256": expected_quarantine_sha256,
-                    "retirement_receipt_sha256": expected_receipt_sha256,
-                    "actor": actor,
-                    "restored_at": datetime.now(timezone.utc).isoformat(),
-                },
-            )
-        except Exception:
-            os.replace(target, source)
-            raise
-        return target

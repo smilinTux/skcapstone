@@ -652,7 +652,7 @@ def register_coord_commands(main: click.Group) -> None:
         agent,
         home,
     ):
-        """Reversibly quarantine one exact stale ownerless projection."""
+        """Retire one exact immutable projection generation through SKCoord."""
         from ..projection_retirement import retire_projection
 
         validate_task_id(task_id)
@@ -694,7 +694,7 @@ def register_coord_commands(main: click.Group) -> None:
         agent,
         home,
     ):
-        """Restore one exact hash-fenced retired projection."""
+        """Restore one exact hash-fenced generation through SKCoord."""
         from ..projection_retirement import restore_projection
 
         validate_agent_name(projection_agent)
