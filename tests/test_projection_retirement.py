@@ -190,6 +190,87 @@ def test_restore_fences_changed_disk_receipt_without_cache_write(
 
 
 @pytest.mark.parametrize("replica", ["replica-a", "replica-b"])
+def test_contract_stub_retire_restore_keeps_immutable_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replica: str
+) -> None:
+    """Exercise both adapter paths with disk receipts and unchanged cache bytes."""
+    import skcapstone.projection_retirement as retirement
+
+    root = tmp_path / replica
+    store, cache = _world(root)
+    cache_before = cache.read_bytes()
+    generation_dir = root / "coordination" / "agents" / ".generations" / "pi-test" / replica
+    generation_dir.mkdir(parents=True)
+    initial = generation_dir / "initial.json"
+    initial.write_bytes(b'{"generation_id":"initial"}')
+    initial_hash = _sha(initial)
+    tombstone = generation_dir / "tombstone.json"
+    disposition = generation_dir / "disposition.json"
+    restoration = generation_dir / "restoration.json"
+    restore_disposition = generation_dir / "restore-disposition.json"
+
+    class ContractStub:
+        """Persist test-only immutable records through the broker API seam."""
+
+        @staticmethod
+        def retire_projection(home, **kwargs):
+            """Append one tombstone and disposition for an exact head."""
+            assert home == root
+            if _sha(initial) != kwargs["expected_generation_sha256"]:
+                raise ValueError("generation conflict")
+            with tombstone.open("xb") as record:
+                record.write(b'{"kind":"tombstone","predecessor":"initial"}')
+            with disposition.open("xb") as record:
+                record.write(b'{"kind":"retired","generation":"tombstone"}')
+            return SimpleNamespace(
+                generation_sha256=_sha(tombstone),
+                disposition_sha256=_sha(disposition),
+            )
+
+        @staticmethod
+        def restore_projection(home, **kwargs):
+            """Append restoration only for the exact prior receipt."""
+            assert home == root
+            if _sha(tombstone) != kwargs["expected_generation_sha256"]:
+                raise ValueError("generation conflict")
+            if _sha(disposition) != kwargs["expected_receipt_sha256"]:
+                raise ValueError("disposition conflict")
+            with restoration.open("xb") as record:
+                record.write(b'{"kind":"restoration","predecessor":"tombstone"}')
+            with restore_disposition.open("xb") as record:
+                record.write(b'{"kind":"restored","generation":"restoration"}')
+            return SimpleNamespace(
+                generation_sha256=_sha(restoration),
+                disposition_sha256=_sha(restore_disposition),
+            )
+
+    monkeypatch.setattr(retirement, "_generation_broker", lambda: ContractStub)
+    retired = retire_projection(
+        root,
+        task_id="deadbeef",
+        projection_agent="pi-test",
+        expected_card_sha256=card_generation_sha256(store.fold("deadbeef")),
+        expected_projection_sha256=initial_hash,
+        actor="repair",
+    )
+    assert retired.generation_sha256 == _sha(tombstone)
+    assert retired.disposition_sha256 == _sha(disposition)
+    restored = restore_projection(
+        root,
+        projection_agent="pi-test",
+        expected_quarantine_sha256=retired.generation_sha256,
+        expected_receipt_sha256=retired.disposition_sha256,
+        actor="repair",
+    )
+    assert restored.generation_sha256 == _sha(restoration)
+    assert restored.disposition_sha256 == _sha(restore_disposition)
+    assert initial.read_bytes() == b'{"generation_id":"initial"}'
+    assert tombstone.read_bytes() == b'{"kind":"tombstone","predecessor":"initial"}'
+    assert disposition.read_bytes() == b'{"kind":"retired","generation":"tombstone"}'
+    assert cache.read_bytes() == cache_before
+
+
+@pytest.mark.parametrize("replica", ["replica-a", "replica-b"])
 def test_unresolved_conflict_fails_before_broker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replica: str
 ) -> None:

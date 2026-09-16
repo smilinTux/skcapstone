@@ -22,8 +22,9 @@ hash-bound tombstone/restoration generations and dispositions. They never move,
 replace, or delete canonical, generation, or Syncthing conflict bytes. The
 retirement or restore receipt exposes `generation_sha256` and
 `disposition_sha256`; the CLI reports those hashes without a quarantine path.
-Disk-backed seam tests exercise stale generation and disposition races in two
-replicas, but the absent broker means they do not qualify its implementation.
+Disk-backed seam tests exercise a retire/restore round trip and stale generation
+and disposition races in two replicas using a test-only contract stub. The
+absent broker means they do not qualify its implementation.
 A single-authority reconciler alone may publish the legacy cache after a clean
 fold and recheck. The SKCapstone CLI must fail closed on broker absence/outage,
 ambiguous lineage, conflict bytes, or stale digests. Its existing hash options
