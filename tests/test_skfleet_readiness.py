@@ -7,6 +7,7 @@ from skfleet_readiness import (
     required_env,
     unit_modules,
     check_module_imports,
+    parse_systemd_environment,
 )
 
 
@@ -67,3 +68,24 @@ def test_required_env_on_the_real_dispatcher_finds_the_var_that_broke_the_deploy
     assert "SKFLEET_GATEWAY_URL" in names
     assert "SKFLEET_TARGET" in names
     assert "SKFLEET_QWEN_TARGET" not in names   # has a default
+
+
+def test_parse_systemd_environment_normal_multi_var_line():
+    raw = "SKFLEET_TARGET=3 SKFLEET_GLM_TARGET=2 SKFLEET_GATEWAY_URL=http://gateway.local:8080"
+    result = parse_systemd_environment(raw)
+    assert result == {
+        "SKFLEET_TARGET": "3",
+        "SKFLEET_GLM_TARGET": "2",
+        "SKFLEET_GATEWAY_URL": "http://gateway.local:8080",
+    }
+
+
+def test_parse_systemd_environment_empty_result():
+    assert parse_systemd_environment("") == {}
+    assert parse_systemd_environment("   \n") == {}
+
+
+def test_parse_systemd_environment_value_containing_equals_splits_on_first_only():
+    raw = "SKFLEET_GATEWAY_URL=http://gateway.local:8080/v1?token=abc=def"
+    result = parse_systemd_environment(raw)
+    assert result == {"SKFLEET_GATEWAY_URL": "http://gateway.local:8080/v1?token=abc=def"}

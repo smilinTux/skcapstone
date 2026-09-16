@@ -22,6 +22,7 @@ import argparse
 import ast
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -108,12 +109,75 @@ def check_module_imports(modules: list[str], python_bin: str) -> dict[str, bool]
     return results
 
 
+def parse_systemd_environment(raw: str) -> dict[str, str]:
+    """Parse the output of `systemctl show <unit> -p Environment --value`.
+
+    That output is a single line of space-separated KEY=value pairs (systemd
+    already merges the unit file and every drop-in that touches it). Each
+    pair is split on the FIRST '=' only, so a value that itself contains an
+    '=' (for example a URL with a query string) stays intact.
+    """
+    raw = raw.strip()
+    if not raw:
+        return {}
+    try:
+        tokens = shlex.split(raw)
+    except ValueError:
+        tokens = raw.split()
+    env: dict[str, str] = {}
+    for token in tokens:
+        if "=" not in token:
+            continue
+        key, _, value = token.partition("=")
+        env[key] = value
+    return env
+
+
+def systemd_effective_environment(unit: str) -> tuple[dict[str, str] | None, str | None]:
+    """Ask systemd for the effective environment of a unit: the unit file plus
+    every drop-in that touches it, already merged by systemd itself.
+
+    Returns (env, None) on success, or (None, message) when the environment
+    could not be determined (systemctl missing, unit unknown, or any other
+    failure). Never raises. An undetermined state is never reported as an
+    empty-but-successful environment; callers must treat (None, message) as
+    a failed check, not as "no vars required."
+    """
+    try:
+        proc = subprocess.run(
+            ["systemctl", "--user", "show", unit, "-p", "LoadState", "-p", "Environment", "--value"],
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, "systemctl is not available (%s)" % exc
+
+    if proc.returncode != 0:
+        stderr = proc.stderr.strip() or ("systemctl exited with code %d" % proc.returncode)
+        return None, "systemctl could not read unit %s (%s)" % (unit, stderr)
+
+    output_lines = proc.stdout.splitlines()
+    load_state = output_lines[0].strip() if output_lines else ""
+    environment_line = output_lines[1] if len(output_lines) > 1 else ""
+
+    if load_state in ("", "not-found"):
+        return None, "systemd does not know unit %s (LoadState=%s)" % (unit, load_state or "unknown")
+
+    return parse_systemd_environment(environment_line), None
+
+
 def _iter_unit_files(units_dir: Path):
     for path in sorted(units_dir.glob("*.service")):
         yield path
 
 
-def _run(rotate_script: Path, units_dir: Path, python_bin: str, env_from_unit: str | None):
+def _run(
+    rotate_script: Path,
+    units_dir: Path,
+    python_bin: str,
+    env_from_unit: str | None,
+    env_from_systemd: str | None = None,
+):
     lines: list[str] = []
     ok = True
 
@@ -127,25 +191,40 @@ def _run(rotate_script: Path, units_dir: Path, python_bin: str, env_from_unit: s
 
     mandatory = required_env(dispatcher_source)
 
-    if env_from_unit:
+    env_error: str | None = None
+    if env_from_systemd:
+        env_snapshot, env_error = systemd_effective_environment(env_from_systemd)
+        env_source_label = "systemd effective environment for unit %s" % env_from_systemd
+    elif env_from_unit:
         unit_path = units_dir / env_from_unit
         env_snapshot = _env_from_unit_file(unit_path)
-        env_source_label = "unit %s" % env_from_unit
+        env_source_label = "unit %s (Environment= lines only, drop-ins not read)" % env_from_unit
     else:
         env_snapshot = dict(os.environ)
         env_source_label = "process environment"
 
-    if not mandatory:
-        lines.append("OK required env: dispatcher declares no mandatory env vars")
-    for name in sorted(mandatory):
-        if name in env_snapshot and env_snapshot[name] != "":
-            lines.append("OK required env: %s is set (checked against %s)" % (name, env_source_label))
-        else:
-            ok = False
+    if env_error is not None:
+        ok = False
+        lines.append(
+            "FAIL required env: could not determine %s (%s); "
+            "an undetermined environment is never treated as ready" % (env_source_label, env_error)
+        )
+        for name in sorted(mandatory):
             lines.append(
-                "FAIL required env: %s is missing (checked against %s); "
-                "dispatcher will raise SystemExit without it" % (name, env_source_label)
+                "FAIL required env: %s could not be verified (environment source unavailable)" % name
             )
+    else:
+        if not mandatory:
+            lines.append("OK required env: dispatcher declares no mandatory env vars")
+        for name in sorted(mandatory):
+            if env_snapshot is not None and name in env_snapshot and env_snapshot[name] != "":
+                lines.append("OK required env: %s is set (checked against %s)" % (name, env_source_label))
+            else:
+                ok = False
+                lines.append(
+                    "FAIL required env: %s is missing (checked against %s); "
+                    "dispatcher will raise SystemExit without it" % (name, env_source_label)
+                )
 
     all_modules: list[str] = []
     seen_modules: set[str] = set()
@@ -219,7 +298,8 @@ def main(argv=None) -> int:
     parser.add_argument("--rotate-script", required=True, help="Path to the dispatcher source, e.g. scripts/fleet/skfleet-rotate.py")
     parser.add_argument("--units-dir", required=True, help="Directory containing systemd *.service unit files")
     parser.add_argument("--python-bin", required=True, help="Python interpreter to check module imports against")
-    parser.add_argument("--env-from-unit", default=None, help="Optional unit file name; check env against its Environment= lines instead of the process environment")
+    parser.add_argument("--env-from-unit", default=None, help="Optional unit file name; check env against its Environment= lines only (drop-ins are not read), instead of the process environment")
+    parser.add_argument("--env-from-systemd", default=None, help="Optional systemd unit name; check env against the unit's EFFECTIVE environment as reported by systemctl --user show, which already merges the unit file and every drop-in. Preferred over --env-from-unit when both are given.")
     args = parser.parse_args(argv)
 
     return _run(
@@ -227,6 +307,7 @@ def main(argv=None) -> int:
         Path(args.units_dir),
         args.python_bin,
         args.env_from_unit,
+        args.env_from_systemd,
     )
 
 

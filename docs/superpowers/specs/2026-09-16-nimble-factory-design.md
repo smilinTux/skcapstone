@@ -299,3 +299,185 @@ Steps 1 through 3 are independently valuable and can each be reverted alone.
 2. Should `exit_gates` support an `expires_at`, so a gate nobody satisfies does
    not park a card forever? Deliberately deferred until `abandon_reason` data
    shows whether this happens in practice.
+
+---
+
+# Amendment A: node lifecycle, and ATLAS as rollout controller
+
+**Date:** 2026-09-16. Added after the first deploy of `origin/main` to chiap01
+exposed gaps this document did not cover.
+
+## A.1 What the first deploy proved
+
+Deploying main to one host, by hand, produced these measured facts:
+
+| Finding | Value |
+|---|---|
+| Hosts on `main` before the deploy | 0 of 5 |
+| Distinct branches across 5 hosts | 5 |
+| Commits chiap01 was behind main | 414 |
+| Uncommitted files that a checkout would have destroyed | 24, across 3 hosts |
+| Hosts with no dispatcher script at all | 1 (chiap04) |
+| Result of the deploy before hand-patching | node FAILING |
+
+The node failed because `main` requires `SKFLEET_GATEWAY_URL` and no unit
+supplied it. Nothing would have stopped that config gap reaching four more hosts.
+
+Two failures a week apart share one shape:
+
+- `skfleet-niobe-shadow.service` names `skcapstone.seat_shadow_entrypoint`, a
+  module that does not exist in the deployed artifact.
+- `skfleet-rotate.service` needs `SKFLEET_GATEWAY_URL`, a variable that does not
+  exist in the deployed config.
+
+**A unit referencing something absent from the artifact it runs against.** One
+named a missing module, the other a missing variable. ADR-0005 already records a
+third instance of the same shape: *"ATLAS has never run, because its freeze store
+was never provisioned; nobody noticed the prerequisite."*
+
+## A.2 The architectural frame
+
+The fleet is a scheduler over worker nodes, which is the WebSphere and Kubernetes
+shape. Mapping it honestly shows what exists and what does not:
+
+| Concept | SKWorld today | State |
+|---|---|---|
+| node | chiap01-04, chiap08 | exists |
+| scheduler | `skfleet-rotate` dispatch loop | exists, works |
+| pod spec | systemd unit plus `Environment=` | exists, NOT versioned with code |
+| image | git SHA plus installed package | NOT pinned together |
+| readiness probe | none | **added by A.3** |
+| rollout controller | a human, by hand | **assigned by A.4** |
+| leader election | `active_host` static string | **replaced by A.5** |
+
+The scheduler half is built and sound. The node-lifecycle half is absent, and
+every failure above lives in the absent half.
+
+## A.3 The readiness gate
+
+`scripts/fleet/skfleet_readiness.py`. A node is ready only when both hold:
+
+1. **Every mandatory env var is present in the effective systemd environment.**
+   The required set is DERIVED FROM THE SOURCE, never hand-maintained, so it
+   cannot drift from what the dispatcher actually demands. A
+   `_required_lane_target("NAME")` call with no default is mandatory; with a
+   default it is optional.
+2. **Every module named by a unit's `ExecStart` imports** under that node's
+   interpreter. This is the niobe check.
+
+The effective environment must come from `systemctl --user show <unit> -p
+Environment`, which merges the unit with its drop-ins. Reading the repo's unit
+file is wrong: on chiap01 that file declares zero `Environment=` lines while the
+effective environment carries 13 variables from seven drop-ins. A gate that
+reports NOT READY on a healthy node will be switched off, so a false alarm is not
+a cosmetic defect, it is a fatal one.
+
+An undeterminable check FAILS. Unknown is never ready.
+
+## A.4 ATLAS becomes the rollout controller
+
+ADR-0005 assigns Operations to ATLAS: *"Apps and infra. Observes, reasons,
+repairs, under the Atlas Constitution"*, and forbids it *"the coordination board,
+which it provably does not read."*
+
+That boundary is exactly right for this role and needs no change. A rollout
+controller operates on hosts, units, packages and manifests. It never needs the
+board. The seat was underdefined, not misdefined: it had a domain and no
+mechanism, which is why it produced 8 card events in a week.
+
+ATLAS owns:
+
+- the **deployment manifest** (A.6)
+- running the **readiness gate** on a node after deploying to it
+- **staged rollout**: deploy to one node, gate it, and HALT THE ROLLOUT on first
+  failure rather than continuing
+- **rollback** to the previous manifest when a gate fails
+- answering *"is what we merged actually running?"* on every node, continuously
+
+ATLAS absorbs `tank`, whose real activity (releases, rollback rehearsals, 26
+events) is a subset of this. The surviving seat keeps the ATLAS name because
+ADR-0005 names it Operations and it carries its own constitution. The behaviour
+ported in is tank's, which was on-charter; atlas's own off-charter behaviour
+(editing source) is not carried forward.
+
+**Unchanged floor:** anything the Atlas Constitution Article 2 calls irreversible
+stays human-gated. A rollout is reversible by construction, which is what makes
+it appropriate for this seat. Anything that is not reversible is not a rollout.
+
+## A.5 Seats stop being host-pinned
+
+`seat-control-plane.json` performs leader election with a static string:
+
+```json
+{"active_host": "chiap08", "seats": {"mero": ["chiap08"], ...}}
+```
+
+`seat_cycle_entrypoint.py` enforces it as a hard refusal, deliberately: the file
+is Syncthing-replicated to every host, so without the refusal five hosts would
+each believe they hold the seat. The refusal is correct. The static pin is not.
+
+In Kubernetes terms this is a Deployment with `replicas: 1` whose node is
+hardcoded rather than scheduled.
+
+**Replacement: a seat cycle becomes a claimable card.** The CardStore claim is
+already exact-revision fenced, and that fence is what stops two workers taking
+one card across five hosts. Reusing it means:
+
+- leader election is the claim fence, a mechanism already proven in production
+- any host can run any seat
+- one exclusion mechanism instead of two
+- `active_host` is deleted rather than generalised
+
+**Cold-start limit, stated rather than discovered.** Dispatch cannot bootstrap
+through the thing it dispatches. Niobe therefore keeps a minimal timer presence
+on at least two hosts as supervisor of last resort. The other five seats become
+fleet work. A dispatcher that can deadlock on its own absence is the failure this
+clause exists to prevent.
+
+Blast radius: 6 Python modules read this file and 12 unit files reference it.
+This is a contract change, not a config edit.
+
+## A.6 The deployment manifest
+
+One artifact pinning what a node must run:
+
+```jsonc
+{
+  "revision": "2026-09-16T22:00Z",
+  "git_sha": "04c3388a",
+  "package_version": "0.15.168.dev214+g04c3388a",
+  "required_env": ["SKFLEET_TARGET", "SKFLEET_GLM_TARGET", "SKFLEET_GATEWAY_URL"],
+  "units": ["skfleet-rotate.service", "skfleet-atlas.service"]
+}
+```
+
+`required_env` is generated from the source by the readiness gate, never typed by
+hand. A hand-maintained list of prerequisites is the thing that failed three
+times already.
+
+## A.7 Revised rollout order
+
+Node lifecycle now precedes the card work, because the card work cannot reach the
+fleet until deploys are trustworthy.
+
+1. Readiness gate (done)
+2. ATLAS rollout controller and manifest
+3. Roll `main` to the remaining four hosts, gated, halting on first failure
+4. chiap04 separately: it has no dispatcher script and needs its own diagnosis
+5. Then the card lifecycle plan, sections 3.1 through 3.4 and 3.7
+6. Seats onto fleet work (A.5)
+
+## A.8 Workflow rule replaced by a mechanism
+
+CLAUDE.md says never leave uncommitted edits in a shared checkout. That is a
+discipline rule, and it failed on 3 of 5 hosts at once, including untracked niobe
+work that existed nowhere else.
+
+Replace it with a mechanism: **the shared checkout is a deploy target that is
+never edited.** Card work happens in a card-scoped worktree, commits locally, and
+pushes a branch. If nothing edits the shared checkout, nothing can be lost there,
+and the rule stops needing enforcement because the situation cannot arise.
+
+Belt to that braces: ATLAS auto-preserves any dirty shared checkout to a
+`preserve/<host>-<timestamp>` branch before deploying over it, exactly as was
+done by hand on 2026-09-16 to rescue 24 files.
