@@ -669,13 +669,11 @@ def register_coord_commands(main: click.Group) -> None:
             )
         except (OSError, RuntimeError, ValueError) as exc:
             raise click.ClickException(str(exc)) from None
-        console.print(
+        click.echo(
             json.dumps(
                 {
-                    "projection_agent": receipt.projection_agent,
-                    "quarantined_path": str(receipt.quarantined_path),
-                    "projection_sha256": receipt.projection_sha256,
-                    "receipt_sha256": receipt.receipt_sha256,
+                    "generation_sha256": receipt.generation_sha256,
+                    "disposition_sha256": receipt.disposition_sha256,
                 },
                 indent=2,
             )
@@ -700,7 +698,7 @@ def register_coord_commands(main: click.Group) -> None:
         validate_agent_name(projection_agent)
         validate_agent_name(agent)
         try:
-            restored = restore_projection(
+            receipt = restore_projection(
                 Path(home).expanduser(),
                 projection_agent=projection_agent,
                 expected_quarantine_sha256=expected_quarantine_sha256,
@@ -709,7 +707,15 @@ def register_coord_commands(main: click.Group) -> None:
             )
         except (OSError, RuntimeError, ValueError) as exc:
             raise click.ClickException(str(exc)) from None
-        console.print(json.dumps({"restored_path": str(restored)}, indent=2))
+        click.echo(
+            json.dumps(
+                {
+                    "generation_sha256": receipt.generation_sha256,
+                    "disposition_sha256": receipt.disposition_sha256,
+                },
+                indent=2,
+            )
+        )
 
     @coord.command("score")
     @click.argument("task_id")

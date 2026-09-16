@@ -100,6 +100,96 @@ def test_remote_cache_race_cannot_delete_either_generation(
 
 
 @pytest.mark.parametrize("replica", ["replica-a", "replica-b"])
+def test_retire_fences_disk_generation_race_without_cache_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replica: str
+) -> None:
+    """A competing immutable head invalidates the supplied generation hash."""
+    import skcapstone.projection_retirement as retirement
+
+    root = tmp_path / replica
+    store, cache = _world(root)
+    before = cache.read_bytes()
+    generation_dir = root / "coordination" / "agents" / ".generations" / "pi-test" / replica
+    generation_dir.mkdir(parents=True)
+    first = generation_dir / "first.json"
+    first.write_bytes(b'{"generation_id":"first"}')
+    expected = _sha(first)
+    competing = generation_dir / "second.json"
+
+    def broker_retire(home, **kwargs):
+        """Recheck the on-disk head at the immutable broker boundary."""
+        assert home == root
+        assert kwargs["expected_generation_sha256"] == expected
+        if competing.exists():
+            raise ValueError("generation conflict")
+        pytest.fail("stale race reached disposition append")
+
+    monkeypatch.setattr(
+        retirement,
+        "_generation_broker",
+        lambda: SimpleNamespace(retire_projection=broker_retire),
+    )
+    competing.write_bytes(b'{"generation_id":"second","predecessor":"race"}')
+    with pytest.raises(ValueError, match="generation conflict"):
+        retire_projection(
+            root,
+            task_id="deadbeef",
+            projection_agent="pi-test",
+            expected_card_sha256=card_generation_sha256(store.fold("deadbeef")),
+            expected_projection_sha256=expected,
+            actor="repair",
+        )
+    assert first.read_bytes() == b'{"generation_id":"first"}'
+    assert competing.read_bytes().startswith(b'{"generation_id":"second"')
+    assert cache.read_bytes() == before
+
+
+@pytest.mark.parametrize("replica", ["replica-a", "replica-b"])
+def test_restore_fences_changed_disk_receipt_without_cache_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replica: str
+) -> None:
+    """Restore rejects a changed immutable disposition on either replica."""
+    import skcapstone.projection_retirement as retirement
+
+    root = tmp_path / replica
+    _, cache = _world(root)
+    before = cache.read_bytes()
+    disposition = (
+        root / "coordination" / "agents" / ".generations" / "pi-test" / replica / "retired.json"
+    )
+    disposition.parent.mkdir(parents=True)
+    disposition.write_bytes(b'{"disposition":"retired"}')
+    expected = _sha(disposition)
+    competing = disposition.with_name("restored.json")
+
+    def broker_restore(home, **kwargs):
+        """Require the exact disposition before appending restoration."""
+        assert home == root
+        assert kwargs["expected_receipt_sha256"] == expected
+        if competing.exists():
+            raise ValueError("generation conflict")
+        pytest.fail("stale restore reached restoration append")
+
+    monkeypatch.setattr(
+        retirement,
+        "_generation_broker",
+        lambda: SimpleNamespace(restore_projection=broker_restore),
+    )
+    competing.write_bytes(b'{"disposition":"competing"}')
+    with pytest.raises(ValueError, match="generation conflict"):
+        restore_projection(
+            root,
+            projection_agent="pi-test",
+            expected_quarantine_sha256="a" * 64,
+            expected_receipt_sha256=expected,
+            actor="repair",
+        )
+    assert disposition.read_bytes() == b'{"disposition":"retired"}'
+    assert competing.read_bytes() == b'{"disposition":"competing"}'
+    assert cache.read_bytes() == before
+
+
+@pytest.mark.parametrize("replica", ["replica-a", "replica-b"])
 def test_unresolved_conflict_fails_before_broker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replica: str
 ) -> None:
@@ -132,11 +222,8 @@ def test_validated_retirement_delegates_without_moving_cache(
     before = path.read_bytes()
     seen = {}
     receipt = SimpleNamespace(
-        home=tmp_path,
-        projection_agent="pi-test",
-        quarantined_path=tmp_path / "immutable-receipt.json",
-        projection_sha256=_sha(path),
-        receipt_sha256="a" * 64,
+        generation_sha256="a" * 64,
+        disposition_sha256="b" * 64,
     )
 
     class Broker:
@@ -153,6 +240,87 @@ def test_validated_retirement_delegates_without_moving_cache(
     assert result is receipt
     assert seen["expected_card_sha256"] == card_generation_sha256(store.fold("deadbeef"))
     assert seen["expected_generation_sha256"] == _sha(path)
+    assert path.read_bytes() == before
+
+
+def test_cli_reads_immutable_retirement_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The public seam reports broker hashes without legacy quarantine fields."""
+    import skcapstone.projection_retirement as retirement
+
+    store, path = _world(tmp_path)
+    before = path.read_bytes()
+    receipt = SimpleNamespace(generation_sha256="a" * 64, disposition_sha256="b" * 64)
+    monkeypatch.setattr(
+        retirement,
+        "_generation_broker",
+        lambda: SimpleNamespace(retire_projection=lambda *args, **kwargs: receipt),
+    )
+    result = CliRunner().invoke(
+        main,
+        [
+            "coord",
+            "retire-ownerless-projection",
+            "deadbeef",
+            "--projection-agent",
+            "pi-test",
+            "--expected-card-sha256",
+            card_generation_sha256(store.fold("deadbeef")),
+            "--expected-projection-sha256",
+            _sha(path),
+            "--agent",
+            "repair",
+            "--home",
+            str(tmp_path),
+        ],
+    )
+    assert result.exit_code == 0, result.exception
+    assert '"generation_sha256": "' + "a" * 64 + '"' in result.output
+    assert '"disposition_sha256": "' + "b" * 64 + '"' in result.output
+    assert path.read_bytes() == before
+
+
+def test_cli_restore_reads_immutable_receipt_without_publishing_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Restore delegates exact hashes and reports its appended generation."""
+    import skcapstone.projection_retirement as retirement
+
+    _, path = _world(tmp_path)
+    before = path.read_bytes()
+    seen = {}
+
+    def restore(home, **kwargs):
+        """Capture the immutable restore contract without changing a cache."""
+        seen.update(home=home, **kwargs)
+        return SimpleNamespace(generation_sha256="c" * 64, disposition_sha256="d" * 64)
+
+    monkeypatch.setattr(
+        retirement,
+        "_generation_broker",
+        lambda: SimpleNamespace(restore_projection=restore),
+    )
+    result = CliRunner().invoke(
+        main,
+        [
+            "coord",
+            "restore-retired-projection",
+            "pi-test",
+            "--expected-quarantine-sha256",
+            "a" * 64,
+            "--expected-receipt-sha256",
+            "b" * 64,
+            "--agent",
+            "repair",
+            "--home",
+            str(tmp_path),
+        ],
+    )
+    assert result.exit_code == 0, result.exception
+    assert seen["expected_generation_sha256"] == "a" * 64
+    assert seen["expected_receipt_sha256"] == "b" * 64
+    assert '"generation_sha256": "' + "c" * 64 + '"' in result.output
     assert path.read_bytes() == before
 
 

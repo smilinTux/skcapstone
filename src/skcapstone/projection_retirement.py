@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
 
@@ -58,27 +57,6 @@ def _generation_broker():
     return broker if getattr(broker, "IMMUTABLE_GENERATION_CONTRACT_VERSION", None) == 1 else None
 
 
-@dataclass(frozen=True)
-class RetirementReceipt:
-    """Hash-bound result of one exact projection retirement."""
-
-    home: Path
-    projection_agent: str
-    quarantined_path: Path
-    projection_sha256: str
-    receipt_sha256: str
-
-    def restore(self, *, expected_quarantine_sha256: str) -> Path:
-        """Restore this exact quarantined projection with hash fencing."""
-        return restore_projection(
-            self.home,
-            projection_agent=self.projection_agent,
-            expected_quarantine_sha256=expected_quarantine_sha256,
-            expected_receipt_sha256=self.receipt_sha256,
-            actor="receipt-restore",
-        )
-
-
 def retire_projection(
     home: Path,
     *,
@@ -87,7 +65,7 @@ def retire_projection(
     expected_card_sha256: str,
     expected_projection_sha256: str,
     actor: str,
-) -> RetirementReceipt:
+):
     """Retire one exact immutable generation through the SKCoord authority."""
     root = Path(home)
     source = _projection_path(root, projection_agent)
@@ -126,7 +104,7 @@ def restore_projection(
     expected_quarantine_sha256: str,
     expected_receipt_sha256: str,
     actor: str,
-) -> Path:
+):
     """Restore through the immutable generation authority, never the cache."""
     root = Path(home)
     target = _projection_path(root, projection_agent)
