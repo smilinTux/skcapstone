@@ -143,27 +143,43 @@ def systemd_effective_environment(unit: str) -> tuple[dict[str, str] | None, str
     empty-but-successful environment; callers must treat (None, message) as
     a failed check, not as "no vars required."
     """
+    # Two separate calls, one property each. systemctl show --value does NOT
+    # return lines in the order properties were given on the command line
+    # (confirmed by hand: -p LoadState -p Environment and -p Environment
+    # -p LoadState both printed Environment first), so asking for both
+    # properties in one call and reading lines by position is not reliable.
+    load_state, err = _systemctl_show_value(unit, "LoadState")
+    if err is not None:
+        return None, err
+
+    if load_state.strip() in ("", "not-found"):
+        return None, "systemd does not know unit %s (LoadState=%s)" % (unit, load_state.strip() or "unknown")
+
+    environment_line, err = _systemctl_show_value(unit, "Environment")
+    if err is not None:
+        return None, err
+
+    return parse_systemd_environment(environment_line), None
+
+
+def _systemctl_show_value(unit: str, prop: str) -> tuple[str, str | None]:
+    """Run `systemctl --user show <unit> -p <prop> --value` and return
+    (stdout, None) on success or ("", message) on failure. Never raises.
+    """
     try:
         proc = subprocess.run(
-            ["systemctl", "--user", "show", unit, "-p", "LoadState", "-p", "Environment", "--value"],
+            ["systemctl", "--user", "show", unit, "-p", prop, "--value"],
             capture_output=True,
             text=True,
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        return None, "systemctl is not available (%s)" % exc
+        return "", "systemctl is not available (%s)" % exc
 
     if proc.returncode != 0:
         stderr = proc.stderr.strip() or ("systemctl exited with code %d" % proc.returncode)
-        return None, "systemctl could not read unit %s (%s)" % (unit, stderr)
+        return "", "systemctl could not read unit %s (%s)" % (unit, stderr)
 
-    output_lines = proc.stdout.splitlines()
-    load_state = output_lines[0].strip() if output_lines else ""
-    environment_line = output_lines[1] if len(output_lines) > 1 else ""
-
-    if load_state in ("", "not-found"):
-        return None, "systemd does not know unit %s (LoadState=%s)" % (unit, load_state or "unknown")
-
-    return parse_systemd_environment(environment_line), None
+    return proc.stdout, None
 
 
 def _iter_unit_files(units_dir: Path):
