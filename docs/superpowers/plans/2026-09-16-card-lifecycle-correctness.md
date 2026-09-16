@@ -249,7 +249,7 @@ import pytest
 from skcoord.abandon_reason import ABANDON_REASONS, validate_abandon_reason
 
 
-def test_vocabulary_is_exactly_the_five_specified_reasons():
+def test_vocabulary_is_exactly_the_specified_reasons():
     assert ABANDON_REASONS == frozenset(
         {
             "criteria-unsatisfiable",
