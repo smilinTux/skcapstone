@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -339,6 +341,58 @@ def test_seraph_zero_eligible_work_is_truthful_noop(tmp_path, monkeypatch) -> No
         "suppressed": 0,
         "reason": "seraph_no_eligible_work",
     }
+
+
+def test_seraph_timeout_terminates_reaps_process_group_and_reports_cleanup(
+    tmp_path, monkeypatch
+) -> None:
+    child_pid = tmp_path / "child.pid"
+    dispatcher = tmp_path / "skenv-bin/skfleet-rotate.py"
+    dispatcher.write_text(
+        "#!/usr/bin/env python3\n"
+        "import pathlib, subprocess, time\n"
+        "child = subprocess.Popen(['sleep', '30'])\n"
+        f"pathlib.Path({str(child_pid)!r}).write_text(str(child.pid))\n"
+        "print('partial seraph output', flush=True)\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    dispatcher.chmod(0o755)
+    monkeypatch.setattr(seat_entrypoint, "_SERAPH_DISPATCH_TIMEOUT_SECONDS", 0.2)
+    monkeypatch.setattr(seat_entrypoint, "_DISPATCH_TERMINATE_GRACE_SECONDS", 0.2)
+
+    result = seraph_operation(tmp_path)
+
+    assert result["reason"] == "seraph_dispatch_timeout"
+    assert result["dispatch_failed"] == 1
+    assert result["exception_type"] == "TimeoutExpired"
+    assert result["cleanup"] == "process_group_reaped"
+    assert result["dispatcher_stdout"] == "partial seraph output\n"
+    pid = int(child_pid.read_text(encoding="utf-8"))
+    deadline = time.monotonic() + 1
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.01)
+    else:
+        pytest.fail("dispatcher child process group was not reaped")
+
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    summary = run_cycle(
+        seat="seraph",
+        home=tmp_path,
+        control_plane=control_path,
+        local_host="chiap08",
+        operation=lambda: result,
+    )
+    receipt = json.loads(
+        (tmp_path / "coordination/seat-cycles/seraph.health.jsonl").read_text(encoding="utf-8")
+    )
+    assert summary.cleanup == receipt["cleanup"] == "process_group_reaped"
+    assert summary.exception_type == receipt["exception_type"] == "TimeoutExpired"
 
 
 def test_seraph_zero_available_capacity_is_truthful_noop(tmp_path, monkeypatch) -> None:

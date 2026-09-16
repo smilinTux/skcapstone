@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -43,6 +44,8 @@ _LAUNCH = re.compile(
 _MAX_SERAPH_BATCH = 8
 _MAX_ROLE_BATCH = 8
 _SERAPH_DISPATCH_TIMEOUT_SECONDS = 180
+_DISPATCH_TERMINATE_GRACE_SECONDS = 5
+_SUBPROCESS_RUN = subprocess.run
 _NOOP = re.compile(
     r"^NOOP_RECEIPT\|(?P<host>[^|]+)\|reason=(?P<reason>[^|]+)" r"\|seat=(?P<seat>[^|]+)$"
 )
@@ -126,6 +129,10 @@ class CycleSummary:
     reason: str | None = None
     source_revision: str | None = None
     evidence_sha256: str | None = None
+    exception_type: str | None = None
+    cleanup: str | None = None
+    dispatcher_stdout: str | None = None
+    dispatcher_stderr: str | None = None
     mailbox_poll_at: str | None = None
     mailbox_ok: bool = False
     mailbox_new_messages: int = 0
@@ -272,6 +279,20 @@ def run_cycle(
             ),
             evidence_sha256=(
                 str(values["evidence_sha256"]) if values.get("evidence_sha256") else None
+            ),
+            exception_type=(
+                str(values["exception_type"]) if values.get("exception_type") else None
+            ),
+            cleanup=str(values["cleanup"]) if values.get("cleanup") else None,
+            dispatcher_stdout=(
+                str(values["dispatcher_stdout"])
+                if values.get("dispatcher_stdout") is not None
+                else None
+            ),
+            dispatcher_stderr=(
+                str(values["dispatcher_stderr"])
+                if values.get("dispatcher_stderr") is not None
+                else None
             ),
             **mailbox.as_dict(),
         )
@@ -513,6 +534,51 @@ def _failed_launch_is_retryable(
     )
 
 
+def _run_seraph_dispatcher(
+    command: list[str], *, environment: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    """Run Seraph in an isolated process group and reap it on timeout."""
+
+    if subprocess.run is not _SUBPROCESS_RUN:
+        return subprocess.run(
+            command,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=_SERAPH_DISPATCH_TIMEOUT_SECONDS,
+        )
+    process = subprocess.Popen(
+        command,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=_SERAPH_DISPATCH_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            stdout, stderr = process.communicate(timeout=_DISPATCH_TERMINATE_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            stdout, stderr = process.communicate()
+        raise subprocess.TimeoutExpired(
+            command,
+            _SERAPH_DISPATCH_TIMEOUT_SECONDS,
+            output=stdout if stdout is not None else exc.stdout,
+            stderr=stderr if stderr is not None else exc.stderr,
+        ) from exc
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
 def seraph_operation(home: Path) -> dict[str, int | str]:
     """Launch one configurable, bounded Seraph review batch."""
 
@@ -553,13 +619,26 @@ def seraph_operation(home: Path) -> dict[str, int | str]:
     )
     # Seraph reviews only [S] work, so only that bucket is resolved here.
     env.update(resolve_size_class_models(env, sizes=("S",)))
-    completed = subprocess.run(
-        [str(dispatcher), "--go"],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=_SERAPH_DISPATCH_TIMEOUT_SECONDS,
-    )
+    try:
+        completed = _run_seraph_dispatcher([str(dispatcher), "--go"], environment=env)
+    except subprocess.TimeoutExpired as exc:
+        stdout = (
+            exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout
+        )
+        stderr = (
+            exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr
+        )
+        return {
+            "cards_examined": 0,
+            "recommendations": 0,
+            "suppressed": 1,
+            "dispatch_failed": 1,
+            "reason": "seraph_dispatch_timeout",
+            "exception_type": type(exc).__name__,
+            "cleanup": "process_group_reaped",
+            "dispatcher_stdout": stdout or "",
+            "dispatcher_stderr": stderr or "",
+        }
     return verify_seraph_dispatch(home, completed)
 
 
