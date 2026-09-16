@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Card `4dcb5258`: preserve canonical and Syncthing conflict files verbatim
+  instead of promoting, replacing, or deleting them by mtime; emit
+  hash-bound diagnostics without declaring either copy authoritative.
+
 - Card `4a80d2c9`: paginate the Mero blocker census across bounded cycles:
   a census-local checkpoint at `mero_census/pagination.json` records the
   window position so runs beyond the 4000-card cap deterministically sweep
