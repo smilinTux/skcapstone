@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Card `81da24f6`: bound assigned-review observation to the immutable POOL_V2
+  review snapshot so an empty Seraph selection emits its typed no-op before the
+  service deadline, and terminate and reap the dispatcher process group on
+  timeout while preserving diagnostics in an auditable health receipt.
+
 - Card `4a80d2c9`: paginate the Mero blocker census across bounded cycles:
   a census-local checkpoint at `mero_census/pagination.json` records the
   window position so runs beyond the 4000-card cap deterministically sweep
