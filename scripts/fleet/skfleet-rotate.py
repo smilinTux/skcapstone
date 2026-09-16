@@ -441,6 +441,7 @@ GLM_TARGET=_required_lane_target("SKFLEET_GLM_TARGET")
 QWEN_TARGET=_required_lane_target("SKFLEET_QWEN_TARGET", default="6")
 KIMI_TARGET=_required_lane_target("SKFLEET_KIMI_TARGET", default="0")
 MAX_LAUNCH=int(os.environ.get("SKFLEET_MAX_LAUNCH","11"))
+_MAX_CLAIMS=int(os.environ.get("SKFLEET_MAX_CLAIMS","5"))
 MAX_CANDIDATE_SCAN=max(
     MAX_LAUNCH,
     int(os.environ.get("SKFLEET_MAX_CANDIDATE_SCAN",str(MAX_LAUNCH*8))),
@@ -1172,7 +1173,7 @@ def event_rows(cid):
     _rows[cid]=out; return out
 
 def acts(cid):
-    return [e.get("action") for e in event_rows(cid)]
+    return collections.Counter(e.get("action") for e in event_rows(cid))
 
 def _dependency_value(event):
     payload=event.get("payload") if isinstance(event.get("payload"),dict) else {}
@@ -2917,8 +2918,27 @@ def _wake_retry_available(cid,generation):
     retries=sum(1 for launched in _wake_launch_times.get(cid,()) if launched>generation)
     return retries<_WAKE_RETRY_LIMIT
 
+def _claim_ceiling_hit(cid):
+    """True when a card has been claimed repeatedly and never finished.
+
+    Keyed on CLAIM EVENTS, not launch evidence. blocked_backoff already caps
+    relaunches, but launch_attempts() reads worker logs and the outcomes store,
+    and card 06a95c23 produced ZERO worker logs across 402 claims while the
+    ledger recorded every one. Evidence the failing path never writes cannot
+    gate the failing path.
+
+    A card that completed, or that finished its worker-owned criteria and is
+    waiting on another seat, is never runaway no matter how many claims it took.
+    """
+    counts=acts(cid)
+    if counts.get("complete") or counts.get("await_gates"):
+        return False
+    return counts.get("claim",0)>_MAX_CLAIMS
+
 def blocked_backoff(cid):
     """True if this card should stay out of the pool for now."""
+    if _claim_ceiling_hit(cid):
+        return True
     ts, val = _load_outcomes().get(cid, (None, None))
     # Missing or mixed blocker metadata fails closed. Guessing at its meaning
     # would turn an unresolved human or dependency hold into execution.

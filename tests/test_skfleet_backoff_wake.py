@@ -34,6 +34,8 @@ FUNCTIONS = {
     "_dependency_state_change_epoch",
     "_blocker_change_epoch",
     "_wake_retry_available",
+    "_claim_ceiling_hit",
+    "acts",
     "blocked_backoff",
     "_material_change_since",
     "awaiting_review",
@@ -57,6 +59,7 @@ CONSTANTS = {
     "_PASS_RE",
     "_ESCALATE_LABEL",
     "_CAPABILITY_VERDICT_RE",
+    "_MAX_CLAIMS",
 }
 
 
