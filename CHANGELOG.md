@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Card `f6d18fcf`: give Seraph a bounded wait for the shared fleet rotation
+  lock while preserving Niobe's existing wait and nonblocking Tank and Atlas
+  behavior, with the Seraph lock, dispatch, and cleanup budget below the
+  300-second service deadline.
+
 - Card `9150a101`: propagate the bounded Seraph batch size through both
   `SKFLEET_TARGET` and `SKFLEET_SEAT_TARGET` so the shared dispatcher does not
   reject a manager environment that omits the required general target, and
