@@ -43,3 +43,22 @@ def test_beat_writes_to_correct_directory():
     """Beat files go to ~/.skcapstone/fleet/beats/."""
     src = ROTATE.read_text(encoding="utf-8")
     assert "~/.skcapstone/fleet/beats" in src
+
+
+def test_generated_worker_brief_contains_agent_reporting_contract():
+    """The generated brief carries the exact Card C reporting instructions."""
+    src = ROTATE.read_text(encoding="utf-8")
+    for phrase in (
+        "WORKER AGENT BEAT CONTRACT",
+        "RUNNING, WAITING_DEPENDENCY",
+        "BLOCKED_NEEDS_HUMAN, or DEGRADED_RETRYING",
+        "opaque progress token",
+        "phase and step",
+        "A silent worker is indistinguishable from a hung worker",
+        "skmail event to heartbeat",
+        "routine RUNNING beats",
+        "through skmail",
+        "Mid-run emission is not proven",
+        "MID_RUN_EMISSION_UNPROVEN_LAUNCHER_BLOCKS_SUBPROCESS_RUN",
+    ):
+        assert phrase in src
