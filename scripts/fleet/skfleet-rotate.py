@@ -3009,7 +3009,10 @@ def terminal_review_verdict(cid, core=None):
     if "review" not in {str(label).strip().lower() for label in labels}:
         return False
     ts, value = _load_outcomes().get(cid, (None, None))
-    return bool(ts and re.match(r"^\s*(PASS|FAIL)\s*(?::|$)", str(value or ""), re.I))
+    return bool(
+        ts
+        and re.match(r"^\s*(?:PASS\s*(?::|$)|FAIL(?:\s*(?::|$)|_))", str(value or ""), re.I)
+    )
 
 
 def outcome_lifecycle_bucket(lifecycle, historical_review):
