@@ -12,6 +12,16 @@
   when the terminal-receipt reserve begins, preserving fail-closed routing and
   a terminal cycle receipt before the outer dispatcher timeout.
 
+- Card `eacedb1a`: paginate the Mero blocker census across bounded cycles:
+  a census-local checkpoint at `mero_census/pagination.json` records the
+  window position so runs beyond the 4000-card cap deterministically sweep
+  the tail of the sorted card id list, the report carries a coverage
+  contract (window bounds, position, cycle, pass completion) proving
+  eventual full coverage, and the 200-finding cap defers rather than drops
+  unemitted findings; the checkpoint is committed atomically, touches no
+  card event or lifecycle field, and preserves observe/recommend-only
+  authority.
+
 - Card `964aa0ae`: preserve the pre-claim lifecycle column when a claim is
   released, so review-shaped backlog, ready, and doing cards remain withheld
   until an explicit move to review; exclude `do-not-claim` reviews while
