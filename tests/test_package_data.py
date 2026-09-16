@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = "skfleet-niobe-live.env.example"
 PACKAGE_PATH = f"skcapstone/data/systemd/{TEMPLATE}"
 EGG_INFO = ROOT / "src" / "skcapstone.egg-info"
+SERVICE = "skfleet-niobe-live.service"
 
 # Keep the packaging build out of the live checkout. In-tree build_sdist writes
 # src/skcapstone.egg-info; pytest sets pythonpath=["src"], so Version: 0.0.0
@@ -108,3 +109,26 @@ def test_niobe_environment_template_ships_in_wheel_and_sdist(tmp_path: Path) -> 
         assert extracted.read() == expected
 
     assert _egg_info_fingerprint() == before
+
+
+def test_niobe_service_loads_documented_environment_file() -> None:
+    """Source and packaged services load the documented operator file."""
+    expected = "EnvironmentFile=-%h/.config/skcapstone/skfleet-niobe-live.env"
+    source = (ROOT / "systemd" / SERVICE).read_bytes()
+    packaged = (ROOT / "src" / "skcapstone" / "data" / "systemd" / SERVICE).read_bytes()
+
+    assert source == packaged
+    assert expected.encode() in source
+
+
+def test_niobe_template_uses_dispatcher_lane_model_names() -> None:
+    """Advertised Qwen, GLM, and Kimi model keys match dispatcher consumers."""
+    source = (ROOT / "systemd" / TEMPLATE).read_bytes()
+    packaged = (
+        ROOT / "src" / "skcapstone" / "data" / "systemd" / TEMPLATE
+    ).read_bytes()
+
+    assert source == packaged
+    for lane in ("QWEN", "GLM", "KIMI"):
+        assert f"SKFLEET_{lane}_MODEL=".encode() in source
+        assert f"SKFLEET_{lane}_LANE_MODEL=".encode() not in source
