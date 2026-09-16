@@ -19,9 +19,11 @@ Syncthing conflict filename format:
 from __future__ import annotations
 
 import asyncio
+import errno
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -216,11 +218,17 @@ class CoordFederationWatcher:
 
         try:
             conflict_sha256 = hashlib.sha256(conflict_path.read_bytes()).hexdigest()
-            canonical_sha256 = (
-                hashlib.sha256(canonical_path.read_bytes()).hexdigest()
-                if canonical_path.exists()
-                else "absent"
-            )
+            try:
+                with os.fdopen(
+                    os.open(canonical_path, os.O_RDONLY | os.O_NOFOLLOW), "rb"
+                ) as canonical_file:
+                    canonical_sha256 = hashlib.sha256(canonical_file.read()).hexdigest()
+            except FileNotFoundError:
+                canonical_sha256 = "absent"
+            except OSError as exc:
+                if exc.errno != errno.ELOOP:
+                    raise
+                canonical_sha256 = "unsafe"
         except OSError as exc:
             logger.warning("Could not inspect coordination conflict: %s", exc)
             return

@@ -148,3 +148,36 @@ async def test_conflict_outside_coordination_root_is_ignored(tmp_path: Path) -> 
 
     assert path.read_bytes() == original
     assert not (tmp_path / "outside.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_in_root_conflict_never_reads_external_canonical_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An in-root conflict must not hash a canonical symlink outside the root."""
+    root = tmp_path / "replica"
+    tasks = root / "coordination" / "tasks"
+    tasks.mkdir(parents=True)
+    external = tmp_path / "external.json"
+    external.write_bytes(b'{"external":"must-not-be-read"}\n')
+    canonical = tasks / "card.json"
+    canonical.symlink_to(external)
+    conflict = tasks / "card.sync-conflict-20260916-010203-PEER1.json"
+    conflict_bytes = b'{"conflict":"preserve"}\n'
+    conflict.write_bytes(conflict_bytes)
+    original_read_bytes = Path.read_bytes
+
+    def guarded_read_bytes(path: Path) -> bytes:
+        """Fail if the watcher tries to read the external canonical target."""
+        if path.resolve() == external:
+            raise AssertionError("external canonical target was read")
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", guarded_read_bytes)
+    with caplog.at_level(logging.WARNING, logger="skcapstone.coord_federation"):
+        await CoordFederationWatcher(root)._handle_change(conflict)
+
+    assert conflict.read_bytes() == conflict_bytes
+    assert canonical.is_symlink()
+    assert original_read_bytes(external) == b'{"external":"must-not-be-read"}\n'
+    assert any("canonical_sha256=unsafe" in record.message for record in caplog.records)
