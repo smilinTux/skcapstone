@@ -77,3 +77,100 @@ def test_awaiting_gates_card_is_not_claimable():
         "awaiting_gates": True,
     }
     assert ns["_claimability_reason"]({"kind": "task"}, state) == "awaiting-gates"
+
+
+# --- Task 6: refuse cards whose criteria the worker cannot satisfy ---------
+#
+# The full state fold in _claimability_reason walks past awaiting-gates into
+# review-marker and host-pin checks even for a plain claimable card, so the
+# hand-built state dict needs review_seen/review_markers too, not just the
+# description/acceptance_criteria/links the awaiting-gates test above already
+# needed. host_pin() also reads the module-level KNOWN_HOSTS global, whose
+# real definition chains into _resolve_rotation_hosts()/_estate_rotation_hosts()
+# (environment and filesystem reads) -- extracting that chain would give the
+# test real side effects for a value the gate logic never inspects (our test
+# titles never name a host, so host_pin always returns None). _load_gate()
+# extracts the static, side-effect-free globals the real function needs
+# (including HOST, harmlessly just os.uname().nodename) and stubs KNOWN_HOSTS
+# to an empty tuple afterward so host_pin's internal lookup resolves.
+BASE_STATE = {
+    "title": "t",
+    "description": "",
+    "acceptance_criteria": [],
+    "links": {},
+    "labels": [],
+    "dependencies": [],
+    "owner": "",
+    "status": "ready",
+    "voided": False,
+    "archived": False,
+    "awaiting_gates": False,
+    "review_seen": False,
+    "review_markers": {},
+}
+HELPERS = {"_claimability_reason", "_coord_task_claimable", "non_implementation", "host_pin"}
+GATE_CONSTANTS = {
+    "_GATE_LANGUAGE_RE",
+    "_NOT_CLAIMABLE",
+    "_SENSITIVE_CATEGORY",
+    "_CATEGORY_OPT_IN",
+    "_NON_IMPLEMENTATION_LABELS",
+    "HOST",
+}
+
+
+def _load_gate():
+    ns = _load(HELPERS, GATE_CONSTANTS)
+    ns.setdefault("KNOWN_HOSTS", ())
+    return ns
+
+
+def test_v2_card_with_reviewer_criterion_is_refused():
+    """The measured 06a95c23 criterion: AC4 named a reviewer's verdict."""
+    ns = _load_gate()
+    core = {
+        "kind": "task",
+        "spec_version": 2,
+        "acceptance_criteria": [
+            "Independent review PASS on the successor commit before merge"
+        ],
+    }
+    assert ns["_claimability_reason"](core, dict(BASE_STATE)) == "criteria-not-satisfiable"
+
+
+def test_v2_card_with_self_satisfiable_criteria_is_claimable():
+    """5a7d31ce's shape: every criterion falsifiable by a test."""
+    ns = _load_gate()
+    core = {
+        "kind": "task",
+        "spec_version": 2,
+        "acceptance_criteria": [
+            "Add a deterministic fixture reproducing e125b710",
+            "Pass focused and full scheduler tests, Ruff, formatting and compile",
+        ],
+    }
+    assert ns["_claimability_reason"](core, dict(BASE_STATE)) == "claimable"
+
+
+def test_legacy_card_with_reviewer_criterion_is_untouched():
+    """spec_version absent means v1. The new gate must not apply."""
+    ns = _load_gate()
+    core = {
+        "kind": "task",
+        "acceptance_criteria": [
+            "Independent review PASS on the successor commit before merge"
+        ],
+    }
+    assert ns["_claimability_reason"](core, dict(BASE_STATE)) == "claimable"
+
+
+def test_gate_language_in_exit_gates_is_fine():
+    """Gate language belongs in exit_gates. Only acceptance_criteria is checked."""
+    ns = _load_gate()
+    core = {
+        "kind": "task",
+        "spec_version": 2,
+        "acceptance_criteria": ["Tests pass"],
+        "exit_gates": [{"gate": "independent-review", "owner": "seraph"}],
+    }
+    assert ns["_claimability_reason"](core, dict(BASE_STATE)) == "claimable"

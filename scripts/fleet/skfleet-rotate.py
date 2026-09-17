@@ -1804,6 +1804,14 @@ _SENSITIVE_CATEGORY = re.compile(
     r"(capauth|credential|custody|issuer|secret|\bkey\b|rollback|"
     r"deploy|production|release|migrat)", re.I)
 _CATEGORY_OPT_IN = "dispatch-approved"
+# Criteria a worker CANNOT satisfy alone: they name another seat's verdict or a
+# merge. Measured 2026-09-16: 160 of 444 open SKLegal cards carried one, and
+# those cards averaged 3.39 claims against 1.96 for cards without.
+_GATE_LANGUAGE_RE = re.compile(
+    r"independent review|reviewer|review pass|before merge|approval|approved by"
+    r"|sign-?off|merged",
+    re.I,
+)
 _OVERLAY_ACTIONS = {
     "move": "move", "assign": "assign", "unassign": "unassign",
     "add_label": "add_label", "remove_label": "remove_label",
@@ -2113,6 +2121,10 @@ def _claimability_reason(core, state):
         return "done"
     if state.get("awaiting_gates"):
         return "awaiting-gates"
+    if int(core.get("spec_version") or 1) >= 2:
+        criteria = " ".join(str(c) for c in (core.get("acceptance_criteria") or []))
+        if _GATE_LANGUAGE_RE.search(criteria):
+            return "criteria-not-satisfiable"
     if state["owner"] and state["status"] in {"ready", "doing", "review"}:
         return "owned-%s" % state["status"]
     # Review work is a separate lane.  An unowned review card must not fall
