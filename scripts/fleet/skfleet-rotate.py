@@ -4873,6 +4873,13 @@ def _legacy_selector_decision(cid, core_p):
     if outcome_bucket != "open":
         return {"eligible": False, "reason": outcome_bucket}
     if blocked_backoff(cid):
+        # _claim_ceiling_hit folds into blocked_backoff, so a ceiling-hit card
+        # is also blocked_backoff-true. Claim counts are monotonic and never
+        # decrease, so a ceiling exclusion is permanent; ordinary backoff is
+        # expected to clear on its own. Reporting both as plain "backoff" hid
+        # which cards were frozen for good behind ones that would retry.
+        if _claim_ceiling_hit(cid):
+            return {"eligible": False, "reason": "claim_ceiling"}
         return {
             "eligible": False,
             "reason": "awaiting_review" if awaiting_review(cid) else "backoff",
@@ -4911,6 +4918,7 @@ foreign_skipped=0
 skipped_unclaimable=0
 skipped_terminal=0
 skipped_blocked=0
+skipped_claim_ceiling=0
 skipped_review=0
 not_claimable_skipped=0
 pinned_elsewhere=0
@@ -4980,6 +4988,14 @@ for cd in sorted(glob.glob(CARDS+"/*")):
             if DRY:
                 log(d,"DRY_SELECTION|%s|%s|excluded=authoritative-blocked-unchanged"%
                     (HOST,cid))
+        elif legacy_reason == "claim_ceiling":
+            # Claim counts are monotonic, so this exclusion never clears on
+            # its own the way ordinary backoff does. Logged per card, not
+            # just counted, so an operator can tell which cards are frozen
+            # and act (satisfy the gate, void, or raise SKFLEET_MAX_CLAIMS)
+            # instead of finding out only by their absence from the pool.
+            skipped_claim_ceiling += 1
+            log(d,"CLAIM_CEILING_EXCLUDED|%s|%s|max_claims=%d"%(HOST,cid,_MAX_CLAIMS))
         elif legacy_reason in ("done", "void", "archive"):
             skipped_terminal += 1
         elif legacy_reason.startswith("owned-"):
@@ -5041,13 +5057,15 @@ if claimability_errors:
     log(d,"CLAIMABILITY_EXCLUDED|%s|%s"%(HOST,",".join(claimability_errors)))
 log(d,"POOL|%s|ready=%d sklegal=%d eng=%d biz=%d dep_blocked=%d "
       "unclaimable=%d claimed=%d itil_closed=%d blocked_backoff=%d "
+      "claim_ceiling=%d "
       "awaiting_review=%d pinned_elsewhere=%d foreign=%d not_claimable=%d "
       "historical_review_terminal=%d historical_review_claimed=%d "
       "category_withheld=%d owned_ready=%d "
       "structural_leaf=%d human_gated=%d "
       "safety_filtered=%d top_unblocks=%d"
       %(HOST,len(pool),lc[0],lc[1],lc[2],blocked,skipped_unclaimable,
-        skipped_claimed,skipped_terminal,skipped_blocked,skipped_review,
+        skipped_claimed,skipped_terminal,skipped_blocked,
+        skipped_claim_ceiling,skipped_review,
         pinned_elsewhere,foreign_skipped,not_claimable_skipped,
         historical_review_terminal,historical_review_claimed,
         sensitive_withheld,owned_ready,
@@ -5174,6 +5192,7 @@ def _pool_v2_overlay(cid, core, reason):
         "terminal_review": bool(terminal_review_verdict(cid, core)),
         "awaiting_review": awaiting_review(cid),
         "backoff": blocked_backoff(cid),
+        "claim_ceiling": _claim_ceiling_hit(cid),
         "attempt_limit": unclaimable(cid),
         "class_facets": sorted(
             name for name, ids in _POOL_V2_CLASSES.items() if cid in ids
@@ -5427,6 +5446,7 @@ def _shadow_pool_v2():
                         and reason != "governed-review"
                         and not (seraph_review_admitted or elastic_review_admitted)
                     ),
+                    claim_ceiling=_claim_ceiling_hit(cid),
                     backoff=blocked_backoff(cid),
                     attempt_limit=unclaimable(cid),
                     host_pin_elsewhere=reason.startswith("host-pin:"),

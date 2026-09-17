@@ -61,3 +61,65 @@ def test_ceiling_boundary_is_exclusive():
     assert ns["_claim_ceiling_hit"]("edge") is False
     ns = _load_ceiling_namespace(collections.Counter({"claim": 6}))
     assert ns["_claim_ceiling_hit"]("edge") is True
+
+
+def _load_selector_namespace(*, ceiling_hit: bool, backoff: bool) -> dict:
+    """Extract the pure _legacy_selector_decision seam with stubbed facts."""
+    tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
+    nodes = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_legacy_selector_decision"
+    ]
+    namespace = {
+        "excluded": set(),
+        "_REVIEW_READBACK_BLOCKED": set(),
+        "unclaimable": lambda cid: False,
+        "itil_terminal": lambda cid: False,
+        "lifecycle_state": lambda cid: "open",
+        "awaiting_review": lambda cid: False,
+        "outcome_lifecycle_bucket": lambda lifecycle, historical_review: "open",
+        "blocked_backoff": lambda cid: backoff,
+        "_claim_ceiling_hit": lambda cid: ceiling_hit,
+        "terminal_review_verdict": lambda cid, core: False,
+        "authoritative_claimability": lambda cid, core=None: {
+            "claimable": True,
+            "reason": "claimable",
+            "title": "t",
+            "labels": [],
+            "core": core or {},
+        },
+        "json": __import__("json"),
+    }
+    exec(compile(ast.Module(nodes, type_ignores=[]), str(ROTATE), "exec"), namespace)
+    assert "_legacy_selector_decision" in namespace, "selector seam missing from script"
+    return namespace
+
+
+def test_claim_ceiling_hit_is_reported_distinctly_from_ordinary_backoff(tmp_path):
+    """The exclusion must be visible, not folded silently into 'backoff'.
+
+    Fix 4: _claim_ceiling_hit is folded into blocked_backoff, so a
+    ceiling-hit card and an ordinary backoff card looked identical in the
+    selector's reason. Claim counts are monotonic, so a card excluded this
+    way never recovers; that must not be indistinguishable from a card that
+    will retry on its own.
+    """
+    core_path = tmp_path / "core.json"
+    core_path.write_text("{}")
+    ns = _load_selector_namespace(ceiling_hit=True, backoff=True)
+
+    decision = ns["_legacy_selector_decision"]("deadbeef", str(core_path))
+
+    assert decision == {"eligible": False, "reason": "claim_ceiling"}
+
+
+def test_ordinary_backoff_without_ceiling_is_unchanged(tmp_path):
+    """A card that is not ceiling-hit keeps reporting plain backoff."""
+    core_path = tmp_path / "core.json"
+    core_path.write_text("{}")
+    ns = _load_selector_namespace(ceiling_hit=False, backoff=True)
+
+    decision = ns["_legacy_selector_decision"]("deadbeef", str(core_path))
+
+    assert decision == {"eligible": False, "reason": "backoff"}

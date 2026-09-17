@@ -62,6 +62,7 @@ LAUNCHER_RUFF_BASELINE = {
         ("sensitive_category", True, "sensitive_category"),
         ("dependency", True, "dependency"),
         ("awaiting_review", True, "awaiting_review"),
+        ("claim_ceiling", True, "claim_ceiling"),
         ("backoff", True, "backoff"),
         ("attempt_limit", True, "attempt_limit"),
         ("host_pin_elsewhere", True, "host_pin_elsewhere"),
@@ -91,6 +92,20 @@ def test_precedence_is_exclusive_and_preserves_lower_reasons_as_facets() -> None
         "backoff",
         "skcoord:void_dependency_edges",
     )
+
+
+def test_claim_ceiling_is_distinguished_from_ordinary_backoff() -> None:
+    """A permanent ceiling exclusion must not read the same as temporary backoff.
+
+    _claim_ceiling_hit folds into blocked_backoff, so both are true on a
+    ceiling-hit card. claim_ceiling must win precedence so the primary_reason
+    names the permanent, monotonic exclusion rather than the generic backoff
+    an operator would read as self-correcting.
+    """
+    decision = classify_scheduler(SchedulerFacts("deadbeef", claim_ceiling=True, backoff=True))
+
+    assert decision.primary_reason == "claim_ceiling"
+    assert decision.facets == ("backoff",)
 
 
 def test_no_reason_is_ready() -> None:
@@ -531,6 +546,7 @@ def test_shadow_partition_executes_real_legacy_path_on_same_population(tmp_path)
         "review00": {"awaiting_review": True, "backoff": True},
         "blocked0": {"dependency": True, "backoff": True},
         "hostpin0": {"claimability_reason": "host-pin:chiap01"},
+        "ceiling0": {"backoff": True, "claim_ceiling": True},
     }
     for cid in rows:
         (tmp_path / f"{cid}.json").write_text(
@@ -574,6 +590,7 @@ def test_shadow_partition_executes_real_legacy_path_on_same_population(tmp_path)
             "outcome_lifecycle_bucket": outcome_bucket,
             "authoritative_claimability": claimability,
             "blocked_backoff": lambda cid: row(cid).get("backoff", False),
+            "_claim_ceiling_hit": lambda cid: row(cid).get("claim_ceiling", False),
             "terminal_review_verdict": lambda cid, core: False,
             "json": json,
         },
@@ -589,6 +606,7 @@ def test_shadow_partition_executes_real_legacy_path_on_same_population(tmp_path)
             owner_health="live" if facts.get("lifecycle") == "claimed" else None,
             dependency=facts.get("dependency", False),
             awaiting_review=facts.get("awaiting_review", False),
+            claim_ceiling=facts.get("claim_ceiling", False),
             backoff=facts.get("backoff", False),
             host_pin_elsewhere=str(facts.get("claimability_reason", "")).startswith("host-pin:"),
         )
@@ -604,6 +622,7 @@ def test_shadow_partition_executes_real_legacy_path_on_same_population(tmp_path)
     assert report.population == report.ready + sum(report.reasons.values())
     assert report.reasons == {
         "awaiting_review": 1,
+        "claim_ceiling": 1,
         "dependency": 1,
         "host_pin_elsewhere": 1,
         "lifecycle_excluded": 1,
