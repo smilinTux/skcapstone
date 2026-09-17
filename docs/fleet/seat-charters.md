@@ -23,7 +23,7 @@ exception, not a profile default.
 | **Integrator** (`link`) | Triage, independent-review assignment, the merge queue, and eligible merges under the PR 358 control. Owns delivery quality. | Fleet claims, launches, releases, reassignment, application action dispatch, app actuation |
 | **Overseer** (`mero`) | Read-only convergence and drift measurement. Emits typed recommendations, alerts, observations, and briefs. | Fleet mutation, merge, application action dispatch, or any actuation |
 | **Independent Verifier** (`seraph`) | Exact-candidate review and PASS, FAIL, or BLOCKED evidence. | Self-review, merge, dispatch, deployment, or actuation |
-| **Operations** (`atlas`) | Exact-target verification and postcondition evidence for governed releases, plus release and installation of exact approved artifacts, behavioral verification, and bounded rollback (ported from the retired Tank seat). | Source authoring, self-approval, independent review of its own release, merge, dispatch, coordination-board ownership, card claiming, reviewer assignment, or policy change |
+| **Operations** (`atlas`) | Exact-target verification and postcondition evidence for governed releases. Release and installation of exact approved artifacts, plus bounded rollback, are ported from the retired Tank seat **as a duty on paper only**; see [ATLAS release and install duty: inoperable pending B3](#atlas-release-and-install-duty-inoperable-pending-b3) below before assuming ATLAS can perform either. | Source authoring, self-approval, independent review of its own release, merge, dispatch, coordination-board ownership, card claiming, reviewer assignment, or policy change, and, until B3 lands, any actual deploy |
 
 **Tank is folded into ATLAS (spec `2026-09-16-nimble-factory-design.md` section
 3.6).** ADR-0005 names ATLAS as Operations, and ATLAS absorbed Tank's real
@@ -32,6 +32,58 @@ verification, and bounded rollback rehearsals. `LIFECYCLE_SEATS` in
 `src/skcapstone/lifecycle_seats.py` is now five entries: `link`, `mero`,
 `seraph`, `niobe`, `atlas`. Tank no longer runs, has no timer, and the
 `skfleet-tank.service` / `skfleet-tank.timer` pair no longer ships.
+
+### ATLAS release and install duty: inoperable pending B3
+
+**The fold moved the duty, not the authority. ATLAS cannot currently perform
+a governed release or install, and there is presently no dispatchable seat
+that can.** This is a deliberate decision, not an oversight left for later:
+granting deploy authority now, before spec A.4 / Plan B3 exists, would create
+an actuating seat with no deployment manifest to deploy, no readiness gate to
+run after deploying, and no prior manifest to roll back to. The Atlas
+Constitution keeps irreversible actions human-gated precisely because a
+rollout is only safe when it is reversible by construction, and none of that
+machinery exists yet. Do not treat this section as a bug report; it is the
+intended state of this branch, and it must stay true until B3 ships.
+
+Three concrete things are missing, all measured against the current tree:
+
+1. **No `DEPLOY` authority.** `data/lifecycle-seat-profiles.json` grants
+   `atlas` `approved_artifact_release`, `approved_artifact_install`, and
+   `rollback` as duties, but `Seat.ATLAS` in `src/skcapstone/seat_boundaries.py`
+   is scoped to `{OBSERVE, ACTUATE_APPLICATION, CREATE_CARD}` only, no
+   `Action.DEPLOY`. `Action.DEPLOY` is still held by `Seat.TANK`, and Tank is
+   not dispatched (its timer and service no longer exist). No seat that
+   actually runs holds `DEPLOY` today.
+2. **The digest gate never moved.** `_role_seat_metadata` in
+   `scripts/fleet/skfleet-rotate.py` still reads `approved_artifact_sha256`
+   only on its `tank` branch. The `atlas` branch reads
+   `verification_target` and `verification_evidence_sha256` for its existing
+   postcondition-verification duty, and nothing else; the artifact-digest
+   fence that gated Tank's release was never ported to ATLAS's branch of that
+   function.
+3. **The rail brief still forbids it.** The dispatch-layer ATLAS role brief
+   in `skfleet-rotate.py` tells every ATLAS worker: "Do not deploy, dispatch,
+   invoke an actuator, or change the target." A worker dispatched to ATLAS is
+   told not to do the exact thing this section says it cannot yet do safely.
+
+**What to do instead of a governed release: wait for B3, or route the
+release manually with full human sign-off outside any seat.** ATLAS may
+still verify a target that was released by other means and record PASS,
+FAIL, or BLOCKED evidence; that half of the fold is real and operable today.
+
+**What NOT to do: do not fall back to the Casey-directed emergency gateway
+for a routine release.** `JarvisEmergencyGateway` (`Seat.JARVIS` in
+`seat_boundaries.py`) holds `Action.DEPLOY` and `Action.RELEASE_ARTIFACT`
+unbounded, with no artifact-digest fence at all, gated only on a signed Casey
+direction bound to action, target, change, and scope. That gate protects
+against forged or substituted direction; it does not narrow *what* gets
+deployed the way Tank's `approved_artifact_sha256` check did. Using the
+emergency path as a routine substitute for the retired governed release
+surface is strictly worse than waiting: it trades a missing but plannable
+capability for an unbounded one exercised on a routine cadence, which is the
+opposite of what the gateway is for. Reserve it for the emergencies it is
+named for.
 
 Retiring the seat is not erasing the actor: `seat_boundaries.Seat.TANK` is
 deliberately retained in the authority-model enum. Tank's historical board
@@ -92,7 +144,9 @@ folded into the `atlas` branch, so a reader should not assume the
 release/install duty ported from Tank is gated on an artifact digest at the
 dispatch layer today the way it was under Tank. ATLAS observes and records
 postconditions, and cannot deploy, dispatch, or actuate outside its scoped
-action.
+action. See [ATLAS release and install duty: inoperable pending
+B3](#atlas-release-and-install-duty-inoperable-pending-b3) above for the full
+picture: the digest gate is one of three missing pieces, not the only one.
 Routine documented action classes are notify-only. A human gate exists only
 where the governing catalog, irreversible-effect policy, protected-data rule,
 or external authority requires it.
@@ -252,6 +306,7 @@ clause exists to prevent.
 
 | Date | Change | Author |
 |---|---|---|
+| 2026-09-17 | Documented that ATLAS's ported release/install/rollback duty is inoperable pending B3: no `DEPLOY` authority in `seat_boundaries`, the digest gate still on the retired tank branch, and the rail brief forbidding deploy; named the emergency gateway as unbounded and not a substitute; added the upgrade-before-converge and converge-only-on-elected-host ordering constraints and the partial-rollback note | lumina |
 | 2026-09-17 | Folded tank into atlas, reducing `LIFECYCLE_SEATS` to five; `seat_boundaries.Seat.TANK` retained as a non-dispatched authority-model actor; documented that seats remain host-pinned (Amendment B) and the niobe cold-start constraint | lumina |
 | 2026-09-09 | Activated six lifecycle seats and moved recurring dispatch from Jarvis to Niobe (card 20a637fe) | jarvis |
 | 2026-09-01 | Initial charter document aligned with sk-standards ADR-0005 (card 95af18fd) | pi-jarvis-chiap03-4274eef2 |

@@ -17,6 +17,51 @@ minimal timer presence on at least two hosts as supervisor of last resort,
 because dispatch cannot bootstrap through the thing it dispatches; see
 [seat-charters.md](./seat-charters.md#cold-start-constraint).
 
+**ATLAS cannot perform a governed release or install today.** The tank fold
+(2026-09-17) moved the duty into ATLAS's charter but not the authority: no
+seat holds `DEPLOY`, the artifact-digest gate is still on the retired tank
+branch of the dispatch-layer metadata check, and ATLAS's own rail brief
+forbids deploying. See [seat-charters.md, ATLAS release and install duty:
+inoperable pending
+B3](./seat-charters.md#atlas-release-and-install-duty-inoperable-pending-b3)
+before dispatching or approving any release work through this runbook. Do
+not route a routine release through the Casey-directed emergency gateway as
+a workaround; it is unbounded and has no digest fence, so that path is
+strictly worse than waiting for B3.
+
+## Rollout ordering constraints
+
+Read this before running anything below on more than one host. Both
+constraints are measured against the current code, not theoretical.
+
+**1. Upgrade every host before converging.** Old code running against new
+synced data is an availability cliff, not a graceful degrade. `_SEATS` in
+`skcapstone.seat_cycle_entrypoint` is bound to `LIFECYCLE_SEATS` at import
+time. On a host still running the pre-fold six-seat code, `LIFECYCLE_SEATS`
+still contains `tank`. If a five-seat control plane record (written by an
+upgraded host's convergence) reaches that host through Syncthing,
+`load_control_plane` compares the synced record's seat set against the
+local, stale `LIFECYCLE_SEATS` and raises, because five does not equal six.
+That raise happens once, before any individual seat is processed, so it
+fails closed for **all five seats on that host**, not just the missing one.
+This fails safe rather than dispatching under a mismatched roster, but if
+the un-upgraded host happens to be the currently elected `active_host`, the
+result is the whole seat layer stopping on that host until the code
+upgrade lands. Upgrade code on every host in the rotation before running
+convergence anywhere.
+
+**2. Converge only on the elected host.** `converge_lifecycle_seats` derives
+`active_host` from the local machine (`local_host(active_host)` with no
+argument) and writes it into the synced `seat-control-plane.json`, which
+every host reads. Running convergence on a host that is not the current
+election overwrites that synced record to name the wrong host. During the
+Syncthing propagation window this can produce two hosts each reading a
+control-plane record that names itself as `active_host`, and both then
+consider themselves authorized to dispatch. A code-side refusal for this
+case is being added concurrently with this document; until it is confirmed
+landed, treat "converge only from the elected host" as an operator
+discipline requirement, not a guarantee the tooling enforces.
+
 ## 0. Local preflight
 
 Run on chiap08 from the SKCapstone workspace:
@@ -132,6 +177,16 @@ existing postcondition-verification duty. `seat_boundaries.Seat.TANK` is
 still present in the authority-model enum so Tank's historical board actions
 keep resolving; it just no longer receives dispatched work or runs a cycle.
 
+**That ported release and install duty is inoperable today.** ATLAS's
+allowed-action set in `seat_boundaries.py` does not include `DEPLOY`, the
+dispatch-layer digest check in `skfleet-rotate.py` still gates only the
+retired `tank` branch, and ATLAS's own rail brief tells workers not to
+deploy. See [seat-charters.md, ATLAS release and install duty: inoperable
+pending
+B3](./seat-charters.md#atlas-release-and-install-duty-inoperable-pending-b3)
+for the full accounting. Do not activate this runbook expecting ATLAS to
+perform a governed release; only its verification duty is live.
+
 ATLAS is active for bounded presence and exact card-scoped operations. Its
 presence cycle reads SKMail and emits health but does not claim work or actuate
 outside an admitted, labeled batch. An operations card reaches ATLAS through
@@ -242,3 +297,20 @@ python -m skcapstone.lifecycle_seats rollback \
   --home "$HOME/.skcapstone" \
   --rollback-dir "$HOME/.skcapstone/rollback/lifecycle-five-seat-<change-id>"
 ```
+
+**Known gap: rollback is not staged, so a failure partway can leave the
+control plane restored and the placement manifest not.**
+`rollback_lifecycle_seats` in `src/skcapstone/lifecycle_seats.py` restores
+the captured files sequentially, in the order convergence wrote them:
+`coordination/seat-control-plane.json` first, then
+`coordination/seat-placement.json`, then each seat's per-agent profile and
+startup files. Each file is hash-checked before it is touched, and a
+mismatch raises immediately, which is fail-closed for that file, but it does
+not roll back files already restored earlier in the same run, and it never
+reaches files later in the sequence. If rollback stops after the control
+plane but before the placement manifest, the two are left inconsistent.
+**After any rollback, read back both
+`coordination/seat-control-plane.json` and
+`coordination/seat-placement.json` and confirm they agree before assuming
+the seat layer is in its prior state.** A partial rollback that raised is
+not a completed rollback.

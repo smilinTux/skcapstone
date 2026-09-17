@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+- **Docs: the tank-to-atlas fold moved the duty, not the authority; charter
+  now says so.** `docs/fleet/seat-charters.md` and
+  `docs/fleet/activation-runbook.md` now document that ATLAS's ported
+  release-and-install duty is inoperable pending spec A.4 / Plan B3: `Seat.ATLAS`
+  in `seat_boundaries.py` has no `DEPLOY` action, `_role_seat_metadata` in
+  `scripts/fleet/skfleet-rotate.py` still gates the artifact digest only on
+  the retired `tank` branch, and ATLAS's own dispatch-layer rail brief tells
+  workers not to deploy. No source, script, or test file changed; this is a
+  documentation-only correction so an operator reading the charter does not
+  conclude a governed release can be dispatched through ATLAS today. The
+  charter also states plainly what not to do: do not route a routine release
+  through the Casey-directed emergency gateway as a substitute, since
+  `JarvisEmergencyGateway` holds `DEPLOY` and `RELEASE_ARTIFACT` unbounded
+  with no artifact-digest fence, which is strictly worse than waiting for B3.
+  Added two measured rollout ordering constraints to the activation runbook:
+  upgrade every host's code before converging (an un-upgraded host's stale
+  `LIFECYCLE_SEATS` still contains tank, so a five-seat control-plane record
+  synced to it makes `load_control_plane` raise for all five seats on that
+  host), and converge only on the elected host (`converge_lifecycle_seats`
+  derives `active_host` from the local machine and overwrites the synced
+  record, so converging from the wrong host can leave two hosts each
+  believing they are elected during the Syncthing propagation window; a
+  code-side refusal for this is tracked separately and not yet confirmed
+  landed). Also documented that `rollback_lifecycle_seats` restores its
+  captured files sequentially with no staging, so a failure partway can
+  leave the control plane restored and the placement manifest not; an
+  operator rolling back should read back both files before trusting the
+  result.
+
 - **Fold the tank seat into atlas; seat depinning did not land (nimble-factory
   Plan B2).** ADR-0005 names ATLAS as Operations, and ATLAS absorbed tank's real
   activity (releases and rollback rehearsals, 26 events), so `LIFECYCLE_SEATS`
