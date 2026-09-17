@@ -34,6 +34,7 @@ HOST_LOCAL_BEAT_NOTICE_S = 120.0
 # Default above measured cross-host p95 with margin.
 DEFAULT_HEARTBEAT_TIMEOUT_S = 600.0
 DEFAULT_TRANSPORT_TIMEOUT_S = 600.0
+DEFAULT_PROGRESS_TIMEOUT_S = 900.0
 
 
 @dataclass(frozen=True)
@@ -107,6 +108,57 @@ class StartupObservation:
     executable_evidence: Mapping[str, object] | None = None
     process_alive: bool | None = None
     session_alive: bool | None = None
+
+
+@dataclass(frozen=True)
+class ProgressObservation:
+    """Bounded progress proof for one exact worker generation."""
+
+    owner: str
+    card_id: str
+    session_id: str
+    claim_revision: str
+    expected_claim_revision: str
+    progress_at: str | None
+    terminal_evidence_seen: bool = False
+    process_alive: bool | None = None
+    session_alive: bool | None = None
+
+
+def classify_progress(
+    observation: ProgressObservation,
+    *,
+    now: datetime,
+    progress_timeout_s: float = DEFAULT_PROGRESS_TIMEOUT_S,
+) -> str:
+    """Classify executable progress without performing any actuation."""
+    if not all(
+        (
+            observation.owner,
+            observation.card_id,
+            observation.session_id,
+            observation.claim_revision,
+            observation.expected_claim_revision,
+        )
+    ):
+        return "progress-invalid-identity"
+    if observation.claim_revision != observation.expected_claim_revision:
+        return "progress-claim-mismatch"
+    if observation.process_alive is False and observation.session_alive is False:
+        return "progress-exited"
+    if observation.terminal_evidence_seen:
+        return "progress-terminal-evidence"
+    if not observation.progress_at:
+        return "progress-missing"
+    progress = _parse_time(observation.progress_at)
+    if progress is None:
+        return "progress-malformed"
+    age = (now.astimezone(timezone.utc) - progress).total_seconds()
+    if age < 0:
+        return "progress-clock-skew"
+    if age > progress_timeout_s:
+        return "progress-stale"
+    return "progress-fresh"
 
 
 def classify_startup(

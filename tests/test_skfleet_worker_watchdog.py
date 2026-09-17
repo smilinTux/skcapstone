@@ -11,10 +11,12 @@ from skcapstone.fleet.worker_watchdog import (
     HOST_LOCAL_BEAT_NOTICE_S,
     MEASURED_CROSS_HOST_P95_S,
     GatewayRequest,
+    ProgressObservation,
     StartupObservation,
     WorkerClassification,
     WorkerGeneration,
     WorkerObservation,
+    classify_progress,
     classify_startup,
     classify_worker,
     correlate_request,
@@ -99,6 +101,37 @@ def test_startup_release_requires_exact_fence_and_absent_process() -> None:
         startup_actuation_fenced(stale, owner=stale.owner, claim_revision="wrong", now=NOW)
         is False
     )
+
+
+def _progress(**changes: object) -> ProgressObservation:
+    values: dict[str, object] = {
+        "owner": "pi-codex-chiap08-abcd1234",
+        "card_id": "card-1",
+        "session_id": "session-1",
+        "claim_revision": "revision-1",
+        "expected_claim_revision": "revision-1",
+        "progress_at": "2026-09-04T13:59:30Z",
+    }
+    values.update(changes)
+    return ProgressObservation(**values)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("changes", "expected"),
+    [
+        ({}, "progress-fresh"),
+        ({"progress_at": None}, "progress-missing"),
+        ({"progress_at": "2026-09-04T13:00:00Z"}, "progress-stale"),
+        ({"progress_at": "not-a-time"}, "progress-malformed"),
+        ({"terminal_evidence_seen": True}, "progress-terminal-evidence"),
+        ({"claim_revision": "other"}, "progress-claim-mismatch"),
+        ({"process_alive": False, "session_alive": False}, "progress-exited"),
+    ],
+)
+def test_progress_requires_fresh_executable_signal(
+    changes: dict[str, object], expected: str
+) -> None:
+    assert classify_progress(_progress(**changes), now=NOW) == expected
 
 
 INVARIANT = (
