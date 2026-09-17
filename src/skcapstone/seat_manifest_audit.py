@@ -14,7 +14,12 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-SEATS = ("link", "mero", "niobe", "tank", "seraph", "atlas")
+from .lifecycle_seats import LIFECYCLE_SEATS
+
+# Derived, not restated: a hardcoded second copy of the roster is exactly how
+# this audit drifted from LIFECYCLE_SEATS when tank folded into atlas and
+# kept auditing a seat that no longer existed.
+SEATS = tuple(sorted(LIFECYCLE_SEATS))
 PRODUCT_SCOPE = ["skcapstone", "skdashboard", "skworld"]
 SEAT_SCHEMA = "sk.lifecycle-seat/v1"
 DEFAULT_MODEL_ROUTE = "sk-codex-mid"

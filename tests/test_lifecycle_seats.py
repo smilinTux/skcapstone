@@ -70,3 +70,46 @@ def test_load_seat_control_plane_raises_on_roster_mismatch(monkeypatch) -> None:
     )
     with pytest.raises(ValueError, match="seat control plane must contain exactly"):
         load_seat_control_plane("some-host")
+
+
+def test_seat_manifest_audit_seats_do_not_diverge_from_lifecycle_seats() -> None:
+    """seat_manifest_audit.SEATS is a second copy of the roster; it must track
+    LIFECYCLE_SEATS instead of drifting from it, as it did when tank folded
+    into atlas but this copy still listed tank.
+    """
+    from skcapstone import seat_manifest_audit
+
+    assert set(seat_manifest_audit.SEATS) == LIFECYCLE_SEATS
+
+
+def test_skrsi_estate_adapters_seats_do_not_diverge_from_lifecycle_seats() -> None:
+    """skrsi_estate_adapters.LIFECYCLE_SEATS adds product routing scopes on top
+    of the canonical roster; it must never drop or rename a real seat while
+    doing so.
+    """
+    from skcapstone import skrsi_estate_adapters
+
+    product_scopes = frozenset({"skcapstone", "skdashboard", "skworld"})
+    assert skrsi_estate_adapters.LIFECYCLE_SEATS == LIFECYCLE_SEATS | product_scopes
+
+
+def test_skrsi_handoff_owners_are_current_lifecycle_seats() -> None:
+    """Every FIRST_WAVE_HANDOFFS recovery owner must be a seat that still
+    exists; a handoff owned by a folded seat is a contract nobody occupies.
+    """
+    from skcapstone.skrsi_handoffs import FIRST_WAVE_HANDOFFS
+
+    for name, contract in FIRST_WAVE_HANDOFFS.items():
+        assert (
+            contract.recovery_owner in LIFECYCLE_SEATS
+        ), f"{name} handoff owner {contract.recovery_owner!r} is not a current seat"
+
+
+def test_skrsi_collector_adapter_owners_are_current_lifecycle_seats() -> None:
+    """Every ESTATE_ADAPTERS handoff owner must be a seat that still exists."""
+    from skcapstone.skrsi_collector import ESTATE_ADAPTERS
+
+    for name, contract in ESTATE_ADAPTERS.items():
+        assert (
+            contract.handoff_owner in LIFECYCLE_SEATS
+        ), f"{name} adapter owner {contract.handoff_owner!r} is not a current seat"
