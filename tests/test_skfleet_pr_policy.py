@@ -246,3 +246,31 @@ def test_old_pr_mandate_string_removed_from_whole_file() -> None:
         "Put the PR URL in your verdict AND in your skmail. A verdict claiming work was"
         not in source
     )
+
+
+def test_prompt_category_prose_matches_the_regex_it_describes():
+    """The prompt restates _SENSITIVE_CATEGORY's terms as prose; pin the pair.
+
+    The immediate-PR clause lists the sensitive categories in words so a worker
+    can act on them without reading a regex. That is a second copy of the same
+    policy, and this effort has already been bitten twice by a second copy
+    drifting from its original. Adding a term to the regex without adding it to
+    the prose would gate a card the worker was never told about, which reads to
+    the worker as an arbitrary refusal.
+
+    Terms are matched as prefixes because the regex carries stems: "migrat"
+    covers the prose word "migration".
+    """
+    sensitive = _load_category_matchers()["_SENSITIVE_CATEGORY"]
+    build = _load_done_instructions()["_worker_done_instructions"]
+    prose = build(True)
+
+    terms = [
+        term.strip("()").replace("\\b", "") for term in sensitive.pattern.strip("()").split("|")
+    ]
+    assert terms, "no terms extracted from _SENSITIVE_CATEGORY"
+
+    missing = [term for term in terms if term not in prose]
+    assert not missing, (
+        "sensitive categories in the regex but not described to the worker: " f"{missing}"
+    )
