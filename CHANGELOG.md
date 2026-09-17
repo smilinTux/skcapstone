@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- **Salvaged four pieces from a branch stranded on a production host.** `chiap08`,
+  the chi estate's elected control-plane host, was found running a local branch 12
+  commits ahead of main, 235 behind, never pushed. The branch itself must never be
+  merged: `git merge-tree` reports zero conflicts because it holds whole-file older
+  versions rather than conflicting lines, and merging it would have removed the
+  claim ceiling, casey-authorization, the gated exit code, gate-satisfaction
+  tracking and the commit-evidence gate, while shrinking the dispatcher from 6,842
+  lines to 4,480.
+
+  - `ProgressObservation` and `classify_progress()` in `fleet/worker_watchdog.py`,
+    a bounded progress-proof classifier, landed as a delta into main's current file
+    rather than by copying the branch's divergent version of that module.
+  - The worker file heartbeat is detached from worker pipes, so a worker's exit
+    evidence no longer depends on pipe state.
+  - Gateway-routing work is kept off the qwen lane. The original fix assumed two
+    call sites for `qwen_suitable()`; main has four, so all four are updated and a
+    test now counts them, making a future partial application fail loudly instead
+    of silently under-enforcing.
+  - **Workspace custody is verified before cleanup.** This covers a window the
+    commit-evidence gate structurally cannot see: that gate inspects a card at
+    `coord complete` or `coord move done`, so a worker that crashes or is reaped
+    beforehand leaves nothing behind and nothing notices. Custody is derived from
+    the card's `commit_sha` and `branch` links, reusing `commit_sha_is_valid`, and
+    the literal `none` sentinel satisfies it. `cleanup_decision()` is called at
+    every worker exit; only the destructive execution is deferred, behind an
+    explicit `# intentionally-unwired:` marker naming the reason.
+
+  Deliberately not taken: a `coord gates` consolidation that predates several
+  governance controls and would have silently regressed the diagnostic, and
+  `seat_shadow_entrypoint.py` with its units, which main renamed and reimplemented
+  in #638 after the old unit failed on enable.
+
 - **Docs: the tank-to-atlas fold moved the duty, not the authority; charter
   now says so.** `docs/fleet/seat-charters.md` and
   `docs/fleet/activation-runbook.md` now document that ATLAS's ported
