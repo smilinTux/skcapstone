@@ -992,7 +992,7 @@ def test_atlas_presence_cycles_do_not_run_link_work(tmp_path: Path) -> None:
         assert result.cards_examined == 0
 
 
-@pytest.mark.parametrize("seat", ["tank", "atlas"])
+@pytest.mark.parametrize("seat", ["atlas"])
 def test_role_dispatch_is_bounded_and_seat_scoped(tmp_path, monkeypatch, seat) -> None:
     captured = {}
     card_id = "a8100007"
@@ -1046,7 +1046,7 @@ def test_role_dispatch_is_bounded_and_seat_scoped(tmp_path, monkeypatch, seat) -
     ]
 
 
-@pytest.mark.parametrize("seat", ["tank", "atlas"])
+@pytest.mark.parametrize("seat", ["atlas"])
 def test_role_dispatch_rotation_overlap_is_truthful_noop(tmp_path, monkeypatch, seat) -> None:
     monkeypatch.setattr(
         "skcapstone.seat_cycle_entrypoint.subprocess.run",
@@ -1062,14 +1062,20 @@ def test_role_dispatch_rotation_overlap_is_truthful_noop(tmp_path, monkeypatch, 
     assert result["suppressed"] == 0
 
 
-@pytest.mark.parametrize("seat", ["tank", "atlas"])
+@pytest.mark.parametrize("seat", ["atlas"])
 @pytest.mark.parametrize("batch", ["0", "-1", "9", "invalid"])
 def test_role_dispatch_rejects_invalid_batch(tmp_path, monkeypatch, seat, batch) -> None:
     monkeypatch.setenv(f"SKFLEET_{seat.upper()}_BATCH_SIZE", batch)
     assert role_dispatch_operation(tmp_path, seat)["reason"] == f"{seat}_batch_size_invalid"
 
 
-@pytest.mark.parametrize("seat", ["tank", "atlas"])
+def test_role_dispatch_rejects_the_retired_tank_seat_name(tmp_path) -> None:
+    """Tank folded into atlas; the batch dispatcher must not still accept it."""
+
+    assert role_dispatch_operation(tmp_path, "tank")["reason"] == "tank_batch_size_invalid"
+
+
+@pytest.mark.parametrize("seat", ["atlas"])
 def test_role_dispatch_rejects_missing_wheel_owned_dispatcher(tmp_path, monkeypatch, seat) -> None:
     bindir = tmp_path / "venv" / "bin"
     bindir.mkdir(parents=True)
