@@ -3,8 +3,13 @@
 
 Scope is deliberately narrow: cards still OPEN and claimed 3 or more times.
 That is the tail that actually costs dispatch cycles. Closed cards are never
-touched, and the event ledger is append-only, so the pre-split state remains
-recoverable.
+touched.
+
+core.json is the only copy of acceptance_criteria, and --apply overwrites it
+in place. There is no ledger to recover a pre-split state from. Before the
+first card is touched, --apply writes a backup file with the pre-split
+acceptance_criteria for every card in the batch, keyed by card id, and
+refuses to run if that backup cannot be written.
 
 Dry run by default. Pass --apply to write.
 """
@@ -14,12 +19,17 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
+# Paired with _GATE_LANGUAGE_RE in scripts/fleet/skfleet-rotate.py. Keep both
+# in sync: a card split by one definition and judged unsatisfiable by the
+# other reintroduces the claim-loop this script exists to cure.
 GATE_LANGUAGE_RE = re.compile(
-    r"independent review|reviewer|review pass|before merge|approval|approved by"
-    r"|sign-?off|merged",
+    r"independent review|review pass|before merge|approved by|sign-?off"
+    r"|reviewed by|merged to main|awaiting review",
     re.I,
 )
 DEFAULT_GATE_OWNER = "seraph"
@@ -58,16 +68,26 @@ def card_actions(card_dir: Path) -> collections.Counter:
     return counts
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--home", default=str(Path.home() / ".skcapstone"))
-    parser.add_argument("--min-claims", type=int, default=3)
-    parser.add_argument("--apply", action="store_true")
-    args = parser.parse_args()
+Candidate = tuple[Path, dict, list[str], list[dict]]
 
-    home = Path(args.home)
-    candidates = []
-    for card_dir in (home / "cards").iterdir():
+
+def discover_candidates(
+    home: Path, min_claims: int
+) -> tuple[list[Candidate], list[str]]:
+    """Walk home/cards and partition it into writable candidates and skips.
+
+    A card qualifies only if it is still open (never completed or voided),
+    claimed at least min_claims times, and the split moves at least one
+    criterion into exit_gates. A card whose split would leave
+    acceptance_criteria empty is never written; its id is returned in the
+    second list for a human to look at instead.
+    """
+    cards_dir = home / "cards"
+    candidates: list[Candidate] = []
+    skipped_zero_kept: list[str] = []
+    if not cards_dir.exists():
+        return candidates, skipped_zero_kept
+    for card_dir in sorted(cards_dir.iterdir()):
         core_path = card_dir / "core.json"
         if not core_path.exists():
             continue
@@ -78,27 +98,96 @@ def main() -> int:
         counts = card_actions(card_dir)
         if counts.get("complete") or counts.get("void"):
             continue
-        if counts.get("claim", 0) < args.min_claims:
+        if counts.get("claim", 0) < min_claims:
             continue
         kept, gates = split_criteria([str(c) for c in criteria])
-        if gates:
-            candidates.append((card_dir, core, kept, gates))
+        if not gates:
+            continue
+        if not kept:
+            skipped_zero_kept.append(core.get("id") or card_dir.name)
+            continue
+        candidates.append((card_dir, core, kept, gates))
+    return candidates, skipped_zero_kept
+
+
+def default_backup_path(home: Path) -> Path:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return home / "fleet-backups" / f"backfill_exit_gates-{stamp}.json"
+
+
+def write_backup(backup_path: Path, candidates: list[Candidate]) -> None:
+    """Write the pre-split acceptance_criteria for every candidate, by id.
+
+    Raises OSError if the file cannot be written. Callers must call this,
+    and it must succeed, before any card in candidates is modified.
+    """
+    payload = {
+        (core.get("id") or card_dir.name): (core.get("acceptance_criteria") or [])
+        for card_dir, core, _kept, _gates in candidates
+    }
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = backup_path.with_name(backup_path.name + ".tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp_path, backup_path)
+
+
+def atomic_write_json(path: Path, data: dict) -> None:
+    """Write JSON to path atomically: temp file in the same dir, then replace.
+
+    Key order is preserved, not sorted, so a touched card does not show up
+    as a whole-file diff across the shared store. Same-directory matters:
+    os.replace is only atomic within a filesystem.
+    """
+    tmp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    tmp_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp_path, path)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--home", default=str(Path.home() / ".skcapstone"))
+    parser.add_argument("--min-claims", type=int, default=3)
+    parser.add_argument("--apply", action="store_true")
+    parser.add_argument(
+        "--backup-path",
+        default=None,
+        help="Where to write the pre-split backup. Defaults under --home.",
+    )
+    args = parser.parse_args(argv)
+
+    home = Path(args.home)
+    candidates, skipped_zero_kept = discover_candidates(home, args.min_claims)
 
     print(f"cards in scope: {len(candidates)}")
     for card_dir, _core, kept, gates in candidates:
         print(f"  {card_dir.name}: {len(kept)} kept, {len(gates)} moved to exit_gates")
 
+    print(
+        "skipped, split would leave zero acceptance criteria: "
+        f"{len(skipped_zero_kept)}"
+    )
+    for card_id in skipped_zero_kept:
+        print(f"  {card_id}")
+
     if not args.apply:
         print("dry run. pass --apply to write")
         return 0
+
+    backup_path = (
+        Path(args.backup_path) if args.backup_path else default_backup_path(home)
+    )
+    try:
+        write_backup(backup_path, candidates)
+    except OSError as exc:
+        print(f"refusing to apply: backup could not be written to {backup_path}: {exc}")
+        return 1
+    print(f"backup of pre-split acceptance_criteria written to: {backup_path}")
 
     for card_dir, core, kept, gates in candidates:
         core["acceptance_criteria"] = kept
         core["exit_gates"] = gates
         core["spec_version"] = 2
-        (card_dir / "core.json").write_text(
-            json.dumps(core, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
+        atomic_write_json(card_dir / "core.json", core)
         print(f"  split {card_dir.name}")
     return 0
 

@@ -1807,9 +1807,15 @@ _CATEGORY_OPT_IN = "dispatch-approved"
 # Criteria a worker CANNOT satisfy alone: they name another seat's verdict or a
 # merge. Measured 2026-09-16: 160 of 444 open SKLegal cards carried one, and
 # those cards averaged 3.39 claims against 1.96 for cards without.
+# Paired with GATE_LANGUAGE_RE in scripts/fleet/backfill_exit_gates.py. Keep
+# both in sync: a card split by one definition and judged unsatisfiable by
+# the other reintroduces the claim-loop this gate exists to cure. Tightened
+# 2026-09-17: bare approval/reviewer/merged were 44 percent false positives
+# (an adjective, a negation, a worker's own test name), so only phrase forms
+# that denote waiting on someone else remain.
 _GATE_LANGUAGE_RE = re.compile(
-    r"independent review|reviewer|review pass|before merge|approval|approved by"
-    r"|sign-?off|merged",
+    r"independent review|review pass|before merge|approved by|sign-?off"
+    r"|reviewed by|merged to main|awaiting review",
     re.I,
 )
 _OVERLAY_ACTIONS = {
