@@ -48,6 +48,7 @@ def test_unit_modules_deduplicates():
 
 def test_check_module_imports_reports_a_real_module_true(tmp_path):
     import sys
+
     result = check_module_imports(["json"], sys.executable)
     assert result == {"json": True}
 
@@ -55,6 +56,7 @@ def test_check_module_imports_reports_a_real_module_true(tmp_path):
 def test_check_module_imports_reports_a_missing_module_false(tmp_path):
     """This is the niobe bug class: a unit naming a module that is not installed."""
     import sys
+
     result = check_module_imports(["skcapstone.seat_shadow_entrypoint_nope"], sys.executable)
     assert result == {"skcapstone.seat_shadow_entrypoint_nope": False}
 
@@ -62,12 +64,14 @@ def test_check_module_imports_reports_a_missing_module_false(tmp_path):
 def test_required_env_on_the_real_dispatcher_finds_the_var_that_broke_the_deploy():
     """Regression: SKFLEET_GATEWAY_URL is exactly what took chiap01 down."""
     from pathlib import Path
-    src = (Path(__file__).resolve().parents[1]
-           / "scripts" / "fleet" / "skfleet-rotate.py").read_text(encoding="utf-8")
+
+    src = (
+        Path(__file__).resolve().parents[1] / "scripts" / "fleet" / "skfleet-rotate.py"
+    ).read_text(encoding="utf-8")
     names = required_env(src)
     assert "SKFLEET_GATEWAY_URL" in names
     assert "SKFLEET_TARGET" in names
-    assert "SKFLEET_QWEN_TARGET" not in names   # has a default
+    assert "SKFLEET_QWEN_TARGET" not in names  # has a default
 
 
 def test_parse_systemd_environment_normal_multi_var_line():
