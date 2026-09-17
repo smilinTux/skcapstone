@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+- **PR policy: branch push by default, PR per batch (nimble-factory Plan B1).**
+  Measured cause: of the six skcapstone workflows, `docs-check` and `secret-scan`
+  fire on any branch push and cost about 0.4 minutes total, while `ci`, `pytest`,
+  `providers`, and `publish` fire only on a PR or on `main`. The PR was where the
+  20 to 30 minute delay lived, and it was paid on every routine card. Separately,
+  over 1,200 live cards, only 15 percent are sensitive enough to need the
+  independent review a PR forces.
+
+  - The worker launch prompt's DEFINITION OF DONE no longer says "Work is NOT
+    done until it is an open pull request." The new default: branch first, never
+    commit to `main`, commit as soon as a fast check passes, push the branch, and
+    record the branch and the exact commit SHA as evidence.
+  - `pr_required(core)` in `scripts/fleet/skfleet-rotate.py` opens a PR only when
+    a card's title or a label matches `capauth`, `credential`, `custody`,
+    `issuer`, `secret`, `key`, `rollback`, `deploy`, `production`, `release`, or
+    `migration`. Every other card is batched into one PR per cycle by the
+    Integrator seat instead of one PR per card.
+  - Evidence moves from a PR URL to `skcapstone coord link <card> branch
+    <repo>:<branch-name>` and `skcapstone coord link <card> commit_sha
+    <40-character SHA>`. The branch link is repository-qualified because the
+    fleet dispatches across skcapstone, skcoord, skchat, and others, and a bare
+    branch name does not say which repository to fetch from. A card that needed
+    no repository change links `commit_sha` to the literal `none`, which is a
+    recorded decision rather than a gap.
+  - Dropping the PR requirement lowers traceability unless the replacement
+    evidence is actually required: measured on 544 completed cards under the old
+    PR-mandatory policy, only 26.8 percent carried any code-evidence link.
+    `complete_coord_task` and `coord move <id> done` now both refuse to complete
+    a card carrying a `repo:<name>` label unless it also carries a `commit_sha`
+    link, naming the command that supplies it. This enforcement is scoped to
+    cards with that label, about 12.6 percent of the board (739 of 5,861 cards);
+    a card without the label still routes to the code bridge by default and can
+    produce code without tripping this gate.
+
 - **Card lifecycle correctness (nimble-factory Plan A).** Measured cause: 444 open
   cards, 235 claimed and then abandoned with no recorded reason, some claimed
   hundreds of times. Cards looped because their acceptance criteria named an
