@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+- **Fold the tank seat into atlas; seat depinning did not land (nimble-factory
+  Plan B2).** ADR-0005 names ATLAS as Operations, and ATLAS absorbed tank's real
+  activity (releases and rollback rehearsals, 26 events), so `LIFECYCLE_SEATS`
+  in `src/skcapstone/lifecycle_seats.py` is now five: link, mero, seraph,
+  niobe, atlas. The `skfleet-tank.service` / `skfleet-tank.timer` pair is
+  deleted from both systemd trees, and the bounded batch dispatch layer in
+  `seat_cycle_entrypoint.py` now accepts `atlas` only, not `{"tank", "atlas"}`.
+  `seat_manifest_audit.SEATS` now derives from `LIFECYCLE_SEATS` instead of
+  restating it as a second hardcoded roster, which is exactly the drift that
+  briefly had the audit still checking a seat, tank, that no longer existed.
+  `seat_boundaries.Seat.TANK` is
+  deliberately retained: tank is no longer a seat that runs, but it stays a
+  known actor in the authority model so its historical board actions still
+  resolve. `lifecycle_seats` also gained a generator for `seat-placement.json`,
+  so that manifest stops being hand-maintained; nothing in the repository
+  previously wrote it.
+
+  **Plan B2's other half, letting any host in an estate run any seat, did not
+  land, and is dropped rather than deferred.** Its premise was measured false:
+  the CardStore claim fence cannot exclude a concurrent second host. `fcntl.flock`
+  is taken on a card's local directory, and `~/.skcapstone` is a per-host local
+  ext4 volume replicated asynchronously by Syncthing, so the same card has
+  different inodes on different hosts, one flock per host, no cross-machine
+  exclusion. `acquire_card_admission` says as much in its own docstring: "ON
+  THIS HOST." `active_host` in `seat-control-plane.json` is therefore currently
+  the only cross-host exclusion the estate has, and seats remain host-pinned to
+  it. See [Amendment B](docs/superpowers/specs/2026-09-17-seat-exclusion-amendment.md)
+  for the measured cause, three options, and a recommendation. This change is
+  code and tests only: nothing here was rolled out to any live host, and no
+  live estate's `seat-placement.json` or `seat-control-plane.json` was touched.
+
 - **PR policy: branch push by default, PR per batch (nimble-factory Plan B1).**
   Measured cause: of the six skcapstone workflows, `docs-check` and `secret-scan`
   fire on any branch push and cost about 0.4 minutes total, while `ci`, `pytest`,

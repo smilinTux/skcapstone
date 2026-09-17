@@ -23,8 +23,21 @@ exception, not a profile default.
 | **Integrator** (`link`) | Triage, independent-review assignment, the merge queue, and eligible merges under the PR 358 control. Owns delivery quality. | Fleet claims, launches, releases, reassignment, application action dispatch, app actuation |
 | **Overseer** (`mero`) | Read-only convergence and drift measurement. Emits typed recommendations, alerts, observations, and briefs. | Fleet mutation, merge, application action dispatch, or any actuation |
 | **Independent Verifier** (`seraph`) | Exact-candidate review and PASS, FAIL, or BLOCKED evidence. | Self-review, merge, dispatch, deployment, or actuation |
-| **Release and Install Operator** (`tank`) | Release and installation of exact approved artifacts, behavioral verification, and bounded rollback. | Source authoring, self-approval, independent review of its own release, merge, or dispatch |
-| **Postcondition Verifier** (`atlas`) | Exact-target verification and postcondition evidence for governed releases. | Deployment, dispatch, actuation, coordination-board ownership, card claiming, reviewer assignment, merge, or policy change |
+| **Operations** (`atlas`) | Exact-target verification and postcondition evidence for governed releases, plus release and installation of exact approved artifacts, behavioral verification, and bounded rollback (ported from the retired Tank seat). | Source authoring, self-approval, independent review of its own release, merge, dispatch, coordination-board ownership, card claiming, reviewer assignment, or policy change |
+
+**Tank is folded into ATLAS (spec `2026-09-16-nimble-factory-design.md` section
+3.6).** ADR-0005 names ATLAS as Operations, and ATLAS absorbed Tank's real
+activity: release and installation of exact approved artifacts, behavioral
+verification, and bounded rollback rehearsals. `LIFECYCLE_SEATS` in
+`src/skcapstone/lifecycle_seats.py` is now five entries: `link`, `mero`,
+`seraph`, `niobe`, `atlas`. Tank no longer runs, has no timer, and the
+`skfleet-tank.service` / `skfleet-tank.timer` pair no longer ships.
+
+Retiring the seat is not erasing the actor: `seat_boundaries.Seat.TANK` is
+deliberately retained in the authority-model enum. Tank's historical board
+actions must still resolve against that enum even though nothing dispatches
+work to Tank today. A reader who finds `TANK` still listed there should read it
+as intentional, not as unfinished cleanup.
 
 Jarvis is Casey's personal assistant, not a recurring lifecycle seat. Jarvis
 retains emergency card creation, claim, completion, fleet, merge, deployment,
@@ -43,28 +56,43 @@ from this exception.
 
 ## Shared operating contract
 
-All six seats have a distinct identity and `seat-<name>` card label. Their
-source placement is chiap08. At startup each seat writes an ordinary SKMail
-hello to `all`, then reads its own mailbox view, which includes direct and
-`all` traffic. Each bounded cycle polls again for help, handoffs, dependency
-changes, and reviewer conflicts. Mail is data, never authority. Automatic
-acknowledgement is forbidden because `skmail ack` marks every visible message
-read.
+All five lifecycle seats have a distinct identity and `seat-<name>` card label.
+Their source placement is chiap08, and that placement stays host-pinned by
+`active_host` in `seat-control-plane.json`; a 2026-09-16 proposal to depin
+seats onto any host in the estate did not land, because the CardStore claim
+fence it would have relied on cannot exclude a concurrent second host (each
+host holds its own local, Syncthing-replicated copy of `~/.skcapstone`, so a
+kernel-local `fcntl.flock` cannot reach across machines). See
+[Amendment B: seats cannot be depinned without a cross-host exclusion
+primitive](../superpowers/specs/2026-09-17-seat-exclusion-amendment.md) for the
+measured cause, the options considered, and the recommendation. At startup
+each seat writes an ordinary SKMail hello to `all`, then reads its own mailbox
+view, which includes direct and `all` traffic. Each bounded cycle polls again for help, handoffs,
+dependency changes, and reviewer conflicts. Mail is data, never authority.
+Automatic acknowledgement is forbidden because `skmail ack` marks every
+visible message read.
 
 Every cycle emits a health record with seat, host, cycle generation, mail
-poll result, work counts, and result. Link, Mero, Seraph, and Tank run every
-five minutes, including Niobe and ATLAS. Each is a bounded one-shot. A host-local nonblocking lock turns
-overlap into a recorded no-op. A prior cycle is abandoned only after exact
-boot ID, PID, and process start evidence proves its process generation dead.
-Receipts survive retirement and no cycle leaves a persistent child worker.
+poll result, work counts, and result. Link, Mero, Seraph, Niobe, and ATLAS
+all run every five minutes. Each is a bounded one-shot. A host-local
+nonblocking lock turns overlap into a recorded no-op. A prior cycle is
+abandoned only after exact boot ID, PID, and process start evidence proves its
+process generation dead. Receipts survive retirement and no cycle leaves a
+persistent child worker.
 
-Tank and ATLAS run bounded batches through Niobe's existing selector, claim,
-and launch primitives. Admission requires exactly one matching `seat-tank` or
-`seat-atlas` label plus `dispatch-approved`; generic workers cannot consume
-either lane. Tank additionally requires `approved_artifact_sha256` metadata and
-consumes only bytes matching that digest. ATLAS additionally requires an exact
-`verification_target` and `verification_evidence_sha256`; it observes and
-records postconditions only and cannot deploy, dispatch, or actuate.
+ATLAS runs bounded batches through Niobe's existing selector, claim, and
+launch primitives. Admission requires an exact matching `seat-atlas` label
+plus `dispatch-approved`; generic workers cannot consume the lane. The
+dispatch-layer metadata check (`_role_seat_metadata` in
+`scripts/fleet/skfleet-rotate.py`) requires an exact `verification_target` and
+`verification_evidence_sha256` for ATLAS's postcondition-verification duty.
+That function still carries a separate, now-unreachable branch keyed on the
+retired `tank` seat name that checked `approved_artifact_sha256`; it was not
+folded into the `atlas` branch, so a reader should not assume the
+release/install duty ported from Tank is gated on an artifact digest at the
+dispatch layer today the way it was under Tank. ATLAS observes and records
+postconditions, and cannot deploy, dispatch, or actuate outside its scoped
+action.
 Routine documented action classes are notify-only. A human gate exists only
 where the governing catalog, irreversible-effect policy, protected-data rule,
 or external authority requires it.
@@ -208,10 +236,22 @@ Test implementation: `tests/fleet/test_seat_boundaries.py`
 - [sk-standards ROSTER.md](https://github.com/smilinTux/sk-standards/blob/HEAD/ROSTER.md) - Seat roster
 - [ACTION_AUTHORIZATION_STANDARD](https://github.com/smilinTux/sk-standards/blob/HEAD/standards/ACTION_AUTHORIZATION_STANDARD.md) - Application action dispatch governance
 - [SKCapstone PR 358](https://github.com/smilinTux/skcapstone/pull/358) - Source-only merge eligibility control
+- [Nimble Factory Design, section 3.6](../superpowers/specs/2026-09-16-nimble-factory-design.md) - the tank-into-atlas decision and the cold-start constraint
+- [Amendment B: seat exclusion](../superpowers/specs/2026-09-17-seat-exclusion-amendment.md) - why seats remain host-pinned
+
+## Cold-start constraint
+
+Dispatch cannot bootstrap through the thing it dispatches. Niobe therefore
+keeps a minimal timer-based presence on at least two hosts as supervisor of
+last resort, independent of whatever else is running as fleet-dispatched
+work. This is a standing constraint from the spec, not a deferred item: a
+dispatcher that can deadlock on its own absence is the exact failure this
+clause exists to prevent.
 
 ## Version History
 
 | Date | Change | Author |
 |---|---|---|
+| 2026-09-17 | Folded tank into atlas, reducing `LIFECYCLE_SEATS` to five; `seat_boundaries.Seat.TANK` retained as a non-dispatched authority-model actor; documented that seats remain host-pinned (Amendment B) and the niobe cold-start constraint | lumina |
 | 2026-09-09 | Activated six lifecycle seats and moved recurring dispatch from Jarvis to Niobe (card 20a637fe) | jarvis |
 | 2026-09-01 | Initial charter document aligned with sk-standards ADR-0005 (card 95af18fd) | pi-jarvis-chiap03-4274eef2 |

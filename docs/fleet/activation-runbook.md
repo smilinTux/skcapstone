@@ -7,6 +7,16 @@ This is the shortest safe path to full role-specific capacity. Routine work is
 automatic and notify-only. Casey is interrupted only when a governing catalog
 or policy requires a human decision.
 
+**Seats remain host-pinned.** A 2026-09-16 proposal to let any host in the
+estate run any seat did not land: the CardStore claim fence it would have
+relied on cannot exclude a concurrent second host, since each host holds a
+separate local copy of `~/.skcapstone` replicated asynchronously by
+Syncthing. See [Amendment B](../superpowers/specs/2026-09-17-seat-exclusion-amendment.md)
+for the measured cause and the options for a future fix. Niobe keeps a
+minimal timer presence on at least two hosts as supervisor of last resort,
+because dispatch cannot bootstrap through the thing it dispatches; see
+[seat-charters.md](./seat-charters.md#cold-start-constraint).
+
 ## 0. Local preflight
 
 Run on chiap08 from the SKCapstone workspace:
@@ -100,11 +110,7 @@ scope, the five fleet actions only, explicit denial of merge, deploy,
 application actuation, and external dispatch, the immutable card core hash,
 the named unit, exact rollback action, and a future expiry.
 
-## 4. Tank and Seraph
-
-Tank is active as a card-scoped worker, not a permanent daemon. Tank executes
-only an exact approved release or deployment card with pinned artifact and
-rollback evidence.
+## 4. Seraph
 
 Seraph uses the bounded `skfleet-seraph.timer` on the active control-plane
 host. Each invocation may claim and launch at most one canonical review card,
@@ -115,11 +121,23 @@ notify-only; production authority remains an external gate.
 
 ## 5. ATLAS and Jarvis
 
+**Tank is retired as a running seat and its duties are folded into ATLAS**
+(spec `2026-09-16-nimble-factory-design.md` section 3.6, landed 2026-09-17).
+The `skfleet-tank.service` / `skfleet-tank.timer` pair no longer ships in
+either systemd tree, and `LIFECYCLE_SEATS` in
+`src/skcapstone/lifecycle_seats.py` is five entries, not six. Tank's real
+activity, card-scoped release and installation of exact approved artifacts
+with pinned rollback evidence, is now part of ATLAS's scope alongside its
+existing postcondition-verification duty. `seat_boundaries.Seat.TANK` is
+still present in the authority-model enum so Tank's historical board actions
+keep resolving; it just no longer receives dispatched work or runs a cycle.
+
 ATLAS is active for bounded presence and exact card-scoped operations. Its
-presence cycle reads SKMail and emits health but does not claim work or actuate.
-An operations card reaches ATLAS through Niobe and remains subject to the
-ActionIntent catalog, exact capability, rollback, and verification gates.
-Routine catalog-authorized work is notify-only.
+presence cycle reads SKMail and emits health but does not claim work or actuate
+outside an admitted, labeled batch. An operations card reaches ATLAS through
+Niobe and remains subject to the ActionIntent catalog, exact capability,
+rollback, and verification gates. Routine catalog-authorized work is
+notify-only.
 
 Jarvis remains Casey's assistant. Jarvis may use card, fleet, and verification
 tools immediately when Casey directs it. Merge, deployment, release, and
@@ -131,6 +149,16 @@ exact action, target, change, and `skcapstone,skdashboard,skworld` scope before
 calling the mutation. A missing or mismatched direction fails closed.
 
 ## Rollback
+
+**This section is a historical record of the 2026-09-06 Niobe cutover.** It
+predates the 2026-09-17 fold of tank into atlas: the `skfleet-tank.timer`
+named below existed on 2026-09-06 and no longer exists today, since the
+`skfleet-tank.service` / `skfleet-tank.timer` pair was deleted from both
+systemd trees. Do not run the `--legacy-timer skfleet-tank.timer` example
+verbatim on a current host; there is nothing left to disable under that name.
+The general shape (stop the orchestrator, prove the forbidden units are
+inactive, only then re-enable a legacy timer) still applies to seraph and
+niobe.
 
 Disable only the affected unit, preserve evidence, and return the seat to its
 last safe state. The approved Niobe rollback is:
@@ -187,17 +215,24 @@ rolls back through its card-pinned artifact procedure. Seraph rolls back by
 disabling `skfleet-seraph.timer`, preserving append-only review evidence, and
 reverting its pinned source commit. A feed failure disables Link's eligibility
 input; it does not trigger GitHub mutations.
-### Converge the six lifecycle profiles
+### Converge the five lifecycle profiles
 
 After independently reviewed package installation and before enabling timers,
 converge the packaged control record and role profiles into the existing
 sovereign agent homes. The command refuses missing or mismatched identities and
 captures every replaced file in an exact rollback bundle.
 
+As of 2026-09-17 this converges five profiles (`link`, `mero`, `seraph`,
+`niobe`, `atlas`), not six: tank is folded into atlas and no longer has its
+own converged profile. Older rollback bundles under a
+`lifecycle-six-seat-<change-id>` directory name predate the fold; name new
+bundles `lifecycle-five-seat-<change-id>` so the directory name does not
+imply a roster that no longer exists.
+
 ```bash
 python -m skcapstone.lifecycle_seats converge \
   --home "$HOME/.skcapstone" \
-  --rollback-dir "$HOME/.skcapstone/rollback/lifecycle-six-seat-<change-id>"
+  --rollback-dir "$HOME/.skcapstone/rollback/lifecycle-five-seat-<change-id>"
 ```
 
 Rollback fails closed if any installed target changed after convergence:
@@ -205,5 +240,5 @@ Rollback fails closed if any installed target changed after convergence:
 ```bash
 python -m skcapstone.lifecycle_seats rollback \
   --home "$HOME/.skcapstone" \
-  --rollback-dir "$HOME/.skcapstone/rollback/lifecycle-six-seat-<change-id>"
+  --rollback-dir "$HOME/.skcapstone/rollback/lifecycle-five-seat-<change-id>"
 ```
