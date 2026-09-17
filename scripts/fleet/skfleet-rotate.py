@@ -1801,6 +1801,17 @@ for _f in glob.glob(os.path.join(EVID,"*","actions.log")):
 # unconditionally. reopen is the one explicit path that clears terminality.
 _COLUMNS = {"backlog", "ready", "doing", "review", "done"}
 _NOT_CLAIMABLE = {"not-claimable", "sprint-container", "do-not-claim"}
+# Answers: does this card need the dispatch-approved opt-in before it can be
+# dispatched at all. This is an ADMISSION gate, not a routing gate.
+# _QWEN_UNSUITABLE (scripts/fleet/skfleet-rotate.py, near line 5733) answers a
+# different question: can the qwen lane specifically take this card. The two
+# share a subject-matter prefix (capauth, credential, custody, and so on) on
+# purpose, because the same categories that require sign-off also tend to be
+# ones a cheap lane should not touch unsupervised. That overlap is deliberate,
+# not duplication. Do not merge these two patterns: collapsing them folds an
+# admission policy into a routing policy and breaks lane selection with no
+# test catching it at the call sites, since the two are read at different
+# points in the pipeline for different purposes.
 _SENSITIVE_CATEGORY = re.compile(
     r"(capauth|credential|custody|issuer|secret|\bkey\b|rollback|"
     r"deploy|production|release|migrat)", re.I)
@@ -5730,6 +5741,17 @@ def needs_escalation(cid, core=None, labels=None):
         return False
     return bool(_ts and _CAPABILITY_VERDICT_RE.search(str(_val or "")))
 
+# Answers: can the qwen lane specifically take this card. This is a ROUTING
+# gate, not an admission gate. _SENSITIVE_CATEGORY (scripts/fleet/skfleet-rotate.py,
+# near line 1815) answers a different question: does this card need the
+# dispatch-approved opt-in before it can be dispatched at all. The shared
+# prefix (capauth, credential, custody, and so on) is deliberate subject-matter
+# overlap, not duplication: this pattern extends that prefix with terms
+# (schema, architecture, [HUMAN], [XL]) that are fine for a supervised lane
+# but wrong for qwen unsupervised. Do not merge these two patterns: collapsing
+# them folds a routing policy into an admission policy and breaks lane
+# selection with no test catching it at the call sites, since the two are
+# read at different points in the pipeline for different purposes.
 _QWEN_UNSUITABLE = re.compile(
     r"(capauth|credential|custody|issuer|secret|\bkey\b|rollback|deploy|"
     r"production|release|migrat|schema|architecture|\[HUMAN\]|\[XL\])", re.I)
