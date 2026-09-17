@@ -47,7 +47,16 @@ dependencies = [
     # 0.1.46 changed parity absence semantics, 0.1.51 changed KanbanBoard.cards()
     # from failing closed to degrading one unreadable card. Neither was announced
     # because neither had to be: the floor was 0.1.44 and anything satisfied it.
-    "skcoord>=0.1.69",
+    #
+    # Bumped 2026-09-17: this branch calls Board.release_claim(abandon_reason=...),
+    # which does not exist in any skcoord release through 0.1.76 (verified against
+    # the skcoord repo: the feature lives only on its sibling spec branch, not yet
+    # merged to main or tagged). The floor is set one past the newest published
+    # tag so installing this package fails loudly until skcoord actually ships
+    # the version carrying abandon_reason, rather than silently resolving to
+    # 0.1.69 or any other real-but-lacking release. Do not lower this to make
+    # the dependency resolve; the ordering fix is that skcoord ships first.
+    "skcoord>=0.1.77",
     "skmemory>=0.5.0",
     "skskills>=0.1.1",
 ]
