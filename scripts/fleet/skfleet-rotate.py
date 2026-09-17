@@ -1816,6 +1816,32 @@ _SENSITIVE_CATEGORY = re.compile(
     r"(capauth|credential|custody|issuer|secret|\bkey\b|rollback|"
     r"deploy|production|release|migrat)", re.I)
 _CATEGORY_OPT_IN = "dispatch-approved"
+
+
+def pr_required(core) -> bool:
+    """Return True when a card's work needs a pull request, not just a pushed branch.
+
+    Reads the raw core.json dict directly, on purpose: a model read through
+    CardCore/CardStore.fold silently drops unknown fields on a node running an
+    older skcoord, which produces a check that passes every test against real
+    data and enforces nothing in production. The raw field for a card's tags
+    is initial_labels (confirmed against live cards under ~/.skcapstone/cards;
+    core.json never carries a "tags" key), so that is what this checks, not
+    "tags".
+
+    Matches the card's title or any tag against _SENSITIVE_CATEGORY, the same
+    pattern the admission gate at _claimability_reason uses. A missing, empty,
+    or non-string title never raises; it is simply not a match.
+    """
+    if not isinstance(core, dict):
+        return False
+    title = core.get("title")
+    if isinstance(title, str) and _SENSITIVE_CATEGORY.search(title):
+        return True
+    for tag in core.get("initial_labels") or []:
+        if isinstance(tag, str) and _SENSITIVE_CATEGORY.search(tag):
+            return True
+    return False
 # Criteria a worker CANNOT satisfy alone: they name another seat's verdict or a
 # merge. Measured 2026-09-16: 160 of 444 open SKLegal cards carried one, and
 # those cards averaged 3.39 claims against 1.96 for cards without.

@@ -77,3 +77,70 @@ def test_category_matchers_are_not_equivalent() -> None:
     assert qwen_unsuitable.search("revise the architecture") is not None
     assert sensitive.search("update the schema") is None
     assert sensitive.search("revise the architecture") is None
+
+
+def _load_pr_required() -> dict[str, object]:
+    """Extract ``_SENSITIVE_CATEGORY`` and ``pr_required`` from the source.
+
+    ``pr_required`` reads the raw ``core.json`` dict directly (never through
+    ``CardCore``/``CardStore.fold``: a model read silently drops fields on a
+    node running an older skcoord), so this loader pulls both the regex it
+    depends on and the function itself, unmodified, straight from the live
+    source and executes them together in one namespace so the function's
+    module-level lookup of ``_SENSITIVE_CATEGORY`` resolves correctly.
+    """
+    tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
+    assign_node = None
+    func_node = None
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "_SENSITIVE_CATEGORY"
+            for target in node.targets
+        ):
+            assign_node = node
+        if isinstance(node, ast.FunctionDef) and node.name == "pr_required":
+            func_node = node
+    assert assign_node is not None, "_SENSITIVE_CATEGORY not found"
+    assert func_node is not None, "pr_required not found"
+    namespace: dict[str, object] = {"re": re}
+    module = ast.Module(body=[assign_node, func_node], type_ignores=[])
+    exec(compile(module, str(ROTATE), "exec"), namespace)
+    return namespace
+
+
+def test_sensitive_title_requires_pr() -> None:
+    namespace = _load_pr_required()
+    pr_required = namespace["pr_required"]
+    assert pr_required({"title": "rotate the deploy key"}) is True
+
+
+def test_ordinary_title_does_not_require_pr() -> None:
+    namespace = _load_pr_required()
+    pr_required = namespace["pr_required"]
+    assert pr_required({"title": "fix a typo in the README"}) is False
+
+
+def test_sensitive_tag_requires_pr() -> None:
+    namespace = _load_pr_required()
+    pr_required = namespace["pr_required"]
+    core = {"title": "fix a typo in the README", "initial_labels": ["migration"]}
+    assert pr_required(core) is True
+
+
+def test_missing_title_does_not_raise() -> None:
+    namespace = _load_pr_required()
+    pr_required = namespace["pr_required"]
+    assert pr_required({}) is False
+
+
+def test_empty_title_does_not_raise() -> None:
+    namespace = _load_pr_required()
+    pr_required = namespace["pr_required"]
+    assert pr_required({"title": ""}) is False
+
+
+def test_non_string_title_does_not_raise() -> None:
+    namespace = _load_pr_required()
+    pr_required = namespace["pr_required"]
+    assert pr_required({"title": None}) is False
+    assert pr_required({"title": 12345}) is False
