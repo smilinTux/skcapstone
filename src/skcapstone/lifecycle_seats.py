@@ -198,8 +198,34 @@ def _atomic_write(path: Path, payload: bytes) -> None:
         raise
 
 
+def _existing_active_host(home: Path) -> str | None:
+    """Read the ``active_host`` a prior convergence already elected, if any.
+
+    Args:
+        home: The estate home whose synced control plane is consulted.
+
+    Returns:
+        The elected host, or ``None`` if no control plane has synced yet, or
+        it cannot be read as JSON, or it carries no ``active_host``. A
+        missing or unreadable record is not evidence of a conflict, so it is
+        treated the same as a bootstrap: nothing to disagree with.
+    """
+    path = home / "coordination/seat-control-plane.json"
+    if not path.is_file():
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    existing = value.get("active_host") if isinstance(value, dict) else None
+    return str(existing).strip().lower() if existing else None
+
+
 def converge_lifecycle_seats(
-    home: Path, rollback_dir: Path, active_host: str | None = None
+    home: Path,
+    rollback_dir: Path,
+    active_host: str | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
     """Idempotently install canonical profiles and control data with rollback.
 
@@ -214,20 +240,48 @@ def converge_lifecycle_seats(
     manifest, and a rollback of one always rolls back the other, so the pair
     can never drift apart the way the hand-maintained file did.
 
+    Before the placement generator was wired in, a stale hand-maintained
+    placement file was an accidental brake: converging on a non-elected host
+    produced a pin conflict and refused. Wiring the generator removed that
+    brake, so this function now derives its own: if the synced control plane
+    already names an ``active_host`` different from the one about to be
+    written, convergence refuses. Running it anyway would re-elect the local
+    host, and during the Syncthing replication window the old elected host
+    and the new one would each read a record naming themselves and both
+    dispatch, the exact double-dispatch ``active_host`` exists to prevent
+    (see :mod:`skcapstone.estate`).
+
     Args:
         home: The estate home to converge into.
         rollback_dir: Where prior file contents are captured for rollback.
         active_host: The host every seat is provisioned to. ``None`` derives
             it from the local machine, matching the prior behaviour of
             ``load_seat_control_plane()`` called with no argument.
+        force: Bypass the election-mismatch refusal. Only for a deliberate,
+            confirmed migration off a host that is gone or decommissioned,
+            never for routine convergence.
 
     Returns:
         The rollback manifest, with a top-level ``sha256`` of its own bytes.
+
+    Raises:
+        ValueError: A synced control-plane record elects a different host
+            than the one being written, and ``force`` was not passed.
     """
 
     home = Path(home)
     rollback_dir = Path(rollback_dir)
     host = local_host(active_host)
+    existing_host = _existing_active_host(home)
+    if existing_host and existing_host != host and not force:
+        raise ValueError(
+            "refusing to converge: the synced control plane elects "
+            f"'{existing_host}', but this convergence would write '{host}'. "
+            f"Run converge on {existing_host} instead, or, only after "
+            f"confirming the election is being deliberately moved off "
+            f"{existing_host} (it is gone or decommissioned), pass "
+            "force=True (--force on the CLI)."
+        )
     profiles = load_lifecycle_seat_profiles()
     control = load_seat_control_plane(host)
     placement = generate_seat_placement_manifest(active_host=host, home=home)
@@ -338,15 +392,36 @@ def rollback_lifecycle_seats(home: Path, rollback_dir: Path) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Converge or roll back the five lifecycle profiles."""
+    """Converge or roll back the five lifecycle profiles.
+
+    There is deliberately no ``--active-host`` flag: convergence is meant to
+    run ON the host being elected, deriving ``active_host`` from the local
+    machine, never remotely naming a different one. A flag that let an
+    operator on host A elect host B without ever running there would
+    reopen the same double-dispatch risk ``--force`` exists to guard, not
+    solve it: a converge on B has to actually run on B, or its identity and
+    profile files never land there at all. ``--force`` only bypasses the
+    election-mismatch refusal for a deliberate migration; it never lets the
+    operator pick an arbitrary host.
+    """
 
     parser = argparse.ArgumentParser()
     parser.add_argument("operation", choices=("converge", "rollback"))
     parser.add_argument("--home", type=Path, required=True)
     parser.add_argument("--rollback-dir", type=Path, required=True)
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Bypass the refusal when the synced control plane already elects "
+            "a different active host. Only for a deliberate migration off a "
+            "host that is gone or decommissioned."
+        ),
+    )
     args = parser.parse_args(argv)
     if args.operation == "converge":
-        print(json.dumps(converge_lifecycle_seats(args.home, args.rollback_dir), sort_keys=True))
+        result = converge_lifecycle_seats(args.home, args.rollback_dir, force=args.force)
+        print(json.dumps(result, sort_keys=True))
     else:
         rollback_lifecycle_seats(args.home, args.rollback_dir)
     return 0
