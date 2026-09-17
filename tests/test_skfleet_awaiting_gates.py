@@ -62,7 +62,15 @@ def test_reopen_clears_awaiting_gates():
 
 
 def test_awaiting_gates_card_is_not_claimable():
-    ns = _load({"_claimability_reason", "_coord_task_claimable", "non_implementation", "host_pin"}, set())
+    ns = _load(
+        {
+            "_claimability_reason",
+            "_coord_task_claimable",
+            "non_implementation",
+            "host_pin",
+        },
+        set(),
+    )
     state = {
         "title": "t",
         "description": "",
@@ -131,9 +139,7 @@ def test_v2_card_with_reviewer_criterion_is_refused():
     core = {
         "kind": "task",
         "spec_version": 2,
-        "acceptance_criteria": [
-            "Independent review PASS on the successor commit before merge"
-        ],
+        "acceptance_criteria": ["Independent review PASS on the successor commit before merge"],
     }
     assert ns["_claimability_reason"](core, dict(BASE_STATE)) == "criteria-not-satisfiable"
 
@@ -157,9 +163,7 @@ def test_legacy_card_with_reviewer_criterion_is_untouched():
     ns = _load_gate()
     core = {
         "kind": "task",
-        "acceptance_criteria": [
-            "Independent review PASS on the successor commit before merge"
-        ],
+        "acceptance_criteria": ["Independent review PASS on the successor commit before merge"],
     }
     assert ns["_claimability_reason"](core, dict(BASE_STATE)) == "claimable"
 
@@ -174,3 +178,12 @@ def test_gate_language_in_exit_gates_is_fine():
         "exit_gates": [{"gate": "independent-review", "owner": "seraph"}],
     }
     assert ns["_claimability_reason"](core, dict(BASE_STATE)) == "claimable"
+
+
+def test_reopen_then_await_gates_ends_awaiting():
+    """reopen's reset must not swallow a later await_gates."""
+    ns = _load({"_fold_claimability"}, {"_COLUMNS"})
+    core = {"title": "t", "dependencies": [], "initial_labels": []}
+    rows = [{"action": "reopen"}, {"action": "await_gates"}]
+    state = ns["_fold_claimability"](core, rows)
+    assert state["awaiting_gates"] is True
