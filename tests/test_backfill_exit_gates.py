@@ -31,6 +31,8 @@ def _make_card(
     claims: int = 0,
     complete: bool = False,
     void: bool = False,
+    archive: bool = False,
+    move_to: str | None = None,
 ) -> Path:
     card_dir = cards_dir / card_id
     card_dir.mkdir(parents=True)
@@ -51,6 +53,12 @@ def _make_card(
         seq += 1
     if void:
         _write_event(events_dir, "w", seq, action="void")
+        seq += 1
+    if archive:
+        _write_event(events_dir, "w", seq, action="archive")
+        seq += 1
+    if move_to is not None:
+        _write_event(events_dir, "w", seq, action="move", column=move_to)
         seq += 1
     return card_dir
 
@@ -189,7 +197,7 @@ def test_scope_filter_excludes_two_claims(tmp_path):
         ["Tests pass", "Independent review PASS before merge"],
         claims=2,
     )
-    candidates, skipped = discover_candidates(home, min_claims=3)
+    candidates, skipped, _unreadable = discover_candidates(home, min_claims=3)
     assert candidates == []
     assert skipped == []
 
@@ -203,7 +211,7 @@ def test_scope_filter_includes_three_claims(tmp_path):
         ["Tests pass", "Independent review PASS before merge"],
         claims=3,
     )
-    candidates, _skipped = discover_candidates(home, min_claims=3)
+    candidates, _skipped, _unreadable = discover_candidates(home, min_claims=3)
     ids = [core["id"] for _card_dir, core, _kept, _gates in candidates]
     assert ids == ["cccc3333"]
 
@@ -218,7 +226,7 @@ def test_scope_filter_excludes_completed_card_even_with_five_claims(tmp_path):
         claims=5,
         complete=True,
     )
-    candidates, skipped = discover_candidates(home, min_claims=3)
+    candidates, skipped, _unreadable = discover_candidates(home, min_claims=3)
     assert candidates == []
     assert skipped == []
 
@@ -237,7 +245,7 @@ def test_zero_kept_guard_skips_and_reports(tmp_path, capsys):
     )
     before = (card_dir / "core.json").read_bytes()
 
-    candidates, skipped = discover_candidates(home, min_claims=3)
+    candidates, skipped, _unreadable = discover_candidates(home, min_claims=3)
     assert candidates == []
     assert skipped == ["eeee5555"]
 
@@ -261,7 +269,7 @@ def test_backup_written_before_any_card_is_modified(tmp_path):
         ["Tests pass", "Independent review PASS before merge"],
         claims=3,
     )
-    candidates, _skipped = discover_candidates(home, min_claims=3)
+    candidates, _skipped, _unreadable = discover_candidates(home, min_claims=3)
     backup_path = tmp_path / "backup.json"
 
     before = (card_dir / "core.json").read_bytes()
@@ -271,3 +279,111 @@ def test_backup_written_before_any_card_is_modified(tmp_path):
     assert after == before
     payload = json.loads(backup_path.read_text(encoding="utf-8"))
     assert payload == {"ffff6666": ["Tests pass", "Independent review PASS before merge"]}
+
+
+# --- The open predicate: archive and move-to-done are closed too -----------
+#
+# skfleet-rotate.py's own fold treats a move to column "done" as equal in
+# standing to an explicit "complete" event (see _completion_epoch, which
+# matches action == "complete" OR (action == "move" and column == "done")).
+# An "archive" event is its own closed signal. A card in either state has
+# already left OPEN and must not be eligible for the destructive split.
+
+
+def test_scope_filter_excludes_archived_card(tmp_path):
+    home = tmp_path / "home"
+    cards_dir = home / "cards"
+    _make_card(
+        cards_dir,
+        "gggg7777",
+        ["Tests pass", "Independent review PASS before merge"],
+        claims=3,
+        archive=True,
+    )
+    candidates, skipped, _unreadable = discover_candidates(home, min_claims=3)
+    assert candidates == []
+    assert skipped == []
+
+
+def test_scope_filter_excludes_card_moved_to_done(tmp_path):
+    home = tmp_path / "home"
+    cards_dir = home / "cards"
+    _make_card(
+        cards_dir,
+        "hhhh8888",
+        ["Tests pass", "Independent review PASS before merge"],
+        claims=3,
+        move_to="done",
+    )
+    candidates, skipped, _unreadable = discover_candidates(home, min_claims=3)
+    assert candidates == []
+    assert skipped == []
+
+
+def test_scope_filter_includes_card_moved_to_a_non_done_column(tmp_path):
+    """A move to a non-terminal column is not a completion signal."""
+    home = tmp_path / "home"
+    cards_dir = home / "cards"
+    _make_card(
+        cards_dir,
+        "iiii9999",
+        ["Tests pass", "Independent review PASS before merge"],
+        claims=3,
+        move_to="review",
+    )
+    candidates, _skipped, _unreadable = discover_candidates(home, min_claims=3)
+    ids = [core["id"] for _card_dir, core, _kept, _gates in candidates]
+    assert ids == ["iiii9999"]
+
+
+def test_scope_filter_still_includes_a_genuinely_open_card(tmp_path):
+    """Guard against over-correcting the predicate into excluding everything."""
+    home = tmp_path / "home"
+    cards_dir = home / "cards"
+    _make_card(
+        cards_dir,
+        "jjjj0000",
+        ["Tests pass", "Independent review PASS before merge"],
+        claims=4,
+    )
+    candidates, _skipped, _unreadable = discover_candidates(home, min_claims=3)
+    ids = [core["id"] for _card_dir, core, _kept, _gates in candidates]
+    assert ids == ["jjjj0000"]
+
+
+# --- An unreadable core.json is skipped and counted, not fatal -------------
+
+
+def test_unreadable_card_is_skipped_and_walk_continues(tmp_path):
+    home = tmp_path / "home"
+    cards_dir = home / "cards"
+    broken_dir = cards_dir / "aaaa0000-broken"
+    broken_dir.mkdir(parents=True)
+    (broken_dir / "core.json").write_text("{not valid json", encoding="utf-8")
+
+    _make_card(
+        cards_dir,
+        "zzzz9999",
+        ["Tests pass", "Independent review PASS before merge"],
+        claims=3,
+    )
+
+    candidates, _skipped, unreadable = discover_candidates(home, min_claims=3)
+    ids = [core["id"] for _card_dir, core, _kept, _gates in candidates]
+    assert ids == ["zzzz9999"]
+    assert unreadable == ["aaaa0000-broken"]
+
+
+def test_unreadable_card_count_is_reported_by_main(tmp_path, capsys):
+    home = tmp_path / "home"
+    cards_dir = home / "cards"
+    broken_dir = cards_dir / "broken0001"
+    broken_dir.mkdir(parents=True)
+    (broken_dir / "core.json").write_text("not json at all", encoding="utf-8")
+
+    exit_code = main(["--home", str(home)])
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "unreadable" in out.lower()
+    assert "broken0001" in out

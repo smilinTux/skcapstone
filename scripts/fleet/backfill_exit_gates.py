@@ -55,6 +55,15 @@ def split_criteria(criteria: list[str]) -> tuple[list[str], list[dict]]:
 
 
 def card_actions(card_dir: Path) -> collections.Counter:
+    """Count event actions in this card's event log.
+
+    Also folds in a synthetic "_done_by_move" count for any move event to
+    column "done". That matches skfleet-rotate.py's own completion-evidence
+    semantics: its _completion_epoch treats action == "complete" and
+    (action == "move" and column == "done") as equal in standing, because
+    the dispatcher's own fold sets status = "done" on both. A card closed
+    either way is not OPEN and must not be in scope here.
+    """
     counts: collections.Counter = collections.Counter()
     events_dir = card_dir / "events"
     if not events_dir.exists():
@@ -62,9 +71,13 @@ def card_actions(card_dir: Path) -> collections.Counter:
     for log in events_dir.glob("*.jsonl"):
         for line in log.read_text(encoding="utf-8", errors="ignore").splitlines():
             try:
-                counts[json.loads(line).get("action")] += 1
+                event = json.loads(line)
             except Exception:
                 continue
+            action = event.get("action")
+            counts[action] += 1
+            if action == "move" and str(event.get("column") or "").strip().lower() == "done":
+                counts["_done_by_move"] += 1
     return counts
 
 
@@ -73,30 +86,46 @@ Candidate = tuple[Path, dict, list[str], list[dict]]
 
 def discover_candidates(
     home: Path, min_claims: int
-) -> tuple[list[Candidate], list[str]]:
+) -> tuple[list[Candidate], list[str], list[str]]:
     """Walk home/cards and partition it into writable candidates and skips.
 
-    A card qualifies only if it is still open (never completed or voided),
-    claimed at least min_claims times, and the split moves at least one
-    criterion into exit_gates. A card whose split would leave
-    acceptance_criteria empty is never written; its id is returned in the
-    second list for a human to look at instead.
+    A card qualifies only if it is still genuinely OPEN: no complete event,
+    no void event, no archive event, and no move event to column "done"
+    (the dispatcher treats move-to-done as equal in standing to complete;
+    see card_actions). It must also be claimed at least min_claims times,
+    and the split must move at least one criterion into exit_gates. A card
+    whose split would leave acceptance_criteria empty is never written; its
+    id is returned in the second list for a human to look at instead.
+
+    A card whose core.json cannot be read (missing on disk mid-walk,
+    permission denied, corrupt JSON, or valid JSON that is not an object)
+    is skipped rather than aborting the whole walk. Its id is returned in
+    the third list so the caller can report how many were skipped.
     """
     cards_dir = home / "cards"
     candidates: list[Candidate] = []
     skipped_zero_kept: list[str] = []
+    unreadable: list[str] = []
     if not cards_dir.exists():
-        return candidates, skipped_zero_kept
+        return candidates, skipped_zero_kept, unreadable
     for card_dir in sorted(cards_dir.iterdir()):
         core_path = card_dir / "core.json"
         if not core_path.exists():
             continue
-        core = json.loads(core_path.read_text(encoding="utf-8"))
+        try:
+            core = json.loads(core_path.read_text(encoding="utf-8"))
+            if not isinstance(core, dict):
+                raise ValueError("core.json did not decode to a JSON object")
+        except (OSError, ValueError):
+            unreadable.append(card_dir.name)
+            continue
         criteria = core.get("acceptance_criteria") or []
         if not criteria:
             continue
         counts = card_actions(card_dir)
-        if counts.get("complete") or counts.get("void"):
+        if counts.get("complete") or counts.get("void") or counts.get("archive"):
+            continue
+        if counts.get("_done_by_move"):
             continue
         if counts.get("claim", 0) < min_claims:
             continue
@@ -107,7 +136,7 @@ def discover_candidates(
             skipped_zero_kept.append(core.get("id") or card_dir.name)
             continue
         candidates.append((card_dir, core, kept, gates))
-    return candidates, skipped_zero_kept
+    return candidates, skipped_zero_kept, unreadable
 
 
 def default_backup_path(home: Path) -> Path:
@@ -156,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     home = Path(args.home)
-    candidates, skipped_zero_kept = discover_candidates(home, args.min_claims)
+    candidates, skipped_zero_kept, unreadable = discover_candidates(home, args.min_claims)
 
     print(f"cards in scope: {len(candidates)}")
     for card_dir, _core, kept, gates in candidates:
@@ -167,6 +196,10 @@ def main(argv: list[str] | None = None) -> int:
         f"{len(skipped_zero_kept)}"
     )
     for card_id in skipped_zero_kept:
+        print(f"  {card_id}")
+
+    print(f"unreadable core.json, skipped: {len(unreadable)}")
+    for card_id in unreadable:
         print(f"  {card_id}")
 
     if not args.apply:
