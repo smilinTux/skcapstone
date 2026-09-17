@@ -921,6 +921,64 @@ def _worker_search_instructions():
     )
 
 
+def _worker_done_instructions(pr_required_now):
+    """Build the DEFINITION OF DONE fragment for the worker launch brief.
+
+    A pushed branch plus a recorded commit SHA is the default handoff, not an
+    open pull request: a routine card no longer pays a 20 to 30 minute PR
+    cycle. ``pr_required_now`` (the caller passes ``pr_required(core)``) adds
+    the immediate-PR clause for sensitive cards only.
+
+    This intentionally does NOT consult the dispatch-approved label.
+    dispatch-approved answers whether a worker may take a sensitive card at
+    all; pr_required answers how the result must be published. A sensitive
+    card approved for dispatch still touches credentials or deploys, so it
+    still earns a PR, not a waiver.
+    """
+    done = (
+        "DEFINITION OF DONE, applies to every card that touches a repository:\n"
+        "Work is NOT done until the branch is pushed and the exact commit SHA is\n"
+        "recorded. An edit left uncommitted, or a commit left unpushed, is not\n"
+        "delivered: a later pull or checkout by any session sharing that checkout\n"
+        "destroys it without trace. Two entire repositories were found emptied on\n"
+        "disk this way, and a night of agent work was found sitting untracked in\n"
+        "live checkouts. So, in this exact order:\n"
+        "1. Branch first. NEVER commit to main or master. Use fix/, feat/ or chore/.\n"
+        "2. Commit as soon as the code is written and a fast check passes. Do NOT\n"
+        "   wait for a long test run: commit, then run it, then amend or add a\n"
+        "   follow-up commit. Never gate a commit on a job you are waiting on.\n"
+        "3. Push the branch. An unpushed commit is destroyed by any other session's\n"
+        "   checkout of that tree, so pushing is mandatory: the pushed branch plus\n"
+        "   the recorded SHA is the handoff.\n"
+        "4. Put the exact commit SHA and the branch name in your verdict AND in\n"
+        "   your skmail. A verdict claiming work was done with no reachable SHA is\n"
+        "   incomplete.\n"
+        "5. Open a PR only when the card is sensitive (title or label matches\n"
+        "   capauth, credential, custody, issuer, secret, key, rollback, deploy,\n"
+        "   production, release, or migration) or when you are asked to. A PR is\n"
+        "   what costs the CI cycle and the wait, so it is reserved for changes\n"
+        "   that earn it. Otherwise the Integrator seat opens one PR per batch,\n"
+        "   not you.\n"
+        "6. Attribute the commit to yourself, the agent that did the work. Never\n"
+        "   claim co-authorship you cannot evidence.\n"
+        "7. Clean up: remove scratch files and temp worktrees. Scratch belongs\n"
+        "   outside the repo.\n"
+        "If the card needs no repository change, say so explicitly in your verdict\n"
+        "so the absence of a PR is a recorded decision rather than an omission.\n"
+        "- Never use an em dash or en dash.\n"
+    )
+    if pr_required_now:
+        done += (
+            "THIS CARD REQUIRES AN IMMEDIATE PR. Its title or a label matches a\n"
+            "sensitive category (capauth, credential, custody, issuer, secret, key,\n"
+            "rollback, deploy, production, release, or migration), so open a PR now\n"
+            "with gh pr create and put the PR URL in your verdict, in addition to\n"
+            "the commit SHA above. This is separate from dispatch-approved: that\n"
+            "label only says you may take the card, it does not waive the PR.\n"
+        )
+    return done
+
+
 def _seraph_terminal_noop(
     host, only_seat, dry, pick_count, processed_picks, launch_receipts
 ):
@@ -6175,9 +6233,10 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
       "directly. Read your inbox before you start and before you finish: someone may have\n"
       "answered the question you are about to spend an hour on, or told you the card is\n"
       "void. Coordination beats duplicated effort.\n"
-      "- PUBLISH YOUR WORK. Commit to a feature branch, push it, and open a PR. This is\n"
-      "  required, not optional: a candidate that exists only in your worktree cannot be\n"
-      "  reviewed, is one pull away from being erased, and does not count as done.\n"
+      "- PUBLISH YOUR WORK. Commit to a feature branch and push it. This is required,\n"
+      "  not optional: an unpushed commit is destroyed by any other session's checkout\n"
+      "  of that tree and does not count as done. Open a PR only when the card is\n"
+      "  sensitive or you are asked to; see DEFINITION OF DONE below.\n"
       "- Do NOT commit or push to main, and do NOT merge. Landing is a separate decision\n"
       "  a human makes on a reviewed PR.\n"
       "- No deploy, restart, live gateway or config mutation, credential disclosure,\n"
@@ -6237,25 +6296,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
       "- If you push a branch, say so and name it, because a pushed branch IS durable\n"
       "  and reachable from any host. That is the cheapest way to satisfy this.\n"
       "A SHA with no reachable bytes is not evidence. It is a promise that expired.\n"
-      "DEFINITION OF DONE, applies to every card that touches a repository:\n"
-      "Work is NOT done until it is an open pull request. An edit left uncommitted,\n"
-      "or a commit left unpushed, is not delivered: a later pull or checkout by any\n"
-      "session sharing that checkout destroys it without trace. Two entire repositories\n"
-      "were found emptied on disk this way, and a night of agent work was found sitting\n"
-      "untracked in live checkouts. So, in this exact order:\n"
-      "1. Branch first. NEVER commit to main or master. Use fix/, feat/ or chore/.\n"
-      "2. Commit as soon as the code is written and a fast check passes. Do NOT wait for\n"
-      "   a long test run: commit, then run it, then amend or add a follow-up commit.\n"
-      "   Never gate a commit on a job you are waiting on.\n"
-      "3. Push the branch and open a PR with gh pr create.\n"
-      "4. Put the PR URL in your verdict AND in your skmail. A verdict claiming work was\n"
-      "   done with no PR URL is incomplete and will be treated as unverified.\n"
-      "5. Attribute the commit to yourself, the agent that did the work. Never claim\n"
-      "   co-authorship you cannot evidence.\n"
-      "6. Clean up: remove scratch files and temp worktrees. Scratch belongs outside the repo.\n"
-      "If the card needs no repository change, say so explicitly in your verdict so the\n"
-      "absence of a PR is a recorded decision rather than an omission.\n"
-      "- Never use an em dash or en dash.\n")
+      + _worker_done_instructions(pr_required(core)))
     brief=_RAILS + ("Work only SKCapstone card %s. The fleet selector has already claimed it "
       "for your exact agent identity. Verify that ownership before working and never "
       "claim or substitute another card. If ownership is absent, or a dependency is "

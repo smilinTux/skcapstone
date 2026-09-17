@@ -144,3 +144,105 @@ def test_non_string_title_does_not_raise() -> None:
     pr_required = namespace["pr_required"]
     assert pr_required({"title": None}) is False
     assert pr_required({"title": 12345}) is False
+
+
+def _load_done_instructions() -> dict[str, object]:
+    """Extract ``_worker_done_instructions`` from the source, unmodified.
+
+    Follows the pattern of ``_worker_mail_instructions`` /
+    ``_worker_search_instructions`` in ``tests/test_skfleet_mail_routing.py``
+    and ``tests/test_skfleet_worker_search_policy.py``: the worker brief text
+    is built by a standalone, argument-driven function rather than inline in
+    the launch loop, specifically so it can be extracted and unit tested
+    without executing the whole fleet-rotate script.
+    """
+    tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
+    node = next(
+        item
+        for item in tree.body
+        if isinstance(item, ast.FunctionDef) and item.name == "_worker_done_instructions"
+    )
+    namespace: dict[str, object] = {}
+    exec(compile(ast.Module([node], []), str(ROTATE), "exec"), namespace)
+    return namespace
+
+
+def test_definition_of_done_drops_pr_mandate() -> None:
+    """The old blanket PR mandate must be gone from both variants of the text."""
+    done_instructions = _load_done_instructions()["_worker_done_instructions"]
+    for pr_flag in (False, True):
+        text = done_instructions(pr_flag)
+        assert "Work is NOT done until it is an open pull request" not in text
+
+
+def test_definition_of_done_requires_commit_sha_in_verdict() -> None:
+    done_instructions = _load_done_instructions()["_worker_done_instructions"]
+    text = done_instructions(False)
+    assert "commit SHA" in text
+    assert "branch name" in text
+    assert "verdict" in text
+    assert "skmail" in text
+
+
+def test_definition_of_done_requires_push_before_pr_language() -> None:
+    """Pushing the branch, not opening a PR, is what the definition calls the handoff."""
+    done_instructions = _load_done_instructions()["_worker_done_instructions"]
+    text = done_instructions(False)
+    assert "Push the branch" in text
+    assert "handoff" in text
+
+
+def test_pr_required_true_adds_immediate_pr_instruction() -> None:
+    done_instructions = _load_done_instructions()["_worker_done_instructions"]
+    text = done_instructions(True)
+    assert "gh pr create" in text
+    assert "PR URL" in text
+    for category in (
+        "capauth",
+        "credential",
+        "custody",
+        "issuer",
+        "secret",
+        "key",
+        "rollback",
+        "deploy",
+        "production",
+        "release",
+        "migration",
+    ):
+        assert category in text
+
+
+def test_pr_required_false_omits_immediate_pr_instruction() -> None:
+    done_instructions = _load_done_instructions()["_worker_done_instructions"]
+    text = done_instructions(False)
+    assert "gh pr create" not in text
+
+
+def test_definition_of_done_no_em_dash_or_en_dash() -> None:
+    done_instructions = _load_done_instructions()["_worker_done_instructions"]
+    for pr_flag in (False, True):
+        text = done_instructions(pr_flag)
+        assert "—" not in text
+        assert "–" not in text
+
+
+def test_call_site_wires_pr_required_into_done_instructions() -> None:
+    """The launch loop must call _worker_done_instructions(pr_required(core)).
+
+    A unit-tested function nobody calls proves nothing about the assembled
+    launch string. This checks the raw source for the call site so a future
+    edit cannot silently stop wiring the two together.
+    """
+    source = ROTATE.read_text(encoding="utf-8")
+    assert "_worker_done_instructions(pr_required(core))" in source
+
+
+def test_old_pr_mandate_string_removed_from_whole_file() -> None:
+    """The literal old-policy sentence must not survive anywhere in the file."""
+    source = ROTATE.read_text(encoding="utf-8")
+    assert "Work is NOT done until it is an open pull request" not in source
+    assert (
+        "Put the PR URL in your verdict AND in your skmail. A verdict claiming work was"
+        not in source
+    )
