@@ -124,11 +124,11 @@ def test_profile_convergence_is_exact_idempotent_and_rollback_safe(tmp_path: Pat
     prior.parent.mkdir(parents=True)
     prior.write_text("prior\n")
 
-    first = converge_lifecycle_seats(home, rollback)
+    first = converge_lifecycle_seats(home, rollback, active_host="chiap08")
     installed = {
         seat: (home / "agents" / seat / PROFILE_FILENAME).read_bytes() for seat in LIFECYCLE_SEATS
     }
-    second = converge_lifecycle_seats(home, tmp_path / "rollback-second")
+    second = converge_lifecycle_seats(home, tmp_path / "rollback-second", active_host="chiap08")
     assert first["schema"] == second["schema"]
     assert set(installed) == LIFECYCLE_SEATS
     assert all(b'"poll_interval_seconds":300' in value for value in installed.values())
@@ -142,9 +142,16 @@ def test_profile_convergence_is_exact_idempotent_and_rollback_safe(tmp_path: Pat
         for value in installed.values()
     )
     assert all((home / "agents" / seat / STARTUP_FILENAME).is_file() for seat in LIFECYCLE_SEATS)
-    assert load_seat_control_plane() == json.loads(
+    assert load_seat_control_plane("chiap08") == json.loads(
         (home / "coordination/seat-control-plane.json").read_text()
     )
+    # The placement manifest belongs to the same write set as the control
+    # plane: it is generated, not hand-maintained, and every seat maps to
+    # exactly one host (seats are not depinned; a second host per seat would
+    # let two machines dispatch the same cards twice).
+    placement = json.loads((home / "coordination/seat-placement.json").read_text())
+    assert set(placement["seats"]) == LIFECYCLE_SEATS
+    assert all(hosts == ["chiap08"] for hosts in placement["seats"].values())
 
     rollback_lifecycle_seats(home, rollback)
     assert prior.read_text() == "prior\n"
@@ -154,6 +161,9 @@ def test_profile_convergence_is_exact_idempotent_and_rollback_safe(tmp_path: Pat
         not (home / "agents" / seat / STARTUP_FILENAME).exists() for seat in LIFECYCLE_SEATS
     )
     assert not (home / "coordination/seat-control-plane.json").exists()
+    # Rollback must undo the placement manifest in step with the control
+    # plane, never one without the other.
+    assert not (home / "coordination/seat-placement.json").exists()
 
 
 def test_profile_convergence_refuses_missing_or_mismatched_identity(tmp_path: Path) -> None:
@@ -164,7 +174,7 @@ def test_profile_convergence_refuses_missing_or_mismatched_identity(tmp_path: Pa
         identity.write_text(json.dumps({"name": seat.title()}))
     (home / "agents/atlas/identity/identity.json").write_text(json.dumps({"name": "Jarvis"}))
     try:
-        converge_lifecycle_seats(home, tmp_path / "rollback")
+        converge_lifecycle_seats(home, tmp_path / "rollback", active_host="chiap08")
     except ValueError as exc:
         assert "identity does not match" in str(exc)
     else:

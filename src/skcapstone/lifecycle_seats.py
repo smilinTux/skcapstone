@@ -198,15 +198,42 @@ def _atomic_write(path: Path, payload: bytes) -> None:
         raise
 
 
-def converge_lifecycle_seats(home: Path, rollback_dir: Path) -> dict[str, Any]:
-    """Idempotently install canonical profiles and control data with rollback."""
+def converge_lifecycle_seats(
+    home: Path, rollback_dir: Path, active_host: str | None = None
+) -> dict[str, Any]:
+    """Idempotently install canonical profiles and control data with rollback.
+
+    The placement manifest (``coordination/seat-placement.json``) is
+    generated and written in the same pass as the control plane, not by a
+    separate mechanism. ``generate_seat_placement_manifest`` used to have no
+    production caller at all: it had ten passing tests and enforced nothing,
+    because the dispatcher it feeds
+    (``scripts/fleet/skfleet-rotate.py::_load_seat_placement``) fails closed
+    on a file nothing ever wrote. Folding it into this write set means every
+    convergence that updates the control plane also refreshes the placement
+    manifest, and a rollback of one always rolls back the other, so the pair
+    can never drift apart the way the hand-maintained file did.
+
+    Args:
+        home: The estate home to converge into.
+        rollback_dir: Where prior file contents are captured for rollback.
+        active_host: The host every seat is provisioned to. ``None`` derives
+            it from the local machine, matching the prior behaviour of
+            ``load_seat_control_plane()`` called with no argument.
+
+    Returns:
+        The rollback manifest, with a top-level ``sha256`` of its own bytes.
+    """
 
     home = Path(home)
     rollback_dir = Path(rollback_dir)
+    host = local_host(active_host)
     profiles = load_lifecycle_seat_profiles()
-    control = load_seat_control_plane()
+    control = load_seat_control_plane(host)
+    placement = generate_seat_placement_manifest(active_host=host, home=home)
     targets: list[tuple[Path, bytes]] = [
-        (home / "coordination/seat-control-plane.json", _canonical_bytes(control))
+        (home / "coordination/seat-control-plane.json", _canonical_bytes(control)),
+        (home / "coordination/seat-placement.json", _canonical_bytes(placement)),
     ]
     for seat in sorted(LIFECYCLE_SEATS):
         agent_home = home / "agents" / seat
