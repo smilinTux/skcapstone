@@ -6,25 +6,32 @@ This closes the gap from both ends: completing a gated card now records
 ``await_gates`` instead of ``complete``, and ``coord satisfy-gate`` is the
 only way to clear a gate so a later completion can proceed.
 
-The read path is the trap this whole task exists to avoid: ``exit_gates``
-lives on ``core.json`` only, and the installed ``CardCore`` silently drops it
-via pydantic's default extra="ignore". Every test here goes through the real
-CLI and the real card_store, so a regression that switches to a CardCore/fold
-read shows up as a failing test, not a silent no-op.
+The read path is the trap this whole task exists to avoid. ``exit_gates`` is
+written straight onto ``core.json``, and every reader here goes through the
+real CLI and the real card_store rather than a model. That independence is the
+point: skcoord versions before 0.1.77 had no ``exit_gates`` field on
+``CardCore`` and, with pydantic defaulting to extra="ignore", dropped it
+silently, so a fold-based read saw an empty list on every card and enforced
+nothing while looking healthy. 0.1.77 added the field, but a node mid-rollout
+or pinned older still behaves the old way, so the read path must not depend on
+the model either way.
 """
 
 from __future__ import annotations
 
+import ast
+import inspect
 import json
+import textwrap
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
-from skcoord.card_store import CardCore
 
 from skcapstone.cli import main
 from skcapstone.coord_completion import (
     GatesPending,
+    _read_core_exit_gates,
     complete_coord_task,
     move_coord_task,
     outstanding_gates,
@@ -44,7 +51,7 @@ def _make_card(
 
     exit_gates is never passed through CardCore: it is written straight onto
     core.json after creation, the same way the real backfill tooling does it,
-    because CardCore has no field for it at all.
+    because the read path must not depend on the model carrying the field.
     """
     board = Board(home)
     board.ensure_dirs()
@@ -106,7 +113,22 @@ def test_card_with_one_outstanding_gate_gets_await_gates_not_complete(
 def test_exit_gates_are_read_from_core_json_not_the_cardcore_model(
     tmp_path: Path,
 ) -> None:
-    """Pin the trap: CardCore drops exit_gates, our reader must not."""
+    """The reader must read core.json directly, never through CardCore.
+
+    History, because this test used to assert the opposite and went red the
+    moment it came true. Older installed skcoord versions lacked exit_gates on
+    CardCore and, with pydantic defaulting to extra="ignore", silently dropped
+    the field on load. A reader going through CardStore.fold or any CardCore
+    path therefore saw an empty list on every card, passed every test against
+    real data, and enforced nothing.
+
+    skcoord 0.1.77 added the field, so asserting that CardCore drops it now
+    fails. That assertion was never the property worth pinning: it encoded which
+    skcoord happened to be installed. What matters is that this reader does not
+    depend on the model carrying the field, so it stays correct on a node that
+    is mid-rollout or pinned to an older skcoord. Do not reintroduce a
+    CardCore/fold read here.
+    """
     home = tmp_path / "home"
     _make_card(
         home,
@@ -114,15 +136,21 @@ def test_exit_gates_are_read_from_core_json_not_the_cardcore_model(
         "trap card",
         exit_gates=[{"gate": "g1", "owner": "seraph"}],
     )
-    core_path = home / "cards" / "cccc3333" / "core.json"
-    core = json.loads(core_path.read_text())
-
-    # Confirm the trap is real: the installed CardCore silently drops the field.
-    dumped = CardCore(**core).model_dump()
-    assert "exit_gates" not in dumped
-
-    # Our reader goes around CardCore entirely and still sees the gate.
+    # The reader goes around CardCore entirely, whatever the model does.
     assert outstanding_gates(home, "cccc3333") == [{"gate": "g1", "owner": "seraph"}]
+
+    # Pin the independence structurally, not by asserting what the installed
+    # CardCore happens to do. A value assertion alone stopped catching the
+    # regression the moment skcoord 0.1.77 added the field, because a
+    # model-based reader started returning the right answer here while still
+    # being wrong on any node running an older skcoord.
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_read_core_exit_gates)))
+    fn = tree.body[0]
+    body = fn.body[1:] if ast.get_docstring(fn) else fn.body
+    code = "\n".join(ast.dump(node) for node in body)
+    assert "core.json" in code
+    assert "CardCore" not in code
+    assert "fold" not in code
 
 
 def test_satisfy_gate_rejects_a_name_not_in_exit_gates(tmp_path: Path) -> None:
