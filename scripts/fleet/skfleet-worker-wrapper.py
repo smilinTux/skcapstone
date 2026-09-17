@@ -22,6 +22,12 @@ from skcapstone.fleet.terminal_capacity import (
     retire_worker_generation,
 )
 from skcapstone.fleet.worker_watchdog import StartupObservation, classify_startup
+from skcapstone.fleet.workspace_lifecycle import (
+    WorkspaceProof,
+    cleanup_decision,
+    recovery_manifest,
+    write_manifest,
+)
 from skcapstone.review_verdict import validate_review_completion
 from skcapstone.seat_mail import poll_mail, startup_hello
 
@@ -663,6 +669,87 @@ def record_terminal_exit(
         handle.write("\n")
 
 
+def record_workspace_lifecycle_decision(args: argparse.Namespace, outcome: str) -> None:
+    """Record a real cleanup-eligibility decision; never delete anything here.
+
+    Reads live Git state of this process's own cwd, which is the exact
+    directory skfleet-rotate.py's _worker_launch_command binds as the
+    systemd unit's working directory, so it is genuinely this worker's
+    workspace, not an assertion about it. Combined with the card's current
+    commit_sha/branch custody links, this makes
+    skcapstone.fleet.workspace_lifecycle.cleanup_decision reachable from a
+    real worker exit for the first time: the ported version
+    (stranded commit a45aed76) defined and tested that function but nothing
+    in production ever called it.
+
+    Execution stays out of scope on purpose. This never calls
+    cleanup_worktree(execute=True): docs/fleet/workspace-lifecycle.md and
+    scripts/fleet/skfleet-rotate.py's worker prompt both say an agent must
+    never delete its own workspace, so the decision this writes is a record
+    for a later, separate, authorized cleanup pass to act on, not an action
+    taken here.
+    # intentionally-unwired: workspace deletion. No such later pass exists
+    # in this codebase yet (workspace_runtime.retire_workspace has no
+    # production caller either); building one is out of this task's scope.
+    """
+    try:
+        home = Path.home() / ".skcapstone"
+        status = subprocess.run(
+            ["git", "status", "--porcelain=v1", "-z"], capture_output=True, check=False
+        )
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False
+        )
+        branch = subprocess.run(
+            ["git", "branch", "--show-current"], capture_output=True, text=True, check=False
+        )
+        toplevel = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        entries = [item for item in status.stdout.split(b"\0") if item]
+        proof = WorkspaceProof(
+            card_id=args.card,
+            claim_revision=args.claim_revision,
+            workspace=str(Path.cwd().resolve()),
+            branch=branch.stdout.strip(),
+            head=head.stdout.strip(),
+            porcelain_sha256=hashlib.sha256(status.stdout).hexdigest(),
+            dirty_paths=sum(not item.startswith(b"??") for item in entries),
+            untracked_paths=sum(item.startswith(b"??") for item in entries),
+            active_processes=0,
+            recovery_instructions=(
+                f"Open exact workspace {Path.cwd().resolve()}",
+                f"Verify card {args.card} claim generation {args.claim_revision}",
+                "Preserve dirty bytes and unique commits before any cleanup decision",
+            ),
+            outcome=outcome,
+        )
+        repository = (
+            Path(toplevel.stdout.strip())
+            if toplevel.returncode == 0 and toplevel.stdout.strip()
+            else None
+        )
+        decision = cleanup_decision(proof, home=home, repository=repository)
+        manifest = recovery_manifest(proof, decision.state)
+        path = args.evidence_dir / f"{args.card}-{args.claim_revision}-workspace.json"
+        digest = write_manifest(path, manifest)
+        emit_work_mail(
+            args,
+            "agent.status",
+            f"workspace_state={decision.state.value} manifest_sha256={digest} "
+            f"reasons={','.join(decision.reasons)}",
+        )
+    except Exception as exc:  # noqa: BLE001 - a broken read must not fail the worker
+        emit_work_mail(
+            args,
+            "work.blocked",
+            f"workspace_state=RECOVERABLE_QUARANTINE reason={type(exc).__name__}",
+        )
+
+
 def parse_args() -> argparse.Namespace:
     """Parse wrapper metadata and the child command."""
     parser = argparse.ArgumentParser()
@@ -880,6 +967,7 @@ def main() -> int:
                 result_code = 75
                 completion_failure = reason
         record_terminal_exit(args, stderr, result_code, completion_failure)
+        record_workspace_lifecycle_decision(args, "success" if result_code == 0 else "failure")
         write_process_record(
             args,
             pid=child.pid,

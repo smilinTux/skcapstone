@@ -516,3 +516,178 @@ def test_idle_owner_projection_ignores_identity_mismatch(tmp_path, monkeypatch) 
     before = path.read_text(encoding="utf-8")
     _wrapper().idle_owner_projection("pi-codex-chiap08-deadbeef")
     assert path.read_text(encoding="utf-8") == before
+
+
+# ---- workspace lifecycle wiring (salvaged and reworked from a45aed76) ------
+#
+# Ported from the stranded chiap08 branch (origin/fix/68a14a4f-seat-model-
+# repoint, commit a45aed76). That version left every custody field the ported
+# module checked at None forever, and cleanup_decision() itself was never
+# called from anywhere the fleet actually runs. These tests instead prove
+# cleanup_decision() is reachable from record_workspace_lifecycle_decision,
+# which every fleet worker's own exit path calls, and that the decision it
+# writes reflects the card's real commit_sha/branch links (Plan B1, commit
+# 621c358d), not a hardcoded assumption.
+
+
+def _init_repo(path: Path, branch: str = "card-branch") -> None:
+    """Create a tiny, real Git repository with one commit on ``branch``."""
+    subprocess.run(["git", "init", "-q", "-b", branch, str(path)], check=True)
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.email", "fixture@example.invalid"], check=True
+    )
+    subprocess.run(["git", "-C", str(path), "config", "user.name", "Fixture"], check=True)
+    (path / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(path), "add", "tracked.txt"], check=True)
+    subprocess.run(["git", "-C", str(path), "commit", "-qm", "fixture"], check=True)
+
+
+def test_record_workspace_lifecycle_decision_reaches_cleanup_eligible(
+    tmp_path, monkeypatch
+) -> None:
+    """cleanup_decision() must actually report CLEANUP_ELIGIBLE, reached
+    through the wrapper's own exit path, once the card's commit_sha and
+    branch links are genuine and the workspace is clean."""
+    module = _wrapper()
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    _init_repo(workspace)
+    head = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    coord_home = home / ".skcapstone"
+    coord_home.mkdir(parents=True)
+    store = module.CardStore(coord_home)
+    store.create(CardCore(id="deadbeef", title="synthetic"))
+    store.append_event("deadbeef", "link", "worker", link_key="commit_sha", link_value=head)
+    store.append_event(
+        "deadbeef", "link", "worker", link_key="branch", link_value="fixture:card-branch"
+    )
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.chdir(workspace)
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        module, "emit_work_mail", lambda args, kind, body: calls.append((kind, body))
+    )
+    evidence = tmp_path / "evidence"
+    args = argparse.Namespace(
+        card="deadbeef",
+        claim_revision="rev-1",
+        owner="worker",
+        evidence_dir=evidence,
+        mail_recipient="jarvis",
+        host="chiap08",
+    )
+
+    module.record_workspace_lifecycle_decision(args, "success")
+
+    payload = json.loads((evidence / "deadbeef-rev-1-workspace.json").read_text(encoding="utf-8"))
+    assert payload["state"] == "CLEANUP_ELIGIBLE"
+    assert "CLEANUP_ELIGIBLE" in calls[-1][1]
+
+
+def test_record_workspace_lifecycle_decision_refuses_without_custody(
+    tmp_path, monkeypatch
+) -> None:
+    """No commit_sha/branch link at all must refuse cleanup, not default it in."""
+    module = _wrapper()
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    _init_repo(workspace)
+    coord_home = home / ".skcapstone"
+    coord_home.mkdir(parents=True)
+    module.CardStore(coord_home).create(CardCore(id="deadbeef", title="synthetic"))
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.chdir(workspace)
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        module, "emit_work_mail", lambda args, kind, body: calls.append((kind, body))
+    )
+    evidence = tmp_path / "evidence"
+    args = argparse.Namespace(
+        card="deadbeef",
+        claim_revision="rev-1",
+        owner="worker",
+        evidence_dir=evidence,
+        mail_recipient="jarvis",
+        host="chiap08",
+    )
+
+    module.record_workspace_lifecycle_decision(args, "success")
+
+    payload = json.loads((evidence / "deadbeef-rev-1-workspace.json").read_text(encoding="utf-8"))
+    assert payload["state"] == "HANDOFF_REQUIRED"
+    assert "custody-unverified" in calls[-1][1]
+
+
+def test_wrapper_exit_path_calls_workspace_lifecycle_decision_end_to_end(
+    tmp_path,
+) -> None:
+    """Run the real wrapper end to end and prove cleanup_decision() is reached
+    from a genuine worker exit, not only from a direct unit call. A card with
+    its commit_sha and branch already linked (as Plan B1 requires before a
+    worker exits) must leave a CLEANUP_ELIGIBLE workspace manifest behind."""
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    _init_repo(workspace)
+    head = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    coord_home = home / ".skcapstone"
+    coord_home.mkdir(parents=True)
+    store = _wrapper().CardStore(coord_home)
+    store.create(CardCore(id="deadbeef", title="synthetic"))
+    store.append_event("deadbeef", "link", "worker", link_key="commit_sha", link_value=head)
+    store.append_event(
+        "deadbeef", "link", "worker", link_key="branch", link_value="fixture:card-branch"
+    )
+    stdout = home / "logs" / "deadbeef.log"
+    evidence = home / ".skcapstone" / "evidence" / "fleet-worker-exits"
+    command = [
+        sys.executable,
+        str(WRAPPER),
+        "--card",
+        "deadbeef",
+        "--owner",
+        "worker",
+        "--claim-revision",
+        "rev-1",
+        "--host",
+        "chiap08",
+        "--lane",
+        "codex",
+        "--model",
+        "sk-codex-mid",
+        "--stdout",
+        str(stdout),
+        "--evidence-dir",
+        str(evidence),
+        "--",
+        "bash",
+        "-lc",
+        "echo done; exit 0",
+    ]
+
+    result = subprocess.run(
+        command,
+        cwd=str(workspace),
+        capture_output=True,
+        env={
+            "HOME": str(home),
+            "PATH": "/usr/bin:/bin",
+            "PYTHONPATH": str(ROOT / "src"),
+        },
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr.decode()
+    manifest = evidence / "deadbeef-rev-1-workspace.json"
+    assert manifest.is_file()
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    assert payload["state"] == "CLEANUP_ELIGIBLE"
