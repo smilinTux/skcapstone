@@ -1963,6 +1963,7 @@ def _fold_claimability(core, rows):
         },
         "labels": [str(x) for x in (core.get("initial_labels") or [])],
         "dependencies": [str(x) for x in (core.get("dependencies") or [])],
+        "awaiting_gates": False,
     }
     review_link_keys = {
         "pr", "pull_request", "open_pr", "candidate_evidence_sha256",
@@ -2034,9 +2035,12 @@ def _fold_claimability(core, rows):
             state["terminal"] = True
         elif action == "archive":
             state["archived"] = True
+        elif action == "await_gates":
+            state["awaiting_gates"] = True
         elif action == "reopen":
             state["archived"] = False
             state["terminal"] = False
+            state["awaiting_gates"] = False
             column = str(event.get("column") or "").strip().lower()
             if column in _COLUMNS:
                 state["status"] = column
@@ -2107,6 +2111,8 @@ def _claimability_reason(core, state):
         return "archive"
     if state["status"] == "done":
         return "done"
+    if state.get("awaiting_gates"):
+        return "awaiting-gates"
     if state["owner"] and state["status"] in {"ready", "doing", "review"}:
         return "owned-%s" % state["status"]
     # Review work is a separate lane.  An unowned review card must not fall
