@@ -125,6 +125,266 @@ def test_niobe_admits_four_distinct_requests_and_denies_fifth(paths, operator, n
     )
 
 
+def test_consumer_reconciles_live_first_and_fills_four_slots(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41)
+    writer = store.Writer(role="scheduler", node="niobe", identity="")
+    requests = [
+        builder_dispatch.offer(
+            paths, _card() | {"id": f"24b0000{number}"}, ["sk-m", "source-only"], writer=writer
+        )
+        for number in range(1, 5)
+    ]
+    folded = {request["card_id"]: _folded(id=request["card_id"]) for request in requests}
+    claims = []
+    launches = []
+
+    def claim(_self, owner, card_id):
+        claims.append(card_id)
+        folded[card_id].owner = owner
+        folded[card_id].meta = dict(_card()["meta"], _claim_revision=f"claim-{card_id}")
+
+    monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda _self, card_id: folded[card_id])
+    monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(builder_dispatch, "_proc_start_ticks", lambda pid: str(pid))
+
+    def launch(_command, workspace):
+        launches.append(workspace)
+        return SimpleNamespace(pid=100 + len(launches), poll=lambda: None)
+
+    builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=launch,
+        materializer=lambda _request, workspace: workspace,
+    )
+    assert len(launches) == 4
+    assert len(set(launches)) == 4
+    assert claims == [request["card_id"] for request in requests]
+    builder_dispatch._PROCESSES.clear()  # daemon restart: PID birth tokens remain exact
+    builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=launch,
+        materializer=lambda _request, workspace: workspace,
+    )
+    assert len(launches) == len(claims) == 4
+    for request in requests:
+        status = builder_dispatch._load(
+            builder_dispatch.status_path(paths, "node-ziowk01", request["card_id"])
+        )
+        assert status["state"] == "running"
+        assert status["liveness"] == "live"
+
+
+def test_live_first_request_does_not_hide_queued_second(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41)
+    writer = store.Writer(role="scheduler", node="niobe", identity="")
+    first, second = [
+        builder_dispatch.offer(
+            paths, _card() | {"id": card_id}, ["sk-m", "source-only"], writer=writer
+        )
+        for card_id in ("29a6f24e", "6fe4d373")
+    ]
+    builder_dispatch._write_status(
+        paths,
+        "node-ziowk01",
+        first,
+        "running",
+        owner="pi-builder-standby-node-ziowk01-29a6f24e",
+        claim_revision="first-claim",
+        pid=123,
+        pid_start_ticks="123",
+        attempt=1,
+    )
+    folded = {
+        first["card_id"]: _folded(
+            id=first["card_id"],
+            owner="pi-builder-standby-node-ziowk01-29a6f24e",
+            meta=dict(_card()["meta"], _claim_revision="first-claim"),
+        ),
+        second["card_id"]: _folded(id=second["card_id"]),
+    }
+    claims = []
+
+    def claim(_self, owner, card_id):
+        claims.append(card_id)
+        folded[card_id].owner = owner
+        folded[card_id].meta = dict(_card()["meta"], _claim_revision="second-claim")
+
+    monkeypatch.setattr(builder_dispatch, "_proc_start_ticks", lambda pid: str(pid))
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda _self, card_id: folded[card_id])
+    monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
+    monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
+    result = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=lambda *_args: SimpleNamespace(pid=124, poll=lambda: None),
+        materializer=lambda _request, workspace: workspace,
+    )
+    assert result["request_id"] == second["request_id"]
+    assert claims == [second["card_id"]]
+    assert (
+        builder_dispatch._load(
+            builder_dispatch.status_path(paths, "node-ziowk01", first["card_id"])
+        )["liveness"]
+        == "live"
+    )
+
+
+def test_changed_request_preserves_uncertain_live_generation(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41)
+    request = builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+    )
+    builder_dispatch._write_status(
+        paths,
+        "node-ziowk01",
+        request,
+        "running",
+        owner="prior-owner",
+        claim_revision="prior-revision",
+        pid=123,
+        pid_start_ticks="123",
+        attempt=1,
+    )
+    changed = dict(request, request_id="changed-generation")
+    builder_dispatch.atomic_write_text(
+        builder_dispatch.request_path(paths, "node-ziowk01", request["card_id"]),
+        json.dumps(changed) + "\n",
+    )
+    monkeypatch.setattr(
+        builder_dispatch.Board,
+        "release_claim",
+        lambda *_args, **_kwargs: pytest.fail("released"),
+    )
+    monkeypatch.setattr(
+        builder_dispatch.Board, "claim_task", lambda *_args: pytest.fail("claimed")
+    )
+    assert (
+        builder_dispatch.consume_one(
+            paths,
+            tmp_path,
+            "node-ziowk01",
+            launcher=lambda *_args: pytest.fail("launched"),
+            materializer=lambda *_args: pytest.fail("materialized"),
+        )
+        is None
+    )
+    status = builder_dispatch._load(
+        builder_dispatch.status_path(paths, "node-ziowk01", request["card_id"])
+    )
+    assert status["request_id"] == request["request_id"]
+    assert status["owner"] == "prior-owner"
+
+
+def test_consumer_keeps_fifth_waiting_until_a_slot_closes(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41)
+    writer = store.Writer(role="scheduler", node="niobe", identity="")
+    requests = [
+        builder_dispatch.offer(
+            paths, _card() | {"id": f"24b0000{number}"}, ["sk-m", "source-only"], writer=writer
+        )
+        for number in range(1, 5)
+    ]
+    fifth = dict(requests[-1], card_id="24b00005", request_id="fifth-request")
+    builder_dispatch.atomic_write_text(
+        builder_dispatch.request_path(paths, "node-ziowk01", fifth["card_id"]),
+        json.dumps(fifth) + "\n",
+    )
+    folded = {request["card_id"]: _folded(id=request["card_id"]) for request in [*requests, fifth]}
+    processes = []
+    claims = []
+
+    def claim(_self, owner, card_id):
+        claims.append(card_id)
+        folded[card_id].owner = owner
+        folded[card_id].meta = dict(_card()["meta"], _claim_revision=f"claim-{card_id}")
+
+    def launch(_command, _workspace):
+        process = SimpleNamespace(pid=100 + len(processes), poll=lambda: None)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda _self, card_id: folded[card_id])
+    monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(builder_dispatch, "_proc_start_ticks", lambda pid: str(pid))
+    builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=launch,
+        materializer=lambda _request, workspace: workspace,
+    )
+    assert len(processes) == 4
+    assert fifth["card_id"] not in claims
+    builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=launch,
+        materializer=lambda _request, workspace: workspace,
+    )
+    assert len(processes) == 4
+    processes[0].poll = lambda: 0
+    folded[requests[0]["card_id"]].status = SimpleNamespace(value="done")
+    monkeypatch.setattr(builder_dispatch, "_send_status", lambda *_args: True)
+    builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=launch,
+        materializer=lambda _request, workspace: workspace,
+    )
+    assert len(processes) == 5
+    assert claims[-1] == fifth["card_id"]
+
+
+def test_expired_unclaimed_offer_is_terminal_without_claim(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41)
+    request = builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+        now=datetime(2020, 1, 1, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(
+        builder_dispatch.Board, "claim_task", lambda *_args: pytest.fail("claimed")
+    )
+    for _ in range(2):
+        builder_dispatch.consume_one(
+            paths,
+            tmp_path,
+            "node-ziowk01",
+            launcher=lambda *_args: pytest.fail("launched"),
+            materializer=lambda *_args: pytest.fail("materialized"),
+        )
+    status = builder_dispatch._load(
+        builder_dispatch.status_path(paths, "node-ziowk01", request["card_id"])
+    )
+    assert status["state"] == "blocked"
+    assert status["error"] == "unclaimed offer expired"
+    assert status["attempt"] == 0
+
+
 def test_offer_rejects_wrong_scheduler_and_lane_pins(paths) -> None:
     wrong = store.Writer(role="scheduler", node="atlas", identity="")
     try:

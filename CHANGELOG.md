@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Card `5f178417`: reconcile all running builder requests before filling up to
+  four exact-claim worker slots; preserve uncertain live generations and block
+  expired unclaimed offers without launch.
+
 - Card `3402048c`: re-fold builder offers before each prelaunch binding check;
   durable mismatches block only the exact request generation without consuming
   a launch attempt, while preserving source reconstruction and claim fences.

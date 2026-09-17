@@ -545,14 +545,46 @@ def consume_one(
     launcher: Callable[[list[str], Path], object] | None = None,
     materializer: Callable[[dict, Path], Path] = materialize_source,
 ) -> dict | None:
-    """Claim and launch one exact request on its assigned builder node."""
+    """Reconcile active builders and fill this node's bounded worker slots."""
+    directory = paths.root / "dispatch" / node
+    with _request_exclusion(directory / ".consumer"):
+        return _consume_available(paths, coordination_home, node, launcher, materializer)
+
+
+def _consume_available(
+    paths: FleetPaths,
+    coordination_home: Path,
+    node: str,
+    launcher: Callable[[list[str], Path], object] | None,
+    materializer: Callable[[dict, Path], Path],
+) -> dict | None:
+    """Refresh every active generation before admitting pending requests."""
     spec = store.read_spec(paths, "node", node) or {}
     if spec.get("spec", {}).get("role") != ROLE or spec.get("spec", {}).get("actuate") is not True:
         return None
     if not store.actuation_allowed(paths):
         return None
     directory = paths.root / "dispatch" / node
-    for path in sorted(directory.glob("*.json")) if directory.exists() else ():
+    paths_to_visit = sorted(directory.glob("*.json")) if directory.exists() else ()
+    result = None
+    active = 0
+    for path in paths_to_visit:
+        with _request_exclusion(path):
+            request = _load(path) or {}
+            if (
+                request.get("schema") != "skfleet.builder-dispatch/v1"
+                or request.get("node") != node
+            ):
+                continue
+            prior = _load(status_path(paths, node, request["card_id"])) or {}
+            if prior.get("state") != "running":
+                continue
+            if prior.get("request_id") != request.get("request_id"):
+                active += 1  # Preserve an uncertain prior generation and its claim.
+                continue
+            result = _reconcile_running(paths, coordination_home, node, request, prior)
+            active += result["state"] == "running"
+    for path in paths_to_visit:
         with _request_exclusion(path):
             request = _load(path) or {}
             if (
@@ -566,6 +598,8 @@ def consume_one(
                 and prior.get("request_id") != request.get("request_id")
                 and (prior.get("owner") or prior.get("claim_revision"))
             ):
+                if prior.get("state") == "running":
+                    continue
                 prior_owner = str(prior.get("owner") or "")
                 prior_revision = str(prior.get("claim_revision") or "")
                 released = bool(prior_owner and prior_revision) and _release_exact(
@@ -575,7 +609,7 @@ def consume_one(
                     prior_revision,
                     actor=prior_owner,
                 )
-                return _write_status(
+                result = _write_status(
                     paths,
                     node,
                     request,
@@ -585,14 +619,34 @@ def consume_one(
                     attempt=int(prior.get("attempt") or 0),
                     claim_released=released,
                 )
+                continue
             if prior.get("request_id") == request.get("request_id"):
                 if prior.get("state") == "running":
-                    return _reconcile_running(paths, coordination_home, node, request, prior)
+                    continue
                 if prior.get("state") not in {"failed", "frozen"} or (
                     prior.get("state") == "failed"
                     and int(prior.get("attempt") or 1) >= MAX_ATTEMPTS
                 ):
                     continue
+            try:
+                expires = datetime.strptime(
+                    request["lease_expires_at"], "%Y-%m-%dT%H:%M:%SZ"
+                ).replace(tzinfo=timezone.utc)
+            except (KeyError, TypeError, ValueError):
+                expires = datetime.min.replace(tzinfo=timezone.utc)
+            if _now() > expires:
+                result = _write_status(
+                    paths,
+                    node,
+                    request,
+                    "blocked",
+                    attempt=int(prior.get("attempt") or 0),
+                    claim_released=False,
+                    error="unclaimed offer expired",
+                )
+                continue
+            if active >= BUILDER_CAPACITY:
+                continue
             attempt = int(prior.get("attempt") or 0) + 1
             owner = f"pi-builder-standby-{node}-{request['card_id']}"
             workspace = paths.root / "workspaces" / owner
@@ -731,7 +785,7 @@ def consume_one(
             pid = getattr(process, "pid", None)
             if pid is not None:
                 _PROCESSES[request["request_id"]] = process
-            return _write_status(
+            result = _write_status(
                 paths,
                 node,
                 request,
@@ -742,7 +796,8 @@ def consume_one(
                 pid_start_ticks=_proc_start_ticks(pid) if pid is not None else None,
                 attempt=attempt,
             )
-    return None
+            active += 1
+    return result
 
 
 def recover_stale(
