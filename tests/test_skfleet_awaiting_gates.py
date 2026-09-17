@@ -187,3 +187,19 @@ def test_reopen_then_await_gates_ends_awaiting():
     rows = [{"action": "reopen"}, {"action": "await_gates"}]
     state = ns["_fold_claimability"](core, rows)
     assert state["awaiting_gates"] is True
+
+
+def test_spec_version_null_is_treated_as_v1_and_not_gated():
+    """New v1 cards serialise spec_version: null, not an absent key.
+
+    skcoord e9ae4da gave CardCore a spec_version field defaulting to None, so
+    this is the shape production now writes. Gating it would strand the 160 open
+    cards that carry reviewer criteria.
+    """
+    ns = _load_gate()
+    core = {
+        "kind": "task",
+        "spec_version": None,
+        "acceptance_criteria": ["Independent review PASS on the successor commit before merge"],
+    }
+    assert ns["_claimability_reason"](core, dict(BASE_STATE)) == "claimable"
