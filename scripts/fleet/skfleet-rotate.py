@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 
 from skcapstone.card_store import CardStore
 from skcapstone.coord_completion import GATED_EXIT_CODE
+from skcapstone.lifecycle_seats import LIFECYCLE_SEATS
 from skcapstone.coordination import Board
 from skcapstone.fleet.worker_watchdog import StartupObservation, startup_actuation_fenced
 from skcapstone.fleet.worker_liveness_runtime import run_production_cycle
@@ -2683,6 +2684,15 @@ def _load_seat_placement(path=None):
             return {}, "manifest-seat:%s" % seat
         if not isinstance(raw_hosts, list) or not raw_hosts:
             return {}, "manifest-hosts:%s" % seat
+        if len(raw_hosts) != 1:
+            # Seats are not depinned: the CardStore claim fence cannot
+            # exclude a concurrent second host (~/.skcapstone is per-host
+            # local storage replicated by Syncthing, fcntl.flock cannot
+            # reach across machines), so more than one host for a seat here
+            # is a manifest error, not a valid multi-host placement. This is
+            # defence in depth alongside the producer, which never writes
+            # more than one host per seat.
+            return {}, "manifest-hosts:%s" % seat
         hosts = tuple(str(host).strip().lower() for host in raw_hosts)
         if len(set(hosts)) != len(hosts) or any(host not in ROTATION_HOSTS for host in hosts):
             return {}, "manifest-hosts:%s" % seat
@@ -2694,6 +2704,8 @@ _SEAT_PLACEMENT, _SEAT_PLACEMENT_ERROR = _load_seat_placement()
 _ONLY_SEAT = ONLY_SEAT
 if _ONLY_SEAT and not _SEAT_RE.fullmatch(_ONLY_SEAT):
     raise SystemExit("BLOCKED|SKFLEET_ONLY_SEAT|invalid seat")
+if _ONLY_SEAT and _ONLY_SEAT not in LIFECYCLE_SEATS:
+    raise SystemExit("BLOCKED|SKFLEET_ONLY_SEAT|not a lifecycle seat")
 
 def seat_for(cid, core):
     """Return the named seat this card belongs to, or None.
