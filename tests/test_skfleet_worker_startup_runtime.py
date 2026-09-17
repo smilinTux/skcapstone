@@ -129,6 +129,8 @@ def test_next_cycle_release_requires_negative_proof_and_fresh_fence(tmp_path, mo
             "rev-1",
             "--agent",
             "jarvis",
+            "--abandon-reason",
+            "error",
         ]
         claim[:] = [None, None, None]
         return subprocess.CompletedProcess(command, 0, "", "")

@@ -560,14 +560,23 @@ def register_coord_commands(main: click.Group) -> None:
         help="Exact current claim revision. A newer generation is never released.",
     )
     @click.option("--agent", required=True, help="Audited release actor.")
+    @click.option(
+        "--abandon-reason",
+        default=None,
+        help=(
+            "Why the worker stopped: criteria-unsatisfiable, dependency-unsatisfied, "
+            "capability-missing, error, superseded. Omit and it records unspecified."
+        ),
+    )
     @click.option("--home", default=AGENT_HOME, type=click.Path())
-    def coord_release_claim(task_id, owner, expected_claim_revision, agent, home):
+    def coord_release_claim(task_id, owner, expected_claim_revision, agent, abandon_reason, home):
         """Release one exact claim generation without completing the task."""
+        import uuid
+
         from skcoord.card_store import (
             CardStore,
             card_mutation_lock,
             current_claim_precondition,
-            mirror_coord_release,
         )
         from skcoord.coordination import _board_mutation_lock
 
@@ -612,12 +621,18 @@ def register_coord_commands(main: click.Group) -> None:
                         )
                 owner_projection = board.load_agent(owner)
                 if current_revision is not None:
-                    mirror_coord_release(
-                        home_path,
+                    # Inlined from skcoord.card_store.mirror_coord_release, which
+                    # does not accept abandon_reason. This is the one CardStore
+                    # write the dispatcher and CLI callers share, so it is the
+                    # place a real reason (or an honest unspecified) lands.
+                    CardStore(home_path).append_event(
                         task_id,
-                        owner,
+                        "release_claim",
                         agent,
-                        expected_claim_revision,
+                        released_owner=owner,
+                        expected_claim_revision=expected_claim_revision,
+                        transition_id=uuid.uuid4().hex,
+                        abandon_reason=abandon_reason,
                     )
                     if restore_review:
                         CardStore(home_path).append_event(task_id, "move", agent, column="review")

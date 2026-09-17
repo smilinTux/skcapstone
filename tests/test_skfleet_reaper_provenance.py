@@ -803,6 +803,8 @@ def test_launch_failure_releases_the_exact_claimed_revision() -> None:
             "exact-revision",
             "--agent",
             "worker-owner",
+            "--abandon-reason",
+            "error",
         ]
     ]
 
@@ -846,6 +848,8 @@ def test_genuine_dead_fleet_claim_with_exact_generation_is_released(
             revision,
             "--agent",
             "jarvis",
+            "--abandon-reason",
+            "error",
         ]
     ]
 

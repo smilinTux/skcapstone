@@ -3774,7 +3774,8 @@ def _release_failed_startups():
                 (HOST, cid, owner, revision))
             result = subprocess.run(
                 [SKC, "coord", "release-claim", cid, "--owner", owner,
-                 "--expected-claim-revision", revision, "--agent", "jarvis"],
+                 "--expected-claim-revision", revision, "--agent", "jarvis",
+                 "--abandon-reason", "error"],
                 capture_output=True, text=True, timeout=10)
             fresh_owner, _, fresh_revision = _current_claim_identity_fresh(cid)
             released = (fresh_owner, fresh_revision) != (owner, revision)
@@ -4094,7 +4095,7 @@ def reap_dead_claims():
         r = subprocess.run(
             [SKC, "coord", "release-claim", cid, "--owner", str(fresh_owner),
              "--expected-claim-revision", str(fresh_revision),
-             "--agent", "jarvis"],
+             "--agent", "jarvis", "--abandon-reason", "error"],
             capture_output=True, text=True)
         if r.returncode == 0:
             _rows.pop(cid, None)          # the fold below must re-read from disk
@@ -4793,7 +4794,12 @@ def release_finished_review_claims():
             continue
         result = subprocess.run(
             [SKC, "coord", "release-claim", cid, "--owner", owner,
-             "--expected-claim-revision", revision, "--agent", "fleet-review-closer"],
+             "--expected-claim-revision", revision, "--agent", "fleet-review-closer",
+             # Not an abandonment: the verdict is durable and the process
+             # already exited cleanly. None of the five specific reasons
+             # describe a normal completion cleanup, so this stays honest
+             # rather than borrowing one that would misrepresent it.
+             "--abandon-reason", "unspecified"],
             capture_output=True, text=True,
         )
         if result.returncode != 0:
@@ -6417,7 +6423,10 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         if not _same_generation:
             subprocess.run(
                 [SKC,"coord","release-claim",cid,"--owner",name,
-                 "--expected-claim-revision",claimed_revision,"--agent","niobe"],
+                 "--expected-claim-revision",claimed_revision,"--agent","niobe",
+                 # A live holder already exists for this card; our duplicate
+                 # claim yields to the standing one.
+                 "--abandon-reason","superseded"],
                 capture_output=True,text=True)
         continue
     # Recheck under the lock: the claim won before admission, but the
@@ -6436,7 +6445,10 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
                 name,claimed_revision))
         subprocess.run(
             [SKC,"coord","release-claim",cid,"--owner",name,
-             "--expected-claim-revision",claimed_revision,"--agent","niobe"],
+             "--expected-claim-revision",claimed_revision,"--agent","niobe",
+             # reason=claim-displaced above: a concurrent owner's earlier
+             # claim already won the authoritative fold.
+             "--abandon-reason","superseded"],
             capture_output=True,text=True)
         continue
     if _fanout_request is not None:
@@ -6448,7 +6460,8 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         except (FanoutBoundaryError, OSError, ValueError) as exc:
             subprocess.run(
                 [SKC,"coord","release-claim",cid,"--owner",name,
-                 "--expected-claim-revision",claimed_revision,"--agent","niobe"],
+                 "--expected-claim-revision",claimed_revision,"--agent","niobe",
+                 "--abandon-reason","error"],
                 capture_output=True,text=True)
             log(d,"FANOUT_CLAIM_RECEIPT_FAILED|%s|%s|%s"%(HOST,cid,exc))
             continue
@@ -6563,8 +6576,11 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         except (BoundaryError, OSError, ValueError) as exc:
             log(d, "MERO_OBSERVATION_FAILED|%s|%s|%s" % (HOST, cid, exc))
     if not ok:
+        # LAUNCH_FAILED above: the launch command itself returned nonzero,
+        # so the claimed worker never came alive.
         subprocess.run([SKC,"coord","release-claim",cid,"--owner",name,
-                        "--expected-claim-revision",claimed_revision,"--agent",name],
+                        "--expected-claim-revision",claimed_revision,"--agent",name,
+                        "--abandon-reason","error"],
                        capture_output=True,text=True)
     else:
         launched+=1
