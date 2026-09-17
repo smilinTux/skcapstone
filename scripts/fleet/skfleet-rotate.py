@@ -5887,10 +5887,19 @@ def needs_escalation(cid, core=None, labels=None):
 # read at different points in the pipeline for different purposes.
 _QWEN_UNSUITABLE = re.compile(
     r"(capauth|credential|custody|issuer|secret|\bkey\b|rollback|deploy|"
-    r"production|release|migrat|schema|architecture|\[HUMAN\]|\[XL\])", re.I)
+    r"production|release|migrat|schema|architecture|gateway|skgw|kimi|"
+    r"model[-_ ]?registr|provider[-_ ]?rout|\[HUMAN\]|\[XL\])", re.I)
 
-def qwen_suitable(core):
-    """Return whether Qwen may receive this card before a paid lane."""
+def qwen_suitable(core, labels=None):
+    """Return whether Qwen may receive this card before a paid lane.
+
+    Gateway/provider routing work is not Qwen work by default: a card must
+    explicitly carry ``qwen-suitable`` to opt back in.  Ordinary cards retain
+    the previous title-based suitability rules.
+    """
+    normalized={str(label).strip().lower() for label in (labels or [])}
+    if "qwen-suitable" in normalized:
+        return True
     return not _QWEN_UNSUITABLE.search(str((core or {}).get("title") or ""))
 
 
@@ -5974,7 +5983,7 @@ def _has_launchable_pick(picks, remaining, elastic_remaining, lane_order,
             if elastic else remaining
         )
         lane_name, _reason = select_compatible_lane(
-            labels, escalation, lane_order, available, qwen_suitable(core),
+            labels, escalation, lane_order, available, qwen_suitable(core, labels),
             qwen_exclusive, health, qwen_enabled, glm_enabled,
         )
         if lane_name is not None:
@@ -6032,7 +6041,7 @@ while _i<len(owned) and _i<len(_candidate_scan):
          for name in remaining}
         if _elastic_review else remaining)
     _lane_name,_defer=select_compatible_lane(
-        _labels,_esc,lane_order,_selection_remaining,qwen_suitable(_card[3]),_qwen_exclusive,
+        _labels,_esc,lane_order,_selection_remaining,qwen_suitable(_card[3],_labels),_qwen_exclusive,
         _card_lane_health,QWEN_TARGET>0,GLM_TARGET>0)
     if _lane_name is None:
         _lane_deferred[_defer]+=1
@@ -6239,7 +6248,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
     )
     _attempt_lane_name,_attempt_defer=select_compatible_lane(
         _labels,_attempt_escalation,lane_order,_attempt_remaining,
-        qwen_suitable(core),qwen_first_exclusive(cid,_labels),_attempt_health,
+        qwen_suitable(core,_labels),qwen_first_exclusive(cid,_labels),_attempt_health,
         QWEN_TARGET>0,GLM_TARGET>0)
     if _attempt_lane_name is None:
         log(d,"SKIPPED_ATTEMPT_ADMISSION|%s|%s|reason=%s"%
@@ -6425,7 +6434,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         cid,fresh_claimability["core"],fresh_claimability["labels"])
     compatible,affinity_reason=lane_compatibility(
         fresh_claimability["labels"],fresh_escalation,
-        qwen_suitable(fresh_claimability["core"]),
+        qwen_suitable(fresh_claimability["core"],fresh_claimability["labels"]),
         qwen_first_exclusive(cid,fresh_claimability["labels"]),
         QWEN_TARGET>0,GLM_TARGET>0)
     if _LANE["name"] not in compatible:

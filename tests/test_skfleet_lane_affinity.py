@@ -18,6 +18,7 @@ def _load_lane_helpers() -> dict[str, object]:
         "_fold_claimability",
         "semantic_stage_completed",
         "qwen_first_exclusive",
+        "qwen_suitable",
         "lane_compatibility",
         "select_compatible_lane",
     }
@@ -32,6 +33,7 @@ def _load_lane_helpers() -> dict[str, object]:
                 in {
                     "_LANE_ONLY_LABELS",
                     "_SEMANTIC_COMPLETE_ACTION",
+                    "_QWEN_UNSUITABLE",
                 }
                 for target in node.targets
             )
@@ -192,6 +194,34 @@ def test_qwen_suitable_is_nonexclusive() -> None:
 
 
 @pytest.mark.parametrize(
+    "title",
+    [
+        "[SKGW-KIMI-QUEUE] Expose Kimi capacity",
+        "[SKGW] Repair provider routing",
+        "Update model registry backend",
+    ],
+)
+def test_gateway_and_kimi_cards_are_not_qwen_suitable_by_default(title: str) -> None:
+    namespace = _load_lane_helpers()
+    assert namespace["qwen_suitable"]({"title": title}, []) is False
+
+
+def test_gateway_card_can_opt_in_to_qwen_explicitly() -> None:
+    namespace = _load_lane_helpers()
+    assert (
+        namespace["qwen_suitable"](
+            {"title": "[SKGW-KIMI-QUEUE] Expose Kimi capacity"}, ["qwen-suitable"]
+        )
+        is True
+    )
+
+
+def test_ordinary_card_remains_qwen_suitable() -> None:
+    namespace = _load_lane_helpers()
+    assert namespace["qwen_suitable"]({"title": "Document parser cleanup"}, []) is True
+
+
+@pytest.mark.parametrize(
     ("labels", "qwen_enabled", "glm_enabled", "expected"),
     [
         (["qwen-first"], True, True, "qwen"),
@@ -320,8 +350,15 @@ def test_pool_and_immediate_preclaim_use_the_same_affinity_predicate() -> None:
     assert 'fresh_claimability["labels"]' in source
     assert "SKIPPED_LANE_RACE|" in source
     assert "LANE_DEFER|" in source
-    assert "qwen_suitable(_card[3]),_qwen_exclusive" in source
-    assert 'qwen_suitable(fresh_claimability["core"]),' in source
+    assert "qwen_suitable(_card[3],_labels),_qwen_exclusive" in source
+    assert 'qwen_suitable(fresh_claimability["core"],fresh_claimability["labels"]),' in source
+    # All four call sites must pass labels through, not just the two this
+    # file happened to have when the qwen-routing fix landed. A patch that
+    # only updates two of four looks done but silently under-enforces the
+    # rest, so this counts every call site rather than sampling.
+    assert source.count("qwen_suitable(") == 5  # def plus 4 call sites
+    assert "qwen_suitable(core, labels)," in source
+    assert "qwen_suitable(core,_labels)," in source
     assert 'qwen_first_exclusive(cid,fresh_claimability["labels"])' in source
     assert source.count("QWEN_TARGET>0,GLM_TARGET>0") == 4
     assert "DRY_SELECTION|" in source
