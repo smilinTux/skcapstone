@@ -151,7 +151,22 @@ def move_coord_task(
     column: str,
     order: int | None = None,
 ):
-    """Validate a terminal move, then use the canonical lifecycle mutation."""
+    """Validate a terminal move, then use the canonical lifecycle mutation.
+
+    ``coord move <task_id> done`` reaches the board through this function
+    instead of complete_coord_task, so it is a second entrypoint into the
+    same terminal state and must obey the same exit_gates rule. A move to
+    done with outstanding gates is refused with a ValueError naming the
+    outstanding gates and their owners, rather than being silently
+    converted into an await_gates card the way complete_coord_task
+    converts it: move is a column operation, not a lifecycle assertion, and
+    a caller scripting a move wants to know immediately that it did not
+    happen, not discover later that it became something else. Use
+    coord satisfy-gate for each outstanding gate, then move again.
+
+    A card with no exit_gates, or one whose gates are all satisfied, moves
+    exactly as before. A move to any column other than done is unaffected.
+    """
     from skcoord.lifecycle import transition_task
 
     from .review_verdict import validate_review_completion
@@ -166,6 +181,13 @@ def move_coord_task(
             except (OSError, ValueError):
                 title = ""
         validate_review_completion(task_id, title, home_path)
+        pending = outstanding_gates(home_path, task_id)
+        if pending:
+            names = ", ".join(f"{gate['gate']} (owner: {gate.get('owner')})" for gate in pending)
+            raise ValueError(
+                f"task {task_id} has outstanding exit gates: {names}; "
+                "run coord satisfy-gate for each before moving to done"
+            )
     return transition_task(
         home_path,
         task_id=task_id,

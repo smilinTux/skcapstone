@@ -26,6 +26,7 @@ from skcapstone.cli import main
 from skcapstone.coord_completion import (
     GatesPending,
     complete_coord_task,
+    move_coord_task,
     outstanding_gates,
     satisfy_gate,
 )
@@ -262,3 +263,93 @@ def test_cli_satisfy_gate_rejects_unknown_name(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 1
+
+
+# --- move-to-done bypass (task 11) -----------------------------------------
+#
+# ``coord move <task_id> done`` reaches the board through
+# ``skcoord.lifecycle.transition_task`` instead of ``complete_coord_task``,
+# and never ran the gate check above, so a card with outstanding exit_gates
+# could be moved straight to done with no gate ever satisfied. move_coord_task
+# refuses the move instead of silently converting it into an await_gates
+# card: a worker scripting a move to done wants to know immediately that the
+# move did not happen, not discover later that it turned into something else.
+
+
+def test_move_to_done_with_outstanding_gate_is_refused(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    _make_card(
+        home,
+        "66667777",
+        "gated card",
+        exit_gates=[{"gate": "independent-review", "owner": "seraph"}],
+    )
+
+    with pytest.raises(ValueError, match="independent-review"):
+        move_coord_task(home, "reviewer", "66667777", "done")
+
+    actions = [e.get("action") for e in _events(home, "66667777")]
+    assert "move" not in actions
+
+
+def test_move_to_done_without_exit_gates_is_unchanged(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    _make_card(home, "77778888", "plain card, no gates")
+
+    move_coord_task(home, "reviewer", "77778888", "done")
+
+    actions = [e.get("action") for e in _events(home, "77778888")]
+    assert "move" in actions
+
+
+def test_move_to_non_done_column_with_outstanding_gate_is_unchanged(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    _make_card(
+        home,
+        "88889999",
+        "gated card",
+        exit_gates=[{"gate": "independent-review", "owner": "seraph"}],
+    )
+
+    move_coord_task(home, "reviewer", "88889999", "review")
+
+    actions = [e.get("action") for e in _events(home, "88889999")]
+    assert "move" in actions
+
+
+def test_move_to_done_succeeds_after_all_gates_satisfied(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    _make_card(
+        home,
+        "9999aaaa",
+        "gated card",
+        exit_gates=[{"gate": "independent-review", "owner": "seraph"}],
+    )
+
+    satisfy_gate(home, "9999aaaa", "independent-review", "seraph")
+    move_coord_task(home, "reviewer", "9999aaaa", "done")
+
+    actions = [e.get("action") for e in _events(home, "9999aaaa")]
+    assert "move" in actions
+
+
+def test_cli_move_to_done_reports_outstanding_gate_and_owner(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    _make_card(
+        home,
+        "aaaabbbb",
+        "gated card",
+        exit_gates=[{"gate": "independent-review", "owner": "seraph"}],
+    )
+
+    result = CliRunner().invoke(
+        main,
+        ["coord", "move", "aaaabbbb", "done", "--home", str(home), "--agent", "reviewer"],
+    )
+
+    assert result.exit_code != 0
+    assert "independent-review" in result.output
+    assert "seraph" in result.output
+    assert "satisfy-gate" in result.output
