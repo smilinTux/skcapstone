@@ -543,13 +543,53 @@ def register_coord_commands(main: click.Group) -> None:
             agent, Action.COMPLETE_CARD, task_id, casey_authorization, casey_change_id
         )
 
+        from ..coord_completion import GatesPending
+
         try:
-            ag = complete_coord_task(home_path, agent, task_id)
+            result = complete_coord_task(home_path, agent, task_id)
         except ValueError as e:
             console.print(f"\n  [red]Error:[/] {e}\n")
             sys.exit(1)
+
+        if isinstance(result, GatesPending):
+            console.print(f"\n  [yellow]Awaiting gates:[/] [{task_id}] not completed\n")
+            for gate in result.outstanding:
+                console.print(f"    - {gate.get('gate')} (owner: {gate.get('owner')})")
+            console.print()
+            return
+
         # board.complete_task() automatically mints Joules via _mint_joules_for_task
-        console.print(f"\n  [green]Completed:[/] [{task_id}] by [bold]{ag.agent}[/]\n")
+        console.print(f"\n  [green]Completed:[/] [{task_id}] by [bold]{result.agent}[/]\n")
+
+    @coord.command("satisfy-gate")
+    @click.argument("task_id")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--gate", "gate_name", required=True, help="Exit gate name to satisfy.")
+    @click.option("--agent", required=True, help="Seat satisfying the gate.")
+    def coord_satisfy_gate(task_id, home, gate_name, agent):
+        """Record one exit gate as satisfied by its owning seat.
+
+        Rejects a gate name that is not in the card's exit_gates. Satisfying
+        an already-satisfied gate is not an error and appends nothing.
+        """
+        validate_task_id(task_id)
+        validate_agent_name(agent)
+
+        home_path = Path(home).expanduser()
+        from ..coord_completion import satisfy_gate
+
+        try:
+            appended = satisfy_gate(home_path, task_id, gate_name, agent)
+        except ValueError as e:
+            console.print(f"\n  [red]Error:[/] {e}\n")
+            sys.exit(1)
+
+        if appended:
+            console.print(
+                f"\n  [green]Gate satisfied:[/] [{task_id}] {gate_name} by [bold]{agent}[/]\n"
+            )
+        else:
+            console.print(f"\n  [yellow]Already satisfied:[/] [{task_id}] {gate_name}\n")
 
     @coord.command("release-claim")
     @click.argument("task_id")
