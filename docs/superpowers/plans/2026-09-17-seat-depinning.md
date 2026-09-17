@@ -29,9 +29,27 @@ rather than in the spec, so the spec stays the record of what was decided.
    stale by comparing the NOR file against a spec describing CHI. It is not
    stale. Depinning means host-agnostic WITHIN an estate.
 
-2. **Six seats, not seven.** `LIFECYCLE_SEATS` is exactly
-   `{link, mero, seraph, niobe, tank, atlas}`. There is no `jarvis` seat in the
-   control plane, so 3.6's "seven to five" is really six to five.
+2. **CORRECTION WITHDRAWN. The spec's "seven to five" was right, and this plan
+   was wrong to dispute it.** There are two distinct rosters by design:
+
+   ```
+   LIFECYCLE_SEATS         link mero seraph niobe atlas         which seats the
+                                                                control plane runs
+   seat_boundaries.Seat    atlas jarvis link mero niobe          the authority model,
+                           seraph tank                          who may do what
+   ```
+
+   `jarvis` and `tank` are members of the authority model without being lifecycle
+   seats. So 3.6's count of seven refers to `seat_boundaries.Seat`, which genuinely
+   has seven members, and folding tank leaves six there while leaving five in
+   `LIFECYCLE_SEATS`. An earlier revision of this plan asserted no jarvis seat
+   existed and called the spec wrong; that was the second time this effort
+   mistakenly accused this spec of being stale, after comparing the NOR control
+   plane against a spec describing CHI.
+
+   Practical consequence: `seat_boundaries.Seat.TANK` is correctly RETAINED.
+   Tank is no longer a running seat, but it remains a known actor whose historical
+   board actions must still resolve against the authority model.
 
 3. **The depinning mechanism already exists.** `seat-placement.json`, read by
    `_load_seat_placement` (`skfleet-rotate.py:2667`), maps each seat to a LIST of
