@@ -1,4 +1,4 @@
-"""Run one non-overlapping Tank, Seraph, and Niobe seat generation."""
+"""Run one non-overlapping Atlas, Seraph, and Niobe seat generation."""
 
 from __future__ import annotations
 
@@ -15,11 +15,11 @@ from typing import Any, Callable
 from skcapstone.estate import sovereign_home
 from skcapstone.niobe_activation import parse_activation
 
-_TANK = "skfleet-tank.service"
+_ATLAS = "skfleet-atlas.service"
 _SERAPH = "skfleet-seraph.service"
 _NIOBE_LIVE = "skfleet-niobe-live.service"
 _NIOBE_SHADOW = "skfleet-niobe.service"
-_GOVERNED_SERVICES = (_TANK, _SERAPH, _NIOBE_SHADOW, _NIOBE_LIVE)
+_GOVERNED_SERVICES = (_ATLAS, _SERAPH, _NIOBE_SHADOW, _NIOBE_LIVE)
 
 
 def _recovery_marker(home: Path) -> Path:
@@ -143,7 +143,7 @@ def _recovery_required(home: Path) -> bool:
     seats = receipt.get("seats")
     if not isinstance(seats, list):
         return True
-    expected_units = [_TANK, _SERAPH, select_niobe_service(home)]
+    expected_units = [_ATLAS, _SERAPH, select_niobe_service(home)]
     if [seat.get("unit") for seat in seats if isinstance(seat, dict)] != expected_units:
         return True
     for seat in seats:
@@ -275,7 +275,7 @@ def _run_generation_locked(
         }
         _append_receipt(home, receipt)
         return receipt
-    units = (_TANK, _SERAPH, select_niobe_service(home))
+    units = (_ATLAS, _SERAPH, select_niobe_service(home))
     seats: list[dict[str, Any]] = []
     aborted = False
     for unit in units:

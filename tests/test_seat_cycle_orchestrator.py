@@ -34,7 +34,7 @@ def test_generation_runs_exact_order_and_continues_after_failure(tmp_path, monke
         return SimpleNamespace(
             returncode=(
                 1
-                if command[2:4] == ["start", "--wait"] and command[-1] == "skfleet-tank.service"
+                if command[2:4] == ["start", "--wait"] and command[-1] == "skfleet-atlas.service"
                 else 0
             ),
             stdout="",
@@ -45,7 +45,7 @@ def test_generation_runs_exact_order_and_continues_after_failure(tmp_path, monke
 
     start_calls = [command for command in calls if command[2:4] == ["start", "--wait"]]
     assert [command[-1] for command in start_calls] == [
-        "skfleet-tank.service",
+        "skfleet-atlas.service",
         "skfleet-seraph.service",
         "skfleet-niobe-live.service",
     ]
@@ -82,7 +82,7 @@ def test_nonzero_start_aborts_when_service_cannot_be_proven_inactive(tmp_path, m
     result = run_generation(tmp_path, runner=runner)
     assert result["aborted"] is True
     assert [call for call in calls if call[2:4] == ["start", "--wait"]] == [
-        ["systemctl", "--user", "start", "--wait", "skfleet-tank.service"]
+        ["systemctl", "--user", "start", "--wait", "skfleet-atlas.service"]
     ]
 
 
@@ -95,7 +95,7 @@ def test_timeout_stops_and_proves_seat_inactive_before_continuing(tmp_path, monk
 
     def runner(command, **_kwargs):
         calls.append(command)
-        if command[2:4] == ["start", "--wait"] and command[-1] == "skfleet-tank.service":
+        if command[2:4] == ["start", "--wait"] and command[-1] == "skfleet-atlas.service":
             raise subprocess.TimeoutExpired(command, 310)
         if command[2] == "show":
             return SimpleNamespace(
@@ -107,8 +107,8 @@ def test_timeout_stops_and_proves_seat_inactive_before_continuing(tmp_path, monk
 
     verbs = [(call[2], call[-1]) for call in calls]
     assert verbs[:3] == [
-        ("start", "skfleet-tank.service"),
-        ("stop", "skfleet-tank.service"),
+        ("start", "skfleet-atlas.service"),
+        ("stop", "skfleet-atlas.service"),
         ("show", "--property=LoadState,ActiveState,Job"),
     ]
     assert ("start", "skfleet-seraph.service") in verbs
@@ -138,7 +138,7 @@ def test_timeout_aborts_generation_when_inactive_state_cannot_be_proven(tmp_path
 
     assert result["aborted"] is True
     assert [call for call in calls if call[2:4] == ["start", "--wait"]] == [
-        ["systemctl", "--user", "start", "--wait", "skfleet-tank.service"]
+        ["systemctl", "--user", "start", "--wait", "skfleet-atlas.service"]
     ]
 
 
@@ -164,7 +164,7 @@ def test_timeout_cleanup_rejects_inactive_service_with_pending_job(tmp_path, mon
     result = run_generation(tmp_path, runner=runner)
     assert result["aborted"] is True
     assert [call for call in calls if call[2:4] == ["start", "--wait"]] == [
-        ["systemctl", "--user", "start", "--wait", "skfleet-tank.service"]
+        ["systemctl", "--user", "start", "--wait", "skfleet-atlas.service"]
     ]
 
 
@@ -285,7 +285,7 @@ def test_untrusted_receipt_shapes_require_recovery_proof(tmp_path, receipt):
     ],
 )
 def test_contradictory_success_receipts_require_recovery_proof(tmp_path, mutation):
-    units = ["skfleet-tank.service", "skfleet-seraph.service", "skfleet-niobe.service"]
+    units = ["skfleet-atlas.service", "skfleet-seraph.service", "skfleet-niobe.service"]
     receipt = {
         "schema": "skfleet.seat-cycle-generation/v1",
         "started_at": "2026-09-15T00:00:00+00:00",
@@ -334,7 +334,7 @@ def test_receipt_failures_boolean_is_not_accepted_as_integer(tmp_path):
         "failures": True,
         "seats": [
             {
-                "unit": "skfleet-tank.service",
+                "unit": "skfleet-atlas.service",
                 "returncode": 7,
                 "error": "systemctl_start_failed",
                 "timeout_cleanup_proven": True,
@@ -408,7 +408,7 @@ def test_concurrent_process_cannot_enter_or_clear_owner_fence(tmp_path):
 
     def owner():
         def runner(command, **_kwargs):
-            if command[2:4] == ["start", "--wait"] and command[-1] == "skfleet-tank.service":
+            if command[2:4] == ["start", "--wait"] and command[-1] == "skfleet-atlas.service":
                 entered.set()
                 assert release.wait(10)
             if command[2] == "show":
@@ -576,7 +576,7 @@ def test_non_object_niobe_activation_roots_fail_closed_to_shadow(tmp_path, monke
 def test_structurally_malformed_object_activation_fails_closed_to_shadow(
     tmp_path, monkeypatch
 ) -> None:
-    """An object rejected with TypeError cannot abort Tank-first execution."""
+    """An object rejected with TypeError cannot abort Atlas-first execution."""
 
     activation = tmp_path / "coordination/niobe-activation.json"
     activation.parent.mkdir(parents=True)
@@ -606,12 +606,11 @@ def test_orchestrator_units_are_packaged_and_prevent_overlapping_generations() -
 
 
 def test_control_profile_requires_only_orchestrator_for_serialized_seats() -> None:
-    """Competing Tank, Seraph, and Niobe timers cannot be enabled by profile convergence."""
+    """Competing Seraph and Niobe timers cannot be enabled by profile convergence."""
 
     source = (Path(__file__).parents[1] / "scripts/fleet/gen-profile-manifests.py").read_text()
     assert '"skfleet-seat-cycle.timer"' in source
     for timer in (
-        "skfleet-tank.timer",
         "skfleet-seraph.timer",
         "skfleet-niobe.timer",
         "skfleet-niobe-live.timer",

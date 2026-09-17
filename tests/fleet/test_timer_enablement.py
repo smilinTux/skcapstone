@@ -573,7 +573,7 @@ def test_rollback_timer_set_selects_live_niobe_from_valid_activation(tmp_path, m
     )
     selected = timer_enablement.approved_legacy_timers(tmp_path)
     assert selected == {
-        "skfleet-tank.timer",
+        "skfleet-atlas.timer",
         "skfleet-seraph.timer",
         "skfleet-niobe-live.timer",
     }
@@ -583,7 +583,7 @@ def test_rollback_timer_set_selects_live_niobe_from_valid_activation(tmp_path, m
 def test_rollback_timer_set_selects_shadow_for_missing_or_invalid_activation(tmp_path):
     selected = timer_enablement.approved_legacy_timers(tmp_path)
     assert selected == {
-        "skfleet-tank.timer",
+        "skfleet-atlas.timer",
         "skfleet-seraph.timer",
         "skfleet-niobe.timer",
     }

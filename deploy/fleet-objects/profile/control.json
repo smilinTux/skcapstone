@@ -6,7 +6,7 @@
   "name": "control",
   "spec": {
     "capauthIdentityClass": "operator",
-    "description": "The single control seat (.158, node-noroc2027). Holds the full sovereign tree and runs the control-plane loops. Changes almost nothing, which is the point. Atlas, Link, and Mero retain bounded timers; one required seat-cycle timer serializes Tank, Seraph, and activation-selected Niobe so generations cannot overlap. Individual Tank, Seraph, Niobe, and Niobe-live timers are forbidden alongside that orchestrator. SK-managed units are those prefixed sk/capauth/cloud9, plus the fleet-adjacent syncthing and tailscaled units. Everything else on the box is desktop, distro or third-party and is listed in unitsIgnore, so it never reads as drift. Role model and the two orthogonal axes: docs/fleet/adr-node-role-model.md.",
+    "description": "The single control seat (.158, node-noroc2027). Holds the full sovereign tree and runs the control-plane loops. Changes almost nothing, which is the point. Atlas, Link, and Mero retain bounded timers; one required seat-cycle timer serializes Seraph and activation-selected Niobe so generations cannot overlap. Individual Seraph, Niobe, and Niobe-live timers are forbidden alongside that orchestrator. SK-managed units are those prefixed sk/capauth/cloud9, plus the fleet-adjacent syncthing and tailscaled units. Everything else on the box is desktop, distro or third-party and is listed in unitsIgnore, so it never reads as drift. Role model and the two orthogonal axes: docs/fleet/adr-node-role-model.md.",
     "packages": {
       "allowed": [
         "capauth",
@@ -81,7 +81,6 @@
         "skfleet-seat-cycle.service",
         "skfleet-seat-cycle.timer",
         "skfleet-seraph.service",
-        "skfleet-tank.service",
         "skgateway.service",
         "skingest-maintain.timer",
         "sknoded.service",
@@ -101,7 +100,6 @@
         "skfleet-niobe-live.timer",
         "skfleet-niobe.timer",
         "skfleet-seraph.timer",
-        "skfleet-tank.timer",
         "whisper-stt.service"
       ],
       "required": [
