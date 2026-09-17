@@ -287,6 +287,17 @@ def move_coord_task(
                 f"task {task_id} has outstanding exit gates: {names}; "
                 "run coord satisfy-gate for each before moving to done"
             )
+        # Same gate as complete_coord_task. Gating only completion would leave
+        # move-to-done as an unlocked side door, which reads as enforcement
+        # while providing none. That exact bypass already had to be closed once
+        # for exit gates; this is the same door for commit evidence.
+        if _missing_commit_evidence(home_path, task_id):
+            raise ValueError(
+                f"task {task_id} touches a repository and has no commit_sha "
+                f"link; run: skcapstone coord link {task_id} commit_sha "
+                "<the 40-character SHA, or the literal none if the card needed "
+                "no repository change> before moving to done"
+            )
     return transition_task(
         home_path,
         task_id=task_id,

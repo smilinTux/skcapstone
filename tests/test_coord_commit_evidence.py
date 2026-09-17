@@ -27,8 +27,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from skcapstone.card import CardEvent, CardEventLog
-from skcapstone.coord_completion import GatesPending, complete_coord_task
+from skcapstone.coord_completion import (
+    GatesPending,
+    complete_coord_task,
+    move_coord_task,
+)
 from skcapstone.coordination import Board, Task
 
 
@@ -144,3 +150,30 @@ def test_missing_commit_sha_refusal_does_not_write_an_await_gates_event(
     assert isinstance(result, GatesPending)
     actions = [e.get("action") for e in _events(home, "ffff6666")]
     assert "await_gates" not in actions
+
+
+def test_move_to_done_is_gated_the_same_as_complete(tmp_path: Path) -> None:
+    """Gating completion alone leaves move-to-done as an unlocked side door.
+
+    This exact bypass already had to be closed once for exit gates: a card
+    could be marked done through the column operation without ever satisfying
+    the gate that completion enforced. A gate that can be walked around is
+    worse than a missing one, because it reads as enforcement while providing
+    none.
+    """
+    home = tmp_path / "home"
+    _make_card(home, "eeee5555", "touches skcapstone", tags=["repo:skcapstone"])
+
+    with pytest.raises(ValueError, match="commit_sha"):
+        move_coord_task(home, "reviewer", "eeee5555", "done")
+
+    _link(home, "eeee5555", "commit_sha", "none")
+    move_coord_task(home, "reviewer", "eeee5555", "done")
+
+
+def test_move_to_a_non_done_column_is_not_gated(tmp_path: Path) -> None:
+    """Only the done transition asserts the lifecycle fact. Others are moves."""
+    home = tmp_path / "home"
+    _make_card(home, "ffff6666", "touches skcapstone", tags=["repo:skcapstone"])
+
+    move_coord_task(home, "reviewer", "ffff6666", "doing")
