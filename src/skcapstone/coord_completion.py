@@ -116,6 +116,63 @@ def satisfy_gate(home: Path, task_id: str, gate_name: str, agent_name: str) -> b
     return True
 
 
+#: The signal this codebase already uses to mean "this card is code work
+#: bound to a repository". execute_mux._card_routing (src/skcapstone/
+#: execute_mux.py) reads exactly this prefix on a folded card's labels to
+#: route it to the sandboxed code bridge instead of the comms dispatcher, so
+#: reusing it here means a card the rest of the system already treats as
+#: code work is exactly the card this gate treats as code work too. No
+#: second, divergent heuristic is invented for this one call site.
+_REPO_LABEL_PREFIX = "repo:"
+
+#: The evidence link this gate requires. `commit` (a neighbouring, older
+#: link key with 100 uses on the live board) is a free-form human prose
+#: field, and only 4 of those 100 uses are an actual 40-hex SHA. It cannot
+#: be machine-read, so it must never be accepted here.
+_COMMIT_SHA_LINK_KEY = "commit_sha"
+
+
+def _card_labels_and_links(home: Path, task_id: str) -> tuple[list, dict]:
+    """Return a card's folded (labels, links), or ([], {}) on any failure.
+
+    Fails closed toward NOT blocking: this backs a refusal check, so a fold
+    error here must never start refusing completions across the board. A
+    genuinely missing or unreadable card is already caught earlier in
+    complete_coord_task, through validate_review_completion and the board
+    mutation itself, so this path is only reached for a card that resolved
+    fine moments earlier.
+    """
+    try:
+        from .card_store import CardStore
+
+        card = CardStore(Path(home).expanduser()).fold(task_id)
+    except Exception:  # noqa: BLE001 - this check must never crash a completion
+        return [], {}
+    if card is None:
+        return [], {}
+    labels = list(getattr(card, "labels", None) or [])
+    links = dict(getattr(card, "links", None) or {})
+    return labels, links
+
+
+def _missing_commit_evidence(home: Path, task_id: str) -> bool:
+    """True when a repo-labeled card has no non-blank commit_sha link.
+
+    The literal value "none" satisfies this exactly like a real SHA: this
+    checks only that the link is present and non-blank, never what it says,
+    because the worker prompt (scripts/fleet/skfleet-rotate.py,
+    _worker_done_instructions) tells a worker to link commit_sha to the
+    literal value "none" when a card needed no repository change, and that
+    recorded decision must complete in one command, not be blocked by it.
+    """
+    labels, links = _card_labels_and_links(home, task_id)
+    touches_repository = any(str(label).lower().startswith(_REPO_LABEL_PREFIX) for label in labels)
+    if not touches_repository:
+        return False
+    commit_sha = str(links.get(_COMMIT_SHA_LINK_KEY) or "").strip()
+    return not commit_sha
+
+
 def complete_coord_task(home: Path, agent_name: str, task_id: str):
     """Validate governed review completion, then perform the board mutation.
 
@@ -124,6 +181,23 @@ def complete_coord_task(home: Path, agent_name: str, task_id: str):
     can report exactly which gates are outstanding and who owns each one.
     A card with no exit_gates at all, or one whose gates are all satisfied,
     completes exactly as before.
+
+    A `repo:<name>`-labeled card (see _REPO_LABEL_PREFIX) with no
+    commit_sha link is refused the same way, reusing GatesPending and
+    GATED_EXIT_CODE rather than a second refusal mechanism: coord.py's CLI
+    complete command and the fleet's close_reviewed_parents already branch
+    on exactly this shape and need no changes to also understand this
+    refusal. Unlike the exit_gates branch, this one does NOT append an
+    await_gates event: that event has no matching core.json exit_gates
+    entry for "commit_sha", and the fleet dispatcher's own state fold
+    (scripts/fleet/skfleet-rotate.py, around line 2260) treats an
+    await_gates event against an empty declared-gates set as a stale or
+    malformed read that fails closed forever, never auto-clearing. Writing
+    that event here would permanently misclassify the card as
+    "awaiting-gates" in the fleet even after commit_sha is linked. This
+    check is cheap to re-run instead: complete_coord_task re-derives the
+    commit_sha presence fresh from the card's links on every call, so no
+    event needs to remember anything.
     """
     from .card_store import CardStore
     from .coordination import Board
@@ -148,6 +222,23 @@ def complete_coord_task(home: Path, agent_name: str, task_id: str):
             gates=[gate["gate"] for gate in pending],
         )
         return GatesPending(task_id=task_id, outstanding=pending)
+
+    if _missing_commit_evidence(home_path, task_id):
+        return GatesPending(
+            task_id=task_id,
+            outstanding=[
+                {
+                    "gate": _COMMIT_SHA_LINK_KEY,
+                    "owner": agent_name,
+                    "message": (
+                        f"card {task_id} is labeled repo:* (touches a repository) but "
+                        "has no commit_sha link; run: skcapstone coord link "
+                        f"{task_id} commit_sha <the 40-character SHA, or the literal "
+                        "value none if no repository change was needed>"
+                    ),
+                }
+            ],
+        )
 
     return Board(home_path).complete_task(agent_name, task_id)
 
