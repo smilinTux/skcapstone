@@ -481,3 +481,74 @@ and the rule stops needing enforcement because the situation cannot arise.
 Belt to that braces: ATLAS auto-preserves any dirty shared checkout to a
 `preserve/<host>-<timestamp>` branch before deploying over it, exactly as was
 done by hand on 2026-09-16 to rescue 24 files.
+
+---
+
+# Correction C1: the 23 dependency cycles did not exist
+
+**Date:** 2026-09-17. Raised by Task 8's implementer, verified by the controller.
+
+## What this document claimed
+
+Section 1.1 ranked "unsatisfied or cyclic dependencies" as cause 2, at 95 of 444
+open SKLegal cards, and section 3.7 stated that **23 cycles existed**, that 35
+open cards were in or transitively blocked by one, and that 6 of the 11 worst
+claim-thrashers were cycle-blocked. Tasks 7 and 8 were justified on that basis.
+
+## What is actually true
+
+Measured on the live store at chiap08, 7,148 cards, two independent methods:
+
+| Graph | Cycles found |
+|---|---|
+| Birth-time (`core.json` dependencies only) | **0** |
+| Folded (all `add_dependency` and `remove_dependency` events applied) | **0** |
+
+An independent Kahn topological sort over all 7,148 cards completes cleanly,
+which it cannot do if any cycle exists.
+
+The ledger holds **350 `remove_dependency` events**. Card `0aec5a64`, named in
+this document as a 126-claim thrasher, carries one dated **2026-09-09** with the
+reason *"cycle repair: preserve parent-to-leaf gate, remove leaf-to-parent edge
+only"*. Twenty-seven such repair events exist fleet-wide.
+
+**The cycles were repaired on 2026-09-09, a week before the measurement that
+claimed they were present.** The figure was not a stale reading of the
+birth-time graph, because that graph also contains zero cycles. It was simply
+wrong, and it was carried into this spec, the implementation plan, three task
+briefs, and several status reports without verification.
+
+## What this does and does not invalidate
+
+**The rest of the diagnosis stands**, re-verified independently on the same run:
+
+| Claim | Stated | Verified |
+|---|---|---|
+| SKLegal cards | 2,136 | 2,136 |
+| SKLegal open | 444 | 444 |
+| Open cards with external-actor criteria | 160 (36%) | 160 (36%) |
+| Human-gated open cards | 14 (3%) | 15 (3%) |
+
+So cause 1, the external-actor acceptance criteria that produced 402 claims on
+card `06a95c23`, is real and remains the primary justification for this work.
+Tasks 1 through 6 and 9 are unaffected.
+
+**Task 7 keeps its value, with a corrected rationale.** It is a preventive guard,
+not a response to a live outbreak. Cycles were possible and were created at least
+once historically, since 27 repair events exist. Nothing previously stopped a
+cycle being written, and now something does. The urgency was overstated; the
+value was not.
+
+**Task 8 changes purpose.** It was specified as a repair for 23 existing cycles
+and there are none to repair. It is retained as a **standing detector**: a
+dry-run that reports zero today and will report loudly if one ever reappears. It
+must never be run with `--apply` against a store with zero cycles, because there
+is nothing to break and every edge it could remove would be a legitimate one.
+
+## The lesson worth keeping
+
+The number came from an automated diagnostic and was propagated into a spec, a
+plan, three briefs and several reports without anyone re-deriving it. The same
+diagnostic's other figures were exact. **Accuracy elsewhere in a report is not
+evidence for any individual number in it.** Load-bearing figures get verified
+independently before they justify work, not after the work is built.
