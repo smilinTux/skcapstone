@@ -274,3 +274,231 @@ def test_prompt_category_prose_matches_the_regex_it_describes():
     assert not missing, (
         "sensitive categories in the regex but not described to the worker: " f"{missing}"
     )
+
+
+# ---- Task 4: the branch and SHA must actually land in the evidence store ----
+#
+# The existing evidence-recording path, enumerated by reading the source
+# rather than assumed: a worker (or a human) runs
+# ``skcapstone coord link <card> <key> <value>`` (src/skcapstone/cli/coord.py,
+# ``coord_link``), which appends a CardEvent(action="link") to
+# ``coordination/card_events/<host>.jsonl`` via CardEventLog.append
+# (skcoord/card.py). ``CardStore.fold`` (skcoord/card_store.py) merges that
+# overlay log with each card's own ``cards/<id>/events/`` store log and folds
+# every "link" event into ``card.links[link_key] = link_value`` with no
+# allowlist. ``coordination/`` is the directory the project CLAUDE.md
+# documents as Syncthing-synced, which is what makes this the "replicated
+# evidence record" the spec's cross-host-visibility argument depends on. This
+# is a different, and separate, mechanism from _fold_claimability's local
+# ``state["links"]`` allowlist a few hundred lines below in this same file,
+# which only feeds board claimability decisions and intentionally recognizes
+# a short, unrelated list of typed review keys (producer_identity, pr, and so
+# on); branch and commit_sha do not need to join that allowlist because
+# nothing about claimability depends on them.
+#
+# Before this task, _worker_done_instructions told a worker to put the SHA
+# and branch name only in the verdict prose and in skmail. Both are read by a
+# human, not queried by another host: skmail is explicitly documented a few
+# lines later in this same file as a location "NOTHING reads" programmatically,
+# and prose in a verdict string is not a stable field. So the SHA the spec's
+# argument depends on was never landing in the queryable evidence store at
+# all. This is fixed by having the DEFINITION OF DONE instruct the worker to
+# also record ``branch`` and ``commit_sha`` as their own evidence links via
+# ``skcapstone coord link``, the existing mechanism above, and nothing new.
+
+
+def test_valid_commit_sha_accepts_a_genuine_forty_char_sha() -> None:
+    namespace = _load_valid_commit_sha()
+    valid = namespace["_valid_commit_sha"]
+    assert valid("a" * 40) is True
+    assert valid("0123456789abcdef0123456789abcdef01234567") is True
+
+
+def test_valid_commit_sha_accepts_uppercase_hex() -> None:
+    """Git itself is case-insensitive about hex digits; do not punish a worker for case."""
+    namespace = _load_valid_commit_sha()
+    valid = namespace["_valid_commit_sha"]
+    assert valid("A" * 40) is True
+
+
+def test_valid_commit_sha_rejects_the_none_sentinel() -> None:
+    """The literal value none is the explicit no-repository-change sentinel, not a SHA."""
+    namespace = _load_valid_commit_sha()
+    valid = namespace["_valid_commit_sha"]
+    assert valid("none") is False
+
+
+def test_valid_commit_sha_rejects_wrong_length_and_non_hex() -> None:
+    namespace = _load_valid_commit_sha()
+    valid = namespace["_valid_commit_sha"]
+    assert valid("a" * 39) is False
+    assert valid("a" * 41) is False
+    assert valid("g" * 40) is False
+    assert valid("") is False
+
+
+def test_valid_commit_sha_rejects_non_string() -> None:
+    namespace = _load_valid_commit_sha()
+    valid = namespace["_valid_commit_sha"]
+    assert valid(None) is False
+    assert valid(40) is False
+
+
+def _load_valid_commit_sha() -> dict[str, object]:
+    """Extract ``_COMMIT_SHA_RE`` and ``_valid_commit_sha`` from the source."""
+    tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
+    assign_node = None
+    func_node = None
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "_COMMIT_SHA_RE"
+            for target in node.targets
+        ):
+            assign_node = node
+        if isinstance(node, ast.FunctionDef) and node.name == "_valid_commit_sha":
+            func_node = node
+    assert assign_node is not None, "_COMMIT_SHA_RE not found"
+    assert func_node is not None, "_valid_commit_sha not found"
+    namespace: dict[str, object] = {"re": re}
+    module = ast.Module(body=[assign_node, func_node], type_ignores=[])
+    exec(compile(module, str(ROTATE), "exec"), namespace)
+    return namespace
+
+
+def test_definition_of_done_instructs_recording_branch_as_an_evidence_link() -> None:
+    done_instructions = _load_done_instructions()["_worker_done_instructions"]
+    text = done_instructions(False)
+    assert "coord link" in text
+    assert "branch" in text
+
+
+def test_definition_of_done_instructs_recording_commit_sha_as_an_evidence_link() -> None:
+    done_instructions = _load_done_instructions()["_worker_done_instructions"]
+    text = done_instructions(False)
+    assert "commit_sha" in text
+    assert "coord link" in text
+
+
+def test_definition_of_done_distinguishes_verdict_prose_from_evidence_link() -> None:
+    """The prose-only channels (verdict, skmail) must not be presented as sufficient.
+
+    This is the exact gap the brief opened with: recording the SHA only in
+    prose is indistinguishable, to a downstream reader, from never recording
+    it at all. The instructions must say the link is what gets read, not the
+    prose.
+    """
+    done_instructions = _load_done_instructions()["_worker_done_instructions"]
+    text = done_instructions(False)
+    assert "not only" in text or "not just" in text
+
+
+def test_definition_of_done_gives_an_explicit_no_repo_change_sentinel() -> None:
+    """A card needing no repository change must record that, not omit the key.
+
+    Otherwise a legitimate "nothing to link" outcome is indistinguishable from
+    a worker that simply failed to record its SHA, which is exactly the
+    ambiguity design point 3 of the brief calls out.
+    """
+    done_instructions = _load_done_instructions()["_worker_done_instructions"]
+    text = done_instructions(False)
+    assert "commit_sha" in text
+    assert "none" in text
+
+
+def test_definition_of_done_with_links_still_has_no_em_dash_or_en_dash() -> None:
+    done_instructions = _load_done_instructions()["_worker_done_instructions"]
+    for pr_flag in (False, True):
+        text = done_instructions(pr_flag)
+        assert "—" not in text
+        assert "–" not in text
+
+
+def test_branch_and_commit_sha_round_trip_through_coord_link(tmp_path) -> None:
+    """Prove the enumerated path actually works end to end, not just in prose.
+
+    This runs the real write path a worker is told to use
+    (``skcapstone coord link``) and the real read path another host uses
+    (``CardStore.fold``), against a real temporary ``~/.skcapstone``-shaped
+    home. It is deliberately NOT another extracted-source unit test: the
+    claim under test is that the SHA genuinely lands in and comes back out of
+    the replicated evidence store, which an isolated-namespace exec of one
+    function can never demonstrate.
+    """
+    import click
+    from click.testing import CliRunner
+
+    from skcapstone.card_store import CardCore, CardStore
+    from skcapstone.cli.coord import register_coord_commands
+
+    @click.group()
+    def main():
+        pass
+
+    register_coord_commands(main)
+
+    CardStore(tmp_path).create(CardCore(id="ev00001", title="fix a typo in the README"))
+
+    sha = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+    branch = "fix/ev00001-typo"
+    runner = CliRunner()
+    for key, value in (("branch", branch), ("commit_sha", sha)):
+        result = runner.invoke(
+            main,
+            [
+                "coord",
+                "link",
+                "ev00001",
+                key,
+                value,
+                "--home",
+                str(tmp_path),
+                "--agent",
+                "worker-test",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+    card = CardStore(tmp_path).fold("ev00001")
+    assert card.links["branch"] == branch
+    assert card.links["commit_sha"] == sha
+
+
+def test_branch_and_commit_sha_no_repo_change_sentinel_round_trips(tmp_path) -> None:
+    """The explicit "no repository change" sentinel must also round trip and read
+    back as an invalid SHA, distinguishable from a real one."""
+    import click
+    from click.testing import CliRunner
+
+    from skcapstone.card_store import CardCore, CardStore
+    from skcapstone.cli.coord import register_coord_commands
+
+    @click.group()
+    def main():
+        pass
+
+    register_coord_commands(main)
+
+    CardStore(tmp_path).create(CardCore(id="ev00002", title="update docs only"))
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "coord",
+            "link",
+            "ev00002",
+            "commit_sha",
+            "none",
+            "--home",
+            str(tmp_path),
+            "--agent",
+            "worker-test",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    card = CardStore(tmp_path).fold("ev00002")
+    assert card.links["commit_sha"] == "none"
+
+    namespace = _load_valid_commit_sha()
+    assert namespace["_valid_commit_sha"](card.links["commit_sha"]) is False

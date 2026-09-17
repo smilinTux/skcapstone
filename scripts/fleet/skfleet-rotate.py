@@ -950,9 +950,18 @@ def _worker_done_instructions(pr_required_now):
         "3. Push the branch. An unpushed commit is destroyed by any other session's\n"
         "   checkout of that tree, so pushing is mandatory: the pushed branch plus\n"
         "   the recorded SHA is the handoff.\n"
-        "4. Put the exact commit SHA and the branch name in your verdict AND in\n"
-        "   your skmail. A verdict claiming work was done with no reachable SHA is\n"
-        "   incomplete.\n"
+        "4. Record the branch and the exact commit SHA as their own evidence\n"
+        "   links, not only as prose: skcapstone coord link <card> branch\n"
+        "   <branch-name> and skcapstone coord link <card> commit_sha\n"
+        "   <the 40-character SHA>. A link is what another host and the\n"
+        "   Integrator actually query; a SHA mentioned only in verdict prose\n"
+        "   or in skmail is not a queryable field, and that gap is exactly\n"
+        "   what PR-per-change used to close. Also put the exact commit SHA\n"
+        "   and the branch name in your verdict AND in your skmail. A verdict\n"
+        "   claiming work was done with no coord link commit_sha is incomplete.\n"
+        "   If the card needed no repository change, link commit_sha to the\n"
+        "   literal value none, so that is a recorded decision rather than a\n"
+        "   gap indistinguishable from a worker who simply forgot.\n"
         "5. Open a PR only when the card is sensitive (title or label matches\n"
         "   capauth, credential, custody, issuer, secret, key, rollback, deploy,\n"
         "   production, release, or migration) or when you are asked to. A PR is\n"
@@ -1900,6 +1909,35 @@ def pr_required(core) -> bool:
         if isinstance(tag, str) and _SENSITIVE_CATEGORY.search(tag):
             return True
     return False
+
+
+#: A full, lowercase, 40 character git commit SHA. The literal string "none"
+#: (the explicit no-repository-change sentinel a worker links when a card
+#: needed no commit) deliberately does not match this.
+_COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _valid_commit_sha(value) -> bool:
+    """Return whether value is a genuine 40 character git commit SHA.
+
+    skcapstone coord link (src/skcapstone/cli/coord.py) is a generic
+    evidence-attachment primitive shared by every kind of card link, not
+    something this script owns or can gate at write time. An unvalidated
+    placeholder written there is otherwise indistinguishable from a real SHA
+    later, so this predicate lets a reader check the shape for itself, the
+    same 40 hex character shape already used elsewhere in this file to
+    validate link_head_revision for governed review evidence.
+
+    Accepts either case, because git itself treats hex digits as
+    case-insensitive; a worker should not be penalized for writing the SHA
+    a tool printed in mixed case. A missing or non-string value is simply
+    not a SHA.
+    """
+    if not isinstance(value, str):
+        return False
+    return bool(_COMMIT_SHA_RE.fullmatch(value.strip().lower()))
+
+
 # Criteria a worker CANNOT satisfy alone: they name another seat's verdict or a
 # merge. Measured 2026-09-16: 160 of 444 open SKLegal cards carried one, and
 # those cards averaged 3.39 claims against 1.96 for cards without.
