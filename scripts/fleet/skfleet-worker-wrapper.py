@@ -17,7 +17,10 @@ import time
 from pathlib import Path
 
 from skcapstone.card_store import CardStore
-from skcapstone.fleet.terminal_capacity import retire_worker_generation
+from skcapstone.fleet.terminal_capacity import (
+    is_abandon_reason_signature_mismatch,
+    retire_worker_generation,
+)
 from skcapstone.fleet.worker_watchdog import StartupObservation, classify_startup
 from skcapstone.review_verdict import validate_review_completion
 from skcapstone.seat_mail import poll_mail, startup_hello
@@ -336,7 +339,7 @@ def release_superseded_review_claim(args: argparse.Namespace) -> bool:
         record_review_completion_rejection(args, str(exc))
         raise RuntimeError(f"review completion rejected: {exc}") from exc
     released = False
-    contention: TimeoutError | None = None
+    contention: TimeoutError | TypeError | None = None
     for attempt in range(LOCK_RELEASE_ATTEMPTS):
         try:
             released = Board(home).release_claim(
@@ -352,6 +355,25 @@ def release_superseded_review_claim(args: argparse.Namespace) -> bool:
             contention = exc
             if attempt + 1 < LOCK_RELEASE_ATTEMPTS:
                 time.sleep(LOCK_RELEASE_RETRY_BACKOFF_SECONDS)
+        except TypeError as exc:
+            if not is_abandon_reason_signature_mismatch(exc):
+                raise
+            # The installed skcoord predates abandon_reason. Every retry
+            # carries the same call, so this is not transient: retrying
+            # cannot help. The release genuinely did not happen, so fail
+            # through to the truthful-failure path below rather than
+            # pretending the release succeeded. Logged loudly and distinctly
+            # from an ordinary release failure so an operator can tell the
+            # two apart and re-resolve the dependency instead of chasing a
+            # phantom lock-contention bug.
+            sys.stderr.write(
+                "release_claim() interface mismatch for "
+                f"{args.card} owner={args.owner}: installed skcoord predates "
+                f"the abandon_reason parameter; claim was not released: {exc}\n"
+            )
+            contention = exc
+            released = False
+            break
         except (RuntimeError, ValueError):
             released = False
             break
@@ -760,6 +782,19 @@ def finalize_terminal_capacity(args: argparse.Namespace, child: subprocess.Popen
         publish_terminal_capacity(args, child)
     except (OSError, ValueError) as exc:
         sys.stderr.write(f"terminal capacity publication failed: {exc}\n")
+    except TypeError as exc:
+        if not is_abandon_reason_signature_mismatch(exc):
+            raise
+        # retire_worker_generation already degrades this internally, but a
+        # future caller under it could still surface the same mismatch here.
+        # Same rule as above: log loudly and distinctly, then let the
+        # existing "capacity did not publish, claim release still tried
+        # separately" contract carry the failure, instead of crashing the
+        # finalizer over a known, already-tracked packaging gap.
+        sys.stderr.write(
+            "terminal capacity publication failed: installed skcoord "
+            f"predates the abandon_reason parameter (interface mismatch): {exc}\n"
+        )
     return released
 
 

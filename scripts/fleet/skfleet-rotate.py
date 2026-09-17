@@ -2130,6 +2130,12 @@ def _fold_claimability(core, rows):
         }
         if declared_gates and declared_gates <= state["satisfied_gates"]:
             state["awaiting_gates"] = False
+    # This state dict is returned verbatim as legacy["decision"], which
+    # nearby code hashes, fingerprints, and may eventually json.dumps. A set
+    # is neither JSON-safe nor deterministically ordered, so convert to a
+    # sorted list at the exit boundary. Every membership check above runs on
+    # the set form, before this line, so the fold semantics are unchanged.
+    state["satisfied_gates"] = sorted(state["satisfied_gates"])
     return state
 
 

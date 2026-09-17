@@ -246,6 +246,53 @@ def test_snapshot_failure_falls_back_to_exact_claim_release(monkeypatch, capsys)
     assert "bad snapshot" in capsys.readouterr().err
 
 
+def test_snapshot_interface_mismatch_falls_back_to_exact_claim_release(
+    monkeypatch, capsys
+) -> None:
+    """The installed skcoord predates abandon_reason. This must degrade the
+    same way any other publication failure does, loudly enough that an
+    operator can tell an interface mismatch apart from an ordinary failure.
+    """
+    module = load_module()
+    values = args()
+    values.review_supersession = {"current_head": "2" * 40}
+    calls = []
+
+    def fail_publication(*_args):
+        raise TypeError(
+            "mirror_coord_release() got an unexpected keyword argument 'abandon_reason'"
+        )
+
+    monkeypatch.setattr(module, "publish_terminal_capacity", fail_publication)
+    monkeypatch.setattr(
+        module,
+        "release_superseded_review_claim",
+        lambda *_args: calls.append("release") or True,
+    )
+
+    assert module.finalize_terminal_capacity(values, None) is True
+    assert calls == ["release"]
+    assert "abandon_reason" in capsys.readouterr().err
+
+
+def test_snapshot_unrelated_type_error_is_not_swallowed(monkeypatch) -> None:
+    """Only the known abandon_reason signature mismatch degrades. Any other
+    TypeError is a real bug and must still surface as itself.
+    """
+    module = load_module()
+    values = args()
+    values.review_supersession = {"current_head": "2" * 40}
+
+    def fail_publication(*_args):
+        raise TypeError("'NoneType' object is not subscriptable")
+
+    monkeypatch.setattr(module, "publish_terminal_capacity", fail_publication)
+    monkeypatch.setattr(module, "release_superseded_review_claim", lambda *_args: True)
+
+    with pytest.raises(TypeError, match="NoneType"):
+        module.finalize_terminal_capacity(values, None)
+
+
 def test_failed_exact_release_preserves_owner_projection(monkeypatch) -> None:
     module = load_module()
     values = args()

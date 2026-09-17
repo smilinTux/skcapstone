@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from skcoord.card_store import CardCore, CardStore
 
+import skcapstone.fleet.terminal_capacity as terminal_capacity
 from skcapstone.fleet.terminal_capacity import invalidate_worker, retire_worker_generation
 
 
@@ -193,3 +194,52 @@ def test_invalidation_failure_releases_without_exposing_snapshot_capacity(tmp_pa
 
     assert store.fold("feedbeef").owner is None
     assert snapshot.read_bytes() == before
+
+
+def test_abandon_reason_interface_mismatch_degrades_without_lying(tmp_path, monkeypatch):
+    """The installed skcoord predates the sibling branch that adds abandon_reason
+    to mirror_coord_release. On a node running from a git checkout that never
+    re-resolves, this surfaces as a TypeError. The release genuinely did not
+    happen, so this must report failure (None), the same as every other
+    unmet-precondition path here, not raise past the caller.
+    """
+    home = tmp_path / "coord"
+    home.mkdir()
+    store = CardStore(home)
+    _claimed(store, "feedbeef", "worker", "rev-1")
+    snapshot = tmp_path / "fleet-live.json"
+    before = _snapshot(snapshot, _worker("feedbeef", "worker", "rev-1"))
+
+    def _mismatched(*_args, **_kwargs):
+        raise TypeError(
+            "mirror_coord_release() got an unexpected keyword argument 'abandon_reason'"
+        )
+
+    monkeypatch.setattr(terminal_capacity, "mirror_coord_release", _mismatched)
+
+    assert (
+        retire_worker_generation(snapshot, home, "chiap08", "feedbeef", "worker", "rev-1") is None
+    )
+    assert store.fold("feedbeef").owner == "worker"
+    assert snapshot.read_bytes() == before
+
+
+def test_unrelated_type_error_is_not_swallowed_as_interface_mismatch(tmp_path, monkeypatch):
+    """Only the known abandon_reason signature mismatch degrades. Any other
+    TypeError is a real bug in this code path and must still surface as
+    itself, not vanish into a quiet None.
+    """
+    home = tmp_path / "coord"
+    home.mkdir()
+    store = CardStore(home)
+    _claimed(store, "feedbeef", "worker", "rev-1")
+    snapshot = tmp_path / "fleet-live.json"
+    _snapshot(snapshot, _worker("feedbeef", "worker", "rev-1"))
+
+    def _buggy(*_args, **_kwargs):
+        raise TypeError("'NoneType' object is not subscriptable")
+
+    monkeypatch.setattr(terminal_capacity, "mirror_coord_release", _buggy)
+
+    with pytest.raises(TypeError, match="NoneType"):
+        retire_worker_generation(snapshot, home, "chiap08", "feedbeef", "worker", "rev-1")

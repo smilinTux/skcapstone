@@ -249,6 +249,31 @@ def test_gate_satisfied_all_gates_reaches_claimable_end_to_end():
     assert ns["_claimability_reason"](core, state) == "claimable"
 
 
+def test_satisfied_gates_is_a_json_safe_sorted_list_not_a_set():
+    """The fold's state dict is embedded verbatim as legacy["decision"] and can
+    reach json.dumps or a fingerprint hash. A set fails both: it is not JSON
+    serialisable, and its iteration order is not deterministic.
+    """
+    ns = _load({"_fold_claimability"}, set())
+    core = {"title": "t", "dependencies": [], "initial_labels": []}
+    rows = [
+        {"action": "gate_satisfied", "gate": "zeta"},
+        {"action": "gate_satisfied", "gate": "alpha"},
+        {"action": "gate_satisfied", "gate": "mid"},
+    ]
+    state = ns["_fold_claimability"](core, rows)
+    assert state["satisfied_gates"] == ["alpha", "mid", "zeta"]
+    json.dumps(state["satisfied_gates"])
+
+
+def test_no_gate_satisfied_events_leaves_an_empty_json_safe_list():
+    ns = _load({"_fold_claimability"}, set())
+    core = {"title": "t", "dependencies": [], "initial_labels": []}
+    state = ns["_fold_claimability"](core, [{"action": "claim", "owner": "w1"}])
+    assert state["satisfied_gates"] == []
+    json.dumps(state["satisfied_gates"])
+
+
 def test_spec_version_null_is_treated_as_v1_and_not_gated():
     """New v1 cards serialise spec_version: null, not an absent key.
 
