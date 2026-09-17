@@ -344,6 +344,7 @@ def release_superseded_review_claim(args: argparse.Namespace) -> bool:
                 args.card,
                 actor=args.owner,
                 expected_claim_revision=args.claim_revision,
+                abandon_reason="not-abandoned",
             )
             contention = None
             break

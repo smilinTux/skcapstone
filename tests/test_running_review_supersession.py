@@ -151,8 +151,10 @@ def test_superseded_review_releases_only_exact_claim(monkeypatch) -> None:
         def __init__(self, home):
             calls.append(("home", home))
 
-        def release_claim(self, owner, card, *, actor, expected_claim_revision):
-            calls.append((owner, card, actor, expected_claim_revision))
+        def release_claim(
+            self, owner, card, *, actor, expected_claim_revision, abandon_reason=None
+        ):
+            calls.append((owner, card, actor, expected_claim_revision, abandon_reason))
             return True
 
     monkeypatch.setattr("skcoord.coordination.Board", Board)
@@ -177,6 +179,7 @@ def test_superseded_review_releases_only_exact_claim(monkeypatch) -> None:
         values.card,
         values.owner,
         "generation-1",
+        "not-abandoned",
     )
 
 

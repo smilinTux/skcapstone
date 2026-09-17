@@ -55,7 +55,9 @@ def make_flaky_board(failures: int):
         def __init__(self, home):
             super().__init__(home)
 
-        def release_claim(self, owner, task_id, *, actor, expected_claim_revision):
+        def release_claim(
+            self, owner, task_id, *, actor, expected_claim_revision, abandon_reason=None
+        ):
             state["calls"].append((owner, task_id, actor, expected_claim_revision))
             if len(state["calls"]) <= failures:
                 raise TimeoutError("timed out acquiring board mutation lock")
@@ -64,6 +66,7 @@ def make_flaky_board(failures: int):
                 task_id,
                 actor=actor,
                 expected_claim_revision=expected_claim_revision,
+                abandon_reason=abandon_reason,
             )
 
     return FlakyBoard, state
@@ -116,6 +119,49 @@ def test_release_retries_transient_board_lock_timeout(claimed_board, monkeypatch
     assert state["calls"] == [expected, expected, expected]
     assert len(sleeps) == 2
     assert all(wait == module.LOCK_RELEASE_RETRY_BACKOFF_SECONDS for wait in sleeps)
+
+
+def test_release_records_not_abandoned_after_review_completion(claimed_board, monkeypatch) -> None:
+    """release_superseded_review_claim only runs after validate_review_completion
+    passes, so the release it performs is a durable finish, not an abandonment.
+    It must pass not-abandoned rather than leaving the CardStore event with no
+    reason at all.
+    """
+    module, values, _home = claimed_board
+    recorded: list[dict[str, object]] = []
+
+    class RecordingBoard:
+        def __init__(self, _home):
+            pass
+
+        def release_claim(
+            self, owner, task_id, *, actor, expected_claim_revision, abandon_reason=None
+        ):
+            recorded.append(
+                {
+                    "owner": owner,
+                    "task_id": task_id,
+                    "actor": actor,
+                    "expected_claim_revision": expected_claim_revision,
+                    "abandon_reason": abandon_reason,
+                }
+            )
+            return True
+
+    monkeypatch.setattr("skcoord.coordination.Board", RecordingBoard)
+    values.review_supersession = {"current_head": "2" * 40}
+
+    assert module.release_superseded_review_claim(values) is True
+
+    assert recorded == [
+        {
+            "owner": values.owner,
+            "task_id": values.card,
+            "actor": values.owner,
+            "expected_claim_revision": values.claim_revision,
+            "abandon_reason": "not-abandoned",
+        }
+    ]
 
 
 def test_release_does_not_retry_non_timeout_failures(monkeypatch) -> None:
