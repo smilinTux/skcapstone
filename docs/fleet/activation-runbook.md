@@ -57,10 +57,36 @@ every host reads. Running convergence on a host that is not the current
 election overwrites that synced record to name the wrong host. During the
 Syncthing propagation window this can produce two hosts each reading a
 control-plane record that names itself as `active_host`, and both then
-consider themselves authorized to dispatch. A code-side refusal for this
-case is being added concurrently with this document; until it is confirmed
-landed, treat "converge only from the elected host" as an operator
-discipline requirement, not a guarantee the tooling enforces.
+consider themselves authorized to dispatch.
+
+This is now enforced in code as well as by discipline. `converge_lifecycle_seats`
+refuses when an existing synced record elects a different host, naming both:
+
+```
+refusing to converge: the synced control plane elects 'chiap08',
+but this convergence would write 'noroc2027'.
+```
+
+Keep the operator discipline anyway. The refusal protects a host that can read
+the synced record, and Syncthing is asynchronous, so a host that has not yet
+received the current record cannot be protected by it.
+
+**3. Install the package before copying the dispatcher script.** These are two
+separate deployment steps and the order is load bearing. `skfleet-rotate.py` is
+installed per host at `~/.local/bin/skfleet-rotate.py`, while `skcapstone`
+itself is installed into `~/.skenv`. The dispatcher imports from the package
+(`from skcapstone.coord_completion import GATED_EXIT_CODE`), so copying a newer
+script onto a host whose package is older fails at import and takes that host's
+dispatcher down entirely:
+
+```
+ImportError: cannot import name 'GATED_EXIT_CODE' from 'skcapstone.coord_completion'
+```
+
+Installing the package first is always safe, because an older script does not
+reference symbols added later. So: package, then script, then converge. This
+mirrors the skcoord rule, where skcoord must ship and install before the
+skcapstone code that calls its new parameters.
 
 ## 0. Local preflight
 
