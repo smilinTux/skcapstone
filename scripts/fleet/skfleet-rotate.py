@@ -4802,10 +4802,10 @@ def release_finished_review_claims():
             [SKC, "coord", "release-claim", cid, "--owner", owner,
              "--expected-claim-revision", revision, "--agent", "fleet-review-closer",
              # Not an abandonment: the verdict is durable and the process
-             # already exited cleanly. None of the five specific reasons
-             # describe a normal completion cleanup, so this stays honest
-             # rather than borrowing one that would misrepresent it.
-             "--abandon-reason", "unspecified"],
+             # already exited cleanly. not-abandoned says exactly that, so
+             # this success release is never counted alongside the releases
+             # nobody can explain.
+             "--abandon-reason", "not-abandoned"],
             capture_output=True, text=True,
         )
         if result.returncode != 0:

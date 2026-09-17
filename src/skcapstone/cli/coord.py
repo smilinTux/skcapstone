@@ -605,7 +605,9 @@ def register_coord_commands(main: click.Group) -> None:
         default=None,
         help=(
             "Why the worker stopped: criteria-unsatisfiable, dependency-unsatisfied, "
-            "capability-missing, error, superseded. Omit and it records unspecified."
+            "capability-missing, error, superseded, not-abandoned. Use not-abandoned "
+            "when the release follows a durable finish, not a stoppage. Omit and it "
+            "records unspecified."
         ),
     )
     @click.option("--home", default=AGENT_HOME, type=click.Path())

@@ -106,6 +106,25 @@ def test_current_generation_is_released_and_retired_together(tmp_path):
     assert json.loads(snapshot.read_text())["cards"] == []
 
 
+def test_terminal_capacity_release_records_error_as_the_abandon_reason(tmp_path):
+    """A dead terminal slot is a genuine abandonment, not an unexplained one."""
+    home = tmp_path / "coord"
+    home.mkdir()
+    store = CardStore(home)
+    _claimed(store, "feedbeef", "worker", "rev-1")
+    snapshot = tmp_path / "fleet-live.json"
+    _snapshot(snapshot, _worker("feedbeef", "worker", "rev-1"))
+
+    assert (
+        retire_worker_generation(snapshot, home, "chiap08", "feedbeef", "worker", "rev-1")
+        is not None
+    )
+    events = store._read_events("feedbeef")
+    release_events = [e for e in events if e.get("action") == "release_claim"]
+    assert release_events
+    assert release_events[-1]["abandon_reason"] == "error"
+
+
 def test_concurrent_terminal_workers_preserve_live_siblings(tmp_path):
     home = tmp_path / "coord"
     home.mkdir()

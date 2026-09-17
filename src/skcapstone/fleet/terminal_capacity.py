@@ -128,6 +128,11 @@ def retire_worker_generation(
                 owner,
                 claim_revision,
                 transition_id=f"terminal-capacity:{owner}:{claim_revision}",
+                # The worker's host terminal slot is invalidated, so the work
+                # stopped because its execution environment died out from
+                # under it. That maps to "error", not to "unspecified": the
+                # cause is known, only the message is not.
+                abandon_reason="error",
             )
         if not _generation_was_released(store, card, owner, claim_revision):
             return None

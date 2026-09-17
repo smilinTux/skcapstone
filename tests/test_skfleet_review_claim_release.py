@@ -90,7 +90,7 @@ def test_releases_four_finished_claims_with_exact_cas_and_keeps_evidence(tmp_pat
             "--agent",
             "fleet-review-closer",
             "--abandon-reason",
-            "unspecified",
+            "not-abandoned",
         ]
 
 
