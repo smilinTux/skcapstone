@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+- **Card lifecycle correctness (nimble-factory Plan A).** Measured cause: 444 open
+  cards, 235 claimed and then abandoned with no recorded reason, some claimed
+  hundreds of times. Cards looped because their acceptance criteria named an
+  external reviewer the worker could never be, and nothing capped re-dispatch or
+  recorded why a claim ended.
+
+  - Claim ceiling keyed on claim events rather than launch evidence, so a card
+    cannot be re-dispatched indefinitely. Ceiling exclusions are logged per card
+    and counted separately from ordinary backoff, because an exclusion that reads
+    as temporary backoff is invisible and permanent.
+  - `exit_gates` separate criteria a worker owns from criteria only another seat
+    can satisfy. `await_gates` records the worker-terminal state as a ledger fact,
+    and `coord satisfy-gate` clears each gate so the card becomes dispatchable
+    again. Both ship together: a producer without an exit converts a looping card
+    into a permanently stuck one.
+  - `coord complete` and `coord move <id> done` both refuse a card with
+    outstanding gates, naming the gates and their owners. Gating only the first
+    left the second as an unlocked side door, which reads as enforcement while
+    providing none.
+  - `--abandon-reason` on `coord release-claim`, recorded at every release site
+    the vocabulary can honestly describe. Where it cannot, the reason is omitted
+    rather than guessed: `_release_exact` is shared by seven callers with
+    genuinely different causes, and a wrong label is unfalsifiable afterwards.
+  - Fleet readiness gate refusing to start a node whose required environment
+    variables or modules are missing. The first deploy it ran against caught a
+    real configuration gap.
+  - `scripts/fleet/backfill_exit_gates.py` splits gate language out of existing
+    cards. Dry run by default; `--apply` writes a backup first because `core.json`
+    is the only copy of `acceptance_criteria` and there is no ledger to recover
+    from. It refuses to write a card whose split would leave no criteria at all.
+
+  Requires `skcoord>=0.1.77`. The floor is deliberately one past the newest
+  published tag so installing fails loudly rather than resolving to a real but
+  lacking release; see the comment in `pyproject.toml`.
+
 - Card `5f178417`: reconcile all running builder requests before filling up to
   four exact-claim worker slots; preserve uncertain live generations and block
   expired unclaimed offers without launch.
