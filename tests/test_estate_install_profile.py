@@ -13,16 +13,24 @@ from pathlib import Path
 import pytest
 
 from skcapstone.fleet import install_backends, installer, profile_doctor, profiles
+from skcapstone.lifecycle_seats import LIFECYCLE_SEATS
 
-SEATS = ("atlas", "link", "mero", "niobe", "seraph", "tank")
+#: Derived, not restated. A hardcoded copy of the roster here is how this test
+#: kept asserting skfleet-tank.service was allowed after spec 3.6 folded tank
+#: into atlas and deleted its units. Third instance of that drift in this fold.
+SEATS = tuple(sorted(LIFECYCLE_SEATS))
 SEAT_TIMERS = tuple(f"skfleet-{seat}.timer" for seat in ("atlas", "link", "mero")) + (
     "skfleet-seat-cycle.timer",
 )
+#: Legacy independently scheduled seat timers the control role forbids, because
+#: the single seat-cycle timer serializes them. Tank was a fourth member until
+#: spec 3.6 folded it into Atlas; its units no longer exist, so there is nothing
+#: left to forbid. Kept in step with SERIALIZED_SEAT_MUST_NOT in
+#: scripts/fleet/gen-profile-manifests.py.
 SERIALIZED_TIMERS = (
     "skfleet-niobe-live.timer",
     "skfleet-niobe.timer",
     "skfleet-seraph.timer",
-    "skfleet-tank.timer",
 )
 PROFILE_DIR = Path(__file__).resolve().parents[1] / "deploy" / "fleet-objects" / "profile"
 

@@ -77,7 +77,19 @@ def _referenced_units() -> list[tuple[str, int, str]]:
 
     found: list[tuple[str, int, str]] = []
     for root in SCAN_ROOTS:
-        for path in sorted(root.rglob("*.py")):
+        for path in sorted(_scanned_files(root)):
+            if path.suffix != ".py":
+                # Shell and other non-Python files get a plain text scan. An AST
+                # walk cannot read them, and globbing them without this branch
+                # silently skips every one: that is how scripts/install.sh kept
+                # naming skfleet-tank.service and .timer for nine days after
+                # those units were deleted.
+                for lineno, line in enumerate(
+                    path.read_text(encoding="utf-8").splitlines(), start=1
+                ):
+                    for match in _UNIT_PATTERN.finditer(line):
+                        found.append((str(path.relative_to(REPO_ROOT)), lineno, match.group()))
+                continue
             try:
                 tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             except SyntaxError:
@@ -91,6 +103,18 @@ def _referenced_units() -> list[tuple[str, int, str]]:
                 for match in _UNIT_PATTERN.finditer(node.value):
                     found.append((str(path.relative_to(REPO_ROOT)), node.lineno, match.group()))
     return found
+
+
+def _scanned_files(root):
+    """Every file that can name a unit, not only Python.
+
+    scripts/install.sh listed skfleet-tank.service and skfleet-tank.timer for
+    nine days after those units were deleted, and this test did not see it
+    because it globbed *.py only. A shell installer naming a unit that does not
+    exist is exactly the dangling reference this test exists to catch.
+    """
+    for pattern in ("*.py", "*.sh"):
+        yield from root.rglob(pattern)
 
 
 def test_every_referenced_skfleet_unit_is_shipped() -> None:
