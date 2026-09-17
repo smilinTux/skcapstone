@@ -32,8 +32,12 @@
     `complete_coord_task` and `coord move <id> done` now both refuse to complete
     a card carrying a `repo:<name>` label unless it also carries a `commit_sha`
     link, naming the command that supplies it. This enforcement is scoped to
-    cards with that label, about 12.6 percent of the board (739 of 5,861 cards);
-    a card without the label still routes to the code bridge by default and can
+    cards with that label. The original 12.6 percent figure here (739 of 5,861
+    cards) was measured against raw `initial_labels`, not the folded labels the
+    gate actually reads (initial_labels plus every later `add_label` /
+    `remove_label` event); measured correctly, against folded labels, on a
+    400-card fold sample, the figure is approximately 23.2 percent. A card
+    without the label still routes to the code bridge by default and can
     produce code without tripping this gate.
 
 - **Card lifecycle correctness (nimble-factory Plan A).** Measured cause: 444 open

@@ -926,8 +926,8 @@ def _worker_done_instructions(pr_required_now):
 
     A pushed branch plus a recorded commit SHA is the default handoff, not an
     open pull request: a routine card no longer pays a 20 to 30 minute PR
-    cycle. ``pr_required_now`` (the caller passes ``pr_required(core)``) adds
-    the immediate-PR clause for sensitive cards only.
+    cycle. ``pr_required_now`` (the caller passes ``pr_required(core, labels)``)
+    adds the immediate-PR clause for sensitive cards only.
 
     This intentionally does NOT consult the dispatch-approved label.
     dispatch-approved answers whether a worker may take a sensitive card at
@@ -1873,7 +1873,7 @@ _COLUMNS = {"backlog", "ready", "doing", "review", "done"}
 _NOT_CLAIMABLE = {"not-claimable", "sprint-container", "do-not-claim"}
 # Answers: does this card need the dispatch-approved opt-in before it can be
 # dispatched at all. This is an ADMISSION gate, not a routing gate.
-# _QWEN_UNSUITABLE (scripts/fleet/skfleet-rotate.py, near line 5733) answers a
+# _QWEN_UNSUITABLE (elsewhere in this same file) answers a
 # different question: can the qwen lane specifically take this card. The two
 # share a subject-matter prefix (capauth, credential, custody, and so on) on
 # purpose, because the same categories that require sign-off also tend to be
@@ -1888,57 +1888,53 @@ _SENSITIVE_CATEGORY = re.compile(
 _CATEGORY_OPT_IN = "dispatch-approved"
 
 
-def pr_required(core) -> bool:
+def pr_required(core, labels=()) -> bool:
     """Return True when a card's work needs a pull request, not just a pushed branch.
 
-    Reads the raw core.json dict directly, on purpose: a model read through
-    CardCore/CardStore.fold silently drops unknown fields on a node running an
-    older skcoord, which produces a check that passes every test against real
-    data and enforces nothing in production. The raw field for a card's tags
-    is initial_labels (confirmed against live cards under ~/.skcapstone/cards;
-    core.json never carries a "tags" key), so that is what this checks, not
-    "tags".
+    Title is read from the raw core.json dict, on purpose: a model read
+    through CardCore/CardStore.fold silently drops unknown fields on a node
+    running an older skcoord, which produces a check that passes every test
+    against real data and enforces nothing in production, and title is not
+    subject to any folding a caller could get wrong.
 
-    Matches the card's title or any tag against _SENSITIVE_CATEGORY, the same
-    pattern the admission gate at _claimability_reason uses. A missing, empty,
-    or non-string title never raises; it is simply not a match.
+    Labels are different: they are not read off core here at all. They must
+    be passed in already folded (initial_labels plus every add_label /
+    remove_label event, via this file's own folded_labels(cid, core) or an
+    equivalent read), never core.get("initial_labels") directly. Measured
+    2026-09-17: reading raw initial_labels missed a sensitive label added
+    after a card's creation via `coord label` in about 0.3 percent of live
+    cards, because coord_completion.py's commit-evidence gate reads folded
+    labels while this used to read only the raw pre-events list, so the two
+    silently disagreed about the same card. The raw-JSON justification above
+    does not apply to labels the way it applies to title: labels is a field
+    CardCore does carry, so a folded read through the normal machinery does
+    not lose it.
+
+    Matches the card's title or any label against _SENSITIVE_CATEGORY, the
+    same pattern the admission gate at _claimability_reason uses. A missing,
+    empty, or non-string title never raises; it is simply not a match.
     """
     if not isinstance(core, dict):
         return False
     title = core.get("title")
     if isinstance(title, str) and _SENSITIVE_CATEGORY.search(title):
         return True
-    for tag in core.get("initial_labels") or []:
+    for tag in labels or ():
         if isinstance(tag, str) and _SENSITIVE_CATEGORY.search(tag):
             return True
     return False
 
 
-#: A full, lowercase, 40 character git commit SHA. The literal string "none"
-#: (the explicit no-repository-change sentinel a worker links when a card
-#: needed no commit) deliberately does not match this.
-_COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
-
-
-def _valid_commit_sha(value) -> bool:
-    """Return whether value is a genuine 40 character git commit SHA.
-
-    skcapstone coord link (src/skcapstone/cli/coord.py) is a generic
-    evidence-attachment primitive shared by every kind of card link, not
-    something this script owns or can gate at write time. An unvalidated
-    placeholder written there is otherwise indistinguishable from a real SHA
-    later, so this predicate lets a reader check the shape for itself, the
-    same 40 hex character shape already used elsewhere in this file to
-    validate link_head_revision for governed review evidence.
-
-    Accepts either case, because git itself treats hex digits as
-    case-insensitive; a worker should not be penalized for writing the SHA
-    a tool printed in mixed case. A missing or non-string value is simply
-    not a SHA.
-    """
-    if not isinstance(value, str):
-        return False
-    return bool(_COMMIT_SHA_RE.fullmatch(value.strip().lower()))
+# Genuine-SHA validation for a commit_sha link used to be a second copy here
+# (_COMMIT_SHA_RE / _valid_commit_sha), stranded because this file is a
+# script, not a package module, and so cannot be imported BY anything else.
+# That stranding was never actually necessary: this file already imports
+# FROM the skcapstone package (see the `from skcapstone.coord_completion
+# import GATED_EXIT_CODE` near the top), so it is not a bare, importless
+# script either. The one shared implementation now lives in
+# skcapstone.coord_completion.commit_sha_is_valid, next to the gate that
+# actually enforces it, and this file has no call site of its own that needs
+# it: it only ever wrote the worker prompt, never validated evidence itself.
 
 
 # Criteria a worker CANNOT satisfy alone: they name another seat's verdict or a
@@ -5867,8 +5863,8 @@ def needs_escalation(cid, core=None, labels=None):
     return bool(_ts and _CAPABILITY_VERDICT_RE.search(str(_val or "")))
 
 # Answers: can the qwen lane specifically take this card. This is a ROUTING
-# gate, not an admission gate. _SENSITIVE_CATEGORY (scripts/fleet/skfleet-rotate.py,
-# near line 1815) answers a different question: does this card need the
+# gate, not an admission gate. _SENSITIVE_CATEGORY (elsewhere in this same
+# file) answers a different question: does this card need the
 # dispatch-approved opt-in before it can be dispatched at all. The shared
 # prefix (capauth, credential, custody, and so on) is deliberate subject-matter
 # overlap, not duplication: this pattern extends that prefix with terms
@@ -6337,7 +6333,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
       "- If you push a branch, say so and name it, because a pushed branch IS durable\n"
       "  and reachable from any host. That is the cheapest way to satisfy this.\n"
       "A SHA with no reachable bytes is not evidence. It is a promise that expired.\n"
-      + _worker_done_instructions(pr_required(core)))
+      + _worker_done_instructions(pr_required(core, _labels)))
     brief=_RAILS + ("Work only SKCapstone card %s. The fleet selector has already claimed it "
       "for your exact agent identity. Verify that ownership before working and never "
       "claim or substitute another card. If ownership is absent, or a dependency is "

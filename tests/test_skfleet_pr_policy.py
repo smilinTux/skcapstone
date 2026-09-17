@@ -123,8 +123,23 @@ def test_ordinary_title_does_not_require_pr() -> None:
 def test_sensitive_tag_requires_pr() -> None:
     namespace = _load_pr_required()
     pr_required = namespace["pr_required"]
-    core = {"title": "fix a typo in the README", "initial_labels": ["migration"]}
-    assert pr_required(core) is True
+    core = {"title": "fix a typo in the README"}
+    assert pr_required(core, ["migration"]) is True
+
+
+def test_pr_required_reads_the_labels_argument_not_raw_initial_labels() -> None:
+    """A label added after creation via `coord label` never appears in a
+    card's raw initial_labels; it only shows up once folded (initial_labels
+    plus every add_label/remove_label event). pr_required must be handed
+    that folded set explicitly and judge it, not silently re-derive an
+    unfolded answer from core.json on its own. Measured live: reading raw
+    initial_labels missed about 0.3 percent of cards where the sensitive
+    label was added after creation."""
+    namespace = _load_pr_required()
+    pr_required = namespace["pr_required"]
+    core = {"title": "fix a typo in the README", "initial_labels": []}
+    assert pr_required(core, ["deploy"]) is True
+    assert pr_required(core) is False
 
 
 def test_missing_title_does_not_raise() -> None:
@@ -228,14 +243,17 @@ def test_definition_of_done_no_em_dash_or_en_dash() -> None:
 
 
 def test_call_site_wires_pr_required_into_done_instructions() -> None:
-    """The launch loop must call _worker_done_instructions(pr_required(core)).
+    """The launch loop must call _worker_done_instructions(pr_required(core, labels)).
 
     A unit-tested function nobody calls proves nothing about the assembled
     launch string. This checks the raw source for the call site so a future
-    edit cannot silently stop wiring the two together.
+    edit cannot silently stop wiring the two together. The labels argument
+    must be an already-folded label list (see
+    test_pr_required_reads_the_labels_argument_not_raw_initial_labels), never
+    a raw core.get("initial_labels") read reintroduced at the call site.
     """
     source = ROTATE.read_text(encoding="utf-8")
-    assert "_worker_done_instructions(pr_required(core))" in source
+    assert "_worker_done_instructions(pr_required(core, _labels))" in source
 
 
 def test_old_pr_mandate_string_removed_from_whole_file() -> None:
@@ -307,62 +325,17 @@ def test_prompt_category_prose_matches_the_regex_it_describes():
 # ``skcapstone coord link``, the existing mechanism above, and nothing new.
 
 
-def test_valid_commit_sha_accepts_a_genuine_forty_char_sha() -> None:
-    namespace = _load_valid_commit_sha()
-    valid = namespace["_valid_commit_sha"]
-    assert valid("a" * 40) is True
-    assert valid("0123456789abcdef0123456789abcdef01234567") is True
-
-
-def test_valid_commit_sha_accepts_uppercase_hex() -> None:
-    """Git itself is case-insensitive about hex digits; do not punish a worker for case."""
-    namespace = _load_valid_commit_sha()
-    valid = namespace["_valid_commit_sha"]
-    assert valid("A" * 40) is True
-
-
-def test_valid_commit_sha_rejects_the_none_sentinel() -> None:
-    """The literal value none is the explicit no-repository-change sentinel, not a SHA."""
-    namespace = _load_valid_commit_sha()
-    valid = namespace["_valid_commit_sha"]
-    assert valid("none") is False
-
-
-def test_valid_commit_sha_rejects_wrong_length_and_non_hex() -> None:
-    namespace = _load_valid_commit_sha()
-    valid = namespace["_valid_commit_sha"]
-    assert valid("a" * 39) is False
-    assert valid("a" * 41) is False
-    assert valid("g" * 40) is False
-    assert valid("") is False
-
-
-def test_valid_commit_sha_rejects_non_string() -> None:
-    namespace = _load_valid_commit_sha()
-    valid = namespace["_valid_commit_sha"]
-    assert valid(None) is False
-    assert valid(40) is False
-
-
-def _load_valid_commit_sha() -> dict[str, object]:
-    """Extract ``_COMMIT_SHA_RE`` and ``_valid_commit_sha`` from the source."""
-    tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
-    assign_node = None
-    func_node = None
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and any(
-            isinstance(target, ast.Name) and target.id == "_COMMIT_SHA_RE"
-            for target in node.targets
-        ):
-            assign_node = node
-        if isinstance(node, ast.FunctionDef) and node.name == "_valid_commit_sha":
-            func_node = node
-    assert assign_node is not None, "_COMMIT_SHA_RE not found"
-    assert func_node is not None, "_valid_commit_sha not found"
-    namespace: dict[str, object] = {"re": re}
-    module = ast.Module(body=[assign_node, func_node], type_ignores=[])
-    exec(compile(module, str(ROTATE), "exec"), namespace)
-    return namespace
+# The genuine-SHA shape check used to be defined in this script
+# (_COMMIT_SHA_RE / _valid_commit_sha) and pinned here via the same
+# AST-extraction pattern the rest of this file uses, but that stranded the
+# one real implementation in a location no production code could reach: this
+# script is a launcher, not the gate, and never called it. The
+# implementation now lives in skcapstone.coord_completion.commit_sha_is_valid,
+# next to complete_coord_task and move_coord_task, the two entrypoints that
+# actually enforce it, and its behaviour is pinned in
+# tests/test_coord_commit_evidence.py by direct import instead of source
+# extraction, because that module is a normal importable part of the
+# package.
 
 
 def test_definition_of_done_instructs_recording_branch_as_an_evidence_link() -> None:
@@ -500,8 +473,9 @@ def test_branch_and_commit_sha_no_repo_change_sentinel_round_trips(tmp_path) -> 
     card = CardStore(tmp_path).fold("ev00002")
     assert card.links["commit_sha"] == "none"
 
-    namespace = _load_valid_commit_sha()
-    assert namespace["_valid_commit_sha"](card.links["commit_sha"]) is False
+    from skcapstone.coord_completion import commit_sha_is_valid
+
+    assert commit_sha_is_valid(card.links["commit_sha"]) is False
 
 
 def test_branch_link_instruction_is_repo_qualified():

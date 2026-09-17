@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -118,11 +119,14 @@ def satisfy_gate(home: Path, task_id: str, gate_name: str, agent_name: str) -> b
 
 #: The signal this codebase already uses to mean "this card is code work
 #: bound to a repository". execute_mux._card_routing (src/skcapstone/
-#: execute_mux.py) reads exactly this prefix on a folded card's labels to
-#: route it to the sandboxed code bridge instead of the comms dispatcher, so
-#: reusing it here means a card the rest of the system already treats as
-#: code work is exactly the card this gate treats as code work too. No
-#: second, divergent heuristic is invented for this one call site.
+#: execute_mux.py) reads exactly this prefix, case-sensitively, on a folded
+#: card's labels to route it to the sandboxed code bridge instead of the
+#: comms dispatcher, so reusing it here means a card the rest of the system
+#: already treats as code work is exactly the card this gate treats as code
+#: work too. No second, divergent heuristic is invented for this one call
+#: site, and the match must stay exactly this prefix: execute_mux does not
+#: lowercase before checking, so this does not either, or the two would
+#: silently disagree about a differently-cased label.
 _REPO_LABEL_PREFIX = "repo:"
 
 #: The evidence link this gate requires. `commit` (a neighbouring, older
@@ -130,6 +134,51 @@ _REPO_LABEL_PREFIX = "repo:"
 #: field, and only 4 of those 100 uses are an actual 40-hex SHA. It cannot
 #: be machine-read, so it must never be accepted here.
 _COMMIT_SHA_LINK_KEY = "commit_sha"
+
+#: The evidence link that says what to fetch. Repo-qualified as
+#: <repo>:<name> by convention (scripts/fleet/skfleet-rotate.py's worker
+#: prompt), because the fleet dispatches across more than one repository and
+#: a bare branch name does not say which one to fetch from. Required
+#: alongside a genuine commit_sha: a SHA with no branch names a commit
+#: nobody else can necessarily reach.
+_BRANCH_LINK_KEY = "branch"
+
+#: The explicit "no repository change" sentinel a worker links to commit_sha
+#: when a card needed no code change. Exact, case-sensitive match:
+#: skfleet-rotate.py's worker prompt always tells a worker to write this
+#: literal lowercase value, and a genuine SHA can never collide with it (it
+#: is four characters, not forty hex digits), so no normalization is needed.
+_NO_CHANGE_SENTINEL = "none"
+
+#: A full, lowercase, 40 character git commit SHA. The literal string "none"
+#: deliberately does not match this; see _NO_CHANGE_SENTINEL above.
+_COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def commit_sha_is_valid(value) -> bool:
+    """Return whether value is a genuine 40 character git commit SHA.
+
+    The single shared implementation of this check. scripts/fleet/
+    skfleet-rotate.py is a script, not a normal package module, but it
+    already imports from this package directly (see its
+    ``from skcapstone.coord_completion import GATED_EXIT_CODE``), so it is
+    not stranded the way a bare, unimportable script would be: it imports
+    this function too rather than keeping a second copy. This module is the
+    right home because it is the module that actually enforces the gate;
+    skfleet-rotate.py only ever wrote the worker prompt, and a copy that
+    lives next to a prompt but not next to the gate is exactly how the
+    validator ended up called from no production code the first time.
+
+    Accepts either case, because git itself treats hex digits as
+    case-insensitive; a worker should not be penalized for writing the SHA
+    a tool printed in mixed case. A missing or non-string value is simply
+    not a SHA. The literal value "none" is deliberately NOT accepted here:
+    it is a separate sentinel, checked on its own by _commit_evidence_problem
+    below, not a SHA.
+    """
+    if not isinstance(value, str):
+        return False
+    return bool(_COMMIT_SHA_RE.fullmatch(value.strip().lower()))
 
 
 def _card_labels_and_links(home: Path, task_id: str) -> tuple[list, dict]:
@@ -155,22 +204,46 @@ def _card_labels_and_links(home: Path, task_id: str) -> tuple[list, dict]:
     return labels, links
 
 
-def _missing_commit_evidence(home: Path, task_id: str) -> bool:
-    """True when a repo-labeled card has no non-blank commit_sha link.
+def _commit_evidence_problem(home: Path, task_id: str) -> str | None:
+    """Return what is wrong with a repo-labeled card's commit evidence, or
+    None if the card completes cleanly.
 
-    The literal value "none" satisfies this exactly like a real SHA: this
-    checks only that the link is present and non-blank, never what it says,
-    because the worker prompt (scripts/fleet/skfleet-rotate.py,
-    _worker_done_instructions) tells a worker to link commit_sha to the
-    literal value "none" when a card needed no repository change, and that
-    recorded decision must complete in one command, not be blocked by it.
+    Checks SHAPE, not just presence, because presence alone let a refused
+    worker unblock a card by linking any non-blank string at all ("wip",
+    "x", ...), which made the gate a speed bump rather than a record. Three
+    distinguishable problems, so the refusal message can say what was found:
+
+      - no commit_sha link at all (or a blank one)
+      - a commit_sha link that is neither a genuine SHA nor the literal
+        sentinel "none"
+      - a genuine SHA with no accompanying branch link: the branch,
+        repo-qualified as <repo>:<name>, is the only part of the evidence
+        record that tells another host what to fetch, so a real SHA with no
+        branch is a promise with nothing to verify it against. The literal
+        "none" sentinel needs no branch, because there is no code to fetch.
+
+    A card with no repo:* label is not code work by this gate's own
+    standard (see _REPO_LABEL_PREFIX) and always returns None.
     """
     labels, links = _card_labels_and_links(home, task_id)
-    touches_repository = any(str(label).lower().startswith(_REPO_LABEL_PREFIX) for label in labels)
+    touches_repository = any(str(label).startswith(_REPO_LABEL_PREFIX) for label in labels)
     if not touches_repository:
-        return False
+        return None
     commit_sha = str(links.get(_COMMIT_SHA_LINK_KEY) or "").strip()
-    return not commit_sha
+    if not commit_sha:
+        return "has no commit_sha link"
+    if commit_sha == _NO_CHANGE_SENTINEL:
+        return None
+    if not commit_sha_is_valid(commit_sha):
+        return (
+            f"has a commit_sha link of {commit_sha!r}, which is neither a "
+            f"genuine 40-character hex commit SHA nor the literal value "
+            f"{_NO_CHANGE_SENTINEL!r}"
+        )
+    branch = str(links.get(_BRANCH_LINK_KEY) or "").strip()
+    if not branch:
+        return "has a valid commit_sha link but no branch link"
+    return None
 
 
 def complete_coord_task(home: Path, agent_name: str, task_id: str):
@@ -182,12 +255,13 @@ def complete_coord_task(home: Path, agent_name: str, task_id: str):
     A card with no exit_gates at all, or one whose gates are all satisfied,
     completes exactly as before.
 
-    A `repo:<name>`-labeled card (see _REPO_LABEL_PREFIX) with no
-    commit_sha link is refused the same way, reusing GatesPending and
-    GATED_EXIT_CODE rather than a second refusal mechanism: coord.py's CLI
-    complete command and the fleet's close_reviewed_parents already branch
-    on exactly this shape and need no changes to also understand this
-    refusal. Unlike the exit_gates branch, this one does NOT append an
+    A `repo:<name>`-labeled card (see _REPO_LABEL_PREFIX) with missing or
+    invalid commit evidence (see _commit_evidence_problem) is refused the
+    same way, reusing GatesPending and GATED_EXIT_CODE rather than a second
+    refusal mechanism: coord.py's CLI complete command and the fleet's
+    close_reviewed_parents already branch on exactly this shape and need no
+    changes to also understand this refusal. Unlike the exit_gates branch,
+    this one does NOT append an
     await_gates event: that event has no matching core.json exit_gates
     entry for "commit_sha", and the fleet dispatcher's own state fold
     (scripts/fleet/skfleet-rotate.py, around line 2260) treats an
@@ -223,7 +297,8 @@ def complete_coord_task(home: Path, agent_name: str, task_id: str):
         )
         return GatesPending(task_id=task_id, outstanding=pending)
 
-    if _missing_commit_evidence(home_path, task_id):
+    problem = _commit_evidence_problem(home_path, task_id)
+    if problem:
         return GatesPending(
             task_id=task_id,
             outstanding=[
@@ -232,9 +307,11 @@ def complete_coord_task(home: Path, agent_name: str, task_id: str):
                     "owner": agent_name,
                     "message": (
                         f"card {task_id} is labeled repo:* (touches a repository) but "
-                        "has no commit_sha link; run: skcapstone coord link "
-                        f"{task_id} commit_sha <the 40-character SHA, or the literal "
-                        "value none if no repository change was needed>"
+                        f"{problem}; run: skcapstone coord link {task_id} commit_sha "
+                        "<the 40-character SHA, or the literal value none if no "
+                        "repository change was needed> and, once that is a genuine "
+                        f"SHA, skcapstone coord link {task_id} branch "
+                        "<repo>:<branch-name>"
                     ),
                 }
             ],
@@ -291,12 +368,15 @@ def move_coord_task(
         # move-to-done as an unlocked side door, which reads as enforcement
         # while providing none. That exact bypass already had to be closed once
         # for exit gates; this is the same door for commit evidence.
-        if _missing_commit_evidence(home_path, task_id):
+        problem = _commit_evidence_problem(home_path, task_id)
+        if problem:
             raise ValueError(
-                f"task {task_id} touches a repository and has no commit_sha "
-                f"link; run: skcapstone coord link {task_id} commit_sha "
-                "<the 40-character SHA, or the literal none if the card needed "
-                "no repository change> before moving to done"
+                f"task {task_id} touches a repository and {problem}; run: "
+                f"skcapstone coord link {task_id} commit_sha <the "
+                "40-character SHA, or the literal none if the card needed no "
+                f"repository change> and, once that is a genuine SHA, "
+                f"skcapstone coord link {task_id} branch <repo>:<branch-name> "
+                "before moving to done"
             )
     return transition_task(
         home_path,
