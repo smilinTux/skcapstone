@@ -1,4 +1,4 @@
-# COORD DAG — Design & Rollout Plan
+# COORD DAG: Design and Rollout Plan
 
 **Status:** planned (Phase 1 ready to build)
 **Author:** Fable design pass, verified against HEAD 2026-08-02 (lumina)
@@ -13,7 +13,7 @@ The board already stores a real DAG. Tasks carry a populated `dependencies` edge
 list (`coordination.py:112`), authorable at birth via `coord create --dep`, and
 ~2000+ live task files already have edges. **Nothing reads them.** The readiness
 function that would consume them, `unblocked_task_ids()` (`coordination.py:501`),
-has **zero callers** anywhere in the tree — verified dead.
+has **zero callers** anywhere in the tree, verified dead.
 
 The fix is almost entirely read-side derivation, no new subsystem. Roughly
 ~150 lines, one extracted helper, two auction hooks, one fold clause, and the
@@ -40,10 +40,10 @@ already-authored edges become a working parallel scheduler.
 
 | # | Change | Why it matters |
 |---|---|---|
-| 1 | **Overlay `BLOCKED`/`READY` onto `get_task_views()`** via a pure `apply_dependency_status()` fn, applied **once after both** the legacy and CardStore branches | The single most important placement call — do it twice and the two backends diverge. Revives `unblocked_task_ids()` as the one source of readiness truth. |
+| 1 | **Overlay `BLOCKED`/`READY` onto `get_task_views()`** via a pure `apply_dependency_status()` fn, applied **once after both** the legacy and CardStore branches | The single most important placement call, do it twice and the two backends diverge. Revives `unblocked_task_ids()` as the one source of readiness truth. |
 | 2 | **Extract team_engine's Kahn topo-sort** into `graphutil.topo_waves()`, return-not-raise | Cycles among a few of thousands of tasks must never crash a board read. team_engine keeps its raising wrapper + green tests. |
 | 3 | **`dep_add`/`dep_remove` events** in CardStore, mirroring the `add_label`/`remove_label` fold (`card_store.py:68`, `:204`) | "The graph you can never amend is the graph nobody maintains." Edges are *discovered* (autopilot decompose), not only declared at birth. |
-| 4 | **`coord ready` / `blocked` / `graph --check`** CLI + auction stops bidding blocked work + `complete_task` fans out newly-unblocked dependents | The "stop waiting in line" mechanic — finishing a node *pushes* its ready dependents to idle agents instead of them polling. |
+| 4 | **`coord ready` / `blocked` / `graph --check`** CLI + auction stops bidding blocked work + `complete_task` fans out newly-unblocked dependents | The "stop waiting in line" mechanic, finishing a node *pushes* its ready dependents to idle agents instead of them polling. |
 | 5 | **Worktree-per-node = agent-layer convention, not a coord feature** | Coord is Syncthing-synced multi-host; a worktree path is host-local, meaningless on another node. Bind via existing `coord link`. |
 
 ---
@@ -63,7 +63,7 @@ silently block.
 
 ## Rollout (zero-risk first)
 
-### Phase 1 — read-only derivation (build first)
+### Phase 1: read-only derivation (build first)
 - Add `apply_dependency_status()` (pure fn) + wire it once after both branches of `get_task_views()`.
 - Revive `unblocked_task_ids()` as the readiness source.
 - Apply the dangling-edge mask (`& known_ids`).
@@ -72,16 +72,16 @@ silently block.
 - **Run `coord graph --check` before merge** to measure dangling/cyclic edges in the live corpus.
 - Blast radius: some OPEN tasks correctly show BLOCKED. No schema change, files read exactly as before.
 
-### Phase 2 — enforcement
+### Phase 2: enforcement
 - Auction ready-filter (stop bidding blocked work).
 - Claim guard (refuse claim on a blocked task).
 - `complete_task` fan-out of newly-unblocked dependents to idle agents.
 
-### Phase 3 — edge mutation
+### Phase 3: edge mutation
 - `coord dep add` / `coord dep remove` (CardStore `dep_add`/`dep_remove` events, mirror the label fold).
 - Cycle guard at create/mutate time (reuse `graphutil.topo_waves()`).
 
-### Phase 4 — worktree convention
+### Phase 4: worktree convention
 - Runner-side only. Worktree-per-node bound via `coord link`, never stored as a coord field.
 
 ---
