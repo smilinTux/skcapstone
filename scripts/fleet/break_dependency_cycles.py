@@ -73,6 +73,28 @@ def plan_breaks(cycles: list[list[str]], parents: dict[str, str]) -> list[tuple[
     return breaks
 
 
+def _resolved(cycle: list[str], breaks: list[tuple[str, str]]) -> bool:
+    """Return True if one of the planned breaks is this cycle's own closing edge.
+
+    Node membership is not enough: a card can sit in two distinct cycles, and
+    breaking an edge that resolves one of them says nothing about the other
+    just because they share a node. The correct test is whether a planned
+    break is an adjacent pair in this cycle's own ring, in either direction.
+    """
+    ring = list(cycle)
+    adjacent: set[tuple[str, str]] = set()
+    for i in range(len(ring)):
+        a, b = ring[i], ring[(i + 1) % len(ring)]
+        adjacent.add((a, b))
+        adjacent.add((b, a))
+    return any(tuple(brk) in adjacent for brk in breaks)
+
+
+def unbroken_cycles(cycles: list[list[str]], breaks: list[tuple[str, str]]) -> list[list[str]]:
+    """Return the cycles whose own closing edge was not among the planned breaks."""
+    return [cycle for cycle in cycles if not _resolved(cycle, breaks)]
+
+
 def _parent_from_labels(labels: list[str]) -> str | None:
     """Return the single parent-<id> label target, or None if there isn't one."""
     found = {
@@ -161,11 +183,7 @@ def main() -> int:
     for parent, child in breaks:
         print(f"  remove {parent} -> {child}")
 
-    broken_members: set[str] = set()
-    for parent, child in breaks:
-        broken_members.add(parent)
-        broken_members.add(child)
-    unbroken = [cycle for cycle in cycles if not (set(cycle) & broken_members)]
+    unbroken = unbroken_cycles(cycles, breaks)
     if unbroken:
         print(f"WARNING {len(unbroken)} cycles have no parent edge to break:")
         for cycle in unbroken:
