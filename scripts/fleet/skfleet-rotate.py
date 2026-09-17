@@ -15,6 +15,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from skcapstone.card_store import CardStore
+from skcapstone.coord_completion import GATED_EXIT_CODE
 from skcapstone.coordination import Board
 from skcapstone.fleet.worker_watchdog import StartupObservation, startup_actuation_fenced
 from skcapstone.fleet.worker_liveness_runtime import run_production_cycle
@@ -1978,6 +1979,7 @@ def _fold_claimability(core, rows):
         "labels": [str(x) for x in (core.get("initial_labels") or [])],
         "dependencies": [str(x) for x in (core.get("dependencies") or [])],
         "awaiting_gates": False,
+        "satisfied_gates": set(),
     }
     review_link_keys = {
         "pr", "pull_request", "open_pr", "candidate_evidence_sha256",
@@ -2051,6 +2053,10 @@ def _fold_claimability(core, rows):
             state["archived"] = True
         elif action == "await_gates":
             state["awaiting_gates"] = True
+        elif action == "gate_satisfied":
+            name = event.get("gate")
+            if isinstance(name, str) and name:
+                state["satisfied_gates"].add(name)
         elif action == "reopen":
             state["archived"] = False
             state["terminal"] = False
@@ -2106,6 +2112,24 @@ def _fold_claimability(core, rows):
                 state["dependencies"].append(dep)
             elif action == "remove_dependency" and dep:
                 state["dependencies"] = [x for x in state["dependencies"] if x != dep]
+    # gate_satisfied is written by coord satisfy-gate and read here, never
+    # through CardCore/CardStore.fold(): exit_gates only exists on core.json,
+    # not on the installed CardCore, so this must stay a raw-JSON read. Once
+    # every gate declared on core.json has a matching gate_satisfied event,
+    # the card must stop reporting awaiting-gates on its own, without
+    # depending on an operator running reopen to unstick it. An await_gates
+    # event with no exit_gates on core.json (a stale or malformed read) must
+    # not be auto-cleared: that is positive evidence of nothing, and fails
+    # closed exactly like the pre-existing behaviour it must not regress.
+    if state["awaiting_gates"]:
+        declared_gates = {
+            str(gate.get("gate"))
+            for gate in (core.get("exit_gates") or [])
+            if isinstance(gate, dict) and isinstance(gate.get("gate"), str)
+            and gate.get("gate")
+        }
+        if declared_gates and declared_gates <= state["satisfied_gates"]:
+            state["awaiting_gates"] = False
     return state
 
 
@@ -4684,6 +4708,12 @@ def close_reviewed_parents():
                 _rows.pop(parent, None)
                 closed += 1
                 log(d, "CLOSED_REVIEWED|%s|%s|review=%s|%s" % (HOST, parent, rev, rv[:40]))
+            elif c.returncode == GATED_EXIT_CODE:
+                # coord complete recorded await_gates instead of completing.
+                # This is not a failure and must not claim a close that did
+                # not happen: the card stays open, and the next cycle tries
+                # again once every gate is satisfied.
+                log(d, "CLOSE_GATED|%s|%s|review=%s|%s" % (HOST, parent, rev, rv[:40]))
             else:
                 log(d, "CLOSE_FAILED|%s|%s|%s" % (HOST, parent, (c.stderr or "").strip()[:110]))
             break

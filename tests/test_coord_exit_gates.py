@@ -193,9 +193,36 @@ def test_cli_complete_reports_outstanding_gate_and_owner(tmp_path: Path) -> None
         ["coord", "complete", "11112222", "--home", str(home), "--agent", "reviewer"],
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 3, result.output
     assert "independent-review" in result.output
     assert "seraph" in result.output
+
+
+def test_cli_complete_gated_exit_code_is_distinct_from_success_and_error(
+    tmp_path: Path,
+) -> None:
+    """A gated complete must not read as returncode 0 to a caller.
+
+    Fleet's close_reviewed_parents() checks returncode == 0 to decide whether
+    a card actually closed; a gated card exiting 0 was a false completion.
+    Exit code 1 is already this command's ValueError path, so the gated
+    outcome needs its own code rather than reusing either.
+    """
+    home = tmp_path / "home"
+    _make_card(
+        home,
+        "55556666",
+        "gated card",
+        exit_gates=[{"gate": "independent-review", "owner": "seraph"}],
+    )
+
+    result = CliRunner().invoke(
+        main,
+        ["coord", "complete", "55556666", "--home", str(home), "--agent", "reviewer"],
+    )
+
+    assert result.exit_code not in (0, 1)
+    assert result.exit_code == 3
 
 
 def test_cli_satisfy_gate_then_complete_round_trip(tmp_path: Path) -> None:
@@ -212,7 +239,7 @@ def test_cli_satisfy_gate_then_complete_round_trip(tmp_path: Path) -> None:
         main,
         ["coord", "complete", "33334444", "--home", str(home), "--agent", "reviewer"],
     )
-    assert first.exit_code == 0, first.output
+    assert first.exit_code == 3, first.output
 
     satisfy = runner.invoke(
         main,

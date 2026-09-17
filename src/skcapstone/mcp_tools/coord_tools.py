@@ -263,8 +263,13 @@ async def _handle_coord_claim(args: dict) -> list[TextContent]:
 
 
 async def _handle_coord_complete(args: dict) -> list[TextContent]:
-    """Complete a task on the board."""
-    from ..coord_completion import complete_coord_task
+    """Complete a task on the board.
+
+    A card with outstanding exit_gates is a normal, expected outcome, not an
+    error: complete_coord_task returns a GatesPending instead of an Agent,
+    and this reports it as a gated, still-open result rather than raising.
+    """
+    from ..coord_completion import GatesPending, complete_coord_task
 
     task_id = args.get("task_id", "")
     agent_name = args.get("agent_name", "")
@@ -286,9 +291,20 @@ async def _handle_coord_complete(args: dict) -> list[TextContent]:
     )
     home = _home()
     try:
-        agent = complete_coord_task(home, agent_name, task_id)
+        result = complete_coord_task(home, agent_name, task_id)
     except ValueError as exc:
         return _error_response(str(exc))
+
+    if isinstance(result, GatesPending):
+        return _json_response(
+            {
+                "completed": False,
+                "gated": True,
+                "task_id": task_id,
+                "outstanding": result.outstanding,
+            }
+        )
+    agent = result
 
     # Report minted Joules in the response (best-effort)
     joules_minted = 0

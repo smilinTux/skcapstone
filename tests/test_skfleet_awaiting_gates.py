@@ -189,6 +189,66 @@ def test_reopen_then_await_gates_ends_awaiting():
     assert state["awaiting_gates"] is True
 
 
+def test_gate_satisfied_clears_awaiting_gates_when_all_declared_gates_done():
+    """satisfy-gate must actually un-stick the card, not just log an event."""
+    ns = _load({"_fold_claimability"}, set())
+    core = {
+        "title": "t",
+        "dependencies": [],
+        "initial_labels": [],
+        "exit_gates": [{"gate": "g1", "owner": "seraph"}],
+    }
+    rows = [
+        {"action": "claim", "owner": "w1"},
+        {"action": "await_gates", "gates": ["g1"]},
+        {"action": "gate_satisfied", "gate": "g1"},
+    ]
+    state = ns["_fold_claimability"](core, rows)
+    assert state["awaiting_gates"] is False
+
+
+def test_gate_satisfied_leaves_awaiting_gates_while_a_gate_remains_open():
+    """Only every declared gate satisfied clears it, not just one of several."""
+    ns = _load({"_fold_claimability"}, set())
+    core = {
+        "title": "t",
+        "dependencies": [],
+        "initial_labels": [],
+        "exit_gates": [
+            {"gate": "g1", "owner": "seraph"},
+            {"gate": "g2", "owner": "mero"},
+        ],
+    }
+    rows = [
+        {"action": "await_gates", "gates": ["g1", "g2"]},
+        {"action": "gate_satisfied", "gate": "g1"},
+    ]
+    state = ns["_fold_claimability"](core, rows)
+    assert state["awaiting_gates"] is True
+
+
+def test_gate_satisfied_all_gates_reaches_claimable_end_to_end():
+    """The full path: fold plus reason must report claimable, not awaiting-gates."""
+    ns = _load(HELPERS | {"_fold_claimability"}, GATE_CONSTANTS | {"_COLUMNS"})
+    ns.setdefault("KNOWN_HOSTS", ())
+    core = {
+        "kind": "task",
+        "title": "t",
+        "description": "",
+        "acceptance_criteria": [],
+        "links": {},
+        "dependencies": [],
+        "initial_labels": [],
+        "exit_gates": [{"gate": "g1", "owner": "seraph"}],
+    }
+    rows = [
+        {"action": "await_gates", "gates": ["g1"]},
+        {"action": "gate_satisfied", "gate": "g1"},
+    ]
+    state = ns["_fold_claimability"](core, rows)
+    assert ns["_claimability_reason"](core, state) == "claimable"
+
+
 def test_spec_version_null_is_treated_as_v1_and_not_gated():
     """New v1 cards serialise spec_version: null, not an absent key.
 

@@ -6,6 +6,14 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+# Exit code coord.py's CLI complete command uses when the outcome is
+# GatesPending, and the exact value the fleet's review closer checks for to
+# tell a gated card apart from a real close. Never 0 (a caller that only
+# checks returncode == 0 must not mistake gated for completed) and never 1
+# (already the CLI's plain-error exit code). Shared here so the CLI and the
+# fleet dispatcher, which both act on this return value, cannot drift apart.
+GATED_EXIT_CODE = 3
+
 
 @dataclass(frozen=True)
 class GatesPending:

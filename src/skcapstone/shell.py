@@ -348,13 +348,19 @@ def _handle_coord(args: list[str]) -> None:
 
     elif sub == "complete" and len(args) > 1:
         agent = args[2] if len(args) > 2 else name
-        from .coord_completion import complete_coord_task
+        from .coord_completion import GatesPending, complete_coord_task
 
         try:
-            complete_coord_task(_home(), agent, args[1])
-            console.print(f"  [green]Completed:[/] {args[1]} by {agent}")
+            result = complete_coord_task(_home(), agent, args[1])
         except ValueError as e:
             console.print(f"  [red]{e}[/]")
+        else:
+            if isinstance(result, GatesPending):
+                console.print(f"  [yellow]Awaiting gates:[/] {args[1]} not completed")
+                for gate in result.outstanding:
+                    console.print(f"    - {gate.get('gate')} (owner: {gate.get('owner')})")
+            else:
+                console.print(f"  [green]Completed:[/] {args[1]} by {agent}")
 
     elif sub == "create" and len(args) > 1:
         from .coordination import Task

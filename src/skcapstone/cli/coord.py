@@ -543,7 +543,7 @@ def register_coord_commands(main: click.Group) -> None:
             agent, Action.COMPLETE_CARD, task_id, casey_authorization, casey_change_id
         )
 
-        from ..coord_completion import GatesPending
+        from ..coord_completion import GATED_EXIT_CODE, GatesPending
 
         try:
             result = complete_coord_task(home_path, agent, task_id)
@@ -556,7 +556,13 @@ def register_coord_commands(main: click.Group) -> None:
             for gate in result.outstanding:
                 console.print(f"    - {gate.get('gate')} (owner: {gate.get('owner')})")
             console.print()
-            return
+            # GATED_EXIT_CODE, distinct from the 0 a caller reads as "closed"
+            # and the 1 an actual error already uses on this command. A caller
+            # that only checks returncode == 0 must not be able to mistake a
+            # gated, still-open card for a completion; a script that wants to
+            # treat gated as fine can check for this exact code instead of
+            # guessing.
+            sys.exit(GATED_EXIT_CODE)
 
         # board.complete_task() automatically mints Joules via _mint_joules_for_task
         console.print(f"\n  [green]Completed:[/] [{task_id}] by [bold]{result.agent}[/]\n")
