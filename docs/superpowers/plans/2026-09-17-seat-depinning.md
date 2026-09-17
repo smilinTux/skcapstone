@@ -126,13 +126,22 @@ This task adds NO production code. It characterises existing behaviour.
 
 `atlas` and `tank` are absent from `seat-placement.json`, so `_seat_provisioned`
 returns false and they report `seat-unprovisioned`. Before either can move off a
-timer, the fleet path has to be able to run them at all.
+timer, the fleet path has to be able to run them at all. Measured: the manifest
+on chiap08 lists only link, mero, niobe and seraph, is dated 2026-09-08, and is
+written by nothing in this repository.
 
-- [ ] **Step 1: Write failing tests** for a placement manifest containing all six
-  lifecycle seats, asserting `_seat_provisioned` is true for each and that an
-  unknown seat name is still rejected.
+**Do NOT hardcode a seat roster or a seat count.** Task 3 folds `tank` into
+`atlas`, so any literal six in this task's code or tests is something Task 3 then
+has to rip out, and a second copy of the roster inside the dispatcher is the same
+two-copies drift that has already cost this effort time twice. Provision whatever
+`LIFECYCLE_SEATS` contains, so the fold flows through without touching your work.
+
+- [ ] **Step 1: Write failing tests** for a placement manifest covering every seat
+  in `LIFECYCLE_SEATS`, asserting `_seat_provisioned` is true for each and that an
+  unknown seat name is still rejected. Derive the roster; do not spell it out.
 - [ ] **Step 2: Run them, confirm they FAIL.**
-- [ ] **Step 3: Make the fleet path accept all six seats.** Change no host lists.
+- [ ] **Step 3: Make the fleet path accept every seat in the roster.** Change no
+  host lists.
 - [ ] **Step 4: Run the tests plus `pytest tests/ -k skfleet -q`; verify the
   script parses.**
 - [ ] **Step 5: Commit.**
