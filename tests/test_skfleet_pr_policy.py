@@ -502,3 +502,21 @@ def test_branch_and_commit_sha_no_repo_change_sentinel_round_trips(tmp_path) -> 
 
     namespace = _load_valid_commit_sha()
     assert namespace["_valid_commit_sha"](card.links["commit_sha"]) is False
+
+
+def test_branch_link_instruction_is_repo_qualified():
+    """A bare branch name is ambiguous across a multi-repo fleet.
+
+    Measured before this was added: the 14 existing branch links in the live
+    event log hold three distinct values in three different shapes, a bare
+    branch, a GitHub tree URL, and one repo-qualified name. So there was no
+    convention to match, only one to establish. The fleet dispatches work
+    across skcapstone, skcoord, skchat and others, and the Integrator reading
+    a recorded branch has to know which repository to fetch it from.
+    """
+    build = _load_done_instructions()["_worker_done_instructions"]
+    text = build(False)
+
+    assert "<repo>:<branch-name>" in text
+    assert "skcapstone:fix/abc123" in text
+    assert "coord link <card> commit_sha" in text
