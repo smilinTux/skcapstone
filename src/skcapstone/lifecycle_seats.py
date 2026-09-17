@@ -13,7 +13,7 @@ from typing import Any
 
 from .estate import local_host
 
-LIFECYCLE_SEATS = frozenset({"link", "mero", "seraph", "niobe", "tank", "atlas"})
+LIFECYCLE_SEATS = frozenset({"link", "mero", "seraph", "niobe", "atlas"})
 PROFILE_FILENAME = "config/seat-role.json"
 STARTUP_FILENAME = "config/lifecycle-startup.md"
 
@@ -26,7 +26,7 @@ def load_lifecycle_seat_profiles() -> dict[str, Any]:
     if value.get("schema") != "skfleet.lifecycle-seat-profiles/v1":
         raise ValueError("unsupported lifecycle seat profile schema")
     if set(value.get("seats", {})) != LIFECYCLE_SEATS:
-        raise ValueError("lifecycle seat set does not match the canonical six seats")
+        raise ValueError("lifecycle seat set does not match the canonical five seats")
     if value.get("default_model_route") != "sk-codex-mid":
         raise ValueError("lifecycle seats must default to sk-codex-mid")
     if value.get("default_model_profile") != "gpt-5.6-luna":
@@ -43,7 +43,7 @@ def load_lifecycle_seat_profiles() -> dict[str, Any]:
 
 
 def load_seat_control_plane(active_host: str | None = None) -> dict[str, Any]:
-    """Load the packaged six-seat control record, bound to one active host.
+    """Load the packaged five-seat control record, bound to one active host.
 
     The packaged file is a TEMPLATE: it ships the seat roster with an empty
     ``active_host`` and empty host lists, and this function fills both in
@@ -54,12 +54,12 @@ def load_seat_control_plane(active_host: str | None = None) -> dict[str, Any]:
 
     ``active_host`` stays in the record (and therefore in the synced
     coordination tree) on purpose: it is an estate-wide ELECTION, not
-    host-local truth. Exactly one host per estate runs the six seats, and a
+    host-local truth. Exactly one host per estate runs the five seats, and a
     per-host answer would let two hosts both claim the seat and dispatch the
     same cards twice. See :mod:`skcapstone.estate` for the full rule.
 
     Args:
-        active_host: The host this estate elects to run the six seats.
+        active_host: The host this estate elects to run the five seats.
             ``None`` derives it from the local machine.
 
     Returns:
@@ -68,7 +68,7 @@ def load_seat_control_plane(active_host: str | None = None) -> dict[str, Any]:
 
     Raises:
         ValueError: The packaged template is not schema 1, does not carry
-            exactly the six lifecycle seats, or the resolved host is empty.
+            exactly the five lifecycle seats, or the resolved host is empty.
     """
 
     path = files("skcapstone").joinpath("data/seat-control-plane.json")
@@ -76,7 +76,7 @@ def load_seat_control_plane(active_host: str | None = None) -> dict[str, Any]:
     if value.get("schema_version") != 1:
         raise ValueError("unsupported seat control plane schema")
     if set(value.get("seats", {})) != LIFECYCLE_SEATS:
-        raise ValueError("seat control plane must contain exactly six lifecycle seats")
+        raise ValueError("seat control plane must contain exactly five lifecycle seats")
     host = local_host(active_host)
     if not host:
         raise ValueError("seat control plane requires a non-empty active host")
@@ -216,7 +216,7 @@ def rollback_lifecycle_seats(home: Path, rollback_dir: Path) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Converge or roll back the six lifecycle profiles."""
+    """Converge or roll back the five lifecycle profiles."""
 
     parser = argparse.ArgumentParser()
     parser.add_argument("operation", choices=("converge", "rollback"))

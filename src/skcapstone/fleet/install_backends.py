@@ -191,7 +191,7 @@ def default_backends(runner: Callable = subprocess.run) -> dict[str, Callable]:
         )
         if "skfleet-seat-cycle.timer" in names:
             unit_names.update(
-                f"skfleet-{seat}.service" for seat in ("tank", "seraph", "niobe", "niobe-live")
+                f"skfleet-{seat}.service" for seat in ("seraph", "niobe", "niobe-live")
             )
         return sorted(unit_names)
 

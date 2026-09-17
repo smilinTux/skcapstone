@@ -920,8 +920,6 @@ def test_unit_templates_preserve_limits_and_disabled_install_contract() -> None:
     mero_timer = (root / "systemd/skfleet-mero.timer").read_text()
     seraph = (root / "systemd/skfleet-seraph.service").read_text()
     seraph_timer = (root / "systemd/skfleet-seraph.timer").read_text()
-    tank = (root / "systemd/skfleet-tank.service").read_text()
-    tank_timer = (root / "systemd/skfleet-tank.timer").read_text()
     atlas = (root / "systemd/skfleet-atlas.service").read_text()
     atlas_timer = (root / "systemd/skfleet-atlas.timer").read_text()
     niobe = (root / "systemd/skfleet-niobe-live.service").read_text()
@@ -950,21 +948,20 @@ def test_unit_templates_preserve_limits_and_disabled_install_contract() -> None:
     assert "Environment=SKFLEET_GLM_TARGET=0" in niobe
     assert "Environment=SKFLEET_KIMI_TARGET=0" in niobe
     assert "skfleet-seraph.service" in seraph_timer
-    assert "--seat tank" in tank and "TimeoutStartSec=300" in tank
-    assert "SKFLEET_TANK_BATCH_SIZE=2" in tank
-    assert "ProtectHome=read-only" in tank
-    assert "ReadWritePaths=%h/.skcapstone/evidence %h/.skcapstone/fleet" in tank
-    assert "OnUnitActiveSec=5min" in tank_timer
     assert "--seat atlas" in atlas and "TimeoutStartSec=300" in atlas
     assert "SKFLEET_ATLAS_BATCH_SIZE=2" in atlas
     assert "ProtectHome=read-only" in atlas
     assert "ReadWritePaths=%h/.skcapstone/evidence %h/.skcapstone/fleet" in atlas
     assert "bounded postcondition verifier" in atlas
     assert "OnUnitActiveSec=5min" in atlas_timer
-    for seat in ("tank", "atlas"):
+    for seat in ("atlas",):
         assert (root / "systemd" / f"skfleet-{seat}.service").read_bytes() == (
             root / "src" / "skcapstone" / "data" / "systemd" / f"skfleet-{seat}.service"
         ).read_bytes()
+    assert not (root / "systemd/skfleet-tank.service").exists()
+    assert not (root / "systemd/skfleet-tank.timer").exists()
+    assert not (root / "src/skcapstone/data/systemd/skfleet-tank.service").exists()
+    assert not (root / "src/skcapstone/data/systemd/skfleet-tank.timer").exists()
 
 
 def test_installer_reuses_configured_niobe_gateway_route_for_seraph() -> None:
@@ -975,10 +972,10 @@ def test_installer_reuses_configured_niobe_gateway_route_for_seraph() -> None:
     assert 'cp "$_NIOBE_GATEWAY_DROPIN" "$_SERAPH_GATEWAY_DROPIN"' in installer
 
 
-def test_tank_and_atlas_presence_cycles_do_not_run_link_work(tmp_path: Path) -> None:
+def test_atlas_presence_cycles_do_not_run_link_work(tmp_path: Path) -> None:
     control_path = tmp_path / "control.json"
     control(control_path)
-    for seat in ("tank", "atlas"):
+    for seat in ("atlas",):
         result = run_cycle(
             seat=seat,
             home=tmp_path / "home",

@@ -171,7 +171,7 @@ def test_core_backend_installs_timer_and_paired_service_before_enable(monkeypatc
     }
     assert installed_sources >= {
         str(install_backends._packaged_core_unit(f"skfleet-{seat}.service"))
-        for seat in ("tank", "seraph", "niobe", "niobe-live")
+        for seat in ("seraph", "niobe", "niobe-live")
     }
 
 
