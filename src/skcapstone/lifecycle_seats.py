@@ -11,11 +11,16 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
-from .estate import local_host
+from .estate import estate_rotation_hosts, local_host
 
 LIFECYCLE_SEATS = frozenset({"link", "mero", "seraph", "niobe", "atlas"})
 PROFILE_FILENAME = "config/seat-role.json"
 STARTUP_FILENAME = "config/lifecycle-startup.md"
+
+#: The chi fleet exactly as it was when it was a literal in skfleet-rotate.py.
+#: Used only when neither the estate nor SKFLEET_ROTATION_HOSTS declares a
+#: roster, matching that script's own `_resolve_rotation_hosts` default.
+_DEFAULT_ROTATION_HOSTS = ("chiap01", "chiap02", "chiap03", "chiap04", "chiap08")
 
 
 def load_lifecycle_seat_profiles() -> dict[str, Any]:
@@ -83,6 +88,96 @@ def load_seat_control_plane(active_host: str | None = None) -> dict[str, Any]:
     value["active_host"] = host
     value["seats"] = {seat: [host] for seat in sorted(LIFECYCLE_SEATS)}
     return value
+
+
+def _rotation_hosts(home: Path | str | None = None) -> tuple[str, ...]:
+    """Resolve the estate's rotation hosts, mirroring skfleet-rotate.py.
+
+    Resolution is most explicit first: ``SKFLEET_ROTATION_HOSTS`` for a host
+    bootstrapping before its estate record has synced, then the estate's
+    declared roster, then the chi fleet default. This is the same order
+    ``_resolve_rotation_hosts`` uses in the shipped script, so the placement
+    manifest never names a host the dispatcher itself would refuse to rotate
+    onto.
+
+    Args:
+        home: The estate home consulted for a declared roster.
+
+    Returns:
+        The resolved rotation hosts, lowercased.
+    """
+    raw = str(os.environ.get("SKFLEET_ROTATION_HOSTS", "") or "").strip()
+    if raw:
+        return tuple(part.strip().lower() for part in raw.split(",") if part.strip())
+    declared = estate_rotation_hosts(home)
+    if declared:
+        return tuple(str(part).strip().lower() for part in declared)
+    return _DEFAULT_ROTATION_HOSTS
+
+
+def generate_seat_placement_manifest(
+    active_host: str | None = None, home: Path | str | None = None
+) -> dict[str, Any]:
+    """Build a schema-1 seat placement manifest covering every lifecycle seat.
+
+    Nothing in the repository writes ``seat-placement.json``: it has been a
+    hand-maintained file that the dispatcher
+    (``scripts/fleet/skfleet-rotate.py::_load_seat_placement``) fails closed
+    on when it is missing, malformed, or simply forgotten. This generates it
+    from the same canonical roster, ``LIFECYCLE_SEATS``, that every other
+    lifecycle-seat consumer already reads.
+
+    Every seat maps to a list holding exactly ONE host, deliberately. The
+    manifest format the dispatcher reads supports several hosts per seat, but
+    that capacity stays unused: the CardStore claim fence does not exclude a
+    concurrent second host (``~/.skcapstone`` is per-host local storage
+    replicated by Syncthing, so ``fcntl.flock`` cannot reach across
+    machines), so ``active_host`` in the seat control plane is the only
+    cross-host exclusion this estate has. Listing two hosts for one seat
+    would let both dispatch the same cards twice.
+
+    Args:
+        active_host: The host every seat is provisioned to. ``None`` derives
+            it from the local machine.
+        home: The estate home consulted for its declared rotation hosts.
+            Defaults to the sovereign home.
+
+    Returns:
+        The generated manifest: ``{"schema_version": 1, "seats": {...}}``.
+
+    Raises:
+        ValueError: The resolved host is empty, or is not one of the
+            estate's rotation hosts.
+    """
+    host = local_host(active_host)
+    if not host:
+        raise ValueError("seat placement manifest requires a non-empty active host")
+    hosts = _rotation_hosts(home)
+    if host not in hosts:
+        raise ValueError(f"active host is not one of the estate's rotation hosts: {host}")
+    return {
+        "schema_version": 1,
+        "seats": {seat: [host] for seat in sorted(LIFECYCLE_SEATS)},
+    }
+
+
+def write_seat_placement_manifest(
+    path: Path | str, active_host: str | None = None, home: Path | str | None = None
+) -> dict[str, Any]:
+    """Generate the seat placement manifest and write it atomically.
+
+    Args:
+        path: Destination file path, for example
+            ``~/.skcapstone/coordination/seat-placement.json``.
+        active_host: Passed through to :func:`generate_seat_placement_manifest`.
+        home: Passed through to :func:`generate_seat_placement_manifest`.
+
+    Returns:
+        The manifest that was written.
+    """
+    manifest = generate_seat_placement_manifest(active_host=active_host, home=home)
+    _atomic_write(Path(path), _canonical_bytes(manifest))
+    return manifest
 
 
 def _canonical_bytes(value: Any) -> bytes:
