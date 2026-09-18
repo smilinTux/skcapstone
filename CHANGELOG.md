@@ -43,7 +43,15 @@
   strings lie, services importing from trees agents work in, CI that ran twice
   and starved the only complete gate, verifying through the path that wrote,
   when a test fighting a change three times means the change is wrong, and the
-  unowned job.
+  unowned job. Extended with four more from the seat-authorization work:
+  coverage is the property (22 of 32 coord mutation entrypoints had no gate
+  at all, so the fix is an enumeration test where a new verb is mutating
+  until classified otherwise), an identity must be a resolved subject and
+  not a free string (the literal unexpanded `SKAGENT` wrote 12 events), a
+  seat retired on paper keeps writing until something checks (Tank wrote 18
+  events the day before its retirement), and name the boundary you cannot
+  reach yet (the coord CLI cannot reach the one PDP because `--agent` is
+  unauthenticated, so the gap is stated with its unblocking condition).
 
 - **Claim TTL counts the dispatcher's `worker_liveness` link as the owner being
   alive.** That link is the strongest liveness signal the estate produces:

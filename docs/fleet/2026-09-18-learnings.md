@@ -315,6 +315,113 @@ general and nobody's in particular.
 
 ---
 
+## 12. Coverage is the property. A list of gated entrypoints is not coverage
+
+The Overseer mutating the board looked like one seat overstepping. Enumerating
+the code found the real shape: of **32 coord mutation entrypoints, 22 had no
+authorization call at all**. `void`, `describe`, `label`, `link`,
+`reprioritize`, `amend-criteria`, both dependency verbs and `satisfy-gate` were
+ungated. The ten that were gated checked exactly one identity by name and let
+every other actor through.
+
+So the story was never "a deny-list missing an entry". It was a handful of
+guarded doors in a building with no walls.
+
+**Contract.** The property is that **no mutating entrypoint lacks a gate**, and
+a test enumerates the entrypoints from the code to prove it.
+
+| | |
+|---|---|
+| Evidence | an AST walk over every CLI command and MCP handler, asserting the gate call |
+| Fails closed | **a new verb counts as mutating until deliberately classified read-only** |
+| Recovery owner | the seat that owns the surface |
+
+That default is the whole mechanism. A hand-maintained list of what to check
+degrades every time someone adds a verb, and nothing notices, which is exactly
+how `release-claim` ended up with no check while its four siblings had one.
+
+This generalises past authorization. Wherever a rule must hold for a *class* of
+things, test the class membership, not the members you remembered.
+
+---
+
+## 13. An identity must be a subject, not whatever string arrived
+
+The writer `SKAGENT` wrote **12 events in 14 days**. Not the value of the
+`SKAGENT` variable: the literal, unexpanded variable name, from a shell that
+did not interpolate it. The board accepted it as an actor and attributed real
+mutations to it.
+
+Alongside it, the same audit found a controller wearing a seat's identity via
+`--agent mero`, and the dispatcher's own writer arriving from a second
+unnoticed spelling, `os.environ.get("SKAGENT", "skfleet-rotate")`, where the
+chi hosts export `SKAGENT="jarvis"` in `.bashrc`. The same code path therefore
+produced two different identities depending on whether it ran from a login
+shell or a timer.
+
+**Contract.** An actor is resolved and validated, never accepted as a free
+string.
+
+| | |
+|---|---|
+| Evidence | the identity matches a known subject or a declared delegate grammar |
+| Fails closed | an unknown string is **refused**, so a hostname or an unexpanded env var cannot act |
+| Detection | audit for writers matching no known subject; the count should be zero |
+
+The fix for the dispatcher deliberately does **not** consult `SKAGENT`, with a
+test pinning that inertness, because honouring it would silently restore the
+wrong writer on every interactive run on those hosts. When an input has proven
+it can carry a wrong value, refusing to read it is a legitimate fix.
+
+---
+
+## 14. A seat retired on paper keeps writing until something checks
+
+Tank was dissolved into Operations on 2026-09-17. It wrote **18 events on
+2026-09-16**, and the trailing writer was still live when the authorization
+table was built, so its capability row had to be kept rather than deleted, with
+a follow-up to find what still wears the identity.
+
+**Contract.** Retiring a seat is not a document edit. It completes when no
+writer bearing that identity has acted for a defined window.
+
+| | |
+|---|---|
+| Evidence | zero events under the retired identity since the retirement timestamp |
+| Fails closed | the capability row stays until the writer is found and stopped |
+| Recovery owner | whoever absorbed the duties |
+
+Deleting the row first would have broken a live writer. Keeping it is honest:
+the row now documents a known gap instead of asserting a tidiness that is not
+true yet.
+
+---
+
+## 15. Name the boundary you cannot reach yet
+
+The authorization standard says one PDP: `capauth.authz.decide` over canonical
+fqids. The coord CLI cannot reach it. `--agent` is an unauthenticated string
+with no credential to resolve a subject from, so the policy lives in one local
+decision function until coord subjects are enrolled.
+
+That limit is written into the PR rather than papered over, and the thin-PEP
+side is built so it survives the migration unchanged.
+
+**Contract.** When a standard cannot be met yet, the gap is stated with the
+condition that closes it, and the code is shaped so closing it is a
+substitution rather than a rewrite.
+
+| | |
+|---|---|
+| Evidence | the unmet requirement named, with the precondition that unblocks it |
+| Fails closed | the interim mechanism still refuses unknown subjects |
+
+An honest "not yet, and here is why, and here is what it takes" is worth more
+than a green checkbox over a local reimplementation nobody knows is local. The
+estate's own standards say green-by-omission is worse than no standard.
+
+---
+
 ## The one-line version
 
 Every failure here was an unverified assertion, and the fix is always the same
