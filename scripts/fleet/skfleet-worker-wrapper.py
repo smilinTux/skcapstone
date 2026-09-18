@@ -798,6 +798,30 @@ def preflight_worktree() -> int:
     return r.returncode
 
 
+def foreign_claim_owner(args: argparse.Namespace) -> str | None:
+    """Return the folded claim owner when it is not this worker, else None.
+
+    Cross-host exclusion fence. Every pre-launch recheck in skfleet-rotate.py
+    (fresh_claimability, the post-claim identity read, the under-lock
+    claim-displaced check) reads the host-local store, so a claim written on
+    another host and still in Syncthing flight is invisible to all of them.
+    By the time this wrapper starts, the winning claim has usually synced in,
+    so the same CardStore fold that skfleet-working displays is re-read here
+    and its owner is the single arbiter: no tiebreak, no timestamp compare.
+    A fold that cannot be read proves nothing and never authorizes an abort.
+    """
+    try:
+        card = CardStore(Path.home() / ".skcapstone").fold(args.card)
+    except (OSError, TypeError, ValueError):
+        return None
+    if card is None:
+        return None
+    owner = str(card.owner or "")
+    if owner == args.owner:
+        return None
+    return owner or "unclaimed"
+
+
 def preflight_mailbox(args: argparse.Namespace) -> bool:
     """Prove hello and read-only direct-plus-all mailbox access before work."""
     hello = startup_hello(Path.home() / ".skcapstone", args.owner, host=args.host)
@@ -906,6 +930,19 @@ def main() -> int:
     """Run the child, tee stderr to the journal, and record terminal evidence."""
     args = parse_args()
     args.started_at = int(time.time())
+    observed_owner = foreign_claim_owner(args)
+    if observed_owner is not None:
+        # The authoritative fold names another worker as the claim owner, so
+        # this process has no custody. It exits before any work and before
+        # any card mutation: no release, no void, no event. Releasing an
+        # owner's live claim is how running work gets stolen; the loser's
+        # only correct move is to disappear and leave the card alone.
+        sys.stderr.write(
+            "ABORTED_NOT_CLAIM_OWNER|card=%s|worker=%s|observed_owner=%s\n"
+            % (args.card, args.owner, observed_owner)
+        )
+        write_startup_report(args, os.getpid(), "startup-aborted-not-claim-owner")
+        return 2
     preflight = preflight_worktree()
     if preflight == 2:
         write_startup_report(args, os.getpid(), "startup-preflight-blocked")

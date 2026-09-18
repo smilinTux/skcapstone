@@ -85,6 +85,25 @@
       source level that both the launch site and the post-race recheck resolve a
       lane model, and that the identity is never assigned the sent model. A test
       of `_lane_model` alone passed for the entire time the fleet was misrouting.
+- **Worker startup ownership fence: a worker that does not own the folded claim
+  refuses to run.** Measured on chi 2026-09-18: two duplicate pairs across
+  chiap01/chiap02/chiap04, where a worker whose identity did not match the
+  card's folded `claim_owner` was doing live work anyway (and three hosts
+  claimed one card within 51 seconds). Root cause: every pre-launch recheck in
+  `skfleet-rotate.py` (the `fresh_claimability` refold, the post-claim identity
+  read, and the under-lock claim-displaced check) reads the host-local
+  Syncthing-replicated store, so another host's claim still in flight is
+  invisible to all of them, and `acquire_card_admission` is a host-local lock
+  that cannot see cross-host holders. The wrapper
+  (`skfleet-worker-wrapper.py`) now folds the card first thing at startup and,
+  when the folded owner is not itself, exits with a distinct
+  `ABORTED_NOT_CLAIM_OWNER|card=..|worker=..|observed_owner=..` line and a
+  `startup-aborted-not-claim-owner` startup report, before any work and
+  without appending any card event: the loser does not own the claim, so it
+  never releases, voids, or otherwise writes to the card. The fold is the
+  single arbiter; a fold that cannot be read never authorizes an abort. The
+  existing `fresh_claimability` recheck is unchanged, this is a second fence
+  behind it.
 
 - **New runbook: `docs/fleet/starting-a-new-project.md`.** Start-to-finish guide
   for standing up a new project on the coordination board: decomposition into

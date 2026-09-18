@@ -643,6 +643,10 @@ def test_wrapper_exit_path_calls_workspace_lifecycle_decision_end_to_end(
     coord_home.mkdir(parents=True)
     store = _wrapper().CardStore(coord_home)
     store.create(CardCore(id="deadbeef", title="synthetic"))
+    # A real worker always holds its claim at launch (skfleet-rotate.py claims
+    # before launching), and the wrapper's startup ownership fence refuses to
+    # run without one, so the fixture claims the way production does.
+    store.append_event("deadbeef", "claim", "worker", owner="worker", claim_revision="rev-1")
     store.append_event("deadbeef", "link", "worker", link_key="commit_sha", link_value=head)
     store.append_event(
         "deadbeef", "link", "worker", link_key="branch", link_value="fixture:card-branch"
