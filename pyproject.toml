@@ -146,6 +146,7 @@ script-files = [
     "scripts/fleet/link-lineage.py",
     "scripts/fleet/skfleet-link-producer.py",
     "scripts/fleet/skfleet-pi-model-catalog.py",
+    "scripts/fleet/skfleet_readiness.py",
     "scripts/fleet/skfleet-rotate.py",
     "scripts/fleet/skfleet-worker-wrapper.py",
     "scripts/fleet/skmail",
