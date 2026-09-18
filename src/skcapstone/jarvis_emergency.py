@@ -15,9 +15,9 @@ from .operator_authorization import (
 from .seat_boundaries import (
     JARVIS_DIRECT_ACTIONS,
     Action,
-    Seat,
     canonical_human_principal,
     require_authority,
+    require_coord_authority,
     verify_casey_direction,
 )
 
@@ -26,29 +26,26 @@ Verifier = Callable[[bytes, str, str], bool]
 SCOPE = "skcapstone,skdashboard,skworld"
 
 
-def authorize_jarvis_entrypoint(
+def authorize_coord_mutation(
     actor: str,
     action: Action,
     target: str,
     authorization_path: Path | None,
     change_id: str | None,
 ) -> None:
-    """Gate a real mutation surface for seat-governed actors.
+    """The one gate every coord mutation entrypoint calls.
 
-    The read-only Overseer seat (``mero``) is refused every action outside its
-    charter here, because this function is the one gate every coord mutation
-    entrypoint already calls. ADR-0005 and ``docs/fleet/seat-charters.md``
-    allow the Overseer to observe, recommend, and create cards, and nothing
-    else; measured on chi in September 2026, ``--agent mero`` had written 324
-    ``move`` and 147 ``release_claim`` events in 14 days because only the
-    Jarvis identity was checked. The exact ``mero`` identity is what the
-    charter binds; ``pi-mero-*`` lane workers are ordinary workers and pass.
-
-    Every other non-Jarvis actor returns unchecked, exactly as before.
+    Policy lives in ``seat_boundaries.require_coord_authority``: one
+    capability table keyed by seat, consulted for every actor, refusing an
+    identity the table and grammar do not know. This function adds only the
+    Jarvis leg: an action outside ``JARVIS_DIRECT_ACTIONS`` needs a verified
+    signed Casey direction. PR 766 gated exactly one seat (``mero``) here;
+    this generalizes that check so no seat is unchecked by default, while
+    ``pi-<seat>-*`` lane workers, humans, and system writers pass as their
+    own explicitly classified identities.
     """
+    require_coord_authority(actor, action)
     normalized = actor.strip().lower()
-    if normalized == Seat.MERO.value:
-        require_authority(normalized, action)
     if normalized != "jarvis":
         return
     if action in JARVIS_DIRECT_ACTIONS:
@@ -83,6 +80,11 @@ def authorize_jarvis_entrypoint(
         verifier=get_backend(profile.crypto_backend).verify,
     )
     consume_authorization(envelope, capauth_home / "operator" / "used-authorizations")
+
+
+#: Compatibility alias: the gate predates the per-seat capability table and
+#: several call sites and tests still import the historical name.
+authorize_jarvis_entrypoint = authorize_coord_mutation
 
 
 @dataclass(frozen=True)

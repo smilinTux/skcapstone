@@ -233,11 +233,11 @@ async def _handle_coord_claim(args: dict) -> list[TextContent]:
 
     from pathlib import Path
 
-    from ..jarvis_emergency import authorize_jarvis_entrypoint
+    from ..jarvis_emergency import authorize_coord_mutation
     from ..seat_boundaries import Action
 
     auth = args.get("casey_authorization")
-    authorize_jarvis_entrypoint(
+    authorize_coord_mutation(
         agent_name,
         Action.CLAIM,
         task_id,
@@ -284,11 +284,11 @@ async def _handle_coord_complete(args: dict) -> list[TextContent]:
 
     from pathlib import Path
 
-    from ..jarvis_emergency import authorize_jarvis_entrypoint
+    from ..jarvis_emergency import authorize_coord_mutation
     from ..seat_boundaries import Action
 
     auth = args.get("casey_authorization")
-    authorize_jarvis_entrypoint(
+    authorize_coord_mutation(
         agent_name,
         Action.COMPLETE_CARD,
         task_id,
@@ -365,11 +365,11 @@ async def _handle_coord_create(args: dict) -> list[TextContent]:
     )
     from pathlib import Path
 
-    from ..jarvis_emergency import authorize_jarvis_entrypoint
+    from ..jarvis_emergency import authorize_coord_mutation
     from ..seat_boundaries import Action
 
     auth = args.get("casey_authorization")
-    authorize_jarvis_entrypoint(
+    authorize_coord_mutation(
         task.created_by,
         Action.CREATE_CARD,
         task.id,
@@ -396,6 +396,13 @@ async def _handle_coord_score(args: dict) -> list[TextContent]:
     if not task_id or "round" not in args or "score" not in args:
         return _error_response("task_id, round, and score are required")
 
+    from ..jarvis_emergency import authorize_coord_mutation
+    from ..seat_boundaries import Action, BoundaryError
+
+    try:
+        authorize_coord_mutation("coord-score", Action.SCORE_CARD, task_id, None, None)
+    except BoundaryError as exc:
+        return _error_response(str(exc))
     board = Board(_shared_root())
     try:
         path = board.score_task(
@@ -473,14 +480,14 @@ async def _handle_coord_move(args: dict) -> list[TextContent]:
 
     from pathlib import Path
 
-    from ..jarvis_emergency import authorize_jarvis_entrypoint
+    from ..jarvis_emergency import authorize_coord_mutation
     from ..seat_boundaries import Action
 
     actor = args.get("agent", "") or "coord-move"
     auth = args.get("casey_authorization")
 
     try:
-        authorize_jarvis_entrypoint(
+        authorize_coord_mutation(
             actor,
             Action.MOVE_CARD,
             f"{task_id}:{column}",

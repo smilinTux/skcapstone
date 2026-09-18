@@ -456,10 +456,10 @@ def register_coord_commands(main: click.Group) -> None:
             dependencies=list(dep),
             meta=meta,
         )
-        from ..jarvis_emergency import authorize_jarvis_entrypoint
+        from ..jarvis_emergency import authorize_coord_mutation
         from ..seat_boundaries import Action
 
-        authorize_jarvis_entrypoint(
+        authorize_coord_mutation(
             by, Action.CREATE_CARD, task.id, casey_authorization, casey_change_id
         )
         if claim_for_me:
@@ -506,10 +506,10 @@ def register_coord_commands(main: click.Group) -> None:
         validate_agent_name(agent)
 
         home_path = Path(home).expanduser()
-        from ..jarvis_emergency import authorize_jarvis_entrypoint
+        from ..jarvis_emergency import authorize_coord_mutation
         from ..seat_boundaries import Action
 
-        authorize_jarvis_entrypoint(
+        authorize_coord_mutation(
             agent, Action.CLAIM, task_id, casey_authorization, casey_change_id
         )
         board = Board(home_path)
@@ -631,10 +631,10 @@ def register_coord_commands(main: click.Group) -> None:
 
         home_path = Path(home).expanduser()
         from ..coord_completion import complete_coord_task
-        from ..jarvis_emergency import authorize_jarvis_entrypoint
+        from ..jarvis_emergency import authorize_coord_mutation
         from ..seat_boundaries import Action
 
-        authorize_jarvis_entrypoint(
+        authorize_coord_mutation(
             agent, Action.COMPLETE_CARD, task_id, casey_authorization, casey_change_id
         )
 
@@ -676,6 +676,10 @@ def register_coord_commands(main: click.Group) -> None:
         validate_task_id(task_id)
         validate_agent_name(agent)
 
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation(agent, Action.SATISFY_GATE, task_id, None, None)
         home_path = Path(home).expanduser()
         from ..coord_completion import satisfy_gate
 
@@ -729,10 +733,10 @@ def register_coord_commands(main: click.Group) -> None:
         validate_task_id(task_id)
         validate_agent_name(owner)
         validate_agent_name(agent)
-        from ..jarvis_emergency import authorize_jarvis_entrypoint
+        from ..jarvis_emergency import authorize_coord_mutation
         from ..seat_boundaries import Action
 
-        authorize_jarvis_entrypoint(agent, Action.RELEASE, task_id, None, None)
+        authorize_coord_mutation(agent, Action.RELEASE, task_id, None, None)
         if not str(expected_claim_revision).strip():
             raise click.ClickException("expected claim revision must not be empty")
         home_path = Path(home).expanduser()
@@ -815,6 +819,10 @@ def register_coord_commands(main: click.Group) -> None:
         home,
     ):
         """Reversibly quarantine one exact stale ownerless projection."""
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation(agent, Action.MAINTAIN_BOARD, task_id, None, None)
         from ..projection_retirement import retire_projection
 
         validate_task_id(task_id)
@@ -857,6 +865,10 @@ def register_coord_commands(main: click.Group) -> None:
         home,
     ):
         """Restore one exact hash-fenced retired projection."""
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation(agent, Action.MAINTAIN_BOARD, projection_agent, None, None)
         from ..projection_retirement import restore_projection
 
         validate_agent_name(projection_agent)
@@ -887,6 +899,10 @@ def register_coord_commands(main: click.Group) -> None:
         from ..coordination import Board
 
         validate_task_id(task_id)
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation("coord-score", Action.SCORE_CARD, task_id, None, None)
         home_path = Path(home).expanduser()
         board = Board(home_path)
         try:
@@ -1000,7 +1016,10 @@ def register_coord_commands(main: click.Group) -> None:
     def coord_archive_done(home, days, dry_run):
         """Age done tasks off the active board (default: older than 14 days)."""
         from ..coordination import Board
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
 
+        authorize_coord_mutation("archive-done", Action.MAINTAIN_BOARD, "board", None, None)
         home_path = Path(home).expanduser()
         board = Board(home_path)
         ids = board.archive_done_tasks(older_than_days=days, dry_run=dry_run)
@@ -1021,7 +1040,10 @@ def register_coord_commands(main: click.Group) -> None:
     def coord_age_backlog(home, days, dry_run):
         """Archive ancient unclaimed open tasks (default: older than 90 days)."""
         from ..coordination import Board
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
 
+        authorize_coord_mutation("age-backlog", Action.MAINTAIN_BOARD, "board", None, None)
         home_path = Path(home).expanduser()
         board = Board(home_path)
         ids = board.age_stale_open(older_than_days=days, dry_run=dry_run)
@@ -1042,6 +1064,10 @@ def register_coord_commands(main: click.Group) -> None:
         Idempotent and additive (Phase 4). Nothing reads the CardStore until
         SKCOORD_CARD_STORE=1. Reversible: rm ~/.skcapstone/cards to undo.
         """
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation("import", Action.MAINTAIN_BOARD, "board", None, None)
         from ..card_store import import_from_legacy
 
         home_path = Path(home).expanduser()
@@ -1143,6 +1169,10 @@ def register_coord_commands(main: click.Group) -> None:
         and reported rather than dragged backward to match a lagging legacy
         projection. Use --allow-uncomplete to override.
         """
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation("reconcile", Action.MAINTAIN_BOARD, "board", None, None)
         from ..card_store import reconcile_from_legacy
 
         home_path = Path(home).expanduser()
@@ -1217,6 +1247,10 @@ def register_coord_commands(main: click.Group) -> None:
         into a synthetic 'legacy-export' agent for entries that predate
         dual-write and therefore have no per-event owner anywhere.
         """
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation("export-legacy", Action.MAINTAIN_BOARD, "board", None, None)
         from ..card_store import export_to_legacy
 
         home_path = Path(home).expanduser()
@@ -1258,7 +1292,10 @@ def register_coord_commands(main: click.Group) -> None:
         per-writer archive index to restore. Also prunes stale lock files.
         """
         from ..coordination import Board
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
 
+        authorize_coord_mutation("coord-maintain", Action.MAINTAIN_BOARD, "board", None, None)
         home_path = Path(home).expanduser()
         board = Board(home_path)
         done = board.archive_done_tasks(older_than_days=done_days, dry_run=dry_run)
@@ -1287,11 +1324,11 @@ def register_coord_commands(main: click.Group) -> None:
         """Move a card to a kanban column (backlog/ready/doing/review/done)."""
         home_path = Path(home).expanduser()
         from ..coord_completion import move_coord_task
-        from ..jarvis_emergency import authorize_jarvis_entrypoint
+        from ..jarvis_emergency import authorize_coord_mutation
         from ..seat_boundaries import Action
 
         actor = agent or "coord-move"
-        authorize_jarvis_entrypoint(
+        authorize_coord_mutation(
             actor,
             Action.MOVE_CARD,
             f"{task_id}:{column}",
@@ -1328,6 +1365,10 @@ def register_coord_commands(main: click.Group) -> None:
         """Audit agent projection drift and optionally repair it explicitly."""
         import json
 
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation(agent, Action.MAINTAIN_BOARD, "board", None, None)
         from skcoord.lifecycle import audit_lifecycle, repair_lifecycle
 
         home_path = Path(home).expanduser()
@@ -1357,7 +1398,10 @@ def register_coord_commands(main: click.Group) -> None:
     def coord_label(task_id, label, home, remove, agent):
         """Add (or remove) a label on a card."""
         from ..card import CardEvent, CardEventLog
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
 
+        authorize_coord_mutation(agent or "", Action.LABEL_CARD, task_id, None, None)
         home_path = Path(home).expanduser()
         action = "remove_label" if remove else "add_label"
         CardEventLog(home_path).append(
@@ -1384,6 +1428,10 @@ def register_coord_commands(main: click.Group) -> None:
         if title is None and description is None:
             raise click.UsageError("Pass --title and/or --description.")
 
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation(agent or "", Action.DESCRIBE_CARD, task_id, None, None)
         home_path = Path(home).expanduser()
         try:
             CardEventLog(home_path).append(
@@ -1423,6 +1471,10 @@ def register_coord_commands(main: click.Group) -> None:
         reversible by swapping the arguments. Use it after a repository move
         instead of hand-editing dozens of cards.
         """
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation(agent or "", Action.DESCRIBE_CARD, old_prefix, None, None)
         from ..rehome import rehome_descriptions
 
         home_path = Path(home).expanduser()
@@ -1447,6 +1499,10 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--agent", default=None, help="Writer name (defaults to host).")
     def coord_link(task_id, key, value, home, agent):
         """Attach a link (pr/commit/doc/...) to a card."""
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation(agent or "", Action.LINK_CARD, task_id, None, None)
         from ..blocked_verdict import validate_blocked_verdict
         from ..card import CardEvent, CardEventLog
 
