@@ -15,6 +15,19 @@
   `BUILDER_DISPATCH_IDLE|host|card|reason=...` line per declined candidate
   per cycle.
 
+- **Route preflight stopped being rejected for how it identifies itself.** The
+  gateway forwards the CALLER's `User-Agent` upstream, and the kimi upstream's
+  edge refuses python-urllib's default with HTTP 403. Measured on chiap01
+  2026-09-18: the identical request body returns 403 with the default agent and
+  does not with a conventional one. Every kimi preflight therefore failed, the
+  dispatcher logged `ROUTE_PREFLIGHT_BLOCKED ... reason=gateway rejected
+  preflight with HTTP 403`, and hosts whose owned card routed to kimi reported
+  `attempted=1 launched=0` cycle after cycle. The probe now sends
+  `PREFLIGHT_USER_AGENT`. The same request also stopped sending
+  `temperature: 0`, which the kimi backends reject outright, so the probe was
+  failing on exactly the backends most likely to need probing;
+  `scripts/gateway/skgw-warm` already omitted it for that reason.
+
 - **Fleet rotation: card ownership is a pure stable hash again; live capacity
   no longer moves it.** The 2026-09-16 "place neutral cards on hosts with
   capacity" change hashed neutral cards over "hosts whose latest fleet-live

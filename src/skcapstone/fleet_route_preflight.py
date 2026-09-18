@@ -23,6 +23,16 @@ class RoutePreflight:
         return asdict(self)
 
 
+PREFLIGHT_USER_AGENT = "skfleet-route-preflight/1.0"
+"""Sent on every preflight probe.
+
+The gateway forwards the caller's User-Agent upstream, so the agent string is
+not cosmetic: an upstream edge that refuses unknown clients refuses the probe,
+and the dispatcher reads that as an unhealthy route rather than a rejected
+client. Keep it a conventional token.
+"""
+
+
 def _json_response(response: Any) -> dict[str, Any]:
     raw = response.read(MAX_RESPONSE_BYTES + 1)
     if len(raw) > MAX_RESPONSE_BYTES:
@@ -79,11 +89,24 @@ def resolve_and_preflight(
                     "model": route,
                     "messages": [{"role": "user", "content": "Reply OK."}],
                     "max_tokens": 1,
-                    "temperature": 0,
+                    # No temperature. The kimi backends REJECT temperature 0, so
+                    # sending it fails the probe on exactly the backends most
+                    # likely to need probing. The same omission is already in
+                    # scripts/gateway/skgw-warm for the same reason.
                     "stream": False,
                 }
             ).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                # The gateway forwards the CALLER's User-Agent upstream, and the
+                # kimi upstream's edge rejects python-urllib's default with HTTP
+                # 403. Measured on chiap01 2026-09-18: the identical request body
+                # returns 403 with the default agent and does not with a
+                # conventional one. Every kimi preflight therefore failed, and
+                # the dispatcher logged ROUTE_PREFLIGHT_BLOCKED and launched
+                # nothing on hosts whose owned card routed to kimi.
+                "User-Agent": PREFLIGHT_USER_AGENT,
+            },
             method="POST",
         )
         with opener(request, timeout=request_timeout()) as response:
