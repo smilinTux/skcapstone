@@ -41,6 +41,43 @@
   the cold-gateway case (backends read `unknown` until a real request has been
   served). The `docs-evidence` block gained four hermetic checks covering those
   facts, and `verified:` moved to 2026-09-18.
+- **Gateway warm-start and kimi credential sync are now in the repo** rather
+  than living only on the host that runs them. `scripts/gateway/skgw-warm`
+  closes the cold-start deadlock: a backend reads `unknown` until
+  `recordOutcome()` runs, and `recordOutcome()` runs only after a request, so a
+  restarted gateway cannot clear its own health while fail-closed admission
+  refuses every unknown backend. `scripts/gateway/sync-kimi-auth.sh` moves the
+  kimi credential from the host that refreshes it to the host that serves it,
+  refusing a credential that is malformed, incomplete, expired, or OLDER than
+  the one already installed, and restarting the gateway only on a real change.
+  Documented in `docs/fleet/gateway-warm-and-kimi-auth.md`, with the deployed
+  drop-in kept verbatim in `reference/systemd/50-warm-backends.conf`.
+
+- **The dispatcher sends each lane's own model, not the bare size bucket.**
+  `_lane_model` resolves a card to the model its lane actually uses (a glm level
+  for glm, the `SKFLEET_MODEL_`/`SKFLEET_CODEX_MODEL_` override for codex,
+  `kimi-for-coding` or `k3` for kimi). It existed and was called by NOTHING, so
+  every lane shipped the bare bucket `sk-s`/`sk-m`/`sk-l`/`sk-xl` as its model.
+  The gateway advertises `sk-<size>-<public|internal|secret>` and not the bare
+  bucket, so every request fell through to the local qwen38 backend.
+
+    - Measured on chi 2026-09-18: `codex` (max 32) and `zai` (max 10) served
+      ZERO requests while `chiap08-qwen38` served all of them from 3 slots. The
+      estate's entire subscription capacity sat idle behind a 5-slot local
+      fallback, and a codex target of 30 could never be met because codex was
+      never asked for anything.
+    - Probed directly at the gateway the same day, which is what proves the
+      models themselves were fine: `sk-codex-mid` served by `gpt-5.6-luna`,
+      `glm-4.7` served by `glm-5.3-flash`, and `sk-m` served by `qwen3.8-27b`.
+    - The size bucket remains the card's ROUTE IDENTITY: `logical_route` in the
+      route identity stays the bucket and only `model_or_bucket` and the model
+      actually sent become the lane's resolution. The unsized-card skip is
+      unchanged, because a silent downgrade hides lost capability behind work
+      that quietly got weaker.
+    - A test asserts the launch site and the post-race recheck both call
+      `_lane_model`. A test of the function alone would have passed for the
+      entire time the fleet was misrouting.
+
 - **Readiness checks each unit against the interpreter it declares.** The gate
   tested every unit's module imports against one interpreter (`--python-bin`),
   but a unit is entitled to its own virtualenv and declares it in `ExecStart`.
