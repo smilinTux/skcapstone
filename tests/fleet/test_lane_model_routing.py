@@ -75,15 +75,15 @@ def test_the_launch_site_actually_calls_lane_model():
     time the fleet was routing everything to qwen38.
     """
     src = _source()
-    assert "_lane_model(_LANE,core)" in src.replace(" ", ""), (
-        "the launch site must resolve the model through _lane_model"
-    )
-    assert "_lane_model(_LANE,fresh_claimability" in src.replace(" ", ""), (
-        "the post-race recheck must resolve the model through _lane_model too"
-    )
+    assert "_lane_model(_LANE,core)" in src.replace(
+        " ", ""
+    ), "the launch site must resolve the model through _lane_model"
+    assert "_lane_model(_LANE,fresh_claimability" in src.replace(
+        " ", ""
+    ), "the post-race recheck must resolve the model through _lane_model too"
 
 
-def test_the_route_identity_keeps_the_BUCKET_as_the_logical_route():
+def test_the_route_identity_keeps_the_bucket_as_the_logical_route():
     """The bucket is the card's route identity and must not become the model,
     or preflight, health and evidence all start naming a backend instead of a
     capability bucket."""
