@@ -18,8 +18,8 @@ from skcapstone.fleet_lane_health import (
     ENDPOINT_TIMEOUT_SECONDS,
     MAX_ENDPOINT_BYTES,
     acquire_lane_snapshot,
-    gateway_root,
     active_gateway_revision,
+    gateway_root,
     lane_health,
 )
 
@@ -555,3 +555,105 @@ def test_the_root_form_is_still_admissible(tmp_path: Path) -> None:
         now=2_000_000_000.0,
     )
     assert (admitted, reason) == (True, "healthy")
+
+
+def test_duplicate_identical_lane_bindings_are_one_observation(tmp_path: Path) -> None:
+    """A repeated (lane, model) binding must not read as ambiguous evidence.
+
+    Measured live on chi, 2026-09-18 04:01:14 CDT: the rotator's health-lane
+    list carried (kimi, kimi-for-coding) twice, once from LANES and once from
+    the unconditional kimi alias append, so every snapshot held two identical
+    healthy rows for that binding and lane_health() refused it as "unknown"
+    forever, on the same snapshot whose glm and escalate rows admitted fine.
+    The gateway's own /health said kimi was up the whole time. A fail-closed
+    gate refused positive evidence solely because it was written down twice.
+    """
+    lanes = [
+        {"name": "qwen", "model": "qwen-model"},
+        {"name": "kimi", "model": "kimi-for-coding"},
+        {"name": "kimi", "model": "kimi-for-coding"},
+        {"name": "kimi", "model": "k3"},
+    ]
+    domains = {"qwen": ("qwen-a", "qwen-b"), "kimi": ("codex",)}
+    snapshot = acquire_lane_snapshot(
+        ENDPOINT,
+        lanes,
+        domains,
+        tmp_path / "lane-health.json",
+        "cycle-1",
+        opener=_opener(_documents(), []),
+        revision_resolver=lambda endpoint: REVISION,
+        now=lambda: 2_000_000_000.0,
+    )
+    kimi_rows = [(row["lane"], row["model"]) for row in snapshot["lanes"] if row["lane"] == "kimi"]
+    assert kimi_rows == [("kimi", "kimi-for-coding"), ("kimi", "k3")]
+    assert lane_health(
+        snapshot,
+        "kimi",
+        "kimi-for-coding",
+        cycle_id="cycle-1",
+        endpoint=ENDPOINT,
+        capacity_domains=("codex",),
+        active_revision=REVISION,
+        now=2_000_000_001.0,
+    ) == (True, "healthy")
+
+
+def test_identical_duplicate_rows_in_a_sealed_snapshot_still_admit(tmp_path: Path) -> None:
+    """lane_health itself collapses byte-identical duplicates.
+
+    A deployed rotator that still emits the duplicate must recover on a library
+    upgrade alone, without a same-day script redeploy: two identical rows are
+    the same observation stated twice, not conflicting evidence.
+    """
+    snapshot, _, _ = _acquire(tmp_path, _documents())
+    duplicated = dict(snapshot)
+    qwen_row = next(row for row in snapshot["lanes"] if row["lane"] == "qwen")
+    duplicated["lanes"] = [*snapshot["lanes"], json.loads(json.dumps(qwen_row))]
+    assert _admit(duplicated, "qwen", "qwen-model") == (True, "healthy")
+
+
+def test_conflicting_duplicate_rows_still_fail_closed(tmp_path: Path) -> None:
+    """Two rows for one binding that DISAGREE stay refused: that is ambiguity."""
+    snapshot, _, _ = _acquire(tmp_path, _documents())
+    forged = dict(snapshot)
+    qwen_row = next(row for row in snapshot["lanes"] if row["lane"] == "qwen")
+    altered = json.loads(json.dumps(qwen_row))
+    altered["domains"] = [
+        {"capacity_domain": "qwen-a", "state": "owner-down"},
+        {"capacity_domain": "qwen-b", "state": "owner-down"},
+    ]
+    forged["lanes"] = [*snapshot["lanes"], altered]
+    assert _admit(forged, "qwen", "qwen-model") == (False, "unknown")
+
+
+def test_rotator_health_lanes_carry_no_duplicate_bindings() -> None:
+    """The rotator's generated health-lane list is duplicate-free, kimi included."""
+    script = Path(__file__).parents[1] / "scripts/fleet/skfleet-rotate.py"
+    tree = ast.parse(script.read_text(encoding="utf-8"))
+    start = next(
+        i
+        for i, node in enumerate(tree.body)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "_health_lanes" for t in node.targets)
+    )
+    end = next(i for i in range(start + 1, len(tree.body)) if isinstance(tree.body[i], ast.Assign))
+    namespace = {
+        "LANES": [
+            {"name": "codex", "model": "sk-codex-mid"},
+            {"name": "glm", "model": "sk-glm-s"},
+            {"name": "qwen", "model": "qwen-model"},
+            {"name": "kimi", "model": "kimi-for-coding"},
+            {"name": "escalate", "model": "gpt-strong"},
+        ],
+        "_GLM_LEVELS": {"S": "sk-glm-s", "M": "sk-glm-m", "L": "sk-glm-l", "XL": "sk-glm-l"},
+        "_SIZE_MODELS": {"S": "sk-s", "M": "sk-m", "L": "sk-l", "XL": "sk-xl"},
+    }
+    exec(
+        compile(ast.Module(body=tree.body[start:end], type_ignores=[]), str(script), "exec"),
+        namespace,
+    )
+    bindings = [(lane["name"], lane["model"]) for lane in namespace["_health_lanes"]]
+    assert len(bindings) == len(set(bindings)), bindings
+    assert ("kimi", "kimi-for-coding") in bindings
+    assert ("kimi", "k3") in bindings

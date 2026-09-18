@@ -104,6 +104,22 @@
   single arbiter; a fold that cannot be read never authorizes an abort. The
   existing `fresh_claimability` recheck is unchanged, this is a second fence
   behind it.
+- **Lane admission no longer refuses a healthy lane whose binding is stated
+  twice.** The rotator's health-lane list carried `(kimi, kimi-for-coding)`
+  both from `LANES` and from the unconditional kimi alias append (the glm and
+  codex expansions were guarded, kimi was not), so every sealed snapshot held
+  two identical healthy rows for that binding and `lane_health()`'s exact-match
+  check read them as ambiguity, refusing the lane as `unknown` on every cycle
+  with no path to recovery: no gateway state change alters how many times the
+  writer states a row. Measured live on chi 2026-09-18 04:01 CDT: the same
+  snapshot admitted glm and escalate as `healthy` while kimi read `unknown`,
+  the gateway's own `/health` reported both kimi backends up, and kimi sat at
+  0 of its worker slots across every rotation. Three-layer fix, none of which
+  weakens the fail-closed gate: the rotator's kimi expansion is now guarded
+  like glm and codex; `acquire_lane_snapshot()` seals one row per
+  `(lane, model)` binding; and `lane_health()` collapses byte-identical
+  duplicate rows into one observation before the exactness check. Rows that
+  DISAGREE for the same binding remain ambiguous and still fail closed.
 
 - **New runbook: `docs/fleet/starting-a-new-project.md`.** Start-to-finish guide
   for standing up a new project on the coordination board: decomposition into

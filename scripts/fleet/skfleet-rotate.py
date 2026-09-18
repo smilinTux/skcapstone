@@ -6114,8 +6114,14 @@ for _glm_model in sorted(set(_GLM_LEVELS.values())):
 for _codex_model in sorted(set(_SIZE_MODELS.values())):
     if _codex_model!=next(lane for lane in LANES if lane["name"]=="codex")["model"]:
         _health_lanes.append({"name":"codex","model":_codex_model})
+# Guarded like the glm and codex expansions above: the base kimi lane already
+# carries SKFLEET_KIMI_MODEL (default kimi-for-coding), and appending it again
+# sealed a duplicate (kimi, kimi-for-coding) row that lane_health() refused as
+# "unknown" on every cycle. Live on chi 2026-09-18 this held kimi at 0 workers
+# while the gateway reported the backend up.
 for _kimi_model in ("kimi-for-coding", "k3"):
-    _health_lanes.append({"name":"kimi","model":_kimi_model})
+    if all(lane["name"]!="kimi" or lane["model"]!=_kimi_model for lane in _health_lanes):
+        _health_lanes.append({"name":"kimi","model":_kimi_model})
 _cycle_id=new_cycle_id(HOST,STAMP)
 _lane_health_snapshot=acquire_lane_snapshot(
     _GATEWAY_ENDPOINT,_health_lanes,_CAPACITY_DOMAINS,
