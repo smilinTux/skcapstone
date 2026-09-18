@@ -200,24 +200,34 @@ def test_pool_owner_map_preserves_ordinary_and_seat_ownership(tmp_path: Path) ->
         {"chiap03": 5, "chiap08": 0},
     )
     assert capacity_owners["00000001"] == "chiap08"
+    assert capacity_owners["00000002"] == ns["_partition_owner"]("00000002", HOSTS)
     assert capacity_owners["00000003"] == "chiap08"
     assert blocked == {}
 
 
-def test_host_neutral_owner_uses_existing_live_free_capacity(tmp_path: Path) -> None:
-    """A free host owns work that the stable all-host hash strands elsewhere."""
+def test_host_neutral_owner_ignores_live_capacity_skew(tmp_path: Path) -> None:
+    """Live capacity skew never moves ownership off the stable all-host hash.
+
+    Regression for the 2026-09-18 chi fleet stall: ownership was hashed over
+    "hosts whose latest fleet-live snapshot advertises free lanes". That set
+    differs per host and per cycle (the snapshots race over Syncthing, and the
+    standalone publisher writes lanes={}), so every host partitioned the same
+    pool over a different roster, was routinely excluded from its own
+    partition, and reported owned=0 while free slots and ready work existed.
+    """
     ns, _ = _load(str(tmp_path))
     card_id = "cdf59956"
     rows = [[2, 4, card_id, {}, [], 0]]
     ns["_POOL_V2_ADMISSIONS"] = {}
 
     assert ns["_partition_owner"](card_id, HOSTS) == "chiap03"
-    assert ns["_pool_v2_owner_map"](
-        rows,
-        "chiap08",
-        set(),
-        {"chiap03": 0, "chiap08": 5},
-    ) == ({card_id: "chiap08"}, {})
+    for viewing_host in ("chiap03", "chiap08"):
+        assert ns["_pool_v2_owner_map"](
+            rows,
+            viewing_host,
+            set(),
+            {"chiap03": 0, "chiap08": 5},
+        ) == ({card_id: "chiap03"}, {})
 
 
 def test_host_neutral_capacity_keeps_equal_and_all_zero_partitioning(tmp_path: Path) -> None:

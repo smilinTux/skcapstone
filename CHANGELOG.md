@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- **Fleet rotation: card ownership is a pure stable hash again; live capacity
+  no longer moves it.** The 2026-09-16 "place neutral cards on hosts with
+  capacity" change hashed neutral cards over "hosts whose latest fleet-live
+  snapshot advertises free lanes". That set differs per host and per cycle
+  (snapshots race over Syncthing, and the standalone fleet-live publisher
+  writes `lanes: {}`, advertising zero capacity for healthy hosts), so on
+  2026-09-18 the chi fleet partitioned the same ready pool over a different
+  roster every cycle (three consecutive chiap03 cycles used chiap01 alone,
+  then chiap01-04, then chiap01/02/04), hosts were excluded from their own
+  partition, and every host reported `owned=0` with free slots while ready
+  work existed. `_pool_v2_owner_map` now ignores the capacity snapshot for
+  ownership; a zero-capacity host's slice simply waits, which is the
+  documented cost of stable one-card-one-owner partitioning.
+- **Fleet rotation: `SELECTION_EMPTY` no longer misreports a builder-withheld
+  slice as `foreign-hash-partition`.** A host whose entire hash slice is
+  source-only builder work (the bulk of the current sklegal pool) logged the
+  self-contradicting `owned=0 ... owners=<this host>:N`. The diagnostic now
+  receives the withheld ids, reports `reason=builder-path-withheld` with
+  those ids, and always appends a `builder_withheld=<n>` field.
+
 - **The stalled-worker progress watchdog is now wired, REPORT ONLY.**
   `classify_progress` in `skcapstone.fleet.worker_watchdog` existed, was
   tested, and was called by nothing (contract 1,

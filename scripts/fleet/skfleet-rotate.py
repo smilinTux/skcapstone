@@ -269,15 +269,24 @@ def _partition_owner(card_id, hosts, pinned_host=None):
     return hosts[index]
 
 
-def _selection_diagnostic(pool, owned, lanes, owner_for, host_capacity=None):
+def _selection_diagnostic(pool, owned, lanes, owner_for, host_capacity=None,
+                          builder_withheld=()):
     """Classify why an authoritative pool produced no local selection.
 
     This is diagnostic only. It never changes ownership or claimability, so the
     authoritative claim, post-claim readback, and duplicate guards remain the
     admission mechanism.
+
+    ``builder_withheld`` names the cards this host DID own by hash but handed
+    to the Niobe builder path before lane selection. Without it, a host whose
+    entire slice is source-only builder work logged the self-contradicting
+    line ``owned=0 ... owners=<this host>:N`` under the FALSE reason
+    ``foreign-hash-partition`` (observed fleet-wide on chi, 2026-09-18, while
+    every host sat idle with free slots).
     """
     pool_ids = [row[2] for row in pool]
     owned_ids = [row[2] for row in owned]
+    builder_ids = [str(card_id) for card_id in builder_withheld]
     total_target = sum(int(lane.get("target", 0)) for lane in lanes)
     total_free = sum(int(lane.get("free", 0)) for lane in lanes)
     if not pool:
@@ -285,7 +294,10 @@ def _selection_diagnostic(pool, owned, lanes, owner_for, host_capacity=None):
     elif total_target == 0:
         reason, ids = "zero-target", owned_ids or pool_ids
     elif not owned:
-        reason, ids = "foreign-hash-partition", pool_ids
+        if builder_ids:
+            reason, ids = "builder-path-withheld", builder_ids
+        else:
+            reason, ids = "foreign-hash-partition", pool_ids
     else:
         reason, ids = "no-compatible-lane", owned_ids
     bounded, omitted = _bounded_ids(ids)
@@ -299,9 +311,9 @@ def _selection_diagnostic(pool, owned, lanes, owner_for, host_capacity=None):
     ) or "-"
     return (
         "reason=%s pool=%d owned=%d target=%d free=%d ids=%s omitted=%d "
-        "owners=%s owner_free=%s"
+        "owners=%s owner_free=%s builder_withheld=%d"
         % (reason, len(pool), len(owned), total_target, total_free, bounded,
-           omitted, owner_counts, owner_free)
+           omitted, owner_counts, owner_free, len(builder_ids))
     )
 
 
@@ -5790,10 +5802,27 @@ def _pool_v2_authority_rows(decisions, admissions, failed, unblocks, priorities,
 
 
 def _pool_v2_owner_map(rows, host, pinned_ids, host_capacity=None):
-    """Return exact stable host ownership for the authoritative rows."""
+    """Return exact stable host ownership for the authoritative rows.
+
+    ``host_capacity`` is accepted for call compatibility and DELIBERATELY
+    unused. Ownership must be a pure function of shared, stable state (the
+    card id, the declared ROTATION_HOSTS tuple, pins, and seat placement),
+    never of live capacity. The capacity-subset partition shipped 2026-09-16
+    ("place neutral cards on hosts with capacity") hashed neutral cards over
+    "hosts whose latest fleet-live snapshot advertises free lanes", a set that
+    differs per host and per cycle: the snapshots race over Syncthing, and the
+    standalone fleet-live publisher writes ``lanes: {}``, advertising zero
+    capacity for a healthy host. Measured on chi 2026-09-18, three consecutive
+    chiap03 cycles partitioned the same pool over three different rosters
+    (chiap01 alone; chiap01-04; chiap01,02,04), hosts were routinely excluded
+    from their own partition, and every host reported ``owned=0`` while free
+    slots and ready work both existed. A host with zero capacity simply leaves
+    its slice waiting until it has slots, which the selection loop already
+    handles; that is the documented cost of stable ownership, and it is what
+    keeps one card owned by one host.
+    """
     owners = {}
     blocked = {}
-    capacity = host_capacity or {}
     for row in rows:
         cid, core = row[2], row[3]
         admission = _POOL_V2_ADMISSIONS.get(cid, {})
@@ -5811,18 +5840,6 @@ def _pool_v2_owner_map(rows, host, pinned_ids, host_capacity=None):
                 if not _SEAT_PLACEMENT.get("niobe")
                 else "seat-nonunique:niobe"
             )
-        elif (
-            not seat
-            and not pinned_host
-            and any(int(value) > 0 for value in capacity.values())
-        ):
-            available_hosts = tuple(
-                candidate
-                for candidate in ROTATION_HOSTS
-                if int(capacity.get(candidate, 0)) > 0
-            )
-            owner = _partition_owner(cid, available_hosts or ROTATION_HOSTS)
-            reason = "ordinary"
         else:
             owner, reason = _seat_owner(
                 cid, seat, pinned_host
@@ -6078,6 +6095,9 @@ _builder_candidates = [
     )
 ]
 _builder_candidate_ids = {candidate[2] for candidate in _builder_candidates}
+_builder_withheld_ids = [
+    candidate[2] for candidate in owned if candidate[2] in _builder_candidate_ids
+]
 owned = [candidate for candidate in owned if candidate[2] not in _builder_candidate_ids]
 
 # Niobe may place one generic medium source card on a Ready builder standby.
@@ -6549,7 +6569,7 @@ def _observe_assigned_reviews():
 if not picks:
     _observe_assigned_reviews()
     detail = _selection_diagnostic(
-        pool, owned, LANES, owner_host, _HOST_CAPACITY)
+        pool, owned, LANES, owner_host, _HOST_CAPACITY, _builder_withheld_ids)
     log(d,"SELECTION_EMPTY|%s|%s"%(HOST,detail))
     log(d,"NOOP|%s|selection empty: %s"%(HOST,detail))
     log(d,"NOOP_RECEIPT|%s|reason=%s|seat=%s"%
