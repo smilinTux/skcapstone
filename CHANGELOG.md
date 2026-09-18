@@ -22,6 +22,23 @@
   and whether an amnesty is in effect. Ships the mechanism only; no amnesty
   event is written to any live board.
 
+- **Fleet review opener: new review cards are admissible again.** Since the
+  governed review gate began requiring a seat label, typed producer evidence,
+  and a source binding, every card `fleet-review-opener` created was born
+  permanently inadmissible (`wrong-seat` plus `absent-source-binding`; 357
+  cards awaiting review, `eligible=0` every cycle), and since PR 567 its
+  `coord create` calls failed outright. The opener now creates cards the way
+  the one admitted producer (`link_review_work.py`) does: exactly one
+  `seat-seraph` label, typed `--producer-identity` and
+  `--candidate-evidence-sha256`, and a source binding of `--source-card`
+  (the parent) plus `--head-revision` (the producer's own 40-hex
+  `candidate_commit`). A verdict event that carries no typed
+  `candidate_commit` has no honest source binding, so the opener skips it
+  with a per-hour `OPEN_REVIEW_SOURCE_UNBOUND` diagnostic instead of
+  inventing a revision, and the post-create readback now refuses (and
+  fences) any card that folds back without the seat, the binding, or gate
+  admissibility. The gate itself is unchanged. Backfilling the existing
+  inadmissible cards is a separate operator decision.
 - **Builder dispatch: a declined card now logs why.** `builder_dispatch.offer`
   returns None for reasons the operator could not see: a frozen plane, no
   Ready `builder-standby` node, an invalid source binding, and, most commonly

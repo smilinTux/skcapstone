@@ -5123,6 +5123,26 @@ def _eligible_provisional_reviews(capacity):
                 (HOST, parent, str(outcome_ts or ""), token),
             )
             continue
+        # A governed review card must bind the exact source revision it reviews
+        # (link_source_card plus a 40-hex link_head_revision), and the only
+        # honest revision the opener can know is the typed candidate_commit the
+        # producer put on its own verdict event.  A verdict without one cannot
+        # yield an admissible review card, and inventing a placeholder revision
+        # would be worse than opening nothing: the reviewer would verify a
+        # binding that never existed.  Skip, and say why, so the fix lands at
+        # the producer that omitted its typed candidate identity.
+        if not generation[4]:
+            _log_once_per_hour(
+                d,
+                "OPEN_REVIEW_SOURCE_UNBOUND",
+                parent,
+                "OPEN_REVIEW_SOURCE_UNBOUND|%s|%s|outcome=%s|%s|verdict event "
+                "carries no typed candidate_commit, so no honest source "
+                "binding exists; the producer must emit candidate_commit, "
+                "candidate_tree, and candidate_ref" %
+                (HOST, parent, str(outcome_ts or ""), token),
+            )
+            continue
         selected.append((parent, str(outcome_ts or ""), token, review_id) + generation)
     return selected
 
@@ -5135,8 +5155,8 @@ def _authoritative_review_readback(
         core_path = os.path.join(CARDS, review_id, "core.json")
         with open(core_path, encoding="utf-8") as fh:
             core = json.load(fh)
-        parent_labels = [label for label in folded_labels(review_id, core)
-                         if str(label).startswith("parent-")]
+        labels = [str(label) for label in folded_labels(review_id, core)]
+        parent_labels = [label for label in labels if label.startswith("parent-")]
         description = str(core.get("description") or "")
         typed = not commit or all(
             value in description for value in (
@@ -5145,9 +5165,34 @@ def _authoritative_review_readback(
                 "Candidate ref: %s." % ref,
             )
         )
+        meta = core.get("meta") if isinstance(core.get("meta"), dict) else {}
+        # The card must fold back bound to the exact source generation the
+        # opener created it for, and must clear the same governed admission
+        # gate the reviewer pool applies.  A create that reported success but
+        # dropped the seat or the source binding would otherwise strand a
+        # permanently inadmissible card on the board.
+        bound = (
+            str(meta.get("producer_identity") or "") == producer and
+            str(meta.get("candidate_evidence_sha256") or "").lower() == digest and
+            str(meta.get("link_source_card") or "") == parent and
+            str(meta.get("link_head_revision") or "").lower() == commit
+        )
+        gate_core = {
+            "title": str(core.get("title") or ""),
+            "description": description,
+            "links": core.get("links") if isinstance(core.get("links"), dict) else {},
+            "meta": meta,
+        }
+        structural = {"wrong-seat", "absent-typed-metadata", "absent-source-binding"}
+        admissible = not (
+            structural & set(governed_review_gate_reasons(gate_core, labels))
+        )
         return bool(
             core.get("id") == review_id and
             parent_labels == ["parent-%s" % parent] and
+            governed_review_seat(labels, qualified_reviewer_seats(core)) == "seraph" and
+            bound and
+            admissible and
             lifecycle_state(review_id) == "open" and
             "Producer identity: %s." % producer in description and
             "Candidate evidence: %s sha256=%s." % (path, digest) in description and
@@ -5189,13 +5234,24 @@ def open_provisional_reviews(capacity, dry_run=False):
                 " Candidate commit: %s. Candidate tree: %s. Candidate ref: %s."
                 % (commit, tree, ref)
             )
+        # The seat label and the typed producer plus source-binding flags are
+        # what make the card admissible to the governed review gate (and what
+        # `coord create` fails fast without, since PR 567).  This mirrors the
+        # one producer whose cards the gate admits, link_review_work.py:
+        # exactly one seat-seraph label, typed producer_identity and
+        # candidate_evidence_sha256, and link_source_card plus the exact
+        # 40-hex link_head_revision being reviewed.
         r = subprocess.run(
             [SKC, "coord", "create", "--id", review_id,
              "--title", "[REVIEW] Review provisional outcome for %s" % parent,
              "--desc", description,
              "--priority", "high", "--tag", "parent-%s" % parent,
-             "--tag", "review", "--tag", "qwen-suitable",
+             "--tag", "review", "--tag", "seat-seraph", "--tag", "qwen-suitable",
              "--tag", "source-implementer-%s" % producer,
+             "--producer-identity", producer,
+             "--candidate-evidence-sha256", digest,
+             "--source-card", parent,
+             "--head-revision", commit,
              "--by", "fleet-review-opener",
              "--criteria", "Verify exact candidate %s at sha256 %s." % (path, digest),
              "--criteria", "Verify exact parent outcome generation %s." % generation,
