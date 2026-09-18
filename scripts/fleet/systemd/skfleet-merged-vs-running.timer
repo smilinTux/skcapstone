@@ -1,0 +1,16 @@
+# Runs the merged-vs-running fleet check every 30 minutes on the ONE
+# auditing host it is installed on. The 16-hour skcoord window and the
+# 2026-09-18 lane-model window would both have been caught inside one tick.
+
+[Unit]
+Description=Run the merged-vs-running fleet check every thirty minutes
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=30min
+AccuracySec=1min
+Persistent=false
+Unit=skfleet-merged-vs-running.service
+
+[Install]
+WantedBy=timers.target

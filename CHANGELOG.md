@@ -72,6 +72,27 @@
   release event changes. Pinned by
   `tests/fleet/test_dispatch_writer_identity.py` (verified red against the
   unfixed script first).
+- **New check: merged versus running (`scripts/fleet/skfleet_merged_vs_running.py`).**
+  Answers the estate's most expensive unanswered question: is what we merged
+  actually what the fleet runs? Compares a git ref (default `origin/main`)
+  against every fleet host over read-only ssh, by CONTENT DIGEST, never a
+  version string (the skcoord incident: pip said 0.1.56, the module said 0.1.0,
+  on the same host). Per host it resolves the dispatcher unit's EFFECTIVE
+  ExecStart via `systemctl show` (drop-ins override the unit file's interpreter
+  on every chi host), hashes the script that ExecStart actually names, and
+  hashes every module of the skcapstone package that the unit's own interpreter
+  resolves via `find_spec` (no package code executed). A split fleet (hosts
+  disagreeing with EACH OTHER) is reported as a distinct, worse finding than a
+  uniformly-behind fleet, naming the hosts in each content group; an
+  unreachable host is UNKNOWN, never OK, and exit codes keep the three states
+  apart (0 in sync, 1 drift, 2 could-not-measure). Report only: it never
+  deploys, restarts, or repairs. Optional `--gtd-capture` upserts findings into
+  the unified GTD store deduped on a stable `(source, source_ref)`;
+  `--verdict-path` writes an atomic JSON verdict in the readiness-gate shape;
+  the hand-installed timer units live in `scripts/fleet/systemd/`. First live
+  run found a real split fleet: chiap01/02/03/08 running library content from
+  `d448c2fa` (three merged commits behind main) while chiap04's interpreter
+  resolved an uncommitted feature-branch checkout that matches no merged ref.
 
 - **Claim TTL counts the dispatcher's `worker_liveness` link as the owner being
   alive.** That link is the strongest liveness signal the estate produces:
