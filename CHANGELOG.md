@@ -32,6 +32,18 @@
   ADR-0006 removed Jarvis from recurring scheduling (the rotate script's
   writer identity still defaults to `jarvis`, named in the Jarvis boundary as
   the highest-value enforcement fix).
+- **`docs/fleet/2026-09-18-learnings.md`**: eleven failures from one day on chi,
+  each written as an SKRSI boundary contract (producer, consumer, recovery
+  owner, machine evidence, fail-closed condition) rather than as advice. They
+  share one shape, which is the shape SKRSI already names: something asserted a
+  state and nothing independently verified it. Covers the correct-but-unreachable
+  function, the valid route to the wrong backend, a fail-closed gate that could
+  not observe its own recovery, a distributed fence reading host-local state,
+  seat identity assumed by a tool flag, merged-is-not-running and why version
+  strings lie, services importing from trees agents work in, CI that ran twice
+  and starved the only complete gate, verifying through the path that wrote,
+  when a test fighting a change three times means the change is wrong, and the
+  unowned job.
 
 - **Claim TTL counts the dispatcher's `worker_liveness` link as the owner being
   alive.** That link is the strongest liveness signal the estate produces:
