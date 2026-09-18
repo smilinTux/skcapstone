@@ -122,33 +122,83 @@ def evaluate(
 
 
 def _parse_ts(value: object) -> float:
-    from datetime import datetime
+    """Unix seconds, or 0.0 for anything unparseable.
+
+    A timestamp with no offset is resolved as UTC rather than host-local.
+    Every writer in this store stamps tz-aware ISO-8601, but ``append_event``
+    merges its payload over the envelope, so a caller passing ``ts=`` can
+    land a naive value. Resolving that host-local would shift apparent
+    idleness by the host's UTC offset, which is a 9 hour error on an Asian
+    host and a 14 hour one at UTC+14: enough to reclaim a live worker's card
+    or to hide a dead one.
+    """
+    from datetime import datetime, timezone
 
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except Exception:
         return 0.0
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
 
 
-def _last_owner_event_at(root: Path, card_id: str, owner: str) -> float:
-    """When the owner last wrote ANY event to the card it holds.
+def _is_worker_for(writer: str, card_id: str) -> bool:
+    """Is this writer a worker acting on THIS card, rather than a seat?
 
-    This is the only thing the event log is read for. Ownership itself comes
-    from the fold, which is the authority, so nothing here needs to know how
-    a claim is won or lost.
+    Worker identities embed the card id by construction
+    (``pi-codex-chiap08-0f7b2e6c``, ``kimi-chiap01-34115541``,
+    ``codex-02963e5f-r4``), and seat identities never do. That single test
+    is what separates "a worker for this card is alive" from "a seat filed
+    an observation about an abandoned card", and it needs no list of seat
+    names: a card id is eight hex characters, so no seat name can contain
+    one. An explicit seat blocklist was written first and then removed,
+    because a mutation check proved it never fired.
 
-    Events are sharded one file per writer (``jarvis@chiap03.jsonl``,
-    ``pi-codex-chiap01-<cid>@chiap01.jsonl``), so every shard has to be read;
-    the owner's own shard is not the only place its name appears.
+    It is deliberately CONSERVATIVE. A sibling whose identity does not
+    reference the card (``cursor-w73-live`` writing on card ``73c201a1``) is
+    not counted, so such a card can expire while that writer is active.
+    Phase 2 of the rollout exists to measure exactly this before anything
+    is enforced.
+
+    This matters because the owning identity is frequently NOT the working
+    identity for the same card. Measured on chi, card 0f7b2e6c: the owner
+    ``pi-codex-chiap02-0f7b2e6c`` wrote one event, its sibling
+    ``pi-codex-chiap08-0f7b2e6c`` wrote four. Counting only the owner's own
+    writes would reclaim that card while the work was in progress.
     """
-    events_dir = root / "cards" / str(card_id) / "events"
+    if not writer or not card_id:
+        return False
+    return card_id in writer
+
+
+def _evidence_activity(root: Path) -> dict[str, dict[str, float]]:
+    """card_id -> writer -> that writer's latest timestamp, from card_events.
+
+    ``<sovereign home>/coordination/card_events/*.jsonl`` is a SECOND event
+    store, and it is where the review workflow actually lands: `coord link`,
+    `verdict` and `evidence` are written here through ``CardEventLog`` and
+    never touch ``cards/<id>/events/``. Measured on chi it holds 81,207
+    records (68,666 link, 7,799 move, 701 verdict) against roughly 13,000 in
+    the per-card shards.
+
+    Reading only the per-card shards therefore made the idle clock blind to
+    the evidence store, and a worker posting evidence hourly and a verdict
+    seconds before the sweep still measured as idle for its whole run. That
+    was demonstrated end to end against the real write paths: the card
+    folded to owner=None while the worker was alive and working.
+
+    Read in ONE pass and indexed, rather than re-read per card, because this
+    runs inside a 5 minute dispatcher cycle.
+    """
+    index: dict[str, dict[str, float]] = {}
+    events_dir = root / "coordination" / "card_events"
     if not events_dir.is_dir():
-        return 0.0
-    latest = 0.0
+        return index
     try:
         names = sorted(events_dir.iterdir())
     except OSError:
-        return 0.0
+        return index
     for name in names:
         if name.suffix != ".jsonl":
             continue
@@ -167,11 +217,77 @@ def _last_owner_event_at(root: Path, card_id: str, owner: str) -> float:
                     continue
                 if not isinstance(event, dict):
                     continue
-                if event.get("writer") != owner and event.get("owner") != owner:
+                card_id = event.get("card_id")
+                writer = event.get("writer")
+                if not card_id or not writer:
                     continue
                 stamp = _parse_ts(event.get("ts"))
-                if stamp > latest:
-                    latest = stamp
+                if not stamp:
+                    continue
+                per_card = index.setdefault(str(card_id), {})
+                writer = str(writer)
+                if stamp > per_card.get(writer, 0.0):
+                    per_card[writer] = stamp
+    return index
+
+
+def _last_activity_at(
+    root: Path,
+    card_id: str,
+    owner: str,
+    evidence: dict[str, dict[str, float]],
+) -> float:
+    """When work on this card was last evidenced, across BOTH event stores.
+
+    Counts an event when it was written by the owner, or by a worker
+    identity that references this card. Excludes seat writers, so a seat
+    filing observations on an abandoned card does not keep its claim alive.
+    """
+    latest = 0.0
+
+    # Store 1: the per-card structural shards.
+    events_dir = root / "cards" / str(card_id) / "events"
+    if events_dir.is_dir():
+        try:
+            names = sorted(events_dir.iterdir())
+        except OSError:
+            names = []
+        for name in names:
+            if name.suffix != ".jsonl":
+                continue
+            try:
+                handle = name.open(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            with handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except ValueError:
+                        continue
+                    if not isinstance(event, dict):
+                        continue
+                    writer = str(event.get("writer") or "")
+                    counts = (
+                        writer == owner
+                        or event.get("owner") == owner
+                        or _is_worker_for(writer, str(card_id))
+                    )
+                    if not counts:
+                        continue
+                    stamp = _parse_ts(event.get("ts"))
+                    if stamp > latest:
+                        latest = stamp
+
+    # Store 2: the evidence overlay (link, verdict, evidence, move).
+    for writer, stamp in (evidence.get(str(card_id)) or {}).items():
+        if writer == owner or _is_worker_for(writer, str(card_id)):
+            if stamp > latest:
+                latest = stamp
+
     return latest
 
 
@@ -204,6 +320,7 @@ def observe(home: Path | str) -> list[ClaimObservation]:
 
     root = Path(home)
     cards = CardStore(root).list_cards(include_archived=False, degrade_unreadable=True)
+    evidence = _evidence_activity(root)
 
     out: list[ClaimObservation] = []
     for card in cards:
@@ -222,7 +339,7 @@ def observe(home: Path | str) -> list[ClaimObservation]:
                 card_id=card_id,
                 owner=str(owner),
                 claim_revision=str(revision) if revision else None,
-                last_owner_event_at=_last_owner_event_at(root, card_id, str(owner)),
+                last_owner_event_at=_last_activity_at(root, card_id, str(owner), evidence),
             )
         )
     return out

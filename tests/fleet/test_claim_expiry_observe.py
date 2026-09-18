@@ -245,3 +245,149 @@ def test_observe_agrees_with_the_fold_over_a_mixed_population(tmp_path):
     }
     replay_owners = {o.card_id: o.owner for o in observe(tmp_path)}
     assert replay_owners == fold_owners
+
+
+# ---------------------------------------------------------------------------
+# The evidence store. `coord link`, `verdict` and `evidence` are written to
+# ~/.skcapstone/coordination/card_events/*.jsonl through CardEventLog and
+# NEVER touch cards/<id>/events/. Measured on chi that store holds 81,207
+# records against roughly 13,000 in the per-card shards, so an idle clock
+# that reads only the shards is blind to the entire review workflow.
+#
+# An adversarial review demonstrated the consequence end to end: a worker
+# claimed at T-50h, posted evidence hourly and a verdict seconds before the
+# sweep through the real write paths, and still measured as 50 hours idle.
+# The card folded to owner=None while the worker was alive and working.
+# ---------------------------------------------------------------------------
+
+
+def _evidence(home, card_id, writer, *, action="link", hours_ago=0.0):
+    """Append one record to the evidence store, in its real on-disk shape."""
+    from datetime import datetime, timedelta, timezone
+
+    d = home / "coordination" / "card_events"
+    d.mkdir(parents=True, exist_ok=True)
+    stamp = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
+    with (d / "chiap01.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(
+            json.dumps(
+                {
+                    "card_id": card_id,
+                    "action": action,
+                    "writer": writer,
+                    "ts": stamp,
+                    "link_key": "evidence",
+                    "link_value": "/tmp/x",
+                }
+            )
+            + "\n"
+        )
+
+
+def _age_shards(home, card_id, hours):
+    """Backdate every event in the per-card shards, to isolate the overlay."""
+    from datetime import datetime, timedelta, timezone
+
+    stamp = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    for shard in (home / "cards" / card_id / "events").glob("*.jsonl"):
+        out = []
+        for line in shard.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            event = json.loads(line)
+            event["ts"] = stamp
+            out.append(json.dumps(event))
+        shard.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
+def test_evidence_store_activity_keeps_a_live_workers_claim_alive(tmp_path):
+    """The attack, defended. Without the overlay this card is 50h idle and
+    reclaimable while its worker is posting verdicts."""
+    store = _store(tmp_path)
+    cid = _card(store, "worker posting evidence")
+    store.append_event(
+        cid, "claim", "pi-codex-chiap01-w", owner="pi-codex-chiap01-w", claim_revision="r1"
+    )
+    _age_shards(tmp_path, cid, 50)
+    _evidence(tmp_path, cid, "pi-codex-chiap01-w", action="verdict", hours_ago=0.01)
+
+    got = _held(tmp_path)[cid]
+    assert got.last_owner_event_at > 0
+    verdict = evaluate([got], now=time.time(), ttl_seconds=48 * HOUR)[0]
+    assert (
+        verdict.reclaimable is False
+    ), "a worker posting verdicts is alive; the overlay must see it"
+    assert verdict.idle_seconds < HOUR
+
+
+def test_a_seat_writing_evidence_does_NOT_keep_a_dead_claim_alive(tmp_path):
+    """The complement, and the reason the overlay is not simply "any event".
+
+    Measured on chi, three held cards had an owner idle 32 to 34 hours while
+    a seat wrote to the card within 10 minutes. Counting that as liveness
+    would keep dead claims alive forever, which is the bug being fixed.
+
+    What excludes them is the card-id rule, not a list of seat names: a card
+    id is eight hex characters and no seat name contains one. A blocklist
+    was written first and removed after a mutation check showed it never
+    fired.
+    """
+    store = _store(tmp_path)
+    cid = _card(store, "abandoned but observed")
+    store.append_event(cid, "claim", "dead-worker", owner="dead-worker", claim_revision="r1")
+    _age_shards(tmp_path, cid, 200)
+    for seat in ("mero", "jarvis", "lumina", "coord"):
+        _evidence(tmp_path, cid, seat, action="link", hours_ago=0.01)
+
+    got = _held(tmp_path)[cid]
+    verdict = evaluate([got], now=time.time(), ttl_seconds=48 * HOUR)[0]
+    assert verdict.reclaimable is True, "a seat's observations are not the holder being alive"
+    assert verdict.idle_seconds > 190 * HOUR
+
+
+def test_a_sibling_worker_identity_for_the_same_card_counts_as_activity(tmp_path):
+    """Card 0f7b2e6c on chi: the owner `pi-codex-chiap02-0f7b2e6c` wrote one
+    event while its sibling `pi-codex-chiap08-0f7b2e6c` wrote four. The
+    owning identity is frequently not the working identity."""
+    store = _store(tmp_path)
+    cid = _card(store, "worked by a sibling", id="0f7b2e6c")
+    store.append_event(
+        cid,
+        "claim",
+        f"pi-codex-chiap02-{cid}",
+        owner=f"pi-codex-chiap02-{cid}",
+        claim_revision="r1",
+    )
+    _age_shards(tmp_path, cid, 60)
+    _evidence(tmp_path, cid, f"pi-codex-chiap08-{cid}", hours_ago=0.01)
+
+    verdict = evaluate([_held(tmp_path)[cid]], now=time.time(), ttl_seconds=48 * HOUR)[0]
+    assert verdict.reclaimable is False
+
+
+def test_a_worker_for_a_DIFFERENT_card_does_not_count(tmp_path):
+    """The card-id match must be about THIS card, or any busy worker on the
+    fleet would keep every claim alive."""
+    store = _store(tmp_path)
+    cid = _card(store, "abandoned", id="aaaa1111")
+    store.append_event(cid, "claim", "dead", owner="dead", claim_revision="r1")
+    _age_shards(tmp_path, cid, 200)
+    _evidence(tmp_path, cid, "pi-codex-chiap01-bbbb2222", hours_ago=0.01)
+
+    verdict = evaluate([_held(tmp_path)[cid]], now=time.time(), ttl_seconds=48 * HOUR)[0]
+    assert verdict.reclaimable is True
+
+
+def test_a_naive_timestamp_is_resolved_as_utc(tmp_path):
+    """`append_event` merges its payload over the envelope, so a caller can
+    land a naive `ts`. Resolving it host-local shifts apparent idleness by
+    the host's UTC offset: 9 hours on an Asian host, 14 at UTC+14."""
+    from datetime import datetime, timedelta, timezone
+
+    from skcapstone.fleet.claim_expiry import _parse_ts
+
+    naive = (datetime.now(timezone.utc) - timedelta(hours=1)).replace(tzinfo=None)
+    aware = naive.replace(tzinfo=timezone.utc)
+    assert _parse_ts(naive.isoformat()) == pytest.approx(aware.timestamp(), abs=1)
+    assert _parse_ts("not a timestamp") == 0.0
+    assert _parse_ts(None) == 0.0

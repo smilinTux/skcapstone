@@ -248,3 +248,75 @@ def test_snapshot_fetch_failure_has_no_routes(tmp_path):
     assert snapshot["routes"] == []
     assert snapshot["error"] == "OSError"
     assert eligible_review_routes(snapshot, "S", [], "producer", "reviewer", {}) == []
+
+
+def _strict_opener(documents):
+    """Route on the EXACT path a real server would see, and 404 a miss.
+
+    The mocks above resolve with `url.endswith(key)`, which cannot tell
+    `/v1/v1/models` from `/v1/models`. That is the same blind spot that let a
+    gateway-URL misconfiguration cost this fleet three days of zero dispatch
+    through fleet_lane_health: the probe's own test passed because its mock
+    only looked at the trailing path segment.
+    """
+    import urllib.error
+    import urllib.parse
+
+    def opener(url, timeout=8):
+        path = urllib.parse.urlsplit(url).path.rstrip("/") or "/"
+        if path not in documents:
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+        return _Response(json.dumps(documents[path]).encode())
+
+    return opener
+
+
+def test_a_v1_suffixed_base_url_still_seals_real_routes(tmp_path):
+    """Regression: this function appends "/v1" itself for the models probe
+    while /health and /queue are root-relative, so a base URL that already
+    carries "/v1" would request /v1/v1/models, /v1/health and /v1/queue.
+
+    All three 404, `routes` comes back empty, and aggregate_review_capacity
+    then reports ZERO codex review capacity: a total review outage from a
+    config value that looks correct.
+    """
+    now = 2_000_000_000.0
+    documents = dict(zip(("/v1/models", "/health", "/queue"), _documents(now)))
+    opener = _strict_opener(documents)
+
+    snapshot = acquire_review_route_snapshot(
+        "https://gateway/v1", tmp_path / "snap-v1.json", "cycle-v1",
+        opener=opener, now=lambda: now,
+    )
+    routes = eligible_review_routes(
+        snapshot, "M", [], "producer", "pi-seraph-review", {"cloud-b": 1}
+    )
+    assert routes, "a /v1 base URL must still resolve real routes"
+    assert aggregate_review_capacity(routes, 8) == 2
+
+
+def test_the_origin_form_is_unaffected(tmp_path):
+    now = 2_000_000_000.0
+    documents = dict(zip(("/v1/models", "/health", "/queue"), _documents(now)))
+    snapshot = acquire_review_route_snapshot(
+        "https://gateway", tmp_path / "snap-root.json", "cycle-root",
+        opener=_strict_opener(documents), now=lambda: now,
+    )
+    routes = eligible_review_routes(
+        snapshot, "M", [], "producer", "pi-seraph-review", {"cloud-b": 1}
+    )
+    assert aggregate_review_capacity(routes, 8) == 2
+
+
+def test_the_strict_opener_really_does_404_a_doubled_prefix():
+    """Guard the guard, so the regression test cannot pass for the wrong
+    reason if the normalization is later removed."""
+    import urllib.error
+
+    import pytest as _pytest
+
+    opener = _strict_opener({"/v1/models": {}, "/health": {}, "/queue": {}})
+    with _pytest.raises(urllib.error.HTTPError):
+        opener("https://gateway/v1/v1/models")
+    with _pytest.raises(urllib.error.HTTPError):
+        opener("https://gateway/v1/health")
