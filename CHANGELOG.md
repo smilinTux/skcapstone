@@ -20,6 +20,19 @@
   three-layer detection contract (PR 766 runtime refusal, negative tests, and
   a shard-store audit query that provably flags the 2026-09-07 burst, to run
   in Seraph's cycle, never mero's own).
+- **Seat charters: every running seat now has an explicit verb boundary.**
+  `docs/fleet/seat-charters.md` gains boundary sections for Seraph, Atlas, and
+  Jarvis (previously only Mero, Link, and Niobe had them), a dissolution
+  record for Tank naming the owner of each folded duty, and a runnable
+  event-store detection query keyed on prohibited verbs per writer identity.
+  Grounded in a 30-day card-event census on chi (2026-08-19 to 2026-09-18):
+  the census also recorded the drift each boundary flags at adoption,
+  including 11 post-charter Mero mutations, Atlas void/archive on seat-seraph
+  review cards, and 4,487 scheduled `jarvis` dispatch events written after
+  ADR-0006 removed Jarvis from recurring scheduling (the rotate script's
+  writer identity still defaults to `jarvis`, named in the Jarvis boundary as
+  the highest-value enforcement fix).
+
 - **Claim TTL counts the dispatcher's `worker_liveness` link as the owner being
   alive.** That link is the strongest liveness signal the estate produces:
   `skfleet-rotate` emits one every 2 to 3 minutes for each worker it observes

@@ -1,7 +1,7 @@
 # Lifecycle seat charters
 
 **Status:** ACTIVE
-**Date:** 2026-09-09
+**Date:** 2026-09-18
 **Canonical Source:** [sk-standards ADR-0006](https://github.com/smilinTux/sk-standards/blob/HEAD/decisions/ADR-0006-dispatch-handoff-niobe-tank-seraph.md)
 **Reference:** [sk-standards ROSTER.md](https://github.com/smilinTux/sk-standards/blob/HEAD/ROSTER.md)
 
@@ -427,6 +427,153 @@ Link records the exact head, check state, review identity, review evidence SHA25
 **Application action dispatch separation:**
 Niobe gains no application actuation authority from the Fleet Dispatcher seat. The application action dispatcher remains a separate governed component with the closed inputs, ITIL fold, readiness, freeze, and current-catalog checks defined by ACTION_AUTHORIZATION_STANDARD. Fleet dispatch coordinates CardStore work and worker processes only.
 
+### Seraph (Independent Verifier) Boundary
+
+Measured basis: 2,596 card events in the 30 days to 2026-09-18 were written by
+`seraph` or a `*seraph*` worker identity (claim 849, move 808, complete 492,
+release_claim 193, review_assignment_launch 176), which makes the verifier one
+of the three most active writers on the board. A seat this active cannot run
+on prose. The lists below are the checkable contract.
+
+**Allowed operations (explicit verbs):**
+- `claim`, `move`, `complete`, `release_claim` on a card that carries the
+  `seat-seraph` label, or on a review card the verifier operates in its own
+  lane
+- `review_assignment_launch` for bounded review workers running under a
+  `pi-seraph-<host>-<card>` identity
+- `link` for attaching verdict evidence
+- `pass_for_review` and `blocked` verdict records
+- Card creation (typed, provenance recorded), per Fenced System Actors below
+
+**Prohibited operations:**
+- `void` and `archive`: terminal board mutation belongs to the dispatcher
+  seat's hygiene subsystems, never to the verifier
+- `add_dependency`, `remove_dependency`, `amend_criteria`, `describe`,
+  `priority`, `reopen`, `unassign`, `add_label` on cards outside its own lane
+- `review_assignment_recommendation` (Link's verb)
+- `mero_observation` and `mero_blocker_recommendation` (Mero's verbs)
+- Merge, deployment, release, or actuation of any kind
+- Verifying a candidate it authored or claimed (self-review), per ADR-0006
+
+**Measured drift at adoption:** in the same 30-day window the seraph identity
+set wrote 20 `void`, 20 `archive`, 7 `describe`, 7 `add_dependency`,
+5 `remove_dependency`, and 2 `amend_criteria`. Under this boundary those are
+violations. The detection query in
+[Boundary detection signals](#boundary-detection-signals) flags every one.
+
+**Detection signal:** the per-writer event-store query below, with this
+section's prohibited-verb list. It would have caught each measured drift
+event above on the day it was written.
+
+### Atlas (Operations) Boundary
+
+Measured basis, 30 days to 2026-09-18: 1,166 `skfleet-atlas` cycle records on
+chiap08 and every one records `dispatch_succeeded: 0`. The freeze store
+`~/.skcapstone/agents/atlas/objects/_freeze.json` is absent on all five chi
+hosts (re-verified 2026-09-18 by direct filesystem check), so under AUTONOMY
+invariant 4 the seat holds no actuation and is correctly refusing every
+effect. In the same window, identities matching `*atlas*` wrote 34 board
+events: claim 11, move 9, complete 8, void 2, archive 2, link 2.
+
+**Allowed operations (explicit verbs):**
+- `claim`, `move`, `complete`, `release_claim` ONLY on a card carrying both
+  the `seat-atlas` label and `dispatch-approved`, entered through Niobe's
+  atomic claim-and-launch (ADR-0006 section 6)
+- `link` for postcondition and behavioral-verification evidence
+- Card creation (typed, provenance recorded)
+- Release, install, and rollback of exact approved artifacts, but only after
+  BOTH of the following exist, and neither exists today: a human-provisioned
+  freeze store in the off position, and an `Action.DEPLOY` grant per the
+  bounded four-item list in
+  [ATLAS release and install duty](#atlas-release-and-install-duty-inoperable-pending-b3)
+
+**Prohibited operations:**
+- `claim` on any card lacking the `seat-atlas` plus `dispatch-approved`
+  admission pair
+- `void` and `archive`
+- `review_assignment_launch`, `review_assignment_recommendation`, and
+  reviewer assignment of any kind
+- `add_dependency`, `remove_dependency`, `amend_criteria`, `priority`,
+  `describe` outside its own claimed cards
+- Merge, policy change, fleet dispatch
+- Any deploy, install, release, or rollback effect while the freeze store is
+  absent: an absent kill switch means no actuation, not free actuation
+
+**Measured drift at adoption:** the atlas identity claimed and completed two
+cards carrying no `seat-atlas` label (`9149e27a` on 2026-09-08 and `4dcb5258`
+on 2026-09-16), and on 2026-09-16 wrote `void` and `archive` on `5391d896`
+and `86a7086f`, which are `seat-seraph` review cards. Its one clean lane
+event set is card `a71a7a71`, which carries `seat-atlas`. Under this boundary
+the unlabeled claims and both void/archive pairs are violations, and the
+detection query flags all of them.
+
+**Detection signal:** the per-writer query below with this section's
+prohibited list, plus a label check on every atlas `claim` (flag any claim
+whose card lacks `seat-atlas`). For the actuation half: `skcapstone atlas
+eyes` plus `ls ~/.skcapstone/agents/atlas/objects/_freeze.json` on every
+host; a dispatch or deploy effect while that file is absent is a violation of
+AUTONOMY invariant 4 regardless of what any card says.
+
+### Jarvis (Casey-directed assistance) Boundary
+
+Jarvis is not a lifecycle seat and holds no recurring schedule. Everything
+below restates ADR-0006 section 5 as checkable verbs.
+
+**Allowed operations:**
+- Any board verb, but only under a verified, signed, unexpired Casey
+  direction through `skcapstone.jarvis_emergency.JarvisEmergencyGateway`,
+  bound to the exact action, target, change, and product scope
+- Reversible coordination for Casey, immediate, with Casey ownership
+  provenance recorded
+
+**Prohibited operations:**
+- Recurring lifecycle writes of ANY verb: no timer, unit, cron, or scheduled
+  process may write to the CardStore as `jarvis`
+- Exercising the dispatcher verbs (`claim`, `release_claim`, `move`,
+  `complete`, `void`, `archive`, `review_assignment_launch`) on a cadence
+
+**Measured nonconformance, open:** the deployed `skfleet-rotate.py` defaults
+its writer identity to `jarvis` (the `requested = ("jarvis",)` fallback and
+the `--agent jarvis` reclaim calls in the script), and `skfleet-rotate.timer`
+fires every 5 minutes on chiap01 through chiap04. Result: 12,230 `jarvis`
+card events in the 30 days to 2026-09-18, of which 4,487 landed AFTER
+ADR-0006 declared Jarvis outside recurring lifecycle scheduling (claim 816,
+move 2,140, complete 816, release_claim 323, void 116). The dispatch
+machinery is doing the dispatcher seat's job under the wrong identity. Until
+the rotate writer identity moves to `niobe`, no query can separate
+gateway-authorized Jarvis action from automation, which means this boundary
+is currently uncheckable. Repointing that writer identity is a small change
+in `scripts/fleet/skfleet-rotate.py` and is the single highest-value
+enforcement fix this document names.
+
+**Detection signal (armed once the identity moves):** any `jarvis` event in
+the store without a matching gateway direction receipt is a violation. Until
+then the signal is the inverse: `skfleet-rotate` cycles must stop appearing
+as `jarvis`, and the query below reports the daily `jarvis` event count so
+the cutover is visible.
+
+### Tank (dissolved seat)
+
+Tank does not survive as a seat. PR 751 folded it into ATLAS on 2026-09-17
+(spec `2026-09-16-nimble-factory-design.md` section 3.6), and this section
+exists so that no duty Tank owned is left unowned:
+
+- Release and install of exact approved artifacts: owned on paper by ATLAS;
+  performed in practice by a human invoking `skcapstone fleet rollout` and
+  `skcapstone fleet rollback` (dry run by default) until the freeze store and
+  the `Action.DEPLOY` grant land
+- Behavioral verification ("is what we merged actually running?"): owned by
+  ATLAS's postcondition duty; instrumented today by `skfleet-readiness.timer`
+  and `skcapstone fleet node drift` (Plan B3 phase 1) and the daily
+  report-only `skfleet-install-audit.timer` on all five chi hosts
+- Bounded rollback: `rollout_history.previous_manifest` plus
+  `execute_rollback`, human-invoked
+
+Measured close-out: Tank identities wrote 33 board events in the 30 days to
+2026-09-18, all coordination on DEPLOY and INTEGRATION cards, zero releases;
+no tank unit or timer exists on chiap08 today. `seat_boundaries.Seat.TANK`
+remains in the authority-model enum so historical events still resolve.
+
 ### Fenced System Actors
 
 Every lifecycle seat may create a correctly typed card within its product and
@@ -476,6 +623,72 @@ The following tests verify that boundary violations fail closed:
 
 Test implementation: `tests/fleet/test_seat_boundaries.py`
 
+### Boundary detection signals
+
+The event store is the detection surface. Every board write lands in
+`~/.skcapstone/cards/<id>/events/<writer>@<host>.jsonl`; the FILENAME is the
+writer identity, the record field is `action`, and `seq` restarts per shard
+so order is `(ts, seq)`. One read-only query answers every boundary in this
+document:
+
+```bash
+python3 - <<'EOF'
+import json, os, glob, collections
+FORBIDDEN = {
+    "mero":   {"claim","release_claim","move","complete","void","archive",
+               "add_dependency","remove_dependency","amend_criteria",
+               "describe","priority","reopen","unassign"},
+    "link":   {"claim","release_claim","void","archive",
+               "review_assignment_launch"},
+    "seraph": {"void","archive","add_dependency","remove_dependency",
+               "amend_criteria","describe","priority","reopen","unassign",
+               "add_label","review_assignment_recommendation",
+               "mero_observation","mero_blocker_recommendation"},
+    "atlas":  {"void","archive","review_assignment_launch",
+               "review_assignment_recommendation","add_dependency",
+               "remove_dependency","amend_criteria","priority"},
+    "niobe":  {"pass_for_review","blocked",
+               "review_assignment_recommendation",
+               "mero_observation","mero_blocker_recommendation"},
+}
+hits = collections.Counter()
+for f in glob.glob(os.path.expanduser("~/.skcapstone/cards/*/events/*.jsonl")):
+    w = os.path.basename(f).split("@")[0]
+    if w not in FORBIDDEN: continue
+    for line in open(f):
+        try: r = json.loads(line)
+        except Exception: continue
+        if r.get("action") in FORBIDDEN[w]:
+            hits[(w, r.get("action"), f.split("/")[-3], r.get("ts","")[:10])] += 1
+for k, n in sorted(hits.items()):
+    print(*k, n)
+EOF
+```
+
+Run over the 30 days ending 2026-09-18, this query flags every violation this
+document names: Mero's 548 mutation events (537 before its boundary activated
+on 2026-09-09 and 11 after, the post-activation set being claims and moves on
+cards `7f3a9c21`, `556491d9`, and `abe011e9`); Atlas's void/archive of the
+seat-seraph review cards on 2026-09-16; Seraph's out-of-lane terminal and
+metadata writes; and, once the rotate identity moves off `jarvis`, every
+scheduled `jarvis` dispatch event. The two-week unnoticed window that
+motivated this section existed because the prose said "read-only" and named
+no verbs; this query is the verbs.
+
+Two further signals sit outside the event store:
+
+- Deploy and install drift: `skfleet-readiness.timer` and `skcapstone fleet
+  node drift` (report-only), plus the daily `skfleet-install-audit.timer` on
+  all five chi hosts. These are the instruments that would have caught the
+  2026-09-18 window in which every host ran a pre-fix
+  `~/.local/bin/skfleet-rotate.py` after the fix had merged.
+- Cross-repo contract drift: `scripts/check_lifecycle_seat_alignment.py` in
+  sk-standards, run against
+  `src/skcapstone/data/lifecycle-seat-profiles.json`. On 2026-09-18 it failed
+  ("SKCapstone profile does not contain the canonical six seats") because the
+  tank fold landed here without the sk-standards side; that failure is the
+  gate working, and the sk-standards reconciliation PR restores it to green.
+
 ## Related Documents
 
 - [Standing Up A Seat](./standing-up-a-seat.md) - Procedure for creating a new seat
@@ -499,7 +712,11 @@ clause exists to prevent.
 
 | Date | Change | Author |
 |---|---|---|
+<<<<<<< HEAD
 | 2026-09-18 | Rewrote the Mero (Overseer) boundary from measured behaviour: purpose statement, explicit permitted and prohibited verb tables with counts, verdict on the 2026-09-07 mutation burst (necessary janitorial fraction assigned to Niobe via typed recommendations, live-claim releases ruled overstepping), and a three-layer violation-detection contract including a shard-store audit query verified to catch the burst | Fable 5 (subagent) |
+=======
+| 2026-09-18 | Added explicit verb boundaries and detection signals for Seraph, Atlas, and Jarvis, a dissolution record for Tank naming where each duty went, and the event-store boundary query; recorded the measured drift each boundary flags at adoption (card-event census on chi, 30 days to 2026-09-18) | Fable 5 (subagent) |
+>>>>>>> 83e49a1b (docs(fleet): verb boundaries and detection signals for Seraph, Atlas, Jarvis; Tank dissolution record)
 | 2026-09-17 | Noted that Plan B3 phase 2 delivered the rollout mechanism (recorded prior manifests, staged rollout, rollback, `skcapstone fleet rollout`/`rollback`) without changing ATLAS's authority bound; added the concrete, bounded list of what granting `Action.DEPLOY` would now take | claude-sonnet-5 |
 | 2026-09-17 | Noted that Plan B3 phase 1 delivered observation (deployment manifest, readiness gate with a caller, `skcapstone fleet node drift`) without changing ATLAS's authority bound; linked [rollout-drift.md](rollout-drift.md) | lumina |
 | 2026-09-17 | Documented that ATLAS's ported release/install/rollback duty is inoperable pending B3: no `DEPLOY` authority in `seat_boundaries`, the digest gate still on the retired tank branch, and the rail brief forbidding deploy; named the emergency gateway as unbounded and not a substitute; added the upgrade-before-converge and converge-only-on-elected-host ordering constraints and the partial-rollback note | lumina |
