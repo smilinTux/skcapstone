@@ -343,14 +343,25 @@ def test_idle_but_observed_domain_stays_admissible(tmp_path: Path) -> None:
     assert _admit(stale, "codex", "sk-codex") == (True, "healthy")
 
 
-def test_unobserved_domain_is_still_refused_after_a_gateway_restart(tmp_path: Path) -> None:
-    """The fresh-start state is genuinely no evidence, so it still fails closed."""
+def test_unobserved_domain_is_cold_and_admitted(tmp_path: Path) -> None:
+    """Card d7a38a00: a never-observed backend is COLD, not unknown.
+
+    Measured on the live dispatch gateway 2026-09-18: kimi-for-coding,
+    kimi-k3, anthropic, openrouter all read status=unknown observed=false
+    with 0 requests, and fail-closed refused them forever because nothing
+    would ever send them traffic. A cold backend is admitted so the first
+    request generates the observation that either confirms or condemns it.
+    This is NOT the 9b5c49a1 recency gate: that gate refused observed
+    backends by the AGE of their lastCheck, while this rule keys on
+    observed=false alone, which the gateway only reports when no request
+    outcome has ever been recorded for that backend.
+    """
     cold = _acquire_health(
         tmp_path,
         {"status": "unknown", "observed": False, "quarantined": False, "lastCheck": 0},
     )
-    assert _codex_state(cold) == "unknown"
-    assert _admit(cold, "codex", "sk-codex") == (False, "unknown")
+    assert _codex_state(cold) == "cold"
+    assert _admit(cold, "codex", "sk-codex") == (True, "healthy")
 
 
 def test_malformed_or_future_last_check_still_fails_closed(tmp_path: Path) -> None:
@@ -368,6 +379,12 @@ def test_malformed_or_future_last_check_still_fails_closed(tmp_path: Path) -> No
         assert _codex_state(snapshot) == "unknown", last_check
         assert _admit(snapshot, "codex", "sk-codex") == (False, "unknown"), last_check
 
+    # A future-dated lastCheck (recorded after the observation time) is
+    # malformed evidence for an observed backend, so it still fails closed.
+    # Card d7a38a00: only observation AGE is no longer a condition, but an
+    # impossible timestamp is still malformed, consistent with the
+    # 9b5c49a1 intent that recency gates be removed while impossible
+    # evidence is refused.
     future = _acquire_health(
         tmp_path,
         {

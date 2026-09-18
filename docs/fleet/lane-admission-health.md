@@ -37,30 +37,42 @@ claim and fails closed as malformed.
 
 ## Bootstrap after a gateway restart
 
-`observed: false` is the correct state for a backend on a freshly started
-gateway, and it is refused, because nothing has served and nothing is known.
-That is the intended fail-closed behaviour and it is not weakened here.
+## Cold-start deadlock (card d7a38a00)
 
-The consequence is that immediately after an SKGateway restart, and on a fresh
-node install, NO lane is admissible until one request has succeeded on each
-capacity domain the fleet wants to use. Measured on 2026-09-04 against a gateway
-restarted with no traffic: every domain read `status=unknown observed=false` at
-+0s, +10s and +30s, and every lane resolved to `(False, "unknown")`.
+A capacity domain that has never been trafficked reads `observed=false`, and
+the gateway only writes health rows from proxied request outcomes
+(`Backend.recordOutcome()` is the only writer; the gateway runs no active
+backend health checker). A lane whose only compatible domains are all
+unobserved could therefore never become admissible: nothing sends it
+traffic, so nothing can ever be observed. That is a cold-start deadlock
+(measured 2026-09-18: kimi and anthropic domains on chiap01 at
+`status=unknown observed=false` 0 requests, cards whose only lane is kimi
+defering every cycle).
 
-That refusal clears with the first success and does not come back. One warm-up
-completion per capacity domain is the entire bootstrap:
+Resolution (option 1 of the card): an unobserved capacity domain is admitted
+with a capped concurrency (`LANE_ADMISSION_UNOBSERVED_CONCURRENCY_CAP = 12`),
+whereas an observed domain uses the normal cap (48). The cap is what keeps
+the first dispatch small: the first request generates the observation that
+either confirms or condemns the domain; a second wave of traffic is bounded
+by the cap until the domain is observed.
 
-```
-curl -s -X POST "$SKFLEET_GATEWAY_URL/v1/chat/completions" \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"<a model served by that domain>",
-       "messages":[{"role":"user","content":"ok"}],"max_tokens":1}'
-```
+Fail-closed is preserved for every domain that HAS been observed in a bad
+state: `status=unknown` after real traffic, quarantined, owner-down, zero
+queue capacity, or a stale snapshot all still refuse the lane.
 
-Confirm with `curl -s "$SKFLEET_GATEWAY_URL/health"`: the domain should read
-`observed: true` with a non-down `status`. Repeat per capacity domain, since the
-health row is per backend and a success on one domain says nothing about
-another.
+The 2026-09-04 staleness/recency gate removed in `9b5c49a1` is not
+reintroduced: the new rule keys on `observed` (did the gateway ever serve
+this domain), not on how long ago an observation was taken. An unobserved
+domain cannot have a `lastCheck` to gate on, and an observed domain's
+`lastCheck` age is still not a condition, as `9b5c49a1` established.
+
+After a gateway restart or a fresh node install, the bootstrap now happens
+automatically on the first dispatch; no manual warm-up curl is required,
+though one can still be used to force the observation earlier.
+
+Confirm with `curl -s "$SKFLEET_GATEWAY_URL/health"`: after the first
+dispatch, the domain should read `observed: true` with a non-down
+`status`.
 
 If a lane is refused with `unknown` while `/health` shows the domain `up` and
 `observed`, the snapshot itself is the suspect (cycle, endpoint, revision, or

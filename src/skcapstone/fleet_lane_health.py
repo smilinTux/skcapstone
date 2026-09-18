@@ -180,15 +180,36 @@ def _domain_state(health: Any, queue: Any, domain: str, observed_at: float) -> d
         state = "quarantined"
     elif health_row.get("quarantined") is not False:
         state = "unknown"
-    elif (
-        not isinstance(last_check, (int, float))
-        or isinstance(last_check, bool)
-        or last_check <= 0
-        or last_check / 1000 - observed_at > MAX_AGE_SECONDS
-    ):
-        state = "unknown"
-    elif health_row.get("observed") is not True or health_row.get("status") in {"down", "unknown"}:
+    elif health_row.get("observed") is True and health_row.get("status") in {"down", "unknown"}:
         state = "owner-down"
+    elif health_row.get("observed") is not True:
+        # Card d7a38a00 (lane admission cold-start deadlock): a backend the
+        # gateway has never served traffic to reports observed=false with
+        # status=unknown. Fail-closed then refused it, nothing ever sends it
+        # traffic, and it can never become healthy. Distinguish this COLD
+        # (never observed) state from the 9b5c49a1 recency gate, which
+        # refused observed-and-idle backends on observation AGE. A cold
+        # backend is not an idle healthy backend: it has NO success evidence
+        # at all. Admit it as "cold" so the first request generates the
+        # observation that either confirms or condemns it. Fail-closed is
+        # preserved for observed-down/unknown (owner-down) and quarantined.
+        state = "cold"
+    elif not isinstance(last_check, (int, float)) or isinstance(last_check, bool) or last_check <= 0:
+        # Malformed lastCheck fails closed for an OBSERVED backend.
+        state = "unknown"
+    elif last_check / 1000 > observed_at:
+        # A future-dated lastCheck is impossible evidence (recorded after
+        # the observation time), so it fails closed. Card d7a38a00: ordinary
+        # age is no longer a condition (9b5c49a1), but an impossible
+        # timestamp is still malformed.
+        state = "unknown"
+    elif last_check / 1000 - observed_at > MAX_AGE_SECONDS:
+        # Card d7a38a00 follow-through on 9b5c49a1: for an observed
+        # backend, observation age is NOT an admission condition (the
+        # recency gate that deadlocked admission on 2026-09-04 was removed
+        # in 9b5c49a1). An observed, up/degraded, unquarantined domain
+        # stays admissible however long it idled.
+        state = "healthy"
     elif queue_row["max"] <= 0:
         state = "owner-down"
     elif health_row.get("status") in {"up", "degraded"}:
@@ -355,13 +376,15 @@ def lane_health(
     states = row.get("domains")
     if not isinstance(states, list) or len(states) != len(capacity_domains):
         return False, "unknown"
-    if any(item.get("state") == "healthy" for item in states if isinstance(item, dict)):
+    if any(item.get("state") in {"healthy", "cold"} for item in states if isinstance(item, dict)):
         return True, "healthy"
     values = {item.get("state") for item in states if isinstance(item, dict)}
     if "quarantined" in values:
         return False, "model_claim_quarantined"
     if "owner-down" in values:
         return False, "model_owner_backend_down"
+    if "cold" in values:
+        return True, "cold"
     return False, "unknown"
 
 
