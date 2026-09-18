@@ -392,7 +392,25 @@ def _default_local_repo_root() -> Path:
 
 
 def _ssh(node: str, remote_command: str) -> list[str]:
-    return ["ssh", node, "bash", "-lc", remote_command]
+    """An ssh argv that survives ssh's own argument flattening.
+
+    ``ssh host a b c`` does NOT pass a, b and c to the remote as three argv
+    entries. It JOINS them with spaces and hands the result to the remote
+    login shell, which re-parses it. So passing the command unquoted means
+    the remote sees::
+
+        bash -lc git -C ~/work/skcapstone pull
+
+    and ``bash -lc`` takes only its FIRST word as the command string: it runs
+    bare ``git`` with ``-C``, the path and ``pull`` landing in $0, $1 and $2.
+    Git then prints its usage and the step fails with output that looks
+    nothing like the real cause. Verified against chiap03: unquoted prints
+    usage, quoted returns the revision.
+
+    Quoting the whole command makes it a single word to that re-parse, so
+    the remote bash receives exactly the string intended.
+    """
+    return ["ssh", node, "bash", "-lc", shlex.quote(remote_command)]
 
 
 # --------------------------------------------------------------------------

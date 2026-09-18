@@ -14,6 +14,8 @@ than replaced with a third notion of "healthy" for the tests.
 
 from __future__ import annotations
 
+import shlex
+
 import json
 from pathlib import Path
 
@@ -1076,3 +1078,60 @@ def test_rollback_result_is_a_frozen_dataclass() -> None:
     result = RollbackResult(dry_run=True, completed=(), halted_at=None, reason=None, remaining=())
     with pytest.raises(Exception):
         result.dry_run = False  # type: ignore[misc]
+
+
+def test_ssh_argv_survives_sshs_own_argument_flattening():
+    """Regression: the staged rollout never deployed to a remote host.
+
+    `ssh host a b c` does NOT deliver a, b and c as three remote argv
+    entries. It joins them with spaces and hands the result to the remote
+    login shell to re-parse. Passing the command unquoted meant the remote
+    saw:
+
+        bash -lc git -C ~/work/skcapstone pull
+
+    and `bash -lc` takes only its FIRST word as the command string, so it ran
+    bare `git` with the path and `pull` landing in $0/$1/$2. Git printed its
+    usage and every rollout halted on step one with output that looked
+    nothing like the real cause.
+
+    Verified live against chiap03: unquoted returns git's usage text, quoted
+    returns the revision. The existing tests could not catch this because
+    they substitute a fake runner and never hand the argv to a real ssh.
+    """
+    from skcapstone.fleet.staged_rollout import _ssh
+
+    argv = _ssh("chiap03", "git -C ~/work/skcapstone pull")
+    assert argv[:4] == ["ssh", "chiap03", "bash", "-lc"]
+
+    # The whole command must be ONE word after the remote shell re-parses the
+    # joined string. Re-joining and re-splitting the way ssh and the remote
+    # shell do is the actual property under test.
+    rejoined = " ".join(argv[2:])
+    assert shlex.split(rejoined) == [
+        "bash",
+        "-lc",
+        "git -C ~/work/skcapstone pull",
+    ], f"remote would re-parse as {shlex.split(rejoined)!r}"
+
+
+def test_every_deploy_step_survives_the_same_flattening():
+    """Not just git_pull: `cd X && pip install -e .` and the cp step contain
+    spaces and shell operators too."""
+    from skcapstone.fleet.staged_rollout import (
+        _DEPLOY_STEPS,
+        _ROLLBACK_STEPS,
+        DEFAULT_REMOTE_REPO_ROOT,
+        _ssh,
+    )
+
+    for steps in (_DEPLOY_STEPS, _ROLLBACK_STEPS):
+        for name, template in steps:
+            command = template.format(repo=DEFAULT_REMOTE_REPO_ROOT, git_sha="'abc123'")
+            argv = _ssh("node", command)
+            rejoined = " ".join(argv[2:])
+            assert shlex.split(rejoined) == [
+                "bash",
+                "-lc",
+                command,
+            ], f"step {name!r} would be mangled: {shlex.split(rejoined)!r}"
