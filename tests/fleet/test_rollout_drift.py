@@ -334,3 +334,82 @@ def test_git_sha_missing_when_no_dist_info_is_reported_as_missing_not_changed(
     assert len(git_sha_drifts) == 1
     assert git_sha_drifts[0].kind == "missing"
     assert git_sha_drifts[0].found is None
+
+
+# ---------------------------------------------------------------------------
+# Hand-installed critical units: never shipped, but the enablement check
+# still has to see them. skfleet-rotate.service/.timer are in NEITHER
+# shipped tree (see ALLOWED_UNSHIPPED_UNITS in rollout_drift.py) but are
+# real, live, hand-installed units, and this is the exact incident that
+# motivated the enablement check in the first place: measured on all three
+# rotate hosts, skfleet-rotate.timer active=active, enabled=disabled, for
+# at least 7 weeks, with no shipped-only loop ever able to see it.
+# ---------------------------------------------------------------------------
+
+
+def test_hand_installed_dispatcher_timer_active_but_not_enabled_is_reported(
+    home: Path, monkeypatch
+):
+    responses = _in_scope_atlas_responses()
+    responses.update(
+        {
+            ("skfleet-rotate.timer", "LoadState"): "loaded",
+            ("skfleet-rotate.timer", "ActiveState"): "active",
+            ("skfleet-rotate.timer", "UnitFileState"): "disabled",
+        }
+    )
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(responses))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    mismatches = [
+        d for d in drifts if d.kind == "enablement_mismatch" and "skfleet-rotate" in d.artifact
+    ]
+    assert len(mismatches) == 1
+    drift = mismatches[0]
+    assert drift.artifact == "unit_enablement:skfleet-rotate.timer"
+    assert drift.expected == "enabled"
+    assert drift.found == "disabled"
+    assert drift.host == "node-test"
+
+
+def test_hand_installed_dispatcher_timer_active_and_enabled_reports_no_enablement_drift(
+    home: Path, monkeypatch
+):
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    assert [
+        d for d in drifts if "skfleet-rotate" in d.artifact and d.kind == "enablement_mismatch"
+    ] == []
+
+
+def test_hand_installed_dispatcher_out_of_scope_enablement_is_not_checked(home: Path, monkeypatch):
+    """The chiap08 shape: rotate timer loaded but inactive and disabled, so
+    out of scope. A host that deliberately does not run this role must not
+    be held to "is it enabled" any more than it is held to "is the script
+    installed" (test_dispatcher_absent_on_a_seat_only_host_is_not_drift,
+    above, covers that half).
+    """
+    responses = _in_scope_atlas_responses()
+    responses.update(
+        {
+            ("skfleet-rotate.timer", "LoadState"): "loaded",
+            ("skfleet-rotate.timer", "ActiveState"): "inactive",
+            ("skfleet-rotate.timer", "UnitFileState"): "disabled",
+        }
+    )
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(responses))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _install_unit(home, CORE_SERVICE)
+    _install_unit(home, ATLAS_SERVICE)
+    _install_dist_info(home, "deadbeef")
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    assert [d for d in drifts if "skfleet-rotate" in d.artifact] == []

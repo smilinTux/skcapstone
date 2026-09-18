@@ -52,6 +52,26 @@ from .paths import self_node_name
 #: asked about via unit_in_scope the same way any other role unit can.
 DISPATCHER_UNIT_NAME = "skfleet-rotate.service"
 
+#: Units that are real, live, and referenced by name, but are deliberately
+#: never templated under src/skcapstone/data/systemd/: skfleet-rotate.service
+#: (and its timer) are hand-installed per host at
+#: ~/.config/systemd/user/skfleet-rotate.service, documented in
+#: docs/fleet/model-lane-routing.md. That is a different install path from
+#: the packaged lifecycle-seat units the shipped-unit tree protects.
+#:
+#: This is the single source of truth for that fact, reused rather than
+#: duplicated: tests/fleet/test_no_dangling_systemd_unit_references.py
+#: imports this exact set as its own allowlist. The enablement check below
+#: reuses it for the reason that test exists to guard against a second
+#: hand-maintained list drifting from the first: the timer-enablement
+#: incident this module's docstring documents (skfleet-rotate.timer active
+#: but not enabled on all three rotate hosts for at least 7 weeks) happened
+#: to a unit that is exactly hand-installed and exactly not in
+#: manifest["units"] -- if the enablement check below only ever walked
+#: shipped units, it could never have caught the one incident it was built
+#: for.
+ALLOWED_UNSHIPPED_UNITS = frozenset({"skfleet-rotate.service", "skfleet-rotate.timer"})
+
 _DIST_INFO_GIT_SHA_RE = re.compile(r"\+g([0-9a-f]+)", re.IGNORECASE)
 
 
@@ -194,6 +214,15 @@ def detect_drift(manifest: dict[str, Any], home: Path | str, repo_root: Path | s
     daemons, e.g. skcapstone.service): ``unit_in_scope`` reports those
     undetermined too (their "paired timer" does not exist), and undetermined
     means checked, which is what a unit that runs on every host needs.
+
+    The enablement check (kind ``enablement_mismatch``) is not limited to
+    ``manifest["units"]``: it also covers ``ALLOWED_UNSHIPPED_UNITS``, the
+    critical units that are hand-installed per host rather than shipped
+    (currently just ``skfleet-rotate.service``/``.timer``). They are real,
+    live, in-scope units that can go active-but-not-enabled exactly like a
+    shipped one, and being unshipped is the whole reason the incident this
+    check exists for went undetected for at least 7 weeks: a shipped-only
+    loop cannot see a unit that is never shipped.
     """
     home = Path(home)
     repo_root = Path(repo_root)
@@ -252,13 +281,33 @@ def detect_drift(manifest: dict[str, Any], home: Path | str, repo_root: Path | s
     # total outage no content digest would catch, because the unit file was
     # correct -- only its timers.target.wants symlink was missing. Checked
     # only for units in scope here (out-of-scope units are not supposed to
-    # be enabled or active, so nothing to assert) that ship with a paired
-    # timer at all.
-    for unit_name in manifest.get("units", []):
+    # be enabled or active, so nothing to assert) that have a paired timer
+    # at all.
+    #
+    # That "paired timer" test cannot be "does the repo ship one" alone:
+    # the incident this whole check exists for (skfleet-rotate.timer active
+    # but not enabled for at least 7 weeks on all three rotate hosts) is a
+    # HAND-installed unit, in neither shipped tree, so it would never appear
+    # in manifest["units"] and a shipped-only loop would silently never be
+    # able to catch it again if it recurred. ALLOWED_UNSHIPPED_UNITS names
+    # exactly the units that are real and live despite not being shipped
+    # (reused from tests/fleet/test_no_dangling_systemd_unit_references.py,
+    # the module docstring above explains why it is the one place that list
+    # is allowed to live), so a service is also checked when both it and its
+    # paired timer appear there.
+    candidate_services = dict.fromkeys(manifest.get("units", []))
+    candidate_services.update(
+        dict.fromkeys(name for name in ALLOWED_UNSHIPPED_UNITS if name.endswith(".service"))
+    )
+    for unit_name in candidate_services:
         if not unit_name.endswith(".service"):
             continue
         timer_name = unit_name[: -len(".service")] + ".timer"
-        if not (repo_root / CANONICAL_SYSTEMD_RELATIVE_DIR / timer_name).exists():
+        shipped_timer = (repo_root / CANONICAL_SYSTEMD_RELATIVE_DIR / timer_name).exists()
+        hand_installed_pair = (
+            unit_name in ALLOWED_UNSHIPPED_UNITS and timer_name in ALLOWED_UNSHIPPED_UNITS
+        )
+        if not shipped_timer and not hand_installed_pair:
             continue
         in_scope, _scope_error, checked_unit = scope_of(unit_name)
         if in_scope is not True:

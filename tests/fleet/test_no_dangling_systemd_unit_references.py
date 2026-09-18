@@ -20,21 +20,20 @@ from pathlib import Path
 
 import pytest
 
+from skcapstone.fleet.rollout_drift import ALLOWED_UNSHIPPED_UNITS
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SYSTEMD_DATA_DIR = REPO_ROOT / "src" / "skcapstone" / "data" / "systemd"
 SCAN_ROOTS = (REPO_ROOT / "src", REPO_ROOT / "scripts")
 
 _UNIT_PATTERN = re.compile(r"skfleet-[A-Za-z0-9_-]*\.(?:service|timer)")
 
-#: Units that are real, live, and referenced by name, but are deliberately
-#: never templated under src/skcapstone/data/systemd/: skfleet-rotate.service
-#: (and its timer) are hand-installed per host at
-#: ~/.config/systemd/user/skfleet-rotate.service, documented in
-#: docs/fleet/model-lane-routing.md. That is a different install path from
-#: the packaged lifecycle-seat units this guard exists to protect, so it is
-#: named here explicitly rather than silently widening the shipped-unit
-#: check to satisfy it.
-ALLOWED_UNSHIPPED_UNITS = frozenset({"skfleet-rotate.service", "skfleet-rotate.timer"})
+# ALLOWED_UNSHIPPED_UNITS itself now lives in skcapstone.fleet.rollout_drift
+# (imported above), not here: Task 4's drift enablement check needs the
+# exact same set (skfleet-rotate.service/.timer are real, live, hand-
+# installed units that are never shipped, so the enablement check has to
+# know about them by name too), and a second hand-maintained copy is
+# precisely the kind of drift this whole file exists to catch elsewhere.
 
 
 def _shipped_units() -> frozenset[str]:
