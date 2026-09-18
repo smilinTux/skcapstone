@@ -514,8 +514,8 @@ def register_coord_commands(main: click.Group) -> None:
         )
         board = Board(home_path)
         try:
-            from ..human_wait import assert_human_claim
             from ..fleet.churn_breaker import assert_claim_permitted
+            from ..human_wait import assert_human_claim
             from ..review_admission import assert_governed_review_claim
 
             # All three asserts sit HERE, in front of Board.claim_task,

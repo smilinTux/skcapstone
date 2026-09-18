@@ -246,8 +246,8 @@ async def _handle_coord_claim(args: dict) -> list[TextContent]:
     )
     board = Board(_home())
     try:
-        from ..human_wait import assert_human_claim
         from ..fleet.churn_breaker import assert_claim_permitted
+        from ..human_wait import assert_human_claim
         from ..review_admission import assert_governed_review_claim
 
         # Same two asserts as the CLI claim path, for the same reason:
