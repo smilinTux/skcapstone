@@ -68,6 +68,13 @@ jobs:
     name: unit tests (py${{ matrix.python-version }})
     needs: classify
     runs-on: ubuntu-latest
+    # No timeout meant GitHub's default of 360 minutes applied, so a hung suite
+    # would hold a required check (and this PR's merge) for six hours. Measured
+    # 2026-09-18: py3.11 completes in 153-185s and py3.12, which runs the full
+    # deterministic suite, in 268-292s. 30 minutes is roughly six times the
+    # slowest observed run, so it absorbs a cold cache or a slow runner while
+    # still failing a genuine hang in minutes rather than hours.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

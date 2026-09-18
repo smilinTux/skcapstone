@@ -93,6 +93,29 @@
   run found a real split fleet: chiap01/02/03/08 running library content from
   `d448c2fa` (three merged commits behind main) while chiap04's interpreter
   resolved an uncommitted feature-branch checkout that matches no merged ref.
+- **CI stops running twice on every PR, and a hung suite can no longer hold a
+  merge for six hours.** `secret-scan.yml` used a bare `push:` and
+  `docs-check.yml` used `on: [push, pull_request]`. Neither filtered branches,
+  so a PR from a branch in this repo triggered both workflows TWICE, once for
+  the push and once for the pull_request: the same commit, the same result, and
+  double the runners. That showed up as duplicate `docs / docs-check` and
+  `gitleaks` rows in every PR's check list. Both are now scoped to `main`,
+  matching `ci.yml` and `providers.yml`, which already did this correctly.
+
+    - The wasted concurrency was not free. It starved the one job that needs
+      the time: measured 2026-09-18, `unit tests (py3.11)` completes in 153-185s
+      and `unit tests (py3.12)`, which runs the full deterministic suite rather
+      than the focused compatibility lane, needs 268-292s.
+    - `pytest.yml`'s `unit` job had NO `timeout-minutes`, so GitHub's default of
+      360 applied and a hung suite would hold a required check, and the merge
+      behind it, for six hours. Now 30 minutes: about six times the slowest
+      observed run, so a cold cache or a slow runner still passes while a real
+      hang fails in minutes.
+    - Note for anyone reading a cancelled py3.12 in the history: `pytest.yml`
+      sets `cancel-in-progress` for pull requests, so every force-push kills the
+      in-flight run. py3.11 finishes inside the usual gap between pushes and
+      py3.12 does not, which is why only py3.12 appeared to be failing. Rebasing
+      a PR repeatedly cancels the very check being waited on.
 
 - **Claim TTL counts the dispatcher's `worker_liveness` link as the owner being
   alive.** That link is the strongest liveness signal the estate produces:

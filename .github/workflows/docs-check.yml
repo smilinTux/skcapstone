@@ -1,5 +1,12 @@
 name: docs-check
-on: [push, pull_request]
+on:
+  # Was `on: [push, pull_request]`, which fires on every branch and so
+  # ran twice per PR (the duplicate `docs / docs-check` rows). Scoped to
+  # main to match ci.yml and providers.yml.
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 permissions:
   contents: read
 jobs:
