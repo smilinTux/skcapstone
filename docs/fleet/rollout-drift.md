@@ -166,14 +166,16 @@ node-noroc2027	20 drift(s) against manifest git_sha=b421c0d1
   14 unit(s)/dispatcher script reported missing, not listed: this estate has
   no per-host role manifest, so 'this host's role never installs it' cannot
   be told apart from 'a rollout should have installed it and did not'.
-  Re-run with --json or --strict to see each by name.
+  Re-run with --json to see each by name.
 ```
 
-`--json` and `--strict` are unaffected by this split: both see and act on
-**every** finding, `missing` included. `--json` emits the full list, always;
-`--strict` exits 1 if any finding at all is present, missing findings
-included, so a caller that wants to gate on absence (rather than merely
-report it) still can.
+`--json` and `--strict` both still act on **every** finding, `missing`
+included, but only `--json` changes what is *printed*: it emits the full
+list unconditionally, so that is the flag the summary line points at.
+`--strict` changes only the exit code (1 if any finding at all is present,
+missing included); its text output is identical to the default, unaffected
+by the flag, so telling an operator to pass `--strict` to see names by hand
+would be pointing them at a flag that does not do that.
 
 A clean host reports:
 

@@ -40,8 +40,9 @@
     be told apart from "a rollout should have installed it and did not."
     Rather than guess, the default text output now lists every unambiguous
     finding by name (`changed`, `enablement_mismatch`, `git_sha`) and folds
-    ambiguous `missing` findings into one count with a pointer to `--json`
-    or `--strict`, both of which still see and act on every finding.
+    ambiguous `missing` findings into one count with a pointer to `--json`,
+    the flag that actually expands it (`--strict` only changes the exit
+    code; both still act on every finding, missing included).
   - Documented in new `docs/fleet/rollout-drift.md`, with pointers from
     `docs/fleet/activation-runbook.md`, `docs/fleet/seat-charters.md`, and
     `docs/RELEASING.md`. **This phase observes and does not actuate: no
