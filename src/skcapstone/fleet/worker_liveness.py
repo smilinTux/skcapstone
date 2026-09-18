@@ -115,6 +115,7 @@ class RetirementReceipt:
     workspace_custody_sha256: str
     terminal_marker: str
     terminal_at: datetime
+    needs_human: bool = False
 
 
 @dataclass(frozen=True)
@@ -177,6 +178,7 @@ def _retirement_receipt(o: LivenessObservation) -> RetirementReceipt | None:
         and o.workspace_head
         and len(o.workspace_head) in {40, 64}
         and all(character in "0123456789abcdef" for character in o.workspace_head)
+        and isinstance(o.needs_human, bool)
         and o.workspace_custody_at
         and o.workspace_custody_sha256
         and len(o.workspace_custody_sha256) == 64
@@ -334,6 +336,13 @@ def classify(
                 quarantine=True,
                 preserve_workspace=True,
                 reason="beat-or-terminal-evidence-stale-or-future",
+            )
+        if o.needs_human:
+            return _decision(
+                o,
+                "assistance-due",
+                False,
+                reason="terminal-needs-human-escalation",
             )
         custody_safe = bool(o.workspace_recoverable and o.workspace_custody)
         commits_safe = not o.unpushed_commits or o.unpushed_commits_preserved
