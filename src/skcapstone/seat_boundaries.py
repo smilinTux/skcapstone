@@ -248,7 +248,10 @@ OPERATOR_PRINCIPALS = frozenset(
 #: reconcile, coord, pi. Compound automation names (archive-done, stale-sweep,
 #: fleet-liveness-reaper, lifecycle-reconciler, ...) match the delegate
 #: grammar instead and need no listing.
-SYSTEM_WRITERS = frozenset({"mcp", "import", "reconcile", "coord", "pi"})
+#: "anonymous" is the SDK's documented fallback when no active agent can be
+#: resolved (sdk._agent_name), the library twin of the CLI's identityless
+#: default, so it is a named allowance for the same reason.
+SYSTEM_WRITERS = frozenset({"mcp", "import", "reconcile", "coord", "pi", "anonymous"})
 
 
 class CoordActorClass(StrEnum):
