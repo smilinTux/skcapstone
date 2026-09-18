@@ -486,9 +486,6 @@ def _ensure_runtime_console_path(executable=sys.executable, environ=os.environ):
 # The timer driven production entrypoint always traverses the liveness decision
 # surface. Empty or incomplete evidence still publishes truthful zero metrics
 # and grants no assistance, reconciliation, or retirement authority.
-_ensure_runtime_console_path()
-run_production_cycle(agent=os.environ.get("SKAGENT", "skfleet-rotate"))
-
 def sh(*a): return subprocess.run(a,capture_output=True,text=True).stdout
 
 _WORKER_UNIT_RE = re.compile(
@@ -538,6 +535,72 @@ def _worker_launch_command(unit, workspace, inner):
     ]
 
 
+def _git_worktree_root(path, runner=subprocess.run):
+    """Return the Git worktree containing path, or None when path is outside Git."""
+    candidate = Path(path).expanduser()
+    try:
+        result = runner(
+            ["git", "-C", str(candidate), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if getattr(result, "returncode", 1) != 0:
+        return None
+    root = (getattr(result, "stdout", "") or "").strip()
+    return str(Path(root).resolve()) if root else None
+
+
+def _skcapstone_import_root(runner=subprocess.run):
+    """Return the release tree that supplied the imported skcapstone package."""
+    package_file = getattr(sys.modules.get("skcapstone"), "__file__", None)
+    if not package_file:
+        return None
+    package_path = Path(package_file).resolve()
+    git_root = _git_worktree_root(package_path.parent, runner=runner)
+    return git_root or str(package_path.parent)
+
+
+def _path_is_inside(path, parent):
+    """Return whether path is equal to or inside parent after symlink resolution."""
+    try:
+        Path(path).expanduser().resolve().relative_to(Path(parent).expanduser().resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _assert_dispatcher_import_is_release_managed(runner=subprocess.run):
+    """Fail closed when the dispatcher imports skcapstone from a branchable tree."""
+    package_file = getattr(sys.modules.get("skcapstone"), "__file__", None)
+    if not package_file:
+        raise RuntimeError("skcapstone import path is unavailable")
+    imported_from = Path(package_file).resolve()
+    git_root = _git_worktree_root(imported_from.parent, runner=runner)
+    if git_root is None:
+        return
+    if os.environ.get("SKFLEET_ALLOW_BRANCHABLE_IMPORT") == "1":
+        log(os.environ.get("HOME", "."), "IMPORT_ISOLATION_OVERRIDE|%s" % git_root)
+        return
+    raise RuntimeError(
+        "skfleet-rotate imported skcapstone from branchable Git worktree %s; "
+        "install and run the release-managed package outside worker checkouts" % git_root
+    )
+
+
+def _reject_dispatcher_import_tree_workspace(path, runner=subprocess.run):
+    """Prevent workers from receiving the checkout the dispatcher imports from."""
+    import_root = _skcapstone_import_root(runner=runner)
+    workspace_root = _git_worktree_root(path, runner=runner) or str(Path(path).resolve())
+    if import_root and (
+        _path_is_inside(workspace_root, import_root)
+        or _path_is_inside(import_root, workspace_root)
+    ):
+        raise ValueError("worker workspace aliases dispatcher import tree")
+
+
 def _resolve_workspace_root(root):
     """Resolve a configured workspace root to one unambiguous Git checkout."""
     candidate = Path(root).expanduser()
@@ -561,7 +624,17 @@ def _resolve_workspace_root(root):
 def _worker_workspace(default):
     """Use an explicitly configured checkout only when it resolves uniquely."""
     configured = os.environ.get("SKFLEET_WORKSPACE")
-    return _resolve_workspace_root(configured) if configured else default
+    workspace = _resolve_workspace_root(configured) if configured else default
+    _reject_dispatcher_import_tree_workspace(workspace)
+    return workspace
+
+
+# A production dispatcher must import installed, release-managed bytes.  This
+# runs before any card selection or worker launch, so a host still pointed at a
+# branchable checkout fails closed instead of silently changing under load.
+_assert_dispatcher_import_is_release_managed()
+_ensure_runtime_console_path()
+run_production_cycle(agent=os.environ.get("SKAGENT", "skfleet-rotate"))
 
 
 def _source_workspace_spec(core, labels):
@@ -753,11 +826,13 @@ def _materialize_worker_workspace(default, core, labels, runner=subprocess.run):
     spec = _source_workspace_spec(core, labels)
     if configured:
         checkout = _resolve_workspace_root(configured)
+        _reject_dispatcher_import_tree_workspace(checkout, runner=runner)
         if spec is not None:
             _verify_source_workspace(checkout, *spec, runner=runner)
         return checkout
     if spec is None:
         os.makedirs(default, exist_ok=True)
+        _reject_dispatcher_import_tree_workspace(default, runner=runner)
         return default
     repository, base_ref, base_revision = spec
     target = Path(default)
