@@ -232,6 +232,36 @@ def register_coord_commands(main: click.Group) -> None:
 
         console.print(json.dumps(diagnose(Path(home).expanduser(), task_id), sort_keys=True))
 
+    @coord.command("slice-preflight")
+    @click.argument("task_id")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option(
+        "--max-leaves",
+        default=5,
+        show_default=True,
+        type=click.IntRange(2, 5),
+        help="Upper bound on recommended leaf cards.",
+    )
+    def coord_slice_preflight(task_id, home, max_leaves):
+        """Recommend, never perform, decomposition of TASK_ID into leaf cards.
+
+        Report-only preflight over skcapstone.fleet.card_slicing: prints the
+        scope signals, the bounded/advisory/reject decision, any recommended
+        leaves, and the CompositionVerificationContract the parent retains
+        after all leaves complete. It creates and changes nothing; splitting
+        a card stays a human or seat decision made on this evidence.
+        """
+        validate_task_id(task_id)
+        from ..coord_slice_preflight import slice_preflight
+
+        click.echo(
+            json.dumps(
+                slice_preflight(Path(home).expanduser(), task_id, max_leaves=max_leaves),
+                sort_keys=True,
+                indent=2,
+            )
+        )
+
     @coord.command(
         "create",
         epilog=(

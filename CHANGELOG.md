@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+- **The stalled-worker progress watchdog is now wired, REPORT ONLY.**
+  `classify_progress` in `skcapstone.fleet.worker_watchdog` existed, was
+  tested, and was called by nothing (contract 1,
+  `docs/fleet/2026-09-18-learnings.md`). The dispatcher's worker-health pass
+  in `scripts/fleet/skfleet-rotate.py` now classifies every live local worker
+  and logs one greppable `WORKER_PROGRESS|` line per worker, with
+  `actuation=report-only`; it kills, releases, and reaps nothing, so the
+  classification can be measured for a day before anyone considers acting on
+  it. `progress_at` is fed by the newest write under the worker's own
+  workspace (bounded, early-exiting scan), because measured on the two live
+  chi long-runners the wrapper beat is always fresh (a shell timer, 10s and
+  26s old on workers 4.9h and 4.2h in), the worker stdout log stays zero
+  bytes for the whole run, and the last card event was 2.2h and 4.0h stale
+  while both workers were writing files minutes before the measurement
+  (workspace ages 269s and 191s). Card events would have flagged both
+  genuinely working workers as stalled; workspace output does not. Tests
+  assert the call site, the report-only property, and the classification
+  behaviour against the lifted shipped source.
+- **The card decomposition preflight is now reachable:
+  `skcapstone coord slice-preflight <id>`.** `skcapstone.fleet.card_slicing`
+  had zero call sites. The new read-only subcommand folds one card through
+  CardStore, runs `recommend_decomposition`, and prints the scope signals,
+  the bounded/advisory/reject decision, any recommended leaves, and the
+  `CompositionVerificationContract` the parent retains after leaves complete
+  (`src/skcapstone/coord_slice_preflight.py`). It never creates or splits
+  cards; the report always carries `actuation=recommendation-only`.
+
 - **Two more contracts in `docs/fleet/2026-09-18-learnings.md`.** A worker can be
   fully productive and completely invisible: two workers with card events 2.2 and
   4.0 hours stale had written 216 and 2,351 files in the previous hour, so

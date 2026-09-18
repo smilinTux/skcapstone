@@ -18,7 +18,13 @@ from skcapstone.card_store import CardStore
 from skcapstone.coord_completion import GATED_EXIT_CODE
 from skcapstone.lifecycle_seats import LIFECYCLE_SEATS
 from skcapstone.coordination import Board
-from skcapstone.fleet.worker_watchdog import StartupObservation, startup_actuation_fenced
+from skcapstone.fleet.worker_watchdog import (
+    DEFAULT_PROGRESS_TIMEOUT_S,
+    ProgressObservation,
+    StartupObservation,
+    classify_progress,
+    startup_actuation_fenced,
+)
 from skcapstone.fleet.worker_liveness_runtime import run_production_cycle
 from skcapstone.coord_eligibility import leaf_eligibility_counts
 from skcapstone.fleet_lane_health import (
@@ -2826,6 +2832,142 @@ def _worker_health_snapshot(session_names):
     }
 
 
+# ---- worker progress, REPORT ONLY ------------------------------------------
+# Wired 2026-09-18. classify_progress existed, was tested, and was called by
+# nothing (contract 1, docs/fleet/2026-09-18-learnings.md). This pass calls it
+# once per live local worker and LOGS the classification. It must not kill,
+# release, reap or actuate anything; measure WORKER_PROGRESS lines for a day
+# before anyone considers acting on them, exactly like the claim TTL rollout.
+#
+# What feeds progress_at, and why (measured 2026-09-18 on the two live chi
+# long-runners, both genuinely working):
+#   signal            9e15f83c@chiap02   abe011e9@chiap04   separates?
+#   wrapper beat age        10s               26s            no: shell timer,
+#                                                            fresh even wedged
+#   worker stdout log   0 bytes/4.9h       0 bytes/4.2h      no: empty all run
+#   last card event         2.2h               4.0h          no: task-boundary
+#                                                            only; would flag
+#                                                            both as stale
+#   workspace newest        269s               191s          YES: output
+#     write (2 and 12 files touched in the last 10 min)
+# A worker emits card events at task boundaries and beats on a timer, so only
+# what it WRITES distinguishes WORKING from STALLED (learnings doc, section
+# 18: wedged = no workspace writes for hours or no workspace at all; working
+# = writes within minutes, whatever the CPU says).
+_PROGRESS_SCAN_CAP = 20000
+_PROGRESS_FRESH_EXIT_S = 60.0
+
+
+def _workspace_progress_at(workspace, cap=_PROGRESS_SCAN_CAP,
+                           fresh_within=_PROGRESS_FRESH_EXIT_S, now=None):
+    """Newest write under one worker workspace: the OUTPUT liveness signal.
+
+    Bounded (cap on directory entries) and early-exiting (a write inside
+    fresh_within seconds already answers the only question asked), so it
+    stays cheap inside the five-minute dispatcher cycle even on a workspace
+    that took 2,351 files in an hour. Returns (newest_epoch_or_None,
+    entries_scanned, truncated). .git is scanned on purpose: index and object
+    writes are genuine work product.
+    """
+    now = time.time() if now is None else now
+    newest = None
+    scanned = 0
+    truncated = False
+    stack = [str(workspace)]
+    while stack:
+        if scanned >= cap:
+            truncated = True
+            break
+        current = stack.pop()
+        try:
+            entries = list(os.scandir(current))
+        except OSError:
+            continue
+        for entry in entries:
+            scanned += 1
+            if scanned >= cap:
+                truncated = True
+                break
+            try:
+                stamp = entry.stat(follow_symlinks=False).st_mtime
+            except OSError:
+                continue
+            if newest is None or stamp > newest:
+                newest = stamp
+                if now - newest <= fresh_within:
+                    return newest, scanned, truncated
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    stack.append(entry.path)
+            except OSError:
+                pass
+    return newest, scanned, truncated
+
+
+def _report_worker_progress(session_names, now=None):
+    """Log one WORKER_PROGRESS classification per live local worker.
+
+    REPORT ONLY. Never kills, releases, reaps, or writes board state. The
+    admission receipt provides the exact launched generation and workspace;
+    it is trusted only when its host and session match this host's live
+    session, because ~/.skcapstone/fleet/admission syncs across the estate.
+    """
+    now = time.time() if now is None else now
+    now_dt = datetime.datetime.fromtimestamp(now, datetime.timezone.utc)
+    for session in session_names:
+        lane = next(
+            (item for item in LANES if session.startswith(item["prefix"])), None
+        )
+        if lane is None:
+            continue
+        cid = session[len(lane["prefix"]):]
+        try:
+            _fresh_owner, _fresh_ts, fresh_revision = _current_claim_identity_fresh(cid)
+            receipt = _read_admission_receipt(_admission_lock_path(HOME, cid)) or {}
+            local = (receipt.get("host") == HOST
+                     and receipt.get("session") == session)
+            if local:
+                owner = str(receipt.get("owner") or "")
+                claim_revision = str(receipt.get("claim_revision") or "")
+                workspace = str(receipt.get("workspace") or "")
+            else:
+                try:
+                    with open(os.path.join(CARDS, cid, "core.json"),
+                              encoding="utf-8") as fh:
+                        seat = seat_for(cid, json.load(fh))
+                except (OSError, ValueError):
+                    seat = None
+                owner = _worker_owner(lane["name"], cid, seat)
+                claim_revision = fresh_revision or ""
+                workspace = os.path.join(
+                    HOME, ".skcapstone/fleet/workspaces", owner)
+            progress_ts, scanned, truncated = _workspace_progress_at(
+                workspace, now=now)
+            progress_at = (
+                datetime.datetime.fromtimestamp(
+                    progress_ts, datetime.timezone.utc).isoformat()
+                if progress_ts is not None else None)
+            state = classify_progress(
+                ProgressObservation(
+                    owner=owner, card_id=cid, session_id=session,
+                    claim_revision=claim_revision,
+                    expected_claim_revision=fresh_revision or "",
+                    progress_at=progress_at, session_alive=True),
+                now=now_dt)
+            age = ("none" if progress_ts is None
+                   else str(int(max(0, now - progress_ts))))
+            log(d, "WORKER_PROGRESS|%s|%s|%s|owner=%s|claim_revision=%s|"
+                   "state=%s|progress_age_s=%s|timeout_s=%d|"
+                   "source=workspace-mtime|scanned=%d|truncated=%s|receipt=%s|"
+                   "actuation=report-only" %
+                (HOST, session, cid, owner, claim_revision, state, age,
+                 int(DEFAULT_PROGRESS_TIMEOUT_S), scanned,
+                 str(truncated).lower(), "local" if local else "absent"))
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            log(d, "WORKER_PROGRESS_UNAVAILABLE|%s|%s|%s|%s" %
+                (HOST, session, cid, type(exc).__name__))
+
+
 _NON_IMPLEMENTATION_LABELS = {
     "planning-only-container",
     "do-not-claim-as-implementation",
@@ -4195,13 +4337,13 @@ def reap_dead_claims():
                else str(fault["age_seconds"]))
         log(d, "FLEET_LIVE_FAULT|%s|host=%s|reason=%s|age_seconds=%s|detail=%s"
             % (HOST, fault["host"], fault["reason"], age, fault["detail"]))
-    health = _worker_health_snapshot(
-        sh("tmux", "ls", "-F", "#{session_name}").split()
-    )
+    worker_sessions = sh("tmux", "ls", "-F", "#{session_name}").split()
+    health = _worker_health_snapshot(worker_sessions)
     log(d, "WORKER_HEALTH|%s|sessions=%d claims_exact=%d mismatched=%d "
         "duplicates=%d" %
         (HOST, health["sessions"], health["claims_exact"], health["mismatched"],
          health["duplicates"]))
+    _report_worker_progress(worker_sessions)
     if not oldest or nhosts < REAP_QUORUM:
         log(d, "REAP|%s|quorum_shortage reporting=%d known=%d need>=%d; reaped nothing"
             % (HOST, nhosts, known, REAP_QUORUM))
