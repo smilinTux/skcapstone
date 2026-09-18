@@ -322,6 +322,10 @@ def test_mcp_describe_refuses_unknown_identity() -> None:
 READ_ONLY_CLI = {
     "status",
     "gates",
+    # Deliberately classified read-only 2026-09-18: slice-preflight folds one
+    # card and prints a decomposition RECOMMENDATION (recommendation-only in
+    # its output contract); it creates and changes nothing.
+    "slice-preflight",
     "waiting-on-human",
     "board",
     "kanban",
