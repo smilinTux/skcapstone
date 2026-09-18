@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Readiness checks each unit against the interpreter it declares.** The gate
+  tested every unit's module imports against one interpreter (`--python-bin`),
+  but a unit is entitled to its own virtualenv and declares it in `ExecStart`.
+  Measured on chiap04: `hermes-gateway.service` runs
+  `/home/skuser01/.hermes/hermes-agent/venv/bin/python -m hermes_cli.main` and
+  had been active since 2026-08-27, yet readiness reported the module did not
+  import, because it tested `~/.skenv/bin/python3`. Under the unit's own
+  interpreter it imports fine. The staged rollout consults the readiness
+  verdict as its gate, so that false failure reported a healthy host as
+  not-ready and halted the rollout on it after a successful deploy.
+
 - **Shell-quote the staged rollout's remote command.** The staged rollout had
   never once deployed to a remote host: every run halted on its first step with
   git's usage text, which looks nothing like the real cause. `ssh host a b c`
