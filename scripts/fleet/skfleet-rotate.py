@@ -6590,12 +6590,13 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
     # The size bucket is the card's ROUTE IDENTITY; the model actually sent to
     # the gateway is the lane's own resolution of it. _lane_model has existed
     # and been called by nothing, so every lane shipped the bare bucket
-    # (sk-s/sk-m/sk-l/sk-xl) as its model. The gateway advertises
-    # sk-<size>-<public|internal|secret> and NOT the bare bucket, so every
-    # request fell through to local qwen38. Measured on chi 2026-09-18: codex
-    # (max 32) and zai (max 10) served ZERO requests while chiap08-qwen38
-    # served all of them from 3 slots, so the estate's entire subscription
-    # capacity sat idle behind a 5-slot local fallback.
+    # (sk-s/sk-m/sk-l/sk-xl) as its model regardless of which lane won the card.
+    # The bare bucket IS a valid gateway route, which is why this never errored
+    # and nobody noticed: it resolves to the LOCAL QWEN38 FALLBACK. So a card
+    # dispatched to the codex lane asked the gateway for sk-m and was answered
+    # by qwen38, and the subscription backends were never asked for anything.
+    # Measured on chi 2026-09-18 from 03:58: qwen38's 5 local slots served 467
+    # requests, while codex (32 slots) served 6, zai 1 and kimi 2.
     _bucket=_logical_route_for(core,_labels)
     if _bucket is None:
         log(d,"SKIPPED_LOGICAL_ROUTE|%s|%s|reason=missing-or-ambiguous-size"%

@@ -32,29 +32,26 @@
   alive. Found by phase 2 of the rollout, which is what report mode is for.
   A liveness link naming a different owner still does not count.
 - **The dispatcher sends each lane's own model, not the bare size bucket.**
-  `_lane_model` resolves a card to the model its lane actually uses (a glm level
-  for glm, the `SKFLEET_MODEL_`/`SKFLEET_CODEX_MODEL_` override for codex,
-  `kimi-for-coding` or `k3` for kimi). It existed and was called by NOTHING, so
-  every lane shipped the bare bucket `sk-s`/`sk-m`/`sk-l`/`sk-xl` as its model.
-  The gateway advertises `sk-<size>-<public|internal|secret>` and not the bare
-  bucket, so every request fell through to the local qwen38 backend.
+  `_lane_model` resolves a card to the model its lane actually uses (a glm
+  level, the `SKFLEET_CODEX_MODEL_` override, `kimi-for-coding` or `k3`). It
+  existed and was called by NOTHING, so every lane shipped the bare bucket
+  `sk-s`/`sk-m`/`sk-l`/`sk-xl` as its model.
 
-    - Measured on chi 2026-09-18: `codex` (max 32) and `zai` (max 10) served
-      ZERO requests while `chiap08-qwen38` served all of them from 3 slots. The
-      estate's entire subscription capacity sat idle behind a 5-slot local
-      fallback, and a codex target of 30 could never be met because codex was
-      never asked for anything.
-    - Probed directly at the gateway the same day, which is what proves the
-      models themselves were fine: `sk-codex-mid` served by `gpt-5.6-luna`,
-      `glm-4.7` served by `glm-5.3-flash`, and `sk-m` served by `qwen3.8-27b`.
-    - The size bucket remains the card's ROUTE IDENTITY: `logical_route` in the
-      route identity stays the bucket and only `model_or_bucket` and the model
-      actually sent become the lane's resolution. The unsized-card skip is
-      unchanged, because a silent downgrade hides lost capability behind work
-      that quietly got weaker.
-    - A test asserts the launch site and the post-race recheck both call
-      `_lane_model`. A test of the function alone would have passed for the
-      entire time the fleet was misrouting.
+    - This never errored, which is why it survived: the bare bucket IS a valid
+      gateway route, and it resolves to the LOCAL QWEN38 FALLBACK. A card sent
+      to the codex lane asked for `sk-m`, was answered by qwen38, and came back
+      with good work. The subscription backends were simply never asked.
+    - Measured on chi 2026-09-18 from 03:58 at the gateway: qwen38 served 467
+      requests from 5 local slots, while codex (32 slots) served 6, zai 1 and
+      kimi 2. A codex target of 30 could never be met.
+    - The size bucket stays the card's ROUTE IDENTITY. `logical_route` keeps the
+      bucket; only the model actually sent becomes the lane's resolution. The
+      unsized-card skip is unchanged, because a silent downgrade would hide lost
+      capability behind work that quietly got weaker.
+    - The guard in `tests/test_skfleet_logical_routes.py` now asserts at the
+      source level that both the launch site and the post-race recheck resolve a
+      lane model, and that the identity is never assigned the sent model. A test
+      of `_lane_model` alone passed for the entire time the fleet was misrouting.
 
 - **New runbook: `docs/fleet/starting-a-new-project.md`.** Start-to-finish guide
   for standing up a new project on the coordination board: decomposition into
