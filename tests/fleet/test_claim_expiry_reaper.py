@@ -446,3 +446,29 @@ def test_off_mode_returns_without_importing_the_package(tmp_path, monkeypatch):
     # And prove the stub is real: an enabled mode DOES hit the import.
     with pytest.raises(ImportError):
         expire(env={"SKFLEET_CLAIM_TTL_MODE": "report"})
+
+
+def test_a_store_read_failure_cannot_abort_the_rotation(tmp_path, monkeypatch):
+    """This helper runs unguarded between reap_dead_claims() and the
+    review-and-close phases, so an exception here reaps and then silently
+    drops the rest of the cycle.
+
+    It is reachable without any code defect: list_card_ids() raises
+    ValueError on a stray symlink under cards/, which sits outside the
+    store's own degrade_unreadable boundary. A default-off advisory
+    mechanism must not be able to break dispatch.
+    """
+    loaded = _load(tmp_path)
+    expire = loaded["_expire_idle_claims"]
+    logged = loaded["_logged"] if "_logged" in loaded else None
+
+    import skcapstone.fleet.claim_expiry as ce
+
+    def explode(_home):
+        raise ValueError("card lock identifier must be a non-path identifier")
+
+    monkeypatch.setattr(ce, "observe", explode)
+
+    # report mode reaches the store read, and must survive it
+    assert expire(env={"SKFLEET_CLAIM_TTL_MODE": "report"}) == 0
+    assert expire(env={"SKFLEET_CLAIM_TTL_MODE": "enforce"}) == 0

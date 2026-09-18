@@ -4408,13 +4408,30 @@ def _expire_idle_claims(observations=None, runner=None, state=None,
                                                    text=True))
     state = state or _claim_ttl_fresh_state
     dry = DRY if dry is None else dry
+    # Reading the store must never be able to abort the cycle. This function
+    # is called unguarded between reap_dead_claims() and the review-and-close
+    # phases, so an exception here reaps and then silently drops the rest of
+    # the rotation. list_card_ids() raises ValueError on a stray symlink under
+    # cards/, which is outside the store's own degrade_unreadable boundary, so
+    # this is reachable without any code defect at all. A default-off advisory
+    # mechanism has no business breaking dispatch.
     if observations is None:
-        observations = observe(Path(HOME) / ".skcapstone")
-    verdicts = [v for v in evaluate(
-        observations,
-        now=time.time() if now is None else now,
-        ttl_seconds=ttl_seconds_from_env(env),
-    ) if v.reclaimable]
+        try:
+            observations = observe(Path(HOME) / ".skcapstone")
+        except Exception as exc:                      # noqa: BLE001
+            log(d, "CLAIM_TTL_OBSERVE_FAILED|%s|%s|%s"
+                % (HOST, type(exc).__name__, str(exc)[:160]))
+            return 0
+    try:
+        verdicts = [v for v in evaluate(
+            observations,
+            now=time.time() if now is None else now,
+            ttl_seconds=ttl_seconds_from_env(env),
+        ) if v.reclaimable]
+    except Exception as exc:                          # noqa: BLE001
+        log(d, "CLAIM_TTL_EVALUATE_FAILED|%s|%s|%s"
+            % (HOST, type(exc).__name__, str(exc)[:160]))
+        return 0
 
     if mode == "report":
         # Phase 2 of the rollout. This list is the gate: a known-live worker
