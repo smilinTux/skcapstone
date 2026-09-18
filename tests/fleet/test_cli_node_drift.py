@@ -154,7 +154,12 @@ def test_missing_unit_and_dispatcher_are_summarized_not_listed_by_default(
     assert "unit:c.service" in result.output  # unambiguous, still listed by name
     assert "3 unit(s)/dispatcher script reported missing" in result.output
     assert "no per-host role manifest" in result.output
-    assert "--json or --strict" in result.output
+    # --json expands the suppressed findings. --strict does NOT: in this
+    # codebase it sets a non-zero exit code (see atlas_cmd, config_cmd) and
+    # its output is identical to the default, so the summary must not send
+    # an operator there expecting names.
+    assert "--json" in result.output
+    assert "--json or --strict" not in result.output
 
 
 def test_a_missing_git_sha_is_unambiguous_and_still_listed_by_default(
