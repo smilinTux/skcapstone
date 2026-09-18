@@ -7,17 +7,27 @@ production-pain half of the exclusion work that Amendment B
 
 ## The problem, measured
 
-On the chi cluster, **371 card claims are open and will never close**.
+On the chi cluster, **349 card claims are held and will never be released**.
 
-    median age            189.5 hours  (7.9 days)
-    maximum age           553.2 hours  (23 days)
-    over 24h                     371   (all of them)
-    over 7 days                  213
-    distinct owners              260
+    held claims (fold says owner set, non-terminal)   349
+    owner-idle median                       163.8 hours
+    owner-idle minimum                       30.9 hours
+    owner-idle maximum                      517.5 hours
+    idle under 24h                                    0
 
-Measured on chiap01, 2026-09-18, by replaying every `events/*.jsonl` under
-`~/.skcapstone/cards` and counting cards where `claim` outnumbers
-`release_claim + unassign` with no terminal event.
+Measured on chiap01, 2026-09-18, via `CardStore.fold()` for every card.
+
+The fold is the authority here, and using anything else gets the number
+wrong. An earlier pass counted cards where the `claim` action outnumbered
+`release_claim + unassign` and reported 371. That arithmetic overcounts: a
+worker that re-claims a card it already holds writes a second `claim`, and
+one `release_claim` then settles both. Card `f17d9e32` is the worked
+example, with `claim: 2, release_claim: 1` and no live owner. Event
+counting called it stuck; the fold correctly says nobody holds it.
+
+**"Owner-idle" is the load-bearing measurement**: hours since the current
+owner last wrote ANY event to the card it holds. Not one of the 349 has
+been touched by its owner in the last 30 hours.
 
 This is the failure Chef reports as "multiple running and ones dead and not
 running keeping cards open then they go into a dead state and never picked
@@ -44,6 +54,17 @@ That predicate cannot be satisfied for most owners in the store:
    down, unreachable, or simply slow to sync cannot "report absence". The
    predicate is unsatisfiable exactly when it matters most.
 
+**4. A second gate rejects most owners before liveness is even considered.**
+`_parse_worker_owner()` (`scripts/fleet/skfleet-rotate.py:3732-3751`)
+recognizes only owners shaped `pi-<lane>-<host>-<cid>`,
+`<lane>-<host>-<cid>`, or `pi-<seat>-<host>-<cid>`. An owner named
+`jarvis`, `codex`, `seraph` or `codex-w72-backend-r3` matches none of them
+and is skipped unconditionally, before any liveness or age logic runs.
+This gate alone accounts for the 146 largest-held claims (`jarvis` 104,
+`codex` 28, `seraph` 5). **A TTL check appended to the bottom of
+`reap_dead_claims()` would still never fire for them.** Any fix must bypass
+this shape gate, not sit behind it.
+
 Requiring proof of death is the defect. Nothing can supply that proof, so
 the reaper correctly refuses forever, and claims accumulate without bound.
 
@@ -69,18 +90,41 @@ claim_revision, transition_id, prev_hash`. Add one field:
 Absolute rather than a duration so that a reader never has to know the
 writer's TTL policy, and so a mixed-version fleet agrees on the deadline.
 
-**2. A new `beat` event extends it.**
+**2. The deadline is extended by the owner's own card events, not by a new
+heartbeat.**
 
-    {"action": "beat", "owner": "...", "expires_at": "<new deadline>"}
+The obvious design is a new `beat` card event. Measurement rejected it:
+**the existing beat mechanism is already dead fleet-wide**, and adding a
+second one would inherit the same failure.
 
-`beat` is a **card event**, not a host-local file. This is the load-bearing
-choice in the whole design: host-local evidence is precisely what makes the
-current reaper unable to act. A card event replicates through the same
-Syncthing path the claim itself took, so any host can read it.
+    ~/.skcapstone/fleet/beats/   1018 files, identical on chiap01/04/08
+    newest beat                  27 hours old
+    beats fresher than 2h        0, on every host
+    beat files for the 8 live workers   0
 
-Cost is bounded by beating at `TTL/3`, not continuously. At the proposed
-6h TTL that is one event every 2 hours: about 30 events for a 61-hour
-worker, against the 3,726 claim events the store already holds.
+Worse, every one of those 1018 stale files still reads
+`"disposition": "RUNNING"`. A worker's beat loop dies with the worker and
+leaves a final RUNNING beat behind forever, so **the last beat is a lie**
+and nothing prunes it. The 8 genuinely live workers on chiap04 (`pi
+--name skl-w156-*`, up 61h) emit no beat at all, because they were not
+launched through the dispatcher heredoc that starts the beat loop
+(`scripts/fleet/skfleet-rotate.py:6686-6698`).
+
+So the liveness signal is **the owner's own activity on the card it
+holds**, which already exists, already replicates, and requires no new
+mechanism and no worker cooperation:
+
+    deadline = (last event written by the owner on that card) + TTL
+
+A worker doing real work writes `move`, `describe`, `evidence`, `verdict`
+and `link` events as a matter of course; the store holds thousands of them.
+A worker that has written nothing for the whole TTL is either dead or
+making no progress, and in both cases the card should return to the pool.
+
+Measurement says this discriminates cleanly. Owner-idle time for the 349
+held claims has a **minimum of 30.9 hours**, so a 24-hour TTL separates
+every stuck claim from every live one with a 6.9-hour margin, and a
+48-hour TTL keeps 327 of them with a 4.9-hour margin at the low end.
 
 **3. The reaper gains an expiry path.**
 
@@ -92,20 +136,27 @@ action is auditable and distinguishable from a worker's own release.
 
 ### Choosing the TTL
 
-The TTL must exceed the longest legitimate gap between two beats, or live
-work gets stolen. Measured on chi, workers legitimately run a long time:
+The TTL must exceed the longest legitimate gap between two card events by
+a working owner, or live work gets stolen. Workers on chi legitimately run
+for a long time:
 
     chiap04   8 live `pi` workers          61h 51m
     chiap01   codex                       251h 30m
     chiap01   skfleet-working watch loop  376h 44m
 
-Note these are process lifetimes, not beat gaps. Once beating exists, the
-relevant number is the gap, which is bounded by the beat interval plus
-scheduling jitter. **6 hours** is proposed: 3x the 2-hour beat interval, so
-two consecutive missed beats are tolerated before a claim is reclaimable.
+Process lifetime is not the relevant number, though. The relevant number
+is the event gap, and the measured distribution has a clean floor: the
+least-idle held claim on chi is 30.9 hours idle.
 
-The TTL is configuration, not a constant, so it can be raised without a
-code change if measurement disagrees.
+**48 hours** is proposed, not the tighter 24. The margin to the observed
+floor is smaller in relative terms but the failure is asymmetric: a TTL set
+too long leaves a card stuck a while longer, which is the status quo, while
+a TTL set too short steals a card from a worker that is mid-run, which is
+strictly worse than the bug. 48h reclaims 327 of the 349 immediately and
+still bounds the worst case at two days instead of three weeks.
+
+The TTL is configuration (`SKFLEET_CLAIM_TTL_H`), not a constant, so it can
+be tightened once phase 2 has produced evidence at 48h.
 
 ## Rollout: observe before enforcing
 
@@ -135,21 +186,28 @@ The gate between phases is evidence from the fleet, not elapsed time.
 
 ## The one-time sweep
 
-The existing 371 are cleared once, by hand, under a conservative rule:
-release only where the owner is **provably not live**.
+The existing 349 are cleared once, under a conservative rule: release only
+where the owner is **provably not live**.
 
-    total stuck                                          371
-    safe (older than 7d AND owner not live on any host)  155
-    held back                                            216
+    total held                                        349
+    safe (idle >48h, owner provably dead, has rev)    191
+    held back: ambiguous session identity             146
+    held back: idle under 48h                          20
+    held back: no claim_revision to fence against       1
 
-The 155 are unique one-shot identities holding one card each, whose owning
-process no longer exists anywhere on chi. The 216 held back are:
+The 191 are one-shot identities whose owning process exists nowhere on chi,
+idle between 52 and 518 hours. The sweep is safe by construction rather
+than by my measurement being right: `coord release-claim` requires
+`--owner` and `--expected-claim-revision` and refuses when a newer claim
+generation exists, so a worker that re-claimed since the census causes a
+refusal, never a theft.
 
-- 19 claims younger than 7 days
-- 99 owned by ambiguous session identities (`jarvis` 65, `codex` 29,
-  `seraph` 5) which cannot be distinguished by name from a live process:
-  chiap01 is running a `codex` that has been up for 251 hours
-- the remainder owned by names that substring-match a live process
+The 146 ambiguous are session identities (`jarvis` 104, `codex` 28,
+`seraph` 5, `tank` 3, `pi` 3, `mero` 2, `link` 1) which cannot be
+distinguished from a live process by name: chiap01 is running a `codex`
+that has been up 251 hours. These are reported for a human decision and
+never swept automatically. `jarvis` holding 104 cards is a question about a
+seat being vacated, not a stuck-claim question.
 
 Ambiguous owners are reported for a human decision, never swept
 automatically. `jarvis` holding 65 cards is a standing question about a
@@ -157,10 +215,15 @@ seat being vacated, not a stuck-claim question.
 
 ## Success criteria
 
-1. A claim written after phase 1 carries `expires_at`.
-2. A live worker's claim survives indefinitely, proven by a worker that
-   outlives its own TTL while beating.
+1. A claim written after phase 1 carries `claim_expires_at`.
+2. A claim held by an owner that keeps writing card events is never
+   reclaimed, proven by a worker that outlives its own TTL while working.
 3. A worker killed mid-claim has its card reclaimed within TTL + one reaper
-   cycle, with no host proving absence.
-4. The absence-proof path still releases what it released before.
-5. Phase 2 produces an empty would-reclaim list for every live worker.
+   cycle, with no host proving absence of anything.
+4. **The expiry path fires for owners that `_parse_worker_owner` rejects.**
+   A claim owned by a bare `jarvis` must be reclaimable on expiry; this is
+   the case the current reaper cannot reach at all, and a fix that does not
+   cover it has not fixed the reported problem.
+5. The existing absence-proof path still releases exactly what it released
+   before, with the same gates.
+6. Phase 2's would-reclaim list contains no owner that is live on any host.
