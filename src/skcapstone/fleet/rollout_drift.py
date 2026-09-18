@@ -47,6 +47,7 @@ import tomllib
 
 from .deployment_manifest import CANONICAL_SYSTEMD_RELATIVE_DIR, DISPATCHER_RELATIVE_PATH
 from .paths import self_node_name
+from .rollout_manifest import _dropin_dir_for, _read_dropin_value
 
 #: Not in the shipped systemd/ tree (see the module docstring: the dispatcher
 #: script is deployed by a separate mechanism from the package), but it is
@@ -454,6 +455,86 @@ def detect_drift(manifest: dict[str, Any], home: Path | str, repo_root: Path | s
         if active_state.strip() == "failed":
             drifts.append(
                 Drift(f"unit_failed:{unit_name}", "failed", "not failed", "failed", host)
+            )
+
+    # 6. Per-host drop-in ENVIRONMENT VALUE disagreement (9e15f83c, follow-up
+    # to the 2026-09-18 three-day zero-dispatch outage): the drift detector
+    # has always compared STRUCTURE across hosts (unit present/absent,
+    # enablement, failed state) but never the VALUES the per-host drop-ins
+    # carry. That is exactly how the outage hid: chiap01's rotate drop-in
+    # said http://localhost:18790/v1 while chiap02/03 said
+    # http://chiap01:18790/v1 -- structurally identical units, three of four
+    # hosts disagreeing on the value, invisible to every check that reads
+    # only names and states. install.sh is now the single writer of these
+    # drop-ins (9e15f83c), so any divergence between hosts IS a hand-edit or
+    # a partially completed install, and naming it here is safe.
+    #
+    # Scope guard (deliberate): compare ONLY units that are ACTIVE-scope on
+    # the host (installed for its role) AND that actually carry the
+    # drop-in directory. A unit that does not apply to this host was never
+    # installed, so its drop-in is legitimately absent here and its value is
+    # legitimately "none" -- comparing absent-vs-present across roles would
+    # re-create the false-positive class this module exists to avoid
+    # (the 08590d0e niobe-shadow lesson, mirrored). A host where the unit IS
+    # active-scope but the drop-in directory is missing is a real divergence
+    # (its value is None in the groups below) and is reported.
+    for unit_name in scope_by_unit:
+        if scope_by_unit[unit_name] != "active":
+            continue
+        values: dict[str, list[str]] = {}
+        for host in hosts:
+            value = _read_dropin_value(host, _dropin_dir_for(unit_name))
+            key = value if value is not None else "<absent>"
+            values.setdefault(key, []).append(host)
+        if len(values) > 1:
+            parts = [f"{v or '<absent>'}: {', '.join(hs)}" for v, hs in sorted(values.items())]
+            drifts.append(
+                Drift(
+                    f"dropin_env_value:{unit_name}",
+                    "disagreement",
+                    "all rotate hosts agree on the drop-in value",
+                    "; ".join(parts),
+                    ",".join(hosts),
+                )
+            )
+    # 7. Cross-host agreement on rotate drop-in values (9e15f83c scope c):
+    # the outage hid for three days because a hand-maintained per-host value
+    # drifts. install.sh is now the single writer of the rotate drop-ins
+    # (scope a), so the rotate hosts should all agree; when they do not,
+    # report it here instead of leaving a human to go looking.
+    rotate_hosts = [h for h in hosts if "rotate" in h.lower()]
+    if len(rotate_hosts) > 1:
+        values: dict[str, list[str]] = {}
+        for host in rotate_hosts:
+            value = _read_dropin_value(host, _dropin_dir_for("skfleet-rotate.service"))
+            key = value if value is not None else "<absent>"
+            values.setdefault(key, []).append(host)
+        if len(values) > 1:
+            parts = [f"{v or '<absent>'}: {', '.join(hs)}" for v, hs in sorted(values.items())]
+            drifts.append(
+                Drift(
+                    "dropin_env_value:skfleet-rotate.service",
+                    "disagreement",
+                    "all rotate hosts agree on the drop-in value",
+                    "; ".join(parts),
+                    ",".join(rotate_hosts),
+                )
+            )
+        values: dict[str, list[str]] = {}
+        for host in hosts:
+            value = _read_dropin_value(host, _dropin_dir_for(unit_name))
+            key = value if value is not None else "<absent>"
+            values.setdefault(key, []).append(host)
+        if len(values) > 1:
+            parts = [f"{v or '<absent>'}: {', '.join(hs)}" for v, hs in sorted(values.items())]
+            drifts.append(
+                Drift(
+                    f"dropin_env_value:{unit_name}",
+                    "disagreement",
+                    "all rotate hosts agree on the drop-in value",
+                    "; ".join(parts),
+                    ",".join(hosts),
+                )
             )
 
     return drifts
