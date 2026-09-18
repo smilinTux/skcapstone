@@ -50,6 +50,22 @@
     authority.** `Seat.ATLAS` is still bound to `{OBSERVE,
     ACTUATE_APPLICATION, CREATE_CARD}` only, and its ported release-and-install
     duty is recorded as inoperable pending further work.
+  - **Review follow-up, same phase.** A FAILED unit was previously
+    self-consistent with a disabled `UnitFileState` and produced zero
+    findings (the chiap08 seat unit that sat FAILED for weeks would never
+    have been caught by the code as first written); `detect_drift` now
+    reports a `failed` finding, in the default output. The readiness
+    gate's own unit pair existed in the repository and on no host, because
+    nothing installed it; `skfleet-readiness.service`/`.timer` are now in
+    `skcapstone.systemd.ALL_UNITS`, the list `skcapstone daemon install`
+    actually copies and enables (confirmed absent on chiap01 beforehand).
+    `deployment_manifest.write_manifest` had no caller; `skcapstone fleet
+    node manifest` is now that caller, publishing a manifest to a
+    node-scoped path without changing what `node drift` itself compares.
+    `detect_drift` now also digests every other `pyproject.toml`
+    `script-files` entry against `~/.skenv/bin/<name>`, not just the
+    dispatcher script, so the next divergent binary installed the same way
+    `skmail` was is no longer invisible either.
 
 - **Salvaged four pieces from a branch stranded on a production host.** `chiap08`,
   the chi estate's elected control-plane host, was found running a local branch 12

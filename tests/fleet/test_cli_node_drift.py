@@ -183,6 +183,66 @@ def test_a_missing_git_sha_is_unambiguous_and_still_listed_by_default(
     assert "reported missing, not listed" not in result.output
 
 
+def test_a_missing_script_file_is_unambiguous_and_listed_by_default(
+    tmp_path, monkeypatch, fake_manifest
+):
+    """Unlike a missing unit (which a host's role may legitimately never
+    install), a missing pyproject.toml script-files entry has no such
+    excuse: pip installs every script-files entry into ~/.skenv/bin on
+    every host regardless of role, so its absence is a fact about this
+    host, not a role guess -- it must stay in the default listing by name.
+    Measured live: skfleet_readiness.py is genuinely missing from
+    chiap01's ~/.skenv/bin.
+    """
+    drifts = [
+        Drift(
+            "script:skfleet_readiness.py",
+            "missing",
+            "deadbeef",
+            None,
+            "node-under-test",
+        )
+    ]
+    monkeypatch.setattr(rollout_drift, "detect_drift", lambda manifest, home, repo_root: drifts)
+
+    result = CliRunner().invoke(
+        fleet,
+        ["node", "drift", "--repo-root", str(tmp_path), "--home", str(tmp_path)],
+        env=_env(),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "script:skfleet_readiness.py" in result.output
+    assert "reported missing, not listed" not in result.output
+
+
+def test_a_failed_unit_is_unambiguous_and_listed_by_default(tmp_path, monkeypatch, fake_manifest):
+    """A 'failed' finding (the chiap08 incident: a unit stuck FAILED) is a
+    fact about that unit, not a guess about role, so it stays in the
+    default listing by name rather than folding into the missing summary.
+    """
+    drifts = [
+        Drift(
+            "unit_failed:skfleet-niobe-shadow.service",
+            "failed",
+            "not failed",
+            "failed",
+            "node-under-test",
+        )
+    ]
+    monkeypatch.setattr(rollout_drift, "detect_drift", lambda manifest, home, repo_root: drifts)
+
+    result = CliRunner().invoke(
+        fleet,
+        ["node", "drift", "--repo-root", str(tmp_path), "--home", str(tmp_path)],
+        env=_env(),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "unit_failed:skfleet-niobe-shadow.service" in result.output
+    assert "reported missing, not listed" not in result.output
+
+
 def test_all_missing_drift_still_shows_the_summary_with_no_unambiguous_line(
     tmp_path, monkeypatch, fake_manifest
 ):

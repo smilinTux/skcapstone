@@ -43,6 +43,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import tomllib
+
 from .deployment_manifest import CANONICAL_SYSTEMD_RELATIVE_DIR, DISPATCHER_RELATIVE_PATH
 from .paths import self_node_name
 
@@ -84,11 +86,17 @@ class Drift:
     diff-and-decide), so they are never collapsed into one label.
     ``enablement_mismatch`` covers the timer-enablement incident, which no
     content digest can catch because the unit FILE is correct; only its
-    wants-symlink state is wrong.
+    wants-symlink state is wrong. ``failed`` covers a unit whose ActiveState
+    is literally "failed": self-consistent with a "disabled" enablement
+    state (so ``enablement_mismatch`` never fires for it), but unambiguous
+    drift on its own terms -- no manifest or role knowledge is needed to
+    know a crashed unit is wrong. This is the chiap08 incident: a seat unit
+    sat FAILED for weeks and no existing check ever emitted a finding for
+    it.
     """
 
     artifact: str
-    kind: str  # "missing" | "changed" | "enablement_mismatch"
+    kind: str  # "missing" | "changed" | "enablement_mismatch" | "failed"
     expected: str
     found: str | None
     host: str
@@ -106,6 +114,31 @@ def _sha256_file(path: Path) -> str | None:
         return hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError:
         return None
+
+
+def _sha256_script_body(path: Path) -> str | None:
+    """The content digest of ``path``, ignoring a leading shebang line.
+
+    Measured live on chiap01: pip rewrites a Python ``script-files`` entry's
+    shebang (``#!/usr/bin/env python3`` becoming ``#!<venv>/bin/python``) on
+    every install, and that install had otherwise-identical files that a
+    byte-for-byte digest reported as "changed" on this one line alone. That
+    rewrite is universal and harmless -- pip does it to every correctly
+    installed host, so comparing raw bytes would make this check noisy on
+    every host, not just a broken one, which is exactly the failure mode
+    this whole module exists to avoid. A script with no shebang (the one
+    ``.mjs`` entry) or one pip never rewrites (``skmail`` is bash; pip only
+    rewrites a Python interpreter line) is unaffected: this strips at most
+    one line from both sides of the comparison, so a genuine change deeper
+    in the file is still caught exactly as before.
+    """
+    try:
+        content = path.read_bytes()
+    except OSError:
+        return None
+    if content.startswith(b"#!"):
+        _, _, content = content.partition(b"\n")
+    return hashlib.sha256(content).hexdigest()
 
 
 def _installed_git_sha(home: Path) -> str | None:
@@ -154,6 +187,34 @@ def _sha_matches(expected: str, found: str) -> bool:
     if not shorter:
         return False
     return longer.startswith(shorter)
+
+
+def _script_files(repo_root: Path) -> list[str]:
+    """Every entry under ``pyproject.toml``'s ``[tool.setuptools]
+    script-files``.
+
+    This is the exact list the skmail incident fell through: skmail was
+    never in it, so pip never installed it as part of any package, and no
+    version check could see a file that belonged to no package at all. That
+    specific gap is closed (skmail is declared now), but the detector must
+    not need a second, hand-typed copy of this list to stay honest about
+    the NEXT script added the same way -- so it is read straight from
+    pyproject.toml, the one place the list is declared, rather than
+    duplicated here.
+
+    Returns an empty list (never raises) when pyproject.toml is missing or
+    malformed: a caller comparing an empty list finds nothing to check,
+    which is a silent no-op, not a false "no drift" -- the git_sha and unit
+    checks elsewhere in this module still run and still report a checkout
+    that cannot be read as changed/missing on their own terms.
+    """
+    pyproject_path = repo_root / "pyproject.toml"
+    try:
+        with pyproject_path.open("rb") as stream:
+            data = tomllib.load(stream)
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+    return list(data.get("tool", {}).get("setuptools", {}).get("script-files", []))
 
 
 def _load_readiness_module(repo_root: Path):
@@ -269,6 +330,37 @@ def detect_drift(manifest: dict[str, Any], home: Path | str, repo_root: Path | s
             elif found_digest != expected_digest:
                 drifts.append(Drift(artifact, "changed", expected_digest, found_digest, host))
 
+    # 2b. Every other pyproject.toml script-files entry: pip installs each
+    # one verbatim into ~/.skenv/bin by basename. This is the exact
+    # mechanism section 2 above already trusts for the dispatcher script
+    # (skfleet-rotate.py, one of these same entries, checked separately at
+    # its OTHER install location, ~/.local/bin) -- an extension of that
+    # existing content-digest pattern, not a new subsystem. This is the
+    # incident that motivated this whole module: three different skmail
+    # binaries across five hosts, none matching the repo, invisible to any
+    # check because the file was never declared here and so belonged to no
+    # package at all. skmail is declared now, but the NEXT script added the
+    # same way must not need a second hand-typed list, so this reads
+    # pyproject.toml directly (_script_files) rather than hand-enumerating.
+    #
+    # Compared with _sha256_script_body, not _sha256_file: pip rewrites a
+    # Python script's shebang line to the venv's own interpreter on every
+    # install (measured live on chiap01), which is universal and harmless,
+    # never a fact about this host being wrong. See _sha256_script_body's
+    # own docstring.
+    for entry in _script_files(repo_root):
+        expected_path = repo_root / entry
+        expected_digest = _sha256_script_body(expected_path)
+        if expected_digest is None:
+            continue  # pyproject names a script the repo no longer ships
+        basename = Path(entry).name
+        found_digest = _sha256_script_body(home / ".skenv" / "bin" / basename)
+        artifact = f"script:{basename}"
+        if found_digest is None:
+            drifts.append(Drift(artifact, "missing", expected_digest, None, host))
+        elif found_digest != expected_digest:
+            drifts.append(Drift(artifact, "changed", expected_digest, found_digest, host))
+
     # 3. git_sha: the installed distribution's embedded commit hash.
     expected_sha = manifest.get("git_sha", "")
     found_sha = _installed_git_sha(home)
@@ -334,6 +426,34 @@ def detect_drift(manifest: dict[str, Any], home: Path | str, repo_root: Path | s
                 Drift(
                     artifact, "enablement_mismatch", "active", active_state.strip() or None, host
                 )
+            )
+
+    # 5. Unit health: a unit whose OWN ActiveState is "failed" is
+    # unambiguous drift, full stop -- no manifest or role knowledge needed
+    # to know a crashed unit is wrong. This is a genuinely different signal
+    # from the enablement check above: that check reads the service's
+    # PAIRED TIMER (unit_in_scope's own substitution for a ".service" name),
+    # so a service that is FAILED but whose timer is healthy (active,
+    # enabled) is invisible to it -- exactly the chiap08 shape
+    # (skfleet-niobe-shadow.service FAILED for weeks, self-consistent with
+    # a "disabled" UnitFileState, so the active-vs-enabled comparison above
+    # never fires). No scope check is needed either: a unit whose role does
+    # not apply to this host was never installed, so systemd reports it
+    # inactive or unknown, never "failed" -- only a unit that genuinely ran
+    # here and crashed reports "failed".
+    all_service_names = dict.fromkeys(
+        name for name in manifest.get("units", []) if name.endswith(".service")
+    )
+    all_service_names.update(
+        dict.fromkeys(name for name in ALLOWED_UNSHIPPED_UNITS if name.endswith(".service"))
+    )
+    for unit_name in all_service_names:
+        active_state, active_error = readiness._systemctl_show_value(unit_name, "ActiveState")
+        if active_error is not None:
+            continue
+        if active_state.strip() == "failed":
+            drifts.append(
+                Drift(f"unit_failed:{unit_name}", "failed", "not failed", "failed", host)
             )
 
     return drifts

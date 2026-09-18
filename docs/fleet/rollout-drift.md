@@ -59,10 +59,25 @@ Example, generated read-only against this repo:
 ```
 
 `write_manifest(path, manifest)` writes it atomically (temp file, single
-`os.replace`). Nothing in this phase publishes a manifest to a fixed,
-well-known path on a host; `build_manifest` is a pure function a caller
-supplies `repo_root`/`home` to. `skcapstone fleet node drift` (below) is
-that caller.
+`os.replace`). `build_manifest` itself stays a pure function that a caller
+supplies `repo_root`/`home` to; `skcapstone fleet node drift` (below) is one
+such caller, and it never persists what it builds -- both halves of that
+command's report-only contract (build, then compare) stay in memory.
+
+`skcapstone fleet node manifest` is `write_manifest`'s real caller: it
+builds the same manifest `node drift` builds and publishes it into the
+FLEET tree (`fleet/paths.py`'s `default_paths()`, i.e. `$SKFLEET_ROOT` or
+its documented default) at `status/node-<node>/manifest/manifest.json`,
+the same `status/<node>/<kind>/<name>.json` shape every other status write
+in the package uses -- through `default_paths()` deliberately, not a path
+built from `--home`, because this is fleet state and `paths.py` is the one
+module allowed to name where that tree lives
+(`tests/fleet/test_root_relocation.py`). Unlike `node drift`/`node doctor`
+it writes on purpose, so it carries no report-only contract. `node drift`
+itself still compares against a freshly built manifest, not this pinned
+one; publishing a comparison artifact a future check could read against is
+what closes the "nothing publishes a manifest" gap without changing what
+`node drift` means today.
 
 ## 2. The readiness verdict
 
@@ -72,7 +87,12 @@ every seat module actually imports under the target interpreter. It now has
 a caller: `skfleet-readiness.service` / `.timer`, installed from
 `systemd/skfleet-readiness.service` (mirrored byte-identical into
 `src/skcapstone/data/systemd/`), running every 15 minutes
-(`OnBootSec=5min`, `OnUnitActiveSec=15min`).
+(`OnBootSec=5min`, `OnUnitActiveSec=15min`). That pair is now part of
+`skcapstone.systemd.ALL_UNITS`, the one list `install_service` (invoked by
+`skcapstone daemon install`, the live install path measured on chiap01)
+actually copies and enables on a host -- shipping the unit files under
+`systemd/` was not enough by itself, confirmed absent on chiap01 before this
+was wired in.
 
 The gate is scope-aware: it checks the dispatcher's environment only on a
 host where `skfleet-rotate.service`'s paired timer is genuinely active or
@@ -114,10 +134,13 @@ Builds a fresh manifest from `--repo-root` (default: `$SKCAPSTONE_REPO_ROOT`,
 else `~/work/skcapstone`, the shared-checkout convention live on
 chiap01/02/03/04/08) and compares it against what `--home` (default: `$HOME`)
 actually has installed: a content digest of each shipped unit file, a
-content digest of the installed dispatcher script, the installed
-distribution's embedded git commit (not its semantic version, which is
-exactly what let the `skmail` incident hide), and whether each in-scope
-unit's enabled state agrees with its active state. Local-node-only, like
+content digest of the installed dispatcher script and every other
+`pyproject.toml` `script-files` entry (`~/.skenv/bin/<name>`, the exact
+mechanism the `skmail` incident hid behind -- see the `script` kind below),
+the installed distribution's embedded git commit (not its semantic version,
+which is exactly what let that incident hide), whether each in-scope unit's
+enabled state agrees with its active state, and whether any in-scope unit's
+own `ActiveState` is `failed`. Local-node-only, like
 `fleet node doctor`: grading a remote host from a local checkout would be a
 confident wrong answer, not a report. Read-only and cheap enough to run from
 a systemd timer, though no timer invokes it yet; today it is operator-run,
@@ -136,23 +159,31 @@ Every drift line carries a `kind`:
 
 | `kind` | Meaning |
 |---|---|
-| `changed` | The artifact is installed, but its content differs from what the manifest pins. |
+| `changed` | The artifact is installed, but its content differs from what the manifest pins. Applies to unit files, the dispatcher script, and every other `pyproject.toml` `script-files` entry (artifact `script:<name>`) -- the `skmail` incident's shape, generalised to any script installed the same way, not just that one by name. |
 | `enablement_mismatch` | A unit's `ActiveState` and enabled (`UnitFileState`) disagree, e.g. active but not enabled. This is the timer-enablement incident above: no content digest can catch it, because the unit *file* was correct. |
+| `failed` | A unit's own `ActiveState` is literally `failed`. Self-consistent with a disabled `UnitFileState`, so `enablement_mismatch` never fires for it -- this is the chiap08 incident: a seat unit sat FAILED for weeks and no other check ever emitted a finding for it. Unambiguous regardless of role: a unit whose role does not apply here was never installed, so systemd reports it inactive, never failed. |
 | `missing` | The artifact was not found at all. |
 | `git_sha` (artifact) | The installed distribution's embedded commit differs from (or is entirely absent from) what the manifest expects. |
 
-**`changed`, `enablement_mismatch`, and any `git_sha` finding are shown by
-name in the default text output: they are unambiguous regardless of what
-this host's role is.** A `missing` unit or dispatcher-script finding is
-different: this estate has no per-host role manifest, so "this host's role
-never installs that unit" cannot be told apart from "a rollout should have
-installed it and did not." Run against this checkout, most `missing`
-findings are the former: a workstation or a seat-only host legitimately
-never carries every unit the full package ships. Printing all of them by
-default buried the six lines that actually mattered under fourteen that did
-not, which is exactly the kind of noise that gets a check ignored within a
-week. So the default text output lists every unambiguous finding by name and
-folds `missing` findings into one summary line instead:
+**`changed`, `enablement_mismatch`, `failed`, any `git_sha` finding, and a
+`missing` `script:<name>` finding are shown by name in the default text
+output: they are unambiguous regardless of what this host's role is.** A
+`missing` unit or dispatcher-script finding is different: this estate has
+no per-host role manifest, so "this host's role never installs that unit"
+cannot be told apart from "a rollout should have installed it and did
+not." Run against this checkout, most `missing` findings are the former: a
+workstation or a seat-only host legitimately never carries every unit the
+full package ships. A `missing` `script:<name>` finding carries no such
+excuse -- pip installs every `pyproject.toml` `script-files` entry
+unconditionally on every host with the package installed, so there is no
+role for which one is supposed to be absent (measured live:
+`skfleet_readiness.py` is genuinely missing from chiap01's
+`~/.skenv/bin`). Printing every ambiguous finding by default buried the six
+lines that actually mattered under fourteen that did not, which is exactly
+the kind of noise that gets a check ignored within a week. So the default
+text output lists every unambiguous finding by name and folds only the
+role-ambiguous `missing` unit/dispatcher findings into one summary line
+instead:
 
 ```
 $ skcapstone fleet node drift
