@@ -248,6 +248,28 @@
     - A test asserts the launch site and the post-race recheck both call
       `_lane_model`. A test of the function alone would have passed for the
       entire time the fleet was misrouting.
+- **ATLAS operator surfaces now render the freeze store's tri-state honestly.**
+  `skcapstone atlas eyes` rendered an ABSENT freeze store as "[not frozen]",
+  which reads to a human as armed-and-healthy when the truth is "never
+  provisioned, refusing everything". That is the exact collapse
+  ACTUATION_READINESS_AND_FREEZE_STANDARD R4 forbids, in the dangerous
+  direction: it under-reports missing safety infrastructure as healthy.
+  Measured on all five chi hosts (freeze store absent on every one).
+  `is_frozen`'s deliberate semantics (absent reads not-frozen, corrupt fails
+  closed as frozen) are untouched; only display and status changed, all
+  derived from the shared `store.check_actuation_gate` guard.
+
+    - `eyes.assess` adds `freeze_state` (`frozen` / `active` / `unprovisioned`)
+      to the assessment, and `eyes.render` shows three distinct headlines:
+      `[FROZEN]`, `[active (freeze off)]`, and `[UNPROVISIONED]` with an
+      explanation that every actuation refuses until a human runs
+      `skoperator provision`.
+    - `loop.run_once` carries `freeze_state` in its result and appends an
+      UNPROVISIONED line to the operator report when no valid store exists.
+    - `brief_publish.render_html` / `render_markdown` render UNPROVISIONED as
+      its own state instead of falling through to "ALL QUIET".
+    - soak samples carry `freeze_state`, and the operator HTTP act refusal
+      payload includes it beside the raw `frozen` boolean.
 
 - **Readiness checks each unit against the interpreter it declares.** The gate
   tested every unit's module imports against one interpreter (`--python-bin`),

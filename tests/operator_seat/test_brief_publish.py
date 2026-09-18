@@ -81,3 +81,34 @@ def test_publish_writes_both_artifacts(tmp_path):
     assert written["markdown"].read_text().startswith("# Atlas operator brief")
     assert written["html"].name == "index.html"
     assert written["markdown"].name == "brief.md"
+
+
+# ── tri-state freeze display (ACTUATION_READINESS_AND_FREEZE_STANDARD R4) ───
+
+
+def _unprovisioned_result():
+    return dict(_quiet_result(), freeze_state="unprovisioned")
+
+
+def test_html_unprovisioned_never_reads_all_quiet():
+    out = brief_publish.render_html(_unprovisioned_result(), NOW)
+    assert "UNPROVISIONED" in out
+    assert "ALL QUIET" not in out
+    assert "not frozen" not in out.lower()
+
+
+def test_markdown_unprovisioned_never_reads_all_quiet():
+    out = brief_publish.render_markdown(_unprovisioned_result(), NOW)
+    assert "UNPROVISIONED" in out
+    assert "All quiet" not in out
+    assert "not frozen" not in out.lower()
+
+
+def test_three_freeze_states_render_distinctly():
+    frozen = dict(_quiet_result(), frozen=True, freeze_state="frozen")
+    active = dict(_quiet_result(), freeze_state="active")
+    unprov = _unprovisioned_result()
+    renders = {
+        brief_publish.render_markdown(r, NOW).splitlines()[4] for r in (frozen, active, unprov)
+    }
+    assert len(renders) == 3
