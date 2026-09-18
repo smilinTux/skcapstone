@@ -37,6 +37,31 @@
     - Known gap: `Board.claim_task` in the sibling skcoord package is the true
       chokepoint and is untouched, so a caller reaching skcoord directly still
       bypasses.
+- **Claim-time churn breaker: refuse a looping claim until the blocker is
+  recorded (ships DEFAULT OFF).** The claim ceiling stops dispatch only AFTER
+  five wasted claims and never asks why, and it never self-clears: the
+  scheduler's own comment says claim counts are monotonic and the only exits
+  are satisfying the gate, voiding, or raising the ceiling. Measured on chi:
+  `83e498b6` has 58 claims across 6 owners (47 of them one seat re-claiming
+  every 10 minutes) and needs a human's admin console; `bfbb2986` has 55 and
+  needs an unreachable host, while already labelled `not-claimable` and
+  refilled anyway. 117 cards are now permanently excluded, against a
+  dispatchable pool of roughly 29.
+
+    - `fleet/churn_breaker.py` refuses a claim on a card with roughly 5+ claim
+      attempts or 3+ distinct owners and no terminal state, until a blocker is
+      recorded. `SKFLEET_CHURN_BREAKER_MODE` is `off` / `report` / `enforce`,
+      mirroring `SKFLEET_CLAIM_TTL_MODE` including that `off` returns before
+      doing any work. Non-finite thresholds are rejected.
+    - No new vocabulary: re-permission requires the existing
+      `blocked_on=<kind> referent=<kind>:<id>`, read from the fold AND from
+      `coordination/card_events` where `coord link` actually lands.
+    - Same-owner re-claims are not miscounted: a worker re-claiming a card it
+      holds writes a second claim that one release settles.
+    - All six skcapstone call sites of `Board.claim_task` are covered, and a
+      test greps `src/` for `.claim_task(` so a seventh cannot be added
+      silently. `Board.claim_task` itself, in the sibling skcoord package,
+      remains a bypass.
 
 - **Shell-quote the staged rollout's remote command.** The staged rollout had
   never once deployed to a remote host: every run halted on its first step with
