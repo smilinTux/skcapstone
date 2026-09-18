@@ -1442,6 +1442,83 @@ def register_coord_commands(main: click.Group) -> None:
         verb = "Removed" if remove else "Added"
         console.print(f"\n  [green]{verb} label '{label}' on {task_id}.[/]\n")
 
+    @coord.command("reopen")
+    @click.argument("task_id")
+    @click.option("--agent", required=True, help="Audited actor returning the card.")
+    @click.option(
+        "--reason",
+        required=True,
+        help="Why the card is coming back. Recorded on the event; must not be empty.",
+    )
+    @click.option(
+        "--referent",
+        "referents",
+        multiple=True,
+        help="A blocker this reopen answers, e.g. card:23e3b774. Repeatable.",
+    )
+    @click.option(
+        "--transition-id",
+        default=None,
+        help="Deterministic token. Repeating one returns the durable event instead of appending.",
+    )
+    @click.option(
+        "--column",
+        default=None,
+        help="Column to return the card to. Omit to leave the card exactly where it is.",
+    )
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    def coord_reopen(task_id, agent, reason, referents, transition_id, column, home):
+        """Return a parked card to the pool, on the record.
+
+        A card whose latest outcome is BLOCKED is held out of dispatch until
+        something changes. ``reopen`` is the one escape hatch that hold
+        honours, and until now nothing could emit it but the legacy
+        reconciler, so every stuck card needed a person editing the store.
+
+        The event is written to the CardStore (the card's own event stream),
+        NOT the coordination overlay, because the dispatcher's backoff reads
+        the card stream and would never see an overlay row.
+
+        --reason is required. A card that returns with no recorded why is
+        indistinguishable from a reset button, and this command exists to be
+        auditable, not convenient.
+        """
+        from skcoord.card_store import CardStore
+
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        validate_task_id(task_id)
+        validate_agent_name(agent)
+        if not str(reason).strip():
+            raise click.ClickException("reopen reason must not be empty")
+        # Reopen returns a card to a workable state, which is the authority
+        # MOVE_CARD already names. It deliberately does not mint a new seat
+        # capability: a reopen no seat may move a card is not a thing.
+        authorize_coord_mutation(agent, Action.MOVE_CARD, task_id, None, None)
+        home_path = Path(home).expanduser()
+        store = CardStore(home_path)
+        payload = {"reason": str(reason).strip()}
+        if referents:
+            payload["referents"] = list(referents)
+        if transition_id:
+            payload["transition_id"] = transition_id
+        if column:
+            payload["column"] = column
+        try:
+            store.append_event(task_id, "reopen", agent, **payload)
+            folded = store.fold(task_id)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from None
+        if folded is None:
+            raise click.ClickException(f"CardStore reopen readback failed for {task_id}")
+        if not any(
+            event.get("action") == "reopen"
+            for event in store._read_events(task_id)  # noqa: SLF001 - readback, not a mutation
+        ):
+            raise click.ClickException(f"CardStore reopen readback failed for {task_id}")
+        console.print(f"\n  [green]Reopened {task_id}: {payload['reason']}.[/]\n")
+
     @coord.command("describe")
     @click.argument("task_id")
     @click.option("--title", default=None, help="New card title.")

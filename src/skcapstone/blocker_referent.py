@@ -365,3 +365,137 @@ def card_dir_lookup(home: Path):
         return matches[0] if matches else None
 
     return lookup
+
+
+# --- returning a card whose blocker has already finished ----------------------
+#
+# WHAT IS BROKEN. The dispatcher parks a card whose latest outcome is BLOCKED
+# and wakes it when the blocker CHANGES after the verdict
+# (``_blocker_change_epoch``). That fence is exactly right for a blocker still
+# in motion, and unreachable for one that was ALREADY terminal when the verdict
+# was written: nothing further will ever happen to it, so no change can ever
+# arrive, so the card is parked for good.
+#
+# MEASURED ON chiap01, 2026-09-18. 206 open cards carry a BLOCKED outcome. Of
+# those, eleven name a referent whose fold is DONE and whose completion
+# timestamp is EARLIER than their own verdict. 885037c0 lost that race by half
+# a second: its referent acfede01 completed at 1788824635.5 and the block was
+# written at 1788824636.
+#
+# WHY A DURABLE EVENT AND NOT A LOOSER PREDICATE. Widening
+# ``_blocker_change_epoch`` to accept an older completion leaves no record of
+# why a card came back, and worse, the wake generation it returns also fences
+# retries (``_wake_retry_available`` counts launches after that generation). A
+# generation in the past counts every past launch as a retry; a generation of
+# "now" resets the fence every cycle and loops forever. A ``reopen`` event has
+# neither problem: the dispatcher already honours it as the escape hatch, it
+# names its actor and its reason, and it is written once per blocker
+# generation.
+#
+# WHAT STAYS WITH A PERSON. A ``human`` hold, a ``capability`` hold and a block
+# with no parsable reason are not answered by a card reaching DONE. They are
+# left alone on purpose: silently returning them would destroy the one signal
+# saying a person has to decide something.
+
+#: Blocker categories a machine may discharge by itself. ``human`` needs an
+#: operator, ``capability`` needs a router or an author, and an unparsed reason
+#: means nobody knows what the wall is. None of the three is answered by a
+#: referent card completing.
+AUTO_REOPEN_CATEGORIES = frozenset({"dependency", "card"})
+
+#: The writer the fleet sweep attributes its reopens to, and the reason string
+#: it records. Both are read back by operators, so they are constants, not
+#: ad-hoc strings at the call site.
+REOPEN_WRITER = "fleet-blocker-referent-sweep"
+REOPEN_REASON = "blocker-referent-settled"
+
+#: A referent that is an exact card id, and nothing else. `card:57c301a1:` with
+#: its trailing colon (seen on chiap01's 57c201a1) resolves to no card at all,
+#: so it must not match.
+_EXACT_CARD_REFERENT_RE = re.compile(r"^card:([0-9a-f]{8})$", re.IGNORECASE)
+
+
+def blocker_generation_id(card_id: str, generation) -> str:
+    """A deterministic token for one card's settled-blocker generation.
+
+    The token is derived from the BLOCKERS, not from the verdict that cited
+    them. That is what makes the sweep idempotent in both directions:
+
+    - running it twice appends one event, because ``append_event`` returns the
+      durable event for a repeated ``transition_id``;
+    - a worker that re-blocks on the SAME already-finished referents produces
+      the same token, so the card is NOT returned a second time and a person
+      gets to ask why a worker keeps walling on finished work.
+
+    A referent that completes AGAIN later carries a new timestamp, which is a
+    genuinely new fact and earns a new token.
+    """
+    import hashlib
+
+    parts = ";".join("%s@%d" % (ref, int(stamp)) for ref, stamp in sorted(generation))
+    digest = hashlib.sha256(("%s|%s" % (card_id, parts)).encode("utf-8")).hexdigest()
+    return "blocker-settled:" + digest[:16]
+
+
+def settled_blocker_reopen(card_id: str, category, referents, referent_facts) -> dict:
+    """Decide whether one BLOCKED card may return to the pool unattended.
+
+    Args:
+        card_id: The parked card.
+        category: Its blocked_on category, or None when nothing parsed.
+        referents: The referents its verdict cited, in any order.
+        referent_facts: Callable taking an 8-hex card id and returning
+            ``{"state", "human_gated", "outcome_blocked", "completed_at"}``.
+            ``state`` uses the scheduler's own vocabulary, where ``complete``
+            is the fold's DONE, ``void`` covers voided AND
+            archived-without-completion, and ``missing`` is no such card.
+
+    Returns:
+        ``{"reopen", "hold", "referents", "generation", "transition_id"}``.
+        ``hold`` names the exact guard that refused, which is what an operator
+        reads to see why a card did NOT come back.
+    """
+    cited = [str(ref or "").strip().lower() for ref in (referents or []) if str(ref or "").strip()]
+    result = {
+        "reopen": False,
+        "hold": None,
+        "referents": cited,
+        "generation": [],
+        "transition_id": None,
+    }
+    if category not in AUTO_REOPEN_CATEGORIES:
+        result["hold"] = "category:%s" % (category or "unparsed")
+        return result
+    if not cited:
+        result["hold"] = "no-referent"
+        return result
+    generation = []
+    for ref in cited:
+        match = _EXACT_CARD_REFERENT_RE.match(ref)
+        if not match:
+            result["hold"] = "referent-not-a-card:%s" % ref
+            return result
+        facts = referent_facts(match.group(1).lower()) or {}
+        state = str(facts.get("state") or "missing")
+        if state != "complete":
+            result["hold"] = "referent-%s" % state
+            return result
+        if facts.get("human_gated"):
+            result["hold"] = "referent-human-gated"
+            return result
+        # A card can fold to DONE while its own latest outcome still reads
+        # BLOCKED. Column is not evidence: three of chiap01's candidates
+        # (885037c0, 9df37866, bd795bb2) are exactly that shape.
+        if facts.get("outcome_blocked"):
+            result["hold"] = "referent-outcome-blocked"
+            return result
+        completed_at = float(facts.get("completed_at") or 0.0)
+        if completed_at <= 0:
+            # No completion event to name. The reopen would be unattributable.
+            result["hold"] = "referent-completion-unstamped"
+            return result
+        generation.append((ref, completed_at))
+    result["generation"] = sorted(generation)
+    result["transition_id"] = blocker_generation_id(card_id, generation)
+    result["reopen"] = True
+    return result
