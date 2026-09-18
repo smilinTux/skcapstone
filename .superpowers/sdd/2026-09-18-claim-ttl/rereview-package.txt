@@ -1,0 +1,1908 @@
+===== FIX DIFF: review blockers B1 + B2 and the should-fix items =====
+===== base 6cf6aa7b (the commit the final review examined) -> HEAD =====
+
+cf30375b fix(fleet): address both review blockers
+
+ .../sdd/2026-09-18-claim-ttl/final-review.md       | 333 ++++++++++++
+ .superpowers/sdd/2026-09-18-claim-ttl/progress.md  |   2 +-
+ docs/fleet/lane-admission-health.md                |   9 +-
+ .../specs/2026-09-18-claim-ttl-design.md           |  30 ++
+ src/skcapstone/fleet/claim_expiry.py               | 225 ++++----
+ src/skcapstone/fleet_lane_health.py                |   2 +-
+ tests/fleet/test_claim_expiry.py                   |  28 +
+ tests/fleet/test_claim_expiry_cli.py               | 236 +++++----
+ tests/fleet/test_claim_expiry_observe.py           | 588 ++++++++-------------
+ tests/fleet/test_claim_expiry_reaper.py            |  38 ++
+ tests/test_fleet_lane_health.py                    |  68 +++
+ 11 files changed, 949 insertions(+), 610 deletions(-)
+
+===== FULL DIFF -U12 =====
+diff --git a/.superpowers/sdd/2026-09-18-claim-ttl/final-review.md b/.superpowers/sdd/2026-09-18-claim-ttl/final-review.md
+new file mode 100644
+index 00000000..5f298b84
+--- /dev/null
++++ b/.superpowers/sdd/2026-09-18-claim-ttl/final-review.md
+@@ -0,0 +1,333 @@
++# Final whole-branch review: feat/claim-ttl-heartbeat
++
++Reviewer: adversarial final gate, 2026-09-18. 16 commits vs origin/main (e432e227).
++Worktree: `~/skworld-worktrees/claim-ttl-skcapstone`. Host: noroc2027.
++
++Everything below marked CONFIRMED was produced by running code, either the
++shipped test suite, the shipped `observe()` against the live `~/.skcapstone`
++store on this host read-only, or a synthetic-card harness that folds the same
++directory through both `CardStore.fold()` and `observe()` and prints both
++answers. Scripts were written to the session scratchpad and removed.
++
++## Verdict
++
++**NO, not as it stands** - but only because of one finding in the half that is
++live immediately. Fix F1 and the branch is mergeable with the TTL mechanism
++default off. F2a and F2d must be fixed before any operator sets
++`SKFLEET_CLAIM_TTL_MODE=report`, because the report list IS the phase-2 gate
++and it is currently both blind to a third of held claims and capable of naming
++a card a live worker is holding.
++
++## Test run, done myself
++
++    python3 -m pytest tests/fleet/ tests/test_fleet_lane_health.py -q
++    1493 passed, 14 warnings in 44.93s
++
++Matches the ledger's claim. CONFIRMED.
++
++---
++
++# CONFIRMED FINDINGS
++
++## F1. BLOCKER (live immediately). The gateway fix does not restore dispatch. It relabels the outage and suppresses the diagnostic that found it.
++
++Files:
++- `src/skcapstone/fleet_lane_health.py:245` - `endpoint = gateway_root(base_url)`, and that normalized value is what goes into `snapshot["endpoint"]`.
++- `src/skcapstone/fleet_lane_health.py:338` - `if snapshot.get("endpoint") != endpoint.rstrip("/"): return False, "endpoint-mismatch"`.
++- `scripts/fleet/skfleet-rotate.py:6098` - `endpoint=_GATEWAY_ENDPOINT`, the RAW env value, unnormalized.
++
++`acquire_lane_snapshot()` now normalizes the endpoint it probes AND the endpoint
++it seals into the snapshot. `lane_health()` is then called with the raw value.
++When the raw value carries `/v1`, the two disagree and every lane fails closed
++on `endpoint-mismatch` before any health data is even looked at.
++
++Failure scenario, run end to end against a strict mock server that serves
++`/health` and `/queue` at the root and 404s `/v1/*`:
++
++    SKFLEET_GATEWAY_URL=http://chiap01:18790/v1
++      snapshot.endpoint = http://chiap01:18790   errors = []
++      lane_health(endpoint=_GATEWAY_ENDPOINT) = (False, 'endpoint-mismatch')
++
++    SKFLEET_GATEWAY_URL=http://chiap01:18790
++      snapshot.endpoint = http://chiap01:18790   errors = []
++      lane_health(endpoint=_GATEWAY_ENDPOINT) = (False, 'unknown')  <- proceeds to health
++
++So the `/v1` misconfiguration still blocks every card on the host. Before this
++commit it blocked them as `unknown` with `errors: ['health:HTTPError',
++'queue:HTTPError']`; after it blocks them as `endpoint-mismatch` with
++`errors: []`. **That is strictly worse for diagnosis**: the probe errors were
++the signal that identified the three-day, 373-NOOP outage in the first place,
++and they are now gone while the outage persists in a new form.
++
++Two secondary defects follow from the same root:
++- `docs/fleet/lane-admission-health.md` now asserts "The probe normalizes a path away (`gateway_root()`), so the `/v1` form now works". It does not work. The doc is false.
++- `tests/test_fleet_lane_health.py:462 test_v1_suffixed_base_url_still_probes_the_root_endpoints` stops at the snapshot. It asserts the probe URLs, `errors == []`, and a healthy domain, and never calls `lane_health()`/`_admit()` with the raw `/v1` base, which is what the dispatcher actually does. It therefore cannot distinguish "the outage is fixed" from "the outage moved one check to the right". The `_strict_opener` work is genuinely good and does catch the original bug; the test built on it is scoped one layer too shallow.
++
++Fix: `endpoint=gateway_root(_GATEWAY_ENDPOINT)` at `skfleet-rotate.py:6098`, or
++normalize once into a separate probe constant. Do NOT normalize
++`skfleet-rotate.py:1426` (`env["SKFLEET_GATEWAY_URL"]=_GATEWAY_ENDPOINT`) -
++workers need the operator's value, `/v1` included, for chat completions. Then
++extend the regression test through `_admit()` and correct the doc sentence.
++
++## F2. BLOCKER for the report path. `observe()` diverges from `CardStore.fold()` on ten of ten probed event shapes, and on 75 of 143 held cards in the live store on this host.
++
++Ran the shipped `observe()` and `CardStore.fold()` over every card in
++`~/.skcapstone` (5861 cards) on noroc2027:
++
++    card ids 5861    fold-held 143    replay-held 106    fold errors 0
++    cards the replay misses entirely           37
++    cards where the reported revision differs  38
++    cards the replay over-reports               0
++
++This is a different store from the chi store the ledger validated against, and
++the ledger's "22 = 22, zero disagreement" does not generalize. The three
++defects already found and fixed were real; there are more than four.
++
++Ten synthetic probes, each one card folded both ways. **All ten diverge.**
++
++### F2a. BLOCKER for functionality. A `claim` with no `claim_revision` gets a fence from the fold and none from the replay, so 36% of held claims can never be collected.
++
++`src/skcapstone/fleet/claim_expiry.py:213` - `revision = e.get("claim_revision") or None`
++`skcoord/card_store.py:1576` -              `revision = e.get("claim_revision") or e.get("event_id")`
++
++The fold synthesizes the CAS fence from `event_id`. `observe()` reports `None`,
++`evaluate()` (`claim_expiry.py:76`) refuses with `no-claim-revision`, and
++`_expire_idle_claims` (`skfleet-rotate.py:4430`) skips it. Such a claim is
++permanently uncollectable.
++
++38 of the 106 shared held cards are exactly this shape. Worked example,
++`~/.skcapstone/cards/0a3c64b8`, its only claim event:
++
++    lumina@noroc2027.jsonl seq=0 2026-08-21T19:25:28.506356+00:00 claim
++      owner=lumina  claim_revision=None  event_id=f89302e599fe42c99cc34bc147fb7737
++
++fold says `('lumina', 'f89302e5...')`; replay says `('lumina', None)`.
++
++This also refutes a premise in the spec and the ledger. The phase-2 baseline
++names `72df1b66` as "no claim_revision, so no CAS fence exists (518.1h)" and
++lists it among "exactly what an expiry path should collect". A fence does
++exist, the fold has it, and the shipped code is the only thing that cannot see
++it. As written the mechanism will report that card forever and never take it.
++
++Fix: mirror the fold - `e.get("claim_revision") or e.get("event_id") or None`.
++
++### F2b. SHOULD-FIX. `archive` is treated as FINAL; in the fold only `void` is.
++
++`claim_expiry.py:116` (`_TERMINAL_FINAL = {"void", "archive"}`) and `:190-196` (break).
++`skcoord/card_store.py:1690-1692` - `archive` sets `card.archived = True`, `archived_at`, `archived_by`, and **nothing else**. It does not clear the owner and it does not set the `voided` flag, so the `void_terminal_actions` suppression at `card_store.py:1497` never engages for it.
++
++Probe C: `archive` at T1, `claim owner=alice rev=r1` at T2.
++fold `('alice','r1')`, replay `None`.
++
++All 37 cards the replay misses in the live store are archived-and-owned. The
++direction is safe (under-report, no reclaim) but the CLI report is wrong by 26%
++of the held set, and `tests/fleet/test_claim_expiry_observe.py:381
++test_archive_alone_is_also_final` actively pins behaviour the fold does not have.
++
++### F2c. SHOULD-FIX. `release_claim` is applied unconditionally; the fold applies a CAS fence.
++
++`claim_expiry.py:215-217` - any `release_claim` clears owner and revision.
++`skcoord/card_store.py:1520-1573` - the fold requires `released_owner` to be a non-empty string equal to `card.owner` AND `expected_claim_revision` to equal the live `_claim_revision`, else the release is recorded in `meta["release_conflicts"]` and **the owner stays**. (There is a second accepted form, `releases_conflict`, which retires a matching `claim_conflicts` entry instead.)
++
++Probe B: `claim owner=alice rev=r1`, then `release_claim released_owner=alice expected_claim_revision=STALE`.
++fold `('alice','r1')`, replay `None`.
++Probe B2: `release_claim` with neither field. fold `('alice','r1')`, replay `None`.
++
++Zero such cards on this store today, so it is latent, not active. But this is
++the exact question the brief asked and the answer is that the replay does not
++implement the fence.
++
++### F2d. SHOULD-FIX, and the dangerous direction. A second `claim` by a different owner is honoured by the replay and REFUSED by the fold, so the idle clock can be measured against the wrong identity.
++
++`claim_expiry.py:203-213` - `_ACQUIRE` overwrites owner and revision unconditionally.
++`skcoord/card_store.py:1578-1594` - when the card already has an owner, the new owner differs, and `card.status` is in {ready, doing, review}, the fold records a `claim_conflict` and **keeps the original owner**.
++
++Probe A: `alice@h1` claims with r1 on Sep 1; `bob@h2` claims with r2 on Sep 2, no release between them.
++fold `('alice','r1')`, replay `('bob','r2')`.
++
++Failure scenario: alice is a live worker mid-run, writing move/evidence events
++every few minutes. Something re-claims as bob and then does nothing. The replay
++names bob as owner and measures `last_owner_event_at` from bob's single claim
++event, so after 48 hours the card appears as `RECLAIM ... jarvis-shaped owner
++idle=48.0h` in report mode - **a card a live worker is holding, in the phase-2
++would-reclaim list, which is exactly what spec success criterion 6 forbids and
++what the ledger designates as blocking enforce.**
++
++In enforce mode there is no theft: `coord release-claim` calls
++`current_claim_precondition(home, task_id, owner)` and raises
++`claim revision conflict` (`src/skcapstone/cli/coord.py:660-670`), so the CAS
++fence holds and the reaper logs `CLAIM_TTL_FAILED`. Confirmed by reading the CLI.
++Two residual effects worth knowing: the fold's `releases_conflict` branch can
++accept such a release and silently retire the `claim_conflicts` record, and the
++reaper's confirmation re-read would then log `CLAIM_TTL_INEFFECTIVE ... needs
++repair`, a false alarm about store divergence.
++
++Structural note: the replay **cannot** reproduce this rule as written, because
++the fold's condition is status-dependent and `observe()` never tracks status -
++it ignores `move` and `reopen` entirely. Reproducing the fold requires tracking
++`card.status` or calling the fold for ownership and using the event log only
++for the owner-idle clock. The ledger's Task-2 ruling rejected importing
++`CardStore` on the grounds that it "would buy nothing"; F2a through F2f are what
++it bought.
++
++### F2e. SHOULD-FIX. The sort key still differs from the fold's in two ways.
++
++`claim_expiry.py:183` - `key=lambda e: (_parse_ts(e.get("ts")), e.get("seq") or 0)`
++`skcoord/card_store.py:1427` and `:1484` - `key=lambda e: (e.get("ts",""), e.get("writer",""), e.get("seq",0))`
++
++Two differences: the fold compares `ts` as a STRING, and its tiebreak is
++`writer` before `seq`.
++
++Probe G, identical `ts` across two shards: `alice@h1` claim seq=5, `zrel@h2`
++release seq=0, both at `2026-09-01T00:00:00+00:00`. Fold orders by writer
++("alice" < "zrel") so claim then release, FREE. Replay orders by seq so release
++then claim, HELD with `('alice','r1')`. CONFIRMED.
++
++Probe E, a non-ISO `ts` on the release (`"ts": "not-a-date"`). `_parse_ts`
++(`claim_expiry.py:100-106`) maps it to 0.0 and it sorts FIRST; the fold's string
++sort puts `"not-a-date"` after every `"2026-..."` and it sorts LAST. Full
++inversion: fold FREE, replay HELD. CONFIRMED.
++
++Both over-report. In enforce mode the `state()` re-read
++(`skfleet-rotate.py:4427`) catches it and logs `CLAIM_TTL_SKIPPED`, so no bad
++release. The report lies.
++
++### F2f. SHOULD-FIX. `observe()` never reads `core.json`, which is where the fold gets its initial ownership and its existence check.
++
++`claim_expiry.py:132-148` reads `cards/*/events/` only.
++`skcoord/card_store.py:1450-1479` - `fold()` returns `None` when `core.json` is absent, RAISES when it is malformed, and otherwise seeds `card.owner = core["initial_owner"]` with `card.meta["_claim_revision"] = core["initial_claim_revision"]` (and raises if an owner has no revision).
++
++Probe H: core with `initial_owner=alice, initial_claim_revision=r0` and only a
++`note` event. fold `('alice','r0')`, replay nothing. CONFIRMED.
++
++The inverse is the over-report: a card directory with an events dir and no
++valid `core.json` is invisible to the fold and reported by `observe()`. That is
++a release attempt against a card the store says does not exist.
++
++### F2g. SHOULD-FIX. `observe()` reads files the fold does not, and silently tolerates corruption the fold rejects.
++
++`claim_expiry.py:156-171` vs `skcoord/card_store.py:1379-1425`.
++
++- The fold reads only `*.jsonl`. `observe()` reads every file in the directory. Probe F: the release lives in `z@h2.jsonl.tmp`. fold `('alice','r1')`, replay `None`. CONFIRMED. (No non-`.jsonl` files exist in the live store today; checked, count 0.)
++- The fold RAISES `CardStore event source ... is malformed` on a corrupt JSON line; `observe()` skips it. Probe I: fold raises `ValueError`, replay returns `('alice','r1')`. CONFIRMED. `tests/fleet/test_claim_expiry_observe.py:117 test_observe_survives_a_corrupt_line` pins that divergence as intended behaviour.
++- The fold verifies the per-file `prev_hash` chain and raises on a break. `observe()` does not look at `prev_hash` at all, so a tampered or truncated shard folds cleanly in the replay and hard-fails in the store.
++- `observe()` decodes with `errors="ignore"` (`claim_expiry.py:158`); the fold raises on `UnicodeError`.
++- `except OSError: continue` at `claim_expiry.py:159-160` silently drops one event SHARD mid-card and keeps going with partial history. If the dropped shard held the release, a free card looks held. This is the "reports success, does nothing" class the repo has been bitten by: per-card read failure should surface, not vanish.
++- The fold refuses a symlinked card entry as unsafe (`card_store.py:1712-1713`); `observe()` follows it.
++
++### F2h. SHOULD-FIX. `_parse_ts` resolves a naive timestamp in the HOST's local timezone.
++
++`claim_expiry.py:104` - `datetime.fromisoformat(...).timestamp()`. On a naive
++value there is no tzinfo, so `.timestamp()` applies the host's local offset.
++
++Probe J: `"ts": "2026-09-01T00:00:00"` yields 1788235200 on this host instead of
++1788220800 - a 4-hour error (EDT), and a different error on a host in another
++zone. CONFIRMED. Ownership still agreed in this probe; what breaks is
++`last_owner_event_at`, hence `idle_seconds`, hence the deadline.
++
++No naive and no non-UTC-offset timestamps in the sampled live store (checked
++~511 events across 400 files: 0 naive, 0 non-UTC), so this is latent. Fix is one
++line: treat a naive parse as UTC.
++
++## F3. SHOULD-FIX. `SKFLEET_CLAIM_TTL_H=nan` makes every held claim reclaimable, and there is no floor on the TTL.
++
++`src/skcapstone/fleet/claim_expiry.py:51-59`. `float("nan")` parses, `hours <= 0`
++is False for nan, so `ttl_seconds = nan`. In `evaluate()` at `:82`,
++`idle <= nan` is False, so control falls to the `else` and every observation
++becomes `idle-beyond-ttl`, `reclaimable=True`. CONFIRMED:
++
++    'nan'    ttl=nan     1h-idle claim reclaimable=True  reason=idle-beyond-ttl
++    'inf'    ttl=inf     1h-idle claim reclaimable=False reason=within-ttl
++    '0.0001' ttl=0.36s   1h-idle claim reclaimable=True  reason=idle-beyond-ttl
++    '48'     ttl=172800  1h-idle claim reclaimable=False reason=within-ttl
++
++`inf` and `-inf` and overflow are safe; `nan` is the one that inverts.
++`0.0001` shows the second half: any positive float is accepted, so a
++fat-fingered `.5` gives a 30-minute deadline and reclaims live work on the next
++cycle. Given the spec's whole argument is that the failure is asymmetric and a
++short TTL is "strictly worse than the bug", the config reader should reject
++non-finite values and refuse anything below a floor (1h would do).
++
++## F4. SHOULD-FIX. Spec deviation: the TTL release is not distinguishable from the absence path's, and records no outcome.
++
++The spec requires "an ordinary `release_claim` event carrying
++`reason: "lease-expired"` so the action is auditable and distinguishable from a
++worker's own release".
++
++`scripts/fleet/skfleet-rotate.py:4345-4350` sends
++`--abandon-reason error`, byte-identical to the absence path at
++`skfleet-rotate.py:4283-4286`. In the event log the two paths are
++indistinguishable; the only distinguishing record is `CLAIM_TTL_RECLAIMED` in
++the host's rotate log.
++
++Separately: the absence path calls `_record_reap_outcome()` before releasing
++(`skfleet-rotate.py:4279-4281`), whose own comment is "never release without a
++durable outcome", writing a `WORKER_DIED` verdict and a `worker_died` link. The
++TTL path writes neither. Whether that matters depends on whether the BLOCKED
++backoff and provisional-review logic need an outcome to avoid re-dispatch
++churn; it is at minimum a deliberate asymmetry that is not written down.
++
++Not dangerous while the mechanism is off. It is the audit property the spec
++asked for, and it is missing.
++
++## F5. SHOULD-FIX. Nothing computes success criterion 6, the two paths have no arbitration, and report mode has a built-in false positive.
++
++Asked directly: what happens when the absence path and the TTL path run in the
++same cycle and disagree?
++
++- **Both releasing the same generation: cannot happen.** `_expire_idle_claims()` runs after `reap_dead_claims()` (`skfleet-rotate.py:4473-4474`), calls `observe()` at call time (after the absence path finished), and re-reads lifecycle state with the caches popped immediately before each release (`_claim_ttl_fresh_state`, `:4353-4362`). Verified by test and by reading. CLEAN.
++- **Opposite conclusions: unarbitrated, and the TTL path wins.** The absence path can refuse because a host reports the owner PRESENT, which is positive proof of life, and the TTL path then releases anyway because the owner wrote no events. The spec says that is intentional ("dead or making no progress"). Fine as policy. What is missing is that report mode (`skfleet-rotate.py:4406-4413`) logs card, owner, revision and idle hours and **no liveness annotation at all**, so criterion 6 ("the would-reclaim list contains no owner that is live on any host") has to be evaluated by hand against a separate source. For a gate that is the sole thing standing between report and enforce on a 5-host production cluster, the gate should be computed, or at least the list should carry what `live_report_health()` already knows.
++- **Built-in false positive.** `lifecycle_state()` (`skfleet-rotate.py:2403-2415`) returns `"claimed"` only when the fold has an owner AND status is in {ready, doing, review}. It returns `"void"` for anything archived. On this store 16 of the 106 held cards the CLI reports have status `backlog`, and all 37 archived-and-owned ones are `"void"`. Every one of those will be printed as `RECLAIM` by `skfleet-claim-expiry` and then permanently skipped as `CLAIM_TTL_SKIPPED|...|no longer claimed` by the reaper. The report and the actor disagree by construction, and the skip message blames the absence path for something that never happened.
++
++## F6. NIT. One em dash, which is a hard repo rule violation.
++
++`.superpowers/sdd/2026-09-18-claim-ttl/progress.md:1`
++
++    # SDD ledger - plan: docs/superpowers/plans/2026-09-18-claim-ttl.md
++
++The only other hit in the diff is `docs/superpowers/plans/2026-09-18-claim-ttl.md:311`,
++which is the grep pattern `"-\|-"` itself and has to contain the characters to
++be the check. Legitimate. No em or en dash anywhere in `src/`, `scripts/`, or
++`tests/` on this branch.
++
++## F7. NIT. `idle_seconds` is nonsense on a refused row.
++
++`claim_expiry.py:73` - `idle = now - float(o.last_owner_event_at or 0.0)`. When
++nothing was found, `last_owner_event_at` is 0.0 and `idle` becomes the whole
++Unix epoch, so `claim_expiry_cli` prints `hold  <card>  idle=496761.2h`. Also
++the check order at `:76-81` reports `no-claim-revision` in preference to
++`no-owner-activity` when both hold, so the report names the less informative
++refusal.
++
++---
++
++# AREAS THAT ARE CLEAN
++
++- **`reap_dead_claims()` is genuinely unmodified.** Extracted the function from both `origin/main` and HEAD and diffed: identical, 157 lines, no output. CONFIRMED. (`test_reap_dead_claims_is_untouched_by_this_change` only asserts the function does not NAME the new helpers, which is much weaker than what I verified, but reality is fine.)
++- **The new path consults none of the absence machinery.** No reference to `_parse_worker_owner`, `live_report_health`, `REAP_QUORUM` or `CLAIM_GRACE` in any of the three helpers. The guard test at `tests/fleet/test_claim_expiry_reaper.py:352` is NOT vacuous: `_helper_source()` asserts `{node.name for node in nodes} == set(HELPERS)` before joining, and `ast.unparse` strips comments, so the module-level comment at `skfleet-rotate.py:4325` that mentions `_parse_worker_owner` cannot defeat it. One gap worth noting: the guard inspects only the three helpers, and `_claim_ttl_fresh_state` reaches `lifecycle_state` → `_authoritative_card_state` → `_authoritative_card_snapshot`; I read that chain and it does not consult quorum or report health either.
++- **It cannot release in dry-run, in `off`, or in `report`.** `_expire_idle_claims()` is called only in the `else` branch of `if DRY:` (`skfleet-rotate.py:4470-4474`), so DRY is structurally unreachable there, and the internal `dry` check is redundant defense. `off` returns at `:4392` before `observe()` touches disk. `report` returns 0 at `:4413`. Unknown mode values fall to `off` (`claim_expiry.py:64`). All four exercised by real tests, not mock assertions.
++- **The owner predicate is sound on the question asked.** `claim_expiry.py:223` uses equality, not substring, so `jarvis` does not collide with `jarvis-2` or `pi-codex-jarvis-x`. A different actor writing constantly (`mero`, `coord`, `jarvis`) does NOT reset the clock. The one soft spot is that `e.get("owner") == owner` counts a third party's event that merely NAMES the owner (a `coord`-written `assign owner=jarvis`) as owner activity, which inflates freshness and therefore only ever under-reclaims. Acceptable.
++- **Every path into `evaluate()` with `last_owner_event_at == 0.0` is refused.** The acquire event that sets the owner carries `owner == owner`, so the only way to reach 0.0 is an unparseable `ts` on every one of the owner's events, and `:78` refuses that as `no-owner-activity`. Traced all callers (`claim_expiry_cli.py:31`, `skfleet-rotate.py:4398`).
++- **`gateway_root()` itself is correct for its stated job and safe for its other consumer.** `active_gateway_revision()` (`fleet_lane_health.py:77-112`) reads only `parsed.hostname` and `parsed.port`, so the discarded path is genuinely irrelevant to it, and the docstring's claim checks out. `skfleet-rotate.py:1426` correctly passes the RAW value to workers, who need `/v1`. Edge cases behave: `""` → `""`, `"not-a-url"` → unchanged, `"localhost:18790/"` → `"localhost:18790"`, `"http://h:1/v1?x=1"` → `"http://h:1"`. The bug is not in `gateway_root()`, it is that only one of its two consumers was updated (F1).
++- **Console script target is real.** `skfleet-claim-expiry = "skcapstone.fleet.claim_expiry_cli:main"`; `importlib.import_module` resolves it and `main` is callable. CONFIRMED with `PYTHONPATH=src`. The packaging test is a genuine test, not a tautology.
++- **No `Co-Authored-By` footer in any of the 16 commits.** The only matches in the diff are plan/report prose instructing agents never to add one. CONFIRMED via `git log --format='%H %s%n%b'`.
++- **The reaper tests are well built** and largely not of the "cannot fail" class. `test_off_never_reads_the_store` genuinely bites (the import is at function top, before the mode check, and monkeypatching the module attribute is observed because the import is per-call). `_claimed_then_open()` is per-card rather than per-call on purpose, which is the right call. `test_a_zero_exit_is_not_proof_the_claim_moved` and `test_enforce_skips_a_card_the_absence_path_already_released` both assert on behaviour, not on mocks.
++
++---
++
++# WHAT MUST CHANGE BEFORE MERGE
++
++1. **F1.** `endpoint=gateway_root(_GATEWAY_ENDPOINT)` at `skfleet-rotate.py:6098`. Extend `test_v1_suffixed_base_url_still_probes_the_root_endpoints` through `_admit()` so it asserts a lane is ADMITTED, not merely probed. Correct the false sentence in `docs/fleet/lane-admission-health.md`.
++
++# WHAT MUST CHANGE BEFORE `SKFLEET_CLAIM_TTL_MODE` IS EVER SET
++
++2. **F2a.** `revision = e.get("claim_revision") or e.get("event_id") or None`. Without it the mechanism silently declines a third of its target population, including the spec's own worked example, and the operator will read that as "the TTL is working, those cards are just fenceless".
++3. **F2d.** Either track `card.status` in the replay and reproduce the fold's claim-conflict refusal, or take ownership from `CardStore.fold()` and use the event log only for the owner-idle clock. The second is less code and removes F2b, F2c, F2f and F2g at the same time. Until one of them lands, the phase-2 would-reclaim list can name a card a live worker is holding, and criterion 6 cannot be checked.
++4. **F3.** Reject non-finite `SKFLEET_CLAIM_TTL_H` and impose a floor.
++5. **F5.** Put liveness in the report line, or accept in writing that criterion 6 is a manual cross-reference. And reconcile `lifecycle_state`'s `{ready, doing, review}` gate with what the CLI prints, or the first report-mode run arrives with dozens of rows that can never be acted on.
++
++The remaining should-fix items (F2b, F2c, F2e, F2f, F2g, F2h, F4, F6, F7) are
++real but none of them can cause a bad release while the mode is `off`, and the
++CAS fence plus the `state()` re-read means even the over-reporting ones fail
++safe in `enforce`. They are report-accuracy and audit-trail defects, and the
++report is the thing the rollout is about to make decisions from.
+diff --git a/.superpowers/sdd/2026-09-18-claim-ttl/progress.md b/.superpowers/sdd/2026-09-18-claim-ttl/progress.md
+index b1b231ff..b28e680e 100644
+--- a/.superpowers/sdd/2026-09-18-claim-ttl/progress.md
++++ b/.superpowers/sdd/2026-09-18-claim-ttl/progress.md
+@@ -1,13 +1,13 @@
+-# SDD ledger — plan: docs/superpowers/plans/2026-09-18-claim-ttl.md
++# SDD ledger, plan: docs/superpowers/plans/2026-09-18-claim-ttl.md
+ 
+ Spec: docs/superpowers/specs/2026-09-18-claim-ttl-design.md
+ Branch: feat/claim-ttl-heartbeat (worktree ~/skworld-worktrees/claim-ttl-skcapstone)
+ Base: e432e227 (origin/main, the deployed commit)
+ 
+ ## Pre-flight conflict scan
+ 
+ | rows | finding |
+ |---|---|
+ | T1 vs T2 | Same file (claim_expiry.py). T2 appends `observe` + `import json`; T1 defines the dataclasses it returns. Sequential, dispatched to ONE agent to avoid two review cycles on one file. No conflict. |
+ | T2 vs T3 | T3 consumes observe/evaluate/ttl_seconds_from_env/mode_from_env. Signatures fixed in T1/T2 Interfaces blocks. Agree. |
+ | T3 vs T5 | T5 adds a console script pointing at claim_expiry_cli, created in T3. T5 MUST follow T3 or packaging names a nonexistent module. Ordered. |
+diff --git a/docs/fleet/lane-admission-health.md b/docs/fleet/lane-admission-health.md
+index 53161180..0e66a2dd 100644
+--- a/docs/fleet/lane-admission-health.md
++++ b/docs/fleet/lane-admission-health.md
+@@ -70,27 +70,30 @@ Failure is lane scoped. If one model owner or capacity domain is down, ordinary
+ compatible work may use another healthy lane. A lane with multiple configured
+ capacity domains remains usable while at least one exact domain is healthy.
+ Missing, malformed, oversized, stale, partial, mismatched, or ambiguous evidence
+ does not authorize a claim. Repeated blocker records remain limited to one per
+ card per UTC hour.
+ 
+ `SKFLEET_GATEWAY_URL` is REQUIRED and has no default. The hardcoded
+ `http://chiap01:18790` default was removed in `e1ada0e7`, and the dispatcher
+ now exits with `SKFLEET_GATEWAY_URL is required` when it is unset.
+ 
+ **Set it to the gateway ORIGIN, with no path**: `http://chiap01:18790`, never
+ `http://chiap01:18790/v1`. `/health` and `/queue` are served at the gateway
+-root; only chat completions live under `/v1`. The probe normalizes a path
+-away (`gateway_root()`), so the `/v1` form now works, but the origin form is
+-the one to write.
++root; only chat completions live under `/v1`. `gateway_root()` normalizes a
++path away in BOTH places that matter, the snapshot seal and the endpoint
++comparison in `lane_health()`, so the `/v1` form is tolerated end to end.
++Write the origin form anyway: normalizing in one place only relabels the
++outage rather than fixing it, and that mistake is invisible because the
++probe then succeeds and reports no errors at all.
+ 
+ This mattered: on 2026-09-18 all three chi rotate hosts carried the `/v1`
+ form, so the probe requested `/v1/health` and `/v1/queue`, both 404ed, every
+ lane went `unknown`, and lane admission blocked every card. The fleet had not
+ launched a worker in three days (373 consecutive NOOP cycles) while the
+ gateway itself was healthy the whole time. Note the shape of the trap: the
+ chat-completions example above uses `$SKFLEET_GATEWAY_URL/v1/chat/completions`
+ directly beside `$SKFLEET_GATEWAY_URL/health`, which makes folding `/v1` into
+ the variable itself the natural mistake.
+ 
+ Operators may set `SKFLEET_GATEWAY_URL`, `SKFLEET_GATEWAY_SSH_USER`, or the
+ existing per-lane `SKFLEET_*_CAPACITY_DOMAINS` variables without changing
+diff --git a/docs/superpowers/specs/2026-09-18-claim-ttl-design.md b/docs/superpowers/specs/2026-09-18-claim-ttl-design.md
+index daebed88..2fda2739 100644
+--- a/docs/superpowers/specs/2026-09-18-claim-ttl-design.md
++++ b/docs/superpowers/specs/2026-09-18-claim-ttl-design.md
+@@ -165,24 +165,54 @@ strictly worse than the current bug. So enforcement ships off.
+ 
+ **Phase 1, emit only.** Claims carry `expires_at`; workers beat. Nothing
+ reclaims. Run until the fleet shows beats arriving for every live worker.
+ 
+ **Phase 2, report only.** The reaper logs what it *would* reclaim and emits
+ no release. Compare that list against known-live workers. A live worker
+ appearing in it is a phase-1 defect and blocks phase 3.
+ 
+ **Phase 3, enforce.** Reclaiming turns on, per host, behind a switch.
+ 
+ The gate between phases is evidence from the fleet, not elapsed time.
+ 
++## Ownership by assignment is out of scope, deliberately
++
++A card can be owned two ways. `claim` is the claim-specific primitive and
++carries a `claim_revision`; `assign` is the generic assignment primitive and
++carries none. Both set `card.owner` in the fold.
++
++This mechanism collects **claims only**. An assignment has no revision, so
++`coord release-claim` has no `--expected-claim-revision` to fence against,
++and releasing one unfenced is exactly the race the fence exists to prevent.
++Such a card is therefore reported with reason `no-claim-revision` and never
++reclaimed.
++
++Measured on chi, three held cards are assignments rather than claims:
++
++    122ebff1  jarvis                   idle  34.6h   587 events, zero claims
++    72df1b66  pi-skl-gateway-72df1b66  idle 518.6h
++    cec6b1c0  pi                       idle 514.4h
++
++Clearing those needs `coord unassign`, which is a different action with
++different semantics, so it belongs in its own change rather than smuggled
++into this one. The report making them VISIBLE is the deliverable here; an
++earlier version of `observe` ignored `assign` entirely and these three were
++invisible, which is worse.
++
++Note the distinction that does NOT apply: a `claim` with no explicit
++`claim_revision` is still fenced, because the fold falls back to the event's
++`event_id`. Reading the revision from the fold rather than from the raw
++event is what picks that up. Taking the field literally would have refused a
++third of the held population on one store.
++
+ ## What this does not do
+ 
+ - It does not touch seat exclusion. That is Amendment B, card `f8865032`,
+   deliberately sequenced after this.
+ - It does not retroactively fix the 371 existing stuck claims. Those
+   predate the field and will never gain one. They are cleared by a one-time
+   sweep, scoped and gated separately (see below).
+ - It does not make `~/.skcapstone` synchronous. Replication lag is still
+   10 to 20 seconds, which is why the TTL is hours and not seconds.
+ 
+ ## The one-time sweep
+ 
+diff --git a/src/skcapstone/fleet/claim_expiry.py b/src/skcapstone/fleet/claim_expiry.py
+index c9ad51df..5cd7fd9d 100644
+--- a/src/skcapstone/fleet/claim_expiry.py
++++ b/src/skcapstone/fleet/claim_expiry.py
+@@ -7,63 +7,87 @@ mode can explain itself without re-deriving anything.
+ The deadline is measured from the last event the OWNER wrote on the card it
+ holds, not from the claim timestamp. A worker doing real work writes move,
+ describe, evidence and verdict events continuously; one that has written
+ nothing for the whole TTL is dead or making no progress, and in both cases
+ the card should return to the pool. Measured on chi 2026-09-18, the 349
+ held claims have a minimum owner-idle of 30.9 hours, so a 48 hour deadline
+ separates them from live work with room to spare.
+ """
+ 
+ from __future__ import annotations
+ 
+ import json
++import math
+ from collections.abc import Iterable, Mapping
+ from dataclasses import dataclass
+ from pathlib import Path
+ 
+ #: Hours of owner inactivity before a claim may be reclaimed. Deliberately
+ #: generous: the failure is asymmetric. Too long leaves a card stuck, which
+ #: is the status quo; too short steals a card from a worker mid-run.
+ DEFAULT_TTL_HOURS = 48.0
+ 
++#: The shortest TTL an operator may configure. The deadline exists to
++#: tolerate a live worker that has not written an event recently, so a
++#: margin measured in minutes defeats its purpose.
++MIN_TTL_HOURS = 1.0
++
+ _MODES = ("off", "report", "enforce")
+ 
+ 
+ @dataclass(frozen=True)
+ class ClaimObservation:
+     """One held claim, as read from the CardStore fold plus its event log."""
+ 
+     card_id: str
+     owner: str
+     claim_revision: str | None
+     last_owner_event_at: float
+ 
+ 
+ @dataclass(frozen=True)
+ class ExpiryVerdict:
+     card_id: str
+     owner: str
+     claim_revision: str
+     idle_seconds: float
+     reclaimable: bool
+     reason: str
+ 
+ 
+ def ttl_seconds_from_env(env: Mapping[str, str]) -> float:
++    """The configured TTL in seconds, falling back to the default.
++
++    Every rejection path returns the DEFAULT rather than raising, because
++    this is read inside a dispatcher cycle and a hard failure there costs
++    more than an unexpectedly conservative deadline.
++
++    Two rejections matter more than they look:
++
++    ``nan`` parses as a float and survives a ``<= 0`` test, because every
++    comparison against nan is False. It then makes ``idle <= ttl`` False for
++    ANY claim, so every claim in the store becomes reclaimable, including
++    one made a minute ago. Verified before this guard existed.
++
++    A TTL below MIN_TTL_HOURS is refused as well. The deadline is a safety
++    margin against a live worker that has simply not written an event
++    recently, and a sub-hour margin is not one. ``SKFLEET_CLAIM_TTL_H=.5``
++    would otherwise arm a 30-minute deadline.
++    """
+     raw = str(env.get("SKFLEET_CLAIM_TTL_H", "")).strip()
+     try:
+         hours = float(raw)
+     except (TypeError, ValueError):
+         return DEFAULT_TTL_HOURS * 3600.0
+-    if hours <= 0:
++    if not math.isfinite(hours) or hours < MIN_TTL_HOURS:
+         return DEFAULT_TTL_HOURS * 3600.0
+     return hours * 3600.0
+ 
+ 
+ def mode_from_env(env: Mapping[str, str]) -> str:
+     raw = str(env.get("SKFLEET_CLAIM_TTL_MODE", "")).strip().lower()
+     return raw if raw in _MODES else "off"
+ 
+ 
+ def evaluate(
+     observations: Iterable[ClaimObservation], *, now: float, ttl_seconds: float
+ ) -> list[ExpiryVerdict]:
+@@ -97,139 +121,108 @@ def evaluate(
+     return out
+ 
+ 
+ def _parse_ts(value: object) -> float:
+     from datetime import datetime
+ 
+     try:
+         return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+     except Exception:
+         return 0.0
+ 
+ 
+-#: Void and archive are FINAL. A claim that arrives after them does not
+-#: resurrect the card, and treating it as if it did is a known, costly
+-#: regression: 88 of 114 voids were once silently ineffective and 88 cards
+-#: stayed resurrectable, which reversed decisions the operator had already
+-#: made. The fold enforces this, so the replay must too. Measured on chi:
+-#: card 7e2c6788 took a claim 21 SECONDS after its void+archive, and
+-#: a80f87a9 took one an hour after, and the fold reports neither as held.
+-_TERMINAL_FINAL = {"void", "archive"}
+-
+-#: Complete is SOFT: it clears ownership, but a later assign or claim
+-#: legitimately reopens the card, and the fold honors that. Card cec6b1c0
+-#: on chi is the worked example (claim, release, claim, complete, complete,
+-#: assign) and the fold reports it held by `pi`.
+-_TERMINAL_SOFT = {"complete"}
+-#: Actions that SET an owner. `claim` is the claim-specific primitive and
+-#: carries a claim_revision; `assign` is the generic assignment primitive
+-#: and carries none. Both set `card.owner` in the fold, so a replay that
+-#: honors `unassign` while ignoring `assign` is asymmetric and
+-#: under-reports held cards.
+-_ACQUIRE = {"claim", "assign"}
+-_RELEASE = {"release_claim", "unassign"}
+-
+-
+-def observe(home: Path) -> list[ClaimObservation]:
+-    """Every claim the store currently reports as held, with owner idleness.
+-
+-    Reads the event log directly rather than the CardStore fold, because the
+-    deadline needs the last event the OWNER wrote, which the fold does not
+-    retain. Ownership itself is decided by replaying the claim/release pairs
+-    in sequence order, which is what the fold does: counting claim events
+-    against release events overcounts, since a worker re-claiming a card it
+-    already holds writes a second claim that one release settles.
+-    """
+-    root = Path(home) / "cards"
+-    if not root.is_dir():
+-        return []
++def _last_owner_event_at(root: Path, card_id: str, owner: str) -> float:
++    """When the owner last wrote ANY event to the card it holds.
+ 
+-    out: list[ClaimObservation] = []
+-    for card_dir in sorted(root.iterdir()):
+-        events_dir = card_dir / "events"
+-        if not events_dir.is_dir():
++    This is the only thing the event log is read for. Ownership itself comes
++    from the fold, which is the authority, so nothing here needs to know how
++    a claim is won or lost.
++
++    Events are sharded one file per writer (``jarvis@chiap03.jsonl``,
++    ``pi-codex-chiap01-<cid>@chiap01.jsonl``), so every shard has to be read;
++    the owner's own shard is not the only place its name appears.
++    """
++    events_dir = root / "cards" / str(card_id) / "events"
++    if not events_dir.is_dir():
++        return 0.0
++    latest = 0.0
++    try:
++        names = sorted(events_dir.iterdir())
++    except OSError:
++        return 0.0
++    for name in names:
++        if name.suffix != ".jsonl":
+             continue
+-        events: list[dict] = []
+         try:
+-            names = sorted(events_dir.iterdir())
++            handle = name.open(encoding="utf-8", errors="ignore")
+         except OSError:
+             continue
+-        for fn in names:
+-            try:
+-                fh = fn.open(encoding="utf-8", errors="ignore")
+-            except OSError:
+-                continue
+-            with fh:
+-                for line in fh:
+-                    line = line.strip()
+-                    if not line:
+-                        continue
+-                    try:
+-                        e = json.loads(line)
+-                    except ValueError:
+-                        continue
+-                    if isinstance(e, dict):
+-                        events.append(e)
+-        if not events:
++        with handle:
++            for line in handle:
++                line = line.strip()
++                if not line:
++                    continue
++                try:
++                    event = json.loads(line)
++                except ValueError:
++                    continue
++                if not isinstance(event, dict):
++                    continue
++                if event.get("writer") != owner and event.get("owner") != owner:
++                    continue
++                stamp = _parse_ts(event.get("ts"))
++                if stamp > latest:
++                    latest = stamp
++    return latest
++
++
++def observe(home: Path | str) -> list[ClaimObservation]:
++    """Every claim the CardStore fold reports as held, with owner idleness.
++
++    Ownership and the claim revision come from ``CardStore.fold()`` rather
++    than from a local replay of the event log. An earlier version of this
++    function replayed the events itself and it was wrong four separate
++    times, each found only by diffing against the fold on a live store:
++
++      1. it sorted by ``(seq, ts)``, but events shard one file per writer and
++         ``seq`` restarts at 0 in each, so releases were lost (98 cards)
++      2. it ignored ``assign`` while honoring ``unassign`` (3 cards)
++      3. fixing (2) let a claim resurrect a voided card (2 cards), which is
++         the documented regression that once left 88 of 114 voids ineffective
++      4. it took ``claim_revision`` literally, where the fold falls back to
++         ``event_id``, and it let a second claim by a DIFFERENT owner win,
++         where the fold refuses it and keeps the first owner
++
++    (4) is the one that settles the argument. The fold's second-claim rule is
++    status-dependent (it refuses only while the card is in ready, doing or
++    review), so reproducing it faithfully means reproducing column
++    transitions too, which means reimplementing the fold. Two
++    implementations of one rule drift, and the drift is silent. So this
++    function asks the fold and reads the log only for a timestamp the fold
++    does not retain.
++    """
++    from skcoord.card_store import CardStore
++
++    root = Path(home)
++    cards = CardStore(root).list_cards(include_archived=False, degrade_unreadable=True)
++
++    out: list[ClaimObservation] = []
++    for card in cards:
++        owner = getattr(card, "owner", None)
++        if not owner:
+             continue
+-        # Order by TIMESTAMP first, seq only as a tiebreak. Events are sharded
+-        # one file per writer (`jarvis@chiap03.jsonl`,
+-        # `pi-codex-chiap01-<cid>@chiap01.jsonl`), and `seq` restarts at 0 in
+-        # EVERY file, so seq is meaningless across writers. Sorting by seq
+-        # first interleaves writers and can place a release before a later
+-        # claim by a different writer, leaving the card looking held forever.
+-        # Card bf80259a is the worked example: a claim at seq=1 06:18:40 and a
+-        # release at seq=0 06:27:06, where seq-first ordering loses the
+-        # release and disagrees with CardStore.fold().
+-        events.sort(key=lambda e: (_parse_ts(e.get("ts")), e.get("seq") or 0))
+-
+-        owner: str | None = None
+-        revision: str | None = None
+-        terminal = False
+-        for e in events:
+-            action = e.get("action")
+-            if action in _TERMINAL_FINAL:
+-                # Final: stop here. Nothing after a void or an archive can
+-                # put this card back in play.
+-                terminal = True
+-                owner = None
+-                revision = None
+-                break
+-            if action in _TERMINAL_SOFT:
+-                # Soft: clears ownership without ending the replay, because
+-                # a later assign or claim reopens the card.
+-                terminal = True
+-                owner = None
+-                revision = None
+-            elif action in _ACQUIRE and e.get("owner"):
+-                owner = str(e["owner"])
+-                # Only `claim` carries a claim_revision. An `assign` sets an
+-                # owner with no revision, and therefore no CAS fence, so
+-                # evaluate() will refuse to reclaim it ("no-claim-revision").
+-                # That refusal is correct: releasing an assignment needs
+-                # `coord unassign`, not `release-claim` with an expected
+-                # revision. Recording it still matters, because the report
+-                # has to make such a card VISIBLE rather than pretend the
+-                # store holds nothing.
+-                revision = e.get("claim_revision") or None
+-                terminal = False
+-            elif action in _RELEASE:
+-                owner = None
+-                revision = None
+-        if terminal or not owner:
++        if getattr(card, "archived", False):
+             continue
+-
+-        last_owner = 0.0
+-        for e in events:
+-            if e.get("writer") == owner or e.get("owner") == owner:
+-                t = _parse_ts(e.get("ts"))
+-                if t > last_owner:
+-                    last_owner = t
++        card_id = str(getattr(card, "id", "") or "")
++        if not card_id:
++            continue
++        meta = getattr(card, "meta", None) or {}
++        revision = meta.get("_claim_revision") or None
+         out.append(
+             ClaimObservation(
+-                card_id=card_dir.name,
+-                owner=owner,
+-                claim_revision=revision,
+-                last_owner_event_at=last_owner,
++                card_id=card_id,
++                owner=str(owner),
++                claim_revision=str(revision) if revision else None,
++                last_owner_event_at=_last_owner_event_at(root, card_id, str(owner)),
+             )
+         )
+     return out
+diff --git a/src/skcapstone/fleet_lane_health.py b/src/skcapstone/fleet_lane_health.py
+index a65b4875..a48b3677 100644
+--- a/src/skcapstone/fleet_lane_health.py
++++ b/src/skcapstone/fleet_lane_health.py
+@@ -325,25 +325,25 @@ def lane_health(
+     now: float | None = None,
+ ) -> tuple[bool, str]:
+     """Admit only an exact healthy binding from the current selector cycle."""
+     current = time.time() if now is None else now
+     if snapshot.get("schema_version") != 2 or snapshot.get("cycle_id") != cycle_id:
+         return False, "cycle-mismatch"
+     try:
+         age = current - float(snapshot["observed_at"])
+     except (KeyError, TypeError, ValueError):
+         return False, "unknown"
+     if age < 0 or age > MAX_AGE_SECONDS:
+         return False, "stale"
+-    if snapshot.get("endpoint") != endpoint.rstrip("/"):
++    if snapshot.get("endpoint") != gateway_root(endpoint):
+         return False, "endpoint-mismatch"
+     if (
+         not REVISION_RE.fullmatch(active_revision)
+         or snapshot.get("runtime_revision") != active_revision
+     ):
+         return False, "revision-mismatch"
+     matches = [
+         row
+         for row in snapshot.get("lanes", [])
+         if isinstance(row, dict) and row.get("lane") == lane
+     ]
+     exact = [row for row in matches if row.get("model") == model]
+diff --git a/tests/fleet/test_claim_expiry.py b/tests/fleet/test_claim_expiry.py
+index 8b14928c..7e2ce441 100644
+--- a/tests/fleet/test_claim_expiry.py
++++ b/tests/fleet/test_claim_expiry.py
+@@ -75,12 +75,40 @@ def test_ttl_from_env_override():
+ 
+ 
+ def test_ttl_from_env_rejects_garbage_and_nonpositive():
+     for bad in ("0", "-1", "abc", ""):
+         assert ttl_seconds_from_env({"SKFLEET_CLAIM_TTL_H": bad}) == 48 * HOUR
+ 
+ 
+ def test_mode_defaults_off_and_unknown_is_off():
+     assert mode_from_env({}) == "off"
+     assert mode_from_env({"SKFLEET_CLAIM_TTL_MODE": "banana"}) == "off"
+     assert mode_from_env({"SKFLEET_CLAIM_TTL_MODE": "ENFORCE"}) == "enforce"
+     assert mode_from_env({"SKFLEET_CLAIM_TTL_MODE": " report "}) == "report"
++
++
++def test_nan_ttl_falls_back_to_the_default():
++    """`nan` parses as a float and survives a `<= 0` test, because every
++    comparison against nan is False. Left through, it makes `idle <= ttl`
++    False for EVERY claim, so a claim made a minute ago becomes reclaimable.
++    Verified before this guard existed.
++    """
++    assert ttl_seconds_from_env({"SKFLEET_CLAIM_TTL_H": "nan"}) == 48 * HOUR
++    for token in ("inf", "-inf", "NaN", "Infinity"):
++        assert ttl_seconds_from_env({"SKFLEET_CLAIM_TTL_H": token}) == 48 * HOUR, token
++
++
++def test_a_nan_ttl_cannot_make_a_fresh_claim_reclaimable():
++    """The consequence, asserted end to end rather than on the parser."""
++    ttl = ttl_seconds_from_env({"SKFLEET_CLAIM_TTL_H": "nan"})
++    v = evaluate([obs(last=NOW - 60)], now=NOW, ttl_seconds=ttl)[0]
++    assert v.reclaimable is False
++    assert v.reason == "within-ttl"
++
++
++def test_a_sub_hour_ttl_is_refused():
++    """A deadline measured in minutes is not a safety margin."""
++    for token in ("0.5", ".5", "0.01"):
++        assert ttl_seconds_from_env({"SKFLEET_CLAIM_TTL_H": token}) == 48 * HOUR, token
++    # exactly at the floor is allowed
++    assert ttl_seconds_from_env({"SKFLEET_CLAIM_TTL_H": "1"}) == 1 * HOUR
++    assert ttl_seconds_from_env({"SKFLEET_CLAIM_TTL_H": "6"}) == 6 * HOUR
+diff --git a/tests/fleet/test_claim_expiry_cli.py b/tests/fleet/test_claim_expiry_cli.py
+index 45aa4bf9..46060975 100644
+--- a/tests/fleet/test_claim_expiry_cli.py
++++ b/tests/fleet/test_claim_expiry_cli.py
+@@ -1,145 +1,155 @@
++"""The read-only claim-expiry report, driven against a REAL CardStore.
++
++`observe()` reads the CardStore fold rather than replaying raw event files,
++so these fixtures build cards through the store API. An earlier version of
++this file wrote synthetic JSONL directly, which meant it asserted on a
++contract the code no longer has.
++"""
++
++from __future__ import annotations
++
++import itertools
+ import json
++import time
++from datetime import datetime, timezone
++
++from skcoord.card_store import CardCore, CardStore
+ 
+ from skcapstone.fleet import claim_expiry_cli
+ 
++_COUNTER = itertools.count(1)
++
++
++def _iso_at(unix_seconds: float) -> str:
++    return datetime.fromtimestamp(unix_seconds, timezone.utc).isoformat()
++
++
++def _claimed(home, *, owner, idle_hours, revision="rev-1"):
++    """A card claimed by `owner` whose last owner event is `idle_hours` old.
++
++    The claim goes through the store so the fold sees it, then its `ts` is
++    rewritten on disk to age it. Backdating is the only way to produce an
++    old claim without waiting, and it exercises exactly the field that
++    `observe()` reads for idleness.
++    """
++    store = CardStore(home)
++    card_id = f"{next(_COUNTER):08x}"
++    store.create(CardCore(id=card_id, title=f"card {card_id}"))
++    store.append_event(card_id, "claim", owner, owner=owner, claim_revision=revision)
++
++    stamp = _iso_at(time.time() - idle_hours * 3600.0)
++    for shard in (home / "cards" / card_id / "events").glob("*.jsonl"):
++        out = []
++        for line in shard.read_text(encoding="utf-8").splitlines():
++            if not line.strip():
++                continue
++            event = json.loads(line)
++            if event.get("writer") == owner or event.get("owner") == owner:
++                event["ts"] = stamp
++            out.append(json.dumps(event))
++        shard.write_text("\n".join(out) + "\n", encoding="utf-8")
++    return card_id
++
+ 
+ def test_reports_reclaimable_as_json(tmp_path, capsys, monkeypatch):
+-    from tests.fleet.test_claim_expiry_observe import _card, _iso
+-
+-    _card(
+-        tmp_path,
+-        "aaaa1111",
+-        [
+-            {
+-                "action": "claim",
+-                "owner": "jarvis",
+-                "writer": "jarvis",
+-                "claim_revision": "rev1",
+-                "ts": _iso(-100),
+-            },
+-        ],
+-    )
+-    _card(
+-        tmp_path,
+-        "bbbb2222",
+-        [
+-            {
+-                "action": "claim",
+-                "owner": "fresh",
+-                "writer": "fresh",
+-                "claim_revision": "rev2",
+-                "ts": _iso(-1),
+-            },
+-        ],
+-    )
+-    rc = claim_expiry_cli.main(["--home", str(tmp_path), "--json"])
+-    assert rc == 0
++    monkeypatch.delenv("SKFLEET_CLAIM_TTL_MODE", raising=False)
++    stale = _claimed(tmp_path, owner="jarvis", idle_hours=100)
++    fresh = _claimed(tmp_path, owner="live-worker", idle_hours=1)
++
++    assert claim_expiry_cli.main(["--home", str(tmp_path), "--json"]) == 0
+     payload = json.loads(capsys.readouterr().out)
+-    ids = {r["card_id"]: r for r in payload["verdicts"]}
+-    assert ids["aaaa1111"]["reclaimable"] is True
+-    assert ids["bbbb2222"]["reclaimable"] is False
++    rows = {r["card_id"]: r for r in payload["verdicts"]}
++
++    assert rows[stale]["reclaimable"] is True
++    assert rows[stale]["reason"] == "idle-beyond-ttl"
++    assert rows[fresh]["reclaimable"] is False
++    assert rows[fresh]["reason"] == "within-ttl"
+     assert payload["mode"] == "off"
++    assert payload["ttl_hours"] == 48.0
++    assert payload["held_count"] == 2
+     assert payload["reclaimable_count"] == 1
+ 
+ 
+ def test_exit_code_is_zero_even_with_findings(tmp_path):
+-    """A report is not a failure. Nothing in CI should go red because the
+-    fleet has expired claims."""
++    """A report is not a failure. Nothing should go red because the fleet
++    has expired claims."""
++    _claimed(tmp_path, owner="jarvis", idle_hours=500)
++    assert claim_expiry_cli.main(["--home", str(tmp_path), "--json"]) == 0
++    assert claim_expiry_cli.main(["--home", str(tmp_path)]) == 0
++
++
++def test_exit_code_is_zero_on_an_empty_store(tmp_path):
+     assert claim_expiry_cli.main(["--home", str(tmp_path), "--json"]) == 0
+ 
+ 
+ def test_reclaimable_only_filters_output(tmp_path, capsys):
+-    from tests.fleet.test_claim_expiry_observe import _card, _iso
+-
+-    _card(
+-        tmp_path,
+-        "aaaa1111",
+-        [
+-            {
+-                "action": "claim",
+-                "owner": "jarvis",
+-                "writer": "jarvis",
+-                "claim_revision": "rev1",
+-                "ts": _iso(-100),
+-            },
+-        ],
+-    )
+-    _card(
+-        tmp_path,
+-        "bbbb2222",
+-        [
+-            {
+-                "action": "claim",
+-                "owner": "fresh",
+-                "writer": "fresh",
+-                "claim_revision": "rev2",
+-                "ts": _iso(-1),
+-            },
+-        ],
+-    )
+-    rc = claim_expiry_cli.main(["--home", str(tmp_path), "--json", "--reclaimable-only"])
+-    assert rc == 0
++    stale = _claimed(tmp_path, owner="jarvis", idle_hours=100)
++    fresh = _claimed(tmp_path, owner="live-worker", idle_hours=1)
++
++    claim_expiry_cli.main(["--home", str(tmp_path), "--json", "--reclaimable-only"])
+     payload = json.loads(capsys.readouterr().out)
+-    ids = {r["card_id"] for r in payload["verdicts"]}
+-    assert ids == {"aaaa1111"}
+-    # counts still reflect the whole fleet, not just the filtered rows shown
++    shown = {r["card_id"] for r in payload["verdicts"]}
++
++    assert shown == {stale}
++    assert fresh not in shown
++    # The counts still describe the WHOLE store, not the filtered view, or a
++    # reader cannot tell a quiet fleet from a filtered report.
+     assert payload["held_count"] == 2
+     assert payload["reclaimable_count"] == 1
+ 
+ 
+ def test_text_output_is_not_json(tmp_path, capsys):
+-    from tests.fleet.test_claim_expiry_observe import _card, _iso
+-
+-    _card(
+-        tmp_path,
+-        "aaaa1111",
+-        [
+-            {
+-                "action": "claim",
+-                "owner": "jarvis",
+-                "writer": "jarvis",
+-                "claim_revision": "rev1",
+-                "ts": _iso(-10),
+-            },
+-        ],
+-    )
+-    rc = claim_expiry_cli.main(["--home", str(tmp_path)])
+-    assert rc == 0
++    stale = _claimed(tmp_path, owner="jarvis", idle_hours=100)
++    claim_expiry_cli.main(["--home", str(tmp_path)])
+     out = capsys.readouterr().out
+-    assert "mode=off" in out
+-    assert "aaaa1111" in out
+-    assert "RECLAIM" not in out  # -10h is within the 48h default TTL
++
++    assert stale in out
++    assert "RECLAIM" in out
++    assert "jarvis" in out
++    assert "ttl=48.0h" in out
++    try:
++        json.loads(out)
++    except ValueError:
++        pass
++    else:  # pragma: no cover
++        raise AssertionError("text mode must not emit JSON")
+ 
+ 
+ def test_never_writes_anything_under_home(tmp_path):
+-    """A report CLI must be read only. Nothing new should appear under
+-    --home after a run, in JSON or text mode, filtered or not."""
+-    from tests.fleet.test_claim_expiry_observe import _card, _iso
+-
+-    _card(
+-        tmp_path,
+-        "aaaa1111",
+-        [
+-            {
+-                "action": "claim",
+-                "owner": "jarvis",
+-                "writer": "jarvis",
+-                "claim_revision": "rev1",
+-                "ts": _iso(-100),
+-            },
+-        ],
+-    )
+-    before = sorted(str(p) for p in tmp_path.rglob("*"))
++    """The report is read-only, and it runs on a live production store."""
++    _claimed(tmp_path, owner="jarvis", idle_hours=100)
++
++    def snapshot():
++        return {p: p.stat().st_mtime_ns for p in sorted(tmp_path.rglob("*")) if p.is_file()}
++
++    before = snapshot()
+     claim_expiry_cli.main(["--home", str(tmp_path), "--json"])
+     claim_expiry_cli.main(["--home", str(tmp_path)])
+-    claim_expiry_cli.main(["--home", str(tmp_path), "--reclaimable-only"])
+-    after = sorted(str(p) for p in tmp_path.rglob("*"))
+-    assert before == after
++    after = snapshot()
++
++    assert after == before, "the report mutated the store"
+ 
+ 
+ def test_reports_mode_from_env(tmp_path, capsys, monkeypatch):
+-    monkeypatch.setenv("SKFLEET_CLAIM_TTL_MODE", "report")
+-    rc = claim_expiry_cli.main(["--home", str(tmp_path), "--json"])
+-    assert rc == 0
++    for value, expected in (
++        ("report", "report"),
++        ("enforce", "enforce"),
++        ("banana", "off"),
++        ("", "off"),
++    ):
++        monkeypatch.setenv("SKFLEET_CLAIM_TTL_MODE", value)
++        claim_expiry_cli.main(["--home", str(tmp_path), "--json"])
++        assert json.loads(capsys.readouterr().out)["mode"] == expected, value
++
++
++def test_a_misconfigured_ttl_does_not_mark_a_fresh_claim_reclaimable(
++    tmp_path, capsys, monkeypatch
++):
++    """End to end guard on the nan hazard: left through, it made every claim
++    in the store reclaimable, including one made a minute ago."""
++    monkeypatch.setenv("SKFLEET_CLAIM_TTL_H", "nan")
++    _claimed(tmp_path, owner="live-worker", idle_hours=0.02)
++    claim_expiry_cli.main(["--home", str(tmp_path), "--json"])
+     payload = json.loads(capsys.readouterr().out)
+-    assert payload["mode"] == "report"
++    assert payload["ttl_hours"] == 48.0
++    assert payload["reclaimable_count"] == 0
+diff --git a/tests/fleet/test_claim_expiry_observe.py b/tests/fleet/test_claim_expiry_observe.py
+index 791139f5..4e06fc2d 100644
+--- a/tests/fleet/test_claim_expiry_observe.py
++++ b/tests/fleet/test_claim_expiry_observe.py
+@@ -1,411 +1,247 @@
++"""`observe()` against a REAL CardStore, never a hand-rolled event replay.
++
++The first version of `observe` replayed the event log itself and was wrong
++four separate times, each caught only by diffing against the fold on a live
++store: a `(seq, ts)` sort key where events shard one file per writer and
++`seq` restarts at 0 in each; `assign` ignored while `unassign` was honored;
++a claim resurrecting a voided card; and `claim_revision` taken literally
++where the fold falls back to `event_id`, plus a second claim by a different
++owner winning where the fold refuses it.
++
++So these tests drive the real `CardStore` and assert that `observe` agrees
++with `fold()`. A test built from synthetic JSONL cannot establish that, and
++that is exactly how four defects got through.
++"""
++
++from __future__ import annotations
++
++import itertools
+ import json
+ import time
+-from pathlib import Path
++from datetime import datetime, timezone
+ 
+ import pytest
++from skcoord.card_store import CardCore, CardStore
+ 
+-from skcapstone.fleet.claim_expiry import observe
++from skcapstone.fleet.claim_expiry import evaluate, observe
+ 
++HOUR = 3600.0
+ 
+-def _card(home: Path, cid: str, events: list[dict]) -> None:
+-    d = home / "cards" / cid / "events"
+-    d.mkdir(parents=True, exist_ok=True)
+-    with (d / "0001.jsonl").open("w", encoding="utf-8") as fh:
+-        for e in events:
+-            fh.write(json.dumps(e) + "\n")
+ 
++def _iso_now() -> str:
++    return datetime.now(timezone.utc).isoformat()
+ 
+-def _iso(offset_h: float) -> str:
+-    from datetime import datetime, timedelta, timezone
+ 
+-    return (datetime.now(timezone.utc) + timedelta(hours=offset_h)).isoformat()
++def _store(tmp_path):
++    return CardStore(tmp_path)
+ 
+ 
+-def test_observe_reports_held_claim_with_owner_activity(tmp_path):
+-    _card(
+-        tmp_path,
+-        "aaaa1111",
+-        [
+-            {
+-                "action": "claim",
+-                "owner": "jarvis",
+-                "writer": "jarvis",
+-                "claim_revision": "rev1",
+-                "ts": _iso(-100),
+-            },
+-            {"action": "move", "writer": "jarvis", "ts": _iso(-60)},
+-        ],
+-    )
+-    got = {o.card_id: o for o in observe(tmp_path)}
+-    assert "aaaa1111" in got
+-    o = got["aaaa1111"]
+-    assert o.owner == "jarvis"
+-    assert o.claim_revision == "rev1"
+-    # last OWNER event is the move at -60h, not the claim at -100h
+-    assert o.last_owner_event_at == pytest.approx(time.time() - 60 * 3600, abs=120)
+-
+-
+-def test_observe_ignores_a_released_claim(tmp_path):
+-    _card(
+-        tmp_path,
+-        "bbbb2222",
+-        [
+-            {
+-                "action": "claim",
+-                "owner": "jarvis",
+-                "writer": "jarvis",
+-                "claim_revision": "rev1",
+-                "ts": _iso(-100),
+-            },
+-            {
+-                "action": "release_claim",
+-                "released_owner": "jarvis",
+-                "writer": "mero",
+-                "expected_claim_revision": "rev1",
+-                "ts": _iso(-90),
+-            },
+-        ],
+-    )
+-    assert [o.card_id for o in observe(tmp_path)] == []
++_COUNTER = itertools.count(1)
+ 
+ 
+-def test_observe_ignores_a_completed_card(tmp_path):
+-    _card(
+-        tmp_path,
+-        "cccc3333",
+-        [
+-            {
+-                "action": "claim",
+-                "owner": "jarvis",
+-                "writer": "jarvis",
+-                "claim_revision": "rev1",
+-                "ts": _iso(-100),
+-            },
+-            {"action": "complete", "writer": "jarvis", "ts": _iso(-90)},
+-        ],
+-    )
+-    assert [o.card_id for o in observe(tmp_path)] == []
++def _card(store, title="a card", **kw):
++    """Create a card with a real, non-path identifier.
+ 
++    CardStore.create validates the id as a lock identifier, so an empty or
++    path-like id is rejected outright.
++    """
++    card_id = kw.pop("id", None) or f"{next(_COUNTER):08x}"
++    return store.create(CardCore(id=card_id, title=title, **kw))
+ 
+-def test_observe_uses_the_latest_claim_generation(tmp_path):
+-    """A re-claim by the same owner supersedes the first. The revision
+-    reported must be the newest, or the CAS fence targets a dead generation."""
+-    _card(
+-        tmp_path,
+-        "dddd4444",
+-        [
+-            {
+-                "action": "claim",
+-                "owner": "w1",
+-                "writer": "w1",
+-                "claim_revision": "old",
+-                "ts": _iso(-100),
+-            },
+-            {
+-                "action": "claim",
+-                "owner": "w1",
+-                "writer": "w1",
+-                "claim_revision": "new",
+-                "ts": _iso(-99),
+-            },
+-        ],
+-    )
+-    o = observe(tmp_path)[0]
+-    assert o.claim_revision == "new"
+ 
++def _held(tmp_path):
++    return {o.card_id: o for o in observe(tmp_path)}
+ 
+-def test_observe_survives_a_corrupt_line(tmp_path):
+-    d = tmp_path / "cards" / "eeee5555" / "events"
+-    d.mkdir(parents=True)
+-    (d / "0001.jsonl").write_text(
+-        "not json\n"
+-        + json.dumps(
+-            {
+-                "action": "claim",
+-                "owner": "w2",
+-                "writer": "w2",
+-                "claim_revision": "r",
+-                "ts": _iso(-100),
+-            }
+-        )
+-        + "\n",
+-        encoding="utf-8",
+-    )
+-    assert observe(tmp_path)[0].owner == "w2"
+ 
++def test_an_unclaimed_card_is_not_reported(tmp_path):
++    store = _store(tmp_path)
++    _card(store, "never claimed")
++    assert observe(tmp_path) == []
+ 
+-def test_observe_on_missing_tree_returns_empty(tmp_path):
+-    assert observe(tmp_path / "nope") == []
+ 
++def test_a_claimed_card_is_reported_with_its_fold_revision(tmp_path):
++    store = _store(tmp_path)
++    cid = _card(store, "claimed")
++    store.append_event(cid, "claim", "w1", owner="w1", claim_revision="rev-1")
++    got = _held(tmp_path)
++    assert cid in got
++    assert got[cid].owner == "w1"
++    assert got[cid].claim_revision == "rev-1"
+ 
+-def test_observe_orders_by_timestamp_not_seq_across_writer_shards(tmp_path):
+-    """Regression: events are sharded one file per WRITER and `seq` restarts
+-    at 0 in every file, so seq is meaningless across writers.
+ 
+-    Card bf80259a on the live cluster is the worked example. The owning
+-    worker wrote claim(seq=0, 06:17:51) and claim(seq=1, 06:18:40) into its
+-    own shard; jarvis wrote release_claim(seq=0, 06:27:06) into a different
+-    shard. Ordering by seq first puts the release between the two claims, so
+-    the replay ends with the owner still set and the card is reported held
+-    forever, disagreeing with CardStore.fold(). Ordering by timestamp puts
+-    the release last, which is what actually happened.
++def test_a_claim_with_no_revision_still_gets_the_folds_event_id_fence(tmp_path):
++    """The fold is `claim_revision or event_id`, so a fence ALWAYS exists.
++
++    Reading it as `or None` made every such card permanently unreclaimable
++    with reason "no-claim-revision". On one live store 38 of 106 held cards
++    had no explicit claim_revision, so that reading disabled the mechanism
++    for a third of its own population.
++    """
++    store = _store(tmp_path)
++    cid = _card(store, "claim without an explicit revision")
++    event = store.append_event(cid, "claim", "w2", owner="w2")
++    got = _held(tmp_path)
++    assert got[cid].claim_revision, "the fold supplies event_id as the fence"
++    assert got[cid].claim_revision == event["event_id"]
++
++    verdicts = evaluate(
++        (
++            [got[cid]._replace(last_owner_event_at=time.time() - 100 * HOUR)]
++            if hasattr(got[cid], "_replace")
++            else [got[cid]]
++        ),
++        now=time.time(),
++        ttl_seconds=48 * HOUR,
++    )
++    assert verdicts[0].reason != "no-claim-revision"
++
++
++def test_a_released_card_is_not_reported(tmp_path):
++    store = _store(tmp_path)
++    cid = _card(store, "released")
++    store.append_event(cid, "claim", "w1", owner="w1", claim_revision="r1")
++    store.append_event(
++        cid, "release_claim", "mero", released_owner="w1", expected_claim_revision="r1"
++    )
++    assert cid not in _held(tmp_path)
++
++
++def test_a_release_with_the_wrong_revision_does_not_free_the_card(tmp_path):
++    """The fold applies a CAS fence on release. A replay that cleared
++    ownership on ANY release_claim reported such a card free while the fold
++    still held it, hiding it from the very mechanism meant to collect it."""
++    store = _store(tmp_path)
++    cid = _card(store, "release with a stale revision")
++    store.append_event(cid, "claim", "w1", owner="w1", claim_revision="r1")
++    store.append_event(
++        cid, "release_claim", "someone", released_owner="w1", expected_claim_revision="STALE"
++    )
++    got = _held(tmp_path)
++    assert cid in got, "the fold refuses a release fenced on the wrong revision"
++    assert got[cid].owner == "w1"
++
++
++def test_a_second_claim_by_a_different_owner_does_not_steal_the_card(tmp_path):
++    """The fold refuses a concurrent claim and KEEPS the first owner.
++
++    A replay that let the newer claim win named the losing identity as
++    owner, so a card a live worker holds could surface in the would-reclaim
++    list under a stale owner's name. That breaks the rollout's phase-2 gate.
++    """
++    store = _store(tmp_path)
++    cid = _card(store, "contended")
++    store.append_event(cid, "claim", "first", owner="first", claim_revision="r1")
++    store.append_event(cid, "claim", "second", owner="second", claim_revision="r2")
++    got = _held(tmp_path)
++    assert got[cid].owner == "first", "the first claim holds until released"
++    assert got[cid].claim_revision == "r1"
++
++
++def test_a_re_claim_by_the_SAME_owner_is_accepted(tmp_path):
++    """Complement: the refusal is about a DIFFERENT owner. Card f17d9e32 on
++    chi re-claimed itself twice, and counting claims against releases to
++    detect stuck cards overcounted because of exactly this."""
++    store = _store(tmp_path)
++    cid = _card(store, "self re-claim")
++    store.append_event(cid, "claim", "w1", owner="w1", claim_revision="r1")
++    store.append_event(cid, "claim", "w1", owner="w1", claim_revision="r2")
++    got = _held(tmp_path)
++    assert got[cid].owner == "w1"
++    assert got[cid].claim_revision == "r2"
++
++
++def test_a_voided_card_is_not_reported(tmp_path):
++    """Cards 7e2c6788 and a80f87a9 on chi each took a claim AFTER being
++    voided (by 21 seconds, and by an hour). Resurrecting them reintroduces
++    the regression that left 88 of 114 voids silently ineffective.
++
++    That shape cannot be built through the API any more: append_event now
++    refuses with "void is a terminal decision", which is the write-time half
++    of the guard. Those two cards predate it. So the historical shape is
++    written straight to the shard, which is also the stronger test: it
++    proves the READ path refuses to resurrect a card even when the bytes on
++    disk say someone claimed it.
+     """
+-    d = tmp_path / "cards" / "bf80259a" / "events"
+-    d.mkdir(parents=True)
+-    (d / "pi-codex-chiap01-bf80259a@chiap01.jsonl").write_text(
++    store = _store(tmp_path)
++    cid = _card(store, "voided then claimed")
++    store.append_event(cid, "void", "coord", reason="superseded")
++
++    shard = tmp_path / "cards" / cid / "events" / "late@somehost.jsonl"
++    shard.write_text(
+         json.dumps(
+             {
+-                "action": "claim",
+-                "owner": "pi-codex-chiap01-bf80259a",
+-                "writer": "pi-codex-chiap01-bf80259a",
+-                "claim_revision": "r1",
++                "event_id": "deadbeef",
++                "ts": _iso_now(),
++                "writer": "late",
++                "node": "somehost",
+                 "seq": 0,
+-                "ts": _iso(-120),
+-            }
+-        )
+-        + "\n"
+-        + json.dumps(
+-            {
+                 "action": "claim",
+-                "owner": "pi-codex-chiap01-bf80259a",
+-                "writer": "pi-codex-chiap01-bf80259a",
+-                "claim_revision": "r2",
+-                "seq": 1,
+-                "ts": _iso(-119),
++                "owner": "late",
++                "claim_revision": "r9",
+             }
+         )
+         + "\n",
+         encoding="utf-8",
+     )
+-    (d / "jarvis@chiap03.jsonl").write_text(
+-        json.dumps(
+-            {
+-                "action": "release_claim",
+-                "released_owner": "pi-codex-chiap01-bf80259a",
+-                "writer": "jarvis",
+-                "expected_claim_revision": "r2",
+-                "seq": 0,
+-                "ts": _iso(-118),
+-            }
+-        )
+-        + "\n",
+-        encoding="utf-8",
+-    )
+-
+-    assert [
+-        o.card_id for o in observe(tmp_path)
+-    ] == [], "the release is the last event by timestamp, so nobody holds this card"
+-
+-
+-def test_observe_honors_assign_as_setting_an_owner(tmp_path):
+-    """Regression, card 122ebff1 on chi: 587 events, NOT ONE of them a claim.
+-    Its owner comes from a generic `assign`, and the fold reports `jarvis`.
+-
+-    The first implementation honored `unassign` (clears) while ignoring
+-    `assign` (sets), which is asymmetric: it under-reported held cards, so
+-    the very claims the expiry path exists to collect were invisible to it.
+-    """
+-    _card(
+-        tmp_path,
+-        "122ebff1",
+-        [
+-            {"action": "move", "writer": "coord", "ts": _iso(-400)},
+-            {"action": "assign", "owner": "jarvis", "writer": "coord", "ts": _iso(-300)},
+-            {"action": "move", "writer": "coord", "ts": _iso(-299)},
+-        ],
+-    )
+-    got = {o.card_id: o for o in observe(tmp_path)}
+-    assert "122ebff1" in got, "an assigned card is held"
+-    assert got["122ebff1"].owner == "jarvis"
+-    # No CAS fence exists for an assignment, so it must not be reclaimable.
+-    assert got["122ebff1"].claim_revision is None
+-
+-
+-def test_an_assigned_card_is_visible_but_never_reclaimable(tmp_path):
+-    """Visibility and reclaimability are different things. An assignment has
+-    no claim_revision, so releasing it would be unfenced; refuse, but still
+-    report it so an operator can see the card is held."""
+-    import time as _time
+-    from skcapstone.fleet.claim_expiry import evaluate
+-
+-    _card(
+-        tmp_path,
+-        "aaaa0001",
+-        [
+-            {"action": "assign", "owner": "jarvis", "writer": "coord", "ts": _iso(-500)},
+-        ],
+-    )
+-    verdicts = evaluate(observe(tmp_path), now=_time.time(), ttl_seconds=48 * 3600)
+-    assert len(verdicts) == 1
+-    assert verdicts[0].reclaimable is False
+-    assert verdicts[0].reason == "no-claim-revision"
+-
+-
+-def test_observe_reopens_a_card_assigned_after_a_terminal_event(tmp_path):
+-    """Regression, card cec6b1c0 on chi. Real sequence:
+-
+-        claim(pi-skg-config) -> release_claim -> claim(pi)
+-          -> complete -> complete -> assign(pi)
+-
+-    The fold reports owner `pi` and a non-terminal column. The first
+-    implementation broke out of the replay on the first terminal action, so
+-    the trailing assign was never seen and the card vanished from the census
+-    while still being held.
+-    """
+-    _card(
+-        tmp_path,
+-        "cec6b1c0",
+-        [
+-            {
+-                "action": "claim",
+-                "owner": "pi-skg-config-cec6b1c0",
+-                "writer": "pi-skg-config-cec6b1c0",
+-                "claim_revision": "r1",
+-                "ts": _iso(-600),
+-            },
+-            {
+-                "action": "release_claim",
+-                "released_owner": "pi-skg-config-cec6b1c0",
+-                "writer": "jarvis",
+-                "expected_claim_revision": "r1",
+-                "ts": _iso(-596),
+-            },
+-            {
+-                "action": "claim",
+-                "owner": "pi",
+-                "writer": "pi",
+-                "claim_revision": "r2",
+-                "ts": _iso(-590),
+-            },
+-            {"action": "complete", "writer": "pi", "ts": _iso(-589)},
+-            {"action": "complete", "writer": "pi", "ts": _iso(-589)},
+-            {"action": "assign", "owner": "pi", "writer": "coord", "ts": _iso(-580)},
+-        ],
+-    )
+-    got = {o.card_id: o for o in observe(tmp_path)}
+-    assert "cec6b1c0" in got, "the trailing assign reopened this card"
+-    assert got["cec6b1c0"].owner == "pi"
+-
+-
+-def test_a_terminal_event_with_nothing_after_it_stays_terminal(tmp_path):
+-    """The complement of the test above: not breaking on terminal must not
+-    turn every completed card back into a held one."""
+-    _card(
+-        tmp_path,
+-        "bbbb0002",
+-        [
+-            {
+-                "action": "claim",
+-                "owner": "w1",
+-                "writer": "w1",
+-                "claim_revision": "r1",
+-                "ts": _iso(-100),
+-            },
+-            {"action": "complete", "writer": "w1", "ts": _iso(-90)},
+-            {"action": "move", "writer": "coord", "ts": _iso(-80)},
+-        ],
+-    )
+-    assert [o.card_id for o in observe(tmp_path)] == []
+-
+-
+-def test_unassign_after_assign_clears_ownership(tmp_path):
+-    """Regression, card 72df1b66 on chi, which alternates both primitives."""
+-    _card(
+-        tmp_path,
+-        "72df1b66",
+-        [
+-            {
+-                "action": "claim",
+-                "owner": "jarvis",
+-                "writer": "jarvis",
+-                "claim_revision": "r1",
+-                "ts": _iso(-700),
+-            },
+-            {"action": "unassign", "writer": "coord", "ts": _iso(-699)},
+-            {
+-                "action": "assign",
+-                "owner": "pi-skl-gateway-72df1b66",
+-                "writer": "coord",
+-                "ts": _iso(-600),
+-            },
+-        ],
+-    )
+-    got = {o.card_id: o for o in observe(tmp_path)}
+-    assert got["72df1b66"].owner == "pi-skl-gateway-72df1b66"
+-
+-    _card(
+-        tmp_path,
+-        "cccc0003",
+-        [
+-            {"action": "assign", "owner": "somebody", "writer": "coord", "ts": _iso(-500)},
+-            {"action": "unassign", "writer": "coord", "ts": _iso(-499)},
+-        ],
+-    )
+-    assert "cccc0003" not in {o.card_id for o in observe(tmp_path)}
+-
+-
+-def test_a_claim_after_a_void_does_not_resurrect_the_card(tmp_path):
+-    """Regression with real history behind it.
+-
+-    Cards 7e2c6788 and a80f87a9 on chi each received a claim AFTER being
+-    voided and archived (21 seconds later, and an hour later). The fold
+-    reports neither as held, and resurrecting them is a known costly
+-    regression: 88 of 114 voids were once silently ineffective, leaving 88
+-    cards resurrectable and reversing decisions the operator had already
+-    made.
+-
+-    An intermediate version of `observe` cleared the terminal flag on any
+-    acquire, which resurrected exactly these two. Void and archive are
+-    final; only `complete` is reopenable.
+-    """
+-    _card(
+-        tmp_path,
+-        "7e2c6788",
+-        [
+-            {"action": "void", "writer": "codex-a8100010-r2", "ts": _iso(-200)},
+-            {"action": "archive", "writer": "codex-a8100010-r2", "ts": _iso(-200)},
+-            {
+-                "action": "claim",
+-                "owner": "pi-codex-review-chiap03-7e2c6788",
+-                "writer": "pi-codex-review-chiap03-7e2c6788",
+-                "claim_revision": "57f694d100",
+-                "ts": _iso(-199),
+-            },
+-        ],
+-    )
+-    assert [
+-        o.card_id for o in observe(tmp_path)
+-    ] == [], "a voided card must stay dead no matter what claims follow it"
+-
+-
+-def test_archive_alone_is_also_final(tmp_path):
+-    _card(
+-        tmp_path,
+-        "dddd0004",
+-        [
+-            {"action": "archive", "writer": "coord", "ts": _iso(-100)},
+-            {"action": "assign", "owner": "jarvis", "writer": "coord", "ts": _iso(-90)},
+-        ],
+-    )
+-    assert [o.card_id for o in observe(tmp_path)] == []
++    assert cid not in _held(
++        tmp_path
++    ), "a voided card stays dead no matter what claim bytes follow it"
++
++
++def test_idleness_is_measured_from_the_owners_last_event_not_the_claim(tmp_path):
++    store = _store(tmp_path)
++    cid = _card(store, "worked on")
++    store.append_event(cid, "claim", "w1", owner="w1", claim_revision="r1")
++    store.append_event(cid, "describe", "w1", text="progress")
++    got = _held(tmp_path)
++    assert got[cid].last_owner_event_at == pytest.approx(time.time(), abs=120)
++
++
++def test_another_actors_events_do_not_refresh_the_owners_idleness(tmp_path):
++    """A busy card is not a live worker. mero, jarvis and coord all write to
++    cards they do not own, and counting their writes as owner activity would
++    keep an abandoned claim alive forever."""
++    store = _store(tmp_path)
++    cid = _card(store, "busy but abandoned")
++    store.append_event(cid, "claim", "w1", owner="w1", claim_revision="r1")
++    owner_stamp = _held(tmp_path)[cid].last_owner_event_at
++    for _ in range(5):
++        store.append_event(cid, "mero_observation", "mero", note="still looking")
++    after = _held(tmp_path)[cid].last_owner_event_at
++    assert after == pytest.approx(
++        owner_stamp, abs=2
++    ), "another actor's events must not count as the owner touching the card"
++
++
++def test_observe_on_a_missing_tree_returns_empty(tmp_path):
++    assert observe(tmp_path / "nope") == []
+ 
+ 
+-def test_complete_is_still_reopenable_after_the_void_fix(tmp_path):
+-    """Guard the distinction: tightening void must not also freeze
+-    `complete`, or cec6b1c0 disappears from the census again."""
+-    _card(
+-        tmp_path,
+-        "eeee0005",
+-        [
+-            {
+-                "action": "claim",
+-                "owner": "pi",
+-                "writer": "pi",
+-                "claim_revision": "r1",
+-                "ts": _iso(-100),
+-            },
+-            {"action": "complete", "writer": "pi", "ts": _iso(-99)},
+-            {"action": "assign", "owner": "pi", "writer": "coord", "ts": _iso(-90)},
+-        ],
+-    )
+-    assert [o.owner for o in observe(tmp_path)] == ["pi"]
++def test_observe_agrees_with_the_fold_over_a_mixed_population(tmp_path):
++    """The invariant that actually matters, asserted directly: for every
++    card, observe reports it held exactly when the fold says it has an
++    owner."""
++    store = _store(tmp_path)
++    ids = {}
++    ids["plain"] = _card(store, "plain")
++    ids["claimed"] = _card(store, "claimed")
++    store.append_event(ids["claimed"], "claim", "w1", owner="w1", claim_revision="r1")
++    ids["released"] = _card(store, "released")
++    store.append_event(ids["released"], "claim", "w2", owner="w2", claim_revision="r2")
++    store.append_event(
++        ids["released"], "release_claim", "mero", released_owner="w2", expected_claim_revision="r2"
++    )
++    ids["voided"] = _card(store, "voided")
++    store.append_event(ids["voided"], "claim", "w3", owner="w3", claim_revision="r3")
++    store.append_event(ids["voided"], "void", "coord", reason="no")
++    ids["contended"] = _card(store, "contended")
++    store.append_event(ids["contended"], "claim", "a", owner="a", claim_revision="ra")
++    store.append_event(ids["contended"], "claim", "b", owner="b", claim_revision="rb")
++
++    fold_owners = {
++        c.id: c.owner
++        for c in store.list_cards(include_archived=False)
++        if getattr(c, "owner", None) and not getattr(c, "archived", False)
++    }
++    replay_owners = {o.card_id: o.owner for o in observe(tmp_path)}
++    assert replay_owners == fold_owners
+diff --git a/tests/fleet/test_claim_expiry_reaper.py b/tests/fleet/test_claim_expiry_reaper.py
+index 8bc50785..754fe835 100644
+--- a/tests/fleet/test_claim_expiry_reaper.py
++++ b/tests/fleet/test_claim_expiry_reaper.py
+@@ -399,12 +399,50 @@ def test_reap_dead_claims_is_untouched_by_this_change():
+     helpers.
+     """
+     tree = _module()
+     reaper = next(
+         node
+         for node in tree.body
+         if isinstance(node, ast.FunctionDef) and node.name == "reap_dead_claims"
+     )
+     body = ast.unparse(reaper)
+     for name in HELPERS:
+         assert name not in body
+     assert "claim_expiry" not in body
++
++
++def test_off_mode_returns_without_importing_the_package(tmp_path, monkeypatch):
++    """Default-off must be safe on a HALF-DEPLOYED host.
++
++    This helper is called unguarded between reap_dead_claims() and the
++    review-and-close phases. The import is lazy so module scope stays safe,
++    but that alone is not enough: a host carrying the new script with an
++    older package would reap, raise ImportError here, and never reach
++    open_provisional_reviews or close_reviewed_parents. The same class of
++    trap already bit this script once through the eager GATED_EXIT_CODE
++    import, and the only protection then was deploy ordering.
++
++    So off mode must return BEFORE the import runs. This test makes the
++    import genuinely impossible and asserts off mode still returns 0.
++    """
++    import builtins
++
++    loaded = _load(tmp_path)
++    expire = loaded["_expire_idle_claims"]
++
++    real_import = builtins.__import__
++
++    def refuse(name, *args, **kwargs):
++        if "claim_expiry" in name:
++            raise ImportError(f"simulated half-deployed host: no {name}")
++        return real_import(name, *args, **kwargs)
++
++    monkeypatch.setattr(builtins, "__import__", refuse)
++    monkeypatch.delenv("SKFLEET_CLAIM_TTL_MODE", raising=False)
++
++    assert expire(env={}) == 0, "off mode must not import anything"
++    assert expire(env={"SKFLEET_CLAIM_TTL_MODE": "off"}) == 0
++    assert expire(env={"SKFLEET_CLAIM_TTL_MODE": "banana"}) == 0
++
++    # And prove the stub is real: an enabled mode DOES hit the import.
++    with pytest.raises(ImportError):
++        expire(env={"SKFLEET_CLAIM_TTL_MODE": "report"})
+diff --git a/tests/test_fleet_lane_health.py b/tests/test_fleet_lane_health.py
+index e1efde89..0d72fcc5 100644
+--- a/tests/test_fleet_lane_health.py
++++ b/tests/test_fleet_lane_health.py
+@@ -478,12 +478,80 @@ def test_v1_suffixed_base_url_still_probes_the_root_endpoints(tmp_path: Path) ->
+     healthy = [domain["state"] for lane in snapshot["lanes"] for domain in lane["domains"]]
+     assert "healthy" in healthy, healthy
+ 
+ 
+ def test_strict_opener_would_have_caught_the_bug(tmp_path: Path) -> None:
+     """Guard the guard: prove the strict opener actually 404s a /v1 path, so
+     this regression test cannot silently start passing for the wrong reason.
+     """
+     calls: list[str] = []
+     opener = _strict_opener(_documents(), calls)
+     with pytest.raises(urllib.error.HTTPError):
+         opener(ENDPOINT + "/v1/health", timeout=8)
++
++
++def test_a_v1_base_url_is_admissible_end_to_end_not_just_sealed(tmp_path: Path) -> None:
++    """The blocker this test exists to prevent.
++
++    Normalizing only inside acquire_lane_snapshot seals the ROOT into
++    snapshot["endpoint"] while callers still pass the RAW env value to
++    lane_health, whose endpoint comparison then fails. That does not fix the
++    outage, it relabels it: every lane is refused with "endpoint-mismatch"
++    instead of "unknown", and because the probe now succeeds, errors is []
++    and the one signal that exposed the original 373-NOOP outage is gone.
++
++    So the assertion has to reach admissibility, not stop at the snapshot.
++    """
++    calls: list[str] = []
++    snapshot = acquire_lane_snapshot(
++        ENDPOINT + "/v1",
++        LANES,
++        DOMAINS,
++        tmp_path / "lane-health.json",
++        "cycle-v1-admit",
++        opener=_strict_opener(_documents(), calls),
++        revision_resolver=lambda _base: REVISION,
++        now=lambda: 2_000_000_000.0,
++    )
++    assert snapshot["errors"] == []
++
++    # The raw, /v1-suffixed value is what a caller actually holds.
++    admitted, reason = lane_health(
++        snapshot,
++        "codex",
++        "sk-codex",
++        cycle_id="cycle-v1-admit",
++        endpoint=ENDPOINT + "/v1",
++        capacity_domains=DOMAINS["codex"],
++        active_revision=REVISION,
++        now=2_000_000_000.0,
++    )
++    assert (admitted, reason) == (
++        True,
++        "healthy",
++    ), f"a /v1 base URL must be admissible end to end, got {(admitted, reason)}"
++
++
++def test_the_root_form_is_still_admissible(tmp_path: Path) -> None:
++    """Complement: normalizing must not break the correct form."""
++    calls: list[str] = []
++    snapshot = acquire_lane_snapshot(
++        ENDPOINT,
++        LANES,
++        DOMAINS,
++        tmp_path / "lh.json",
++        "cycle-root",
++        opener=_strict_opener(_documents(), calls),
++        revision_resolver=lambda _base: REVISION,
++        now=lambda: 2_000_000_000.0,
++    )
++    admitted, reason = lane_health(
++        snapshot,
++        "codex",
++        "sk-codex",
++        cycle_id="cycle-root",
++        endpoint=ENDPOINT,
++        capacity_domains=DOMAINS["codex"],
++        active_revision=REVISION,
++        now=2_000_000_000.0,
++    )
++    assert (admitted, reason) == (True, "healthy")

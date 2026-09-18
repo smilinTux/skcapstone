@@ -185,3 +185,51 @@ same failure mode as the `assign` gap. Chi currently has no such event,
 which is why the 22 = 22 comparison is clean; this is latent, not live.
 Severity: should-fix, with a regression test for a mismatched-revision
 release.
+
+### DESIGN finding: the idleness predicate is wrong, measured on chi
+
+Probing the live cluster for whether the design's premise actually holds
+("a worker doing real work writes card events") found it only partly true.
+
+    24 held cards
+    7 of 24 (29%) have an owner that has written NOTHING but its own claim
+
+And the working identity is frequently NOT the owning identity for the same
+card. Card 0f7b2e6c: owner `pi-codex-chiap02-0f7b2e6c` wrote 1 event (the
+claim); the sibling `pi-codex-chiap08-0f7b2e6c` wrote 4. Card 73c201a1:
+owner wrote 1; `pi-codex-chiap04-73c201a1`, `cursor-w73-live` and `mero`
+wrote the rest. Workers on this cluster legitimately run 61h, 251h and 376h,
+so a worker whose owner clock never advances WILL cross a 48h deadline while
+alive, and the mechanism would take its card.
+
+Neither simple predicate is correct:
+
+  "any event on the card" is too permissive. Three held cards have an owner
+  idle 32 to 34 hours while something writes to the card within the last 10
+  minutes (3f642f75 any=0.16h, 4dcb5259 any=0.16h, d52f4408 any=0.08h). That
+  writer is a seat, not a worker, so this predicate would keep dead claims
+  alive forever, which is the bug being fixed.
+
+  "the owner's events only" is too strict, per 0f7b2e6c above.
+
+The discriminator that works is in the naming, and it is measured rather
+than assumed: worker identities EMBED the card id
+(`pi-codex-chiap08-0f7b2e6c`, `kimi-chiap01-34115541`, `codex-02963e5f-r4`),
+while seat identities (`mero`, `jarvis`, `lumina`, `coord`) never do. So:
+
+    last_activity = max(last event by the owner,
+                        last event by any writer whose identity
+                        references this card and is not a seat)
+
+Checked against the live population, that protects every actively worked
+card and excludes every seat-only write.
+
+RESIDUAL RISK, to be stated in the spec rather than engineered away: a
+worker that writes only its claim, whose siblings also write nothing, and
+which runs past the TTL, still loses its card. Phase 2 of the rollout
+(report only, compare the would-reclaim list against live workers) exists
+precisely to measure this before enforcement, and this finding is the
+strongest argument yet for not skipping it.
+
+HELD, not yet implemented: two reviewers are reading these files. Batch
+this with their findings rather than editing under them.
