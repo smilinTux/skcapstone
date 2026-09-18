@@ -4379,6 +4379,21 @@ def _expire_idle_claims(observations=None, runner=None, state=None,
 
     Returns the number of releases confirmed against the fold.
     """
+    # The mode check is deliberately ABOVE the import. The import is lazy so
+    # that a host carrying this script with an older package does not fail at
+    # module scope, but that is only half the protection: this function is
+    # called unguarded between reap_dead_claims() and the review-and-close
+    # phases, so an ImportError here would reap and then abort the rest of
+    # the cycle. Default-off has to mean "touches nothing", including on a
+    # half-deployed host, so off returns before anything is imported. The
+    # same class of trap already bit this script once through the eager
+    # GATED_EXIT_CODE import.
+    env = os.environ if env is None else env
+    mode = (str(env.get("SKFLEET_CLAIM_TTL_MODE", "")).strip().lower()
+            if env is not None else "")
+    if mode not in ("report", "enforce"):
+        return 0                      # the default: no import, no store read
+
     from skcapstone.fleet.claim_expiry import (
         evaluate,
         mode_from_env,
@@ -4386,10 +4401,9 @@ def _expire_idle_claims(observations=None, runner=None, state=None,
         ttl_seconds_from_env,
     )
 
-    env = os.environ if env is None else env
     mode = mode_from_env(env)
     if mode == "off":
-        return 0                      # the default: no store read, no log line
+        return 0                      # belt and braces: the module decides
     runner = runner or (lambda cmd: subprocess.run(cmd, capture_output=True,
                                                    text=True))
     state = state or _claim_ttl_fresh_state
