@@ -23,6 +23,24 @@
   verification through the kanban fold. Every command is taken from
   `cli/coord.py`, `cli/coord_amend.py`, `coord_completion.py`, or
   `scripts/fleet/skfleet-rotate.py`.
+- **Docs: SK doc-standard compliance pass (README, SOP, docs-evidence).**
+  Fixed what was actually wrong rather than adding bulk. SOP §3 claimed "there
+  are five" console scripts while listing six (six is correct; the
+  `skfleet-claim-expiry` row was also indented out of the table). README's
+  "Related projects" still asserted skcapstone "holds no key material of its
+  own", the exact false claim SOP §9 corrected on 2026-08-15 (RSA-2048 TLS
+  key); it now matches §9. Removed README links to `../docs/AGENT_SCAFFOLDING.md`,
+  `../docs/API.md`, `../docs/PMA_INTEGRATION.md`, and `../docs/NEXTCLOUD.md`
+  (targets outside the repo that do not exist) and repaired the Quickstart path.
+  SOP §6 now documents the fleet dispatcher gateway environment verified on chi
+  2026-09-18: `SKFLEET_GATEWAY_URL` takes the gateway ROOT origin with no `/v1`
+  suffix (the `/v1` form 404ed the health/queue probes and caused three days of
+  zero dispatch), required per-lane session targets (chi currently codex 30,
+  glm 9, kimi 9), and lane model resolution that fails closed on a route the
+  gateway does not advertise. §8 gained matching Symptom/Check rows, including
+  the cold-gateway case (backends read `unknown` until a real request has been
+  served). The `docs-evidence` block gained four hermetic checks covering those
+  facts, and `verified:` moved to 2026-09-18.
 - **Readiness checks each unit against the interpreter it declares.** The gate
   tested every unit's module imports against one interpreter (`--python-bin`),
   but a unit is entitled to its own virtualenv and declares it in `ExecStart`.
