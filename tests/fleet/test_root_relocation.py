@@ -205,6 +205,11 @@ _SKCAPSTONE_PATH_EXEMPT = {
         "log observe() reads; that is coordination state, not fleet state under "
         "SKFLEET_ROOT, the CLI never writes, and --home overrides the default"
     ),
+    "claim_ttl.py": (
+        "reads CardStore card events under the default home ~/.skcapstone to "
+        "derive _last_activity_at; that is coordination state, not fleet state "
+        "under SKFLEET_ROOT, the module never writes, and home is overridable"
+    ),
 }
 
 

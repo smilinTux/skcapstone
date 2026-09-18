@@ -31,12 +31,21 @@ def make_observation(**overrides):
         "session_id": "session-1",
         "managed_session": True,
         "unit": "skfleet-host-a.service",
-        "pid": "1234",
-        "process_tree": ["1234", "5678"],
+        "pid": 1234,
+        "process_tree": [1234, 5678],
         "cgroup": "/sys/fs/cgroup/skfleet-host-a.service",
         "process_observed_at": observed_at,
         "cgroup_observed_at": observed_at,
         "beat_id": "b1",
+        "process_alive": True,
+        "session_alive": True,
+        "live_children": 1,
+        "child_activity_at": None,
+        "terminal_marker": None,
+        "terminal_at": None,
+        "skmail_response_at": None,
+        "assistance_requested_at": None,
+        "workspace_recoverable": True,
         "heartbeat_at": observed_at,
         "workspace_custody": True,
         "workspace_path": "/home/skuser01/.skcapstone/fleet/workspaces/ws-1",
@@ -75,7 +84,7 @@ def test_retirement_receipt_requires_exact_fence():
 
 
 def test_fresh_worker_is_running_and_not_assistance_due():
-    obs = make_observation(heartbeat_at="2026-08-30T11:59:00Z")
+    obs = make_observation(last_activity_at="2026-08-30T11:59:00Z")
     now = observed_at_dt(obs) + timedelta(seconds=30)
     d = classify(obs, now=now, refresh_every_minutes=REFRESH_EVERY_MINUTES,
                   assist_after_minutes=ASSIST_AFTER_MINUTES,
@@ -86,7 +95,7 @@ def test_fresh_worker_is_running_and_not_assistance_due():
 
 
 def test_quiet_past_assist_after_triggers_assistance_request():
-    obs = make_observation(heartbeat_at="2026-08-30T09:00:00Z")
+    obs = make_observation(last_activity_at="2026-08-30T09:00:00Z")
     now = observed_at_dt(obs) + timedelta(minutes=ASSIST_AFTER_MINUTES + 5)
     d = classify(obs, now=now, refresh_every_minutes=REFRESH_EVERY_MINUTES,
                   assist_after_minutes=ASSIST_AFTER_MINUTES,
@@ -105,7 +114,7 @@ def test_quiet_past_assist_after_triggers_assistance_request():
 
 
 def test_quiet_past_checkpoint_quarantines_and_preserves_workspace():
-    obs = make_observation(heartbeat_at="2026-08-30T08:00:00Z")
+    obs = make_observation(last_activity_at="2026-08-30T08:00:00Z")
     now = observed_at_dt(obs) + timedelta(minutes=CHECKPOINT_AFTER_MINUTES + 5)
     d = classify(obs, now=now, refresh_every_minutes=REFRESH_EVERY_MINUTES,
                   assist_after_minutes=ASSIST_AFTER_MINUTES,
@@ -117,7 +126,7 @@ def test_quiet_past_checkpoint_quarantines_and_preserves_workspace():
 
 
 def test_needs_human_is_true_when_checkpoints_are_unanswered():
-    obs = make_observation(heartbeat_at="2026-08-30T08:00:00Z")
+    obs = make_observation(last_activity_at="2026-08-30T08:00:00Z")
     now = observed_at_dt(obs) + timedelta(minutes=CHECKPOINT_AFTER_MINUTES + 5)
     d = classify(obs, now=now, refresh_every_minutes=REFRESH_EVERY_MINUTES,
                   assist_after_minutes=ASSIST_AFTER_MINUTES,
@@ -126,7 +135,7 @@ def test_needs_human_is_true_when_checkpoints_are_unanswered():
 
 
 def test_needs_human_defaults_to_false_for_running_workers():
-    obs = make_observation(heartbeat_at="2026-08-30T11:59:00Z")
+    obs = make_observation(last_activity_at="2026-08-30T11:59:00Z")
     now = observed_at_dt(obs) + timedelta(minutes=5)
     d = classify(obs, now=now, refresh_every_minutes=REFRESH_EVERY_MINUTES,
                   assist_after_minutes=ASSIST_AFTER_MINUTES,
