@@ -6518,6 +6518,29 @@ def _health_for(lane,model):
         endpoint=_GATEWAY_ENDPOINT,capacity_domains=_CAPACITY_DOMAINS[lane],
         active_revision=_active_gateway_revision)
 
+def _review_withheld_reason_histogram(withheld):
+    """Return a stable per-reason count for every withheld review card.
+
+    The per-card REVIEW_WITHHELD lines are capped at twelve, so on a live board
+    the remaining reasons are invisible: an operator sees a bare omitted count
+    and cannot tell whether review capacity is being lost to absent typed
+    metadata, a wrong seat, or an ordinary dependency wait that clears on its
+    own. Counting every reason keeps the whole shape of the withholding in one
+    line. Ordering is by weight then name so the line is stable between cycles
+    and a diff of two cycles means something.
+    """
+    counts = {}
+    for _card_id, reasons in withheld:
+        for reason in str(reasons).split(","):
+            reason = reason.strip()
+            if reason:
+                counts[reason] = counts.get(reason, 0) + 1
+    return ",".join(
+        "%s=%d" % (reason, counts[reason])
+        for reason in sorted(counts, key=lambda name: (-counts[name], name))
+    )
+
+
 def _bounded_candidate_sequence(candidates, limit):
     """Return a stable, duplicate-free candidate sequence for one rotation.
 
@@ -6664,6 +6687,10 @@ for _cid,_reasons in _review_withheld[:12]:
     log(d,"REVIEW_WITHHELD|%s|card=%s|reasons=%s"%(HOST,_cid,_reasons))
 if len(_review_withheld)>12:
     log(d,"REVIEW_WITHHELD_OMITTED|%s|count=%d"%(HOST,len(_review_withheld)-12))
+if _review_withheld:
+    log(d,"REVIEW_WITHHELD_REASONS|%s|total=%d|%s"%(
+        HOST,len(_review_withheld),
+        _review_withheld_reason_histogram(_review_withheld)))
 
 
 def _observe_assigned_reviews():
