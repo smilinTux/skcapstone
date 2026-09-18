@@ -198,6 +198,38 @@ def _domain_state(health: Any, queue: Any, domain: str, observed_at: float) -> d
     return {"capacity_domain": domain, "state": state, "max": queue_row["max"]}
 
 
+def gateway_root(base_url: str) -> str:
+    """The gateway's ROOT origin, with any path component discarded.
+
+    ``/health`` and ``/queue`` are served at the gateway root, not under the
+    OpenAI-compatible ``/v1`` prefix. Operators naturally write the ``/v1``
+    form into ``SKFLEET_GATEWAY_URL`` because that is the value every
+    chat-completions example uses, and the docs show
+    ``$SKFLEET_GATEWAY_URL/v1/chat/completions`` directly beside
+    ``$SKFLEET_GATEWAY_URL/health``.
+
+    When that happens the probe requests ``/v1/health`` and ``/v1/queue``,
+    both 404, every lane goes ``unknown``, and lane admission (fail-closed by
+    design) blocks every card on the host. Measured on chi 2026-09-18: all
+    three rotate hosts carried the ``/v1`` form and the fleet had not
+    launched a single worker in three days, 373 consecutive NOOP cycles,
+    while the gateway itself was healthy the whole time.
+
+    Normalizing rather than rejecting is deliberate. The dispatcher already
+    exits hard when the variable is unset, so raising here would convert a
+    recoverable misconfiguration into a second outage. Both endpoints are
+    unambiguously root-relative, so discarding the path is always correct.
+    ``active_gateway_revision`` reads only the host and port, so it is
+    unaffected.
+    """
+    parsed = urllib.parse.urlsplit(base_url.strip())
+    if not parsed.scheme or not parsed.netloc:
+        # Not a URL we can decompose; fall back to the old behaviour rather
+        # than inventing an origin.
+        return base_url.strip().rstrip("/")
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
 def acquire_lane_snapshot(
     base_url: str,
     lanes: list[dict[str, Any]],
@@ -210,7 +242,7 @@ def acquire_lane_snapshot(
     now: Callable[[], float] = time.time,
 ) -> dict[str, Any]:
     """Fetch each endpoint once, validate, and atomically seal this cycle."""
-    endpoint = base_url.rstrip("/")
+    endpoint = gateway_root(base_url)
     errors: list[str] = []
     try:
         health_doc = _fetch_json(endpoint + "/health", opener=opener)

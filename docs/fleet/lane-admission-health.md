@@ -73,7 +73,25 @@ Missing, malformed, oversized, stale, partial, mismatched, or ambiguous evidence
 does not authorize a claim. Repeated blocker records remain limited to one per
 card per UTC hour.
 
-The endpoint defaults to `http://chiap01:18790`. Operators may set
-`SKFLEET_GATEWAY_URL`, `SKFLEET_GATEWAY_SSH_USER`, or the existing per-lane
-`SKFLEET_*_CAPACITY_DOMAINS` variables without changing model mappings or lane
-capacity.
+`SKFLEET_GATEWAY_URL` is REQUIRED and has no default. The hardcoded
+`http://chiap01:18790` default was removed in `e1ada0e7`, and the dispatcher
+now exits with `SKFLEET_GATEWAY_URL is required` when it is unset.
+
+**Set it to the gateway ORIGIN, with no path**: `http://chiap01:18790`, never
+`http://chiap01:18790/v1`. `/health` and `/queue` are served at the gateway
+root; only chat completions live under `/v1`. The probe normalizes a path
+away (`gateway_root()`), so the `/v1` form now works, but the origin form is
+the one to write.
+
+This mattered: on 2026-09-18 all three chi rotate hosts carried the `/v1`
+form, so the probe requested `/v1/health` and `/v1/queue`, both 404ed, every
+lane went `unknown`, and lane admission blocked every card. The fleet had not
+launched a worker in three days (373 consecutive NOOP cycles) while the
+gateway itself was healthy the whole time. Note the shape of the trap: the
+chat-completions example above uses `$SKFLEET_GATEWAY_URL/v1/chat/completions`
+directly beside `$SKFLEET_GATEWAY_URL/health`, which makes folding `/v1` into
+the variable itself the natural mistake.
+
+Operators may set `SKFLEET_GATEWAY_URL`, `SKFLEET_GATEWAY_SSH_USER`, or the
+existing per-lane `SKFLEET_*_CAPACITY_DOMAINS` variables without changing
+model mappings or lane capacity.
