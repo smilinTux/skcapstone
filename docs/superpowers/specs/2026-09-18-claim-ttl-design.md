@@ -174,6 +174,36 @@ appearing in it is a phase-1 defect and blocks phase 3.
 
 The gate between phases is evidence from the fleet, not elapsed time.
 
+## Ownership by assignment is out of scope, deliberately
+
+A card can be owned two ways. `claim` is the claim-specific primitive and
+carries a `claim_revision`; `assign` is the generic assignment primitive and
+carries none. Both set `card.owner` in the fold.
+
+This mechanism collects **claims only**. An assignment has no revision, so
+`coord release-claim` has no `--expected-claim-revision` to fence against,
+and releasing one unfenced is exactly the race the fence exists to prevent.
+Such a card is therefore reported with reason `no-claim-revision` and never
+reclaimed.
+
+Measured on chi, three held cards are assignments rather than claims:
+
+    122ebff1  jarvis                   idle  34.6h   587 events, zero claims
+    72df1b66  pi-skl-gateway-72df1b66  idle 518.6h
+    cec6b1c0  pi                       idle 514.4h
+
+Clearing those needs `coord unassign`, which is a different action with
+different semantics, so it belongs in its own change rather than smuggled
+into this one. The report making them VISIBLE is the deliverable here; an
+earlier version of `observe` ignored `assign` entirely and these three were
+invisible, which is worse.
+
+Note the distinction that does NOT apply: a `claim` with no explicit
+`claim_revision` is still fenced, because the fold falls back to the event's
+`event_id`. Reading the revision from the fold rather than from the raw
+event is what picks that up. Taking the field literally would have refused a
+third of the held population on one store.
+
 ## What this does not do
 
 - It does not touch seat exclusion. That is Amendment B, card `f8865032`,

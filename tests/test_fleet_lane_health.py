@@ -487,3 +487,71 @@ def test_strict_opener_would_have_caught_the_bug(tmp_path: Path) -> None:
     opener = _strict_opener(_documents(), calls)
     with pytest.raises(urllib.error.HTTPError):
         opener(ENDPOINT + "/v1/health", timeout=8)
+
+
+def test_a_v1_base_url_is_admissible_end_to_end_not_just_sealed(tmp_path: Path) -> None:
+    """The blocker this test exists to prevent.
+
+    Normalizing only inside acquire_lane_snapshot seals the ROOT into
+    snapshot["endpoint"] while callers still pass the RAW env value to
+    lane_health, whose endpoint comparison then fails. That does not fix the
+    outage, it relabels it: every lane is refused with "endpoint-mismatch"
+    instead of "unknown", and because the probe now succeeds, errors is []
+    and the one signal that exposed the original 373-NOOP outage is gone.
+
+    So the assertion has to reach admissibility, not stop at the snapshot.
+    """
+    calls: list[str] = []
+    snapshot = acquire_lane_snapshot(
+        ENDPOINT + "/v1",
+        LANES,
+        DOMAINS,
+        tmp_path / "lane-health.json",
+        "cycle-v1-admit",
+        opener=_strict_opener(_documents(), calls),
+        revision_resolver=lambda _base: REVISION,
+        now=lambda: 2_000_000_000.0,
+    )
+    assert snapshot["errors"] == []
+
+    # The raw, /v1-suffixed value is what a caller actually holds.
+    admitted, reason = lane_health(
+        snapshot,
+        "codex",
+        "sk-codex",
+        cycle_id="cycle-v1-admit",
+        endpoint=ENDPOINT + "/v1",
+        capacity_domains=DOMAINS["codex"],
+        active_revision=REVISION,
+        now=2_000_000_000.0,
+    )
+    assert (admitted, reason) == (
+        True,
+        "healthy",
+    ), f"a /v1 base URL must be admissible end to end, got {(admitted, reason)}"
+
+
+def test_the_root_form_is_still_admissible(tmp_path: Path) -> None:
+    """Complement: normalizing must not break the correct form."""
+    calls: list[str] = []
+    snapshot = acquire_lane_snapshot(
+        ENDPOINT,
+        LANES,
+        DOMAINS,
+        tmp_path / "lh.json",
+        "cycle-root",
+        opener=_strict_opener(_documents(), calls),
+        revision_resolver=lambda _base: REVISION,
+        now=lambda: 2_000_000_000.0,
+    )
+    admitted, reason = lane_health(
+        snapshot,
+        "codex",
+        "sk-codex",
+        cycle_id="cycle-root",
+        endpoint=ENDPOINT,
+        capacity_domains=DOMAINS["codex"],
+        active_revision=REVISION,
+        now=2_000_000_000.0,
+    )
+    assert (admitted, reason) == (True, "healthy")

@@ -1,411 +1,247 @@
+"""`observe()` against a REAL CardStore, never a hand-rolled event replay.
+
+The first version of `observe` replayed the event log itself and was wrong
+four separate times, each caught only by diffing against the fold on a live
+store: a `(seq, ts)` sort key where events shard one file per writer and
+`seq` restarts at 0 in each; `assign` ignored while `unassign` was honored;
+a claim resurrecting a voided card; and `claim_revision` taken literally
+where the fold falls back to `event_id`, plus a second claim by a different
+owner winning where the fold refuses it.
+
+So these tests drive the real `CardStore` and assert that `observe` agrees
+with `fold()`. A test built from synthetic JSONL cannot establish that, and
+that is exactly how four defects got through.
+"""
+
+from __future__ import annotations
+
+import itertools
 import json
 import time
-from pathlib import Path
+from datetime import datetime, timezone
 
 import pytest
+from skcoord.card_store import CardCore, CardStore
 
-from skcapstone.fleet.claim_expiry import observe
+from skcapstone.fleet.claim_expiry import evaluate, observe
 
-
-def _card(home: Path, cid: str, events: list[dict]) -> None:
-    d = home / "cards" / cid / "events"
-    d.mkdir(parents=True, exist_ok=True)
-    with (d / "0001.jsonl").open("w", encoding="utf-8") as fh:
-        for e in events:
-            fh.write(json.dumps(e) + "\n")
+HOUR = 3600.0
 
 
-def _iso(offset_h: float) -> str:
-    from datetime import datetime, timedelta, timezone
-
-    return (datetime.now(timezone.utc) + timedelta(hours=offset_h)).isoformat()
+def _iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
-def test_observe_reports_held_claim_with_owner_activity(tmp_path):
-    _card(
-        tmp_path,
-        "aaaa1111",
-        [
-            {
-                "action": "claim",
-                "owner": "jarvis",
-                "writer": "jarvis",
-                "claim_revision": "rev1",
-                "ts": _iso(-100),
-            },
-            {"action": "move", "writer": "jarvis", "ts": _iso(-60)},
-        ],
+def _store(tmp_path):
+    return CardStore(tmp_path)
+
+
+_COUNTER = itertools.count(1)
+
+
+def _card(store, title="a card", **kw):
+    """Create a card with a real, non-path identifier.
+
+    CardStore.create validates the id as a lock identifier, so an empty or
+    path-like id is rejected outright.
+    """
+    card_id = kw.pop("id", None) or f"{next(_COUNTER):08x}"
+    return store.create(CardCore(id=card_id, title=title, **kw))
+
+
+def _held(tmp_path):
+    return {o.card_id: o for o in observe(tmp_path)}
+
+
+def test_an_unclaimed_card_is_not_reported(tmp_path):
+    store = _store(tmp_path)
+    _card(store, "never claimed")
+    assert observe(tmp_path) == []
+
+
+def test_a_claimed_card_is_reported_with_its_fold_revision(tmp_path):
+    store = _store(tmp_path)
+    cid = _card(store, "claimed")
+    store.append_event(cid, "claim", "w1", owner="w1", claim_revision="rev-1")
+    got = _held(tmp_path)
+    assert cid in got
+    assert got[cid].owner == "w1"
+    assert got[cid].claim_revision == "rev-1"
+
+
+def test_a_claim_with_no_revision_still_gets_the_folds_event_id_fence(tmp_path):
+    """The fold is `claim_revision or event_id`, so a fence ALWAYS exists.
+
+    Reading it as `or None` made every such card permanently unreclaimable
+    with reason "no-claim-revision". On one live store 38 of 106 held cards
+    had no explicit claim_revision, so that reading disabled the mechanism
+    for a third of its own population.
+    """
+    store = _store(tmp_path)
+    cid = _card(store, "claim without an explicit revision")
+    event = store.append_event(cid, "claim", "w2", owner="w2")
+    got = _held(tmp_path)
+    assert got[cid].claim_revision, "the fold supplies event_id as the fence"
+    assert got[cid].claim_revision == event["event_id"]
+
+    verdicts = evaluate(
+        (
+            [got[cid]._replace(last_owner_event_at=time.time() - 100 * HOUR)]
+            if hasattr(got[cid], "_replace")
+            else [got[cid]]
+        ),
+        now=time.time(),
+        ttl_seconds=48 * HOUR,
     )
-    got = {o.card_id: o for o in observe(tmp_path)}
-    assert "aaaa1111" in got
-    o = got["aaaa1111"]
-    assert o.owner == "jarvis"
-    assert o.claim_revision == "rev1"
-    # last OWNER event is the move at -60h, not the claim at -100h
-    assert o.last_owner_event_at == pytest.approx(time.time() - 60 * 3600, abs=120)
+    assert verdicts[0].reason != "no-claim-revision"
 
 
-def test_observe_ignores_a_released_claim(tmp_path):
-    _card(
-        tmp_path,
-        "bbbb2222",
-        [
-            {
-                "action": "claim",
-                "owner": "jarvis",
-                "writer": "jarvis",
-                "claim_revision": "rev1",
-                "ts": _iso(-100),
-            },
-            {
-                "action": "release_claim",
-                "released_owner": "jarvis",
-                "writer": "mero",
-                "expected_claim_revision": "rev1",
-                "ts": _iso(-90),
-            },
-        ],
+def test_a_released_card_is_not_reported(tmp_path):
+    store = _store(tmp_path)
+    cid = _card(store, "released")
+    store.append_event(cid, "claim", "w1", owner="w1", claim_revision="r1")
+    store.append_event(
+        cid, "release_claim", "mero", released_owner="w1", expected_claim_revision="r1"
     )
-    assert [o.card_id for o in observe(tmp_path)] == []
+    assert cid not in _held(tmp_path)
 
 
-def test_observe_ignores_a_completed_card(tmp_path):
-    _card(
-        tmp_path,
-        "cccc3333",
-        [
-            {
-                "action": "claim",
-                "owner": "jarvis",
-                "writer": "jarvis",
-                "claim_revision": "rev1",
-                "ts": _iso(-100),
-            },
-            {"action": "complete", "writer": "jarvis", "ts": _iso(-90)},
-        ],
+def test_a_release_with_the_wrong_revision_does_not_free_the_card(tmp_path):
+    """The fold applies a CAS fence on release. A replay that cleared
+    ownership on ANY release_claim reported such a card free while the fold
+    still held it, hiding it from the very mechanism meant to collect it."""
+    store = _store(tmp_path)
+    cid = _card(store, "release with a stale revision")
+    store.append_event(cid, "claim", "w1", owner="w1", claim_revision="r1")
+    store.append_event(
+        cid, "release_claim", "someone", released_owner="w1", expected_claim_revision="STALE"
     )
-    assert [o.card_id for o in observe(tmp_path)] == []
+    got = _held(tmp_path)
+    assert cid in got, "the fold refuses a release fenced on the wrong revision"
+    assert got[cid].owner == "w1"
 
 
-def test_observe_uses_the_latest_claim_generation(tmp_path):
-    """A re-claim by the same owner supersedes the first. The revision
-    reported must be the newest, or the CAS fence targets a dead generation."""
-    _card(
-        tmp_path,
-        "dddd4444",
-        [
+def test_a_second_claim_by_a_different_owner_does_not_steal_the_card(tmp_path):
+    """The fold refuses a concurrent claim and KEEPS the first owner.
+
+    A replay that let the newer claim win named the losing identity as
+    owner, so a card a live worker holds could surface in the would-reclaim
+    list under a stale owner's name. That breaks the rollout's phase-2 gate.
+    """
+    store = _store(tmp_path)
+    cid = _card(store, "contended")
+    store.append_event(cid, "claim", "first", owner="first", claim_revision="r1")
+    store.append_event(cid, "claim", "second", owner="second", claim_revision="r2")
+    got = _held(tmp_path)
+    assert got[cid].owner == "first", "the first claim holds until released"
+    assert got[cid].claim_revision == "r1"
+
+
+def test_a_re_claim_by_the_SAME_owner_is_accepted(tmp_path):
+    """Complement: the refusal is about a DIFFERENT owner. Card f17d9e32 on
+    chi re-claimed itself twice, and counting claims against releases to
+    detect stuck cards overcounted because of exactly this."""
+    store = _store(tmp_path)
+    cid = _card(store, "self re-claim")
+    store.append_event(cid, "claim", "w1", owner="w1", claim_revision="r1")
+    store.append_event(cid, "claim", "w1", owner="w1", claim_revision="r2")
+    got = _held(tmp_path)
+    assert got[cid].owner == "w1"
+    assert got[cid].claim_revision == "r2"
+
+
+def test_a_voided_card_is_not_reported(tmp_path):
+    """Cards 7e2c6788 and a80f87a9 on chi each took a claim AFTER being
+    voided (by 21 seconds, and by an hour). Resurrecting them reintroduces
+    the regression that left 88 of 114 voids silently ineffective.
+
+    That shape cannot be built through the API any more: append_event now
+    refuses with "void is a terminal decision", which is the write-time half
+    of the guard. Those two cards predate it. So the historical shape is
+    written straight to the shard, which is also the stronger test: it
+    proves the READ path refuses to resurrect a card even when the bytes on
+    disk say someone claimed it.
+    """
+    store = _store(tmp_path)
+    cid = _card(store, "voided then claimed")
+    store.append_event(cid, "void", "coord", reason="superseded")
+
+    shard = tmp_path / "cards" / cid / "events" / "late@somehost.jsonl"
+    shard.write_text(
+        json.dumps(
             {
+                "event_id": "deadbeef",
+                "ts": _iso_now(),
+                "writer": "late",
+                "node": "somehost",
+                "seq": 0,
                 "action": "claim",
-                "owner": "w1",
-                "writer": "w1",
-                "claim_revision": "old",
-                "ts": _iso(-100),
-            },
-            {
-                "action": "claim",
-                "owner": "w1",
-                "writer": "w1",
-                "claim_revision": "new",
-                "ts": _iso(-99),
-            },
-        ],
-    )
-    o = observe(tmp_path)[0]
-    assert o.claim_revision == "new"
-
-
-def test_observe_survives_a_corrupt_line(tmp_path):
-    d = tmp_path / "cards" / "eeee5555" / "events"
-    d.mkdir(parents=True)
-    (d / "0001.jsonl").write_text(
-        "not json\n"
-        + json.dumps(
-            {
-                "action": "claim",
-                "owner": "w2",
-                "writer": "w2",
-                "claim_revision": "r",
-                "ts": _iso(-100),
+                "owner": "late",
+                "claim_revision": "r9",
             }
         )
         + "\n",
         encoding="utf-8",
     )
-    assert observe(tmp_path)[0].owner == "w2"
+    assert cid not in _held(
+        tmp_path
+    ), "a voided card stays dead no matter what claim bytes follow it"
 
 
-def test_observe_on_missing_tree_returns_empty(tmp_path):
+def test_idleness_is_measured_from_the_owners_last_event_not_the_claim(tmp_path):
+    store = _store(tmp_path)
+    cid = _card(store, "worked on")
+    store.append_event(cid, "claim", "w1", owner="w1", claim_revision="r1")
+    store.append_event(cid, "describe", "w1", text="progress")
+    got = _held(tmp_path)
+    assert got[cid].last_owner_event_at == pytest.approx(time.time(), abs=120)
+
+
+def test_another_actors_events_do_not_refresh_the_owners_idleness(tmp_path):
+    """A busy card is not a live worker. mero, jarvis and coord all write to
+    cards they do not own, and counting their writes as owner activity would
+    keep an abandoned claim alive forever."""
+    store = _store(tmp_path)
+    cid = _card(store, "busy but abandoned")
+    store.append_event(cid, "claim", "w1", owner="w1", claim_revision="r1")
+    owner_stamp = _held(tmp_path)[cid].last_owner_event_at
+    for _ in range(5):
+        store.append_event(cid, "mero_observation", "mero", note="still looking")
+    after = _held(tmp_path)[cid].last_owner_event_at
+    assert after == pytest.approx(
+        owner_stamp, abs=2
+    ), "another actor's events must not count as the owner touching the card"
+
+
+def test_observe_on_a_missing_tree_returns_empty(tmp_path):
     assert observe(tmp_path / "nope") == []
 
 
-def test_observe_orders_by_timestamp_not_seq_across_writer_shards(tmp_path):
-    """Regression: events are sharded one file per WRITER and `seq` restarts
-    at 0 in every file, so seq is meaningless across writers.
-
-    Card bf80259a on the live cluster is the worked example. The owning
-    worker wrote claim(seq=0, 06:17:51) and claim(seq=1, 06:18:40) into its
-    own shard; jarvis wrote release_claim(seq=0, 06:27:06) into a different
-    shard. Ordering by seq first puts the release between the two claims, so
-    the replay ends with the owner still set and the card is reported held
-    forever, disagreeing with CardStore.fold(). Ordering by timestamp puts
-    the release last, which is what actually happened.
-    """
-    d = tmp_path / "cards" / "bf80259a" / "events"
-    d.mkdir(parents=True)
-    (d / "pi-codex-chiap01-bf80259a@chiap01.jsonl").write_text(
-        json.dumps(
-            {
-                "action": "claim",
-                "owner": "pi-codex-chiap01-bf80259a",
-                "writer": "pi-codex-chiap01-bf80259a",
-                "claim_revision": "r1",
-                "seq": 0,
-                "ts": _iso(-120),
-            }
-        )
-        + "\n"
-        + json.dumps(
-            {
-                "action": "claim",
-                "owner": "pi-codex-chiap01-bf80259a",
-                "writer": "pi-codex-chiap01-bf80259a",
-                "claim_revision": "r2",
-                "seq": 1,
-                "ts": _iso(-119),
-            }
-        )
-        + "\n",
-        encoding="utf-8",
+def test_observe_agrees_with_the_fold_over_a_mixed_population(tmp_path):
+    """The invariant that actually matters, asserted directly: for every
+    card, observe reports it held exactly when the fold says it has an
+    owner."""
+    store = _store(tmp_path)
+    ids = {}
+    ids["plain"] = _card(store, "plain")
+    ids["claimed"] = _card(store, "claimed")
+    store.append_event(ids["claimed"], "claim", "w1", owner="w1", claim_revision="r1")
+    ids["released"] = _card(store, "released")
+    store.append_event(ids["released"], "claim", "w2", owner="w2", claim_revision="r2")
+    store.append_event(
+        ids["released"], "release_claim", "mero", released_owner="w2", expected_claim_revision="r2"
     )
-    (d / "jarvis@chiap03.jsonl").write_text(
-        json.dumps(
-            {
-                "action": "release_claim",
-                "released_owner": "pi-codex-chiap01-bf80259a",
-                "writer": "jarvis",
-                "expected_claim_revision": "r2",
-                "seq": 0,
-                "ts": _iso(-118),
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    ids["voided"] = _card(store, "voided")
+    store.append_event(ids["voided"], "claim", "w3", owner="w3", claim_revision="r3")
+    store.append_event(ids["voided"], "void", "coord", reason="no")
+    ids["contended"] = _card(store, "contended")
+    store.append_event(ids["contended"], "claim", "a", owner="a", claim_revision="ra")
+    store.append_event(ids["contended"], "claim", "b", owner="b", claim_revision="rb")
 
-    assert [
-        o.card_id for o in observe(tmp_path)
-    ] == [], "the release is the last event by timestamp, so nobody holds this card"
-
-
-def test_observe_honors_assign_as_setting_an_owner(tmp_path):
-    """Regression, card 122ebff1 on chi: 587 events, NOT ONE of them a claim.
-    Its owner comes from a generic `assign`, and the fold reports `jarvis`.
-
-    The first implementation honored `unassign` (clears) while ignoring
-    `assign` (sets), which is asymmetric: it under-reported held cards, so
-    the very claims the expiry path exists to collect were invisible to it.
-    """
-    _card(
-        tmp_path,
-        "122ebff1",
-        [
-            {"action": "move", "writer": "coord", "ts": _iso(-400)},
-            {"action": "assign", "owner": "jarvis", "writer": "coord", "ts": _iso(-300)},
-            {"action": "move", "writer": "coord", "ts": _iso(-299)},
-        ],
-    )
-    got = {o.card_id: o for o in observe(tmp_path)}
-    assert "122ebff1" in got, "an assigned card is held"
-    assert got["122ebff1"].owner == "jarvis"
-    # No CAS fence exists for an assignment, so it must not be reclaimable.
-    assert got["122ebff1"].claim_revision is None
-
-
-def test_an_assigned_card_is_visible_but_never_reclaimable(tmp_path):
-    """Visibility and reclaimability are different things. An assignment has
-    no claim_revision, so releasing it would be unfenced; refuse, but still
-    report it so an operator can see the card is held."""
-    import time as _time
-    from skcapstone.fleet.claim_expiry import evaluate
-
-    _card(
-        tmp_path,
-        "aaaa0001",
-        [
-            {"action": "assign", "owner": "jarvis", "writer": "coord", "ts": _iso(-500)},
-        ],
-    )
-    verdicts = evaluate(observe(tmp_path), now=_time.time(), ttl_seconds=48 * 3600)
-    assert len(verdicts) == 1
-    assert verdicts[0].reclaimable is False
-    assert verdicts[0].reason == "no-claim-revision"
-
-
-def test_observe_reopens_a_card_assigned_after_a_terminal_event(tmp_path):
-    """Regression, card cec6b1c0 on chi. Real sequence:
-
-        claim(pi-skg-config) -> release_claim -> claim(pi)
-          -> complete -> complete -> assign(pi)
-
-    The fold reports owner `pi` and a non-terminal column. The first
-    implementation broke out of the replay on the first terminal action, so
-    the trailing assign was never seen and the card vanished from the census
-    while still being held.
-    """
-    _card(
-        tmp_path,
-        "cec6b1c0",
-        [
-            {
-                "action": "claim",
-                "owner": "pi-skg-config-cec6b1c0",
-                "writer": "pi-skg-config-cec6b1c0",
-                "claim_revision": "r1",
-                "ts": _iso(-600),
-            },
-            {
-                "action": "release_claim",
-                "released_owner": "pi-skg-config-cec6b1c0",
-                "writer": "jarvis",
-                "expected_claim_revision": "r1",
-                "ts": _iso(-596),
-            },
-            {
-                "action": "claim",
-                "owner": "pi",
-                "writer": "pi",
-                "claim_revision": "r2",
-                "ts": _iso(-590),
-            },
-            {"action": "complete", "writer": "pi", "ts": _iso(-589)},
-            {"action": "complete", "writer": "pi", "ts": _iso(-589)},
-            {"action": "assign", "owner": "pi", "writer": "coord", "ts": _iso(-580)},
-        ],
-    )
-    got = {o.card_id: o for o in observe(tmp_path)}
-    assert "cec6b1c0" in got, "the trailing assign reopened this card"
-    assert got["cec6b1c0"].owner == "pi"
-
-
-def test_a_terminal_event_with_nothing_after_it_stays_terminal(tmp_path):
-    """The complement of the test above: not breaking on terminal must not
-    turn every completed card back into a held one."""
-    _card(
-        tmp_path,
-        "bbbb0002",
-        [
-            {
-                "action": "claim",
-                "owner": "w1",
-                "writer": "w1",
-                "claim_revision": "r1",
-                "ts": _iso(-100),
-            },
-            {"action": "complete", "writer": "w1", "ts": _iso(-90)},
-            {"action": "move", "writer": "coord", "ts": _iso(-80)},
-        ],
-    )
-    assert [o.card_id for o in observe(tmp_path)] == []
-
-
-def test_unassign_after_assign_clears_ownership(tmp_path):
-    """Regression, card 72df1b66 on chi, which alternates both primitives."""
-    _card(
-        tmp_path,
-        "72df1b66",
-        [
-            {
-                "action": "claim",
-                "owner": "jarvis",
-                "writer": "jarvis",
-                "claim_revision": "r1",
-                "ts": _iso(-700),
-            },
-            {"action": "unassign", "writer": "coord", "ts": _iso(-699)},
-            {
-                "action": "assign",
-                "owner": "pi-skl-gateway-72df1b66",
-                "writer": "coord",
-                "ts": _iso(-600),
-            },
-        ],
-    )
-    got = {o.card_id: o for o in observe(tmp_path)}
-    assert got["72df1b66"].owner == "pi-skl-gateway-72df1b66"
-
-    _card(
-        tmp_path,
-        "cccc0003",
-        [
-            {"action": "assign", "owner": "somebody", "writer": "coord", "ts": _iso(-500)},
-            {"action": "unassign", "writer": "coord", "ts": _iso(-499)},
-        ],
-    )
-    assert "cccc0003" not in {o.card_id for o in observe(tmp_path)}
-
-
-def test_a_claim_after_a_void_does_not_resurrect_the_card(tmp_path):
-    """Regression with real history behind it.
-
-    Cards 7e2c6788 and a80f87a9 on chi each received a claim AFTER being
-    voided and archived (21 seconds later, and an hour later). The fold
-    reports neither as held, and resurrecting them is a known costly
-    regression: 88 of 114 voids were once silently ineffective, leaving 88
-    cards resurrectable and reversing decisions the operator had already
-    made.
-
-    An intermediate version of `observe` cleared the terminal flag on any
-    acquire, which resurrected exactly these two. Void and archive are
-    final; only `complete` is reopenable.
-    """
-    _card(
-        tmp_path,
-        "7e2c6788",
-        [
-            {"action": "void", "writer": "codex-a8100010-r2", "ts": _iso(-200)},
-            {"action": "archive", "writer": "codex-a8100010-r2", "ts": _iso(-200)},
-            {
-                "action": "claim",
-                "owner": "pi-codex-review-chiap03-7e2c6788",
-                "writer": "pi-codex-review-chiap03-7e2c6788",
-                "claim_revision": "57f694d100",
-                "ts": _iso(-199),
-            },
-        ],
-    )
-    assert [
-        o.card_id for o in observe(tmp_path)
-    ] == [], "a voided card must stay dead no matter what claims follow it"
-
-
-def test_archive_alone_is_also_final(tmp_path):
-    _card(
-        tmp_path,
-        "dddd0004",
-        [
-            {"action": "archive", "writer": "coord", "ts": _iso(-100)},
-            {"action": "assign", "owner": "jarvis", "writer": "coord", "ts": _iso(-90)},
-        ],
-    )
-    assert [o.card_id for o in observe(tmp_path)] == []
-
-
-def test_complete_is_still_reopenable_after_the_void_fix(tmp_path):
-    """Guard the distinction: tightening void must not also freeze
-    `complete`, or cec6b1c0 disappears from the census again."""
-    _card(
-        tmp_path,
-        "eeee0005",
-        [
-            {
-                "action": "claim",
-                "owner": "pi",
-                "writer": "pi",
-                "claim_revision": "r1",
-                "ts": _iso(-100),
-            },
-            {"action": "complete", "writer": "pi", "ts": _iso(-99)},
-            {"action": "assign", "owner": "pi", "writer": "coord", "ts": _iso(-90)},
-        ],
-    )
-    assert [o.owner for o in observe(tmp_path)] == ["pi"]
+    fold_owners = {
+        c.id: c.owner
+        for c in store.list_cards(include_archived=False)
+        if getattr(c, "owner", None) and not getattr(c, "archived", False)
+    }
+    replay_owners = {o.card_id: o.owner for o in observe(tmp_path)}
+    assert replay_owners == fold_owners

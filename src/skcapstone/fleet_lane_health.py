@@ -334,7 +334,7 @@ def lane_health(
         return False, "unknown"
     if age < 0 or age > MAX_AGE_SECONDS:
         return False, "stale"
-    if snapshot.get("endpoint") != endpoint.rstrip("/"):
+    if snapshot.get("endpoint") != gateway_root(endpoint):
         return False, "endpoint-mismatch"
     if (
         not REVISION_RE.fullmatch(active_revision)

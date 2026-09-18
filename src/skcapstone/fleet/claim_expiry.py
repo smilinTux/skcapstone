@@ -16,6 +16,7 @@ separates them from live work with room to spare.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +25,11 @@ from pathlib import Path
 #: generous: the failure is asymmetric. Too long leaves a card stuck, which
 #: is the status quo; too short steals a card from a worker mid-run.
 DEFAULT_TTL_HOURS = 48.0
+
+#: The shortest TTL an operator may configure. The deadline exists to
+#: tolerate a live worker that has not written an event recently, so a
+#: margin measured in minutes defeats its purpose.
+MIN_TTL_HOURS = 1.0
 
 _MODES = ("off", "report", "enforce")
 
@@ -49,12 +55,30 @@ class ExpiryVerdict:
 
 
 def ttl_seconds_from_env(env: Mapping[str, str]) -> float:
+    """The configured TTL in seconds, falling back to the default.
+
+    Every rejection path returns the DEFAULT rather than raising, because
+    this is read inside a dispatcher cycle and a hard failure there costs
+    more than an unexpectedly conservative deadline.
+
+    Two rejections matter more than they look:
+
+    ``nan`` parses as a float and survives a ``<= 0`` test, because every
+    comparison against nan is False. It then makes ``idle <= ttl`` False for
+    ANY claim, so every claim in the store becomes reclaimable, including
+    one made a minute ago. Verified before this guard existed.
+
+    A TTL below MIN_TTL_HOURS is refused as well. The deadline is a safety
+    margin against a live worker that has simply not written an event
+    recently, and a sub-hour margin is not one. ``SKFLEET_CLAIM_TTL_H=.5``
+    would otherwise arm a 30-minute deadline.
+    """
     raw = str(env.get("SKFLEET_CLAIM_TTL_H", "")).strip()
     try:
         hours = float(raw)
     except (TypeError, ValueError):
         return DEFAULT_TTL_HOURS * 3600.0
-    if hours <= 0:
+    if not math.isfinite(hours) or hours < MIN_TTL_HOURS:
         return DEFAULT_TTL_HOURS * 3600.0
     return hours * 3600.0
 
@@ -106,130 +130,99 @@ def _parse_ts(value: object) -> float:
         return 0.0
 
 
-#: Void and archive are FINAL. A claim that arrives after them does not
-#: resurrect the card, and treating it as if it did is a known, costly
-#: regression: 88 of 114 voids were once silently ineffective and 88 cards
-#: stayed resurrectable, which reversed decisions the operator had already
-#: made. The fold enforces this, so the replay must too. Measured on chi:
-#: card 7e2c6788 took a claim 21 SECONDS after its void+archive, and
-#: a80f87a9 took one an hour after, and the fold reports neither as held.
-_TERMINAL_FINAL = {"void", "archive"}
+def _last_owner_event_at(root: Path, card_id: str, owner: str) -> float:
+    """When the owner last wrote ANY event to the card it holds.
 
-#: Complete is SOFT: it clears ownership, but a later assign or claim
-#: legitimately reopens the card, and the fold honors that. Card cec6b1c0
-#: on chi is the worked example (claim, release, claim, complete, complete,
-#: assign) and the fold reports it held by `pi`.
-_TERMINAL_SOFT = {"complete"}
-#: Actions that SET an owner. `claim` is the claim-specific primitive and
-#: carries a claim_revision; `assign` is the generic assignment primitive
-#: and carries none. Both set `card.owner` in the fold, so a replay that
-#: honors `unassign` while ignoring `assign` is asymmetric and
-#: under-reports held cards.
-_ACQUIRE = {"claim", "assign"}
-_RELEASE = {"release_claim", "unassign"}
+    This is the only thing the event log is read for. Ownership itself comes
+    from the fold, which is the authority, so nothing here needs to know how
+    a claim is won or lost.
 
-
-def observe(home: Path) -> list[ClaimObservation]:
-    """Every claim the store currently reports as held, with owner idleness.
-
-    Reads the event log directly rather than the CardStore fold, because the
-    deadline needs the last event the OWNER wrote, which the fold does not
-    retain. Ownership itself is decided by replaying the claim/release pairs
-    in sequence order, which is what the fold does: counting claim events
-    against release events overcounts, since a worker re-claiming a card it
-    already holds writes a second claim that one release settles.
+    Events are sharded one file per writer (``jarvis@chiap03.jsonl``,
+    ``pi-codex-chiap01-<cid>@chiap01.jsonl``), so every shard has to be read;
+    the owner's own shard is not the only place its name appears.
     """
-    root = Path(home) / "cards"
-    if not root.is_dir():
-        return []
-
-    out: list[ClaimObservation] = []
-    for card_dir in sorted(root.iterdir()):
-        events_dir = card_dir / "events"
-        if not events_dir.is_dir():
+    events_dir = root / "cards" / str(card_id) / "events"
+    if not events_dir.is_dir():
+        return 0.0
+    latest = 0.0
+    try:
+        names = sorted(events_dir.iterdir())
+    except OSError:
+        return 0.0
+    for name in names:
+        if name.suffix != ".jsonl":
             continue
-        events: list[dict] = []
         try:
-            names = sorted(events_dir.iterdir())
+            handle = name.open(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        for fn in names:
-            try:
-                fh = fn.open(encoding="utf-8", errors="ignore")
-            except OSError:
-                continue
-            with fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        e = json.loads(line)
-                    except ValueError:
-                        continue
-                    if isinstance(e, dict):
-                        events.append(e)
-        if not events:
-            continue
-        # Order by TIMESTAMP first, seq only as a tiebreak. Events are sharded
-        # one file per writer (`jarvis@chiap03.jsonl`,
-        # `pi-codex-chiap01-<cid>@chiap01.jsonl`), and `seq` restarts at 0 in
-        # EVERY file, so seq is meaningless across writers. Sorting by seq
-        # first interleaves writers and can place a release before a later
-        # claim by a different writer, leaving the card looking held forever.
-        # Card bf80259a is the worked example: a claim at seq=1 06:18:40 and a
-        # release at seq=0 06:27:06, where seq-first ordering loses the
-        # release and disagrees with CardStore.fold().
-        events.sort(key=lambda e: (_parse_ts(e.get("ts")), e.get("seq") or 0))
+        with handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                if event.get("writer") != owner and event.get("owner") != owner:
+                    continue
+                stamp = _parse_ts(event.get("ts"))
+                if stamp > latest:
+                    latest = stamp
+    return latest
 
-        owner: str | None = None
-        revision: str | None = None
-        terminal = False
-        for e in events:
-            action = e.get("action")
-            if action in _TERMINAL_FINAL:
-                # Final: stop here. Nothing after a void or an archive can
-                # put this card back in play.
-                terminal = True
-                owner = None
-                revision = None
-                break
-            if action in _TERMINAL_SOFT:
-                # Soft: clears ownership without ending the replay, because
-                # a later assign or claim reopens the card.
-                terminal = True
-                owner = None
-                revision = None
-            elif action in _ACQUIRE and e.get("owner"):
-                owner = str(e["owner"])
-                # Only `claim` carries a claim_revision. An `assign` sets an
-                # owner with no revision, and therefore no CAS fence, so
-                # evaluate() will refuse to reclaim it ("no-claim-revision").
-                # That refusal is correct: releasing an assignment needs
-                # `coord unassign`, not `release-claim` with an expected
-                # revision. Recording it still matters, because the report
-                # has to make such a card VISIBLE rather than pretend the
-                # store holds nothing.
-                revision = e.get("claim_revision") or None
-                terminal = False
-            elif action in _RELEASE:
-                owner = None
-                revision = None
-        if terminal or not owner:
-            continue
 
-        last_owner = 0.0
-        for e in events:
-            if e.get("writer") == owner or e.get("owner") == owner:
-                t = _parse_ts(e.get("ts"))
-                if t > last_owner:
-                    last_owner = t
+def observe(home: Path | str) -> list[ClaimObservation]:
+    """Every claim the CardStore fold reports as held, with owner idleness.
+
+    Ownership and the claim revision come from ``CardStore.fold()`` rather
+    than from a local replay of the event log. An earlier version of this
+    function replayed the events itself and it was wrong four separate
+    times, each found only by diffing against the fold on a live store:
+
+      1. it sorted by ``(seq, ts)``, but events shard one file per writer and
+         ``seq`` restarts at 0 in each, so releases were lost (98 cards)
+      2. it ignored ``assign`` while honoring ``unassign`` (3 cards)
+      3. fixing (2) let a claim resurrect a voided card (2 cards), which is
+         the documented regression that once left 88 of 114 voids ineffective
+      4. it took ``claim_revision`` literally, where the fold falls back to
+         ``event_id``, and it let a second claim by a DIFFERENT owner win,
+         where the fold refuses it and keeps the first owner
+
+    (4) is the one that settles the argument. The fold's second-claim rule is
+    status-dependent (it refuses only while the card is in ready, doing or
+    review), so reproducing it faithfully means reproducing column
+    transitions too, which means reimplementing the fold. Two
+    implementations of one rule drift, and the drift is silent. So this
+    function asks the fold and reads the log only for a timestamp the fold
+    does not retain.
+    """
+    from skcoord.card_store import CardStore
+
+    root = Path(home)
+    cards = CardStore(root).list_cards(include_archived=False, degrade_unreadable=True)
+
+    out: list[ClaimObservation] = []
+    for card in cards:
+        owner = getattr(card, "owner", None)
+        if not owner:
+            continue
+        if getattr(card, "archived", False):
+            continue
+        card_id = str(getattr(card, "id", "") or "")
+        if not card_id:
+            continue
+        meta = getattr(card, "meta", None) or {}
+        revision = meta.get("_claim_revision") or None
         out.append(
             ClaimObservation(
-                card_id=card_dir.name,
-                owner=owner,
-                claim_revision=revision,
-                last_owner_event_at=last_owner,
+                card_id=card_id,
+                owner=str(owner),
+                claim_revision=str(revision) if revision else None,
+                last_owner_event_at=_last_owner_event_at(root, card_id, str(owner)),
             )
         )
     return out

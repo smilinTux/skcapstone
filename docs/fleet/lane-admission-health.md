@@ -79,9 +79,12 @@ now exits with `SKFLEET_GATEWAY_URL is required` when it is unset.
 
 **Set it to the gateway ORIGIN, with no path**: `http://chiap01:18790`, never
 `http://chiap01:18790/v1`. `/health` and `/queue` are served at the gateway
-root; only chat completions live under `/v1`. The probe normalizes a path
-away (`gateway_root()`), so the `/v1` form now works, but the origin form is
-the one to write.
+root; only chat completions live under `/v1`. `gateway_root()` normalizes a
+path away in BOTH places that matter, the snapshot seal and the endpoint
+comparison in `lane_health()`, so the `/v1` form is tolerated end to end.
+Write the origin form anyway: normalizing in one place only relabels the
+outage rather than fixing it, and that mistake is invisible because the
+probe then succeeds and reports no errors at all.
 
 This mattered: on 2026-09-18 all three chi rotate hosts carried the `/v1`
 form, so the probe requested `/v1/health` and `/v1/queue`, both 404ed, every

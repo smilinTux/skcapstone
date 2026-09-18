@@ -408,3 +408,41 @@ def test_reap_dead_claims_is_untouched_by_this_change():
     for name in HELPERS:
         assert name not in body
     assert "claim_expiry" not in body
+
+
+def test_off_mode_returns_without_importing_the_package(tmp_path, monkeypatch):
+    """Default-off must be safe on a HALF-DEPLOYED host.
+
+    This helper is called unguarded between reap_dead_claims() and the
+    review-and-close phases. The import is lazy so module scope stays safe,
+    but that alone is not enough: a host carrying the new script with an
+    older package would reap, raise ImportError here, and never reach
+    open_provisional_reviews or close_reviewed_parents. The same class of
+    trap already bit this script once through the eager GATED_EXIT_CODE
+    import, and the only protection then was deploy ordering.
+
+    So off mode must return BEFORE the import runs. This test makes the
+    import genuinely impossible and asserts off mode still returns 0.
+    """
+    import builtins
+
+    loaded = _load(tmp_path)
+    expire = loaded["_expire_idle_claims"]
+
+    real_import = builtins.__import__
+
+    def refuse(name, *args, **kwargs):
+        if "claim_expiry" in name:
+            raise ImportError(f"simulated half-deployed host: no {name}")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", refuse)
+    monkeypatch.delenv("SKFLEET_CLAIM_TTL_MODE", raising=False)
+
+    assert expire(env={}) == 0, "off mode must not import anything"
+    assert expire(env={"SKFLEET_CLAIM_TTL_MODE": "off"}) == 0
+    assert expire(env={"SKFLEET_CLAIM_TTL_MODE": "banana"}) == 0
+
+    # And prove the stub is real: an enabled mode DOES hit the import.
+    with pytest.raises(ImportError):
+        expire(env={"SKFLEET_CLAIM_TTL_MODE": "report"})

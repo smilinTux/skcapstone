@@ -84,3 +84,31 @@ def test_mode_defaults_off_and_unknown_is_off():
     assert mode_from_env({"SKFLEET_CLAIM_TTL_MODE": "banana"}) == "off"
     assert mode_from_env({"SKFLEET_CLAIM_TTL_MODE": "ENFORCE"}) == "enforce"
     assert mode_from_env({"SKFLEET_CLAIM_TTL_MODE": " report "}) == "report"
+
+
+def test_nan_ttl_falls_back_to_the_default():
+    """`nan` parses as a float and survives a `<= 0` test, because every
+    comparison against nan is False. Left through, it makes `idle <= ttl`
+    False for EVERY claim, so a claim made a minute ago becomes reclaimable.
+    Verified before this guard existed.
+    """
+    assert ttl_seconds_from_env({"SKFLEET_CLAIM_TTL_H": "nan"}) == 48 * HOUR
+    for token in ("inf", "-inf", "NaN", "Infinity"):
+        assert ttl_seconds_from_env({"SKFLEET_CLAIM_TTL_H": token}) == 48 * HOUR, token
+
+
+def test_a_nan_ttl_cannot_make_a_fresh_claim_reclaimable():
+    """The consequence, asserted end to end rather than on the parser."""
+    ttl = ttl_seconds_from_env({"SKFLEET_CLAIM_TTL_H": "nan"})
+    v = evaluate([obs(last=NOW - 60)], now=NOW, ttl_seconds=ttl)[0]
+    assert v.reclaimable is False
+    assert v.reason == "within-ttl"
+
+
+def test_a_sub_hour_ttl_is_refused():
+    """A deadline measured in minutes is not a safety margin."""
+    for token in ("0.5", ".5", "0.01"):
+        assert ttl_seconds_from_env({"SKFLEET_CLAIM_TTL_H": token}) == 48 * HOUR, token
+    # exactly at the floor is allowed
+    assert ttl_seconds_from_env({"SKFLEET_CLAIM_TTL_H": "1"}) == 1 * HOUR
+    assert ttl_seconds_from_env({"SKFLEET_CLAIM_TTL_H": "6"}) == 6 * HOUR

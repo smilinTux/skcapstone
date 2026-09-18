@@ -1,4 +1,4 @@
-# SDD ledger — plan: docs/superpowers/plans/2026-09-18-claim-ttl.md
+# SDD ledger, plan: docs/superpowers/plans/2026-09-18-claim-ttl.md
 
 Spec: docs/superpowers/specs/2026-09-18-claim-ttl-design.md
 Branch: feat/claim-ttl-heartbeat (worktree ~/skworld-worktrees/claim-ttl-skcapstone)
