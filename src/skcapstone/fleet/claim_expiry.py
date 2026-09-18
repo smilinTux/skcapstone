@@ -15,8 +15,10 @@ separates them from live work with room to spare.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
 #: Hours of owner inactivity before a claim may be reclaimed. Deliberately
 #: generous: the failure is asymmetric. Too long leaves a card stuck, which
@@ -90,6 +92,97 @@ def evaluate(
                 idle_seconds=idle,
                 reclaimable=ok,
                 reason=reason,
+            )
+        )
+    return out
+
+
+def _parse_ts(value: object) -> float:
+    from datetime import datetime
+
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0.0
+
+
+_TERMINAL = {"complete", "void", "archive"}
+_RELEASE = {"release_claim", "unassign"}
+
+
+def observe(home: Path) -> list[ClaimObservation]:
+    """Every claim the store currently reports as held, with owner idleness.
+
+    Reads the event log directly rather than the CardStore fold, because the
+    deadline needs the last event the OWNER wrote, which the fold does not
+    retain. Ownership itself is decided by replaying the claim/release pairs
+    in sequence order, which is what the fold does: counting claim events
+    against release events overcounts, since a worker re-claiming a card it
+    already holds writes a second claim that one release settles.
+    """
+    root = Path(home) / "cards"
+    if not root.is_dir():
+        return []
+
+    out: list[ClaimObservation] = []
+    for card_dir in sorted(root.iterdir()):
+        events_dir = card_dir / "events"
+        if not events_dir.is_dir():
+            continue
+        events: list[dict] = []
+        try:
+            names = sorted(events_dir.iterdir())
+        except OSError:
+            continue
+        for fn in names:
+            try:
+                fh = fn.open(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            with fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        e = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(e, dict):
+                        events.append(e)
+        if not events:
+            continue
+        events.sort(key=lambda e: (e.get("seq") or 0, _parse_ts(e.get("ts"))))
+
+        owner: str | None = None
+        revision: str | None = None
+        terminal = False
+        for e in events:
+            action = e.get("action")
+            if action in _TERMINAL:
+                terminal = True
+                break
+            if action == "claim" and e.get("owner"):
+                owner = str(e["owner"])
+                revision = e.get("claim_revision") or revision
+            elif action in _RELEASE:
+                owner = None
+                revision = None
+        if terminal or not owner:
+            continue
+
+        last_owner = 0.0
+        for e in events:
+            if e.get("writer") == owner or e.get("owner") == owner:
+                t = _parse_ts(e.get("ts"))
+                if t > last_owner:
+                    last_owner = t
+        out.append(
+            ClaimObservation(
+                card_id=card_dir.name,
+                owner=owner,
+                claim_revision=revision,
+                last_owner_event_at=last_owner,
             )
         )
     return out
