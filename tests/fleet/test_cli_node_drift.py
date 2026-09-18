@@ -125,6 +125,111 @@ def test_reports_each_drift_kind_distinctly(tmp_path, monkeypatch, fake_manifest
     assert "3 drift" in result.output
 
 
+def test_missing_unit_and_dispatcher_are_summarized_not_listed_by_default(
+    tmp_path, monkeypatch, fake_manifest
+):
+    """Task 5, Part 1: 'missing' on a unit or the dispatcher cannot be told
+    apart from a legitimate role absence without a per-host role manifest,
+    which this estate does not have. Default text output must not print
+    either by name, but must still say how many and how to see them.
+    """
+    drifts = [
+        Drift("unit:a.service", "missing", "deadbeef", None, "node-under-test"),
+        Drift("unit:b.service", "missing", "deadbeef", None, "node-under-test"),
+        Drift("dispatcher:skfleet-rotate.py", "missing", "deadbeef", None, "node-under-test"),
+        Drift("unit:c.service", "changed", "deadbeef", "c0ffee", "node-under-test"),
+    ]
+    monkeypatch.setattr(rollout_drift, "detect_drift", lambda manifest, home, repo_root: drifts)
+
+    result = CliRunner().invoke(
+        fleet,
+        ["node", "drift", "--repo-root", str(tmp_path), "--home", str(tmp_path)],
+        env=_env(),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "unit:a.service" not in result.output
+    assert "unit:b.service" not in result.output
+    assert "dispatcher:skfleet-rotate.py" not in result.output
+    assert "unit:c.service" in result.output  # unambiguous, still listed by name
+    assert "3 unit(s)/dispatcher script reported missing" in result.output
+    assert "no per-host role manifest" in result.output
+    assert "--json or --strict" in result.output
+
+
+def test_a_missing_git_sha_is_unambiguous_and_still_listed_by_default(
+    tmp_path, monkeypatch, fake_manifest
+):
+    """A 'missing' git_sha (the installed distribution itself could not be
+    read) is not a role question, unlike a missing unit, so it stays in
+    the default listing rather than folding into the summary count.
+    """
+    drifts = [Drift("git_sha", "missing", "deadbeef", None, "node-under-test")]
+    monkeypatch.setattr(rollout_drift, "detect_drift", lambda manifest, home, repo_root: drifts)
+
+    result = CliRunner().invoke(
+        fleet,
+        ["node", "drift", "--repo-root", str(tmp_path), "--home", str(tmp_path)],
+        env=_env(),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "git_sha" in result.output
+    assert "reported missing, not listed" not in result.output
+
+
+def test_all_missing_drift_still_shows_the_summary_with_no_unambiguous_line(
+    tmp_path, monkeypatch, fake_manifest
+):
+    drifts = [Drift("unit:a.service", "missing", "deadbeef", None, "node-under-test")]
+    monkeypatch.setattr(rollout_drift, "detect_drift", lambda manifest, home, repo_root: drifts)
+
+    result = CliRunner().invoke(
+        fleet,
+        ["node", "drift", "--repo-root", str(tmp_path), "--home", str(tmp_path)],
+        env=_env(),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "no unambiguous drift" in result.output
+    assert "1 unit(s)/dispatcher script reported missing" in result.output
+
+
+def test_strict_still_exits_one_on_missing_only_drift(tmp_path, monkeypatch, fake_manifest):
+    """--strict must act on every finding, missing included, even though
+    the default text rendering summarizes rather than lists them.
+    """
+    drifts = [Drift("unit:a.service", "missing", "deadbeef", None, "node-under-test")]
+    monkeypatch.setattr(rollout_drift, "detect_drift", lambda manifest, home, repo_root: drifts)
+
+    result = CliRunner().invoke(
+        fleet,
+        ["node", "drift", "--strict", "--repo-root", str(tmp_path), "--home", str(tmp_path)],
+        env=_env(),
+    )
+
+    assert result.exit_code == 1
+
+
+def test_json_lists_every_missing_drift_by_name_regardless_of_default_summary(
+    tmp_path, monkeypatch, fake_manifest
+):
+    drifts = [Drift("unit:a.service", "missing", "deadbeef", None, "node-under-test")]
+    monkeypatch.setattr(rollout_drift, "detect_drift", lambda manifest, home, repo_root: drifts)
+
+    result = CliRunner().invoke(
+        fleet,
+        ["node", "drift", "--repo-root", str(tmp_path), "--home", str(tmp_path), "--json"],
+        env=_env(),
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["drifts"] == [
+        {"artifact": "unit:a.service", "kind": "missing", "expected": "deadbeef", "found": None}
+    ]
+
+
 # --------------------------------------------------------------- json ---
 
 

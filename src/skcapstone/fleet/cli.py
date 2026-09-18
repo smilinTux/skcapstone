@@ -762,6 +762,29 @@ def node_endpoint_audit_cmd(status_file, as_json: bool, strict: bool) -> None:
         raise SystemExit(1)
 
 
+def _drift_is_role_ambiguous(drift) -> bool:
+    """True when ``drift`` cannot be told from a legitimate role difference.
+
+    See ``.superpowers/sdd/2026-09-17-rollout-observability/task-5-brief.md``
+    Part 1, and the incident it names: run against a real workstation or
+    against chiap01/chiap03, most of the ``missing`` findings on a shipped
+    unit or the dispatcher script are units that host's ROLE never installs
+    on purpose, not a rollout gap. This estate has no per-host role
+    manifest, so nothing here can tell those two apart -- and Task 3/4's own
+    documented rule is that ``unit_in_scope`` returning False already
+    suppresses the cases it CAN judge; what reaches ``detect_drift`` as
+    ``missing`` is exactly the residue that is genuinely undecidable.
+
+    ``changed`` and ``enablement_mismatch`` are never ambiguous: the
+    artifact is demonstrably installed, so a content or activation
+    difference is a fact about this host, not a guess about its role. A
+    ``missing`` finding on ``git_sha`` is not ambiguous either: it means
+    the installed distribution itself could not be read at all, which is
+    not a per-unit role question.
+    """
+    return drift.kind == "missing" and drift.artifact != "git_sha"
+
+
 def _default_repo_root() -> Path:
     """The checkout `node drift` reads EXPECTED content from.
 
@@ -815,6 +838,16 @@ def node_drift_cmd(repo_root: Path | None, home: Path | None, as_json: bool, str
     ``skcapstone doctor``: every check here is a file read, a glob, or a
     handful of ``systemctl --user show`` calls, the same read-only cost
     Task 2's readiness gate already pays every 15 minutes.
+
+    Default text output shows every ``changed`` and ``enablement_mismatch``
+    finding, plus any ``git_sha`` finding, by name: those are unambiguous
+    drift regardless of what this host's role is. A ``missing`` unit or
+    dispatcher script is summarised as a count instead of printed by name,
+    because this estate has no per-host role manifest, so "this role never
+    installs it" cannot be told apart from "a rollout should have installed
+    it and did not" -- see ``_drift_is_role_ambiguous``. ``--json`` and
+    ``--strict`` are unaffected by this split: both see and act on every
+    finding, missing included.
     """
     from . import deployment_manifest, rollout_drift
 
@@ -853,11 +886,22 @@ def node_drift_cmd(repo_root: Path | None, home: Path | None, as_json: bool, str
     elif not drifts:
         click.echo(f"{node}: no drift (matches {manifest['git_sha']})")
     else:
+        ambiguous = [d for d in drifts if _drift_is_role_ambiguous(d)]
+        unambiguous = [d for d in drifts if not _drift_is_role_ambiguous(d)]
         click.echo(
             f"{node}\t{len(drifts)} drift(s) against manifest git_sha={manifest['git_sha']}"
         )
-        for d in drifts:
+        if not unambiguous:
+            click.echo("  (no unambiguous drift: no changed content, enablement, or git_sha)")
+        for d in unambiguous:
             click.echo(f"  {d.kind:20} {d.artifact:40} expected={d.expected!r} found={d.found!r}")
+        if ambiguous:
+            click.echo(
+                f"  {len(ambiguous)} unit(s)/dispatcher script reported missing, not listed: "
+                "this estate has no per-host role manifest, so 'this host's role never "
+                "installs it' cannot be told apart from 'a rollout should have installed "
+                "it and did not'. Re-run with --json or --strict to see each by name."
+            )
 
     if strict and drifts:
         raise SystemExit(1)
