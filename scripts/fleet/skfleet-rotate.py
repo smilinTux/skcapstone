@@ -6587,11 +6587,21 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             "- Do not deploy, dispatch, invoke an actuator, or change the target.\n"
         ) % (_verification_target, _verification_evidence_sha256)
     sess="%s%s"%(_LANE["prefix"],cid)
-    model=_logical_route_for(core,_labels)
-    if model is None:
+    # The size bucket is the card's ROUTE IDENTITY; the model actually sent to
+    # the gateway is the lane's own resolution of it. _lane_model has existed
+    # and been called by nothing, so every lane shipped the bare bucket
+    # (sk-s/sk-m/sk-l/sk-xl) as its model. The gateway advertises
+    # sk-<size>-<public|internal|secret> and NOT the bare bucket, so every
+    # request fell through to local qwen38. Measured on chi 2026-09-18: codex
+    # (max 32) and zai (max 10) served ZERO requests while chiap08-qwen38
+    # served all of them from 3 slots, so the estate's entire subscription
+    # capacity sat idle behind a 5-slot local fallback.
+    _bucket=_logical_route_for(core,_labels)
+    if _bucket is None:
         log(d,"SKIPPED_LOGICAL_ROUTE|%s|%s|reason=missing-or-ambiguous-size"%
             (HOST,cid))
         continue
+    model=_lane_model(_LANE,core) or _bucket
     pi_tools=pi_tool_allowlist(_labels)
     if DRY:
         log(d,"WOULD_LAUNCH|%s|%s|%s|lane=%s|model=%s|%s"%(HOST,sess,cid,_LANE["name"],model,str(core.get("title"))[:40]))
@@ -6624,15 +6634,18 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         log(d,"SKIPPED_LANE_RACE|%s|%s|%s|selected=%s|reason=%s"%
             (HOST,sess,cid,_LANE["name"],affinity_reason))
         continue
-    model=_logical_route_for(
+    _bucket=_logical_route_for(
         fresh_claimability["core"],fresh_claimability["labels"])
-    if model is None:
+    if _bucket is None:
         lane_drift += 1
         log(d,"SKIPPED_LOGICAL_ROUTE_RACE|%s|%s|reason=missing-or-ambiguous-size"%
             (HOST,cid))
         continue
+    # Same split as the launch site: the bucket stays the logical route in the
+    # identity, and the lane resolves the model that is actually sent.
+    model=_lane_model(_LANE,fresh_claimability["core"]) or _bucket
     _route_identity={
-        "logical_route":model,
+        "logical_route":_bucket,
         "provider":"skgateway",
         "capacity_domains":[],
         "model_or_bucket":model,
@@ -6659,7 +6672,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             log(d,"SKIPPED_REVIEW_ROUTE|%s|%s|reason=no-eligible-route"%(HOST,cid))
             continue
         _route_identity={
-            "logical_route":model,
+            "logical_route":_bucket,
             "provider":"skgateway",
             "capacity_domains":[str(_selected_route["capacity_domain"])],
             "model_or_bucket":model,
@@ -6678,7 +6691,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             log(d,"SKIPPED_PRODUCER_ROUTE|%s|%s|reason=no-eligible-route"%(HOST,cid))
             continue
         _route_identity={
-            "logical_route":model,
+            "logical_route":_bucket,
             "provider":"skgateway",
             "capacity_domains":[str(_selected_route["capacity_domain"])],
             "model_or_bucket":model,
