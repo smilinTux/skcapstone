@@ -729,6 +729,10 @@ def register_coord_commands(main: click.Group) -> None:
         validate_task_id(task_id)
         validate_agent_name(owner)
         validate_agent_name(agent)
+        from ..jarvis_emergency import authorize_jarvis_entrypoint
+        from ..seat_boundaries import Action
+
+        authorize_jarvis_entrypoint(agent, Action.RELEASE, task_id, None, None)
         if not str(expected_claim_revision).strip():
             raise click.ClickException("expected claim revision must not be empty")
         home_path = Path(home).expanduser()

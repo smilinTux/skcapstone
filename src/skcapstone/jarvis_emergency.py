@@ -15,6 +15,7 @@ from .operator_authorization import (
 from .seat_boundaries import (
     JARVIS_DIRECT_ACTIONS,
     Action,
+    Seat,
     canonical_human_principal,
     require_authority,
     verify_casey_direction,
@@ -32,8 +33,23 @@ def authorize_jarvis_entrypoint(
     authorization_path: Path | None,
     change_id: str | None,
 ) -> None:
-    """Gate a real mutation surface when its authenticated actor is Jarvis."""
-    if actor.strip().lower() != "jarvis":
+    """Gate a real mutation surface for seat-governed actors.
+
+    The read-only Overseer seat (``mero``) is refused every action outside its
+    charter here, because this function is the one gate every coord mutation
+    entrypoint already calls. ADR-0005 and ``docs/fleet/seat-charters.md``
+    allow the Overseer to observe, recommend, and create cards, and nothing
+    else; measured on chi in September 2026, ``--agent mero`` had written 324
+    ``move`` and 147 ``release_claim`` events in 14 days because only the
+    Jarvis identity was checked. The exact ``mero`` identity is what the
+    charter binds; ``pi-mero-*`` lane workers are ordinary workers and pass.
+
+    Every other non-Jarvis actor returns unchecked, exactly as before.
+    """
+    normalized = actor.strip().lower()
+    if normalized == Seat.MERO.value:
+        require_authority(normalized, action)
+    if normalized != "jarvis":
         return
     if action in JARVIS_DIRECT_ACTIONS:
         return
