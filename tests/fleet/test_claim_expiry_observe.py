@@ -136,3 +136,62 @@ def test_observe_survives_a_corrupt_line(tmp_path):
 
 def test_observe_on_missing_tree_returns_empty(tmp_path):
     assert observe(tmp_path / "nope") == []
+
+
+def test_observe_orders_by_timestamp_not_seq_across_writer_shards(tmp_path):
+    """Regression: events are sharded one file per WRITER and `seq` restarts
+    at 0 in every file, so seq is meaningless across writers.
+
+    Card bf80259a on the live cluster is the worked example. The owning
+    worker wrote claim(seq=0, 06:17:51) and claim(seq=1, 06:18:40) into its
+    own shard; jarvis wrote release_claim(seq=0, 06:27:06) into a different
+    shard. Ordering by seq first puts the release between the two claims, so
+    the replay ends with the owner still set and the card is reported held
+    forever, disagreeing with CardStore.fold(). Ordering by timestamp puts
+    the release last, which is what actually happened.
+    """
+    d = tmp_path / "cards" / "bf80259a" / "events"
+    d.mkdir(parents=True)
+    (d / "pi-codex-chiap01-bf80259a@chiap01.jsonl").write_text(
+        json.dumps(
+            {
+                "action": "claim",
+                "owner": "pi-codex-chiap01-bf80259a",
+                "writer": "pi-codex-chiap01-bf80259a",
+                "claim_revision": "r1",
+                "seq": 0,
+                "ts": _iso(-120),
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "action": "claim",
+                "owner": "pi-codex-chiap01-bf80259a",
+                "writer": "pi-codex-chiap01-bf80259a",
+                "claim_revision": "r2",
+                "seq": 1,
+                "ts": _iso(-119),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (d / "jarvis@chiap03.jsonl").write_text(
+        json.dumps(
+            {
+                "action": "release_claim",
+                "released_owner": "pi-codex-chiap01-bf80259a",
+                "writer": "jarvis",
+                "expected_claim_revision": "r2",
+                "seq": 0,
+                "ts": _iso(-118),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert [
+        o.card_id for o in observe(tmp_path)
+    ] == [], "the release is the last event by timestamp, so nobody holds this card"

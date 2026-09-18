@@ -152,7 +152,16 @@ def observe(home: Path) -> list[ClaimObservation]:
                         events.append(e)
         if not events:
             continue
-        events.sort(key=lambda e: (e.get("seq") or 0, _parse_ts(e.get("ts"))))
+        # Order by TIMESTAMP first, seq only as a tiebreak. Events are sharded
+        # one file per writer (`jarvis@chiap03.jsonl`,
+        # `pi-codex-chiap01-<cid>@chiap01.jsonl`), and `seq` restarts at 0 in
+        # EVERY file, so seq is meaningless across writers. Sorting by seq
+        # first interleaves writers and can place a release before a later
+        # claim by a different writer, leaving the card looking held forever.
+        # Card bf80259a is the worked example: a claim at seq=1 06:18:40 and a
+        # release at seq=0 06:27:06, where seq-first ordering loses the
+        # release and disagrees with CardStore.fold().
+        events.sort(key=lambda e: (_parse_ts(e.get("ts")), e.get("seq") or 0))
 
         owner: str | None = None
         revision: str | None = None
