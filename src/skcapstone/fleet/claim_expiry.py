@@ -106,7 +106,26 @@ def _parse_ts(value: object) -> float:
         return 0.0
 
 
-_TERMINAL = {"complete", "void", "archive"}
+#: Void and archive are FINAL. A claim that arrives after them does not
+#: resurrect the card, and treating it as if it did is a known, costly
+#: regression: 88 of 114 voids were once silently ineffective and 88 cards
+#: stayed resurrectable, which reversed decisions the operator had already
+#: made. The fold enforces this, so the replay must too. Measured on chi:
+#: card 7e2c6788 took a claim 21 SECONDS after its void+archive, and
+#: a80f87a9 took one an hour after, and the fold reports neither as held.
+_TERMINAL_FINAL = {"void", "archive"}
+
+#: Complete is SOFT: it clears ownership, but a later assign or claim
+#: legitimately reopens the card, and the fold honors that. Card cec6b1c0
+#: on chi is the worked example (claim, release, claim, complete, complete,
+#: assign) and the fold reports it held by `pi`.
+_TERMINAL_SOFT = {"complete"}
+#: Actions that SET an owner. `claim` is the claim-specific primitive and
+#: carries a claim_revision; `assign` is the generic assignment primitive
+#: and carries none. Both set `card.owner` in the fold, so a replay that
+#: honors `unassign` while ignoring `assign` is asymmetric and
+#: under-reports held cards.
+_ACQUIRE = {"claim", "assign"}
 _RELEASE = {"release_claim", "unassign"}
 
 
@@ -168,12 +187,31 @@ def observe(home: Path) -> list[ClaimObservation]:
         terminal = False
         for e in events:
             action = e.get("action")
-            if action in _TERMINAL:
+            if action in _TERMINAL_FINAL:
+                # Final: stop here. Nothing after a void or an archive can
+                # put this card back in play.
                 terminal = True
+                owner = None
+                revision = None
                 break
-            if action == "claim" and e.get("owner"):
+            if action in _TERMINAL_SOFT:
+                # Soft: clears ownership without ending the replay, because
+                # a later assign or claim reopens the card.
+                terminal = True
+                owner = None
+                revision = None
+            elif action in _ACQUIRE and e.get("owner"):
                 owner = str(e["owner"])
-                revision = e.get("claim_revision") or revision
+                # Only `claim` carries a claim_revision. An `assign` sets an
+                # owner with no revision, and therefore no CAS fence, so
+                # evaluate() will refuse to reclaim it ("no-claim-revision").
+                # That refusal is correct: releasing an assignment needs
+                # `coord unassign`, not `release-claim` with an expected
+                # revision. Recording it still matters, because the report
+                # has to make such a card VISIBLE rather than pretend the
+                # store holds nothing.
+                revision = e.get("claim_revision") or None
+                terminal = False
             elif action in _RELEASE:
                 owner = None
                 revision = None

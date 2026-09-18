@@ -195,3 +195,217 @@ def test_observe_orders_by_timestamp_not_seq_across_writer_shards(tmp_path):
     assert [
         o.card_id for o in observe(tmp_path)
     ] == [], "the release is the last event by timestamp, so nobody holds this card"
+
+
+def test_observe_honors_assign_as_setting_an_owner(tmp_path):
+    """Regression, card 122ebff1 on chi: 587 events, NOT ONE of them a claim.
+    Its owner comes from a generic `assign`, and the fold reports `jarvis`.
+
+    The first implementation honored `unassign` (clears) while ignoring
+    `assign` (sets), which is asymmetric: it under-reported held cards, so
+    the very claims the expiry path exists to collect were invisible to it.
+    """
+    _card(
+        tmp_path,
+        "122ebff1",
+        [
+            {"action": "move", "writer": "coord", "ts": _iso(-400)},
+            {"action": "assign", "owner": "jarvis", "writer": "coord", "ts": _iso(-300)},
+            {"action": "move", "writer": "coord", "ts": _iso(-299)},
+        ],
+    )
+    got = {o.card_id: o for o in observe(tmp_path)}
+    assert "122ebff1" in got, "an assigned card is held"
+    assert got["122ebff1"].owner == "jarvis"
+    # No CAS fence exists for an assignment, so it must not be reclaimable.
+    assert got["122ebff1"].claim_revision is None
+
+
+def test_an_assigned_card_is_visible_but_never_reclaimable(tmp_path):
+    """Visibility and reclaimability are different things. An assignment has
+    no claim_revision, so releasing it would be unfenced; refuse, but still
+    report it so an operator can see the card is held."""
+    import time as _time
+    from skcapstone.fleet.claim_expiry import evaluate
+
+    _card(
+        tmp_path,
+        "aaaa0001",
+        [
+            {"action": "assign", "owner": "jarvis", "writer": "coord", "ts": _iso(-500)},
+        ],
+    )
+    verdicts = evaluate(observe(tmp_path), now=_time.time(), ttl_seconds=48 * 3600)
+    assert len(verdicts) == 1
+    assert verdicts[0].reclaimable is False
+    assert verdicts[0].reason == "no-claim-revision"
+
+
+def test_observe_reopens_a_card_assigned_after_a_terminal_event(tmp_path):
+    """Regression, card cec6b1c0 on chi. Real sequence:
+
+        claim(pi-skg-config) -> release_claim -> claim(pi)
+          -> complete -> complete -> assign(pi)
+
+    The fold reports owner `pi` and a non-terminal column. The first
+    implementation broke out of the replay on the first terminal action, so
+    the trailing assign was never seen and the card vanished from the census
+    while still being held.
+    """
+    _card(
+        tmp_path,
+        "cec6b1c0",
+        [
+            {
+                "action": "claim",
+                "owner": "pi-skg-config-cec6b1c0",
+                "writer": "pi-skg-config-cec6b1c0",
+                "claim_revision": "r1",
+                "ts": _iso(-600),
+            },
+            {
+                "action": "release_claim",
+                "released_owner": "pi-skg-config-cec6b1c0",
+                "writer": "jarvis",
+                "expected_claim_revision": "r1",
+                "ts": _iso(-596),
+            },
+            {
+                "action": "claim",
+                "owner": "pi",
+                "writer": "pi",
+                "claim_revision": "r2",
+                "ts": _iso(-590),
+            },
+            {"action": "complete", "writer": "pi", "ts": _iso(-589)},
+            {"action": "complete", "writer": "pi", "ts": _iso(-589)},
+            {"action": "assign", "owner": "pi", "writer": "coord", "ts": _iso(-580)},
+        ],
+    )
+    got = {o.card_id: o for o in observe(tmp_path)}
+    assert "cec6b1c0" in got, "the trailing assign reopened this card"
+    assert got["cec6b1c0"].owner == "pi"
+
+
+def test_a_terminal_event_with_nothing_after_it_stays_terminal(tmp_path):
+    """The complement of the test above: not breaking on terminal must not
+    turn every completed card back into a held one."""
+    _card(
+        tmp_path,
+        "bbbb0002",
+        [
+            {
+                "action": "claim",
+                "owner": "w1",
+                "writer": "w1",
+                "claim_revision": "r1",
+                "ts": _iso(-100),
+            },
+            {"action": "complete", "writer": "w1", "ts": _iso(-90)},
+            {"action": "move", "writer": "coord", "ts": _iso(-80)},
+        ],
+    )
+    assert [o.card_id for o in observe(tmp_path)] == []
+
+
+def test_unassign_after_assign_clears_ownership(tmp_path):
+    """Regression, card 72df1b66 on chi, which alternates both primitives."""
+    _card(
+        tmp_path,
+        "72df1b66",
+        [
+            {
+                "action": "claim",
+                "owner": "jarvis",
+                "writer": "jarvis",
+                "claim_revision": "r1",
+                "ts": _iso(-700),
+            },
+            {"action": "unassign", "writer": "coord", "ts": _iso(-699)},
+            {
+                "action": "assign",
+                "owner": "pi-skl-gateway-72df1b66",
+                "writer": "coord",
+                "ts": _iso(-600),
+            },
+        ],
+    )
+    got = {o.card_id: o for o in observe(tmp_path)}
+    assert got["72df1b66"].owner == "pi-skl-gateway-72df1b66"
+
+    _card(
+        tmp_path,
+        "cccc0003",
+        [
+            {"action": "assign", "owner": "somebody", "writer": "coord", "ts": _iso(-500)},
+            {"action": "unassign", "writer": "coord", "ts": _iso(-499)},
+        ],
+    )
+    assert "cccc0003" not in {o.card_id for o in observe(tmp_path)}
+
+
+def test_a_claim_after_a_void_does_not_resurrect_the_card(tmp_path):
+    """Regression with real history behind it.
+
+    Cards 7e2c6788 and a80f87a9 on chi each received a claim AFTER being
+    voided and archived (21 seconds later, and an hour later). The fold
+    reports neither as held, and resurrecting them is a known costly
+    regression: 88 of 114 voids were once silently ineffective, leaving 88
+    cards resurrectable and reversing decisions the operator had already
+    made.
+
+    An intermediate version of `observe` cleared the terminal flag on any
+    acquire, which resurrected exactly these two. Void and archive are
+    final; only `complete` is reopenable.
+    """
+    _card(
+        tmp_path,
+        "7e2c6788",
+        [
+            {"action": "void", "writer": "codex-a8100010-r2", "ts": _iso(-200)},
+            {"action": "archive", "writer": "codex-a8100010-r2", "ts": _iso(-200)},
+            {
+                "action": "claim",
+                "owner": "pi-codex-review-chiap03-7e2c6788",
+                "writer": "pi-codex-review-chiap03-7e2c6788",
+                "claim_revision": "57f694d100",
+                "ts": _iso(-199),
+            },
+        ],
+    )
+    assert [
+        o.card_id for o in observe(tmp_path)
+    ] == [], "a voided card must stay dead no matter what claims follow it"
+
+
+def test_archive_alone_is_also_final(tmp_path):
+    _card(
+        tmp_path,
+        "dddd0004",
+        [
+            {"action": "archive", "writer": "coord", "ts": _iso(-100)},
+            {"action": "assign", "owner": "jarvis", "writer": "coord", "ts": _iso(-90)},
+        ],
+    )
+    assert [o.card_id for o in observe(tmp_path)] == []
+
+
+def test_complete_is_still_reopenable_after_the_void_fix(tmp_path):
+    """Guard the distinction: tightening void must not also freeze
+    `complete`, or cec6b1c0 disappears from the census again."""
+    _card(
+        tmp_path,
+        "eeee0005",
+        [
+            {
+                "action": "claim",
+                "owner": "pi",
+                "writer": "pi",
+                "claim_revision": "r1",
+                "ts": _iso(-100),
+            },
+            {"action": "complete", "writer": "pi", "ts": _iso(-99)},
+            {"action": "assign", "owner": "pi", "writer": "coord", "ts": _iso(-90)},
+        ],
+    )
+    assert [o.owner for o in observe(tmp_path)] == ["pi"]
