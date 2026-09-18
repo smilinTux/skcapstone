@@ -6917,6 +6917,9 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
       "  shared path FIRST. skcapstone coord link <card> verdict PASS_FOR_REVIEW is\n"
       "  REFUSED: a link event has no field for a candidate, and 214 cards recorded\n"
       "  that way sat for 14 days with no review opening for any of them.\n"
+      "  Record it LAST, after your branch and commit_sha links. A verdict is only\n"
+      "  current while nothing follows it on the card, so anything you write after it\n"
+      "  supersedes it and the review never opens.\n"
       "- A terminal outcome, plain PASS or BLOCKED, has no candidate to bind and still\n"
       "  uses skcapstone coord link <card> verdict <outcome> --agent \"$SKAGENT\".\n\n"
       "CARD %s (%s)\nTITLE: %s\nDESCRIPTION: %s\n\nACCEPTANCE CRITERIA:\n%s\n\n" % (cid,cid,core.get("kind"),core.get("title"),core.get("description"),ac))

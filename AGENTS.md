@@ -45,6 +45,7 @@ skcapstone coord verdict <card_id> PASS_FOR_REVIEW \
   --candidate ~/.skcapstone/evidence/work/<card_id>/<file> \
   --commit $(git rev-parse HEAD) --tree $(git rev-parse HEAD^{tree}) \
   --ref refs/heads/<branch> --agent <your_name>
+# Record it LAST: anything written after a verdict supersedes it.
 
 # A terminal outcome (plain PASS, BLOCKED) has no candidate to bind:
 skcapstone coord link <card_id> verdict PASS --agent <your_name>

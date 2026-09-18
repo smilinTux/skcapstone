@@ -66,7 +66,9 @@ REMEDY = (
     "    --candidate ~/.skcapstone/evidence/work/<card_id>/<file> \\\n"
     "    --commit $(git rev-parse HEAD) \\\n"
     "    --tree $(git rev-parse HEAD^{tree}) \\\n"
-    "    --ref refs/heads/<branch> --agent <your_name>"
+    "    --ref refs/heads/<branch> --agent <your_name>\n"
+    "Record it LAST. A generation is current only while nothing follows it, so any\n"
+    "link or edit you make after the verdict supersedes it and the review never opens."
 )
 
 

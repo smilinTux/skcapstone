@@ -363,3 +363,72 @@ def test_coord_verdict_requires_a_named_producer(tmp_path: Path):
     )
     assert result.exit_code != 0
     assert "--agent" in result.output
+
+
+def test_later_work_invalidates_the_generation_so_the_verdict_goes_last(tmp_path: Path):
+    """The ordering trap, made explicit.
+
+    ``_generation_invalidated`` treats any later event on the card as work that
+    supersedes the outcome, so a generation is only current while nothing
+    follows it. That makes the verdict the LAST write on the card, after the
+    branch and commit_sha links DEFINITION OF DONE asks for. Not hypothetical:
+    measured on chiap01, 262 of 355 cards blocked at the review gate already
+    carry post-verdict events of exactly this kind, which is why re-verdicting
+    them natively is cleaner than retro-attaching evidence to a stale
+    generation. The brief, the verb help and the refusal message all say so.
+
+    Asserted with a later NATIVE event, because whether a later OVERLAY event
+    invalidates depends on how wide the staleness scan is, and that is being
+    changed separately.
+    """
+    _seed(tmp_path, "7777cccc")
+    candidate = _candidate(tmp_path, "7777cccc")
+    assert (
+        _run(
+            tmp_path,
+            "verdict",
+            "7777cccc",
+            "PASS_FOR_REVIEW",
+            "--candidate",
+            str(candidate),
+            "--commit",
+            COMMIT,
+            "--tree",
+            TREE,
+            "--ref",
+            REF,
+            "--agent",
+            "pi-codex-test",
+        ).exit_code
+        == 0
+    )
+    event = next(e for e in _native_events(tmp_path, "7777cccc") if e.get("action") == "verdict")
+    assert _opener(tmp_path)["_parent_review_generation"](
+        "7777cccc", event["ts"], "PASS_FOR_REVIEW"
+    )
+
+    later = _candidate(tmp_path, "7777cccc").with_name("second.patch")
+    later.write_text("later work\n", encoding="utf-8")
+    assert (
+        _run(
+            tmp_path,
+            "verdict",
+            "7777cccc",
+            "PASS_FOR_REVIEW",
+            "--candidate",
+            str(later),
+            "--commit",
+            COMMIT,
+            "--tree",
+            TREE,
+            "--ref",
+            REF,
+            "--agent",
+            "pi-codex-test",
+        ).exit_code
+        == 0
+    )
+    assert (
+        _opener(tmp_path)["_parent_review_generation"]("7777cccc", event["ts"], "PASS_FOR_REVIEW")
+        is None
+    )

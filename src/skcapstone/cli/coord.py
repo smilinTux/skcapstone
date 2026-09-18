@@ -1545,6 +1545,10 @@ def register_coord_commands(main: click.Group) -> None:
         commit/tree/ref. That is exactly what the review opener reads, so a
         verdict recorded here can actually open the review it asks for, which is
         what ``coord link verdict PASS_FOR_REVIEW`` could never do.
+
+        Record it LAST. A generation is current only while nothing follows it,
+        so link the branch and commit_sha first and let the verdict close the
+        card out.
         """
         from ..jarvis_emergency import authorize_coord_mutation
         from ..provisional_verdict import candidate_evidence

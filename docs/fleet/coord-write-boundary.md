@@ -13,6 +13,7 @@ skcapstone coord verdict <card_id> PASS_FOR_REVIEW \
   --candidate ~/.skcapstone/evidence/work/<card_id>/<file> \
   --commit $(git rev-parse HEAD) --tree $(git rev-parse HEAD^{tree}) \
   --ref refs/heads/<branch> --agent <worker>
+# Record it LAST: anything written after a verdict supersedes it.
 skcapstone coord link <card_id> verdict PASS --agent <worker>
 skcapstone coord link <card_id> evidence <repo-relative-path> --agent <worker>
 skcapstone coord move <card_id> review --agent <worker>
