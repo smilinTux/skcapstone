@@ -88,6 +88,18 @@ reference symbols added later. So: package, then script, then converge. This
 mirrors the skcoord rule, where skcoord must ship and install before the
 skcapstone code that calls its new parameters.
 
+**4. Verify what actually landed, on each host, after the steps above.**
+A version string cannot prove any of the three constraints above were
+actually followed; only content and live state can. Run
+`skcapstone fleet node drift` on each host after upgrading: `changed` catches
+a package or unit file that did not update, `git_sha` catches a host still
+on the old commit, and `enablement_mismatch` catches a unit whose file is
+correct but whose enabled state is not, the exact shape of the seven-week
+`skfleet-rotate.timer` incident that motivated this check. See
+[rollout-drift.md](rollout-drift.md) for the full command reference and how
+to read its output; that document also states plainly what this check does
+not do (no staged rollout, no rollback by manifest).
+
 ## 0. Local preflight
 
 Run on chiap08 from the SKCapstone workspace:

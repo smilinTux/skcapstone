@@ -67,6 +67,17 @@ Three concrete things are missing, all measured against the current tree:
    invoke an actuator, or change the target." A worker dispatched to ATLAS is
    told not to do the exact thing this section says it cannot yet do safely.
 
+**Update, Plan B3 phase 1 (2026-09-17): observation now exists, authority
+still does not.** A deployment manifest (`deployment_manifest.build_manifest`),
+a readiness gate with a real caller (`skfleet-readiness.service`/`.timer`),
+and a drift check (`skcapstone fleet node drift`) now exist; see
+[rollout-drift.md](rollout-drift.md). None of that changes this section's
+verdict: ATLAS still holds no `Action.DEPLOY`, the digest gate is still on
+the retired tank branch, the rail brief still forbids deploying, and nothing
+consumes the manifest to roll a node back. The manifest and drift check are
+observation, which `OBSERVE` already permits; a caller still has to read
+their output and act by hand.
+
 **What to do instead of a governed release: wait for B3, or route the
 release manually with full human sign-off outside any seat.** ATLAS may
 still verify a target that was released by other means and record PASS,
@@ -306,6 +317,7 @@ clause exists to prevent.
 
 | Date | Change | Author |
 |---|---|---|
+| 2026-09-17 | Noted that Plan B3 phase 1 delivered observation (deployment manifest, readiness gate with a caller, `skcapstone fleet node drift`) without changing ATLAS's authority bound; linked [rollout-drift.md](rollout-drift.md) | lumina |
 | 2026-09-17 | Documented that ATLAS's ported release/install/rollback duty is inoperable pending B3: no `DEPLOY` authority in `seat_boundaries`, the digest gate still on the retired tank branch, and the rail brief forbidding deploy; named the emergency gateway as unbounded and not a substitute; added the upgrade-before-converge and converge-only-on-elected-host ordering constraints and the partial-rollback note | lumina |
 | 2026-09-17 | Folded tank into atlas, reducing `LIFECYCLE_SEATS` to five; `seat_boundaries.Seat.TANK` retained as a non-dispatched authority-model actor; documented that seats remain host-pinned (Amendment B) and the niobe cold-start constraint | lumina |
 | 2026-09-09 | Activated six lifecycle seats and moved recurring dispatch from Jarvis to Niobe (card 20a637fe) | jarvis |

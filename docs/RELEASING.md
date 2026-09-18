@@ -97,3 +97,14 @@ Pushing a `v*` tag publishes to PyPI, and PyPI has no delete API (the manage UI
 is the only recourse, and it will not free the version number). Everything else
 here is recoverable. Treat the tag push as the point of no return, not the
 merge.
+
+## A cut release is not a deployed one
+
+Everything above ends at PyPI. It says nothing about which fleet host is
+actually running the tag once it is up: three different `skmail` binaries
+sat across five hosts, and `pip show skcapstone` agreed with `__version__`
+on every one of them throughout. Once a host has installed a release,
+`skcapstone fleet node drift` compares its actual content and live state
+against a fresh manifest built from a checkout, rather than trusting a
+version string. See [`docs/fleet/rollout-drift.md`](fleet/rollout-drift.md).
+It observes only: nothing here stages a rollout or rolls one back.

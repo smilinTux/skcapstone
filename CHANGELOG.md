@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+- **Rollout observability: a deployment manifest, a caller for the readiness
+  gate, and a drift check, quiet by default (nimble-factory Plan B3, phase
+  1).** Measured cause: four drift incidents found by hand in one session
+  that no automated signal reported, because a version string proved what
+  tag was installed and nothing about whether the installed files matched
+  it. Three different `skmail` binaries sat across five hosts, none matching
+  the repo, invisible to every version check because the file was never in
+  `pyproject.toml`'s `script-files` and so belonged to no package at all.
+  Separately, `skfleet-rotate.timer` was active but not enabled (no
+  `timers.target.wants` symlink) on all three rotate hosts for at least
+  seven weeks; a reboot on any of them would have stopped fleet dispatch
+  fleet-wide, with nothing reporting it. Found by following the same
+  investigation, fixed, and now checked continuously rather than by luck.
+
+  - `deployment_manifest.build_manifest(repo_root, home)` pins `revision` (a
+    content digest, not a timestamp, so identical state always compares
+    equal), `git_sha`, `package_version`, `required_env` (reused from the
+    readiness gate's own AST parse, never hand-typed), and `units`.
+  - `scripts/fleet/skfleet_readiness.py` finally has a caller
+    (`skfleet-readiness.service`/`.timer`, every 15 minutes), is scope-aware
+    via the paired timer's `ActiveState` rather than `is-enabled` (measured
+    identical across rotate and seat hosts, so useless for this), and writes
+    its verdict to a node-scoped path so five hosts sharing one Syncthing
+    folder do not overwrite each other's result.
+  - `rollout_drift.detect_drift` compares a node's installed content and
+    live state against a fresh manifest: `missing`, `changed`, and
+    `enablement_mismatch` findings, never collapsed into one label, plus the
+    enablement check widened to cover hand-installed critical units (the
+    dispatcher timer above was never in the shipped tree, so a shipped-only
+    check could never have caught the incident it exists for).
+  - `skcapstone fleet node drift` gives that check a caller. Run against
+    this checkout its default output was 20 drift lines, and 14 were units
+    this workstation never installs on purpose; the same shape was measured
+    on two live hosts against their own pinned commit. This estate has no
+    per-host role manifest, so "this host's role never installs it" cannot
+    be told apart from "a rollout should have installed it and did not."
+    Rather than guess, the default text output now lists every unambiguous
+    finding by name (`changed`, `enablement_mismatch`, `git_sha`) and folds
+    ambiguous `missing` findings into one count with a pointer to `--json`
+    or `--strict`, both of which still see and act on every finding.
+  - Documented in new `docs/fleet/rollout-drift.md`, with pointers from
+    `docs/fleet/activation-runbook.md`, `docs/fleet/seat-charters.md`, and
+    `docs/RELEASING.md`. **This phase observes and does not actuate: no
+    staged rollout, no rollback by manifest, and no change to ATLAS's
+    authority.** `Seat.ATLAS` is still bound to `{OBSERVE,
+    ACTUATE_APPLICATION, CREATE_CARD}` only, and its ported release-and-install
+    duty is recorded as inoperable pending further work.
+
 - **Salvaged four pieces from a branch stranded on a production host.** `chiap08`,
   the chi estate's elected control-plane host, was found running a local branch 12
   commits ahead of main, 235 behind, never pushed. The branch itself must never be
