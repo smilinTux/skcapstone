@@ -433,6 +433,45 @@ estate's own standards say green-by-omission is worse than no standard.
 
 ---
 
+## 16. Two queues into one trunk will starve the expensive one
+
+Two merge queues ran against the same repository: one for this session's code
+fixes, one for a backlog of small docs PRs. The docs queue merged five PRs in
+eight minutes, because docs clear CI in about a minute. The code queue merged
+nothing at all.
+
+The mechanism is simple once seen. Every merge moves `main`. Every move knocks
+every other open PR to `BEHIND`. A `BEHIND` PR owes a fresh CI run, and the
+full suite is about **15 minutes** while the docs lane is about **one**. So the
+cheap queue lapped the expensive one continuously, and the expensive one could
+never finish a cycle before its base moved again.
+
+Nothing failed. Both queues behaved exactly as written. The expensive queue was
+simply never going to converge, and the PRs it held were the ones carrying
+production fixes.
+
+**Contract.** Queues merging into one trunk share a resource, and the sharing
+must be explicit.
+
+| | |
+|---|---|
+| Producer | each merge queue |
+| Consumer | the trunk every queue rebases onto |
+| Recovery owner | whoever runs the queues |
+| Evidence | merge throughput per queue; a queue with zero merges while another is landing steadily is starving, not waiting |
+| Fails closed | one queue runs at a time, **expensive first**, and the cheap one resumes after |
+
+The instinct to run them concurrently is the wrong one: concurrency is what
+creates the starvation. The correct move is to serialise, and to put the
+expensive lane first, because the cheap lane loses almost nothing by waiting
+while the expensive lane loses everything.
+
+Watch for this shape anywhere a slow consumer and a fast consumer share a
+sequencing point. The slow one does not merely go slower. It can be held at
+zero indefinitely while every component reports healthy.
+
+---
+
 ## The one-line version
 
 Every failure here was an unverified assertion, and the fix is always the same
