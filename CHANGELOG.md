@@ -7,7 +7,9 @@
   tested, and was called by nothing (contract 1,
   `docs/fleet/2026-09-18-learnings.md`). The dispatcher's worker-health pass
   in `scripts/fleet/skfleet-rotate.py` now classifies every live local worker
-  and logs one greppable `WORKER_PROGRESS|` line per worker, with
+  (enumerated from BOTH migration-era tmux sessions and systemd
+  `skfleet-worker-*.service` units; on 2026-09-18 all live chi workers were
+  units only) and logs one greppable `WORKER_PROGRESS|` line per worker, with
   `actuation=report-only`; it kills, releases, and reaps nothing, so the
   classification can be measured for a day before anyone considers acting on
   it. `progress_at` is fed by the newest write under the worker's own
