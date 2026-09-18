@@ -155,3 +155,33 @@ resolved by proving a process absent.
 USE THIS TABLE as the phase-2 comparison set: when report mode runs, its
 would-reclaim list should contain the stale rows and none of the 7 active
 ones. An active card appearing in it is a phase-1 defect and blocks enforce.
+
+### Controller findings pending the final review (not yet fixed)
+
+Two items found by reading Task 4's output, held rather than edited so the
+reviewer is not working against a moving file:
+
+**(a) Default-off is not deploy-safe.** `_expire_idle_claims()` imports
+`skcapstone.fleet.claim_expiry` at the TOP of the function, above the
+`mode == "off"` early return, and is called unguarded at module scope
+(skfleet-rotate.py:4474) between `reap_dead_claims()` and the
+review-and-close phases. A host carrying the new script with the old
+package therefore raises ImportError even in default-off mode, reaps, and
+then never reaches `open_provisional_reviews` or `close_reviewed_parents`.
+Today the only protection is deploy ordering (package first, then script),
+which is the exact trap that already bit this repo once via the
+`GATED_EXIT_CODE` import. Fix: move the mode check above the import so off
+mode touches nothing at all. Severity: should-fix before deploy.
+
+**(b) The replay does not apply the fold's CAS fence on release.**
+`observe()` clears ownership on ANY `release_claim`, while the fold accepts
+one only when `released_owner` equals the current owner AND
+`expected_claim_revision` equals the current revision. A rejected release
+therefore leaves the fold holding the card while the replay reports it
+free. The divergence direction is the safe one (the replay under-reports,
+so it never releases something the fold thinks is held), but it means such
+a card is invisible to the very mechanism meant to collect it, which is the
+same failure mode as the `assign` gap. Chi currently has no such event,
+which is why the 22 = 22 comparison is clean; this is latent, not live.
+Severity: should-fix, with a regression test for a mismatched-revision
+release.
