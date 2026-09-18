@@ -34,6 +34,8 @@ FUNCTIONS = {
     "_dependency_state_change_epoch",
     "_blocker_change_epoch",
     "_wake_retry_available",
+    "_claim_amnesty_epoch",
+    "_countable_claims",
     "_claim_ceiling_hit",
     "acts",
     "blocked_backoff",
@@ -60,6 +62,7 @@ CONSTANTS = {
     "_ESCALATE_LABEL",
     "_CAPABILITY_VERDICT_RE",
     "_MAX_CLAIMS",
+    "_AMNESTY_VALUE_RE",
 }
 
 

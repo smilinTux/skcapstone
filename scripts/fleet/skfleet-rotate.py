@@ -3313,6 +3313,54 @@ def _wake_retry_available(cid,generation):
     retries=sum(1 for launched in _wake_launch_times.get(cid,()) if launched>generation)
     return retries<_WAKE_RETRY_LIMIT
 
+# An amnesty must NAME the defect it forgives: <defect-ref>|<why>, both parts
+# non-empty, e.g. "PR-778|ownership-repartition-churn". A bare "reset" or an
+# empty value is refused, which is what keeps this from becoming a silent
+# reset button on the one protection that stops genuine runaways.
+_AMNESTY_VALUE_RE=re.compile(r"^\s*[^|\s][^|]*\|\s*\S")
+
+def _claim_amnesty_epoch(cid):
+    """Epoch of the newest well-formed claim_amnesty link event, else 0.0.
+
+    An amnesty forgives the claims a FIXED estate defect burned (a
+    worker-death storm, ownership repartition churn), so one card can be
+    dispatched again without raising _MAX_CLAIMS for the whole fleet, which
+    would also free the genuine runaway the ceiling exists for (06a95c23,
+    402 claims, zero worker logs). Granted per card, by an operator, as an
+    ordinary link in the evidence overlay:
+
+        skcapstone coord link <cid> claim_amnesty "PR-778|ownership-repartition-churn"
+
+    Every branch fails closed. A value that does not name the defect is not
+    an amnesty. An event with no parseable timestamp cannot fence claims, so
+    it is not one either. A card with no valid amnesty behaves exactly as
+    before this function existed.
+    """
+    latest=0.0
+    for event in _load_evidence_events().get(cid,[]):
+        if event.get("action")!="link": continue
+        if _fold_key(event.get("link_key"))!="claim_amnesty": continue
+        if not _AMNESTY_VALUE_RE.match(str(event.get("link_value") or "")): continue
+        epoch=_ts_epoch(event.get("ts"))
+        if epoch>latest: latest=epoch
+    return latest
+
+def _countable_claims(cid,total):
+    """Claims charged against the ceiling: those NEWER than the latest amnesty.
+
+    Nothing is deleted or rewritten. The ledger stays append-only and the
+    older claims stay on the record; they just stop counting. Bounded by
+    construction: only the LATEST amnesty counts and it is one fixed fence,
+    so a wrongly amnestied card burns at most _MAX_CLAIMS more claims and
+    locks again. A claim whose own timestamp will not parse is charged,
+    never forgiven.
+    """
+    epoch=_claim_amnesty_epoch(cid)
+    if epoch<=0: return total
+    forgiven=sum(1 for e in event_rows(cid)
+                 if e.get("action")=="claim" and 0<_ts_epoch(e.get("ts"))<=epoch)
+    return max(total-forgiven,0)
+
 def _claim_ceiling_hit(cid):
     """True when a card has been claimed repeatedly and never finished.
 
@@ -3324,11 +3372,15 @@ def _claim_ceiling_hit(cid):
 
     A card that completed, or that finished its worker-owned criteria and is
     waiting on another seat, is never runaway no matter how many claims it took.
+
+    Claims older than the card's latest well-formed claim_amnesty link are
+    excluded from the count (see _claim_amnesty_epoch), so a defect the
+    estate has since fixed stops charging the cards it churned.
     """
     counts=acts(cid)
     if counts.get("complete") or counts.get("await_gates"):
         return False
-    return counts.get("claim",0)>_MAX_CLAIMS
+    return _countable_claims(cid,counts.get("claim",0))>_MAX_CLAIMS
 
 def blocked_backoff(cid):
     """True if this card should stay out of the pool for now."""
@@ -5398,9 +5450,10 @@ def _legacy_selector_decision(cid, core_p):
     if blocked_backoff(cid):
         # _claim_ceiling_hit folds into blocked_backoff, so a ceiling-hit card
         # is also blocked_backoff-true. Claim counts are monotonic and never
-        # decrease, so a ceiling exclusion is permanent; ordinary backoff is
-        # expected to clear on its own. Reporting both as plain "backoff" hid
-        # which cards were frozen for good behind ones that would retry.
+        # decrease, so a ceiling exclusion clears only through an operator
+        # claim_amnesty link; ordinary backoff is expected to clear on its
+        # own. Reporting both as plain "backoff" hid which cards were frozen
+        # for good behind ones that would retry.
         if _claim_ceiling_hit(cid):
             return {"eligible": False, "reason": "claim_ceiling"}
         return {
@@ -5515,10 +5568,18 @@ for cd in sorted(glob.glob(CARDS+"/*")):
             # Claim counts are monotonic, so this exclusion never clears on
             # its own the way ordinary backoff does. Logged per card, not
             # just counted, so an operator can tell which cards are frozen
-            # and act (satisfy the gate, void, or raise SKFLEET_MAX_CLAIMS)
-            # instead of finding out only by their absence from the pool.
+            # and act (satisfy the gate, void, or grant a claim_amnesty link
+            # naming the fixed defect that burned the claims) instead of
+            # finding out only by their absence from the pool. The line says
+            # WHY: total vs counted claims, how many WORKER_DIED verdicts the
+            # card carries, and whether an amnesty is already in effect.
             skipped_claim_ceiling += 1
-            log(d,"CLAIM_CEILING_EXCLUDED|%s|%s|max_claims=%d"%(HOST,cid,_MAX_CLAIMS))
+            _cc_total=acts(cid).get("claim",0)
+            _cc_died=sum(1 for _e in _load_evidence_events().get(cid,[])
+                         if str(_e.get("verdict") or "").upper()=="WORKER_DIED")
+            log(d,"CLAIM_CEILING_EXCLUDED|%s|%s|max_claims=%d|claims=%d|counted=%d|worker_died=%d|amnesty=%s"%
+                (HOST,cid,_MAX_CLAIMS,_cc_total,_countable_claims(cid,_cc_total),_cc_died,
+                 "granted" if _claim_amnesty_epoch(cid)>0 else "none"))
         elif legacy_reason in ("done", "void", "archive"):
             skipped_terminal += 1
         elif legacy_reason.startswith("owned-"):

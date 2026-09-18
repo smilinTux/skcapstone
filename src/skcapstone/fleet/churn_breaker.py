@@ -43,10 +43,12 @@ BLOCKED verdict has, so it arms deliberately and in stages.
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import math
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -79,6 +81,14 @@ _RELEASE_ACTIONS = frozenset({"release_claim", "unassign", "demote", "reopen"})
 
 #: Link keys that can carry a recorded blocker directly.
 _BLOCKED_ON_KEYS = ("blocked_on",)
+
+#: One operator-granted claim_amnesty link forgives the claim attempts a FIXED
+#: estate defect burned, so this gate and the dispatch-side claim ceiling stop
+#: charging them. The value must NAME the defect: <defect-ref>|<why>, both
+#: parts non-empty, e.g. "PR-778|ownership-repartition-churn". Writing one is
+#: an operator act (coord link <cid> claim_amnesty "..."), never automatic.
+_AMNESTY_LINK_KEY = "claim_amnesty"
+_AMNESTY_VALUE_RE = re.compile(r"^\s*[^|\s][^|]*\|\s*\S")
 
 
 class ClaimRefusedError(ValueError):
@@ -224,7 +234,67 @@ def _card_events(home: Path, card_id: str) -> list[dict]:
     return rows
 
 
-def count_claim_attempts(events: list[dict]) -> tuple[int, int, bool]:
+def _event_epoch(value: object) -> float:
+    """Seconds for an ISO timestamp, 0.0 for anything unparseable (fail closed)."""
+    try:
+        return datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def claim_amnesty_epoch(home: Path | str, card_id: str) -> float:
+    """Epoch of the newest well-formed claim_amnesty link for this card, else 0.0.
+
+    Amnesties land where ``coord link`` writes, ``coordination/card_events``,
+    never in the per-card shards, the same two-store split documented on
+    ``_blocker_from_evidence``. Every branch fails closed: a value that does
+    not name the defect it forgives is not an amnesty, and an event whose
+    timestamp will not parse cannot fence claims so it is not one either.
+    A card with no valid amnesty is charged for every attempt, as before.
+    """
+    events_dir = Path(home).expanduser() / "coordination" / "card_events"
+    if not events_dir.is_dir():
+        return 0.0
+    try:
+        names = sorted(events_dir.iterdir())
+    except OSError:
+        return 0.0
+    latest = 0.0
+    needle = str(card_id)
+    for name in names:
+        if name.suffix != ".jsonl":
+            continue
+        try:
+            handle = name.open(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        with handle:
+            for line in handle:
+                if needle not in line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                if str(event.get("card_id") or "") != needle:
+                    continue
+                if str(event.get("action") or "link") != "link":
+                    continue
+                key = str(event.get("link_key") or event.get("key") or "")
+                if key.strip().lower().replace("-", "_") != _AMNESTY_LINK_KEY:
+                    continue
+                value = str(event.get("link_value") or event.get("value") or "")
+                if not _AMNESTY_VALUE_RE.match(value):
+                    continue
+                stamp = _event_epoch(event.get("ts"))
+                if stamp > latest:
+                    latest = stamp
+    return latest
+
+
+def count_claim_attempts(events: list[dict], amnesty_epoch: float = 0.0) -> tuple[int, int, bool]:
     """(attempts, distinct owners, terminal) folded from a card's event log.
 
     A worker re-claiming a card IT ALREADY HOLDS is normal and writes a second
@@ -240,6 +310,14 @@ def count_claim_attempts(events: list[dict]) -> tuple[int, int, bool]:
     claim (it records a claim_conflict and keeps the first owner), and the
     attempt is still what this gate measures: a refused claim burned a
     dispatch just the same.
+
+    Attempts at or before ``amnesty_epoch`` (the latest well-formed
+    claim_amnesty link, see ``claim_amnesty_epoch``) are not charged and
+    their owners not counted: the ledger keeps them, the gate stops billing
+    them. The hold they establish is still real, so a same-owner re-claim
+    after the fence stays excused. A claim whose own timestamp will not
+    parse is charged, never forgiven, and an epoch of 0.0 (no amnesty, or
+    an unusable one) charges everything, exactly the old behavior.
     """
     attempts = 0
     owners: set[str] = set()
@@ -260,6 +338,9 @@ def count_claim_attempts(events: list[dict]) -> tuple[int, int, bool]:
         if not owner:
             continue
         if owner == held:
+            continue
+        if amnesty_epoch > 0 and 0 < _event_epoch(event.get("ts")) <= amnesty_epoch:
+            held = owner
             continue
         attempts += 1
         owners.add(owner)
@@ -368,7 +449,9 @@ def read_signature(home: Path | str, card_id: str) -> ChurnSignature:
     """
     root = Path(home).expanduser()
     events = _card_events(root, card_id)
-    attempts, owners, terminal_from_log = count_claim_attempts(events)
+    attempts, owners, terminal_from_log = count_claim_attempts(
+        events, claim_amnesty_epoch(root, card_id)
+    )
 
     terminal = terminal_from_log
     links: Mapping[str, object] | None = None

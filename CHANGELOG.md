@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- **Claim ceiling: bounded per-card amnesty for defect-burned claims.** Claim
+  counts are monotonic over the append-only ledger, so the 5-claim ceiling
+  permanently excludes cards that churned because of an estate defect the
+  fleet has since fixed (the Sep 4-6 worker-death storm, the Sep 9
+  claim-release loop that took 7 SKLEGAL cards to 109-126 claims each, the
+  ownership repartition churn), and the only global escape, raising
+  `SKFLEET_MAX_CLAIMS` past 126, would also free the one genuine runaway
+  (06a95c23, 402 claims, zero worker logs). An operator can now grant one
+  card a `claim_amnesty` link naming the fixed defect
+  (`coord link <cid> claim_amnesty "PR-778|ownership-repartition-churn"`);
+  `_claim_ceiling_hit` and the claim-time churn breaker then charge only
+  claims NEWER than the latest well-formed amnesty. Everything fails closed:
+  no amnesty, a causeless amnesty (no `ref|why` shape), or a timestampless
+  or unparseable one leaves the card exactly as locked as before, nothing in
+  the ledger is rewritten, and a wrongly amnestied card burns at most
+  `_MAX_CLAIMS` more claims and re-locks. `CLAIM_CEILING_EXCLUDED` now also
+  logs WHY: total vs counted claims, the card's WORKER_DIED verdict count,
+  and whether an amnesty is in effect. Ships the mechanism only; no amnesty
+  event is written to any live board.
+
 - **Builder dispatch: a declined card now logs why.** `builder_dispatch.offer`
   returns None for reasons the operator could not see: a frozen plane, no
   Ready `builder-standby` node, an invalid source binding, and, most commonly

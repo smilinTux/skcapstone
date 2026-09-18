@@ -4,14 +4,22 @@ from __future__ import annotations
 
 import ast
 import collections
+import datetime
 import os
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 
-FUNCTIONS = {"_claim_ceiling_hit"}
-CONSTANTS = {"_MAX_CLAIMS"}
+FUNCTIONS = {
+    "_claim_ceiling_hit",
+    "_countable_claims",
+    "_claim_amnesty_epoch",
+    "_fold_key",
+    "_ts_epoch",
+}
+CONSTANTS = {"_MAX_CLAIMS", "_AMNESTY_VALUE_RE"}
 
 
 def _load_ceiling_namespace(acts_result: collections.Counter) -> dict:
@@ -25,7 +33,16 @@ def _load_ceiling_namespace(acts_result: collections.Counter) -> dict:
             names = {t.id for t in node.targets if isinstance(t, ast.Name)}
             if names & CONSTANTS:
                 nodes.append(node)
-    namespace = {"os": os, "collections": collections, "acts": lambda cid: acts_result}
+    namespace = {
+        "os": os,
+        "re": re,
+        "datetime": datetime,
+        "collections": collections,
+        "acts": lambda cid: acts_result,
+        # No amnesty on the board: the ceiling must behave exactly as before.
+        "event_rows": lambda cid: [],
+        "_load_evidence_events": lambda: {},
+    }
     exec(compile(ast.Module(nodes, type_ignores=[]), str(ROTATE), "exec"), namespace)
     assert FUNCTIONS <= namespace.keys(), "ceiling seam missing from script"
     return namespace
