@@ -12,6 +12,31 @@
   interpreter it imports fine. The staged rollout consults the readiness
   verdict as its gate, so that false failure reported a healthy host as
   not-ready and halted the rollout on it after a successful deploy.
+- **Cards blocked on the human operator now stop being dispatched, and appear in
+  the unified GTD.** A worker could already write
+  `BLOCKED blocked_on=human referent=approval:<x>`, and it achieved nothing:
+  card `83e498b6` carried exactly that verdict from 2026-08-28, and refill waves
+  claimed straight through `Board.claim_task`, which has no human gate, then
+  overwrote it as a retryable `blocked_on=capability`. That card now has 58
+  claims across 6 owners, 47 of them one seat re-claiming every 10 minutes, and
+  no agent can ever finish it because it needs a Tailscale admin console.
+  Separately, 16 open cards sat at `blocked_on=human` surfaced to nobody.
+
+    - `human_wait.waiting_on_human(home)` derives the queue from the EXISTING
+      `blocked_verdict` / `review_admission.parse_blocked_on_link` parsers, and
+      `assert_human_claim()` follows `assert_governed_review_claim`'s shape. No
+      new label, field, store, dashboard or push.
+    - The assert is called at `coord claim` and the MCP `_handle_coord_claim`.
+      `coord claim --force`'s help already promised "human gates still cannot be
+      bypassed" while no such gate existed.
+    - `skcapstone coord waiting-on-human [--sync-gtd]` lists the queue and
+      upserts each card as a GTD waiting-for, idempotent on
+      `(source="coord-human", source_ref=card_id)`.
+    - A later agent-written `blocked_on=capability` does NOT clear the hold;
+      only a human-authored approval, void or reopen discharges it.
+    - Known gap: `Board.claim_task` in the sibling skcoord package is the true
+      chokepoint and is untouched, so a caller reaching skcoord directly still
+      bypasses.
 
 - **Shell-quote the staged rollout's remote command.** The staged rollout had
   never once deployed to a remote host: every run halted on its first step with
