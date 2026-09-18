@@ -4,6 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "fleet"))
 
 from skfleet_readiness import (
+    unit_python,
     required_env,
     unit_modules,
     check_module_imports,
@@ -93,3 +94,46 @@ def test_parse_systemd_environment_value_containing_equals_splits_on_first_only(
     raw = "SKFLEET_GATEWAY_URL=http://gateway.local:8080/v1?token=abc=def"
     result = parse_systemd_environment(raw)
     assert result == {"SKFLEET_GATEWAY_URL": "http://gateway.local:8080/v1?token=abc=def"}
+
+
+def test_unit_python_reads_the_interpreter_the_unit_declares():
+    """A unit is entitled to its own virtualenv, declared in ExecStart.
+
+    Regression: readiness checked EVERY unit's imports against one
+    interpreter (--python-bin). On chiap04, hermes-gateway.service runs
+    /home/skuser01/.hermes/hermes-agent/venv/bin/python -m hermes_cli.main
+    and had been active since 2026-08-27, yet readiness reported "module
+    hermes_cli.main does not import" because it tested ~/.skenv/bin/python3.
+    Under the unit's own interpreter the module imports fine. That false
+    failure blocked the deploy gate for the entire host, and the gate is
+    what a staged rollout consults before proceeding.
+    """
+    unit = (
+        "[Service]\n"
+        "ExecStart=/home/skuser01/.hermes/hermes-agent/venv/bin/python "
+        "-m hermes_cli.main gateway run --replace\n"
+    )
+    assert unit_python(unit) == "/home/skuser01/.hermes/hermes-agent/venv/bin/python"
+
+
+def test_unit_python_returns_none_when_no_absolute_interpreter_is_named():
+    """Then the caller falls back to the interpreter it was given, which is
+    the old behaviour and stays correct for units that do not declare one."""
+    assert unit_python("[Service]\nExecStart=/usr/bin/true\n") is None
+    assert unit_python("[Service]\nExecStart=skcapstone fleet sknoded --once\n") is None
+    assert unit_python("[Unit]\nDescription=no ExecStart at all\n") is None
+
+
+def test_unit_python_strips_systemd_exec_prefixes():
+    """systemd allows -, @, +, ! and : prefixes on ExecStart; they are not
+    part of the executable path."""
+    for prefix in ("-", "@", "+", "!", "-@"):
+        unit = f"[Service]\nExecStart={prefix}/opt/venv/bin/python3 -m pkg.mod\n"
+        assert unit_python(unit) == "/opt/venv/bin/python3", prefix
+
+
+def test_unit_python_ignores_a_non_python_executable():
+    """Only an interpreter is a useful answer here; a unit that runs a binary
+    has no module to import under it."""
+    assert unit_python("[Service]\nExecStart=/usr/bin/node server.js\n") is None
+    assert unit_python("[Service]\nExecStart=/usr/local/bin/skfleet-rotate.py --go\n") is None

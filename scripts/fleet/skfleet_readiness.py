@@ -92,6 +92,37 @@ def unit_modules(unit_text: str) -> list[str]:
     return modules
 
 
+def unit_python(unit_text: str) -> str | None:
+    """The interpreter a unit's own ExecStart names, if it names an absolute one.
+
+    A unit is entitled to its own virtualenv, and declaring it in ExecStart is
+    how it does so. Checking every unit's imports against ONE interpreter
+    therefore produces false failures for any unit that is not in that venv.
+
+    Measured on chiap04 2026-09-18: hermes-gateway.service runs
+    ``/home/skuser01/.hermes/hermes-agent/venv/bin/python -m hermes_cli.main``
+    and had been active since 2026-08-27, yet readiness reported
+    "module hermes_cli.main does not import" because it tested
+    ``~/.skenv/bin/python3``. Under the unit's own interpreter the module
+    imports fine. That false failure blocked the deploy gate for the whole
+    host.
+
+    Returns None when ExecStart does not name an absolute interpreter, so the
+    caller falls back to the interpreter it was given.
+    """
+    for line in unit_text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("ExecStart="):
+            continue
+        value = stripped.split("=", 1)[1].strip()
+        # systemd prefixes such as "-", "@", "+", "!" are not part of the path.
+        value = value.lstrip("-@+!:").strip()
+        first = value.split()[0] if value.split() else ""
+        if first.startswith("/") and "python" in first.rsplit("/", 1)[-1]:
+            return first
+    return None
+
+
 def check_module_imports(modules: list[str], python_bin: str) -> dict[str, bool]:
     """Return {module: True/False} for whether each imports under python_bin.
 
@@ -156,7 +187,10 @@ def systemd_effective_environment(unit: str) -> tuple[dict[str, str] | None, str
         return None, err
 
     if load_state.strip() in ("", "not-found"):
-        return None, "systemd does not know unit %s (LoadState=%s)" % (unit, load_state.strip() or "unknown")
+        return None, "systemd does not know unit %s (LoadState=%s)" % (
+            unit,
+            load_state.strip() or "unknown",
+        )
 
     environment_line, err = _systemctl_show_value(unit, "Environment")
     if err is not None:
@@ -338,7 +372,9 @@ def _run(
             % (env_from_systemd, checked_scope_unit)
         )
         if not mandatory:
-            lines.append("SKIP required env: dispatcher declares no mandatory env vars to check anyway")
+            lines.append(
+                "SKIP required env: dispatcher declares no mandatory env vars to check anyway"
+            )
         for name in sorted(mandatory):
             lines.append(
                 "SKIP required env: %s not checked (%s is not active on this host)"
@@ -362,11 +398,13 @@ def _run(
             ok = False
             lines.append(
                 "FAIL required env: could not determine %s (%s); "
-                "an undetermined environment is never treated as ready" % (env_source_label, env_error)
+                "an undetermined environment is never treated as ready"
+                % (env_source_label, env_error)
             )
             for name in sorted(mandatory):
                 lines.append(
-                    "FAIL required env: %s could not be verified (environment source unavailable)" % name
+                    "FAIL required env: %s could not be verified (environment source unavailable)"
+                    % name
                 )
         else:
             if not mandatory:
@@ -374,7 +412,8 @@ def _run(
             for name in sorted(mandatory):
                 if env_snapshot is not None and name in env_snapshot and env_snapshot[name] != "":
                     lines.append(
-                        "OK required env: %s is set (checked against %s)" % (name, env_source_label)
+                        "OK required env: %s is set (checked against %s)"
+                        % (name, env_source_label)
                     )
                 else:
                     ok = False
@@ -402,7 +441,26 @@ def _run(
                 seen_modules.add(module)
                 all_modules.append(module)
 
-    import_results = check_module_imports(all_modules, python_bin)
+    # Group by the interpreter each unit actually declares, so a unit with its
+    # own virtualenv is checked against that venv rather than against whatever
+    # --python-bin happens to be. Checking everything against one interpreter
+    # fails any unit that legitimately lives elsewhere.
+    by_interpreter: dict[str, list[str]] = {}
+    for unit_path in unit_files:
+        try:
+            unit_text = unit_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        interpreter = unit_python(unit_text) or python_bin
+        for module in unit_modules(unit_text):
+            bucket = by_interpreter.setdefault(interpreter, [])
+            if module not in bucket:
+                bucket.append(module)
+
+    import_results: dict[tuple[str, str], bool] = {}
+    for interpreter, modules_for in by_interpreter.items():
+        for module, result in check_module_imports(modules_for, interpreter).items():
+            import_results[(interpreter, module)] = result
 
     for unit_path in unit_files:
         try:
@@ -412,15 +470,19 @@ def _run(
         modules = unit_modules(unit_text)
         if not modules:
             continue
+        interpreter = unit_python(unit_text) or python_bin
         for module in modules:
-            imports_ok = import_results.get(module, False)
+            imports_ok = import_results.get((interpreter, module), False)
             if imports_ok:
-                lines.append("OK unit %s: module %s imports under %s" % (unit_path.name, module, python_bin))
+                lines.append(
+                    "OK unit %s: module %s imports under %s"
+                    % (unit_path.name, module, interpreter)
+                )
             else:
                 ok = False
                 lines.append(
                     "FAIL unit %s: module %s does not import under %s; "
-                    "ExecStart will fail at runtime" % (unit_path.name, module, python_bin)
+                    "ExecStart will fail at runtime" % (unit_path.name, module, interpreter)
                 )
 
     ok = _write_verdict_if_requested(verdict_path, ok, lines)
@@ -463,7 +525,7 @@ def _env_from_unit_file(unit_path: Path) -> dict[str, str]:
         stripped = line.strip()
         if not stripped.startswith("Environment="):
             continue
-        remainder = stripped[len("Environment="):].strip()
+        remainder = stripped[len("Environment=") :].strip()
         if remainder.startswith('"') and remainder.endswith('"'):
             remainder = remainder[1:-1]
         if "=" in remainder:
@@ -473,13 +535,35 @@ def _env_from_unit_file(unit_path: Path) -> dict[str, str]:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Fleet readiness gate for a node before rollout continues.")
-    parser.add_argument("--rotate-script", required=True, help="Path to the dispatcher source, e.g. scripts/fleet/skfleet-rotate.py")
-    parser.add_argument("--units-dir", required=True, help="Directory containing systemd *.service unit files")
-    parser.add_argument("--python-bin", required=True, help="Python interpreter to check module imports against")
-    parser.add_argument("--env-from-unit", default=None, help="Optional unit file name; check env against its Environment= lines only (drop-ins are not read), instead of the process environment")
-    parser.add_argument("--env-from-systemd", default=None, help="Optional systemd unit name; check env against the unit's EFFECTIVE environment as reported by systemctl --user show, which already merges the unit file and every drop-in. Preferred over --env-from-unit when both are given. When given, the unit's role is scoped first: its paired timer (for a .service) or the unit itself must be active or boot-enabled on this host, or its environment is reported skipped rather than asserted.")
-    parser.add_argument("--verdict-path", default=None, help="Optional path to write the verdict as JSON (atomic write), so another process can read it without re-running the gate. Not written when omitted.")
+    parser = argparse.ArgumentParser(
+        description="Fleet readiness gate for a node before rollout continues."
+    )
+    parser.add_argument(
+        "--rotate-script",
+        required=True,
+        help="Path to the dispatcher source, e.g. scripts/fleet/skfleet-rotate.py",
+    )
+    parser.add_argument(
+        "--units-dir", required=True, help="Directory containing systemd *.service unit files"
+    )
+    parser.add_argument(
+        "--python-bin", required=True, help="Python interpreter to check module imports against"
+    )
+    parser.add_argument(
+        "--env-from-unit",
+        default=None,
+        help="Optional unit file name; check env against its Environment= lines only (drop-ins are not read), instead of the process environment",
+    )
+    parser.add_argument(
+        "--env-from-systemd",
+        default=None,
+        help="Optional systemd unit name; check env against the unit's EFFECTIVE environment as reported by systemctl --user show, which already merges the unit file and every drop-in. Preferred over --env-from-unit when both are given. When given, the unit's role is scoped first: its paired timer (for a .service) or the unit itself must be active or boot-enabled on this host, or its environment is reported skipped rather than asserted.",
+    )
+    parser.add_argument(
+        "--verdict-path",
+        default=None,
+        help="Optional path to write the verdict as JSON (atomic write), so another process can read it without re-running the gate. Not written when omitted.",
+    )
     args = parser.parse_args(argv)
 
     return _run(
