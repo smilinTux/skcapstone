@@ -1,8 +1,8 @@
 """Cross-host seat lease: one arbiter host, one flock, one winner.
 
 Spec ``docs/superpowers/sdd/2026-09-18-seat-lease``, Task 1. The estate's
-existing claim fence is ``fcntl.flock`` on a card directory under
-``~/.skcapstone``, and it provably does not exclude across hosts: that tree
+existing claim fence is ``fcntl.flock`` on a card directory under the
+sovereign home, and it provably does not exclude across hosts: that tree
 is a per-host local ext4 volume replicated asynchronously by Syncthing, so
 the "same" card has a different inode on every machine and each host only
 ever flocks its own copy. Measured on 2026-09-18:
@@ -62,15 +62,15 @@ from pathlib import Path
 from typing import Any
 
 from .actuation import Runner, default_runner
-from .paths import valid_name
+from .paths import DEFAULT_FLEET_ROOT, valid_name
 
 #: Where the lease and its guarding lock file live, ON THE LEASE HOST,
 #: expanded against THAT host's home directory (by the remote process, not
 #: the caller). Callers may override either for testing or to point at a
 #: different resource; production callers (Task 2) are expected to use the
 #: defaults so every seat-lease caller contends for the same file.
-DEFAULT_LEASE_PATH = "~/.skcapstone/fleet/seat-lease.json"
-DEFAULT_LOCK_PATH = "~/.skcapstone/fleet/seat-lease.lock"
+DEFAULT_LEASE_PATH = f"{DEFAULT_FLEET_ROOT}/seat-lease.json"
+DEFAULT_LOCK_PATH = f"{DEFAULT_FLEET_ROOT}/seat-lease.lock"
 
 
 @dataclass(frozen=True)

@@ -79,10 +79,17 @@ class FleetPaths:
 #: fact stated once. Consumed by fleet.drill to keep its refusal honest.
 SOVEREIGN_HOME = "~/.skcapstone"
 
+#: The fleet tree's default location under :data:`SOVEREIGN_HOME`. Named here
+#: rather than inline in ``default_paths`` so that a caller which needs the
+#: fleet root as a STRING -- one that will be expanded on a different host,
+#: where a local ``Path`` would be meaningless -- can have it without
+#: hardcoding a second copy. ``SKFLEET_ROOT`` still overrides it locally.
+DEFAULT_FLEET_ROOT = "~/.skcapstone/fleet"
+
 
 def default_paths() -> FleetPaths:
     """The live fleet tree (SKFLEET_ROOT override for tests)."""
-    root = os.environ.get("SKFLEET_ROOT", "~/.skcapstone/fleet")
+    root = os.environ.get("SKFLEET_ROOT", DEFAULT_FLEET_ROOT)
     return FleetPaths(root=Path(root).expanduser())
 
 
