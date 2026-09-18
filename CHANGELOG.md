@@ -14,6 +14,15 @@
   alive. Found by phase 2 of the rollout, which is what report mode is for.
   A liveness link naming a different owner still does not count.
 
+- **New runbook: `docs/fleet/starting-a-new-project.md`.** Start-to-finish guide
+  for standing up a new project on the coordination board: decomposition into
+  independently testable cards, the title size markers (`[S]`/`[M]`/`[L]`/`[XL]`)
+  and what each resolves to per lane, the silent skip of unsized cards
+  (`SKIPPED_LOGICAL_ROUTE`), dependency mechanics and their honest limits,
+  acceptance criteria that survive value drift, dispatch gates, and read-back
+  verification through the kanban fold. Every command is taken from
+  `cli/coord.py`, `cli/coord_amend.py`, `coord_completion.py`, or
+  `scripts/fleet/skfleet-rotate.py`.
 - **Readiness checks each unit against the interpreter it declares.** The gate
   tested every unit's module imports against one interpreter (`--python-bin`),
   but a unit is entitled to its own virtualenv and declares it in `ExecStart`.
