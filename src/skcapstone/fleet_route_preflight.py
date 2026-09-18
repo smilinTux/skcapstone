@@ -23,6 +23,15 @@ class RoutePreflight:
         return asdict(self)
 
 
+PREFLIGHT_MAX_TOKENS = 64
+"""Token budget for the preflight probe.
+
+Large enough that a reasoning model still emits one visible token. Measured on
+chi 2026-09-18: budgets of 1 and 8 produce an empty upstream response and a 502,
+32 and above return content. A probe too small to produce output reports a
+healthy route as unhealthy.
+"""
+
 PREFLIGHT_USER_AGENT = "skfleet-route-preflight/1.0"
 """Sent on every preflight probe.
 
@@ -88,7 +97,16 @@ def resolve_and_preflight(
                 {
                     "model": route,
                     "messages": [{"role": "user", "content": "Reply OK."}],
-                    "max_tokens": 1,
+                    # Measured against the live chi gateway 2026-09-18, identical
+                    # body, varying only this value: 1 and 8 return HTTP 502,
+                    # while 32, 64 and 128 return 200 with content "OK". kimi is
+                    # a reasoning model and spends a tiny budget entirely on
+                    # reasoning, emitting no visible content, which the gateway
+                    # reports as an empty upstream response. A probe that cannot
+                    # afford one visible token measures the budget, not the
+                    # route. 64 leaves margin above the observed 32 floor and is
+                    # paid once per route per cycle.
+                    "max_tokens": PREFLIGHT_MAX_TOKENS,
                     # No temperature. The kimi backends REJECT temperature 0, so
                     # sending it fails the probe on exactly the backends most
                     # likely to need probing. The same omission is already in

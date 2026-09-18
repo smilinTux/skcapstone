@@ -26,7 +26,13 @@
   `PREFLIGHT_USER_AGENT`. The same request also stopped sending
   `temperature: 0`, which the kimi backends reject outright, so the probe was
   failing on exactly the backends most likely to need probing;
-  `scripts/gateway/skgw-warm` already omitted it for that reason.
+  `scripts/gateway/skgw-warm` already omitted it for that reason. And the probe
+  asked for `max_tokens: 1`, which a reasoning model spends entirely on
+  reasoning, emitting no visible content and drawing an empty-upstream 502.
+  Measured on the live gateway, identical body varying only that value: 1 and 8
+  return 502, while 32, 64 and 128 return 200 with content. The budget is now
+  `PREFLIGHT_MAX_TOKENS = 64`. Three defects in one request, each of which alone
+  made a healthy route report as unhealthy.
 
 - **Fleet rotation: card ownership is a pure stable hash again; live capacity
   no longer moves it.** The 2026-09-16 "place neutral cards on hosts with

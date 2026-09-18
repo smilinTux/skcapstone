@@ -45,3 +45,17 @@ def test_preflight_body_omits_temperature() -> None:
     start = src.index('"messages": [{"role": "user", "content": "Reply OK."}]')
     window = src[start : start + 400]
     assert '"temperature"' not in window
+
+
+def test_preflight_budget_allows_one_visible_token() -> None:
+    """A probe too small to produce output reports a healthy route as unhealthy.
+
+    Measured on the live chi gateway 2026-09-18, identical body varying only
+    max_tokens: 1 and 8 return HTTP 502 (empty upstream response), while 32, 64
+    and 128 return 200 with content "OK". kimi is a reasoning model and spends a
+    tiny budget entirely on reasoning.
+    """
+    from skcapstone.fleet_route_preflight import PREFLIGHT_MAX_TOKENS
+
+    assert PREFLIGHT_MAX_TOKENS >= 32
+    assert '"max_tokens": PREFLIGHT_MAX_TOKENS' in _source()
