@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Claim TTL counts the dispatcher's `worker_liveness` link as the owner being
+  alive.** That link is the strongest liveness signal the estate produces:
+  `skfleet-rotate` emits one every 2 to 3 minutes for each worker it observes
+  alive, its `writer` is the dispatcher, and the OWNER's name sits inside
+  `link_value` as `<owner>|<claim_revision>`. Matching only on `writer`
+  therefore ignored it entirely. Measured on chi: 133 of 133 evidence events
+  across a sample of live cards were exactly this kind, with the workers
+  themselves writing nothing at all, so a worker running past the TTL would
+  have had its card reclaimed while the dispatcher was actively recording it
+  alive. Found by phase 2 of the rollout, which is what report mode is for.
+  A liveness link naming a different owner still does not count.
+
 - **Readiness checks each unit against the interpreter it declares.** The gate
   tested every unit's module imports against one interpreter (`--python-bin`),
   but a unit is entitled to its own virtualenv and declares it in `ExecStart`.

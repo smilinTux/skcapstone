@@ -228,6 +228,23 @@ def _evidence_activity(root: Path) -> dict[str, dict[str, float]]:
                 writer = str(writer)
                 if stamp > per_card.get(writer, 0.0):
                     per_card[writer] = stamp
+
+                # A worker_liveness link is the DISPATCHER recording that it
+                # just observed this worker alive, so its writer is
+                # skfleet-rotate and the OWNER's name is in link_value, as
+                # "<owner>|<claim_revision>". Attributing it to the owner is
+                # what makes it usable as liveness.
+                #
+                # This is the strongest liveness signal the estate produces:
+                # measured on chi, it is emitted every 2 to 3 minutes per live
+                # worker, and 133 of 133 evidence events on a sample of live
+                # cards were of exactly this kind, with the workers themselves
+                # writing nothing at all. Ignoring it would age out a card
+                # whose worker the dispatcher was actively watching.
+                if event.get("link_key") == "worker_liveness":
+                    subject = str(event.get("link_value") or "").split("|", 1)[0].strip()
+                    if subject and stamp > per_card.get(subject, 0.0):
+                        per_card[subject] = stamp
     return index
 
 

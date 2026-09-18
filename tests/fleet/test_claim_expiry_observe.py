@@ -391,3 +391,80 @@ def test_a_naive_timestamp_is_resolved_as_utc(tmp_path):
     assert _parse_ts(naive.isoformat()) == pytest.approx(aware.timestamp(), abs=1)
     assert _parse_ts("not a timestamp") == 0.0
     assert _parse_ts(None) == 0.0
+
+
+def test_a_dispatcher_worker_liveness_link_counts_as_the_OWNER_being_alive(tmp_path):
+    """The strongest liveness signal in the estate, and it is not written by
+    the worker.
+
+    `skfleet-rotate` emits a `worker_liveness` link every 2 to 3 minutes for
+    each worker it observes alive. Its `writer` is the dispatcher, and the
+    OWNER's name is inside `link_value` as "<owner>|<claim_revision>".
+
+    Measured on chi 2026-09-18: 133 of 133 evidence events across a sample of
+    live cards were exactly this, with the workers themselves writing nothing.
+    Matching only on `writer` therefore ignored it, and a worker running past
+    the TTL would have had its card reclaimed while the dispatcher was
+    actively recording it alive.
+    """
+    store = _store(tmp_path)
+    cid = _card(store, "long-running worker")
+    owner = "pi-codex-chiap01-deadbeef"
+    store.append_event(cid, "claim", owner, owner=owner, claim_revision="rev-1")
+    _age_shards(tmp_path, cid, 200)
+
+    d = tmp_path / "coordination" / "card_events"
+    d.mkdir(parents=True, exist_ok=True)
+    from datetime import datetime, timezone
+
+    (d / "chiap01.jsonl").write_text(
+        json.dumps(
+            {
+                "card_id": cid,
+                "action": "link",
+                "writer": "skfleet-rotate",
+                "link_key": "worker_liveness",
+                "link_value": f"{owner}|rev-1",
+                "ts": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    verdict = evaluate([_held(tmp_path)[cid]], now=time.time(), ttl_seconds=48 * HOUR)[0]
+    assert (
+        verdict.reclaimable is False
+    ), "the dispatcher just saw this worker alive; the card must not expire"
+    assert verdict.idle_seconds < HOUR
+
+
+def test_a_liveness_link_naming_a_DIFFERENT_owner_does_not_count(tmp_path):
+    """The attribution must be to the owner the link names, or any liveness
+    ping anywhere would keep every card alive."""
+    store = _store(tmp_path)
+    cid = _card(store, "abandoned")
+    store.append_event(cid, "claim", "real-owner", owner="real-owner", claim_revision="r1")
+    _age_shards(tmp_path, cid, 200)
+
+    d = tmp_path / "coordination" / "card_events"
+    d.mkdir(parents=True, exist_ok=True)
+    from datetime import datetime, timezone
+
+    (d / "chiap01.jsonl").write_text(
+        json.dumps(
+            {
+                "card_id": cid,
+                "action": "link",
+                "writer": "skfleet-rotate",
+                "link_key": "worker_liveness",
+                "link_value": "someone-else|r9",
+                "ts": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    verdict = evaluate([_held(tmp_path)[cid]], now=time.time(), ttl_seconds=48 * HOUR)[0]
+    assert verdict.reclaimable is True
