@@ -21,6 +21,23 @@
   logs WHY: total vs counted claims, the card's WORKER_DIED verdict count,
   and whether an amnesty is in effect. Ships the mechanism only; no amnesty
   event is written to any live board.
+- **A reused source workspace now resets itself onto the card's exact
+  base_revision instead of blocking forever.** Fleet workspaces live at
+  `~/.skcapstone/fleet/workspaces/<worker>` and are reused across claims, but
+  nothing ever moved HEAD back after a worker committed work and exited, while
+  `_verify_source_workspace` demanded `HEAD == base_revision` on reuse. Any
+  interrupted source card whose worker had committed was therefore permanently
+  `WORKSPACE_BLOCKED: workspace HEAD does not match exact base_revision` on
+  every later claim (measured 2026-09-18 on chi: 18 live source-only cards
+  across 21 workspaces, including 3f642f75 on chiap08, parked one commit past
+  its own base on its own feature branch). The reuse path in
+  `_materialize_worker_workspace` now verifies the tree is clean, fetches and
+  checks reachability exactly as before, then detaches back onto the exact
+  base_revision, but only when the current HEAD commit is anchored by at least
+  one ref, so committed custody is never orphaned; an unanchored HEAD still
+  fails closed with `workspace HEAD is not anchored by any ref; refusing
+  reset`. Configured `SKFLEET_WORKSPACE` checkouts keep the strict behavior
+  and are never reset.
 
 - **Fleet review opener: new review cards are admissible again.** Since the
   governed review gate began requiring a seat label, typed producer evidence,

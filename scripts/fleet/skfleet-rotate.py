@@ -718,8 +718,13 @@ def _select_matching_source_remote(path, repository, runner=subprocess.run):
 
 
 def _verify_source_workspace(path, repository, base_ref, base_revision,
-                             checkout=False, runner=subprocess.run):
-    """Fetch a named ref and verify one clean checkout at its exact revision."""
+                             checkout=False, reset=False, runner=subprocess.run):
+    """Fetch a named ref and verify one clean checkout at its exact revision.
+
+    With reset=True a clean reused workspace parked at a different commit is
+    detached back onto the exact base_revision, but only when its current HEAD
+    commit is anchored by at least one ref so no committed custody is orphaned.
+    """
     def run(command, name):
         kwargs = {"capture_output": True, "text": True}
         if "fetch" in command:
@@ -763,6 +768,25 @@ def _verify_source_workspace(path, repository, base_ref, base_revision,
         ["git", "-C", str(path), "rev-parse", f"{base_revision}^{{commit}}"],
         "base_revision",
     )
+    if head and head == exact:
+        return
+    if not reset or checkout or not head:
+        raise ValueError("workspace HEAD does not match exact base_revision")
+    anchors = run(
+        ["git", "-C", str(path), "for-each-ref", "--contains", head],
+        "custody anchor",
+    )
+    if not anchors:
+        raise ValueError(
+            "workspace HEAD is not anchored by any ref; refusing reset"
+        )
+    run(
+        ["git", "-C", str(path), "checkout", "--quiet", "--detach", base_revision],
+        "exact base_revision reset",
+    )
+    if run(["git", "-C", str(path), "status", "--porcelain=v1"], "clean"):
+        raise ValueError("workspace contains uncommitted custody state")
+    head = run(["git", "-C", str(path), "rev-parse", "HEAD^{commit}"], "head")
     if not head or head != exact:
         raise ValueError("workspace HEAD does not match exact base_revision")
 
@@ -804,7 +828,8 @@ def _materialize_worker_workspace(default, core, labels, runner=subprocess.run):
     if target.exists() and any(target.iterdir()):
         checkout = _resolve_workspace_root(target)
         _verify_source_workspace(
-            checkout, repository, base_ref, base_revision, runner=runner
+            checkout, repository, base_ref, base_revision, reset=True,
+            runner=runner
         )
         return checkout
     target.parent.mkdir(parents=True, exist_ok=True)

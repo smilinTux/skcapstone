@@ -583,3 +583,126 @@ def test_materialization_precedes_claim_in_scheduler_source() -> None:
     claim_at = source.index("claim=subprocess.run(", materialize_at)
     assert preflight_at < materialize_at < claim_at
     assert "os.makedirs(workspace,exist_ok=True)" not in source
+
+
+def _stale_workspace_runner(
+    remotes: dict[str, str],
+    stale: str,
+    exact: str,
+    anchors: str,
+    issued: list[list[str]],
+):
+    """Simulate a clean workspace parked at a prior card's commit."""
+    state = {"reset": False}
+
+    def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        issued.append(list(command))
+        if _is_remote_listing(command):
+            return subprocess.CompletedProcess(command, 0, _remote_listing(remotes), "")
+        if "status" in command or "fetch" in command or "merge-base" in command:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if "checkout" in command:
+            state["reset"] = True
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if "for-each-ref" in command:
+            return subprocess.CompletedProcess(command, 0, anchors, "")
+        if command[-1] == "HEAD^{commit}":
+            head = exact if state["reset"] else stale
+            return subprocess.CompletedProcess(command, 0, head + "\n", "")
+        return subprocess.CompletedProcess(command, 0, exact + "\n", "")
+
+    return runner
+
+
+def test_stale_clean_workspace_is_reset_to_exact_base_revision(
+    tmp_path: Path,
+) -> None:
+    materialize = _helpers()["_materialize_worker_workspace"]
+    target = tmp_path / "worker"
+    (target / ".git").mkdir(parents=True)
+    issued: list[list[str]] = []
+    runner = _stale_workspace_runner(
+        {"origin": "https://github.com/smilinTux/sklegal"},
+        stale="b" * 40,
+        exact="a" * 40,
+        anchors="refs/heads/feat/prior-claim-work\n",
+        issued=issued,
+    )
+
+    result = materialize(
+        str(target),
+        {
+            "links": {
+                "repository": "https://github.com/smilinTux/sklegal",
+                "base_ref": "main",
+                "base_revision": "a" * 40,
+            }
+        },
+        ["source-only"],
+        runner=runner,
+    )
+    assert result == str(target)
+    resets = [c for c in issued if "checkout" in c and "a" * 40 in c]
+    assert resets, "expected a detached checkout of the exact base_revision"
+    assert "--detach" in resets[0]
+
+
+def test_stale_unanchored_workspace_stays_blocked(tmp_path: Path) -> None:
+    materialize = _helpers()["_materialize_worker_workspace"]
+    target = tmp_path / "worker"
+    (target / ".git").mkdir(parents=True)
+    issued: list[list[str]] = []
+    runner = _stale_workspace_runner(
+        {"origin": "https://github.com/smilinTux/sklegal"},
+        stale="b" * 40,
+        exact="a" * 40,
+        anchors="",
+        issued=issued,
+    )
+
+    with pytest.raises(ValueError, match="not anchored"):
+        materialize(
+            str(target),
+            {
+                "links": {
+                    "repository": "https://github.com/smilinTux/sklegal",
+                    "base_ref": "main",
+                    "base_revision": "a" * 40,
+                }
+            },
+            ["source-only"],
+            runner=runner,
+        )
+    assert not [c for c in issued if "checkout" in c]
+
+
+def test_configured_stale_workspace_is_not_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    materialize = _helpers()["_materialize_worker_workspace"]
+    target = tmp_path / "configured"
+    (target / ".git").mkdir(parents=True)
+    monkeypatch.setenv("SKFLEET_WORKSPACE", str(target))
+    issued: list[list[str]] = []
+    runner = _stale_workspace_runner(
+        {"origin": "https://github.com/smilinTux/sklegal"},
+        stale="b" * 40,
+        exact="a" * 40,
+        anchors="refs/heads/feat/prior-claim-work\n",
+        issued=issued,
+    )
+
+    with pytest.raises(ValueError, match="does not match exact base_revision"):
+        materialize(
+            str(tmp_path / "unused"),
+            {
+                "links": {
+                    "repository": "https://github.com/smilinTux/sklegal",
+                    "base_ref": "main",
+                    "base_revision": "a" * 40,
+                }
+            },
+            ["source-only"],
+            runner=runner,
+        )
+    assert not [c for c in issued if "checkout" in c]
