@@ -203,6 +203,79 @@ def test_exact_revision_is_checked_out_after_named_ref_clone(tmp_path: Path) -> 
     assert fetch_at < calls.index(checkout_call)
 
 
+@pytest.mark.parametrize("labels", [["review"], ["seat-seraph"]])
+def test_governed_review_materializes_without_source_only(
+    tmp_path: Path, labels: list[str]
+) -> None:
+    materialize = _helpers()["_materialize_worker_workspace"]
+    target = tmp_path / "worker"
+    revision = "d" * 40
+    calls: list[list[str]] = []
+
+    def clone(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if command[1] == "clone":
+            checkout = Path(command[-1])
+            checkout.mkdir()
+            (checkout / ".git").mkdir()
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command[-2:] == ["--get", "remote.origin.url"]:
+            output = "https://github.com/smilinTux/skcapstone\n"
+        elif "status" in command or "fetch" in command or "checkout" in command:
+            output = ""
+        elif "rev-parse" in command:
+            output = revision + "\n"
+        else:
+            output = "f" * 40 + "\n"
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    result = materialize(
+        str(target),
+        {
+            "meta": {
+                "repository": "https://github.com/smilinTux/skcapstone",
+                "base_ref": "main",
+                "base_revision": revision,
+            }
+        },
+        labels,
+        runner=clone,
+    )
+
+    assert result == str(target)
+    assert (target / ".git").is_dir()
+    assert any(command[1] == "clone" for command in calls)
+
+
+@pytest.mark.parametrize(
+    "meta, expected",
+    [
+        ({"base_ref": "main", "base_revision": "a" * 40}, "repository"),
+        (
+            {
+                "repository": "https://github.com/smilinTux/skcapstone",
+                "base_revision": "a" * 40,
+            },
+            "base_ref",
+        ),
+        (
+            {
+                "repository": "https://github.com/smilinTux/skcapstone",
+                "base_ref": "main",
+            },
+            "base_revision",
+        ),
+    ],
+)
+def test_governed_review_requires_complete_source_tuple(
+    meta: dict[str, str], expected: str
+) -> None:
+    spec = _helpers()["_source_workspace_spec"]
+
+    with pytest.raises(ValueError, match=expected):
+        spec({"meta": meta}, ["review", "seat-seraph"])
+
+
 def test_non_source_card_keeps_empty_working_directory(tmp_path: Path) -> None:
     materialize = _helpers()["_materialize_worker_workspace"]
     target = tmp_path / "worker"
