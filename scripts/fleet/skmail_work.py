@@ -103,8 +103,11 @@ def read_work_envelopes(
             validate_envelope(candidate, now=now)
         except (TypeError, ValueError, KeyError):
             continue
-        if recipient and candidate["recipient"].lower() not in {recipient.lower(), "all"}:
-            continue
+        if recipient:
+            listed = recipient if isinstance(recipient, list) else [recipient]
+            targets = {r.lower() for r in listed} | {"all"}
+            if candidate["recipient"] and not ({r.lower() for r in candidate["recipient"]} & targets):
+                continue
         if card_id and candidate["card_id"] != card_id:
             continue
         if claim_revision and candidate["claim_revision"] != claim_revision:
@@ -116,7 +119,7 @@ def read_work_envelopes(
 def envelope(
     kind: str,
     sender: str,
-    recipient: str,
+    recipient: str | list[str],
     card_id: str,
     claim_revision: str,
     body: str,
@@ -124,13 +127,14 @@ def envelope(
 ) -> dict:
     now = dt.datetime.now(dt.timezone.utc).isoformat()
     message_id = str(uuid.uuid4())
+    recipients = [recipient] if isinstance(recipient, str) else list(recipient)
     payload = {
         "schema": "skmail.work.v1",
         "message_id": message_id,
         "thread_id": thread_id or message_id,
         "type": kind,
         "sender": sender,
-        "recipient": recipient,
+        "recipient": recipients,
         "card_id": card_id,
         "claim_revision": claim_revision,
         "created_at": now,
@@ -158,7 +162,7 @@ def main() -> int:
         ),
     )
     parser.add_argument("sender")
-    parser.add_argument("recipient")
+    parser.add_argument("recipient", nargs="+"), 
     parser.add_argument("card_id")
     parser.add_argument("claim_revision")
     parser.add_argument("body")
@@ -171,7 +175,7 @@ def main() -> int:
     payload = envelope(
         args.kind,
         args.sender,
-        args.recipient,
+        [r.strip() for r in args.recipient],
         args.card_id,
         args.claim_revision,
         args.body,
@@ -185,15 +189,18 @@ def main() -> int:
     spec.loader.exec_module(writer)
     subject = f"SKMAIL-WORK {args.kind} {args.card_id}"
     line = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    digest = writer.append(
-        args.boxdir, args.sender, args.recipient, "normal", subject, line, args.host
-    )
+    line_digest = hashlib.sha256(line.encode()).hexdigest()
+    digests = []
+    for recipient in payload["recipient"]:
+        digests.append(
+            writer.append(args.boxdir, args.sender, recipient, "normal", subject, line, args.host)
+        )
     print(
         json.dumps(
             {
                 "message_id": payload["message_id"],
                 "body_hash": payload["body_hash"],
-                "line_hash": digest,
+                "line_hash": line_digest,
             }
         )
     )

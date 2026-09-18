@@ -35,6 +35,7 @@ class LivenessObservation:
     workspace_custody: str | None
     unpushed_commits: tuple[str, ...] = ()
     unpushed_commits_preserved: bool = False
+    last_activity_at: datetime | None = None
     quiet_tool_wait: bool = False
     interrupted: bool = False
     cleanup_failed: bool = False
@@ -392,6 +393,8 @@ def classify(
         return _decision(o, "waiting", True, reason="quiet-tool-wait-is-not-death")
 
     activity_at = _latest_activity(o)
+    if o.last_activity_at is not None and (activity_at is None or o.last_activity_at > activity_at):
+        activity_at = o.last_activity_at
     if activity_at is None or now - activity_at < assist_after:
         return _decision(o, "active-compute", True, reason="recent-or-unbounded-activity")
     if o.skmail_response_at and (
@@ -409,7 +412,7 @@ def classify(
         checkpoint_due_at,
     )
     if o.assistance_requested_at and now >= checkpoint_due_at:
-        return _decision(
+        decision = _decision(
             o,
             "checkpoint-missed",
             True,
@@ -418,13 +421,20 @@ def classify(
             preserve_workspace=True,
             reason="structured-status-request-unanswered",
         )
-    return _decision(
+        # AC-4: an unanswered help request reaches a human rather than
+        # silently quarantining; the workspace is preserved.
+        decision.needs_human = True
+        return decision
+    decision = _decision(
         o,
         "assistance-due" if o.assistance_requested_at is None else "checkpoint-pending",
         True,
         assistance_request=request,
         reason="heartbeat-and-child-activity-quiet-past-assistance-window",
     )
+    if o.assistance_requested_at is not None and now >= checkpoint_due_at:
+        decision.needs_human = True
+    return decision
 
 
 def reconcile(

@@ -52,6 +52,7 @@ def obs(**changes: object) -> LivenessObservation:
         "workspace_head": "a" * 40,
         "workspace_custody_at": NOW,
         "workspace_custody_sha256": "b" * 64,
+        "last_activity_at": NOW - timedelta(minutes=5),
     }
     values.update(changes)
     return LivenessObservation(**values)  # type: ignore[arg-type]
