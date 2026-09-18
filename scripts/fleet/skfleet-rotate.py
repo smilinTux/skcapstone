@@ -6655,6 +6655,16 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         fresh_claimability["labels"],
         qualified_reviewer_seats(fresh_claimability["core"]),
     )
+    # A governed review card keeps the BARE BUCKET as its model. The review
+    # path has already chosen a concrete route through eligible_review_routes
+    # and choose_review_route against the advertised snapshot, so substituting
+    # the lane's generic model here would override a selection that was made
+    # with more information (the reviewer seat, the producer identity and the
+    # per-route occupancy). Producer dispatch has no such selection, which is
+    # where sending the bare bucket silently routed every lane to the local
+    # qwen fallback, and that is the only path this change alters.
+    if _review_seat is not None:
+        model=_bucket
     if _review_seat is not None:
         _metadata=_governed_review_metadata(
             fresh_claimability["core"],fresh_claimability["labels"])

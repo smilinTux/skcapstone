@@ -6,16 +6,20 @@ SKFLEET_CODEX_MODEL_ override for codex, kimi-for-coding or k3 for kimi). It
 existed and was called by NOTHING, so every lane shipped the bare bucket
 `sk-s`/`sk-m`/`sk-l`/`sk-xl` as its model.
 
-The gateway advertises `sk-<size>-<public|internal|secret>` and NOT the bare
-bucket, so every request fell through to the local qwen38 backend:
-
-    codex           max 32   served 0 requests
-    zai             max 10   served 0 requests
-    chiap08-qwen38  max  3   served all of them
-
-The estate's entire subscription capacity sat idle behind a 5-slot local
-fallback, and a codex target of 30 could never be met because codex was never
+This never errored, which is exactly why it survived: the bare bucket IS a
+valid gateway route, and it resolves to the LOCAL QWEN38 FALLBACK. A card
+dispatched to the codex lane asked for `sk-m`, was answered by qwen38, and came
+back with perfectly good work. The subscription backends were simply never
 asked for anything.
+
+Measured at the gateway over the 60 minutes to 04:16, 1811 requests:
+
+    chiap08-qwen  sk-m               727   40.1%
+    chiap08-qwen  sk-m-secret        408   22.5%
+    codex         sk-codex-mid         4    0.2%
+    zai           glm-4.7              4    0.2%
+
+A codex target of 30 could never be met, because codex was never asked.
 
 Probed directly at the gateway the same day, which is what proves the models
 themselves were fine:
@@ -101,3 +105,27 @@ def test_the_unsized_card_skip_is_preserved():
     assert "if_bucketisNone:" in src
     assert "SKIPPED_LOGICAL_ROUTE|" in _source()
     assert "SKIPPED_LOGICAL_ROUTE_RACE|" in _source()
+
+
+def test_a_governed_review_card_keeps_the_bare_bucket_as_its_model():
+    """Review dispatch must NOT get the lane's generic model.
+
+    The review path already chose a concrete route through
+    eligible_review_routes and choose_review_route against the advertised
+    snapshot, using the reviewer seat, the producer identity and the per-route
+    occupancy. Substituting the lane model afterwards would discard a selection
+    made with strictly more information, and route preflight would then refuse
+    the card outright because the lane model is not what the review snapshot
+    offered. Producer dispatch has no such selection, which is the only path
+    this change is allowed to alter.
+    """
+    source = _source()
+    # rindex, not index: the identifier appears earlier in the candidate scan
+    # too, and only the occurrence on the LAUNCH path is the one that runs
+    # before route preflight reads `model`.
+    seat = source.rindex("_review_seat=governed_review_seat(")
+    window = source[seat : seat + 1400]
+    assert "model=_bucket" in window, (
+        "the governed-review branch must reset model to the bucket before "
+        "route preflight reads it"
+    )

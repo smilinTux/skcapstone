@@ -439,7 +439,15 @@ def test_seraph_preclaim_batch_allows_distinct_heads_concurrently() -> None:
 def test_worker_runtime_contract_is_unchanged() -> None:
     """The authority repair does not alter Kimi, wrapper, heartbeat, or attribution."""
     source = ROTATE.read_text(encoding="utf-8")
-    assert "model=_logical_route_for(core,_labels)" in source
+    # The launch still derives the route from the CARD, but the bucket and the
+    # model are now two values rather than one: the bucket stays the route
+    # identity and the lane resolves the model actually sent. Before that split
+    # every lane shipped the bare bucket, which is a valid gateway route to the
+    # local qwen fallback, so the subscription backends were never asked for
+    # anything. This assertion pins the post-split shape; the seven below it are
+    # the ones this test exists for and are unchanged.
+    assert "_bucket=_logical_route_for(core,_labels)" in source
+    assert "model=_lane_model(_LANE,core) or _bucket" in source
     assert '"provider":"skgateway"' in source
     assert 'model=str(_selected_route["model_or_bucket"])' not in source
     assert 'qwen_suitable(fresh_claimability["core"],fresh_claimability["labels"])' in source
