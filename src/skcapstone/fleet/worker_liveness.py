@@ -404,25 +404,28 @@ def classify(
     activity_at = _latest_activity(o)
     if o.last_activity_at is not None and (activity_at is None or o.last_activity_at > activity_at):
         activity_at = o.last_activity_at
-    if activity_at is None or now - activity_at < assist_after:
-        return _decision(o, "active-compute", True, reason="recent-or-unbounded-activity")
-    if o.skmail_response_at and (
-        o.assistance_requested_at is None or o.skmail_response_at >= o.assistance_requested_at
+    if o.assistance_requested_at is None and (
+        activity_at is None or now - activity_at < assist_after
     ):
-        return _decision(o, "assisted", True, reason="status-response-received")
-    requested_at = o.assistance_requested_at or now
-    checkpoint_due_at = requested_at + checkpoint_after
-    request = AssistanceRequest(
-        o.owner,
-        o.card_id,
-        o.claim_generation,
-        o.session_id or "",
-        requested_at,
-        checkpoint_due_at,
+        return _decision(o, "active-compute", True, reason="recent-or-unbounded-activity")
+    if o.assistance_requested_at is not None:
+        return _decision(
+            o, "assistance-due", False, reason="assistance-already-requested"
+        )
+    return _decision(
+        o,
+        "assistance-due",
+        False,
+        reason="assist-after-elapsed",
+        request=AssistanceRequest(
+            o.owner,
+            o.card_id,
+            o.claim_generation,
+            o.session_id or "",
+            now,
+            now + checkpoint_after,
+        ),
     )
-    if o.assistance_requested_at and now >= checkpoint_due_at:
-        decision = _decision(
-            o,
             "checkpoint-missed",
             True,
             assistance_request=request,
