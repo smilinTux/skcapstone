@@ -110,16 +110,48 @@ and nothing prunes it. The 8 genuinely live workers on chiap04 (`pi
 launched through the dispatcher heredoc that starts the beat loop
 (`scripts/fleet/skfleet-rotate.py:6686-6698`).
 
-So the liveness signal is **the owner's own activity on the card it
-holds**, which already exists, already replicates, and requires no new
+So the liveness signal is **activity on the card by the party holding
+it**, which already exists, already replicates, and requires no new
 mechanism and no worker cooperation:
 
-    deadline = (last event written by the owner on that card) + TTL
+    deadline = (last activity on that card by its holder) + TTL
 
-A worker doing real work writes `move`, `describe`, `evidence`, `verdict`
-and `link` events as a matter of course; the store holds thousands of them.
-A worker that has written nothing for the whole TTL is either dead or
-making no progress, and in both cases the card should return to the pool.
+Two things about that sentence are load-bearing, and both were wrong in the
+first draft. An adversarial review found them by stealing a live worker's
+card end to end, not by argument.
+
+**There are TWO event stores, and the review workflow lands in the one the
+first draft did not read.** `cards/<id>/events/` holds structure;
+`coordination/card_events/` holds evidence, and `coord link`, `verdict` and
+`evidence` are written there through `CardEventLog` without ever touching
+the per-card shards. Measured on chi:
+
+    coordination/card_events/   81,207 records  (68,666 link, 7,799 move,
+                                                 701 verdict)
+    cards/<id>/events/          ~13,000 across the sampled population
+
+Reading only the shards made the clock blind to the whole review workflow: a
+worker posting evidence hourly and a verdict seconds before the sweep still
+measured as idle for its entire run. The deadline therefore reads both.
+
+**The holder is not always the writer.** Measured on chi, 7 of 24 held
+cards (29%) had an owner that wrote nothing but its own claim, and the
+working identity is frequently a sibling of the owning one: card `0f7b2e6c`'s
+owner wrote 1 event while `pi-codex-chiap08-0f7b2e6c` wrote 4. Counting only
+the owner reclaims that card mid-work. Counting ANY writer is the opposite
+error: three held cards had an owner idle 32 to 34 hours while a seat wrote
+within 10 minutes, and that keeps dead claims alive forever, which is the
+bug being fixed.
+
+Worker identities embed the card id by construction
+(`pi-codex-chiap08-0f7b2e6c`, `kimi-chiap01-34115541`); seat identities
+never do. A card id is eight hex characters, so no seat name can contain
+one. That single test is the discriminator.
+
+**Residual risk, stated rather than engineered away:** a sibling whose
+identity does not reference the card (`cursor-w73-live` writing on card
+`73c201a1`) is not counted, so such a card can expire while that writer is
+active. Phase 2 exists to measure exactly this.
 
 Measurement says this discriminates cleanly. Owner-idle time for the 349
 held claims has a **minimum of 30.9 hours**, so a 24-hour TTL separates
