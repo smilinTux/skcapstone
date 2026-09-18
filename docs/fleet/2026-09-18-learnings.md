@@ -260,8 +260,19 @@ This applies to the work of diagnosis itself, and it cost real time today.
 | Detection | a count that contradicts a known total (a subset larger than its set) is a bug in the counter |
 | Fails closed | "could not measure" is reported as distinct from "measured zero" |
 
+A fourth instance arrived after that rule was written, which is the point of
+recording it. A backlog was reported as "about 90 older PRs" from
+`gh pr list --limit 100` returning exactly 100. The real figure was **293**.
+The limit was the answer.
+
+**A round number equal to your own limit is not a measurement.** Any count that
+lands exactly on a page size, a `head`, a `LIMIT`, or a default is a reading of
+the query, and the query has to be re-run unbounded before the number means
+anything.
+
 The cheap version of this rule: **a surprising number is a claim about your
-query before it is a claim about the world.**
+query before it is a claim about the world.** The cheaper version: **a number
+equal to your limit is always your limit.**
 
 ---
 
