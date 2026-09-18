@@ -900,7 +900,7 @@ def node_drift_cmd(repo_root: Path | None, home: Path | None, as_json: bool, str
                 f"  {len(ambiguous)} unit(s)/dispatcher script reported missing, not listed: "
                 "this estate has no per-host role manifest, so 'this host's role never "
                 "installs it' cannot be told apart from 'a rollout should have installed "
-                "it and did not'. Re-run with --json or --strict to see each by name."
+                "it and did not'. Re-run with --json to see each by name."
             )
 
     if strict and drifts:
