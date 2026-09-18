@@ -410,6 +410,32 @@ def test_default_gate_node_fails_on_unambiguous_drift(home: Path) -> None:
     assert len(outcome.drift) == 1
 
 
+def test_default_gate_node_fails_closed_on_malformed_remote_drift_entry(home: Path) -> None:
+    """A remote node on an older/newer drift-report schema must fail the
+    gate cleanly, not raise a ``KeyError`` out of ``execute_rollout``: an
+    uncaught exception there would abort the whole rollout with no
+    ``RolloutResult`` at all, so a caller could never learn which later
+    nodes were provably untouched.
+    """
+    _write_verdict(home, "chiap01", ready=True)
+
+    def fake_runner(cmd: list[str]):
+        class _Result:
+            returncode = 0
+            # Missing the required "kind"/"expected" fields entirely.
+            stdout = json.dumps(
+                {"node": "node-chiap01", "git_sha": "deadbeef", "drifts": [{"artifact": "x"}]}
+            )
+            stderr = ""
+
+        return _Result()
+
+    outcome = default_gate_node("chiap01", _manifest(), home=home, runner=fake_runner)
+    assert outcome.ready is False
+    assert outcome.drift == ()
+    assert outcome.reason  # a real reason, not a swallowed traceback
+
+
 def test_default_gate_node_ignores_role_ambiguous_missing_findings(home: Path) -> None:
     """A shipped unit reported 'missing' cannot be told apart from a host
     role that never installs it (see cli.py's _drift_is_role_ambiguous), so
@@ -827,6 +853,13 @@ def test_rollback_records_the_target_manifest_as_the_newest_history_entry(
 ) -> None:
     """Rolling back is itself a deployment: it must be recorded, so a
     second rollback later still has a real trail to read, not a gap.
+
+    The recorded entry is marked internally (``kind="rollback"``), so it
+    is not byte-for-byte ``first`` again -- see
+    ``test_second_rollback_does_not_redeploy_the_manifest_the_first_one_escaped``
+    below for the behavior that marker exists to protect: this test only
+    checks that the append happened and carries the right manifest content,
+    not the storage shape of the marker itself.
     """
     monkeypatch.setenv("SKFLEET_NODE", "node-chiap01")
     first = _manifest("rev-1")
@@ -845,7 +878,67 @@ def test_rollback_records_the_target_manifest_as_the_newest_history_entry(
 
     assert outcome.ok is True
     entries = _valid_entries(_history_path(home))
-    assert entries == [first, second, first]
+    assert len(entries) == 3
+    assert entries[0] == first
+    assert entries[1] == second
+    assert entries[2] != first  # marked, not a plain re-recording of first
+    assert entries[2]["revision"] == first["revision"]
+    assert entries[2]["git_sha"] == first["git_sha"]
+
+
+def test_second_rollback_does_not_redeploy_the_manifest_the_first_one_escaped(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The defect this fix closes, reproduced end to end through
+    ``execute_rollback`` (not just ``rollout_history`` in isolation).
+
+    After ``[v1, v2-bad]``, rolling back once correctly targets v1. But
+    that rollback is itself recorded, so the history becomes
+    ``[v1, v2-bad, v1]``. Before this fix, a second rollback read
+    ``entries[-2]`` naively and resolved to v2-bad -- silently redeploying
+    exactly the manifest the first rollback escaped. This is reachable on
+    the documented recovery path, not by misuse: a rollback that halts at
+    a later node's gate, gets re-run over the SAME node list once the
+    operator fixes the problem, re-rolls-back every node already
+    completed, including this one -- precisely the moment someone is under
+    pressure and least able to notice a wrong target.
+    """
+    monkeypatch.setenv("SKFLEET_NODE", "node-chiap01")
+    v1 = _manifest("rev-1")
+    v2_bad = _manifest("rev-2-bad")
+    record_deployment(home, v1)
+    record_deployment(home, v2_bad)
+
+    def fake_runner(cmd: list[str]):
+        class _Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return _Result()
+
+    gated: list[dict] = []
+
+    def fake_gate(node: str, manifest: dict) -> GateOutcome:
+        gated.append(manifest)
+        return GateOutcome(ready=True, drift=(), reason="ok")
+
+    plan = plan_rollback(["chiap01"])
+
+    first_rollback = execute_rollback(
+        plan, dry_run=False, home=home, runner=fake_runner, gate=fake_gate
+    )
+    assert first_rollback.halted_at is None
+    assert gated == [v1]  # first rollback correctly targets v1
+
+    second_rollback = execute_rollback(
+        plan, dry_run=False, home=home, runner=fake_runner, gate=fake_gate
+    )
+    assert second_rollback.halted_at is None
+    # The behaviour under test: the SECOND rollback must still target v1,
+    # never v2-bad -- the manifest the first rollback escaped.
+    assert gated == [v1, v1]
+    assert v2_bad not in gated
 
 
 # --- default_rollback_deploy_node: record first, then checkout the sha ---
@@ -874,7 +967,12 @@ def test_default_rollback_deploy_node_records_before_the_change_locally(
     from skcapstone.fleet.rollout_history import _history_path, _valid_entries
 
     entries = _valid_entries(_history_path(home))
-    assert entries == [manifest]
+    assert len(entries) == 1
+    # Recorded with the rollback marker (see previous_manifest's docstring
+    # for why), so the entry is not byte-for-byte the manifest that went
+    # in -- but every manifest field survives unchanged.
+    assert entries[0]["revision"] == manifest["revision"]
+    assert entries[0]["git_sha"] == manifest["git_sha"]
     assert len(calls) == 4  # checkout, pip install, copy, converge
 
 

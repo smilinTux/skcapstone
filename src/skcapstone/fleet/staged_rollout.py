@@ -57,10 +57,16 @@ way to ask the same question. When the target node IS this machine
 THIS node can be inventoried live" rule), no ssh is spent at all: the real
 functions are called directly, in-process.
 
-Every side-effecting call goes through an injectable ``Runner``
-(``actuation.Runner``, the same type ``nodeinventory`` and ``actuation``
-already use), so tests never shell out and every path here is exercised
-without touching a real host.
+Every side-effecting call that shells out (locally or over ssh) goes
+through an injectable ``Runner`` (``actuation.Runner``, the same type
+``nodeinventory`` and ``actuation`` already use), so tests never shell out
+for those calls. One exception: ``_record_local`` writes this node's own
+rollout history file directly, via ``rollout_history.record_deployment``,
+not through ``Runner`` -- there is no subprocess to inject there, only a
+filesystem write. It is still safe to test against: the write is scoped
+by ``home``, and tests always pass a throwaway directory, never the real
+estate home. Every path here is exercised without touching a real host or
+the real estate home.
 
 Rollback (Task 3) is the reverse of the same mechanism, not a separate one:
 ``execute_rollback`` reuses ``DeployOutcome``, ``GateOutcome``, ``NodeResult``,
@@ -131,15 +137,29 @@ _DEPLOY_STEPS: tuple[tuple[str, str], ...] = (
     ("converge", "skcapstone fleet sknoded --once"),
 )
 
-#: The rollback equivalent of ``_DEPLOY_STEPS``: ``git checkout <sha>``
-#: (the previous manifest's own recorded revision) in place of ``git pull``
-#: (which only ever moves forward). Everything after checkout is identical
-#: to the forward path on purpose: reinstalling and reconverging is the
-#: same operation either direction, only the source revision differs.
-#: Formatted with ``repo=`` and ``git_sha=`` (the latter already
-#: ``shlex.quote``-d by the caller) at call time.
+#: The rollback equivalent of ``_DEPLOY_STEPS``: reset the repo's current
+#: branch to the previous manifest's own recorded revision, in place of
+#: ``git pull`` (which only ever moves forward). Everything after that
+#: reset is identical to the forward path on purpose: reinstalling and
+#: reconverging is the same operation either direction, only the source
+#: revision differs. Formatted with ``repo=`` and ``git_sha=`` (the latter
+#: already ``shlex.quote``-d by the caller) at call time.
+#:
+#: Deliberately NOT a bare ``git checkout {git_sha}``: that detaches HEAD,
+#: and nothing ever re-attaches it, so the next FORWARD rollout's
+#: ``git pull`` fails at its own first step ("you are not currently on a
+#: branch") -- a failed deploy stacked on top of a rollback whose record
+#: was already written. This captures the branch name before touching
+#: anything, stays on it (a no-op checkout if already there), and resets
+#: it to ``git_sha`` -- so a rollback never leaves the repo in a state a
+#: later ``git pull`` cannot recover from on its own.
 _ROLLBACK_STEPS: tuple[tuple[str, str], ...] = (
-    ("git_checkout", "git -C {repo} checkout {git_sha}"),
+    (
+        "git_checkout",
+        "branch=$(git -C {repo} symbolic-ref --short HEAD) && "
+        'git -C {repo} checkout "$branch" && '
+        "git -C {repo} reset --hard {git_sha}",
+    ),
     ("pip_install", "cd {repo} && pip install -e ."),
     (
         "copy_dispatcher",
@@ -151,10 +171,16 @@ _ROLLBACK_STEPS: tuple[tuple[str, str], ...] = (
     ("converge", "skcapstone fleet sknoded --once"),
 )
 
+#: ``sys.argv[2]`` is the record ``kind`` (``"deploy"`` or ``"rollback"``),
+#: optional so this snippet still works unchanged for a caller that only
+#: ever passes the manifest: absent, it defaults to ``"deploy"``, matching
+#: ``record_deployment``'s own default.
 _RECORD_SNIPPET = (
     "import base64, json, os, sys; "
     "from skcapstone.fleet.rollout_history import record_deployment; "
-    "record_deployment(os.path.expanduser('~'), json.loads(base64.b64decode(sys.argv[1])))"
+    "record_deployment(os.path.expanduser('~'), "
+    "json.loads(base64.b64decode(sys.argv[1])), "
+    "kind=(sys.argv[2] if len(sys.argv) > 2 else 'deploy'))"
 )
 
 #: Mirrors ``_RECORD_SNIPPET``: reads THIS remote node's own previous
@@ -374,17 +400,21 @@ def _ssh(node: str, remote_command: str) -> list[str]:
 # --------------------------------------------------------------------------
 
 
-def _record_local(node: str, manifest: dict, home: Path) -> DeployOutcome:
+def _record_local(node: str, manifest: dict, home: Path, *, kind: str = "deploy") -> DeployOutcome:
     try:
-        record_deployment(home, manifest)
+        record_deployment(home, manifest, kind=kind)
     except OSError as exc:
         return DeployOutcome(ok=False, step="record", reason=str(exc))
     return DeployOutcome(ok=True, step=None, reason=None)
 
 
-def _record_remote(node: str, manifest: dict, runner: Runner) -> DeployOutcome:
+def _record_remote(
+    node: str, manifest: dict, runner: Runner, *, kind: str = "deploy"
+) -> DeployOutcome:
     encoded = base64.b64encode(json.dumps(manifest, sort_keys=True).encode()).decode()
-    remote_command = f"python3 -c {shlex.quote(_RECORD_SNIPPET)} {shlex.quote(encoded)}"
+    remote_command = (
+        f"python3 -c {shlex.quote(_RECORD_SNIPPET)} {shlex.quote(encoded)} {shlex.quote(kind)}"
+    )
     try:
         result = runner(_ssh(node, remote_command))
     except Exception as exc:  # pragma: no cover - defensive, mirrors actuation.py
@@ -551,6 +581,14 @@ def default_rollback_deploy_node(
     ``_lookup_previous_manifest`` and passes the exact same dict on to both
     this function and the gate, so a gate check is never run against a
     manifest other than the one that was actually checked out.
+
+    The record itself is written with ``kind="rollback"``
+    (``rollout_history.record_deployment``'s marker), not the default
+    ``"deploy"``: a rollback is still recorded, so a later rollback has a
+    real trail, but the marker keeps ``rollout_history.previous_manifest``
+    from later mistaking this entry for a new forward deployment to roll
+    back FROM -- see that function's docstring for the oscillation this
+    prevents.
     """
     home_path = Path(home) if home is not None else Path.home()
     git_sha = manifest.get("git_sha")
@@ -562,7 +600,7 @@ def default_rollback_deploy_node(
         )
 
     if _is_local(node):
-        record_outcome = _record_local(node, manifest, home_path)
+        record_outcome = _record_local(node, manifest, home_path, kind="rollback")
         if not record_outcome.ok:
             return record_outcome
         repo = str(local_repo_root or _default_local_repo_root())
@@ -575,7 +613,7 @@ def default_rollback_deploy_node(
             extra_format={"git_sha": shlex.quote(git_sha)},
         )
 
-    record_outcome = _record_remote(node, manifest, runner)
+    record_outcome = _record_remote(node, manifest, runner, kind="rollback")
     if not record_outcome.ok:
         return record_outcome
     return _run_shell_steps(
@@ -673,10 +711,20 @@ def _remote_drift(
         payload = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
         return None, f"could not parse drift output from {node}: {exc}"
-    drifts = [
-        Drift(entry["artifact"], entry["kind"], entry["expected"], entry.get("found"), node)
-        for entry in payload.get("drifts", [])
-    ]
+    try:
+        drifts = [
+            Drift(entry["artifact"], entry["kind"], entry["expected"], entry.get("found"), node)
+            for entry in payload.get("drifts", [])
+        ]
+    except (KeyError, TypeError) as exc:
+        # A remote on an older/newer drift-report schema must not raise out
+        # of execute_rollout as an uncaught traceback: that would abort the
+        # whole rollout mid-run with no RolloutResult at all, so the caller
+        # never learns which later nodes were never touched. Reported the
+        # same way every other gate failure here is: a reason string, not
+        # an exception, so the halt-and-report-remaining machinery still
+        # runs for this node and everything after it.
+        return None, f"could not parse drift output from {node}: malformed entry ({exc})"
     return drifts, ""
 
 

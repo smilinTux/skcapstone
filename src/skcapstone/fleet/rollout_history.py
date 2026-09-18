@@ -61,6 +61,24 @@ Corruption costs an entry, never the file, and never silently
     the file and line number, and the corrupt bytes are left exactly where
     they were, sitting in the file, undiscarded, so an operator can go
     look at the line the log points at.
+
+Rollback entries are marked, and previous_manifest ignores them
+    A rollback IS a deployment (it changes what the node runs), so
+    :func:`record_deployment` records it too, via ``kind="rollback"`` --
+    otherwise a second rollback would have no trail to read at all.
+    But if that entry were then treated the same as a forward deploy, the
+    history would oscillate: after ``[v1, v2-bad]``, rolling back to v1
+    appends it, giving ``[v1, v2-bad, v1]``; a second rollback naively
+    reading the second-to-last entry would resolve to v2-bad, the exact
+    manifest the first rollback escaped. This is reachable on the
+    documented recovery path, not by misuse: a rollback that halts partway
+    through a multi-node plan and is then re-run over the same node list
+    re-rolls-back every node already completed, including this one. A
+    rollback entry therefore carries an internal marker
+    (``__rollout_kind``) and :func:`previous_manifest` skips marked
+    entries entirely when resolving what to roll back to, so the answer
+    always comes from the forward-deploy trail, never from what a rollback
+    itself last wrote.
 """
 
 from __future__ import annotations
@@ -75,6 +93,12 @@ from typing import Any
 from .paths import paths_for_home, self_node_name
 
 logger = logging.getLogger(__name__)
+
+#: Internal marker key added to a recorded entry when ``kind="rollback"``.
+#: Not a manifest field: ``deployment_manifest.build_manifest`` never
+#: produces this key, so its presence unambiguously means "this entry is
+#: what a rollback recorded", not "this is a new forward deployment".
+_KIND_KEY = "__rollout_kind"
 
 
 def _history_path(home: Path | str) -> Path:
@@ -123,7 +147,7 @@ def _atomic_write(path: Path, payload: bytes) -> None:
         raise
 
 
-def record_deployment(home: Path | str, manifest: dict[str, Any]) -> None:
+def record_deployment(home: Path | str, manifest: dict[str, Any], *, kind: str = "deploy") -> None:
     """Append ``manifest`` as the newest entry in this node's rollout history.
 
     Args:
@@ -132,6 +156,12 @@ def record_deployment(home: Path | str, manifest: dict[str, Any]) -> None:
             built by ``deployment_manifest.build_manifest``, though any
             JSON-serializable dict is accepted; this module does not
             interpret the manifest's fields, only records it).
+        kind: ``"deploy"`` (the default) for a forward deployment, or
+            ``"rollback"`` when this call is recording what a rollback
+            just returned the node to. Only ``"rollback"`` is written to
+            disk as a marker (see :func:`previous_manifest` for why a
+            plain forward-deploy entry stays exactly the manifest dict it
+            always was, with no added key).
 
     The existing file's bytes are never truncated or rewritten: the new
     write is exactly the old bytes plus one new line, replaced into place
@@ -139,10 +169,13 @@ def record_deployment(home: Path | str, manifest: dict[str, Any]) -> None:
     merely "a file that happens to grow".
     """
     path = _history_path(home)
+    entry: dict[str, Any] = dict(manifest)
+    if kind == "rollback":
+        entry[_KIND_KEY] = kind
     existing = path.read_bytes() if path.exists() else b""
     if existing and not existing.endswith(b"\n"):
         existing += b"\n"
-    _atomic_write(path, existing + _canonical_json_line(manifest))
+    _atomic_write(path, existing + _canonical_json_line(entry))
 
 
 def _valid_entries(path: Path) -> list[dict[str, Any]]:
@@ -183,21 +216,36 @@ def _valid_entries(path: Path) -> list[dict[str, Any]]:
     return entries
 
 
+def _is_rollback_entry(entry: dict[str, Any]) -> bool:
+    return entry.get(_KIND_KEY) == "rollback"
+
+
 def previous_manifest(home: Path | str) -> dict[str, Any] | None:
     """The manifest that was in force on this node before its most recent
-    recorded deployment.
+    recorded forward deployment.
 
     Args:
         home: The user's home directory; see :func:`_history_path`.
 
     Returns:
-        The second-to-last readable entry in this node's history, or
-        ``None`` when there is no such entry: the history has no records
-        yet, has exactly one, or the entry immediately before the latest
-        one was itself corrupt (skipped, per :func:`_valid_entries`, rather
-        than treated as though it were readable).
+        The second-to-last entry among this node's forward-deploy entries,
+        or ``None`` when there is no such entry: the deploy trail has no
+        records yet, has exactly one, or the entry immediately before the
+        latest one was itself corrupt (skipped, per :func:`_valid_entries`,
+        rather than treated as though it were readable).
+
+    Entries recorded by a rollback (``kind="rollback"``, see
+    :func:`record_deployment`) are skipped entirely, not merely left in
+    place: they never count as either "the current entry" or "the previous
+    entry" here. Without that skip, this function would oscillate --
+    rolling back to v1 after ``[v1, v2-bad]`` appends v1, and a second
+    rollback reading the second-to-last entry of ``[v1, v2-bad, v1]``
+    would resolve to v2-bad, the manifest the first rollback escaped. See
+    the module docstring's "Rollback entries are marked" section.
     """
-    entries = _valid_entries(_history_path(home))
+    entries = [
+        entry for entry in _valid_entries(_history_path(home)) if not _is_rollback_entry(entry)
+    ]
     if len(entries) < 2:
         return None
     return entries[-2]
