@@ -4312,6 +4312,150 @@ def reap_dead_claims():
     return freed
 
 
+# ---- the second release path: an absolute idle deadline ---------------------
+# reap_dead_claims() above returns a claim only after every authoritative host
+# reports the owner's process absent. Nothing in this store can supply that
+# proof for most owners, so the reaper correctly refuses forever and claims
+# accumulate without bound: 349 held on chi on 2026-09-18, owner-idle median
+# 163.8 hours, minimum 30.9, and not one of them under 24.
+#
+# The path below is the other half, and it is deliberately independent of
+# everything above it:
+#
+#   * It does NOT consult _parse_worker_owner(). That function recognizes only
+#     pi-<lane>-<host>-<cid> shaped owners and skips every other owner
+#     unconditionally, before any liveness or age logic runs. That gate alone
+#     accounts for 146 of the 349 held claims (jarvis 104, codex 28, seraph 5),
+#     so a TTL check sitting behind it would still never fire for them. A bare
+#     `jarvis` must be reclaimable on expiry or the reported problem is not
+#     fixed (success criterion 4).
+#   * It does NOT require quorum, report health, or the cross-host
+#     authoritative flag. An absolute deadline needs no host to prove absence
+#     of anything, which is precisely why it can act where an absence proof
+#     cannot. It is called beside reap_dead_claims() rather than inside it so
+#     that a quorum shortage, which makes the absence path return early,
+#     does not silently disable this one too.
+#
+# What it does keep is the fence and the confirmation: the same
+# --expected-claim-revision CAS on release, so a worker that re-claimed since
+# the observation causes a refusal rather than a theft, and a fold re-read
+# after every release, because a zero exit code is not proof the claim moved.
+
+
+def _claim_ttl_release_cmd(card_id, owner, revision):
+    """The release invocation, identical in shape to the absence path's."""
+    return [SKC, "coord", "release-claim", str(card_id),
+            "--owner", str(owner),
+            "--expected-claim-revision", str(revision),
+            "--agent", "jarvis", "--abandon-reason", "error"]
+
+
+def _claim_ttl_fresh_state(cid):
+    """Lifecycle state from a re-read, never from this tick's caches.
+
+    Both paths run in one tick and this one acts on observations taken before
+    the other one ran, so a cached fold can say "claimed" about a card that
+    was released seconds ago.
+    """
+    _rows.pop(cid, None)
+    _claim_rows.pop(cid, None)
+    return lifecycle_state(cid)
+
+
+def _expire_idle_claims(observations=None, runner=None, state=None,
+                        now=None, env=None, dry=None):
+    """Reclaim claims whose OWNER has stopped touching the card it holds.
+
+    The deadline is measured from the last event the owner wrote on that card,
+    not from the claim timestamp: a worker doing real work writes move,
+    describe, evidence and verdict events continuously, and one that has
+    written nothing for the whole TTL is dead or making no progress. In both
+    cases the card belongs back in the pool.
+
+    Off unless SKFLEET_CLAIM_TTL_MODE is set. `report` logs what it would
+    reclaim and releases nothing; only `enforce` releases, and never on a dry
+    run. Everything after `observations` exists so the decision can be driven
+    from a test without executing this script's module scope.
+
+    Returns the number of releases confirmed against the fold.
+    """
+    from skcapstone.fleet.claim_expiry import (
+        evaluate,
+        mode_from_env,
+        observe,
+        ttl_seconds_from_env,
+    )
+
+    env = os.environ if env is None else env
+    mode = mode_from_env(env)
+    if mode == "off":
+        return 0                      # the default: no store read, no log line
+    runner = runner or (lambda cmd: subprocess.run(cmd, capture_output=True,
+                                                   text=True))
+    state = state or _claim_ttl_fresh_state
+    dry = DRY if dry is None else dry
+    if observations is None:
+        observations = observe(Path(HOME) / ".skcapstone")
+    verdicts = [v for v in evaluate(
+        observations,
+        now=time.time() if now is None else now,
+        ttl_seconds=ttl_seconds_from_env(env),
+    ) if v.reclaimable]
+
+    if mode == "report":
+        # Phase 2 of the rollout. This list is the gate: a known-live worker
+        # appearing in it blocks enforcement rather than being reclaimed.
+        for v in verdicts:
+            log(d, "CLAIM_TTL_WOULD_RECLAIM|%s|%s|%s|revision=%s idle_h=%.1f"
+                % (HOST, v.card_id, v.owner, v.claim_revision,
+                   v.idle_seconds / 3600.0))
+        log(d, "CLAIM_TTL|%s|mode=report candidates=%d released=0"
+            % (HOST, len(verdicts)))
+        return 0
+
+    if dry:
+        log(d, "CLAIM_TTL|%s|mode=enforce dry_run candidates=%d released=0; "
+               "pass --go to mutate the board" % (HOST, len(verdicts)))
+        return 0
+
+    released = 0
+    for v in verdicts:
+        if not v.claim_revision:
+            continue                  # no fence, no release; evaluate() agrees
+        if state(v.card_id) != "claimed":
+            # The absence path runs first and acts on the same store. Whoever
+            # released it, this generation is gone and must not be released
+            # a second time.
+            log(d, "CLAIM_TTL_SKIPPED|%s|%s|%s|no longer claimed; released by "
+                   "the absence path or by the owner" %
+                (HOST, v.card_id, v.owner))
+            continue
+        r = runner(_claim_ttl_release_cmd(v.card_id, v.owner, v.claim_revision))
+        if getattr(r, "returncode", 0) != 0:
+            # Expected and healthy when a worker re-claimed since the
+            # observation: the CAS fence answers with a refusal, not a theft.
+            log(d, "CLAIM_TTL_FAILED|%s|%s|%s|%s"
+                % (HOST, v.card_id, v.owner,
+                   (getattr(r, "stderr", "") or "").strip()[:120]))
+            continue
+        # A zero exit is not proof the claim moved. When the two stores
+        # disagree the CLI answers "Already released" and writes nothing, so
+        # confirm against the fold rather than trusting the return code.
+        if state(v.card_id) == "claimed":
+            log(d, "CLAIM_TTL_INEFFECTIVE|%s|%s|%s|release reported success but "
+                   "the card is still claimed; CardStore and the legacy task "
+                   "store disagree, needs repair" % (HOST, v.card_id, v.owner))
+            continue
+        released += 1
+        log(d, "CLAIM_TTL_RECLAIMED|%s|%s|%s|revision=%s idle_h=%.1f; owner "
+               "wrote nothing on this card for the whole TTL" %
+            (HOST, v.card_id, v.owner, v.claim_revision,
+             v.idle_seconds / 3600.0))
+    log(d, "CLAIM_TTL|%s|mode=enforce candidates=%d released=%d"
+        % (HOST, len(verdicts), released))
+    return released
+
+
 # DRY gates every board MUTATION, not only the launch. Before this, --go gated the
 # tmux launch and nothing else, so running the rotation without --go still released
 # claims and completed cards. Anyone inspecting what the rotation "would" do was
@@ -4327,6 +4471,7 @@ if DRY:
 else:
     _release_failed_startups()
     reap_dead_claims()
+    _expire_idle_claims()
 
 # ---- open provisional outcomes for review, then close reviewed work --------
 # A card that produced a candidate and had it independently reviewed and PASSED
