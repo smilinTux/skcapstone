@@ -472,6 +472,92 @@ zero indefinitely while every component reports healthy.
 
 ---
 
+## 18. A worker can be fully productive and completely invisible
+
+Two workers had run for four and a half hours at about three percent CPU. Every
+board-side signal said they were dead: their last CARD EVENTS were 2.2 and 4.0
+hours old.
+
+They were working the entire time. Measured directly on their workspaces:
+
+```
+9e15f83c   newest write 169s ago    6 files in 10min    216 files in 60min
+abe011e9   newest write 628s ago    0 files in 10min  2,351 files in 60min
+```
+
+One had written over two thousand files in the previous hour while emitting
+nothing the board could see.
+
+The reason low CPU misleads is that an agent waiting on a model is idle by every
+process metric. The reason card events mislead is that a worker emits them at
+task boundaries, not while working, so a long task looks identical to a dead
+one.
+
+**Contract.** Worker liveness is measured by OUTPUT, not by process state and
+not by board events alone.
+
+| | |
+|---|---|
+| Producer | the worker |
+| Consumer | any reaper, TTL, or health check that can end a worker's claim |
+| Recovery owner | the dispatcher seat |
+| Evidence | recent writes in the worker's own workspace, plus dispatcher liveness links |
+| Fails closed | absent workspace evidence AND absent events, never either alone |
+
+This is why the claim TTL counts the dispatcher's `worker_liveness` links as
+owner activity rather than card events alone: without that, a productive
+long-running worker is reaped for the crime of not having finished yet.
+
+The diagnostic that actually separates the cases, used twice today and correct
+both times:
+
+- **wedged**: no workspace writes for hours, or no workspace at all
+- **working**: writes within minutes, whatever the CPU says
+
+Three workers failed that test and were stopped, freeing their claims cleanly.
+Two passed it and were left alone. CPU was ~3% for all five and would have
+condemned every one of them.
+
+---
+
+## 19. Capacity is not throughput, and an idle fleet is usually a starved one
+
+The fleet reported 48 worker slots and ran two workers. The obvious reading is
+that dispatch is broken. It was not:
+
+```
+ready=27            <- actually dispatchable
+awaiting_review=357
+claim_ceiling=112
+safety_filtered=209
+not_claimable=153
+blocked_backoff=108
+dep_blocked=75
+```
+
+48 slots chasing 27 cards. And ownership is `hash(card_id) % len(ROTATION_HOSTS)`,
+so with a small ready pool most hosts own none of it and correctly log
+`SELECTION_EMPTY reason=foreign-hash-partition` while sitting at zero.
+
+Every component was healthy. Adding hosts would have made it worse, by
+splitting 27 cards across a larger modulus.
+
+**Contract.** Before treating idle capacity as a dispatch fault, measure the
+ready pool and the partition.
+
+| | |
+|---|---|
+| Evidence | the pool's full exclusion breakdown, every card in a named bucket |
+| Detection | `SELECTION_EMPTY reason=foreign-hash-partition` with free slots means STARVED, not blocked |
+| Fails closed | a host with free slots and no owned cards reports starvation distinctly from refusal |
+
+The corollary is where the real work is. When ready work is scarce, the
+constraint has moved upstream: here, 357 cards sat behind a review gate
+reporting `capacity=2 eligible=0` every cycle. Scaling the thing that is idle
+never helps when the thing feeding it is stopped.
+
+---
+
 ## The one-line version
 
 Every failure here was an unverified assertion, and the fix is always the same

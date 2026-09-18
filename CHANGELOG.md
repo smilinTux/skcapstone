@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Two more contracts in `docs/fleet/2026-09-18-learnings.md`.** A worker can be
+  fully productive and completely invisible: two workers with card events 2.2 and
+  4.0 hours stale had written 216 and 2,351 files in the previous hour, so
+  liveness must be measured by workspace output rather than by CPU (an agent
+  waiting on a model is idle by every process metric) or by board events alone
+  (emitted at task boundaries, so a long task looks exactly like a dead one).
+  And capacity is not throughput: 48 slots running 2 workers looked like broken
+  dispatch and was starvation, 27 ready cards against a 5-host hash partition,
+  with the real constraint 357 cards behind a review gate reporting
+  `capacity=2 eligible=0` every cycle.
+
 - **Docs: the Mero (Overseer) seat boundary is now a verb list backed by
   measurement, not the word "read-only".** The old prose boundary was violated
   for eleven days undetected: writer `mero` produced 531 board mutations on chi
