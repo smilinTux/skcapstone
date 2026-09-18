@@ -69,6 +69,7 @@ def _load(tmp_path: Path, *, dry: bool = False) -> dict:
         "HOME": str(tmp_path),
         "HOST": "chiap01",
         "SKC": "/home/test/.skenv/bin/skcapstone",
+        "DISPATCH_AGENT": "niobe",
         "DRY": dry,
         "d": str(tmp_path / "evidence"),
         "log": lambda _d, msg: logged.append(msg),

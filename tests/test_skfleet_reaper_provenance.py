@@ -64,6 +64,7 @@ def _load_functions(*names: str) -> dict[str, object]:
         "os": os,
         "re": re,
         "ROTATION_HOSTS": ("chiap01", "chiap02", "chiap03", "chiap04", "chiap08"),
+        "DISPATCH_AGENT": "niobe",
     }
     exec(compile(module, str(ROTATE), "exec"), namespace)
     return namespace
@@ -847,7 +848,7 @@ def test_genuine_dead_fleet_claim_with_exact_generation_is_released(
             "--expected-claim-revision",
             revision,
             "--agent",
-            "jarvis",
+            "niobe",
             "--abandon-reason",
             "error",
         ]

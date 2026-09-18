@@ -449,6 +449,28 @@ MAX_CANDIDATE_SCAN=max(
     int(os.environ.get("SKFLEET_MAX_CANDIDATE_SCAN",str(MAX_LAUNCH*8))),
 )
 ONLY_SEAT=os.environ.get("SKFLEET_ONLY_SEAT","").strip().lower()
+
+
+def _dispatch_writer(env=None):
+    """The board writer identity for every dispatcher-side mutation.
+
+    ADR-0006 moved fleet dispatch from Jarvis to the niobe seat, so niobe is
+    the DEFAULT here, not jarvis. SKFLEET_DISPATCH_AGENT overrides it, and
+    only that: SKAGENT is deliberately NOT consulted, because the chi hosts
+    export SKAGENT=jarvis in .bashrc, so honoring it would silently restore
+    the jarvis writer on every interactive run, which is exactly how 4,487
+    scheduled dispatch events landed under jarvis after ADR-0006. Events
+    already written as jarvis are history and stay exactly as recorded; this
+    changes what is written next, never the record. The identity names the
+    RELEASE ACTOR only; the released claim's owner always travels separately
+    in --owner, so a claim held by jarvis (or anyone else) stays releasable
+    under the same --expected-claim-revision fence.
+    """
+    values = os.environ if env is None else env
+    return str(values.get("SKFLEET_DISPATCH_AGENT") or "").strip().lower() or "niobe"
+
+
+DISPATCH_AGENT=_dispatch_writer()
 SEAT_TARGET=_required_lane_target("SKFLEET_SEAT_TARGET", default="0")
 CODEX_PHYSICAL_LIMIT=_required_lane_target(
     "SKFLEET_CODEX_PHYSICAL_LIMIT", default=str(TARGET))
@@ -487,7 +509,7 @@ def _ensure_runtime_console_path(executable=sys.executable, environ=os.environ):
 # surface. Empty or incomplete evidence still publishes truthful zero metrics
 # and grants no assistance, reconciliation, or retirement authority.
 _ensure_runtime_console_path()
-run_production_cycle(agent=os.environ.get("SKAGENT", "skfleet-rotate"))
+run_production_cycle(agent=_dispatch_writer())
 
 def sh(*a): return subprocess.run(a,capture_output=True,text=True).stdout
 
@@ -3960,7 +3982,7 @@ def _release_failed_startups():
                 (HOST, cid, owner, revision))
             result = subprocess.run(
                 [SKC, "coord", "release-claim", cid, "--owner", owner,
-                 "--expected-claim-revision", revision, "--agent", "jarvis",
+                 "--expected-claim-revision", revision, "--agent", DISPATCH_AGENT,
                  "--abandon-reason", "error"],
                 capture_output=True, text=True, timeout=10)
             fresh_owner, _, fresh_revision = _current_claim_identity_fresh(cid)
@@ -4281,7 +4303,7 @@ def reap_dead_claims():
         r = subprocess.run(
             [SKC, "coord", "release-claim", cid, "--owner", str(fresh_owner),
              "--expected-claim-revision", str(fresh_revision),
-             "--agent", "jarvis", "--abandon-reason", "error"],
+             "--agent", DISPATCH_AGENT, "--abandon-reason", "error"],
             capture_output=True, text=True)
         if r.returncode == 0:
             _rows.pop(cid, None)          # the fold below must re-read from disk
@@ -4347,7 +4369,7 @@ def _claim_ttl_release_cmd(card_id, owner, revision):
     return [SKC, "coord", "release-claim", str(card_id),
             "--owner", str(owner),
             "--expected-claim-revision", str(revision),
-            "--agent", "jarvis", "--abandon-reason", "error"]
+            "--agent", DISPATCH_AGENT, "--abandon-reason", "error"]
 
 
 def _claim_ttl_fresh_state(cid):
@@ -6844,7 +6866,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         if not _same_generation:
             subprocess.run(
                 [SKC,"coord","release-claim",cid,"--owner",name,
-                 "--expected-claim-revision",claimed_revision,"--agent","niobe",
+                 "--expected-claim-revision",claimed_revision,"--agent",DISPATCH_AGENT,
                  # A live holder already exists for this card; our duplicate
                  # claim yields to the standing one.
                  "--abandon-reason","superseded"],
@@ -6866,7 +6888,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
                 name,claimed_revision))
         subprocess.run(
             [SKC,"coord","release-claim",cid,"--owner",name,
-             "--expected-claim-revision",claimed_revision,"--agent","niobe",
+             "--expected-claim-revision",claimed_revision,"--agent",DISPATCH_AGENT,
              # reason=claim-displaced above: a concurrent owner's earlier
              # claim already won the authoritative fold.
              "--abandon-reason","superseded"],
@@ -6881,7 +6903,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         except (FanoutBoundaryError, OSError, ValueError) as exc:
             subprocess.run(
                 [SKC,"coord","release-claim",cid,"--owner",name,
-                 "--expected-claim-revision",claimed_revision,"--agent","niobe",
+                 "--expected-claim-revision",claimed_revision,"--agent",DISPATCH_AGENT,
                  "--abandon-reason","error"],
                 capture_output=True,text=True)
             log(d,"FANOUT_CLAIM_RECEIPT_FAILED|%s|%s|%s"%(HOST,cid,exc))

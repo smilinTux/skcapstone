@@ -128,7 +128,7 @@ def test_next_cycle_release_requires_negative_proof_and_fresh_fence(tmp_path, mo
             "--expected-claim-revision",
             "rev-1",
             "--agent",
-            "jarvis",
+            "niobe",
             "--abandon-reason",
             "error",
         ]
@@ -148,6 +148,7 @@ def test_next_cycle_release_requires_negative_proof_and_fresh_fence(tmp_path, mo
         HOST="host-1",
         DRY=False,
         SKC="skcapstone",
+        DISPATCH_AGENT="niobe",
         Path=Path,
         subprocess=subprocess,
         json=json,

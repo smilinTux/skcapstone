@@ -52,6 +52,26 @@
   events the day before its retirement), and name the boundary you cannot
   reach yet (the coord CLI cannot reach the one PDP because `--agent` is
   unauthenticated, so the gap is stated with its unblocking condition).
+- **The fleet dispatcher now writes the coordination board as `niobe`, the seat
+  ADR-0006 gave the job, instead of `jarvis`.** Measured on chi, 30 days to
+  2026-09-18: `jarvis` was the estate's most active writer at 12,230 events,
+  4,487 of them after ADR-0006 declared Jarvis outside recurring scheduling,
+  while the exact `niobe` identity showed 11. The cause was
+  `scripts/fleet/skfleet-rotate.py` hardcoding `--agent jarvis` at its three
+  reaper release sites (failed startups, absence-quorum reap, claim TTL). All
+  dispatcher-side board writes now resolve through one `_dispatch_writer()`
+  helper: default `niobe`, overridable ONLY by the explicit
+  `SKFLEET_DISPATCH_AGENT` variable. The ambient `SKAGENT` is deliberately not
+  consulted, because the chi hosts export `SKAGENT=jarvis` in `.bashrc`, and
+  the liveness cycle's `SKAGENT` fallback was the second, unnoticed spelling
+  through which any interactive run kept writing the board as jarvis. History
+  is untouched: events already written as `jarvis` stay exactly as recorded.
+  Pre-existing claims HELD by `jarvis` remain releasable and cannot be stolen:
+  the released owner travels separately in `--owner` and every release keeps
+  its `--expected-claim-revision` CAS fence, so only the audit identity on the
+  release event changes. Pinned by
+  `tests/fleet/test_dispatch_writer_identity.py` (verified red against the
+  unfixed script first).
 
 - **Claim TTL counts the dispatcher's `worker_liveness` link as the owner being
   alive.** That link is the strongest liveness signal the estate produces:
