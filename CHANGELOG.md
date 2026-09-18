@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **Builder dispatch: a declined card now logs why.** `builder_dispatch.offer`
+  returns None for reasons the operator could not see: a frozen plane, no
+  Ready `builder-standby` node, an invalid source binding, and, most commonly
+  on the chi fleet, a request whose retries are already spent (MAX_ATTEMPTS
+  reached), which parks the card forever under its current source binding.
+  Measured 2026-09-18: 17 of the 19 builder-eligible source-only cards in the
+  chi ready pool sat in exactly that state (terminal `failed attempt=2` on
+  node-ziowk01) with nothing in any log naming the reason. New read-only
+  `builder_dispatch.decline_reason()` mirrors offer()'s decline branches, and
+  the rotation loop on the Niobe host logs one
+  `BUILDER_DISPATCH_IDLE|host|card|reason=...` line per declined candidate
+  per cycle.
+
 - **Fleet rotation: card ownership is a pure stable hash again; live capacity
   no longer moves it.** The 2026-09-16 "place neutral cards on hosts with
   capacity" change hashed neutral cards over "hosts whose latest fleet-live

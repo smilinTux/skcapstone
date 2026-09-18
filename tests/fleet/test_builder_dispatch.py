@@ -1284,3 +1284,48 @@ def test_supervisor_records_completion_and_sends_mail(
     assert result["mail_sent"] is True
     assert result["completion"]["verdict"] == "PASS"
     assert sent == ["completed"]
+
+
+def test_decline_reason_names_exhausted_attempts(paths, operator, noded41) -> None:
+    """A card whose retries are spent must say so instead of a silent None."""
+    _node(paths, operator, noded41)
+    writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
+    request = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
+    builder_dispatch._write_status(
+        paths,
+        "node-ziowk01",
+        request,
+        "failed",
+        attempt=builder_dispatch.MAX_ATTEMPTS,
+    )
+    assert builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer) is None
+    reason = builder_dispatch.decline_reason(paths, _card(), ["sk-m", "source-only"])
+    assert reason is not None
+    assert "node-ziowk01" in reason
+    assert "failed" in reason
+
+
+def test_decline_reason_names_missing_ready_builder(paths) -> None:
+    """An empty or role-less registry is a named decline, not silence."""
+    reason = builder_dispatch.decline_reason(paths, _card(), ["sk-m", "source-only"])
+    assert reason == "no-ready-builder"
+
+
+def test_decline_reason_names_ineligible_and_invalid_source(paths, operator, noded41) -> None:
+    _node(paths, operator, noded41)
+    assert builder_dispatch.decline_reason(paths, _card(), ["source-only"]) == "ineligible"
+    bad = _card()
+    bad["meta"] = dict(bad["meta"], repository="http://github.com/smilinTux/skcapstone.git")
+    reason = builder_dispatch.decline_reason(paths, bad, ["sk-m", "source-only"])
+    assert reason is not None
+    assert reason.startswith("invalid-source")
+
+
+def test_decline_reason_is_none_when_offer_would_place(paths, operator, noded41) -> None:
+    """decline_reason must never contradict offer(): offerable means None."""
+    _node(paths, operator, noded41)
+    assert builder_dispatch.decline_reason(paths, _card(), ["sk-m", "source-only"]) is None
+    writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
+    request = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
+    assert request is not None
+    assert builder_dispatch.decline_reason(paths, _card(), ["sk-m", "source-only"]) is None

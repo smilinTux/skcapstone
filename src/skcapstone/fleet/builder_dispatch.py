@@ -270,6 +270,79 @@ def offer(
     return request
 
 
+def decline_reason(
+    paths: FleetPaths,
+    core: dict,
+    labels: list[str] | tuple[str, ...],
+) -> str | None:
+    """Explain, without writing anything, why offer() would decline this card.
+
+    The scheduler's offer() answers None for reasons an operator cannot see:
+    a frozen plane, an empty or role-less node registry, and, most commonly,
+    a request whose retries are already spent (MAX_ATTEMPTS reached), which
+    parks a card forever under its current source binding. This mirrors the
+    decline branches of offer() read-only so the rotation loop can log one
+    line naming the reason; None means offer() would return a request.
+
+    Args:
+        paths: The fleet tree.
+        core: The card core ({"id", "meta"}), as passed to offer().
+        labels: The card's labels, as passed to offer().
+
+    Returns:
+        A short reason string, or None when the card is offerable.
+    """
+    if not store.actuation_allowed(paths):
+        return "actuation-frozen"
+    if not eligible(core, labels):
+        return "ineligible"
+    card_id = str(core["id"]).lower()
+    if not valid_name(card_id):
+        return "invalid-card-id"
+    try:
+        repository, base_ref, revision = _source(core)
+    except BuilderDispatchError as exc:
+        return f"invalid-source: {exc}"
+    normalized_labels = sorted(str(label).strip().lower() for label in labels)
+    ready = _ready_builders(paths)
+    if not ready:
+        return "no-ready-builder"
+    for view in ready:
+        existing = _load(request_path(paths, view.name, card_id))
+        if not existing:
+            continue
+        prior = _load(status_path(paths, view.name, card_id)) or {}
+        same_generation = prior.get("request_id") == existing.get("request_id")
+        same_binding = (
+            existing.get("repository"),
+            existing.get("base_ref"),
+            existing.get("base_revision"),
+            existing.get("labels"),
+        ) == (repository, base_ref, revision, normalized_labels)
+        if same_binding:
+            if (
+                same_generation
+                and prior.get("state") in TERMINAL_STATES
+                and not (
+                    prior.get("state") == "failed"
+                    and int(prior.get("attempt") or 1) < MAX_ATTEMPTS
+                )
+            ):
+                return (
+                    f"terminal: node={view.name} state={prior.get('state')}"
+                    f" attempt={prior.get('attempt')}"
+                )
+            return None
+        if same_generation and prior.get("state") == "running":
+            return f"superseded-binding-running: node={view.name}"
+        return None
+    builders = [view for view in ready if _node_load(paths, view.name) < BUILDER_CAPACITY]
+    decision = scheduler.select(builders, scheduler.Workload("job", card_id))
+    if decision.node is None:
+        return f"unschedulable: {decision.reason}"
+    return None
+
+
 def _write_status(paths: FleetPaths, node: str, request: dict, state: str, **extra) -> dict:
     """Write one node-attributed state for an exact request generation."""
     payload = {

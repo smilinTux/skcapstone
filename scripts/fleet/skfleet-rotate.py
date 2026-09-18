@@ -6130,6 +6130,17 @@ if _is_niobe_builder_host(HOST):
                 ),
             )
             break
+        try:
+            _idle_reason = builder_dispatch.decline_reason(
+                default_fleet_paths(), _remote_core, _candidate[4]
+            )
+        except (builder_dispatch.BuilderDispatchError, OSError, KeyError) as _exc:
+            _idle_reason = "diagnostic-error:%s" % type(_exc).__name__
+        log(
+            d,
+            "BUILDER_DISPATCH_IDLE|%s|%s|reason=%s"
+            % (HOST, _candidate[2], _idle_reason or "offerable-not-offered"),
+        )
 
 # Never steal another host's hash slice without an authoritative shared lock.
 # Syncthing propagation is not a compare-and-swap primitive. Measured 2026-08-28:
