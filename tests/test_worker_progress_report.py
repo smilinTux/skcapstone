@@ -198,6 +198,59 @@ def test_missing_workspace_reports_progress_missing(tmp_path):
     assert "state=progress-missing" in progress[0]
 
 
+def test_unit_workers_are_reported_without_tmux_sessions(tmp_path):
+    """Production workers are systemd transient units; tmux is migration-era.
+
+    Measured on chi 2026-09-18: both live workers (9e15f83c on chiap02,
+    abe011e9 on chiap04) ran only as skfleet-worker-*.service units, with
+    zero lane tmux sessions on either host. A tmux-only enumeration would
+    report nothing while the whole fleet works, which is the exact
+    invisibility this pass exists to end.
+    """
+    lines = []
+    namespace, workspace = _reporter_namespace(tmp_path, lines)
+    (workspace / "output.txt").write_text("work", encoding="utf-8")
+    namespace["_report_worker_progress"](
+        [],
+        [{"unit": "skfleet-worker-codex-cafe0001.service", "lane": "codex", "card": "cafe0001"}],
+    )
+    progress = [line for line in lines if line.startswith("WORKER_PROGRESS|")]
+    assert len(progress) == 1, lines
+    assert "state=progress-fresh" in progress[0]
+    assert "|codex-auto-cafe0001|cafe0001|" in progress[0]
+
+
+def test_health_pass_feeds_units_to_the_reporter():
+    """The call site passes systemd units, not only tmux sessions."""
+    tree = _tree()
+    health_pass = _function(tree, "reap_dead_claims")
+    calls = [
+        child
+        for child in ast.walk(health_pass)
+        if isinstance(child, ast.Call)
+        and isinstance(child.func, ast.Name)
+        and child.func.id == "_report_worker_progress"
+    ]
+    assert calls, "reap_dead_claims does not call _report_worker_progress"
+    argument_names = {
+        name.id
+        for call in calls
+        for argument in call.args
+        for name in ast.walk(argument)
+        if isinstance(name, ast.Name)
+    } | {
+        name.id
+        for call in calls
+        for argument in call.args
+        for name in ast.walk(argument)
+        if isinstance(name, ast.Call) and isinstance(name.func, ast.Name)
+        for name in [name.func]
+    }
+    assert "active_worker_units" in argument_names, (
+        "the reporter call site must enumerate systemd worker units; " f"saw only {argument_names}"
+    )
+
+
 def test_workspace_scan_is_bounded(tmp_path):
     lines = []
     namespace, workspace = _reporter_namespace(tmp_path, lines)

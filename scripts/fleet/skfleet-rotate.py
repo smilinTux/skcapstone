@@ -2904,23 +2904,38 @@ def _workspace_progress_at(workspace, cap=_PROGRESS_SCAN_CAP,
     return newest, scanned, truncated
 
 
-def _report_worker_progress(session_names, now=None):
+def _report_worker_progress(session_names, units=(), now=None):
     """Log one WORKER_PROGRESS classification per live local worker.
 
     REPORT ONLY. Never kills, releases, reaps, or writes board state. The
     admission receipt provides the exact launched generation and workspace;
     it is trusted only when its host and session match this host's live
     session, because ~/.skcapstone/fleet/admission syncs across the estate.
+
+    Workers are enumerated from BOTH forms: migration-era tmux sessions and
+    systemd transient units. Measured on chi 2026-09-18, both live workers
+    (9e15f83c on chiap02, abe011e9 on chiap04) existed only as
+    skfleet-worker-*.service units with zero lane tmux sessions, so a
+    tmux-only pass would have reported nothing while the whole fleet worked,
+    which is the exact invisibility this pass exists to end.
     """
     now = time.time() if now is None else now
     now_dt = datetime.datetime.fromtimestamp(now, datetime.timezone.utc)
+    workers = {}
     for session in session_names:
         lane = next(
             (item for item in LANES if session.startswith(item["prefix"])), None
         )
-        if lane is None:
-            continue
-        cid = session[len(lane["prefix"]):]
+        if lane is not None:
+            workers.setdefault(session[len(lane["prefix"]):], (lane, session))
+    for unit in units or ():
+        lane = next(
+            (item for item in LANES if item["name"] == unit.get("lane")), None
+        )
+        cid = str(unit.get("card") or "")
+        if lane is not None and cid:
+            workers.setdefault(cid, (lane, lane["prefix"] + cid))
+    for cid, (lane, session) in sorted(workers.items()):
         try:
             _fresh_owner, _fresh_ts, fresh_revision = _current_claim_identity_fresh(cid)
             receipt = _read_admission_receipt(_admission_lock_path(HOME, cid)) or {}
@@ -4343,7 +4358,7 @@ def reap_dead_claims():
         "duplicates=%d" %
         (HOST, health["sessions"], health["claims_exact"], health["mismatched"],
          health["duplicates"]))
-    _report_worker_progress(worker_sessions)
+    _report_worker_progress(worker_sessions, active_worker_units())
     if not oldest or nhosts < REAP_QUORUM:
         log(d, "REAP|%s|quorum_shortage reporting=%d known=%d need>=%d; reaped nothing"
             % (HOST, nhosts, known, REAP_QUORUM))
