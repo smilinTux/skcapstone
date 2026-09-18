@@ -25,6 +25,7 @@ from . import (
     node_controller,
     seat_audit,
     service_controller,
+    staged_rollout,
     store,
 )
 from . import profiles as profiles_mod
@@ -986,6 +987,292 @@ def node_manifest_cmd(repo_root: Path | None, home: Path | None, as_json: bool) 
         click.echo(jsonlib.dumps(manifest, indent=2, sort_keys=True))
     else:
         click.echo(f"{node}: published manifest git_sha={manifest['git_sha']} to {manifest_path}")
+
+
+def _staged_result_as_dict(result) -> dict:
+    """A ``RolloutResult`` or ``RollbackResult`` (same shape) as a JSON-safe
+    dict. Shared because both carry identical fields
+    (``dry_run``/``completed``/``halted_at``/``reason``/``remaining``).
+    """
+    return {
+        "dry_run": result.dry_run,
+        "completed": [
+            {
+                "node": r.node,
+                "dry_run": r.dry_run,
+                "deployed": r.deployed,
+                "ready": r.ready,
+                "drift": [
+                    {
+                        "artifact": d.artifact,
+                        "kind": d.kind,
+                        "expected": d.expected,
+                        "found": d.found,
+                    }
+                    for d in r.drift
+                ],
+                "detail": r.detail,
+            }
+            for r in result.completed
+        ],
+        "halted_at": result.halted_at,
+        "reason": result.reason,
+        "remaining": list(result.remaining),
+    }
+
+
+def _render_staged_result(result, as_json: bool, *, noun: str) -> None:
+    """Render a rollout/rollback result: every node in plan order, numbered,
+    so a human can read the whole plan (or the whole outcome) top to bottom
+    before deciding whether to authorise ``--apply``.
+
+    ``noun`` is "rollout" or "rollback", used only in the summary lines.
+    """
+    if as_json:
+        click.echo(jsonlib.dumps(_staged_result_as_dict(result), indent=2, sort_keys=True))
+        return
+
+    total = len(result.completed) + (1 if result.halted_at else 0) + len(result.remaining)
+
+    if result.dry_run:
+        click.echo(f"DRY RUN: previewing {noun} across {total} node(s); nothing was executed.")
+        click.echo("Pass --apply to run this for real.")
+    elif result.halted_at is None:
+        click.echo(f"{noun} complete: all {total} node(s) deployed and gate passed.")
+    else:
+        click.echo(f"{noun} HALTED after {len(result.completed)}/{total} node(s).")
+
+    index = 0
+    for r in result.completed:
+        index += 1
+        click.echo(f"  [{index}/{total}] {r.node}\t{r.detail}")
+    if result.halted_at is not None:
+        index += 1
+        click.echo(f"  [{index}/{total}] {result.halted_at}\tHALTED: {result.reason}")
+        for node in result.remaining:
+            index += 1
+            click.echo(
+                f"  [{index}/{total}] {node}\tnot attempted; {noun} halted before reaching it"
+            )
+
+
+@fleet.command("rollout")
+@click.option(
+    "--node",
+    "nodes",
+    multiple=True,
+    required=True,
+    help="A node to roll out to, in the order given. Repeat for each node, "
+    "e.g. --node chiap01 --node chiap02 --node chiap03.",
+)
+@click.option(
+    "--repo-root",
+    "repo_root",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Checkout to build the manifest from, and to compare THIS machine "
+    "against when it is one of the target nodes (default: "
+    "$SKCAPSTONE_REPO_ROOT or ~/work/skcapstone).",
+)
+@click.option(
+    "--home",
+    "home",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Estate home to read/write node-scoped state under (default: $HOME).",
+)
+@click.option(
+    "--remote-repo-root",
+    "remote_repo_root",
+    default=staged_rollout.DEFAULT_REMOTE_REPO_ROOT,
+    help="Checkout path on each REMOTE node's own filesystem (default: "
+    f"{staged_rollout.DEFAULT_REMOTE_REPO_ROOT}).",
+)
+@click.option(
+    "--apply",
+    "apply_flag",
+    is_flag=True,
+    help="Execute for real. Without this flag the rollout is a DRY RUN: no "
+    "deploy, gate, or record call is made for any node.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.option(
+    "--strict",
+    is_flag=True,
+    help="Exit 1 when the rollout halts before every node completes.",
+)
+def rollout_cmd(
+    nodes: tuple[str, ...],
+    repo_root: Path | None,
+    home: Path | None,
+    remote_repo_root: str,
+    apply_flag: bool,
+    as_json: bool,
+    strict: bool,
+) -> None:
+    """Roll the manifest built from --repo-root out to NODES, one at a time.
+
+    DRY RUN BY DEFAULT: this command previews the plan and executes nothing
+    unless --apply is given. This is a human-invoked mechanism, not an
+    autonomous actuator; nothing schedules it, and it stops itself at the
+    first node that fails rather than continuing past a problem.
+
+    Visits --node arguments in the exact order given (repeat --node once per
+    node). For each node in turn: record the manifest now in force (so a
+    later rollback has something to return to), then deploy (git pull, pip
+    install, copy the dispatcher script, converge) and gate (the existing
+    readiness verdict plus `fleet node drift`'s own no-unambiguous-drift
+    rule -- no second notion of "healthy" is invented here). The first node
+    that fails to deploy or fails its gate HALTS the rollout: every later
+    node is left untouched, never even attempted, and the command reports
+    which node stopped it and why.
+
+    --apply is the only way anything here writes to a host. Without it, no
+    network call and no filesystem write happens for any node: this previews
+    what deploying and gating would do, it does not run a real health check
+    dressed up as a preview.
+
+    --strict sets a non-zero exit code when the rollout halts before every
+    node completes; it does not change the output (matching `node drift` and
+    `node doctor`). Re-run with --json for the full machine-readable result,
+    including every node's readiness and drift detail.
+    """
+    from . import deployment_manifest
+
+    resolved_repo_root = repo_root or _default_repo_root()
+    resolved_home = home or Path.home()
+
+    try:
+        manifest = deployment_manifest.build_manifest(resolved_repo_root, resolved_home)
+    except (OSError, RuntimeError) as exc:
+        raise click.ClickException(
+            f"could not build a manifest from repo root {resolved_repo_root}: {exc}"
+        ) from exc
+
+    try:
+        plan = staged_rollout.plan_rollout(nodes, manifest)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    result = staged_rollout.execute_rollout(
+        plan,
+        dry_run=not apply_flag,
+        home=resolved_home,
+        remote_repo_root=remote_repo_root,
+        local_repo_root=resolved_repo_root,
+    )
+
+    _render_staged_result(result, as_json, noun="rollout")
+
+    if strict and result.halted_at is not None:
+        raise SystemExit(1)
+
+
+@fleet.command("rollback")
+@click.option(
+    "--node",
+    "nodes",
+    multiple=True,
+    required=True,
+    help="A node to roll back, in the order given. Repeat for each node, "
+    "e.g. --node chiap01 --node chiap02 --node chiap03.",
+)
+@click.option(
+    "--repo-root",
+    "repo_root",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Checkout to compare THIS machine against when it is one of the "
+    "target nodes (default: $SKCAPSTONE_REPO_ROOT or ~/work/skcapstone).",
+)
+@click.option(
+    "--home",
+    "home",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Estate home to read/write node-scoped state under (default: $HOME).",
+)
+@click.option(
+    "--remote-repo-root",
+    "remote_repo_root",
+    default=staged_rollout.DEFAULT_REMOTE_REPO_ROOT,
+    help="Checkout path on each REMOTE node's own filesystem (default: "
+    f"{staged_rollout.DEFAULT_REMOTE_REPO_ROOT}).",
+)
+@click.option(
+    "--apply",
+    "apply_flag",
+    is_flag=True,
+    help="Execute for real. Without this flag the rollback is a DRY RUN: no "
+    "lookup, deploy, gate, or record call is made for any node.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.option(
+    "--strict",
+    is_flag=True,
+    help="Exit 1 when the rollback halts before every node completes.",
+)
+def rollback_cmd(
+    nodes: tuple[str, ...],
+    repo_root: Path | None,
+    home: Path | None,
+    remote_repo_root: str,
+    apply_flag: bool,
+    as_json: bool,
+    strict: bool,
+) -> None:
+    """Return NODES to whatever manifest each was running before its last
+    recorded rollout, one at a time.
+
+    DRY RUN BY DEFAULT: --apply is required to execute for real, the same
+    contract `rollout` uses.
+
+    There is no --manifest option: rollback's target is never chosen on the
+    command line. Each node's "previous manifest" is looked up per node, at
+    rollback time, from what `rollout` actually recorded for THAT node via
+    `record_deployment` -- never guessed, never reconstructed from "current
+    minus one commit". A NODE THAT HAS NO RECORDED PREVIOUS MANIFEST CAUSES
+    ROLLBACK TO REFUSE OUTRIGHT for that node: it halts there, with a reason
+    naming the node, exactly like any other halting failure, and every later
+    node is left untouched. This is deliberate: this estate's only existing
+    rollback practice before this command was hand-written `card_events`
+    evidence with no code behind it, and a refusal is a fact where a guess
+    would have been a liability.
+
+    Rollback re-runs the same gate the forward `rollout` path uses, after
+    every node, including after a successful rollback: a rollback is
+    remediation run under pressure on a fleet already known to be unhealthy,
+    which makes verifying each node MORE important, not a place to cut. When
+    the gate fails after a rollback, the node's rollback has already
+    happened; nothing here undoes it (there is no rollback-of-a-rollback).
+    What halts is only the ADVANCE to later nodes, reported with a reason
+    that says "after rollback" so it is never mistaken for a forward-deploy
+    failure.
+
+    --strict sets a non-zero exit code when the rollback halts before every
+    node completes; it does not change the output. Re-run with --json for
+    the full machine-readable result.
+    """
+    try:
+        plan = staged_rollout.plan_rollback(nodes)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    resolved_repo_root = repo_root or _default_repo_root()
+    resolved_home = home or Path.home()
+
+    result = staged_rollout.execute_rollback(
+        plan,
+        dry_run=not apply_flag,
+        home=resolved_home,
+        remote_repo_root=remote_repo_root,
+        local_repo_root=resolved_repo_root,
+    )
+
+    _render_staged_result(result, as_json, noun="rollback")
+
+    if strict and result.halted_at is not None:
+        raise SystemExit(1)
 
 
 def _parse_taint(spec: str) -> tuple[str, str, str]:

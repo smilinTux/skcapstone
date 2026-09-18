@@ -2,6 +2,57 @@
 
 ## Unreleased
 
+- **Staged rollout and rollback: deploy to one node at a time, verify each,
+  halt on the first failure, and go back (nimble-factory Plan B3, phase
+  2).** Measured causes: phase 1 found four drift incidents by hand in one
+  session that no automated signal reported (see the rollout-observability
+  entry below), and a manual four-host roll on this same branch surfaced a
+  stale dispatcher copy on the first host taken (`chiap02`) before the same
+  step ever reached the other three; had all four gone at once, three hosts
+  would have been mid-change when the problem first showed up. This phase
+  turns that one measured-safe ordering into a mechanism instead of an
+  operator's memory.
+
+  - `rollout_history.record_deployment(home, manifest)` /
+    `previous_manifest(home)` give a node-scoped, append-only record of the
+    manifest a node ran before each change, so "the previous manifest" is a
+    fact rather than a reconstruction; before this, the only rollback
+    practice in this estate was hand-written `card_events` evidence with no
+    code behind it.
+  - `staged_rollout.plan_rollout`/`execute_rollout` deploy to nodes in a
+    given order, one at a time: record, then the same four steps
+    `docs/fleet/activation-runbook.md` already documents by hand (git pull,
+    pip install, copy the dispatcher script, converge), then gate with the
+    existing readiness verdict plus `node drift`'s own no-unambiguous-drift
+    rule, never a second notion of "healthy". The first node that fails to
+    deploy or fails its gate halts the rollout; every later node is left
+    untouched, never attempted.
+  - `staged_rollout.plan_rollback`/`execute_rollback` return nodes to
+    whatever `rollout` recorded for each of them, same staging and halt
+    rule. A node with no recorded previous manifest makes rollback refuse
+    outright rather than guess. Rollback re-runs the gate after every node,
+    including a successful one, on the same reasoning the forward path
+    already accepts the cost for: this estate has two documented cases of
+    an unverified change going unnoticed for a long time because nothing
+    checked after it landed (a release uninstalled for sixteen hours; a
+    dispatcher timer active-but-not-enabled for seven weeks).
+  - `skcapstone fleet rollout` and `skcapstone fleet rollback` are the CLI
+    surface, siblings of `fleet node drift`: report-only in spirit, `--json`
+    and `--strict` (non-zero exit, no output change) follow the same
+    contract. **`--apply` is required to execute for real; both default to
+    a dry run** that previews every node's plan, numbered, in visiting
+    order, with zero network or filesystem-writing calls.
+  - Documented in `docs/fleet/rollout-drift.md` (new section 4), with
+    pointers updated in `docs/fleet/activation-runbook.md` and
+    `docs/RELEASING.md`. **This is human-invoked, not an autonomous
+    actuator: nothing schedules it.** `Seat.ATLAS` is still bound to
+    `{OBSERVE, ACTUATE_APPLICATION, CREATE_CARD}` only, `Action.DEPLOY`
+    remains with the retired `Seat.TANK`, and ATLAS's ported
+    release-and-install duty is still recorded as inoperable in
+    `docs/fleet/seat-charters.md`, which now also states concretely what
+    granting `DEPLOY` would take given that the manifest, the gate, and the
+    rollback target it was missing now all exist.
+
 - **Rollout observability: a deployment manifest, a caller for the readiness
   gate, and a drift check, quiet by default (nimble-factory Plan B3, phase
   1).** Measured cause: four drift incidents found by hand in one session

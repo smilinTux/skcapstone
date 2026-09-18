@@ -2,10 +2,17 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-16-nimble-factory-design.md`, sections
 A.4 and A.6, as corrected in
-`docs/superpowers/plans/2026-09-17-rollout-observability.md`.
+`docs/superpowers/plans/2026-09-17-rollout-observability.md` (phase 1) and
+`docs/superpowers/plans/2026-09-17-staged-rollout.md` (phase 2).
 **Code:** `src/skcapstone/fleet/deployment_manifest.py`,
 `scripts/fleet/skfleet_readiness.py`, `src/skcapstone/fleet/rollout_drift.py`,
-`skcapstone fleet node drift` (`src/skcapstone/fleet/cli.py`).
+`src/skcapstone/fleet/rollout_history.py`, `src/skcapstone/fleet/staged_rollout.py`,
+`skcapstone fleet node drift`, `skcapstone fleet rollout`,
+`skcapstone fleet rollback` (`src/skcapstone/fleet/cli.py`).
+
+Sections 1-3 below are phase 1 (build a manifest, gate a node, compare a
+node against a manifest). Section 4 is phase 2 (stage a deploy across
+several nodes, one at a time, and roll one back).
 
 ## Why this exists
 
@@ -215,32 +222,156 @@ $ skcapstone fleet node drift
 node-chiap01: no drift (matches b421c0d1)
 ```
 
-## What this phase does NOT deliver
+## 4. Staged rollout and rollback (nimble-factory Plan B3, phase 2)
 
-Observation, not actuation. Concretely, none of the following exist yet:
+**This is a human-invoked mechanism, not an autonomous actuator.** Nothing
+schedules it, nothing calls it from a drift finding, and nothing about it
+changes ATLAS's authority (see below). It exists so that the four-step
+manual procedure `docs/fleet/activation-runbook.md`'s rollout ordering
+constraints already document (package, then script, then converge, then
+verify with `node drift`) can be run against several hosts, one at a time,
+by a mechanism that actually stops at the first failure instead of a human
+having to remember to check before moving to the next host. That is not
+theoretical: rolling `chiap02` first, by hand, surfaced a stale dispatcher
+copy before the same step ever reached `chiap01` or `chiap03`. Had all four
+gone at once, three hosts would have been mid-change when the problem
+first showed up.
 
-- **No staged rollout.** Nothing here stages a release across a subset of
-  hosts, waits, or halts on failure. Deployment is still a human running
-  `scripts/install.sh`.
-- **No rollback by manifest.** The manifest records what a node should run;
-  nothing consumes it to revert a node to a prior pinned state.
-- **No automatic actuation from a drift finding.** `fleet node drift` and the
-  readiness gate report; neither one restarts, reinstalls, or converges
-  anything. A human (or a future phase) still reads the report and acts.
-- **ATLAS still has no `DEPLOY` authority.** `Seat.ATLAS`'s bound actions are
-  `{OBSERVE, ACTUATE_APPLICATION, CREATE_CARD}` only; `Action.DEPLOY` remains
-  with the retired `Seat.TANK`. ATLAS's ported release-and-install duty is
-  recorded as inoperable pending this and further work; see
-  [seat-charters.md](seat-charters.md#atlas-release-and-install-duty-inoperable-pending-b3).
-  Everything documented above is observation, which `OBSERVE` already
-  permits; nothing here changes that authority boundary.
+```bash
+skcapstone fleet rollout --node chiap01 --node chiap02 --node chiap03 \
+  [--repo-root PATH] [--home PATH] [--remote-repo-root PATH] \
+  [--apply] [--json] [--strict]
+
+skcapstone fleet rollback --node chiap01 --node chiap02 --node chiap03 \
+  [--home PATH] [--repo-root PATH] [--remote-repo-root PATH] \
+  [--apply] [--json] [--strict]
+```
+
+**`--node` is repeated once per node, and the order given is the order
+visited** (`--node chiap01 --node chiap02` visits `chiap01` first). There is
+no separate "which nodes" file or discovery step; the operator states the
+plan on the command line, which is what makes the dry-run output below a
+complete preview of what will happen.
+
+### Dry-run first, always
+
+**Both commands default to a dry run.** Real execution requires `--apply`,
+which is the only thing that makes either command write to a host, run a
+gate check, or record anything. Without `--apply`, zero network calls and
+zero filesystem writes happen, for any node: a dry run is a preview of the
+plan, not a live health check dressed up as one. Read the plan before
+authorising it. Run against the real fleet, read-only, 2026-09-17:
+
+```
+$ skcapstone fleet rollout --node chiap01 --node chiap02 --node chiap03 \
+    --node chiap04 --node chiap08 --repo-root ~/work/skcapstone
+DRY RUN: previewing rollout across 5 node(s); nothing was executed.
+Pass --apply to run this for real.
+  [1/5] chiap01	dry run: would record deployment, then git pull, pip install, copy skfleet-rotate.py, and converge on chiap01; not executed
+  [2/5] chiap02	dry run: would record deployment, then git pull, pip install, copy skfleet-rotate.py, and converge on chiap02; not executed
+  [3/5] chiap03	dry run: would record deployment, then git pull, pip install, copy skfleet-rotate.py, and converge on chiap03; not executed
+  [4/5] chiap04	dry run: would record deployment, then git pull, pip install, copy skfleet-rotate.py, and converge on chiap04; not executed
+  [5/5] chiap08	dry run: would record deployment, then git pull, pip install, copy skfleet-rotate.py, and converge on chiap08; not executed
+```
+
+Every node gets one numbered line, in visiting order, naming exactly what
+would run on it. `--json` gives the same plan as a machine-readable object
+(`dry_run`, `completed`, `halted_at`, `reason`, `remaining`) for a caller
+that wants to render or gate on it programmatically rather than read text.
+
+### Executing for real: `--apply`
+
+With `--apply`, `rollout` visits `--node` arguments in order and, for each
+one: records the manifest now in force (so a later rollback has something
+to return to -- this happens BEFORE any change, so a failure partway still
+leaves a record), then runs the same four steps the activation runbook
+documents by hand (`git pull`, `pip install -e .`, copy the dispatcher
+script, converge), then gates the node with the existing readiness verdict
+plus `node drift`'s own no-unambiguous-drift rule -- no second notion of
+"healthy" is invented for this. **The first node that fails to deploy or
+fails its gate halts the rollout.** Every later node is left untouched,
+never even attempted, and the command names which node stopped it and why.
+Illustrative output (rendered from the same code path, not a real `--apply`
+run against the fleet -- this document only ever runs the dry-run path
+above against real hosts):
+
+```
+rollout HALTED after 1/4 node(s).
+  [1/4] chiap01	chiap01: deployed and gate passed
+  [2/4] chiap02	HALTED: deploy step 'pip_install' failed on chiap02: ImportError: cannot import name 'GATED_EXIT_CODE'
+  [3/4] chiap03	not attempted; rollout halted before reaching it
+  [4/4] chiap04	not attempted; rollout halted before reaching it
+```
+
+### Rolling back
+
+`rollback` has no `--manifest` option: unlike `rollout`, its target is never
+chosen on the command line. Each node's "previous manifest" is looked up
+per node, at rollback time, from whatever `rollout` actually recorded for
+THAT node via `record_deployment` -- never guessed, never reconstructed
+from "current minus one commit". **A node with no recorded previous
+manifest makes rollback refuse outright, for that node,** with a reason
+naming it, exactly like any other halting failure. Illustrative output,
+same caveat as above:
+
+```
+rollback HALTED after 0/2 node(s).
+  [1/2] chiap01	HALTED: no recorded previous manifest for chiap01; rollback refuses to guess or reconstruct one
+  [2/2] chiap02	not attempted; rollback halted before reaching it
+```
+
+This refusal is deliberate. Before this command, the only rollback practice
+in this estate was hand-written `card_events` evidence with no code behind
+it at all; refusing to guess replaces that gap with a fact instead of
+another guess.
+
+Rollback re-runs the same gate the forward path uses, after every node,
+including a successful one. It costs the same time the forward path already
+pays, for the same reason: this estate has two documented cases of an
+unverified change going unnoticed for a long time precisely because nothing
+checked after it landed (a release merged and uninstalled for sixteen
+hours; a dispatcher timer active-but-not-enabled for seven weeks). A
+rollback is remediation run under pressure on a fleet already known to be
+unhealthy, which makes verifying each node MORE important, not a place to
+cut. When the gate fails after a rollback, the node's rollback has already
+happened (there is no rollback-of-a-rollback); what halts is only the
+advance to later nodes, and the reason says "after rollback" so it is never
+mistaken for a forward-deploy failure.
+
+### `--strict` and `--json`
+
+Same contract as `node drift`: `--strict` sets a non-zero exit code when the
+rollout or rollback halts before every node completes; it does not change
+what is printed. `--json` renders the full result (every node's
+`deployed`/`ready`/`drift` detail, plus `halted_at`/`reason`/`remaining`) for
+a caller that wants to act on it programmatically. A dry run never halts
+(nothing runs to fail), so `--strict` on a dry run always exits 0.
+
+## What is still NOT delivered
+
+- **No automatic actuation from a drift finding, a rollout, or a rollback.**
+  `fleet node drift` and the readiness gate report; `fleet rollout` and
+  `fleet rollback` execute only when a human runs them with `--apply`.
+  Nothing here schedules itself, retries itself, or reacts to a finding on
+  its own.
+- **ATLAS still has no `DEPLOY` authority.** `Seat.ATLAS`'s bound actions
+  remain `{OBSERVE, ACTUATE_APPLICATION, CREATE_CARD}`; `Action.DEPLOY`
+  remains with the retired `Seat.TANK`, which nothing dispatches to.
+  ATLAS's ported release-and-install duty is still recorded as inoperable;
+  see
+  [seat-charters.md](seat-charters.md#atlas-release-and-install-duty-inoperable-pending-b3)
+  for the full accounting, including what granting `DEPLOY` would now
+  concretely take. `fleet rollout`/`fleet rollback` are human-invoked CLI
+  commands, not a seat capability; running them changes nothing about who
+  or what may invoke them.
 
 ## Related
 
-- [`docs/fleet/activation-runbook.md`](activation-runbook.md): the rollout
-  ordering constraints these tools help verify after the fact.
+- [`docs/fleet/activation-runbook.md`](activation-runbook.md): the manual
+  rollout ordering constraints `fleet rollout`'s four deploy steps
+  automate, and the constraints it does not remove the need to know.
 - [`docs/fleet/seat-charters.md`](seat-charters.md): ATLAS's authority
-  boundary and why it cannot deploy today.
+  boundary, why it cannot deploy today, and what changing that would take.
 - [`docs/fleet/model-lane-routing.md`](model-lane-routing.md): why the
   dispatcher script is a separate hand-installed artifact from the package,
   which is why the drift check treats it as its own artifact.

@@ -78,6 +78,60 @@ consumes the manifest to roll a node back. The manifest and drift check are
 observation, which `OBSERVE` already permits; a caller still has to read
 their output and act by hand.
 
+**Update, Plan B3 phase 2 (2026-09-17): the mechanism now exists, authority
+still does not.** `record_deployment`/`previous_manifest`
+(`rollout_history.py`) give a node a recorded prior state, and
+`plan_rollout`/`execute_rollout`/`execute_rollback` (`staged_rollout.py`,
+exposed as `skcapstone fleet rollout` and `skcapstone fleet rollback`) stage
+a deploy across several nodes one at a time, gate each with the same
+readiness-plus-drift check `node drift` uses, halt at the first failure, and
+can return a node to whatever it ran before. See
+[rollout-drift.md](rollout-drift.md#4-staged-rollout-and-rollback-nimble-factory-plan-b3-phase-2).
+This still does not change this section's verdict, and is not a gap in the
+mechanism, it is the order Plan B3 chose on purpose: build the mechanism
+first, grant the authority second, because an actuating seat with no
+rollback target is worse than no seat at all (see
+`docs/superpowers/plans/2026-09-17-staged-rollout.md`'s pre-flight ruling).
+Both commands are human-invoked CLI, dry run by default, requiring an
+explicit `--apply`; nothing dispatches them, and nothing about their
+existence gives `Seat.ATLAS` (or any seat) a new bound action.
+
+**What granting ATLAS `DEPLOY` would now concretely take**, so the decision
+stays small and bounded rather than open-ended, since the three things
+missing when B2 first deferred it (a manifest, a gate, and a rollback
+target) now exist:
+
+1. Add `Action.DEPLOY` to `Seat.ATLAS`'s bound action set in
+   `src/skcapstone/seat_boundaries.py` (currently `{OBSERVE,
+   ACTUATE_APPLICATION, CREATE_CARD}`), and decide whether `Action.DEPLOY`
+   moves off `Seat.TANK` or is simply shared; `Seat.TANK` stays in the
+   authority-model enum regardless (see below), so this is a scoping
+   decision, not a deletion.
+2. Port the artifact-digest fence: `_role_seat_metadata` in
+   `scripts/fleet/skfleet-rotate.py` still checks `approved_artifact_sha256`
+   only on its unreachable `tank` branch. The `atlas` branch needs the
+   equivalent check before a dispatched ATLAS worker can be trusted to
+   deploy an exact approved artifact rather than whatever HEAD happens to
+   be.
+3. Rewrite the dispatch-layer ATLAS role brief in `skfleet-rotate.py`,
+   which currently instructs every ATLAS worker: "Do not deploy, dispatch,
+   invoke an actuator, or change the target." That sentence has to change
+   to name the exact bounded action being granted, not become silent on
+   the subject.
+4. Decide who calls `skcapstone fleet rollout`/`rollback` under the grant:
+   a bounded ATLAS batch calling the CLI itself (which still defaults to
+   dry run and still requires an explicit apply-equivalent flag internally),
+   or a human continuing to run it and ATLAS only verifying the result.
+   That is a real design choice this section deliberately leaves open
+   rather than pre-deciding, because it changes what "ATLAS holds DEPLOY"
+   actually means operationally.
+
+None of the four is large, and none requires new machinery: the manifest,
+the gate, and the rollback target this duty was blocked on are the exact
+three things Tasks 1 through 3 of Plan B3 phase 2 built. That is what makes
+this a small, boundable decision now rather than the open-ended one it was
+when this section was first written.
+
 **What to do instead of a governed release: wait for B3, or route the
 release manually with full human sign-off outside any seat.** ATLAS may
 still verify a target that was released by other means and record PASS,
@@ -317,6 +371,7 @@ clause exists to prevent.
 
 | Date | Change | Author |
 |---|---|---|
+| 2026-09-17 | Noted that Plan B3 phase 2 delivered the rollout mechanism (recorded prior manifests, staged rollout, rollback, `skcapstone fleet rollout`/`rollback`) without changing ATLAS's authority bound; added the concrete, bounded list of what granting `Action.DEPLOY` would now take | claude-sonnet-5 |
 | 2026-09-17 | Noted that Plan B3 phase 1 delivered observation (deployment manifest, readiness gate with a caller, `skcapstone fleet node drift`) without changing ATLAS's authority bound; linked [rollout-drift.md](rollout-drift.md) | lumina |
 | 2026-09-17 | Documented that ATLAS's ported release/install/rollback duty is inoperable pending B3: no `DEPLOY` authority in `seat_boundaries`, the digest gate still on the retired tank branch, and the rail brief forbidding deploy; named the emergency gateway as unbounded and not a substitute; added the upgrade-before-converge and converge-only-on-elected-host ordering constraints and the partial-rollback note | lumina |
 | 2026-09-17 | Folded tank into atlas, reducing `LIFECYCLE_SEATS` to five; `seat_boundaries.Seat.TANK` retained as a non-dispatched authority-model actor; documented that seats remain host-pinned (Amendment B) and the niobe cold-start constraint | lumina |

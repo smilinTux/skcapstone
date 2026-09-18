@@ -88,6 +88,17 @@ reference symbols added later. So: package, then script, then converge. This
 mirrors the skcoord rule, where skcoord must ship and install before the
 skcapstone code that calls its new parameters.
 
+**This exact ordering is what `skcapstone fleet rollout` now automates, one
+node at a time, halting at the first node that fails rather than continuing
+past it.** It is still human-invoked (dry run by default, `--apply` required
+to execute), and it still runs constraint 4 below as its own gate after each
+node; it does not remove the need to know these four constraints, it removes
+the need to remember and re-apply them by hand across several hosts. See
+[rollout-drift.md, section
+4](rollout-drift.md#4-staged-rollout-and-rollback-nimble-factory-plan-b3-phase-2)
+for the command reference, including `skcapstone fleet rollback` for
+returning a node to whatever it ran before.
+
 **4. Verify what actually landed, on each host, after the steps above.**
 A version string cannot prove any of the three constraints above were
 actually followed; only content and live state can. Run
@@ -97,8 +108,9 @@ on the old commit, and `enablement_mismatch` catches a unit whose file is
 correct but whose enabled state is not, the exact shape of the seven-week
 `skfleet-rotate.timer` incident that motivated this check. See
 [rollout-drift.md](rollout-drift.md) for the full command reference and how
-to read its output; that document also states plainly what this check does
-not do (no staged rollout, no rollback by manifest).
+to read its output. `skcapstone fleet rollout` runs this same check as its
+per-node gate; `node drift` itself remains report-only and does not stage,
+deploy, or roll anything back on its own.
 
 ## 0. Local preflight
 

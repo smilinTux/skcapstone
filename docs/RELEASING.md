@@ -106,5 +106,9 @@ sat across five hosts, and `pip show skcapstone` agreed with `__version__`
 on every one of them throughout. Once a host has installed a release,
 `skcapstone fleet node drift` compares its actual content and live state
 against a fresh manifest built from a checkout, rather than trusting a
-version string. See [`docs/fleet/rollout-drift.md`](fleet/rollout-drift.md).
-It observes only: nothing here stages a rollout or rolls one back.
+version string. `skcapstone fleet rollout` and `skcapstone fleet rollback`
+then get a release onto (or back off of) the fleet's hosts, one node at a
+time, gated by that same check, dry run by default. See
+[`docs/fleet/rollout-drift.md`](fleet/rollout-drift.md). All three are
+human-invoked: nothing here is scheduled, and cutting a release still does
+not put it on any host by itself.
