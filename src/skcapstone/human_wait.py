@@ -44,6 +44,7 @@ human-authored approval or void, or the removal of the gate label.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from contextlib import contextmanager
@@ -54,6 +55,8 @@ from typing import Any, Iterable, Iterator, Sequence
 
 from .blocked_verdict import blocked_on_category, blocked_on_referent, is_blocked_verdict
 from .review_admission import parse_blocked_on_link
+
+logger = logging.getLogger(__name__)
 
 #: Writers whose events can discharge a hold held for a person. Same set the
 #: fleet rotation's ``_human_resolution_epoch`` authorizes, so a discharge that
@@ -302,7 +305,15 @@ def waiting_on_human(home: Path, now: datetime | None = None) -> tuple[HumanWait
     moment = now or datetime.now(timezone.utc)
     rows: list[HumanWait] = []
     for card in open_cards:
-        hold = hold_from_events(card.id, _card_events(store, card.id))
+        try:
+            hold = hold_from_events(card.id, _card_events(store, card.id))
+        except (OSError, ValueError) as exc:
+            # One unreadable card must not blank the whole queue: the same
+            # one-card fault boundary list_cards(degrade_unreadable=True)
+            # applies. The CLAIM gate deliberately does NOT degrade, because
+            # there a read failure has to fail closed.
+            logger.error("human_wait: card %s is unreadable: %s", card.id, exc)
+            continue
         if hold is None and label_gate(card):
             hold = HumanHold(card.id, "", str(card.created_at or ""), "label")
         if hold is None:
