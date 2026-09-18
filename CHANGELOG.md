@@ -28,6 +28,24 @@
   binding that never existed is exactly what it refuses to do. `~/.local/bin/
   skfleet-rotate.py` is a per-host deployed artifact, so the updated worker
   brief needs a deploy to reach live workers.
+- **A card blocked on another card that has since finished now returns to the
+  pool by itself.** `blocked_backoff` wakes a parked card when its blocker
+  CHANGES after the BLOCKED verdict, which is unreachable for a blocker that was
+  ALREADY terminal when the verdict was written: nothing further will ever
+  happen to it, so no change can ever arrive. Measured on chiap01 2026-09-18, of
+  206 open cards carrying a BLOCKED outcome, 27 named a referent whose fold is
+  DONE with a completion timestamp EARLIER than their own verdict (885037c0 lost
+  that race by half a second). A bounded once-per-cycle sweep in the dispatcher
+  now emits one attributed `reopen` per such card, and `skcapstone coord reopen`
+  gives an operator the same escape hatch by hand for the first time. The
+  transition_id names the BLOCKER GENERATION, not the verdict, so a second run,
+  another host, or a worker re-blocking on the same finished referents all
+  append nothing. Fails closed on `human` and `capability` holds, unparsed
+  reasons, inexact referents, referents that are missing/void/open/claimed or
+  human-gated, referents that folded DONE while their own latest outcome still
+  reads BLOCKED (885037c0 and acfede01 block each other and both fold DONE), and
+  completions with no timestamp. All 27 applied on the chi board: chiap01's
+  `blocked_backoff` exclusion fell 112 to 100 and its ready pool rose 27 to 28.
 
 - **Claim ceiling: bounded per-card amnesty for defect-burned claims.** Claim
   counts are monotonic over the append-only ledger, so the 5-claim ceiling
