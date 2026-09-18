@@ -183,6 +183,13 @@ def _reaper_fixture(
                 "mismatched": 0,
                 "duplicates": 0,
             },
+            # The report-only progress pass (wired 2026-09-18) runs inside
+            # reap_dead_claims but is not under test here; it has its own
+            # coverage in test_worker_progress_report.py. Stubbed exactly
+            # like _worker_health_snapshot above, and the stub records
+            # nothing because the pass must actuate nothing.
+            "_report_worker_progress": lambda *_args, **_kwargs: None,
+            "active_worker_units": lambda: [],
             "sh": lambda *_args: "",
             "seat_for": lambda card_id, _core: "link" if card_id == "deadbeef" else None,
             "subprocess": SimpleNamespace(run=fake_run),
