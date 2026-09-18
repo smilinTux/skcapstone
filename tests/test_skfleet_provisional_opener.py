@@ -633,3 +633,31 @@ def test_outcome_mirrored_into_both_stores_is_not_seen_as_conflicting(
     board.structure["a1b2c3d4"] = [dict(board.events["a1b2c3d4"][0])]
 
     assert board.open(1) == 1
+
+
+def test_later_source_mutation_in_the_overlay_invalidates_the_generation(
+    tmp_path: Path,
+) -> None:
+    """Staleness must be judged over the same union the outcome came from.
+
+    `coord move` and `coord describe` land in the legacy overlay just as
+    `coord link` does. A scan that read only the structure store would not see
+    the card being pushed back into `doing` after its PASS, and would hand a
+    reviewer a generation whose source had already moved on.
+    """
+    board = OpenerHarness(tmp_path)
+    board.outcome("a1b2c3d4", writer="pi-codex-source")
+    outcome_event = dict(board.events["a1b2c3d4"][0])
+    board.structure["a1b2c3d4"] = [outcome_event]
+    board.events["a1b2c3d4"] = [
+        outcome_event,
+        {
+            "action": "move",
+            "column": "doing",
+            "ts": "2026-09-02T12:00:00Z",
+            "writer": "pi-codex-source",
+        },
+    ]
+
+    assert board.open(1) == 0
+    assert board.calls == []
