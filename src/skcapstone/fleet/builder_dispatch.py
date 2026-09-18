@@ -20,6 +20,7 @@ from ..atomic_io import atomic_write_text
 from ..coordination import Board
 from ..seat_mail import startup_hello
 from . import scheduler, store
+from .churn_breaker import ClaimRefusedError, assert_claim_permitted
 from .node_controller import NodeView, node_views
 from .paths import SOVEREIGN_HOME, FleetPaths, valid_name
 
@@ -691,6 +692,19 @@ def _consume_available(
             try:
                 _ensure_request_matches_current_card(coordination_home, request)
             except BuilderDispatchError as exc:
+                _write_status(
+                    paths,
+                    node,
+                    request,
+                    "blocked",
+                    attempt=int(prior.get("attempt") or 0),
+                    claim_released=False,
+                    error=str(exc),
+                )
+                continue
+            try:
+                assert_claim_permitted(coordination_home, request["card_id"], owner)
+            except ClaimRefusedError as exc:
                 _write_status(
                     paths,
                     node,

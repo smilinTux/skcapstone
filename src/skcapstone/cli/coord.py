@@ -515,15 +515,21 @@ def register_coord_commands(main: click.Group) -> None:
         board = Board(home_path)
         try:
             from ..human_wait import assert_human_claim
+            from ..fleet.churn_breaker import assert_claim_permitted
             from ..review_admission import assert_governed_review_claim
 
-            # Both asserts sit HERE, in front of Board.claim_task, because
-            # Board.claim_task has no gate of its own: it takes a card id and
-            # claims it. The human gate exists in the rotate pool's selection
-            # only, so every caller that names an id walks past it, which is
-            # how 83e498b6 took 58 claims while held for Chef.
+            # All three asserts sit HERE, in front of Board.claim_task,
+            # because Board.claim_task has no gate of its own: it takes a card
+            # id and claims it. The human gate exists in the rotate pool's
+            # selection only, so every caller that names an id walks past it,
+            # which is how 83e498b6 took 58 claims while held for Chef.
+            # Order is deliberate and cheapest-refusal-first: a card held for
+            # the operator can never be claimed by anyone, a governed review
+            # can only be claimed by its seat, and only then do we ask whether
+            # this particular card has been churning.
             assert_human_claim(home_path, task_id, agent)
             assert_governed_review_claim(home_path, task_id, agent)
+            assert_claim_permitted(home_path, task_id, agent)
             ag = board.claim_task(agent, task_id, force=force)
             console.print(f"\n  [green]Claimed:[/] [{task_id}] by [bold]{ag.agent}[/]\n")
         except ValueError as e:
