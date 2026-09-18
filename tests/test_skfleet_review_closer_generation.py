@@ -14,6 +14,7 @@ FUNCTIONS = {
     "_event_identity",
     "_generation_invalidated",
     "_matching_outcome_events",
+    "_outcome_scan_rows",
     "_outcome_event_value",
     "_parent_review_generation",
     "_review_names_generation",
@@ -73,6 +74,9 @@ class Harness:
         self.ns.update(
             {
                 "event_rows": lambda card_id: self.events.get(card_id, []),
+                # The closer's board models the structure store only; the
+                # legacy overlay is empty here.
+                "_load_evidence_events": dict,
                 "_load_outcomes": lambda: self.outcomes,
                 "_provisional_candidate": lambda *_args: (
                     "producer",

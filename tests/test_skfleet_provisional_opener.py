@@ -24,6 +24,7 @@ ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 FUNCTIONS = {
     "_log_once_per_hour",
     "_event_sort_key",
+    "_event_identity",
     "_generation_invalidated",
     "_matching_outcome_events",
     "_outcome_event_value",
@@ -33,6 +34,7 @@ FUNCTIONS = {
     "_review_card_id",
     "_record_review_refusal",
     "_provisional_candidate",
+    "_outcome_scan_rows",
     "_eligible_provisional_reviews",
     "_authoritative_review_readback",
     "open_provisional_reviews",
@@ -101,7 +103,15 @@ class OpenerHarness:
         self.ns = _namespace(self.cards, self.refusals)
         self.outcomes: dict[str, tuple[str, str]] = {}
         self.states: dict[str, str] = {}
+        # Production keeps card events in two stores: the structure store
+        # (``cards/<id>/events``, read by ``event_rows``) and the legacy kanban
+        # overlay (``coordination/card_events/*.jsonl``, read by
+        # ``_load_evidence_events``).  Keeping one dict for both would hide
+        # every defect that only shows up when an outcome lives in exactly one
+        # of them, so the harness models them separately and merely defaults
+        # the structure store to the overlay content.
         self.events: dict[str, list[dict[str, str]]] = {}
+        self.structure: dict[str, list[dict[str, str]]] = {}
         self.calls: list[list[str]] = []
         self.logs: list[str] = []
         self.results: list[_Result] = []
@@ -111,7 +121,7 @@ class OpenerHarness:
             {
                 "_load_outcomes": lambda: self.outcomes,
                 "_load_evidence_events": lambda: self.events,
-                "event_rows": lambda cid: self.events.get(cid, []),
+                "event_rows": lambda cid: self.structure.get(cid, self.events.get(cid, [])),
                 "_native_outcome_value": lambda event: str(event.get("verdict") or ""),
                 "lifecycle_state": lambda cid: self.states.get(cid, "open"),
                 "folded_labels": lambda cid, core: core.get("initial_labels", []),
@@ -584,3 +594,42 @@ def test_untyped_candidate_is_skipped_with_reason_not_created(tmp_path: Path) ->
     assert board.open(1) == 0
     assert board.calls == []
     assert any("OPEN_REVIEW_SOURCE_UNBOUND" in row for row in board.logs)
+
+
+def test_outcome_only_in_legacy_overlay_still_resolves_its_generation(
+    tmp_path: Path,
+) -> None:
+    """An outcome written with ``coord link`` must still open its review.
+
+    ``_load_outcomes`` selects the folded outcome from the union of the
+    structure store and the legacy kanban overlay, but the generation lookup
+    behind it used to re-derive the exact event from ``event_rows`` alone.
+    Almost every provisional PASS on the fleet is written as
+    ``coord link --key verdict``, which lands only in the overlay, so the
+    lookup found nothing and the opener reported OPEN_REVIEW_EVIDENCE_BLOCKED
+    for a card whose candidate evidence was fully present and hash-verified.
+    """
+    board = OpenerHarness(tmp_path)
+    board.outcome("a1b2c3d4", writer="pi-codex-source")
+    # The structure store holds no outcome event: the verdict, and the
+    # candidate evidence bound to it, live only in the overlay.
+    board.structure["a1b2c3d4"] = []
+
+    assert board.open(1) == 1
+    assert not any("OPEN_REVIEW_EVIDENCE_BLOCKED" in row for row in board.logs)
+
+
+def test_outcome_mirrored_into_both_stores_is_not_seen_as_conflicting(
+    tmp_path: Path,
+) -> None:
+    """A mutation mirrored into both stores applies once, not twice.
+
+    The overlay is the post-cutover hot backup, so the same event legitimately
+    appears in both places.  Counting it twice would read as two conflicting
+    outcome identities and fail closed on a perfectly healthy card.
+    """
+    board = OpenerHarness(tmp_path)
+    board.outcome("a1b2c3d4", writer="pi-codex-source")
+    board.structure["a1b2c3d4"] = [dict(board.events["a1b2c3d4"][0])]
+
+    assert board.open(1) == 1
