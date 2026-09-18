@@ -17,16 +17,18 @@ Three design choices carried over deliberately from the modules this one
 sits beside:
 
 Node-scoped path
-    ``~/.skcapstone`` is ONE Syncthing folder replicated across five hosts.
-    An unscoped history file would let five hosts overwrite each other's
-    writes and the record would be worthless. This follows the exact shape
-    Task 2 of phase 1 used for the readiness verdict
-    (``~/.skcapstone/fleet/status/node-<host>/readiness/verdict.json``,
+    The sovereign home is ONE Syncthing folder replicated across five
+    hosts. An unscoped history file would let five hosts overwrite each
+    other's writes and the record would be worthless. This follows the
+    exact shape Task 2 of phase 1 used for the readiness verdict
+    (``<sovereign home>/fleet/status/node-<host>/readiness/verdict.json``,
     see ``systemd/skfleet-readiness.service``): history lives at
-    ``~/.skcapstone/fleet/status/node-<host>/rollout/history.jsonl``, built
-    from the same :func:`skcapstone.fleet.paths.self_node_name` every other
-    fleet module already uses for "this node", rather than a second,
-    independent notion of node identity.
+    ``<sovereign home>/fleet/status/node-<host>/rollout/history.jsonl``,
+    resolved via :func:`skcapstone.fleet.paths.paths_for_home` (so this
+    module never re-derives the sovereign home's own name) and scoped by
+    :func:`skcapstone.fleet.paths.self_node_name`, the same node-identity
+    function every other fleet module already uses, rather than a second,
+    independent notion of "this node".
 
 Append-only, but not CardStore's shape
     ``skcoord.card_store.CardStore`` is the established append-only event
@@ -70,7 +72,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from .paths import self_node_name
+from .paths import paths_for_home, self_node_name
 
 logger = logging.getLogger(__name__)
 
@@ -79,23 +81,17 @@ def _history_path(home: Path | str) -> Path:
     """This node's rollout history file, under the estate home.
 
     Args:
-        home: The user's home directory (the parent of ``.skcapstone``),
-            the same meaning ``home`` carries in
-            ``deployment_manifest.build_manifest`` and
+        home: The user's home directory, the same meaning ``home`` carries
+            in ``deployment_manifest.build_manifest`` and
             ``rollout_drift.detect_drift``.
 
     Returns:
-        ``<home>/.skcapstone/fleet/status/node-<host>/rollout/history.jsonl``.
+        The node-scoped history file inside the fleet tree's status
+        directory, built via :func:`paths_for_home` so the sovereign home's
+        own name is never re-typed here.
     """
-    return (
-        Path(home)
-        / ".skcapstone"
-        / "fleet"
-        / "status"
-        / self_node_name()
-        / "rollout"
-        / "history.jsonl"
-    )
+    fleet = paths_for_home(home)
+    return fleet.node_status_dir(self_node_name()) / "rollout" / "history.jsonl"
 
 
 def _canonical_json_line(manifest: dict[str, Any]) -> bytes:
