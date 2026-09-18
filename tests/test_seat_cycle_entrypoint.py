@@ -5,9 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from subprocess import CompletedProcess
 from types import SimpleNamespace
 
 import pytest
@@ -17,10 +19,12 @@ from skcapstone.card import Column
 from skcapstone.card_store import CardCore, CardStore
 from skcapstone.link_review_work import card_generation, reconcile_review_work
 from skcapstone.seat_cycle_entrypoint import (
+    SeatLeaseConfig,
     link_operation,
     load_control_plane,
     role_dispatch_operation,
     run_cycle,
+    seat_lease_config_from_env,
     seraph_operation,
 )
 
@@ -1153,3 +1157,320 @@ def test_a_machine_with_no_claim_still_follows_the_estate_election(
     control(control_path)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-config"))
     assert load_control_plane(control_path, host="chiap08")["active_host"] == "chiap08"
+
+
+# --------------------------------------------------------------------------
+# Seat lease switch (spec docs/superpowers/sdd/2026-09-18-seat-lease, Task 2)
+#
+# The lease is default OFF. Every test in this section that touches the
+# lease path passes an explicit SeatLeaseConfig so the switch's real,
+# unset-by-default state (read from the environment) never leaks a real
+# ssh call into a test. A FakeRunner never shells out; the two "bounded"
+# tests near the end genuinely exercise subprocess timeout enforcement,
+# proving the wait is bounded rather than asserting it.
+# --------------------------------------------------------------------------
+
+
+class _FakeLeaseRunner:
+    """Records every command; replies from a canned queue of JSON payloads.
+
+    Mirrors tests/fleet/test_seat_lease.py's FakeRunner so a seat-lease call
+    made through this entrypoint is tested the same way the primitive
+    itself is: no test here ever shells out to a real host.
+    """
+
+    def __init__(self, replies: list[dict]) -> None:
+        self.replies = list(replies)
+        self.calls: list[list[str]] = []
+
+    def __call__(self, cmd: list[str]) -> CompletedProcess:
+        self.calls.append(cmd)
+        payload = self.replies.pop(0)
+        return CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+
+
+class _RaisingLeaseRunner:
+    """Simulates a transport failure: the runner itself raises."""
+
+    def __init__(self, exc: Exception) -> None:
+        self.exc = exc
+        self.calls: list[list[str]] = []
+
+    def __call__(self, cmd: list[str]) -> CompletedProcess:
+        self.calls.append(cmd)
+        raise self.exc
+
+
+def test_lease_disabled_by_default_is_byte_identical_to_todays_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No lease param at all: exactly today's call shape, today's message."""
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-config"))
+    called = []
+    result = run_cycle(
+        seat="link",
+        home=tmp_path / "home",
+        control_plane=control_path,
+        local_host="chiap01",
+        operation=lambda: called.append(True) or {"recommendations": 1},
+    )
+    assert result.result == "inactive_host_refused"
+    assert result.reason == "active_host=chiap08"
+    assert called == []
+
+
+def test_lease_explicitly_disabled_never_touches_the_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """enabled=False must not consult the lease even if a host is configured."""
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-config"))
+    runner = _FakeLeaseRunner(
+        [{"ok": True, "holder": "chiap01", "remaining_seconds": 300.0, "reason": "acquired"}]
+    )
+    lease = SeatLeaseConfig(enabled=False, lease_host="chiap09", runner=runner)
+    result = run_cycle(
+        seat="link",
+        home=tmp_path / "home",
+        control_plane=control_path,
+        local_host="chiap01",
+        operation=lambda: {"recommendations": 1},
+        lease=lease,
+    )
+    assert result.result == "inactive_host_refused"
+    assert result.reason == "active_host=chiap08"
+    assert runner.calls == []
+
+
+def test_lease_enabled_and_held_by_this_host_lets_the_cycle_proceed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The static record still names chiap08; the lease says chiap01 holds it.
+
+    Proceeding here is the proof that the alternative path really asks the
+    lease INSTEAD of the static string, not merely alongside it.
+    """
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-config"))
+    runner = _FakeLeaseRunner(
+        [{"ok": True, "holder": "chiap01", "remaining_seconds": 300.0, "reason": "acquired"}]
+    )
+    lease = SeatLeaseConfig(enabled=True, lease_host="chiap09", runner=runner)
+    called = []
+    result = run_cycle(
+        seat="link",
+        home=tmp_path / "home",
+        control_plane=control_path,
+        local_host="chiap01",
+        operation=lambda: called.append(True) or {"cards_examined": 3, "recommendations": 1},
+        lease=lease,
+    )
+    assert result.result != "inactive_host_refused"
+    assert result.cards_examined == 3
+    assert called == [True]
+    assert len(runner.calls) == 1
+
+
+def test_lease_enabled_and_held_by_another_host_refuses_naming_holder_and_ttl(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-config"))
+    runner = _FakeLeaseRunner(
+        [
+            {
+                "ok": False,
+                "holder": "chiap08",
+                "remaining_seconds": 42.0,
+                "reason": "held by another holder",
+            }
+        ]
+    )
+    lease = SeatLeaseConfig(enabled=True, lease_host="chiap09", runner=runner)
+    called = []
+    result = run_cycle(
+        seat="link",
+        home=tmp_path / "home",
+        control_plane=control_path,
+        local_host="chiap01",
+        operation=lambda: called.append(True) or {"recommendations": 1},
+        lease=lease,
+    )
+    assert result.result == "inactive_host_refused"
+    assert "chiap08" in result.reason
+    assert "42" in result.reason
+    assert called == []
+
+
+def test_lease_enabled_and_unreachable_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-config"))
+    runner = _RaisingLeaseRunner(
+        OSError("ssh: connect to host chiap09 port 22: Connection refused")
+    )
+    lease = SeatLeaseConfig(enabled=True, lease_host="chiap09", runner=runner)
+    called = []
+    result = run_cycle(
+        seat="link",
+        home=tmp_path / "home",
+        control_plane=control_path,
+        local_host="chiap01",
+        operation=lambda: called.append(True) or {"recommendations": 1},
+        lease=lease,
+    )
+    assert result.result == "inactive_host_refused"
+    assert "Connection refused" in result.reason
+    assert called == []
+
+
+def test_lease_enabled_and_call_times_out_fails_closed_without_hanging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A caught TimeoutExpired (what the bounded runner raises on a wedged
+    lease host) must refuse, not proceed -- and this assertion itself must
+    not take anywhere near as long as a real hang would.
+    """
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-config"))
+    runner = _RaisingLeaseRunner(subprocess.TimeoutExpired(cmd=["ssh", "chiap09"], timeout=10))
+    lease = SeatLeaseConfig(enabled=True, lease_host="chiap09", runner=runner)
+    called = []
+    started = time.monotonic()
+    result = run_cycle(
+        seat="link",
+        home=tmp_path / "home",
+        control_plane=control_path,
+        local_host="chiap01",
+        operation=lambda: called.append(True) or {"recommendations": 1},
+        lease=lease,
+    )
+    elapsed = time.monotonic() - started
+    assert result.result == "inactive_host_refused"
+    assert called == []
+    assert elapsed < 2.0
+
+
+def test_default_lease_runner_bounds_a_wedged_remote_call() -> None:
+    """Genuine proof, not a mock: a real subprocess that outlives the bound
+    is killed and raises, well before it would have returned on its own.
+    """
+    runner = seat_entrypoint._default_lease_runner(0.3)
+    started = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        runner(["sleep", "5"])
+    elapsed = time.monotonic() - started
+    assert elapsed < 2.0
+
+
+def test_lease_enabled_end_to_end_bounds_a_wedged_lease_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No FakeRunner here: a real ssh-shaped binary that sleeps, reached
+    through the real default runner, through the real public entrypoint.
+    Proves the whole call ends up bounded and closed, not just the one
+    helper function in isolation.
+    """
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-config"))
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    fake_ssh = fake_bin / "ssh"
+    fake_ssh.write_text("#!/bin/sh\nsleep 5\n")
+    fake_ssh.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}:{os.environ.get('PATH', '')}")
+    lease = SeatLeaseConfig(enabled=True, lease_host="chiap09", timeout_seconds=0.5)
+    called = []
+    started = time.monotonic()
+    result = run_cycle(
+        seat="link",
+        home=tmp_path / "home",
+        control_plane=control_path,
+        local_host="chiap01",
+        operation=lambda: called.append(True) or {"recommendations": 1},
+        lease=lease,
+    )
+    elapsed = time.monotonic() - started
+    assert result.result == "inactive_host_refused"
+    assert called == []
+    assert elapsed < 3.0
+
+
+def test_load_control_plane_never_deletes_active_host_and_static_checks_still_gate_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The lease overrides what active_host MEANS, never removes the field,
+    and never touches the on-disk record: the one-line revert stays a
+    one-line revert.
+    """
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-config"))
+    before = control_path.read_text()
+    runner = _FakeLeaseRunner(
+        [{"ok": True, "holder": "chiap01", "remaining_seconds": 300.0, "reason": "acquired"}]
+    )
+    lease = SeatLeaseConfig(enabled=True, lease_host="chiap09", runner=runner)
+    record = load_control_plane(control_path, host="chiap01", lease=lease)
+    assert "active_host" in record
+    assert record["active_host"] == "chiap01"
+    assert control_path.read_text() == before
+
+
+def test_lease_enabled_but_misconfigured_with_no_host_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A constructed SeatLeaseConfig with enabled=True and no lease_host
+    (bypassing seat_lease_config_from_env's own guard) must still refuse
+    rather than crash or silently proceed.
+    """
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-config"))
+    lease = SeatLeaseConfig(enabled=True, lease_host="")
+    called = []
+    result = run_cycle(
+        seat="link",
+        home=tmp_path / "home",
+        control_plane=control_path,
+        local_host="chiap01",
+        operation=lambda: called.append(True) or {"recommendations": 1},
+        lease=lease,
+    )
+    assert result.result == "inactive_host_refused"
+    assert called == []
+
+
+def test_seat_lease_config_from_env_requires_both_flag_and_host() -> None:
+    assert seat_lease_config_from_env({}).enabled is False
+    assert seat_lease_config_from_env({"SKFLEET_SEAT_LEASE_ENABLED": "1"}).enabled is False
+    assert seat_lease_config_from_env({"SKFLEET_SEAT_LEASE_HOST": "chiap09"}).enabled is False
+    both = seat_lease_config_from_env(
+        {"SKFLEET_SEAT_LEASE_ENABLED": "true", "SKFLEET_SEAT_LEASE_HOST": "chiap09"}
+    )
+    assert both.enabled is True
+    assert both.lease_host == "chiap09"
+    assert both.ttl_seconds == 300.0
+    assert both.timeout_seconds == 10.0
+
+
+def test_seat_lease_config_from_env_reads_ttl_and_timeout_overrides() -> None:
+    config = seat_lease_config_from_env(
+        {
+            "SKFLEET_SEAT_LEASE_ENABLED": "yes",
+            "SKFLEET_SEAT_LEASE_HOST": "chiap09",
+            "SKFLEET_SEAT_LEASE_TTL_SECONDS": "600",
+            "SKFLEET_SEAT_LEASE_TIMEOUT_SECONDS": "5",
+        }
+    )
+    assert config.ttl_seconds == 600.0
+    assert config.timeout_seconds == 5.0

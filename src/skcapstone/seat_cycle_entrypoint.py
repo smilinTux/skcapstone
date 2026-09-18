@@ -26,6 +26,8 @@ from skcoord.card import Column
 from skcoord.card_store import CardStore
 
 from .estate import host_lifecycle_claim
+from .fleet import seat_lease
+from .fleet.actuation import Runner
 from .lifecycle_seats import LIFECYCLE_SEATS
 from .link_cycle import recommend_one_reviewer
 from .link_observation_feed import ObservationFeedError, load_observation_feed
@@ -141,7 +143,138 @@ class CycleSummary:
     mailbox_error: str | None = None
 
 
-def load_control_plane(path: Path, *, host: str | None = None) -> dict[str, Any]:
+#: Default-off switch for the cross-host seat lease (spec
+#: docs/superpowers/sdd/2026-09-18-seat-lease, Task 2). All three must be
+#: satisfied through :func:`seat_lease_config_from_env` before the lease is
+#: consulted at all: an unset or falsy flag, or a flag with no lease host to
+#: ask, both resolve to disabled, identical to today's behaviour.
+_LEASE_ENABLED_ENV = "SKFLEET_SEAT_LEASE_ENABLED"
+_LEASE_HOST_ENV = "SKFLEET_SEAT_LEASE_HOST"
+_LEASE_TTL_ENV = "SKFLEET_SEAT_LEASE_TTL_SECONDS"
+_LEASE_TIMEOUT_ENV = "SKFLEET_SEAT_LEASE_TIMEOUT_SECONDS"
+_LEASE_TRUTHY = {"1", "true", "yes", "on"}
+#: A five-minute one-shot renews its own hold for roughly its own budget.
+_LEASE_DEFAULT_TTL_SECONDS = 300.0
+#: How long a caller waits for one ssh round trip before giving up. Not the
+#: fleet's shared ``actuation.default_runner`` timeout (30s): that value is
+#: not tuned for this caller's own bounded budget, and this switch wants a
+#: value it can name and justify on its own.
+_LEASE_DEFAULT_TIMEOUT_SECONDS = 10.0
+
+
+@dataclass(frozen=True)
+class SeatLeaseConfig:
+    """Default-off switch carrying everything :func:`load_control_plane`
+    needs to ask the seat lease instead of trusting the control plane's
+    static ``active_host`` string.
+
+    ``enabled`` is the switch. Every production caller reaches this through
+    :func:`seat_lease_config_from_env`, which requires an explicit truthy
+    flag AND a configured lease host before setting it True; constructing
+    this directly with ``enabled=True`` and no ``lease_host`` is refused
+    defensively by :func:`load_control_plane` rather than trusted.
+
+    ``runner`` is ``None`` in production, which means "build the bounded
+    default runner from ``timeout_seconds``"; tests inject a fake here so
+    no test ever shells out to a real host.
+    """
+
+    enabled: bool = False
+    lease_host: str = ""
+    ttl_seconds: float = _LEASE_DEFAULT_TTL_SECONDS
+    timeout_seconds: float = _LEASE_DEFAULT_TIMEOUT_SECONDS
+    lease_path: str = seat_lease.DEFAULT_LEASE_PATH
+    lock_path: str = seat_lease.DEFAULT_LOCK_PATH
+    runner: Runner | None = None
+
+
+def _lease_env_float(value: str | None, default: float) -> float:
+    if value is None or not value.strip():
+        return default
+    try:
+        parsed = float(value)
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
+
+
+def seat_lease_config_from_env(environ: Mapping[str, str] | None = None) -> SeatLeaseConfig:
+    """Read the seat-lease switch from the environment. Off unless BOTH
+    ``SKFLEET_SEAT_LEASE_ENABLED`` is explicitly truthy AND
+    ``SKFLEET_SEAT_LEASE_HOST`` names a lease host; either alone leaves the
+    estate on the static ``active_host`` string, matching today's
+    behaviour exactly.
+    """
+
+    values = os.environ if environ is None else environ
+    flag = str(values.get(_LEASE_ENABLED_ENV, "")).strip().lower() in _LEASE_TRUTHY
+    lease_host = str(values.get(_LEASE_HOST_ENV, "")).strip()
+    return SeatLeaseConfig(
+        enabled=flag and bool(lease_host),
+        lease_host=lease_host,
+        ttl_seconds=_lease_env_float(values.get(_LEASE_TTL_ENV), _LEASE_DEFAULT_TTL_SECONDS),
+        timeout_seconds=_lease_env_float(
+            values.get(_LEASE_TIMEOUT_ENV), _LEASE_DEFAULT_TIMEOUT_SECONDS
+        ),
+    )
+
+
+def _default_lease_runner(timeout_seconds: float) -> Runner:
+    """Bound the wait on one seat-lease ssh call.
+
+    ``fcntl.flock`` on the lease host blocks unboundedly, and the ``ssh``
+    command :mod:`skcapstone.fleet.seat_lease` builds carries no
+    ``ConnectTimeout`` of its own, so without this the caller can hang
+    forever behind a wedged lease host. ``subprocess.run``'s own ``timeout``
+    kills the child and raises ``TimeoutExpired`` regardless of which stage
+    it is wedged in (DNS, TCP connect, or the remote flock), and
+    ``seat_lease._call`` already degrades any exception, ``TimeoutExpired``
+    included, to a failed, non-raising ``LeaseResult`` -- so bounding the
+    wait here is what turns a hang into a fast, fail-closed refusal.
+    """
+
+    def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout_seconds, check=False
+        )
+
+    return _run
+
+
+def _lease_active_host(lease: SeatLeaseConfig, *, local_host: str) -> str:
+    """Ask the lease who should be treated as ``active_host``.
+
+    Returns ``local_host`` on a genuine win: a fresh acquire, a live
+    re-acquire by the same holder, or a takeover of an expired lease all
+    succeed the same way and all mean this host may proceed. Any refusal --
+    a live lease held by someone else, an unreachable lease host, or a
+    timed-out call -- returns a description that can never equal a real
+    host name, so the caller's existing ``host != active_host`` check fires
+    exactly as it does today and names the reason.
+    """
+
+    if not lease.lease_host:
+        return "lease_unreachable(no lease host configured)"
+    runner = lease.runner or _default_lease_runner(lease.timeout_seconds)
+    result = seat_lease.acquire(
+        lease.lease_host,
+        local_host,
+        lease.ttl_seconds,
+        runner=runner,
+        lease_path=lease.lease_path,
+        lock_path=lease.lock_path,
+    )
+    if result.ok:
+        return local_host
+    if result.holder:
+        remaining = 0 if result.remaining_seconds is None else round(result.remaining_seconds)
+        return f"lease_held_by={result.holder}(remaining={remaining}s)"
+    return f"lease_unreachable({result.reason})"
+
+
+def load_control_plane(
+    path: Path, *, host: str | None = None, lease: SeatLeaseConfig | None = None
+) -> dict[str, Any]:
     """Read and validate the small public active-host control record.
 
     This is the point where a record from the SYNCED coordination tree is
@@ -153,9 +286,24 @@ def load_control_plane(path: Path, *, host: str | None = None) -> dict[str, Any]
     refuse, never grant, so a record that reached this machine by mis-sync or
     tampering cannot activate a host whose own operator never declared it.
 
+    ``lease`` is the default-off alternative path (spec
+    docs/superpowers/sdd/2026-09-18-seat-lease, Task 2): when it is ``None``
+    or ``lease.enabled`` is ``False``, this function is unchanged from
+    before the lease existed, byte-for-byte, including every field of the
+    returned record. Only when a caller explicitly passes an enabled
+    ``SeatLeaseConfig`` does the returned ``active_host`` stop being the
+    static string and become the lease's live answer instead;
+    ``active_host`` itself is never removed from the record, so disabling
+    the lease again is the one-line revert of dropping the ``lease``
+    argument. The seat-provisioning and host-local-claim checks above are
+    always evaluated against the record's own static ``active_host``: they
+    are a sanity check on the SYNCED record's internal consistency, not on
+    who is live right now, and the lease has no bearing on either.
+
     Args:
         path: The estate's ``coordination/seat-control-plane.json``.
         host: Running host override, for tests.
+        lease: The seat-lease switch. Defaults to disabled.
 
     Returns:
         The validated control record.
@@ -183,6 +331,11 @@ def load_control_plane(path: Path, *, host: str | None = None) -> dict[str, Any]
     claim = host_lifecycle_claim(host=host)
     if claim is not None and claim != active_host.strip().lower():
         raise ValueError(f"seat control plane names {active_host} but this machine claims {claim}")
+    if lease is not None and lease.enabled:
+        value = dict(value)
+        value["active_host"] = _lease_active_host(
+            lease, local_host=(host or socket.gethostname()).strip().lower()
+        )
     return value
 
 
@@ -206,14 +359,26 @@ def run_cycle(
     local_host: str | None = None,
     dry_run: bool = False,
     operation: Callable[[], dict[str, int]] | None = None,
+    lease: SeatLeaseConfig | None = None,
 ) -> CycleSummary:
-    """Run one fenced lifecycle-seat cycle, or record a bounded no-op."""
+    """Run one fenced lifecycle-seat cycle, or record a bounded no-op.
+
+    ``lease`` defaults to ``None``, which reads the default-off switch from
+    the environment via :func:`seat_lease_config_from_env`; a test that
+    wants a specific lease outcome passes an explicit ``SeatLeaseConfig``
+    instead. Either way, an unset or disabled switch leaves this function
+    byte-identical to before the lease existed.
+    """
 
     seat = seat.strip().lower()
     if seat not in _SEATS:
         raise ValueError(f"unsupported recurring seat: {seat}")
     host = (local_host or socket.gethostname()).strip().lower()
-    control = load_control_plane(control_plane, host=host)
+    control = load_control_plane(
+        control_plane,
+        host=host,
+        lease=lease if lease is not None else seat_lease_config_from_env(),
+    )
     revision = str(control["revision"])
     if host != str(control["active_host"]):
         summary = CycleSummary(
