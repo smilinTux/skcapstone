@@ -514,14 +514,103 @@ def register_coord_commands(main: click.Group) -> None:
         )
         board = Board(home_path)
         try:
+            from ..human_wait import assert_human_claim
             from ..review_admission import assert_governed_review_claim
 
+            # Both asserts sit HERE, in front of Board.claim_task, because
+            # Board.claim_task has no gate of its own: it takes a card id and
+            # claims it. The human gate exists in the rotate pool's selection
+            # only, so every caller that names an id walks past it, which is
+            # how 83e498b6 took 58 claims while held for Chef.
+            assert_human_claim(home_path, task_id, agent)
             assert_governed_review_claim(home_path, task_id, agent)
             ag = board.claim_task(agent, task_id, force=force)
             console.print(f"\n  [green]Claimed:[/] [{task_id}] by [bold]{ag.agent}[/]\n")
         except ValueError as e:
             console.print(f"\n  [red]Error:[/] {e}\n")
             sys.exit(1)
+
+    @coord.command("waiting-on-human")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--json", "as_json", is_flag=True, default=False, help="Emit JSON.")
+    @click.option("--limit", "-n", default=0, type=int, help="Show at most N rows (0 = all).")
+    @click.option(
+        "--sync-gtd",
+        is_flag=True,
+        default=False,
+        help="Upsert each row as a GTD waiting-for through the gtd-ingest port.",
+    )
+    def coord_waiting_on_human(home, as_json, limit, sync_gtd):
+        """List the cards that only the operator can move.
+
+        A card whose worker recorded blocked_on=human, or which carries the
+        human-gate marking, is held for a person and is no longer dispatched.
+        Held and unseen is the same as lost, so this is the queue.
+
+        --sync-gtd files each row into the unified GTD as a waiting-for, keyed
+        on (coord-human, <card_id>), so re-running reconciles rather than
+        duplicates. It is not a second list: the unified GTD is where the
+        operator's waiting-fors already live.
+        """
+        from ..human_wait import sync_gtd as sync_gtd_rows
+        from ..human_wait import waiting_on_human
+
+        home_path = Path(home).expanduser()
+        rows = waiting_on_human(home_path)
+        shown = rows[:limit] if limit > 0 else rows
+
+        synced: list[tuple[str, str, str]] = []
+        if sync_gtd:
+            try:
+                synced = sync_gtd_rows(home_path, shown)
+            except ImportError as exc:
+                raise click.ClickException(
+                    f"the gtd-ingest port is unavailable ({exc}); install skos to sync"
+                ) from None
+
+        if as_json:
+            console.print(
+                json.dumps(
+                    {
+                        "waiting": [row.as_dict() for row in shown],
+                        "total": len(rows),
+                        "synced": [
+                            {"card_id": cid, "item_id": iid, "action": act}
+                            for cid, iid, act in synced
+                        ],
+                    },
+                    sort_keys=True,
+                )
+            )
+            return
+
+        if not rows:
+            console.print("\n  [green]Nothing is waiting on a person.[/]\n")
+            return
+
+        table = Table(title=f"Waiting on human ({len(rows)})")
+        table.add_column("card", style="cyan")
+        table.add_column("waited", justify="right")
+        table.add_column("needs")
+        table.add_column("system")
+        table.add_column("unblocks", justify="right")
+        table.add_column("title")
+        for row in shown:
+            table.add_row(
+                row.card_id,
+                f"{row.waited_hours:.0f}h",
+                row.needs or f"({row.source})",
+                row.system or "-",
+                str(len(row.unblocks)) if row.unblocks else "-",
+                row.title[:60],
+            )
+        console.print()
+        console.print(table)
+        if limit > 0 and len(rows) > len(shown):
+            console.print(f"  [dim]... {len(rows) - len(shown)} more[/]")
+        for cid, _item, action in synced:
+            console.print(f"  [dim]gtd {action}: {cid}[/]")
+        console.print()
 
     @coord.command("complete")
     @click.argument("task_id")
