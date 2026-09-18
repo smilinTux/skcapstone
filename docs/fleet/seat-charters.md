@@ -220,17 +220,145 @@ or external authority requires it.
 
 ### Mero (Overseer) Boundary
 
-**Allowed operations:**
-- Read-only observation of CardStore, fleet-rotation evidence, worker logs
-- Emission of `skfleet.dispatch-recommendation/v1` events (advisory only)
-- Drift measurement, delivery fraction calculation, backlog analysis
-- Alert and observation publication
+**Purpose:** Mero measures the estate (convergence, drift, delivery fraction,
+backlog, claim health) and reports what it finds. It never changes what it
+measures, because a measurer that repairs its own findings can no longer be
+trusted to report them.
 
-**Prohibited operations (runtime enforcement):**
-- Any `claim`, `release_claim`, `launch`, `stop`, or `reassign` actions
-- Merge, deploy, or repository write operations
-- Fleet mutation of any kind
-- Application action dispatch or actuation
+**Why this section is a verb list rather than the word "read-only".** The
+previous version of this boundary said "read-only" in prose, and it was
+violated for eleven days before anyone looked. Measured on chi 2026-09-18
+(per-card shard store, `~/.skcapstone/cards/*/events/mero@*.jsonl`, where the
+filename is the writer identity): between 2026-08-31 and 2026-09-16 the
+identity `mero` wrote 531 lifecycle mutations (327 `move`, 149
+`release_claim`, 29 `complete`, 9 `void`, 9 `archive`, 8 `claim`), plus 5
+`add_dependency` and 12 `describe`, and in the legacy `card_events` store 27
+`add_label` and 23 `remove_label`. 477 of the 531 (90 percent) landed in one
+burst, 2026-09-07 22:00 to 2026-09-08 02:59 UTC, from an interactive
+controller session on chiap08 issuing `skcapstone coord ... --agent mero`
+(evidence in PR 766). Over the same window the read side produced 8,257
+`mero_blocker_recommendation` and 2,380 `mero_observation` events: 95.1
+percent of everything mero wrote was inside charter, and the 4.9 percent that
+was not went unnoticed because "read-only" named no verbs a checker could
+check. This section fixes that: a verb absent from the permitted table is
+prohibited, not undecided.
+
+#### Permitted verbs
+
+| Runtime action (`seat_boundaries.Action`) | Event-store `action` values | Covers |
+|---|---|---|
+| `observe` | `mero_observation` | Census, drift, delivery-fraction, backlog and claim-health measurement over CardStore, fleet-rotation evidence, and worker logs |
+| `recommend` | `mero_blocker_recommendation`, `skfleet.dispatch-recommendation/v1` | Advisory events only; consumed exclusively by Niobe under the typed recommendation contract below |
+| `create_card` | card creation via `coord create --by mero` | Filing discovered work; coordination, not approval (see Fenced System Actors) |
+| (not yet gated at runtime) | `link`, `verdict`, `evidence`, `evidence_link` | Recording mero's own measurement verdicts and evidence hashes on cards, per the coord briefing's evidence contract |
+
+The runtime authority set is `Seat.MERO = {OBSERVE, RECOMMEND, CREATE_CARD}`
+in `src/skcapstone/seat_boundaries.py`, enforced at the coord mutation
+entrypoints since PR 766. The `link`/`verdict`/`evidence` family has no
+`Action` member yet, so it is permitted by this charter and checked by the
+audit query below, not by the runtime gate.
+
+#### Prohibited verbs
+
+Each row names the verb, what mero was measured doing with it, and why it is
+prohibited rather than merely unassigned.
+
+| Verb | Measured (2026-08-31 to 2026-09-16) | Why prohibited |
+|---|---|---|
+| `claim` | 8, including self-claims (`owner: mero`) | The measurer must not hold work it measures. ROSTER.md already forbids this by example: the rubric-scoring card `48136bad` "must not be claimed by mero". |
+| `release_claim` | 149; 129 of them released `jarvis`-held claims; 49 hit an owner who had written to the card within the previous hour; 47 hit claims younger than 2 hours; 37 released owners kept writing to the card afterwards | Releasing another seat's claim is fleet mutation, the Fleet Dispatcher's authority. A third of these releases were live-work stealing, the exact damage the seat separation exists to prevent. |
+| `move` | 327; 284 into `backlog` | Requeueing a card is re-dispatch by another name. It directly inflates the churn metric (claims per card) that the Dispatcher is scored on, from a seat the Dispatcher cannot see. |
+| `complete` | 29 | Completion is precisely the assertion mero exists to audit (claimed-done with no evidence is the estate's core defect). A measurer that completes cards is grading its own homework. |
+| `void`, `archive` | 9 each | Terminal lifecycle decisions belong to the card owner or the Dispatcher. Note: these verbs have no `Action` member and remain ungated at runtime (PR 766 follow-up); only the audit query below catches them. |
+| `add_dependency`, `describe`, `add_label`, `remove_label`, `reprioritize`, `amend_criteria` | 5, 12, 27, 23, 0, 0 | Card metadata shapes other seats' dispatch and triage. If a measurement implies a metadata change, emit a recommendation; do not make the change. |
+| `launch`, `stop`, `reassign`, `rotate`, `repair_worker` | 0 | Fleet actuation, Dispatcher authority (ADR-0005). |
+| `merge`, `deploy`, `actuate_application`, repository writes | 0 | ADR-0005 section 4: the Overseer has no actuation surface, no freeze story, and no capability token, by design. |
+
+#### The 2026-09-07 burst: necessary work in the wrong seat, or overstepping?
+
+Both, in measurable proportions, and the distinction matters because it
+determines what changes.
+
+The burst was the Jarvis-to-Niobe dispatch handover window (recurring
+dispatch moved to Niobe 2026-09-09, per this document's own history). 129 of
+the 149 releases drained `jarvis`-held claims. Splitting them by the state of
+the claim at release time:
+
+- **40 of 149** hit claims whose owner had been silent on the card for more
+  than 24 hours. Releasing those was genuine janitorial work: dead claims
+  block re-dispatch, and after the sweep 104 of the 149 released cards were
+  re-claimed (only 26 by the same owner), so the requeue did feed the board.
+- **49 of 149** hit claims whose owner had written to the card within the
+  previous hour, and **47** hit claims younger than 2 hours. **37** released
+  owners kept writing to cards they no longer held. That is not janitorial
+  work; that is stealing live work and corrupting the claim ledger.
+
+**Verdict:** the janitorial fraction was necessary work, but it was never
+unowned. Stale-claim release is Fleet Dispatcher authority, and the sanctioned
+route already existed on paper: mero emits the typed
+`skfleet.dispatch-recommendation/v1` event and the Dispatcher acts on it with
+readback fencing. The fencing steps (re-read owner, re-read revision, reject
+stale evidence) are precisely what would have filtered the 49 live-claim
+releases out while letting the 40 stale ones through. The burst bypassed the
+mechanism that existed to make it safe. The charter therefore does not expand
+mero's authority to legalise it.
+
+**Where the work goes:** stale-claim reaping is owned by **Niobe**, driven by
+mero's recommendations (mero already emits them at volume: 8,257 blocker
+recommendations in the same window). No new seat is created for this;
+"a seat for coordination is what produced one agent holding four jobs"
+(PROPOSAL-SEATS-WITHOUT-JARVIS, 2026-09-02). The residual human factor is a
+runbook rule: **controller and operator sessions must not wear a seat
+identity via `--agent` or `SKAGENT` for board janitorial work.** A human
+doing an emergency drain does it as an operator identity, on the record as
+themselves.
+
+#### Violation detection
+
+A charter nobody can check is a wish. Three layers, in order of speed:
+
+1. **Runtime refusal (fail closed):** since PR 766, `require_authority` is
+   threaded through the coord mutation entrypoints; `--agent mero` on
+   `claim`, `move`, `complete`, or `release-claim` raises `BoundaryError`
+   before any event is written. This alone would have stopped the burst.
+2. **Negative tests (regression):** `tests/fleet/test_mero_readonly_entrypoint.py`
+   (13 tests) and `tests/fleet/test_seat_boundaries.py` pin the gate; the
+   refusal tests were verified red against the unguarded tree first.
+3. **Standing audit query (catches what the gate cannot):** the `void`,
+   `archive`, and label verbs are ungated, and a writer could bypass the CLI
+   entirely by appending shard files directly. The event store itself is
+   therefore the signal of record. The check is one query over the shard
+   store, keyed on the writer identity in the filename:
+
+```bash
+python3 - <<'PY'
+import json, glob, os, collections, sys
+ALLOWED = {"mero_observation", "mero_blocker_recommendation",
+           "link", "verdict", "evidence", "evidence_link", "create"}
+bad = collections.Counter()
+for f in glob.glob(os.path.expanduser("~/.skcapstone/cards/*/events/mero@*.jsonl")):
+    for line in open(f):
+        line = line.strip()
+        if not line:
+            continue
+        a = json.loads(line).get("action", "?")
+        if a not in ALLOWED:
+            bad[a] += 1
+print(dict(bad) or "CLEAN")
+sys.exit(1 if bad else 0)
+PY
+```
+
+   Run against the chi store on 2026-09-18 (chiap01) this printed exactly
+   `{'release_claim': 149, 'move': 327, 'complete': 29, 'describe': 12,
+   'void': 9, 'archive': 9, 'claim': 8, 'add_dependency': 5}` and exited 1,
+   so it demonstrably catches the 2026-09-07 burst it was designed after.
+   **The query must not be run by mero.** Mero auditing mero is circular
+   (the measurer cannot re-gate the measurer); it belongs in Seraph's
+   bounded cycle as an exact-target verification, with the counter emitted
+   in Seraph's health record. Until Seraph carries it, it runs in CI beside
+   the negative tests. Detection latency target: one Seraph cycle
+   (5 minutes), against the eleven days the burst actually went unnoticed.
 
 **Typed recommendation contract:**
 Mero and Link MAY append a `skfleet.dispatch-recommendation/v1` event to a card. The event is advice, never an instruction, and MUST contain:
@@ -371,6 +499,7 @@ clause exists to prevent.
 
 | Date | Change | Author |
 |---|---|---|
+| 2026-09-18 | Rewrote the Mero (Overseer) boundary from measured behaviour: purpose statement, explicit permitted and prohibited verb tables with counts, verdict on the 2026-09-07 mutation burst (necessary janitorial fraction assigned to Niobe via typed recommendations, live-claim releases ruled overstepping), and a three-layer violation-detection contract including a shard-store audit query verified to catch the burst | Fable 5 (subagent) |
 | 2026-09-17 | Noted that Plan B3 phase 2 delivered the rollout mechanism (recorded prior manifests, staged rollout, rollback, `skcapstone fleet rollout`/`rollback`) without changing ATLAS's authority bound; added the concrete, bounded list of what granting `Action.DEPLOY` would now take | claude-sonnet-5 |
 | 2026-09-17 | Noted that Plan B3 phase 1 delivered observation (deployment manifest, readiness gate with a caller, `skcapstone fleet node drift`) without changing ATLAS's authority bound; linked [rollout-drift.md](rollout-drift.md) | lumina |
 | 2026-09-17 | Documented that ATLAS's ported release/install/rollback duty is inoperable pending B3: no `DEPLOY` authority in `seat_boundaries`, the digest gate still on the retired tank branch, and the rail brief forbidding deploy; named the emergency gateway as unbounded and not a substitute; added the upgrade-before-converge and converge-only-on-elected-host ordering constraints and the partial-rollback note | lumina |

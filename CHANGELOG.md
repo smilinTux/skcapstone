@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **Docs: the Mero (Overseer) seat boundary is now a verb list backed by
+  measurement, not the word "read-only".** The old prose boundary was violated
+  for eleven days undetected: writer `mero` produced 531 board mutations on chi
+  between 2026-08-31 and 2026-09-16 (327 `move`, 149 `release_claim`, 29
+  `complete`, 9 `void`, 9 `archive`, 8 `claim`), 90 percent in one controller
+  burst 2026-09-07 22:00 to 2026-09-08 02:59 UTC, against 10,637 in-charter
+  read-side events (95.1 percent of its output). The rewritten section in
+  `docs/fleet/seat-charters.md` states the seat's purpose in one sentence,
+  lists permitted verbs (`observe`, `recommend`, `create_card`, plus the
+  ungated verdict/evidence link family) and prohibited verbs with the measured
+  count and reason for each, rules the burst's live-claim releases (49 with an
+  owner active in the prior hour, 47 on claims under 2 hours old)
+  overstepping, assigns the genuinely needed stale-claim reaping (40 releases
+  after more than 24h of owner silence) to Niobe via the existing typed
+  recommendation contract rather than expanding mero's authority, and adds a
+  three-layer detection contract (PR 766 runtime refusal, negative tests, and
+  a shard-store audit query that provably flags the 2026-09-07 burst, to run
+  in Seraph's cycle, never mero's own).
 - **Claim TTL counts the dispatcher's `worker_liveness` link as the owner being
   alive.** That link is the strongest liveness signal the estate produces:
   `skfleet-rotate` emits one every 2 to 3 minutes for each worker it observes
