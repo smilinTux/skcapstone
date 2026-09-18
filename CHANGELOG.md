@@ -71,6 +71,22 @@
   `PREFLIGHT_MAX_TOKENS = 64`. Three defects in one request, each of which alone
   made a healthy route report as unhealthy.
 
+- **Fleet live publisher: an unmeasured host no longer advertises zero
+  capacity.** `skcapstone.fleet_live_publisher` hardcoded `"lanes": {}` in
+  every snapshot it wrote, and running 41 seconds after the dispatcher on the
+  packaged timers it clobbered the dispatcher's truthful lane table each
+  cycle, so `reporting_capacity` read capacity 0 for healthy hosts (chiap03
+  advertised 0 in the same cycle its own `SLOTS` line said `total_free=9`;
+  this fed the 2026-09-16 capacity-partition outage and still poisoned the
+  `owner_free=` selection diagnostic after PR #778). The publisher cannot
+  measure lanes itself (targets are estate configuration in the dispatcher's
+  unit environment, codex `free` is gateway-bounded), so it now carries the
+  dispatcher's most recent lane table forward unchanged with a `lanes_ts`
+  provenance stamp, drops it after the same 30-minute freshness fence the
+  readers apply, and otherwise publishes the explicit non-dict marker
+  `"lanes": "unknown"`, which capacity readers skip instead of summing to
+  zero. "Could not measure" and "measured zero free slots" are now
+  distinguishable in every snapshot.
 - **Fleet rotation: card ownership is a pure stable hash again; live capacity
   no longer moves it.** The 2026-09-16 "place neutral cards on hosts with
   capacity" change hashed neutral cards over "hosts whose latest fleet-live
