@@ -6,6 +6,7 @@ Available standalone as `skfleet` and as `skcapstone fleet ...`.
 from __future__ import annotations
 
 import json as jsonlib
+import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -758,6 +759,107 @@ def node_endpoint_audit_cmd(status_file, as_json: bool, strict: bool) -> None:
             for peer_id in node["retirement_candidates"]:
                 click.echo(f"  plan  retirement_candidate        {peer_id}")
     if strict and report["summary"]["unsafe"]:
+        raise SystemExit(1)
+
+
+def _default_repo_root() -> Path:
+    """The checkout `node drift` reads EXPECTED content from.
+
+    ``SKCAPSTONE_REPO_ROOT`` when set, otherwise ``~/work/skcapstone``: the
+    shared-checkout convention documented in
+    ``docs/runbooks/chatgpt-codex-sk-client.md`` and confirmed, read-only,
+    on the live fleet (chiap01/02/03/04/08) -- every host that has a
+    checkout to diagnose itself against keeps it there. Deliberately not
+    ``install_backends._repos_root()`` (``~/clawd/skcapstone-repos``): that is
+    a different, developer-workstation convention, and no rotate host in
+    the live fleet has anything under it.
+    """
+    env = os.environ.get("SKCAPSTONE_REPO_ROOT")
+    return Path(env).expanduser() if env else Path.home() / "work" / "skcapstone"
+
+
+@node_group.command("drift")
+@click.option(
+    "--repo-root",
+    "repo_root",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Checkout with expected content (default: $SKCAPSTONE_REPO_ROOT or ~/work/skcapstone)",
+)
+@click.option(
+    "--home",
+    "home",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Estate home to inspect for installed artifacts (default: $HOME).",
+)
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.option("--strict", is_flag=True, help="Exit 1 when any drift is found.")
+def node_drift_cmd(repo_root: Path | None, home: Path | None, as_json: bool, strict: bool) -> None:
+    """Report rollout drift for this node against a fresh manifest. REPORT ONLY.
+
+    Builds a deployment manifest (Task 1's ``build_manifest``) from
+    --repo-root and compares it against what this node actually has
+    installed (Task 3's ``detect_drift``): content digests for unit files
+    and the dispatcher script, the installed distribution's embedded
+    git_sha, and enabled-versus-active state, never a version label alone.
+    See ``fleet/rollout_drift.py`` for why: a version check reported every
+    host healthy during all four real drift incidents this exists to catch.
+
+    Local only, like ``node doctor``: both the manifest and the installed
+    state it is compared against are facts about THIS machine. Grading a
+    remote node from a local repo checkout would be a confident wrong
+    answer dressed up as a report, not a report.
+
+    Cheap enough to run from a systemd timer independently of the rest of
+    ``skcapstone doctor``: every check here is a file read, a glob, or a
+    handful of ``systemctl --user show`` calls, the same read-only cost
+    Task 2's readiness gate already pays every 15 minutes.
+    """
+    from . import deployment_manifest, rollout_drift
+
+    resolved_repo_root = repo_root or _default_repo_root()
+    resolved_home = home or Path.home()
+
+    try:
+        manifest = deployment_manifest.build_manifest(resolved_repo_root, resolved_home)
+        drifts = rollout_drift.detect_drift(manifest, resolved_home, resolved_repo_root)
+    except (OSError, RuntimeError) as exc:
+        raise click.ClickException(
+            f"could not compute drift from repo root {resolved_repo_root}: {exc}"
+        ) from exc
+
+    node = self_node_name()
+    if as_json:
+        click.echo(
+            jsonlib.dumps(
+                {
+                    "node": node,
+                    "git_sha": manifest["git_sha"],
+                    "drifts": [
+                        {
+                            "artifact": d.artifact,
+                            "kind": d.kind,
+                            "expected": d.expected,
+                            "found": d.found,
+                        }
+                        for d in drifts
+                    ],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    elif not drifts:
+        click.echo(f"{node}: no drift (matches {manifest['git_sha']})")
+    else:
+        click.echo(
+            f"{node}\t{len(drifts)} drift(s) against manifest git_sha={manifest['git_sha']}"
+        )
+        for d in drifts:
+            click.echo(f"  {d.kind:20} {d.artifact:40} expected={d.expected!r} found={d.found!r}")
+
+    if strict and drifts:
         raise SystemExit(1)
 
 
