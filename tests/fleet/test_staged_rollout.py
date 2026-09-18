@@ -21,14 +21,18 @@ import pytest
 
 from skcapstone.fleet.paths import paths_for_home
 from skcapstone.fleet.rollout_drift import Drift
-from skcapstone.fleet.rollout_history import previous_manifest
+from skcapstone.fleet.rollout_history import previous_manifest, record_deployment
 from skcapstone.fleet.staged_rollout import (
     DeployOutcome,
     GateOutcome,
     NodeResult,
+    RollbackResult,
     default_deploy_node,
     default_gate_node,
+    default_rollback_deploy_node,
+    execute_rollback,
     execute_rollout,
+    plan_rollback,
     plan_rollout,
 )
 
@@ -469,3 +473,508 @@ def test_node_result_is_a_frozen_dataclass() -> None:
     )
     with pytest.raises(Exception):
         result.node = "other"  # type: ignore[misc]
+
+
+# ==========================================================================
+# rollback: returning a node to the manifest rollout_history recorded
+# before its last change (staged-rollout Task 3)
+# ==========================================================================
+
+
+def _lookup_runner(manifest: dict | None):
+    """A fake ``runner`` that answers only the remote ``previous_manifest``
+    lookup command with ``manifest`` (or JSON ``null``), regardless of
+    node. Used whenever a test injects its own ``rollback``/``gate`` fakes,
+    so the only real thing ``execute_rollback`` still does for each node is
+    the lookup itself.
+    """
+
+    def runner(cmd: list[str]):
+        class _Result:
+            returncode = 0
+            stdout = json.dumps(manifest)
+            stderr = ""
+
+        assert "previous_manifest" in " ".join(cmd)
+        return _Result()
+
+    return runner
+
+
+# --- plan_rollback: deterministic order, same validation as plan_rollout --
+
+
+def test_plan_rollback_visits_nodes_in_the_given_order() -> None:
+    plan = plan_rollback(["chiap02", "chiap01", "chiap03"])
+    assert plan.nodes == ("chiap02", "chiap01", "chiap03")
+
+
+def test_plan_rollback_rejects_an_unsafe_node_name() -> None:
+    with pytest.raises(ValueError):
+        plan_rollback(["../etc"])
+
+
+# --- rollback carries no manifest: it is looked up per node -------------
+
+
+def test_rollback_plan_has_no_manifest_field() -> None:
+    plan = plan_rollback(["chiap01"])
+    assert not hasattr(plan, "manifest")
+
+
+# --- dry_run defaults to True and mutates nothing ------------------------
+
+
+def test_rollback_dry_run_defaults_to_true(home: Path) -> None:
+    plan = plan_rollback(["chiap01"])
+    calls: list[str] = []
+
+    def fake_rollback(node: str, manifest: dict) -> DeployOutcome:
+        calls.append(node)
+        return DeployOutcome(ok=True, step=None, reason=None)
+
+    # dry_run is omitted entirely: the default must still be a preview.
+    execute_rollback(plan, home=home, rollback=fake_rollback)
+
+    assert calls == []
+
+
+def test_rollback_dry_run_never_calls_rollback_or_gate_or_looks_up_anything(
+    home: Path,
+) -> None:
+    """A dry run makes zero calls, including the previous-manifest lookup
+    itself: for a remote node that lookup is an ssh round trip, and a dry
+    run must never make a network call any more than a live deploy dry run
+    does.
+    """
+    plan = plan_rollback(["chiap01", "chiap02"])
+    rollback_calls: list[str] = []
+    gate_calls: list[str] = []
+
+    def fake_rollback(node: str, manifest: dict) -> DeployOutcome:
+        rollback_calls.append(node)
+        return DeployOutcome(ok=True, step=None, reason=None)
+
+    def fake_gate(node: str, manifest: dict) -> GateOutcome:
+        gate_calls.append(node)
+        return GateOutcome(ready=True, drift=(), reason="ok")
+
+    def exploding_runner(cmd: list[str]):
+        raise AssertionError(f"dry run must never shell out, got {cmd!r}")
+
+    result = execute_rollback(
+        plan,
+        dry_run=True,
+        home=home,
+        rollback=fake_rollback,
+        gate=fake_gate,
+        runner=exploding_runner,
+    )
+
+    assert rollback_calls == []
+    assert gate_calls == []
+    assert result.dry_run is True
+    assert result.halted_at is None
+    assert [n.node for n in result.completed] == ["chiap01", "chiap02"]
+    assert all(not n.deployed for n in result.completed)
+
+
+def test_rollback_dry_run_writes_no_rollout_history(home: Path) -> None:
+    plan = plan_rollback(["chiap01"])
+
+    execute_rollback(plan, dry_run=True, home=home)
+
+    history = home / ".skcapstone" / "fleet" / "status"
+    assert not history.exists()
+
+
+# --- no recorded previous manifest refuses clearly, naming the node ------
+
+
+def test_rollback_refuses_clearly_when_local_node_has_no_recorded_previous_manifest(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """This machine IS the target node and its history is empty: rollback
+    must refuse rather than guess or reconstruct a "previous" state.
+    """
+    monkeypatch.setenv("SKFLEET_NODE", "node-chiap01")
+    plan = plan_rollback(["chiap01"])
+    rollback_calls: list[str] = []
+    gate_calls: list[str] = []
+
+    def fake_rollback(node: str, manifest: dict) -> DeployOutcome:
+        rollback_calls.append(node)
+        return DeployOutcome(ok=True, step=None, reason=None)
+
+    def fake_gate(node: str, manifest: dict) -> GateOutcome:
+        gate_calls.append(node)
+        return GateOutcome(ready=True, drift=(), reason="ok")
+
+    result = execute_rollback(
+        plan, dry_run=False, home=home, rollback=fake_rollback, gate=fake_gate
+    )
+
+    assert result.halted_at == "chiap01"
+    assert "chiap01" in result.reason
+    assert "no recorded previous manifest" in result.reason
+    assert rollback_calls == []  # refused before ever attempting a rollback
+    assert gate_calls == []
+    assert result.completed == ()
+    assert result.remaining == ()
+
+
+def test_rollback_refuses_clearly_when_local_node_has_only_one_recorded_entry(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One recorded deployment and nothing before it: still no previous."""
+    monkeypatch.setenv("SKFLEET_NODE", "node-chiap01")
+    record_deployment(home, _manifest("rev-1"))
+    plan = plan_rollback(["chiap01"])
+
+    result = execute_rollback(
+        plan,
+        dry_run=False,
+        home=home,
+        rollback=lambda n, m: DeployOutcome(ok=True, step=None, reason=None),
+        gate=lambda n, m: GateOutcome(ready=True, drift=(), reason="ok"),
+    )
+
+    assert result.halted_at == "chiap01"
+    assert "no recorded previous manifest" in result.reason
+
+
+def test_rollback_refuses_clearly_when_remote_node_reports_no_previous_manifest(
+    home: Path,
+) -> None:
+    plan = plan_rollback(["chiap02"])
+
+    result = execute_rollback(
+        plan,
+        dry_run=False,
+        home=home,
+        runner=_lookup_runner(None),
+        rollback=lambda n, m: DeployOutcome(ok=True, step=None, reason=None),
+        gate=lambda n, m: GateOutcome(ready=True, drift=(), reason="ok"),
+    )
+
+    assert result.halted_at == "chiap02"
+    assert "chiap02" in result.reason
+    assert "no recorded previous manifest" in result.reason
+
+
+# --- halt on first failure, same rule as the forward path ----------------
+
+
+def test_rollback_failure_at_node_two_of_four_halts_and_leaves_the_rest_untouched(
+    home: Path,
+) -> None:
+    plan = plan_rollback(["chiap01", "chiap02", "chiap03", "chiap08"])
+    rollback_calls: list[str] = []
+    gate_calls: list[str] = []
+
+    def fake_rollback(node: str, manifest: dict) -> DeployOutcome:
+        rollback_calls.append(node)
+        if node == "chiap02":
+            return DeployOutcome(
+                ok=False, step="pip_install", reason="ImportError: broken rollback"
+            )
+        return DeployOutcome(ok=True, step=None, reason=None)
+
+    def fake_gate(node: str, manifest: dict) -> GateOutcome:
+        gate_calls.append(node)
+        return GateOutcome(ready=True, drift=(), reason="ok")
+
+    result = execute_rollback(
+        plan,
+        dry_run=False,
+        home=home,
+        runner=_lookup_runner(_manifest("rev-1")),
+        rollback=fake_rollback,
+        gate=fake_gate,
+    )
+
+    assert rollback_calls == ["chiap01", "chiap02"]
+    assert gate_calls == ["chiap01"]
+    assert result.halted_at == "chiap02"
+    assert "pip_install" in result.reason
+    assert [n.node for n in result.completed] == ["chiap01"]
+    assert result.remaining == ("chiap03", "chiap08")
+
+
+def test_rollback_all_nodes_succeed_leaves_nothing_halted(home: Path) -> None:
+    plan = plan_rollback(["chiap01", "chiap02"])
+
+    result = execute_rollback(
+        plan,
+        dry_run=False,
+        home=home,
+        runner=_lookup_runner(_manifest("rev-1")),
+        rollback=lambda n, m: DeployOutcome(ok=True, step=None, reason=None),
+        gate=lambda n, m: GateOutcome(ready=True, drift=(), reason="ok"),
+    )
+
+    assert result.halted_at is None
+    assert result.reason is None
+    assert result.remaining == ()
+    assert [n.node for n in result.completed] == ["chiap01", "chiap02"]
+    assert all(n.deployed and n.ready for n in result.completed)
+
+
+# --- gating decision: rollback re-gates each node, same as the forward path -
+
+
+def test_rollback_gates_every_successfully_rolled_back_node(home: Path) -> None:
+    """The gate decision this task makes: rollback re-runs the gate after
+    each node, exactly like the forward path, so a rollback can never leave
+    a node silently unverified.
+    """
+    plan = plan_rollback(["chiap01", "chiap02", "chiap03"])
+    gate_calls: list[str] = []
+
+    def fake_gate(node: str, manifest: dict) -> GateOutcome:
+        gate_calls.append(node)
+        return GateOutcome(ready=True, drift=(), reason="ok")
+
+    execute_rollback(
+        plan,
+        dry_run=False,
+        home=home,
+        runner=_lookup_runner(_manifest("rev-1")),
+        rollback=lambda n, m: DeployOutcome(ok=True, step=None, reason=None),
+        gate=fake_gate,
+    )
+
+    assert gate_calls == ["chiap01", "chiap02", "chiap03"]
+
+
+def test_rollback_gate_failure_after_successful_rollback_halts_and_labels_it_as_rollback(
+    home: Path,
+) -> None:
+    plan = plan_rollback(["chiap01", "chiap02", "chiap03"])
+    gate_calls: list[str] = []
+
+    def fake_gate(node: str, manifest: dict) -> GateOutcome:
+        gate_calls.append(node)
+        if node == "chiap02":
+            return GateOutcome(
+                ready=False,
+                drift=(Drift("dispatcher:skfleet-rotate.py", "changed", "aaa", "bbb", node),),
+                reason="unambiguous drift: changed:dispatcher:skfleet-rotate.py",
+            )
+        return GateOutcome(ready=True, drift=(), reason="ok")
+
+    result = execute_rollback(
+        plan,
+        dry_run=False,
+        home=home,
+        runner=_lookup_runner(_manifest("rev-1")),
+        rollback=lambda n, m: DeployOutcome(ok=True, step=None, reason=None),
+        gate=fake_gate,
+    )
+
+    assert result.halted_at == "chiap02"
+    # The reason names this as a rollback-time gate failure, not a forward
+    # deploy failure, so an operator reading it does not misdiagnose which
+    # path they are recovering from.
+    assert "rollback" in result.reason
+    assert "drift" in result.reason
+    assert gate_calls == ["chiap01", "chiap02"]  # chiap03's gate never ran
+    assert result.remaining == ("chiap03",)
+    # chiap02 itself already rolled back (that already happened); it is
+    # simply not marked completed/ready, and nothing later was touched.
+    assert [n.node for n in result.completed] == ["chiap01"]
+
+
+# --- the manifest each node is returned to is the one rollout_history ----
+# --- actually recorded, never a recomputed guess --------------------------
+
+
+def test_rollback_target_manifest_is_read_from_history_not_recomputed(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Seed two real, distinct recorded deployments on the local node, then
+    roll back for real (local lookup) and confirm the exact manifest handed
+    to ``rollback`` is byte-for-byte the FIRST one recorded -- the one
+    ``previous_manifest`` itself reports -- not some other value assembled
+    from bits of the current manifest.
+    """
+    monkeypatch.setenv("SKFLEET_NODE", "node-chiap01")
+    first = _manifest("rev-1")
+    second = _manifest("rev-2")
+    record_deployment(home, first)
+    record_deployment(home, second)
+    assert previous_manifest(home) == first  # sanity: this is what history says
+
+    plan = plan_rollback(["chiap01"])
+    seen: list[dict] = []
+
+    def fake_rollback(node: str, manifest: dict) -> DeployOutcome:
+        seen.append(manifest)
+        return DeployOutcome(ok=True, step=None, reason=None)
+
+    def fake_gate(node: str, manifest: dict) -> GateOutcome:
+        assert manifest == first
+        return GateOutcome(ready=True, drift=(), reason="ok")
+
+    execute_rollback(plan, dry_run=False, home=home, rollback=fake_rollback, gate=fake_gate)
+
+    assert seen == [first]
+    assert seen[0] != second
+
+
+def test_rollback_records_the_target_manifest_as_the_newest_history_entry(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rolling back is itself a deployment: it must be recorded, so a
+    second rollback later still has a real trail to read, not a gap.
+    """
+    monkeypatch.setenv("SKFLEET_NODE", "node-chiap01")
+    first = _manifest("rev-1")
+    second = _manifest("rev-2")
+    record_deployment(home, first)
+    record_deployment(home, second)
+
+    from skcapstone.fleet.rollout_history import _history_path, _valid_entries
+
+    outcome = default_rollback_deploy_node(
+        "chiap01",
+        first,
+        home=home,
+        runner=lambda cmd: type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
+    )
+
+    assert outcome.ok is True
+    entries = _valid_entries(_history_path(home))
+    assert entries == [first, second, first]
+
+
+# --- default_rollback_deploy_node: record first, then checkout the sha ---
+
+
+def test_default_rollback_deploy_node_records_before_the_change_locally(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SKFLEET_NODE", "node-chiap01")
+    calls: list[list[str]] = []
+
+    def fake_runner(cmd: list[str]):
+        calls.append(cmd)
+
+        class _Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return _Result()
+
+    manifest = _manifest("rev-9")
+    outcome = default_rollback_deploy_node("chiap01", manifest, home=home, runner=fake_runner)
+
+    assert outcome.ok is True
+    from skcapstone.fleet.rollout_history import _history_path, _valid_entries
+
+    entries = _valid_entries(_history_path(home))
+    assert entries == [manifest]
+    assert len(calls) == 4  # checkout, pip install, copy, converge
+
+
+def test_default_rollback_deploy_node_checks_out_the_manifests_git_sha(home: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_runner(cmd: list[str]):
+        calls.append(cmd)
+
+        class _Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return _Result()
+
+    manifest = _manifest("rev-1")
+    default_rollback_deploy_node("chiap03", manifest, home=home, runner=fake_runner)
+
+    joined = [" ".join(c) for c in calls]
+    checkout_index = next(i for i, c in enumerate(joined) if "checkout" in c)
+    assert manifest["git_sha"] in joined[checkout_index]
+    pip_index = next(i for i, c in enumerate(joined) if "pip" in c and "install" in c)
+    copy_index = next(i for i, c in enumerate(joined) if "skfleet-rotate.py" in c and "cp" in c)
+    converge_index = next(i for i, c in enumerate(joined) if "sknoded" in c)
+    assert checkout_index < pip_index < copy_index < converge_index
+
+
+def test_default_rollback_deploy_node_records_before_change_remotely(home: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_runner(cmd: list[str]):
+        calls.append(cmd)
+
+        class _Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return _Result()
+
+    manifest = _manifest("rev-2")
+    outcome = default_rollback_deploy_node("chiap02", manifest, home=home, runner=fake_runner)
+
+    assert outcome.ok is True
+    assert len(calls) == 5  # record, checkout, pip install, copy, converge
+    first_cmd = " ".join(calls[0])
+    assert "ssh" in calls[0]
+    assert "record_deployment" in first_cmd
+    second_cmd = " ".join(calls[1])
+    assert "git" in second_cmd and "checkout" in second_cmd
+
+
+def test_default_rollback_deploy_node_stops_at_the_first_failing_step(home: Path) -> None:
+    def fake_runner(cmd: list[str]):
+        class _Result:
+            pass
+
+        result = _Result()
+        joined = " ".join(cmd)
+        if "pip" in joined and "install" in joined:
+            result.returncode = 1
+            result.stdout = ""
+            result.stderr = "pip install failed during rollback"
+        else:
+            result.returncode = 0
+            result.stdout = ""
+            result.stderr = ""
+        return result
+
+    outcome = default_rollback_deploy_node("chiap01", _manifest(), home=home, runner=fake_runner)
+
+    assert outcome.ok is False
+    assert outcome.step == "pip_install"
+    assert "pip install failed during rollback" in outcome.reason
+
+
+def test_default_rollback_deploy_node_refuses_manifest_with_no_git_sha(home: Path) -> None:
+    broken = _manifest()
+    del broken["git_sha"]
+
+    def fake_runner(cmd: list[str]):
+        raise AssertionError("must never shell out with no usable git_sha")
+
+    outcome = default_rollback_deploy_node("chiap01", broken, home=home, runner=fake_runner)
+
+    assert outcome.ok is False
+    assert "git_sha" in outcome.reason
+
+
+# --- RollbackPlan / RollbackResult are frozen, simple data ---------------
+
+
+def test_rollback_plan_is_a_frozen_dataclass() -> None:
+    plan = plan_rollback(["chiap01"])
+    with pytest.raises(Exception):
+        plan.nodes = ("other",)  # type: ignore[misc]
+
+
+def test_rollback_result_is_a_frozen_dataclass() -> None:
+    result = RollbackResult(dry_run=True, completed=(), halted_at=None, reason=None, remaining=())
+    with pytest.raises(Exception):
+        result.dry_run = False  # type: ignore[misc]
