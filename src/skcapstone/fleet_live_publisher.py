@@ -102,6 +102,7 @@ def publish_host_snapshot(
     store: object | None = None,
     runner: Callable[..., object] = subprocess.run,
     now: Callable[[], float] = time.time,
+    lanes: dict[str, dict] | None = None,
 ) -> Path:
     """Atomically publish current host-local workers without dispatching work.
 
@@ -115,6 +116,11 @@ def publish_host_snapshot(
         store: Optional CardStore-compatible reader for tests.
         runner: Read-only subprocess runner for local process probes.
         now: Clock used for the snapshot timestamp.
+        lanes: Optional host-local verified lane capacity (target, busy, free) for
+            the local LANES table; when omitted the snapshot records ``{}``.
+            Callers that own lane capacity pass it here so consumers can report
+            truthful free slots instead of zeros; callers without verified capacity
+            omit it and the empty mapping fails closed, never fabricates.
 
     Returns:
         Path to the atomically replaced host snapshot.
@@ -171,7 +177,7 @@ def publish_host_snapshot(
         "ts": now(),
         "cards": sorted(cards),
         "workers": workers,
-        "lanes": {},
+        "lanes": lanes or {},
         "tmux_socket": str(socket_path),
     }
     with tempfile.NamedTemporaryFile(

@@ -1609,6 +1609,33 @@ def _record_live_no_progress(cid, worker, path, age):
     return True
 
 
+def _verified_lane_capacity():
+    """Return the verified host-local lane capacity for the live snapshot.
+
+    Reads the locally computed LANES table (target, busy, free), which is
+    derived from the local tmux sessions and worker units observed this cycle.
+    When the table is not yet populated (e.g. ONLY_SEAT path or before the
+    capacity block runs), the function returns an empty mapping so the
+    snapshot fails closed: a missing key or absent data yields zero free
+    seats, never a fabricated number. The consumer (reporting_capacity)
+    sums ``free`` per lane; an empty mapping contributes zero, matching the
+    documented contract that unverifiable data fails closed.
+    """
+    try:
+        return {
+            str(lane["name"]): {
+                "target": int(lane.get("target", 0)),
+                "busy": len(lane.get("busy") or ()),
+                "free": max(0, int(lane.get("free", 0))),
+            }
+            for lane in LANES
+            if lane.get("name")
+        }
+    except (KeyError, TypeError, ValueError):
+        # Not yet computed: fail closed, publish no lanes (never invent).
+        return {}
+
+
 def publish_live(sessions, units=()):
     """Record legacy tmux and transient-service workers for every other host."""
     cards = _worker_cards(sessions,units,LANES)
@@ -1650,14 +1677,7 @@ def publish_live(sessions, units=()):
                 "ts": time.time(),
                 "cards": cards,
                 "workers": workers,
-                "lanes": {
-                    lane.get("name", lane.get("prefix", "unknown").rstrip("-")): {
-                        "target": lane.get("target", 0),
-                        "busy": len(lane.get("busy", ())),
-                        "free": lane.get("free", 0),
-                    }
-                    for lane in LANES
-                },
+                "lanes": _verified_lane_capacity(),
             }, fh, sort_keys=True)
         os.replace(tmp, p)          # atomic, so a reader never sees a half file
     except OSError as exc:

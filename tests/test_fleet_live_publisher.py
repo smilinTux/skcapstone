@@ -310,3 +310,58 @@ def test_packaged_timer_is_distinct_from_disabled_rotation_and_central_dispatch(
     assert "skfleet-rotate.timer remains disabled" in rollout
     assert "skfleet-niobe-live.timer remains the sole centralized dispatcher" in rollout
     assert "Do not execute these commands on this\nsource-repair card" in rollout
+
+
+# ---------------------------------------------------------------------------
+# Card 0f7b2e6c: verified lane capacity in live snapshots
+# ---------------------------------------------------------------------------
+
+def test_publisher_can_publish_verified_lane_capacity(tmp_path: Path) -> None:
+    """A caller that owns lane capacity passes it through; lanes are preserved."""
+    socket_path = _real_socket(tmp_path)
+    lanes = {
+        "codex": {"target": 3, "busy": 0, "free": 3},
+        "qwen": {"target": 6, "busy": 2, "free": 4},
+    }
+    target = publish_host_snapshot(
+        home=tmp_path,
+        host="chiap01",
+        tmux_socket=str(socket_path),
+        store=_Store(),
+        runner=_unit_runner(),
+        now=lambda: 1234.5,
+        lanes=lanes,
+    )
+    snap = json.loads(target.read_text(encoding="utf-8"))
+    assert snap["lanes"] == lanes
+    assert snap["host"] == "chiap01"
+
+
+def test_publisher_fails_closed_when_no_lanes_passed(tmp_path: Path) -> None:
+    """Omitting verified capacity publishes an empty mapping, never invents it."""
+    socket_path = _real_socket(tmp_path)
+    target = publish_host_snapshot(
+        home=tmp_path,
+        host="chiap01",
+        tmux_socket=str(socket_path),
+        store=_Store(),
+        runner=_unit_runner(),
+        now=lambda: 1234.5,
+    )
+    snap = json.loads(target.read_text(encoding="utf-8"))
+    assert snap["lanes"] == {}
+
+
+def test_existing_tests_still_expect_empty_lanes_by_default(tmp_path: Path) -> None:
+    """Backward compat: without lanes argument the snapshot records {}."""
+    socket_path = _real_socket(tmp_path)
+    target = publish_host_snapshot(
+        home=tmp_path,
+        host="chiap01",
+        tmux_socket=str(socket_path),
+        store=_Store(),
+        runner=_unit_runner(sessions="codex-auto-aaaaaaaa\ncodex-auto-bbbbbbbb"),
+        now=lambda: 1234.5,
+    )
+    snap = json.loads(target.read_text(encoding="utf-8"))
+    assert snap["lanes"] == {}
