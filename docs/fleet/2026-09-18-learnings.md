@@ -472,6 +472,60 @@ zero indefinitely while every component reports healthy.
 
 ---
 
+## 17. You cannot drain a queue you are still feeding
+
+One chi host had to be deployed, and its library path is the tree its workers
+write in, so the deploy had to wait for the workers to finish. A watcher was
+armed to poll until the worker count reached zero and then deploy.
+
+It polled for an hour at four workers, then two, and would have polled forever.
+The host runs the rotate timer, which dispatches every five minutes. One worker
+that had been stopped came *back*, because the timer re-dispatched its freed
+card, which is the system working exactly as designed.
+
+The condition being waited on was **structurally unreachable**. Nothing failed,
+nothing errored, and every component reported healthy while the watcher counted
+down to a timeout it was always going to hit.
+
+**Contract.** A wait-for-idle loop against a continuously fed system must pause
+the feed first, and the pause is part of the operation rather than a
+precondition someone remembers.
+
+| | |
+|---|---|
+| Producer | whatever feeds the queue (here, the rotate timer) |
+| Consumer | the operation that needs quiescence |
+| Recovery owner | Operations |
+| Evidence | the feed is confirmed stopped BEFORE the drain poll begins |
+| Fails closed | the feed is restored on every exit path, including timeout and error |
+
+The correct shape is a maintenance window: **pause the feed, let in-flight work
+finish on its own, act, resume the feed.** Note what it is not. It is not
+killing the in-flight workers, which destroys their work, and it is not
+deploying underneath them, which changes the library beneath a running process.
+Both of those trade a real loss for impatience.
+
+Restoring the feed on *every* exit path is the part most likely to be skipped,
+and it is the part that turns a five-minute window into a host that quietly
+stopped dispatching.
+
+### The shared shape with contract 16
+
+These are the same failure seen from opposite sides. In both, every component
+behaved exactly as written, nothing reported an error, and the thing being
+waited on could never arrive:
+
+- the expensive merge queue could not converge because a cheaper queue kept
+  moving its base
+- the drain could not complete because a timer kept refilling what it drained
+
+**When a wait has produced no progress over many cycles, stop asking whether the
+thing you are waiting for is slow, and ask whether it is reachable at all.** A
+healthy-looking system that never advances is the signature of a condition that
+cannot occur, not of one that is merely taking its time.
+
+---
+
 ## The one-line version
 
 Every failure here was an unverified assertion, and the fix is always the same

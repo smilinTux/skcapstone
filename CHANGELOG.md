@@ -43,7 +43,14 @@
   strings lie, services importing from trees agents work in, CI that ran twice
   and starved the only complete gate, verifying through the path that wrote,
   when a test fighting a change three times means the change is wrong, and the
-  unowned job. Extended with four more from the seat-authorization work:
+  unowned job. Plus two structural waits that could never complete: two merge
+  queues into one trunk starve the expensive one indefinitely (the cheap lane
+  keeps moving the base the expensive lane is rebasing onto), and a
+  wait-for-idle loop against a continuously fed system polls forever unless
+  the feed is paused first (a drain watcher counted workers on a host whose
+  rotate timer re-dispatched them every five minutes). Both share one tell:
+  every component reports healthy while the awaited condition is structurally
+  unreachable. Extended with four more from the seat-authorization work:
   coverage is the property (22 of 32 coord mutation entrypoints had no gate
   at all, so the fix is an enumeration test where a new verb is mutating
   until classified otherwise), an identity must be a resolved subject and
