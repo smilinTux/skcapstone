@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- **Shell-quote the staged rollout's remote command.** The staged rollout had
+  never once deployed to a remote host: every run halted on its first step with
+  git's usage text, which looks nothing like the real cause. `ssh host a b c`
+  does not deliver a, b and c as three remote argv entries; it JOINS them with
+  spaces and hands the result to the remote login shell to re-parse, so the
+  remote received `bash -lc git -C ~/work/skcapstone pull` and `bash -lc` took
+  only its first word as the command string, running bare `git` with the path
+  and `pull` landing in `$0`, `$1` and `$2`. Verified live against chiap03:
+  unquoted returns git's usage, quoted returns the revision.
+
+    - The existing tests could not catch this. They substitute a fake runner
+      and assert on the argv list, so the argv never reaches a real ssh and the
+      flattening never happens. The new tests re-join and re-split the argv the
+      way ssh and the remote shell actually do, across every deploy AND
+      rollback step, because `cd X && pip install -e .` and the cp step carry
+      spaces and shell operators too.
+    - Two adjacent gaps found while using it and deliberately NOT fixed here:
+      the gate reads the readiness verdict from the LOCAL home, so a rollout
+      driven from outside the estate fails its gate after a successful deploy;
+      and the `record` step runs before `pip_install` while importing
+      `rollout_history`, so a host whose installed package predates that module
+      cannot bootstrap itself through the rollout.
+
 - **Probe the gateway at its ROOT, not at the configured path.** The chi fleet
   had not launched a worker in three days: 373 consecutive NOOP cycles with
   every card blocked on
