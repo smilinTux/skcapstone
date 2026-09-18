@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+- **A worker can now record a provisional PASS that the review opener will
+  actually admit.** `OPENED_REVIEW` was 0 across 14 days and 1,660 rotations on
+  the chi fleet while 214 cards logged `OPEN_REVIEW_EVIDENCE_BLOCKED` every
+  cycle, accruing 4 to 13 new cards a day. Measured on chiap01 across the
+  rotation actions logs: of 354 cards ever reported blocked that way, 305
+  carried their `PASS_FOR_REVIEW` ONLY as a kanban overlay `link` row and 346
+  carried no hash-bound candidate evidence anywhere, in either store. That
+  overlay row is byte-for-byte what `skcapstone coord link <card> verdict
+  PASS_FOR_REVIEW` writes, and it was not worker sloppiness: `coord link` builds
+  a `CardEvent`, whose fixed pydantic field set holds no `candidate_path` and no
+  `candidate_sha256`, so a verdict written through it structurally cannot carry
+  the binding a governed review requires. It was also the ONLY verdict command
+  the fleet had, named by the worker brief, `AGENTS.md`, `coord briefing` and
+  `coord --help` alike, so every worker followed the instruction and the
+  instruction could not produce an admissible verdict. New
+  `skcapstone coord verdict <card> <outcome> --candidate --commit --tree --ref
+  --agent` writes ONE native CardStore event carrying the verdict, the candidate
+  path, the sha256 it computes from that file (never a digest the caller typed),
+  and the typed commit/tree/ref the opener needs to bind a review card to a real
+  revision. `coord link` now refuses a provisional PASS and names the new verb,
+  the way the BLOCKED contract is already refused at the write path; the refusal
+  is scoped to `PASS_FOR_*`/`PASS_READY_*`, so a terminal plain `PASS` is
+  untouched. The review admission gate is NOT relaxed: handing a reviewer a
+  binding that never existed is exactly what it refuses to do. `~/.local/bin/
+  skfleet-rotate.py` is a per-host deployed artifact, so the updated worker
+  brief needs a deploy to reach live workers.
+
 - **Claim ceiling: bounded per-card amnesty for defect-burned claims.** Claim
   counts are monotonic over the append-only ledger, so the 5-claim ceiling
   permanently excludes cards that churned because of an estate defect the
