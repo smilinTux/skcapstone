@@ -299,6 +299,24 @@
   working exactly as the coord briefing documents. `pi-mero-*` lane workers
   are ordinary workers and are not affected.
 
+- **The read-only Overseer identity (`mero`) is now refused at the coord
+  mutation entrypoints.** ADR-0005 and `docs/fleet/seat-charters.md` define the
+  Overseer as read-only (observe, recommend, create), and the charter even
+  claims runtime enforcement, but the only identity the mutation surfaces ever
+  checked was Jarvis: `authorize_jarvis_entrypoint` returned immediately for
+  every other actor, and `coord release-claim` had no gate at all. Measured on
+  the chi estate (per-card shard store, writer `mero`, 14 days to 2026-09-18):
+  324 `move` and 147 `release_claim` events, written by an interactive
+  controller session passing `--agent mero`, not by the `skfleet-mero` timer,
+  whose census cycle is genuinely read-only. 55 of the 149 all-time releases
+  hit a claim whose owner had been active on the card within the previous
+  hour. `authorize_jarvis_entrypoint` now calls `require_authority` for the
+  exact `mero` identity before the Jarvis check, so `claim`, `move`,
+  `complete`, and `release-claim` fail closed as `mero` across the CLI and the
+  MCP handlers, while `coord create --by mero` and mero verdict links keep
+  working exactly as the coord briefing documents. `pi-mero-*` lane workers
+  are ordinary workers and are not affected.
+
 - **Readiness checks each unit against the interpreter it declares.** The gate
   tested every unit's module imports against one interpreter (`--python-bin`),
   but a unit is entitled to its own virtualenv and declares it in `ExecStart`.
