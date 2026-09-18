@@ -292,6 +292,134 @@ def test_run_fails_when_a_units_module_does_not_import(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# The gateway-origin gate
+# ---------------------------------------------------------------------------
+
+
+def _fake_systemctl_with_gateway(value):
+    """Like _fake_systemctl, but the rotate service carries the gateway URL.
+
+    The drop-in file that supplies it is the hand-edited one, so the value
+    lives in the service's parsed Environment, not in the unit file.
+    """
+    env = f"SKFLEET_TARGET=5 {value}" if value else "SKFLEET_TARGET=5"
+    value_map = {
+        ("skfleet-rotate.timer", "LoadState"): "loaded",
+        ("skfleet-rotate.timer", "ActiveState"): "active",
+        ("skfleet-rotate.timer", "UnitFileState"): "disabled",
+        ("skfleet-rotate.service", "Environment"): env,
+    }
+    real_run = subprocess.run
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:3] == ["systemctl", "--user", "show"]:
+            unit = cmd[3]
+            prop = cmd[cmd.index("-p") + 1]
+            value = value_map.get((unit, prop), "")
+            return subprocess.CompletedProcess(cmd, 0, stdout=value + "\n", stderr="")
+        return real_run(cmd, **kwargs)
+
+    return fake_run
+
+
+def test_gateway_url_with_path_fails_readiness(tmp_path, monkeypatch, capsys):
+    """AC4: a URL carrying a path must fail the gate with a line naming the
+    variable, not just a raw exit code.
+    """
+    monkeypatch.setattr(
+        skfleet_readiness.subprocess,
+        "run",
+        _fake_systemctl_with_gateway("SKFLEET_GATEWAY_URL=http://chiap01:18790/v1"),
+    )
+    rotate_script = _dispatcher(tmp_path)
+    units_dir = _units_dir_with_real_module(tmp_path)
+
+    exit_code = _run(
+        rotate_script,
+        units_dir,
+        sys.executable,
+        env_from_unit=None,
+        env_from_systemd="skfleet-rotate.service",
+    )
+    out = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "FAIL required env: SKFLEET_GATEWAY_URL" in out
+    assert "/v1" in out
+
+
+def test_gateway_url_bare_origin_passes_readiness(tmp_path, monkeypatch, capsys):
+    """AC4: the same URL with the path stripped must pass the gate.
+    """
+    monkeypatch.setattr(
+        skfleet_readiness.subprocess,
+        "run",
+        _fake_systemctl_with_gateway("SKFLEET_GATEWAY_URL=http://chiap01:18790"),
+    )
+    rotate_script = _dispatcher(tmp_path)
+    units_dir = _units_dir_with_real_module(tmp_path)
+
+    exit_code = _run(
+        rotate_script,
+        units_dir,
+        sys.executable,
+        env_from_unit=None,
+        env_from_systemd="skfleet-rotate.service",
+    )
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "OK required env: SKFLEET_GATEWAY_URL" in out
+
+
+def test_gateway_url_with_query_or_fragment_fails_readiness(tmp_path, monkeypatch):
+    """AC2: a query or a fragment, like a path, disqualifies the value.
+    """
+    for bad in ("http://chiap01:18790?a=1", "http://chiap01:18790#frag"):
+        monkeypatch.setattr(
+            skfleet_readiness.subprocess,
+            "run",
+            _fake_systemctl_with_gateway(f"SKFLEET_GATEWAY_URL={bad}"),
+        )
+        rotate_script = _dispatcher(tmp_path)
+        units_dir = _units_dir_with_real_module(tmp_path)
+
+        exit_code = _run(
+            rotate_script,
+            units_dir,
+            sys.executable,
+            env_from_unit=None,
+            env_from_systemd="skfleet-rotate.service",
+        )
+        assert exit_code == 1
+
+
+def test_gateway_url_missing_still_fails_as_before(tmp_path, monkeypatch, capsys):
+    """The pre-existing missing-var path must be unchanged: the gate still
+    fails when the unit is in scope and the variable is simply absent.
+    """
+    monkeypatch.setattr(
+        skfleet_readiness.subprocess,
+        "run",
+        _fake_systemctl_with_gateway(None),
+    )
+    rotate_script = _dispatcher(tmp_path)
+    units_dir = _units_dir_with_real_module(tmp_path)
+
+    exit_code = _run(
+        rotate_script,
+        units_dir,
+        sys.executable,
+        env_from_unit=None,
+        env_from_systemd="skfleet-rotate.service",
+    )
+    out = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "FAIL required env: SKFLEET_GATEWAY_URL" in out
+
+
+# ---------------------------------------------------------------------------
 # The verdict file
 # ---------------------------------------------------------------------------
 

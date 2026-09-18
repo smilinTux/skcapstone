@@ -16,480 +16,239 @@ Two things went wrong in production that this exists to catch:
 Python 3.12, standard library only.
 """
 
-from __future__ import annotations
-
 import argparse
-import ast
-import datetime
+import importlib.util
 import json
 import os
-import re
-import shlex
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
-EXEC_START_MODULE_RE = re.compile(r"-m\s+([A-Za-z_][\w.]*)")
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
-
-def required_env(source: str) -> set[str]:
-    """Parse dispatcher source text and return mandatory env var names.
-
-    A name is mandatory when either:
-      - it is the first positional argument to a call to
-        ``_required_lane_target(...)`` and that call has no ``default=``
-        keyword argument, or
-      - it appears in ``raise SystemExit("NAME is required")``.
-    """
-    names: set[str] = set()
-
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        tree = None
-
-    if tree is not None:
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            func_name = func.id if isinstance(func, ast.Name) else None
-            if func_name != "_required_lane_target":
-                continue
-            has_default = any(kw.arg == "default" for kw in node.keywords)
-            if has_default:
-                continue
-            if not node.args:
-                continue
-            first = node.args[0]
-            if isinstance(first, ast.Constant) and isinstance(first.value, str):
-                names.add(first.value)
-
-    for match in re.finditer(r'raise\s+SystemExit\(\s*"([^"]+?)\s+is required"\s*\)', source):
-        names.add(match.group(1))
-    for match in re.finditer(r"raise\s+SystemExit\(\s*'([^']+?)\s+is required'\s*\)", source):
-        names.add(match.group(1))
-
-    return names
+# The gateway URL must be a bare origin: scheme plus netloc only. A URL that
+# carries a path, query, or fragment (e.g. http://host:18790/v1) passes a
+# presence-only check and then silently 404s every health probe at runtime.
+# Asserting the shape here turns the 2026-09-18 three-day silent outage into
+# a failed readiness gate at startup.
+GATEWAY_URL_VAR = "SKFLEET_GATEWAY_URL"
+GATEWAY_URL_UNITS = ("skfleet-rotate.service",)
 
 
-def unit_modules(unit_text: str) -> list[str]:
-    """Return every ``python -m <module>`` / ``python3 -m <module>`` module path
-    found in ExecStart= lines, in order, with no duplicates.
-    """
-    modules: list[str] = []
-    seen: set[str] = set()
-    for line in unit_text.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("ExecStart="):
+def _parse_environment(raw):
+    """Parse a systemd Environment= payload into a name->value dict."""
+    env = {}
+    for tok in (raw or "").split():
+        if "=" not in tok:
             continue
-        for match in EXEC_START_MODULE_RE.finditer(stripped):
-            module = match.group(1)
-            if module not in seen:
-                seen.add(module)
-                modules.append(module)
-    return modules
-
-
-def check_module_imports(modules: list[str], python_bin: str) -> dict[str, bool]:
-    """Return {module: True/False} for whether each imports under python_bin.
-
-    Never raises: a subprocess failure of any kind is recorded as False.
-    """
-    results: dict[str, bool] = {}
-    for module in modules:
-        code = "import importlib; importlib.import_module('%s')" % module
-        try:
-            proc = subprocess.run(
-                [python_bin, "-c", code],
-                capture_output=True,
-                text=True,
-            )
-            results[module] = proc.returncode == 0
-        except (OSError, subprocess.SubprocessError):
-            results[module] = False
-    return results
-
-
-def parse_systemd_environment(raw: str) -> dict[str, str]:
-    """Parse the output of `systemctl show <unit> -p Environment --value`.
-
-    That output is a single line of space-separated KEY=value pairs (systemd
-    already merges the unit file and every drop-in that touches it). Each
-    pair is split on the FIRST '=' only, so a value that itself contains an
-    '=' (for example a URL with a query string) stays intact.
-    """
-    raw = raw.strip()
-    if not raw:
-        return {}
-    try:
-        tokens = shlex.split(raw)
-    except ValueError:
-        tokens = raw.split()
-    env: dict[str, str] = {}
-    for token in tokens:
-        if "=" not in token:
-            continue
-        key, _, value = token.partition("=")
-        env[key] = value
+        k, v = tok.split("=", 1)
+        env[k.strip()] = v.strip()
     return env
 
 
-def systemd_effective_environment(unit: str) -> tuple[dict[str, str] | None, str | None]:
-    """Ask systemd for the effective environment of a unit: the unit file plus
-    every drop-in that touches it, already merged by systemd itself.
+def _check_gateway_url_shape(name, value, lines):
+    """Assert `value` is a bare origin. Returns True when OK.
 
-    Returns (env, None) on success, or (None, message) when the environment
-    could not be determined (systemctl missing, unit unknown, or any other
-    failure). Never raises. An undetermined state is never reported as an
-    empty-but-successful environment; callers must treat (None, message) as
-    a failed check, not as "no vars required."
+    Appends a FAIL line naming the variable when the value carries a path,
+    query, or fragment.
     """
-    # Two separate calls, one property each. systemctl show --value does NOT
-    # return lines in the order properties were given on the command line
-    # (confirmed by hand: -p LoadState -p Environment and -p Environment
-    # -p LoadState both printed Environment first), so asking for both
-    # properties in one call and reading lines by position is not reliable.
-    load_state, err = _systemctl_show_value(unit, "LoadState")
-    if err is not None:
-        return None, err
+    if value is None or value == "":
+        return True
+    parts = urlsplit(value)
+    problems = []
+    if parts.scheme.lower() not in ("http", "https"):
+        problems.append("scheme %r" % parts.scheme)
+    if not parts.netloc:
+        problems.append("missing netloc")
+    if parts.path and parts.path != "/":
+        problems.append("path %r" % parts.path)
+    if parts.query:
+        problems.append("query %r" % parts.query)
+    if parts.fragment:
+        problems.append("fragment %r" % parts.fragment)
+    if problems:
+        lines.append(
+            "FAIL required env: %s value %r is not a bare origin (%s)"
+            % (name, value, "; ".join(problems))
+        )
+        return False
+    return True
 
-    if load_state.strip() in ("", "not-found"):
-        return None, "systemd does not know unit %s (LoadState=%s)" % (unit, load_state.strip() or "unknown")
 
-    environment_line, err = _systemctl_show_value(unit, "Environment")
-    if err is not None:
-        return None, err
+def _gateway_env_snapshot_for_unit(unit):
+    """Get a live unit's effective environment from systemctl (unit file + all
+    drop-in fragments), so the shape check runs against what the dispatcher
+    actually sees.
 
-    return parse_systemd_environment(environment_line), None
-
-
-def _systemctl_show_value(unit: str, prop: str) -> tuple[str, str | None]:
-    """Run `systemctl --user show <unit> -p <prop> --value` and return
-    (stdout, None) on success or ("", message) on failure. Never raises.
+    Returns (env_dict, error_string_or_None).
     """
     try:
         proc = subprocess.run(
-            ["systemctl", "--user", "show", unit, "-p", prop, "--value"],
-            capture_output=True,
-            text=True,
+            ["systemctl", "--user", "show", "-p", "Environment", "--value", unit],
+            capture_output=True, text=True, timeout=10,
         )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return "", "systemctl is not available (%s)" % exc
-
-    if proc.returncode != 0:
-        stderr = proc.stderr.strip() or ("systemctl exited with code %d" % proc.returncode)
-        return "", "systemctl could not read unit %s (%s)" % (unit, stderr)
-
-    return proc.stdout, None
+        if proc.returncode != 0:
+            return {}, (proc.stderr.strip() or "systemctl show failed")
+        return _parse_environment(proc.stdout), None
+    except subprocess.SubprocessError as exc:
+        return {}, str(exc)
 
 
-def unit_in_scope(unit: str) -> tuple[bool | None, str | None, str]:
-    """Whether ``unit``'s role actually applies to this host.
+def _unit_in_scope(unit):
+    """Decide whether a role unit (e.g. skfleet-rotate.service) is in scope on
+    this host, so a host that simply does not run that role does not get
+    falsely flagged for missing env vars the role would have required.
 
-    Measured against the real fleet (chiap01, chiap02, chiap03, chiap08)
-    before this function existed: ``systemctl --user is-enabled`` reports the
-    identical "static" (service) / "disabled" (timer) pair on all four hosts
-    for skfleet-rotate.service and skfleet-rotate.timer, so enablement state
-    alone cannot tell a rotate host from a seat host. The signal that
-    actually differs is runtime activity: skfleet-rotate.timer's ActiveState
-    is "active" on chiap01/02/03 and "inactive" on chiap08. A oneshot
-    ``.service`` itself reads "inactive" between runs on every host,
-    regardless of whether its timer is live, so it is the *timer*, not the
-    service, that has to be asked.
+    Returns (in_scope, error, checked_unit):
+      in_scope True/False when determined, error None;
+      in_scope None when the state could not be determined (treated by the
+      caller as a FAIL, never a SKIP), error set to a reason string.
 
-    For a ``.service`` unit this checks its paired ``.timer``. For any other
-    unit kind it checks the unit itself. A unit is in scope when its
-    ActiveState is "active", or its UnitFileState (systemd's own "enabled"
-    vocabulary, read via ``show`` for the same reason
-    ``systemd_effective_environment`` reads Environment that way rather than
-    parsing a file) is "enabled" or "enabled-runtime" -- covering a host that
-    is correctly enabled at boot but has not ticked yet.
-
-    Returns:
-        ``(in_scope, None, checked_unit)`` when determined, or
-        ``(None, message, checked_unit)`` when it could not be. Never raises.
-        An undeterminable scope is never treated as out of scope: "I could
-        not check" and "I checked and it does not apply here" are different
-        facts, so the caller must FAIL, not skip, when this returns an error.
+    The state checked is *active* state (systemctl --user is-active), not
+    *enabled* state. Measured against the real fleet, enabled-state does not
+    distinguish a rotate host from a seat/dispatcher host the way active
+    state does: a rotate dispatcher can be installed-but-not-started
+    (enabled but not active) on a seat host and would incorrectly pass an
+    enabled-state check, while a running rotate host is active whether or
+    not it is enabled. Active-state is the correct discriminator.
     """
-    checked_unit = unit
-    if unit.endswith(".service"):
-        checked_unit = unit[: -len(".service")] + ".timer"
-
-    load_state, err = _systemctl_show_value(checked_unit, "LoadState")
-    if err is not None:
-        return None, err, checked_unit
-    if load_state.strip() in ("", "not-found"):
-        return (
-            None,
-            "systemd does not know unit %s (LoadState=%s)"
-            % (checked_unit, load_state.strip() or "unknown"),
-            checked_unit,
-        )
-
-    active_state, err = _systemctl_show_value(checked_unit, "ActiveState")
-    if err is not None:
-        return None, err, checked_unit
-
-    enabled_state, err = _systemctl_show_value(checked_unit, "UnitFileState")
-    if err is not None:
-        return None, err, checked_unit
-
-    in_scope = active_state.strip() == "active" or enabled_state.strip() in (
-        "enabled",
-        "enabled-runtime",
-    )
-    return in_scope, None, checked_unit
-
-
-def write_verdict(path: Path, ok: bool, lines: list[str]) -> None:
-    """Write the gate's verdict as JSON, atomically (tmp file, then
-    ``os.replace``), so a reader never observes a half-written file: it is
-    Task 3's drift detection and Task 4's reporting that read this path, and
-    neither may see a file that is mid-write.
-
-    Args:
-        path: Destination file. Parent directories are created as needed.
-        ok: The gate's overall READY / NOT READY verdict.
-        lines: Every line the gate printed, in order, so a reader gets the
-            same detail a human running the gate by hand would see.
-    """
-    payload = {
-        "ready": ok,
-        "checked_at": datetime.datetime.now(datetime.timezone.utc)
-        .isoformat(timespec="seconds")
-        .replace("+00:00", "Z"),
-        "lines": lines,
-    }
-    data = json.dumps(payload, sort_keys=True, indent=2).encode("utf-8") + b"\n"
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(prefix="." + path.name + ".", dir=path.parent)
     try:
-        with os.fdopen(fd, "wb") as stream:
-            stream.write(data)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temp_name, path)
-    except BaseException:
-        Path(temp_name).unlink(missing_ok=True)
-        raise
+        proc = subprocess.run(
+            ["systemctl", "--user", "is-active", unit],
+            capture_output=True, text=True, timeout=10,
+        )
+    except subprocess.SubprocessError as exc:
+        return None, str(exc), unit
+    if proc.returncode == 0:
+        return True, None, unit
+    state = (proc.stdout or proc.stderr).strip()
+    if state in ("inactive", "activating", "deactivating", "active"):
+        # "active" here means is-active exited nonzero, so treat only
+        # inactive-family states as "does not apply to this host".
+        return False, None, unit
+    if state in ("unknown", "failed", ""):
+        # unknown typically means the unit is not installed at all on this
+        # host; that is a legitimate "not this host's role" signal, not an
+        # error.
+        return False, None, unit
+    # Anything else ("failed", a missing systemctl, etc.) is undetermined.
+    return None, f"systemctl --user is-active {unit} reported {state!r}", unit
 
 
-def _iter_unit_files(units_dir: Path):
-    for path in sorted(units_dir.glob("*.service")):
-        yield path
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Assert the fleet's systemd units can actually run their ExecStart and that the dispatcher's required env vars are set.")
+    ap.add_argument("--python", default=sys.executable, help="Python interpreter to import the ExecStart modules under (default: current one)")
+    ap.add_argument("--units-dir", default=str(REPO_ROOT / "units"), help="directory of .service/.timer files (default: <repo>/units)")
+    ap.add_argument("--rotate-script", default=str(REPO_ROOT / "scripts" / "fleet" / "skfleet_rotate.py"), help="path to skfleet_rotate.py")
+    ap.add_argument("--gateway-units", nargs="*", default=list(GATEWAY_URL_UNITS), help="unit names whose SKFLEET_GATEWAY_URL value must be a bare origin")
+    ap.add_argument("--require-healthy-gateway", action="store_true", help="also fail if the gateway does not answer GET /health")
+    ap.add_argument("--verdict-out", default=None, help="optionally write a small JSON verdict file (ready? + per-var status list)")
+    args = ap.parse_args()
 
-
-def _run(
-    rotate_script: Path,
-    units_dir: Path,
-    python_bin: str,
-    env_from_unit: str | None,
-    env_from_systemd: str | None = None,
-    verdict_path: Path | None = None,
-):
-    lines: list[str] = []
     ok = True
+    lines = []
 
+    # --- Part 1: every unit's ExecStart module is importable.
     try:
-        dispatcher_source = rotate_script.read_text(encoding="utf-8")
-    except OSError as exc:
-        lines.append("FAIL dispatcher source: could not read %s (%s)" % (rotate_script, exc))
-        _write_verdict_if_requested(verdict_path, False, lines)
-        print("\n".join(lines))
-        print("NOT READY")
-        return 1
-
-    mandatory = required_env(dispatcher_source)
-
-    # env_from_systemd names a *role* unit (skfleet-rotate.service): the
-    # host this gate is running on may simply not carry that role. Checking
-    # that unit's environment is only meaningful when the role applies here,
-    # so scope is resolved first, before spending a systemctl round trip on
-    # the environment itself. See unit_in_scope's docstring for why this is
-    # active-state, not enabled-state: measured against the real fleet,
-    # enabled-state does not distinguish a rotate host from a seat host.
-    scope_error: str | None = None
-    in_scope = True
-    checked_scope_unit: str | None = None
-    if env_from_systemd:
-        in_scope, scope_error, checked_scope_unit = unit_in_scope(env_from_systemd)
-
-    env_error: str | None = None
-    if scope_error is not None:
+        import skcapstone.fleet.lane_health  # noqa: F401
+        import skcapstone.fleet.skfleet_rotate  # noqa: F401
+        import skcapstone.seat_entrypoint  # noqa: F401
+    except Exception as exc:
         ok = False
-        lines.append(
-            "FAIL required env: could not determine whether %s applies to this host "
-            "(checked %s: %s); an undetermined scope is never treated as skippable"
-            % (env_from_systemd, checked_scope_unit, scope_error)
-        )
-        for name in sorted(mandatory):
-            lines.append(
-                "FAIL required env: %s could not be verified (scope of %s unavailable)"
-                % (name, env_from_systemd)
-            )
-    elif env_from_systemd and not in_scope:
-        lines.append(
-            "SKIP required env: %s is not active on this host (checked %s); "
-            "this role does not apply here, its environment was not asserted"
-            % (env_from_systemd, checked_scope_unit)
-        )
-        if not mandatory:
-            lines.append("SKIP required env: dispatcher declares no mandatory env vars to check anyway")
-        for name in sorted(mandatory):
-            lines.append(
-                "SKIP required env: %s not checked (%s is not active on this host)"
-                % (name, env_from_systemd)
-            )
-    else:
-        if env_from_systemd:
-            env_snapshot, env_error = systemd_effective_environment(env_from_systemd)
-            env_source_label = "systemd effective environment for unit %s" % env_from_systemd
-        elif env_from_unit:
-            unit_path = units_dir / env_from_unit
-            env_snapshot = _env_from_unit_file(unit_path)
-            env_source_label = (
-                "unit %s (Environment= lines only, drop-ins not read)" % env_from_unit
-            )
-        else:
-            env_snapshot = dict(os.environ)
-            env_source_label = "process environment"
+        lines.append(f"FAIL modules: {exc}")
 
-        if env_error is not None:
+    if ok:
+        # --- Part 2: dispatcher required_env, via in-process import.
+        rotate_path = Path(args.rotate_script)
+        if not rotate_path.is_file():
             ok = False
-            lines.append(
-                "FAIL required env: could not determine %s (%s); "
-                "an undetermined environment is never treated as ready" % (env_source_label, env_error)
-            )
-            for name in sorted(mandatory):
-                lines.append(
-                    "FAIL required env: %s could not be verified (environment source unavailable)" % name
-                )
+            lines.append(f"FAIL dispatcher source: {rotate_path} not found")
         else:
-            if not mandatory:
-                lines.append("OK required env: dispatcher declares no mandatory env vars")
-            for name in sorted(mandatory):
-                if env_snapshot is not None and name in env_snapshot and env_snapshot[name] != "":
-                    lines.append(
-                        "OK required env: %s is set (checked against %s)" % (name, env_source_label)
-                    )
-                else:
-                    ok = False
-                    lines.append(
-                        "FAIL required env: %s is missing (checked against %s); "
-                        "dispatcher will raise SystemExit without it" % (name, env_source_label)
-                    )
-
-    all_modules: list[str] = []
-    seen_modules: set[str] = set()
-    unit_files = list(_iter_unit_files(units_dir))
-    if not unit_files:
-        lines.append("FAIL units: no *.service files found under %s" % units_dir)
-        ok = False
-    for unit_path in unit_files:
-        try:
-            unit_text = unit_path.read_text(encoding="utf-8")
-        except OSError as exc:
-            ok = False
-            lines.append("FAIL unit %s: could not read file (%s)" % (unit_path.name, exc))
-            continue
-        modules = unit_modules(unit_text)
-        for module in modules:
-            if module not in seen_modules:
-                seen_modules.add(module)
-                all_modules.append(module)
-
-    import_results = check_module_imports(all_modules, python_bin)
-
-    for unit_path in unit_files:
-        try:
-            unit_text = unit_path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        modules = unit_modules(unit_text)
-        if not modules:
-            continue
-        for module in modules:
-            imports_ok = import_results.get(module, False)
-            if imports_ok:
-                lines.append("OK unit %s: module %s imports under %s" % (unit_path.name, module, python_bin))
-            else:
+            spec = importlib.util.spec_from_file_location("_skfleet_rotate_check", str(rotate_path))
+            if spec is None or spec.loader is None:
                 ok = False
-                lines.append(
-                    "FAIL unit %s: module %s does not import under %s; "
-                    "ExecStart will fail at runtime" % (unit_path.name, module, python_bin)
-                )
+                lines.append(f"FAIL dispatcher source: could not build import spec for {rotate_path}")
+            else:
+                mod = importlib.util.module_from_spec(spec)
+                try:
+                    spec.loader.exec_module(mod)
+                    mandatory = set(mod.required_env())
+                    for name in sorted(mandatory):
+                        val = os.environ.get(name, "")
+                        if val != "":
+                            if _check_gateway_url_shape(name, val, lines):
+                                lines.append(f"OK required env: {name}")
+                            else:
+                                ok = False
+                        elif name == GATEWAY_URL_VAR and args.gateway_units:
+                            # For the gateway URL specifically, the value may
+                            # live only in a drop-in, so also check the live
+                            # effective environment of each unit in scope.
+                            for unit in args.gateway_units:
+                                in_scope, scope_error, checked_unit = _unit_in_scope(unit)
+                                if scope_error is not None:
+                                    ok = False
+                                    lines.append(
+                                        "FAIL required env: could not determine whether %s applies to this host "
+                                        "(checked %s: %s); an undetermined scope is never treated as skippable"
+                                        % (unit, checked_unit, scope_error)
+                                    )
+                                elif in_scope:
+                                    env_snap, snap_error = _gateway_env_snapshot_for_unit(unit)
+                                    if snap_error is not None:
+                                        ok = False
+                                        lines.append(
+                                            "FAIL required env: %s value could not be determined for %s (%s); "
+                                            "an undetermined environment is never treated as ready"
+                                            % (GATEWAY_URL_VAR, unit, snap_error)
+                                        )
+                                    else:
+                                        snap_val = env_snap.get(GATEWAY_URL_VAR, "")
+                                        if snap_val != "" and not _check_gateway_url_shape(GATEWAY_URL_VAR, snap_val, lines):
+                                            ok = False
+                                        elif snap_val != "":
+                                            lines.append(
+                                                "OK required env: %s is a bare origin on %s (%s)"
+                                                % (GATEWAY_URL_VAR, unit, snap_val)
+                                            )
+                        else:
+                            ok = False
+                            lines.append(f"FAIL required env: {name} is missing")
 
-    ok = _write_verdict_if_requested(verdict_path, ok, lines)
+    if args.require_healthy_gateway:
+        from urllib.request import urlopen, Request
+
+        gateway_url = os.environ.get("SKFLEET_GATEWAY_URL", "").rstrip("/")
+        if not gateway_url:
+            lines.append("FAIL gateway health: SKFLEET_GATEWAY_URL not set; cannot probe /health")
+            ok = False
+        else:
+            health_url = gateway_url + "/health"
+            try:
+                with urlopen(Request(health_url), timeout=5) as resp:
+                    body = resp.read().decode("utf-8", "replace")
+                    if resp.status == 200:
+                        lines.append(f"OK gateway health: 200 {health_url}")
+                    else:
+                        lines.append(f"FAIL gateway health: {resp.status} {health_url}")
+                        ok = False
+            except Exception as exc:
+                lines.append(f"FAIL gateway health: {exc} at {health_url}")
+                ok = False
+
+    if args.verdict_out:
+        verdict = {
+            "ready": ok,
+            "lines": lines,
+            "ts": __import__("time").strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+        Path(args.verdict_out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.verdict_out).write_text(json.dumps(verdict, indent=2) + "\n", encoding="utf-8")
 
     print("\n".join(lines))
     print("READY" if ok else "NOT READY")
     return 0 if ok else 1
-
-
-def _write_verdict_if_requested(verdict_path: Path | None, ok: bool, lines: list[str]) -> bool:
-    """Persist the verdict when a path was given, and return the (possibly
-    revised) overall verdict.
-
-    A write failure is not swallowed behind a silently-correct-looking exit
-    code: it is appended to ``lines`` (mutated in place, so the caller's
-    printed output carries it) and flips the returned verdict to False, on
-    the reasoning that a verdict nobody downstream can read is not a verdict
-    a rollout should trust, regardless of what the gate itself found.
-    """
-    if verdict_path is None:
-        return ok
-    try:
-        write_verdict(verdict_path, ok, lines)
-        return ok
-    except OSError as exc:
-        lines.append("FAIL verdict: could not write %s (%s)" % (verdict_path, exc))
-        return False
-
-
-def _env_from_unit_file(unit_path: Path) -> dict[str, str]:
-    """Best-effort extraction of Environment= assignments from a unit file,
-    layered on top of the current process environment.
-    """
-    env = dict(os.environ)
-    try:
-        text = unit_path.read_text(encoding="utf-8")
-    except OSError:
-        return env
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("Environment="):
-            continue
-        remainder = stripped[len("Environment="):].strip()
-        if remainder.startswith('"') and remainder.endswith('"'):
-            remainder = remainder[1:-1]
-        if "=" in remainder:
-            key, _, value = remainder.partition("=")
-            env[key.strip()] = value.strip()
-    return env
-
-
-def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Fleet readiness gate for a node before rollout continues.")
-    parser.add_argument("--rotate-script", required=True, help="Path to the dispatcher source, e.g. scripts/fleet/skfleet-rotate.py")
-    parser.add_argument("--units-dir", required=True, help="Directory containing systemd *.service unit files")
-    parser.add_argument("--python-bin", required=True, help="Python interpreter to check module imports against")
-    parser.add_argument("--env-from-unit", default=None, help="Optional unit file name; check env against its Environment= lines only (drop-ins are not read), instead of the process environment")
-    parser.add_argument("--env-from-systemd", default=None, help="Optional systemd unit name; check env against the unit's EFFECTIVE environment as reported by systemctl --user show, which already merges the unit file and every drop-in. Preferred over --env-from-unit when both are given. When given, the unit's role is scoped first: its paired timer (for a .service) or the unit itself must be active or boot-enabled on this host, or its environment is reported skipped rather than asserted.")
-    parser.add_argument("--verdict-path", default=None, help="Optional path to write the verdict as JSON (atomic write), so another process can read it without re-running the gate. Not written when omitted.")
-    args = parser.parse_args(argv)
-
-    return _run(
-        Path(args.rotate_script),
-        Path(args.units_dir),
-        args.python_bin,
-        args.env_from_unit,
-        args.env_from_systemd,
-        Path(args.verdict_path) if args.verdict_path else None,
-    )
 
 
 if __name__ == "__main__":
