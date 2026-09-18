@@ -27,7 +27,9 @@ def register_coord_commands(main: click.Group) -> None:
             "  coord create --title ... --criteria ...     backlog\n"
             "  coord claim <id> --agent <you>              claimed, moves to ready\n"
             "  coord move <id> doing --agent <you>         doing\n"
-            "  coord link <id> verdict PASS               record the outcome\n"
+            "  coord verdict <id> <outcome> ...           record an outcome with\n"
+            "                                             the candidate bytes bound\n"
+            "  coord link <id> verdict PASS               record a terminal outcome\n"
             "  coord link <id> evidence <path>            record the proof\n"
             "  coord move <id> review --agent <you>       hand to an independent reviewer\n"
             "  coord complete <id> --agent <you>          done\n"
@@ -1521,6 +1523,59 @@ def register_coord_commands(main: click.Group) -> None:
             console.print(f"    [dim]- {cid}[/]")
         console.print()
 
+    @coord.command("verdict")
+    @click.argument("task_id")
+    @click.argument("outcome")
+    @click.option(
+        "--candidate",
+        required=True,
+        help="Durable, SHARED path to the bytes a reviewer must verify.",
+    )
+    @click.option("--commit", required=True, help="git rev-parse HEAD")
+    @click.option("--tree", required=True, help="git rev-parse HEAD^{tree}")
+    @click.option("--ref", required=True, help="refs/heads/<branch> or an https:// URL")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--agent", default=None, help="Writer name. Required: the producer.")
+    def coord_verdict(task_id, outcome, candidate, commit, tree, ref, home, agent):
+        """Record an outcome bound to the candidate a reviewer will verify.
+
+        This is the verdict path for anything that owes an independent review.
+        It writes ONE native CardStore event carrying the verdict, the candidate
+        path, the sha256 this command computes from that file, and the typed
+        commit/tree/ref. That is exactly what the review opener reads, so a
+        verdict recorded here can actually open the review it asks for, which is
+        what ``coord link verdict PASS_FOR_REVIEW`` could never do.
+        """
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..provisional_verdict import candidate_evidence
+        from ..seat_boundaries import Action
+
+        # The opener attributes an outcome to exactly one producer and fails
+        # closed on an empty writer, so an anonymous verdict is unusable.
+        if not str(agent or "").strip():
+            raise click.ClickException(
+                "--agent is required: a verdict is attributed to exactly one producer, "
+                "and the review opener fails closed on an unnamed one."
+            )
+        authorize_coord_mutation(agent, Action.LINK_CARD, task_id, None, None)
+        from ..card_store import CardStore
+
+        try:
+            payload = candidate_evidence(candidate, commit, tree, ref)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from None
+        try:
+            event = CardStore(Path(home).expanduser()).append_event(
+                task_id, "verdict", agent, verdict=str(outcome).strip(), **payload
+            )
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from None
+        console.print(
+            f"\n  [green]Recorded {task_id}: {outcome} bound to "
+            f"{payload['candidate_sha256'][:12]} at {payload['candidate_commit'][:12]}.[/]\n"
+        )
+        console.print(f"  [dim]event_id {event.get('event_id')} ts {event.get('ts')}[/]\n")
+
     @coord.command("link")
     @click.argument("task_id")
     @click.argument("key")
@@ -1544,6 +1599,19 @@ def register_coord_commands(main: click.Group) -> None:
         # enough, so it is refused here at the write path.
         try:
             validate_blocked_verdict(key, value)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from None
+
+        # A provisional PASS is a REQUEST for a governed review, and the review
+        # opener will not open one without the candidate bytes and the source
+        # revision. A CardEvent has no field for either, so recording it here
+        # produces a request nothing can act on. Measured on this fleet
+        # 2026-09-18: 214 cards had done exactly that and no review had opened
+        # in 14 days. Refuse, and name the verb that binds it.
+        from ..provisional_verdict import validate_provisional_verdict
+
+        try:
+            validate_provisional_verdict(key, value)
         except ValueError as exc:
             raise click.ClickException(str(exc)) from None
 
@@ -1599,7 +1667,12 @@ def register_coord_commands(main: click.Group) -> None:
                 "writes use skcapstone coord. Never create, append, rewrite, rename, or "
                 "delete CardStore JSONL."
             ),
-            "good": "skcapstone coord link <card> verdict PASS_FOR_REVIEW --agent <name>",
+            "good": (
+                "skcapstone coord verdict <card> PASS_FOR_REVIEW --candidate <path> "
+                "--commit <sha> --tree <sha> --ref refs/heads/<branch> --agent <name>. "
+                "coord link records a terminal outcome; a PASS that owes an independent "
+                "review must bind its candidate, and a link event has no field for one."
+            ),
             "bad": "Creating, appending, rewriting, renaming, or deleting CardStore JSONL.",
             "read_boundary": (
                 "Use CLI reads normally. Raw file inspection is emergency operator "
