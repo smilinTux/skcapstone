@@ -44,7 +44,7 @@ def _make_card(
     home: Path,
     task_id: str,
     title: str,
-    agent: str = "reviewer",
+    agent: str = "test-reviewer",
     exit_gates: list[dict] | None = None,
 ) -> None:
     """Create a claimed, non-review card, optionally with exit_gates on core.json.
@@ -80,10 +80,10 @@ def test_card_without_exit_gates_completes_exactly_as_today(tmp_path: Path) -> N
     home = tmp_path / "home"
     _make_card(home, "aaaa1111", "plain card, no gates")
 
-    result = complete_coord_task(home, "reviewer", "aaaa1111")
+    result = complete_coord_task(home, "test-reviewer", "aaaa1111")
 
     assert not isinstance(result, GatesPending)
-    assert result.agent == "reviewer"
+    assert result.agent == "test-reviewer"
     assert "aaaa1111" in result.completed_tasks
     actions = [e.get("action") for e in _events(home, "aaaa1111")]
     assert "complete" in actions
@@ -101,7 +101,7 @@ def test_card_with_one_outstanding_gate_gets_await_gates_not_complete(
         exit_gates=[{"gate": "independent-review", "owner": "seraph"}],
     )
 
-    result = complete_coord_task(home, "reviewer", "bbbb2222")
+    result = complete_coord_task(home, "test-reviewer", "bbbb2222")
 
     assert isinstance(result, GatesPending)
     assert result.outstanding == [{"gate": "independent-review", "owner": "seraph"}]
@@ -195,11 +195,11 @@ def test_complete_records_complete_once_every_gate_is_satisfied(
         exit_gates=[{"gate": "g1", "owner": "seraph"}],
     )
 
-    pending = complete_coord_task(home, "reviewer", "ffff6666")
+    pending = complete_coord_task(home, "test-reviewer", "ffff6666")
     assert isinstance(pending, GatesPending)
 
     satisfy_gate(home, "ffff6666", "g1", "seraph")
-    result = complete_coord_task(home, "reviewer", "ffff6666")
+    result = complete_coord_task(home, "test-reviewer", "ffff6666")
 
     assert not isinstance(result, GatesPending)
     assert "ffff6666" in result.completed_tasks
@@ -218,7 +218,7 @@ def test_cli_complete_reports_outstanding_gate_and_owner(tmp_path: Path) -> None
 
     result = CliRunner().invoke(
         main,
-        ["coord", "complete", "11112222", "--home", str(home), "--agent", "reviewer"],
+        ["coord", "complete", "11112222", "--home", str(home), "--agent", "test-reviewer"],
     )
 
     assert result.exit_code == 3, result.output
@@ -246,7 +246,7 @@ def test_cli_complete_gated_exit_code_is_distinct_from_success_and_error(
 
     result = CliRunner().invoke(
         main,
-        ["coord", "complete", "55556666", "--home", str(home), "--agent", "reviewer"],
+        ["coord", "complete", "55556666", "--home", str(home), "--agent", "test-reviewer"],
     )
 
     assert result.exit_code not in (0, 1)
@@ -265,7 +265,7 @@ def test_cli_satisfy_gate_then_complete_round_trip(tmp_path: Path) -> None:
 
     first = runner.invoke(
         main,
-        ["coord", "complete", "33334444", "--home", str(home), "--agent", "reviewer"],
+        ["coord", "complete", "33334444", "--home", str(home), "--agent", "test-reviewer"],
     )
     assert first.exit_code == 3, first.output
 
@@ -287,7 +287,7 @@ def test_cli_satisfy_gate_then_complete_round_trip(tmp_path: Path) -> None:
 
     second = runner.invoke(
         main,
-        ["coord", "complete", "33334444", "--home", str(home), "--agent", "reviewer"],
+        ["coord", "complete", "33334444", "--home", str(home), "--agent", "test-reviewer"],
     )
     assert second.exit_code == 0, second.output
     assert "Completed" in second.output
@@ -341,7 +341,7 @@ def test_move_to_done_with_outstanding_gate_is_refused(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="independent-review"):
-        move_coord_task(home, "reviewer", "66667777", "done")
+        move_coord_task(home, "test-reviewer", "66667777", "done")
 
     actions = [e.get("action") for e in _events(home, "66667777")]
     assert "move" not in actions
@@ -351,7 +351,7 @@ def test_move_to_done_without_exit_gates_is_unchanged(tmp_path: Path) -> None:
     home = tmp_path / "home"
     _make_card(home, "77778888", "plain card, no gates")
 
-    move_coord_task(home, "reviewer", "77778888", "done")
+    move_coord_task(home, "test-reviewer", "77778888", "done")
 
     actions = [e.get("action") for e in _events(home, "77778888")]
     assert "move" in actions
@@ -368,7 +368,7 @@ def test_move_to_non_done_column_with_outstanding_gate_is_unchanged(
         exit_gates=[{"gate": "independent-review", "owner": "seraph"}],
     )
 
-    move_coord_task(home, "reviewer", "88889999", "review")
+    move_coord_task(home, "test-reviewer", "88889999", "review")
 
     actions = [e.get("action") for e in _events(home, "88889999")]
     assert "move" in actions
@@ -384,7 +384,7 @@ def test_move_to_done_succeeds_after_all_gates_satisfied(tmp_path: Path) -> None
     )
 
     satisfy_gate(home, "9999aaaa", "independent-review", "seraph")
-    move_coord_task(home, "reviewer", "9999aaaa", "done")
+    move_coord_task(home, "test-reviewer", "9999aaaa", "done")
 
     actions = [e.get("action") for e in _events(home, "9999aaaa")]
     assert "move" in actions
@@ -401,7 +401,7 @@ def test_cli_move_to_done_reports_outstanding_gate_and_owner(tmp_path: Path) -> 
 
     result = CliRunner().invoke(
         main,
-        ["coord", "move", "aaaabbbb", "done", "--home", str(home), "--agent", "reviewer"],
+        ["coord", "move", "aaaabbbb", "done", "--home", str(home), "--agent", "test-reviewer"],
     )
 
     assert result.exit_code != 0

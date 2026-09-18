@@ -50,7 +50,7 @@ def test_claim_blocked_task_with_force_lists_every_gate_and_exits_nonzero(tmp_pa
     """--force remains accepted but cannot bypass any dependency gate."""
     board = _chain_board(tmp_path)
     board.create_task(Task(id="dd000004", title="review dependency"))
-    board.claim_task("reviewer", "dd000004")
+    board.claim_task("test-reviewer", "dd000004")
     transition_task(tmp_path, task_id="dd000004", column="review", actor="ops")
     board.create_task(Task(id="ee000005", title="human dependency", tags=["human-gate"]))
     board.create_task(
@@ -146,7 +146,7 @@ def test_add_dependency_command_blocks_then_allows_after_completed_gate(tmp_path
             "--home",
             str(tmp_path),
             "--agent",
-            "reviewer",
+            "test-reviewer",
         ],
     )
     assert added.exit_code == 0, added.output
@@ -154,16 +154,16 @@ def test_add_dependency_command_blocks_then_allows_after_completed_gate(tmp_path
 
     blocked = runner.invoke(
         _main(),
-        ["coord", "claim", "b2e00002", "--home", str(tmp_path), "--agent", "implementer"],
+        ["coord", "claim", "b2e00002", "--home", str(tmp_path), "--agent", "test-implementer"],
     )
     assert blocked.exit_code == 1
     assert "a1e00001" in blocked.output
 
-    board.claim_task("reviewer", "a1e00001")
-    board.complete_task("reviewer", "a1e00001")
+    board.claim_task("test-reviewer", "a1e00001")
+    board.complete_task("test-reviewer", "a1e00001")
     eligible = runner.invoke(
         _main(),
-        ["coord", "claim", "b2e00002", "--home", str(tmp_path), "--agent", "implementer"],
+        ["coord", "claim", "b2e00002", "--home", str(tmp_path), "--agent", "test-implementer"],
     )
     assert eligible.exit_code == 0, eligible.output
 
@@ -184,7 +184,7 @@ def test_release_claim_command_is_owner_and_revision_specific(tmp_path: Path):
         "--expected-claim-revision",
         revision,
         "--agent",
-        "repair",
+        "test-repair",
         "--home",
         str(tmp_path),
     ]
@@ -217,18 +217,18 @@ def test_release_claim_restores_review_until_explicit_backlog_move(tmp_path: Pat
     }.items():
         store.append_event("a1e10005", "link", "producer", link_key=key, link_value=value)
     transition_task(tmp_path, task_id="a1e10005", column="review", actor="producer")
-    board.claim_task("reviewer", "a1e10005")
-    revision = current_claim_precondition(tmp_path, "a1e10005", "reviewer")
+    board.claim_task("test-reviewer", "a1e10005")
+    revision = current_claim_precondition(tmp_path, "a1e10005", "test-reviewer")
     args = [
         "coord",
         "release-claim",
         "a1e10005",
         "--owner",
-        "reviewer",
+        "test-reviewer",
         "--expected-claim-revision",
         revision,
         "--agent",
-        "repair",
+        "test-repair",
         "--home",
         str(tmp_path),
     ]
@@ -269,7 +269,7 @@ def test_release_claim_uses_authoritative_claim_when_agent_projection_is_stale(
             "--expected-claim-revision",
             revision,
             "--agent",
-            "repair",
+            "test-repair",
             "--home",
             str(tmp_path),
         ],
@@ -298,7 +298,7 @@ def test_release_claim_requires_expected_revision(tmp_path: Path):
             "--owner",
             "probe",
             "--agent",
-            "repair",
+            "test-repair",
             "--home",
             str(tmp_path),
         ],
