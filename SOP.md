@@ -276,6 +276,7 @@ pip install -e ".[all]"          # runtime + every optional sibling (capauth, sk
   | `crush` | `skcapstone.crush_shim:main` |
   | `skfleet` | `skcapstone.fleet.cli:main` |
   | `skoperator` | `skcapstone.operator_seat.cli:main` |
+| `skfleet-claim-expiry` | `skcapstone.fleet.claim_expiry_cli:main` |
 
 Verify with `skcapstone --version`, and expect a **setuptools-scm** string such as
 `0.15.15.dev25+g90df5e0` on a dev checkout, not a clean release number. See §9.
@@ -719,8 +720,8 @@ skcapstone coord parity --check         # re-verify (exit non-zero on any residu
 <!-- docs-evidence
 verified: 2026-08-20
 checks:
-  - name: all five console scripts exist and there are still exactly five (section 3)
-    run: test $(grep -cE '^[a-z-]+ = "skcapstone\.' pyproject.toml) -eq 5 && grep -qxF 'skcapstone = "skcapstone.cli:main"' pyproject.toml && grep -qxF 'skfleet = "skcapstone.fleet.cli:main"' pyproject.toml && grep -qxF 'skoperator = "skcapstone.operator_seat.cli:main"' pyproject.toml
+  - name: all six console scripts exist and there are still exactly six (section 3)
+    run: test $(grep -cE '^[a-z-]+ = "skcapstone\.' pyproject.toml) -eq 6 && grep -qxF 'skcapstone = "skcapstone.cli:main"' pyproject.toml && grep -qxF 'skfleet = "skcapstone.fleet.cli:main"' pyproject.toml && grep -qxF 'skoperator = "skcapstone.operator_seat.cli:main"' pyproject.toml && grep -qxF 'skfleet-claim-expiry = "skcapstone.fleet.claim_expiry_cli:main"' pyproject.toml
   - name: the two disagreeing DEFAULT_PORT constants are still what section 5 describes
     run: grep -qxF 'DEFAULT_PORT = 7777' src/skcapstone/daemon.py && grep -qxF 'DEFAULT_PORT = int(os.environ.get("SKCAPSTONE_PORT", "9383"))' src/skcapstone/__init__.py
   - name: the per-agent port map still matches the ports section 5 tells operators to expect

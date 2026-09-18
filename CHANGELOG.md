@@ -2,6 +2,68 @@
 
 ## Unreleased
 
+- **Probe the gateway at its ROOT, not at the configured path.** The chi fleet
+  had not launched a worker in three days: 373 consecutive NOOP cycles with
+  every card blocked on
+  `LANE_ADMISSION_BLOCKED|codex=unknown,escalate=unknown,glm=unknown,kimi=unknown,qwen=unknown`,
+  while the gateway itself was healthy throughout. All three rotate hosts
+  carried `SKFLEET_GATEWAY_URL=http://<host>:18790/v1`, and `/health` and
+  `/queue` are served at the gateway root, so both probes 404ed, every lane
+  resolved to `unknown`, and `lane_health()` is fail-closed on unknown by
+  design. `e1ada0e7` had removed the hardcoded default and made the variable
+  mandatory, and the docs show `$SKFLEET_GATEWAY_URL/v1/chat/completions`
+  directly beside `$SKFLEET_GATEWAY_URL/health`, which makes folding `/v1` into
+  the base URL the natural operator mistake.
+
+    - `fleet_lane_health.gateway_root()` discards any path component, and is
+      applied in BOTH places that compare an endpoint: the snapshot seal in
+      `acquire_lane_snapshot` and the comparison inside `lane_health()`.
+      Normalizing only the first relabels the outage as `endpoint-mismatch`
+      with `errors: []`, which is strictly worse: the same total dispatch
+      outage with the one diagnostic that exposed it deleted.
+    - `fleet/review_capacity.acquire_review_route_snapshot` had the same defect
+      independently. It appends `/v1` itself for the models probe while
+      `/health` and `/queue` are root-relative, so a `/v1` base requested
+      `/v1/v1/models`, returned no routes, and reported zero review capacity.
+    - Both modules' existing test mocks resolved a request by its trailing path
+      segment only, so neither could distinguish `/v1/health` from `/health`.
+      Strict openers that route on the full path and 404 a miss were added,
+      each with a test proving the strict opener really does reject the
+      doubled prefix.
+
+- **Release a card claim whose owner has stopped touching it, without
+  requiring any host to prove the owner absent (ships DEFAULT OFF).** 349
+  claims were held on chi and unreleasable: `reap_dead_claims()` releases only
+  after every authoritative host proves absence, which is unsatisfiable when
+  liveness evidence is host-local, most owners are one-shot identities with no
+  process to find, and the store is partitioned. A second gate,
+  `_parse_worker_owner()`, skips any owner not shaped
+  `pi-<lane>-<host>-<cid>` before liveness logic runs, which alone accounts for
+  146 of the 349.
+
+    - `fleet/claim_expiry.py` decides, from events already on disk, which
+      claims are past an idle deadline (`SKFLEET_CLAIM_TTL_H`, default 48h,
+      non-finite values and anything under a 1 hour floor refused). Ownership
+      and the claim revision come from `CardStore.fold()`; a hand-rolled replay
+      was tried first and diverged from the fold on 75 of 143 held cards, so it
+      was deleted rather than patched.
+    - Liveness is measured across BOTH event stores. `coord link`, `verdict`
+      and `evidence` are written to `coordination/card_events/` (81,207 records
+      on chi) and never touch `cards/<id>/events/`, so an idle clock reading
+      only the per-card shards is blind to the entire review workflow: an
+      adversarial review demonstrated a worker posting verdicts being measured
+      as idle for its whole run and losing its card.
+    - Activity counts when written by the owner OR by a worker identity
+      referencing that card, because the owning identity is frequently not the
+      working one (29% of held cards had an owner that wrote nothing but its
+      own claim). Counting any writer is the opposite error: three held cards
+      had an owner idle 32 hours while a seat wrote within 10 minutes.
+    - `skfleet-claim-expiry` reports what would be reclaimed and never writes.
+      `_expire_idle_claims()` returns before importing anything when the mode
+      is off, so a host carrying the new script with an older package cannot
+      fail mid-cycle, and a store-read failure is contained rather than
+      aborting the rotation.
+
 - **Staged rollout and rollback: deploy to one node at a time, verify each,
   halt on the first failure, and go back (nimble-factory Plan B3, phase
   2).** Measured causes: phase 1 found four drift incidents by hand in one

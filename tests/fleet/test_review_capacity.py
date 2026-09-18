@@ -285,8 +285,11 @@ def test_a_v1_suffixed_base_url_still_seals_real_routes(tmp_path):
     opener = _strict_opener(documents)
 
     snapshot = acquire_review_route_snapshot(
-        "https://gateway/v1", tmp_path / "snap-v1.json", "cycle-v1",
-        opener=opener, now=lambda: now,
+        "https://gateway/v1",
+        tmp_path / "snap-v1.json",
+        "cycle-v1",
+        opener=opener,
+        now=lambda: now,
     )
     routes = eligible_review_routes(
         snapshot, "M", [], "producer", "pi-seraph-review", {"cloud-b": 1}
@@ -299,8 +302,11 @@ def test_the_origin_form_is_unaffected(tmp_path):
     now = 2_000_000_000.0
     documents = dict(zip(("/v1/models", "/health", "/queue"), _documents(now)))
     snapshot = acquire_review_route_snapshot(
-        "https://gateway", tmp_path / "snap-root.json", "cycle-root",
-        opener=_strict_opener(documents), now=lambda: now,
+        "https://gateway",
+        tmp_path / "snap-root.json",
+        "cycle-root",
+        opener=_strict_opener(documents),
+        now=lambda: now,
     )
     routes = eligible_review_routes(
         snapshot, "M", [], "producer", "pi-seraph-review", {"cloud-b": 1}
