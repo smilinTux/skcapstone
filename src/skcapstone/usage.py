@@ -213,6 +213,11 @@ class UsageTracker:
             date_str = _today_str()
         with self._lock:
             data = self._load_raw(date_str)
+            agents_dir = self._home / "agents"
+            if agents_dir.is_dir():
+                for child in sorted(agents_dir.iterdir()):
+                    if child.is_dir():
+                        data = _merge_raw(data, self._load_raw(date_str, home=child))
         return _raw_to_report(date_str, data)
 
     def get_weekly(self, anchor: Optional[str] = None) -> list[DailyUsageReport]:
@@ -275,9 +280,10 @@ class UsageTracker:
             reports.append(self.get_daily(d.strftime("%Y-%m-%d")))
         return reports
 
-    def _load_raw(self, date_str: str) -> dict:
+    def _load_raw(self, date_str: str, home: Path | None = None) -> dict:
         """Load raw usage dict from disk (no lock - caller must hold lock)."""
-        path = self._usage_dir / f"tokens-{date_str}.json"
+        usage_dir = self._usage_dir if home is None else home / "usage"
+        path = usage_dir / f"tokens-{date_str}.json"
         if not path.exists():
             return {"date": date_str, "models": {}}
         try:
@@ -323,3 +329,19 @@ def _raw_to_report(date_str: str, data: dict) -> DailyUsageReport:
             estimated_cost_usd=entry.get("estimated_cost_usd", 0.0),
         )
     return DailyUsageReport(date=date_str, models=models)
+
+
+def _merge_raw(left: dict, right: dict) -> dict:
+    """Return usage totals from two homes without mutating either input."""
+    merged = {"models": {name: dict(row) for name, row in left.get("models", {}).items()}}
+    for model, row in right.get("models", {}).items():
+        target = merged["models"].setdefault(
+            model,
+            {"calls": 0, "input_tokens": 0, "output_tokens": 0, "estimated_cost_usd": 0.0},
+        )
+        for key in ("calls", "input_tokens", "output_tokens"):
+            target[key] = target.get(key, 0) + row.get(key, 0)
+        target["estimated_cost_usd"] = round(
+            target.get("estimated_cost_usd", 0.0) + row.get("estimated_cost_usd", 0.0), 8
+        )
+    return merged

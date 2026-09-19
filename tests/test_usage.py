@@ -175,6 +175,22 @@ class TestGetDaily:
         assert isinstance(report, DailyUsageReport)
         assert report.models == {}
 
+    def test_shared_home_aggregates_per_agent_usage(self, home: Path) -> None:
+        """The default shared reader includes records written in agent homes."""
+        date_str = "2026-03-02"
+        UsageTracker(home / "agents" / "lumina").record_usage(
+            "model-a", 100, 40, date_str=date_str
+        )
+        UsageTracker(home / "agents" / "jarvis").record_usage(
+            "model-b", 200, 60, date_str=date_str
+        )
+
+        report = UsageTracker(home).get_daily(date_str)
+
+        assert report.total_calls == 2
+        assert report.total_input_tokens == 300
+        assert report.total_output_tokens == 100
+
 
 # ---------------------------------------------------------------------------
 # UsageTracker.get_weekly / get_monthly
