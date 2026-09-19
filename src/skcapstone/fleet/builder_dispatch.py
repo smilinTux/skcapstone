@@ -32,6 +32,11 @@ LOGICAL_ROUTES = frozenset({"sk-s", "sk-m", "sk-l", "sk-xl"})
 LEASE_SECONDS = 900
 TERMINAL_STATES = {"completed", "blocked", "failed", "stale"}
 MAX_ATTEMPTS = 2
+#: How many times one card may be re-offered over a dispatch status that never
+#: reached a worker verdict. Unworked refusals cost no builder capacity, so the
+#: budget is generous, but it is finite: a revision that simply cannot be
+#: fetched fails unworked every time and must still come to rest. See parked().
+MAX_GENERATIONS = 6
 MATCH_RETRY_LIMIT = 3
 BUILDER_CAPACITY = 4
 _PROCESSES: dict[str, object] = {}
@@ -98,7 +103,34 @@ def logical_route(labels: list[str] | tuple[str, ...]) -> str | None:
 
 
 def eligible(core: dict, labels: list[str] | tuple[str, ...]) -> bool:
-    """Return whether a card is a bounded provider-neutral source workload."""
+    """Return whether a card is a bounded provider-neutral source workload.
+
+    Eligibility is what the rotation uses to withhold a card from its local
+    lane, so a card this answers True for and the builder then cannot bind is
+    a card nobody works. Measured 2026-09-19: card 23554ec7 carries `sk-s` and
+    `source-only` but no `repository`, `base_ref` or `base_revision` at all.
+    It was withheld from the local lane every cycle and refused by the builder
+    every cycle, under the misleading message "repository must be
+    credential-free https" (the empty string simply is not https). A card the
+    builder cannot reconstruct is not a builder workload, so it is not
+    eligible, and it stays with the lane that can still reason about it.
+    """
+    if not _labels_eligible(core, labels):
+        return False
+    try:
+        _source(core)
+    except BuilderDispatchError:
+        return False
+    return True
+
+
+def _labels_eligible(core: dict, labels: list[str] | tuple[str, ...]) -> bool:
+    """Return whether the card's labels alone select the builder lane.
+
+    Split out from eligible() so decline_reason can still tell an operator
+    which of the two questions failed: a card that is not builder work at all,
+    or one that is but whose source binding will not parse.
+    """
     normalized = {str(label).strip().lower() for label in labels}
     return (
         logical_route(labels) is not None
@@ -178,6 +210,58 @@ def _node_load(paths: FleetPaths, node: str) -> int:
     return load
 
 
+def worked(status: dict) -> bool:
+    """Return whether a dispatch status records a worker verdict on the card.
+
+    A status charges the card's retry budget only when a worker actually
+    reached a verdict on it. That is the rule the claim ceiling (#790) and the
+    gateway-failure policy (#794) already apply elsewhere in this fleet: a
+    budget is spent by work that happened, never by the infrastructure that
+    failed around it. An offer that expired before the node consumed it, one
+    invalidated by an amendment, a source reconstruction that never fetched,
+    and a worker the node crashed out from under all leave ``completion``
+    unset. None of them observed the card, so none of them may condemn it.
+
+    Args:
+        status: One dispatch status record, or {} when none exists.
+
+    Returns:
+        True when a worker reached a verdict.
+    """
+    return status.get("completion") is not None
+
+
+def parked(status: dict) -> bool:
+    """Return whether a terminal dispatch status permanently withholds its card.
+
+    Three ways to come to rest, and only three. A completed card is done. A
+    card a worker reached a verdict on MAX_ATTEMPTS times has spent its
+    attempts. A card re-offered MAX_GENERATIONS times without ever reaching a
+    verdict is failing in a way another offer will not fix, so it stops too.
+    Everything else is infrastructure, and infrastructure gets another
+    generation: before this fence a single node crash or gateway timeout
+    turned into a permanent refusal, which is the monotonic-counter shape
+    #790 removed from the claim ceiling.
+
+    Args:
+        status: One dispatch status record whose state is already terminal.
+
+    Returns:
+        True when no further generation may be offered.
+    """
+    if status.get("state") == "completed":
+        return True
+    if status.get("unclaimable_reason"):
+        # A terminal TaskUnclaimable is a durable finding about the card
+        # itself, not about the infrastructure around it: the card was voided
+        # and replaced, so no generation will ever make it claimable. It is
+        # the one refusal that costs no worker and still parks immediately.
+        return True
+    if worked(status) and int(status.get("attempt") or 1) >= MAX_ATTEMPTS:
+        return True
+    return int(status.get("generation") or 0) >= MAX_GENERATIONS
+
+
 def offer(
     paths: FleetPaths,
     core: dict,
@@ -203,6 +287,7 @@ def offer(
         raise BuilderDispatchError("card must select exactly one logical route")
     ready = _ready_builders(paths)
     selected_node = None
+    generation = 0
     for view in ready:
         existing = _load(request_path(paths, view.name, card_id))
         if not existing:
@@ -215,15 +300,23 @@ def offer(
         ) == (repository, base_ref, revision, normalized_labels)
         if same_binding:
             prior = _load(status_path(paths, view.name, card_id)) or {}
-            if prior.get("request_id") == existing.get("request_id") and (
-                prior.get("state") in TERMINAL_STATES
-                and not (
-                    prior.get("state") == "failed"
-                    and int(prior.get("attempt") or 1) < MAX_ATTEMPTS
-                )
-            ):
+            if prior.get("request_id") != existing.get("request_id"):
+                return existing
+            if prior.get("state") not in TERMINAL_STATES:
+                return existing
+            if prior.get("state") == "failed" and int(prior.get("attempt") or 1) < MAX_ATTEMPTS:
+                return existing
+            if parked(prior):
                 return None
-            return existing
+            # Forgive one unworked terminal. The node skips a request whose
+            # status is already terminal for that exact request_id, so a
+            # forgiveness that reused the identity would be read as spent
+            # again on the very next pass. Minting the next generation is
+            # what makes the retry reachable: a new request_id the stale
+            # status no longer matches, under a fresh lease.
+            generation = int(prior.get("generation") or 0) + 1
+            selected_node = view.name
+            break
         prior = _load(status_path(paths, view.name, card_id)) or {}
         if (
             prior.get("request_id") == existing.get("request_id")
@@ -245,15 +338,16 @@ def offer(
         views=[view for view in ready if view.name == selected_node],
     )
     stamp = now or _now()
-    identity = json.dumps(
-        [card_id, selected_node, repository, base_ref, revision, normalized_labels],
-        separators=(",", ":"),
-    )
+    parts = [card_id, selected_node, repository, base_ref, revision, normalized_labels]
+    if generation:
+        parts.append(generation)
+    identity = json.dumps(parts, separators=(",", ":"))
     request = {
         "schema": "skfleet.builder-dispatch/v1",
         "request_id": hashlib.sha256(identity.encode()).hexdigest(),
         "card_id": card_id,
         "node": selected_node,
+        "generation": generation,
         "role": ROLE,
         "provider": PROVIDER,
         "logical_route": route,
@@ -298,7 +392,7 @@ def decline_reason(
     """
     if not store.actuation_allowed(paths):
         return "actuation-frozen"
-    if not eligible(core, labels):
+    if not _labels_eligible(core, labels):
         return "ineligible"
     card_id = str(core["id"]).lower()
     if not valid_name(card_id):
@@ -324,17 +418,12 @@ def decline_reason(
             existing.get("labels"),
         ) == (repository, base_ref, revision, normalized_labels)
         if same_binding:
-            if (
-                same_generation
-                and prior.get("state") in TERMINAL_STATES
-                and not (
-                    prior.get("state") == "failed"
-                    and int(prior.get("attempt") or 1) < MAX_ATTEMPTS
-                )
-            ):
+            if same_generation and prior.get("state") in TERMINAL_STATES and parked(prior):
                 return (
-                    f"terminal: node={view.name} state={prior.get('state')}"
+                    f"parked: node={view.name} state={prior.get('state')}"
                     f" attempt={prior.get('attempt')}"
+                    f" generation={int(prior.get('generation') or 0)}"
+                    f" worked={worked(prior)}"
                 )
             return None
         if same_generation and prior.get("state") == "running":
@@ -362,6 +451,7 @@ def _write_status(paths: FleetPaths, node: str, request: dict, state: str, **ext
         "request_id": request["request_id"],
         "card_id": request["card_id"],
         "node": node,
+        "generation": int(request.get("generation") or 0),
         "state": state,
         "heartbeat_at": _iso(_now()),
         "writer": {"role": "sknoded", "node": node, "identity": store.writer_identity()},
@@ -683,6 +773,7 @@ def _consume_available(
                 prior
                 and prior.get("request_id") != request.get("request_id")
                 and (prior.get("owner") or prior.get("claim_revision"))
+                and prior.get("claim_released") is not True
             ):
                 if prior.get("state") == "running":
                     continue

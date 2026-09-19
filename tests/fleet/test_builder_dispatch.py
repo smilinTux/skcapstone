@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -1234,15 +1235,16 @@ def test_launch_failure_releases_exact_claim_and_retries_once(
     process = builder_dispatch._PROCESSES[result["request_id"]]
     process.poll = lambda: 1
     builder_dispatch.consume_one(paths, tmp_path, "node-ziowk01")
-    assert (
-        builder_dispatch.offer(
-            paths,
-            _card(),
-            ["sk-m", "source-only"],
-            writer=store.Writer(role="scheduler", node="niobe", identity=""),
-        )
-        is None
+    # A launch that never produced a verdict is infrastructure, not a finding
+    # about the card, so the spent attempts buy a fresh generation rather than
+    # a permanent refusal.
+    reoffer = builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
     )
+    assert reoffer is not None and reoffer["generation"] == 1
 
 
 def test_supervisor_records_completion_and_sends_mail(
@@ -1297,12 +1299,14 @@ def test_decline_reason_names_exhausted_attempts(paths, operator, noded41) -> No
         request,
         "failed",
         attempt=builder_dispatch.MAX_ATTEMPTS,
+        completion={"verdict": "blocked", "detail": "the worker reached a finding"},
     )
     assert builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer) is None
     reason = builder_dispatch.decline_reason(paths, _card(), ["sk-m", "source-only"])
     assert reason is not None
     assert "node-ziowk01" in reason
     assert "failed" in reason
+    assert "worked=True" in reason
 
 
 def test_decline_reason_names_missing_ready_builder(paths) -> None:
@@ -1329,3 +1333,187 @@ def test_decline_reason_is_none_when_offer_would_place(paths, operator, noded41)
     request = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
     assert request is not None
     assert builder_dispatch.decline_reason(paths, _card(), ["sk-m", "source-only"]) is None
+
+
+def test_unworked_terminal_status_is_forgiven_with_a_fresh_generation(
+    paths, operator, noded41
+) -> None:
+    """An offer that expired unconsumed proves nothing, so it must not park the card."""
+    _node(paths, operator, noded41)
+    writer = store.Writer(role="scheduler", node="niobe", identity="")
+    request = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
+    builder_dispatch._write_status(
+        paths,
+        "node-ziowk01",
+        request,
+        "blocked",
+        attempt=0,
+        claim_released=False,
+        error="unclaimed offer expired",
+    )
+    assert builder_dispatch.decline_reason(paths, _card(), ["sk-m", "source-only"]) is None
+    reoffer = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
+    assert reoffer is not None
+    assert reoffer["generation"] == 1
+    assert reoffer["request_id"] != request["request_id"]
+    assert reoffer["lease_expires_at"] >= request["lease_expires_at"]
+
+
+def test_generation_zero_keeps_the_established_request_identity(paths, operator, noded41) -> None:
+    """Forgiveness must not re-address every live request and orphan its worker."""
+    _node(paths, operator, noded41)
+    request = builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+    )
+    assert request["generation"] == 0
+    legacy_identity = json.dumps(
+        [
+            "24b00003",
+            "node-ziowk01",
+            _card()["meta"]["repository"],
+            _card()["meta"]["base_ref"],
+            _card()["meta"]["base_revision"],
+            ["sk-m", "source-only"],
+        ],
+        separators=(",", ":"),
+    )
+    assert request["request_id"] == hashlib.sha256(legacy_identity.encode()).hexdigest()
+
+
+def test_worker_verdict_charges_the_attempt_budget_and_parks_at_the_ceiling(
+    paths, operator, noded41
+) -> None:
+    """A worker that actually reached a verdict twice has spent the card's attempts."""
+    _node(paths, operator, noded41)
+    writer = store.Writer(role="scheduler", node="niobe", identity="")
+    request = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
+    builder_dispatch._write_status(
+        paths,
+        "node-ziowk01",
+        request,
+        "failed",
+        attempt=builder_dispatch.MAX_ATTEMPTS,
+        completion={"verdict": "blocked", "detail": "the card cannot be built"},
+    )
+    assert builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer) is None
+    reason = builder_dispatch.decline_reason(paths, _card(), ["sk-m", "source-only"])
+    assert reason is not None and reason.startswith("parked:")
+
+
+def test_unworked_forgiveness_is_bounded_so_an_unbuildable_card_stops(
+    paths, operator, noded41
+) -> None:
+    """A card that never reaches a verdict still stops, at the generation ceiling."""
+    _node(paths, operator, noded41)
+    writer = store.Writer(role="scheduler", node="niobe", identity="")
+    request = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
+    for generation in range(1, builder_dispatch.MAX_GENERATIONS + 2):
+        builder_dispatch._write_status(
+            paths,
+            "node-ziowk01",
+            request,
+            "failed",
+            attempt=builder_dispatch.MAX_ATTEMPTS,
+            error="exact source reconstruction failed",
+        )
+        request = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
+        if request is None:
+            break
+        assert request["generation"] == generation
+    assert request is None
+    reason = builder_dispatch.decline_reason(paths, _card(), ["sk-m", "source-only"])
+    assert reason is not None and reason.startswith("parked:")
+
+
+def test_released_prior_claim_is_not_released_again_and_the_card_launches(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    """A forgiven generation whose prior claim is already released must reach a worker."""
+    _node(paths, operator, noded41)
+    writer = store.Writer(role="scheduler", node="niobe", identity="")
+    request = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
+    builder_dispatch._write_status(
+        paths,
+        "node-ziowk01",
+        request,
+        "blocked",
+        attempt=1,
+        owner="pi-builder-standby-node-ziowk01-24b00003",
+        claim_revision="claim-old",
+        claim_released=True,
+    )
+    reoffer = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
+    assert reoffer is not None and reoffer["generation"] == 1
+    folded = _folded()
+
+    def claim(_self, owner, card_id):
+        folded.owner = owner
+        folded.meta = dict(_card()["meta"], _claim_revision="claim-new")
+
+    monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: folded)
+    monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        builder_dispatch,
+        "_release_exact",
+        lambda *_args, **_kwargs: pytest.fail("released an already-released claim"),
+    )
+    result = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=lambda *_args: SimpleNamespace(pid=71, poll=lambda: None),
+        materializer=lambda _request, workspace: workspace,
+    )
+    assert result is not None and result["state"] == "running"
+    assert result["request_id"] == reoffer["request_id"]
+
+
+def test_a_voided_card_parks_but_an_infrastructure_block_does_not(
+    paths, operator, noded41
+) -> None:
+    """Both are blocked at attempt 0; only one of them is about the card."""
+    _node(paths, operator, noded41)
+    writer = store.Writer(role="scheduler", node="niobe", identity="")
+    request = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
+    builder_dispatch._write_status(
+        paths,
+        "node-ziowk01",
+        request,
+        "blocked",
+        attempt=0,
+        error="unclaimable: card 24b00003 was voided",
+        unclaimable_reason="voided",
+    )
+    assert builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer) is None
+    builder_dispatch._write_status(
+        paths,
+        "node-ziowk01",
+        request,
+        "blocked",
+        attempt=0,
+        error="unclaimed offer expired",
+    )
+    assert (
+        builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer) is not None
+    )
+
+
+def test_a_card_without_a_source_binding_is_not_a_builder_workload() -> None:
+    """Withholding a card the builder cannot bind leaves nobody able to work it."""
+    unbound = {"id": "23554ec7", "meta": {}}
+    assert not builder_dispatch.eligible(unbound, ["sk-s", "source-only"])
+    partial = {"id": "23554ec7", "meta": {"repository": "https://example.invalid/r.git"}}
+    assert not builder_dispatch.eligible(partial, ["sk-s", "source-only"])
+    assert builder_dispatch.eligible(_card(), ["sk-m", "source-only"])
+
+
+def test_credentialed_repository_is_still_refused(paths, operator, noded41) -> None:
+    """The credential fence is a real fence, not a side effect of the new check."""
+    _node(paths, operator, noded41)
+    leaked = {"id": "24b00004", "meta": dict(_card()["meta"])}
+    leaked["meta"]["repository"] = "https://user:token@github.com/smilinTux/skcapstone.git"
+    assert not builder_dispatch.eligible(leaked, ["sk-m", "source-only"])
