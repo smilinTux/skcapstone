@@ -20,7 +20,9 @@ statement about when the fence must REFUSE.
 
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -228,3 +230,116 @@ def test_fence_requires_the_exact_owner_and_revision():
 def test_actuating_states_are_exactly_two():
     """Widening this set is a deliberate act, not an accident."""
     assert WEDGE_ACTUATING_STATES == frozenset({"wedge-stale-confirmed", "wedge-absent-confirmed"})
+
+
+# --- replay of the real measurement window -----------------------------------
+#
+# tests/fixtures/worker-progress-chi-20260918.log is the WORKER_PROGRESS lines
+# the fleet actually emitted while the pass was report-only: 158 records, 12
+# distinct owners, 5 chi hosts, 20260918T193007Z to 20260919T052500Z.
+#
+# This is the test that answers the only question that matters before turning
+# an actuator on: how many genuinely-working workers would it have killed?
+
+FIXTURE = Path(__file__).parent / "fixtures" / "worker-progress-chi-20260918.log"
+
+# The two owners that SHOULD be actuated, and the independent evidence that
+# neither was working, gathered outside this signal on 2026-09-19:
+#
+#   pi-glm-chiap03-139ec63d    the incident. 6h18m held, 0 workspace files,
+#                              pi alive at 0.0% CPU, 0-byte stdout log.
+#   pi-qwen-chiap01-34115541   unit crashlooping, every relaunch exiting
+#                              status=1 in under 2.5min, every worker log
+#                              0 bytes, and `scanned=1587` unchanged across
+#                              the entire 16-hour stale run, so not one file
+#                              was added or touched.
+EXPECTED_ACTUATED = {"pi-glm-chiap03-139ec63d", "pi-qwen-chiap01-34115541"}
+
+
+def _replay():
+    """Classify every measured record. Returns owner -> Counter(verdict)."""
+    per_owner: dict[str, Counter] = defaultdict(Counter)
+    rows = []
+    for line in FIXTURE.read_text(encoding="utf-8").splitlines():
+        stamp, _, body = line.partition("\t")
+        fields = dict(part.split("=", 1) for part in body.split("|") if "=" in part)
+        fields["_at"] = datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        fields["_card"] = body.split("|")[3]
+        rows.append(fields)
+    # The records carry no claim age, so each observation is dated from the
+    # owner's FIRST appearance in the window. That is a lower bound on the
+    # real hold, which is the conservative direction for the absent case: it
+    # can only delay an actuation, never invent one.
+    first: dict[tuple[str, str], datetime] = {}
+    for row in sorted(rows, key=lambda item: item["_at"]):
+        first.setdefault((row["owner"], row["_card"]), row["_at"])
+    for row in rows:
+        age = row["progress_age_s"]
+        progress_at = (
+            None if age == "none" else (row["_at"] - timedelta(seconds=int(age))).isoformat()
+        )
+        observation = ProgressObservation(
+            owner=row["owner"],
+            card_id=row["_card"],
+            session_id="session",
+            claim_revision=row["claim_revision"],
+            expected_claim_revision=row["claim_revision"],
+            progress_at=progress_at,
+            session_alive=True,
+        )
+        per_owner[row["owner"]][
+            classify_wedge(
+                observation,
+                now=row["_at"],
+                claim_age_s=(row["_at"] - first[(row["owner"], row["_card"])]).total_seconds(),
+                receipt_local=row["receipt"] == "local",
+            )
+        ] += 1
+    return per_owner
+
+
+def test_the_measured_window_is_the_window_that_was_measured():
+    """Guard the fixture itself, so a later edit cannot quietly weaken this."""
+    per_owner = _replay()
+    assert sum(sum(counts.values()) for counts in per_owner.values()) == 158
+    assert len(per_owner) == 12
+
+
+def test_no_genuinely_working_worker_would_have_been_killed():
+    """The whole safety case, replayed against 158 real records.
+
+    Ten of the twelve owners are never actuated even once.  The two that are
+    were both independently proven to be producing nothing.
+    """
+    per_owner = _replay()
+    actuated = {
+        owner for owner, counts in per_owner.items() if set(counts) & WEDGE_ACTUATING_STATES
+    }
+    assert actuated == EXPECTED_ACTUATED
+
+
+def test_every_fresh_observation_refuses():
+    """38 of 38 progress-fresh records classify as progressing, none actuate."""
+    per_owner = _replay()
+    total = Counter()
+    for counts in per_owner.values():
+        total.update(counts)
+    assert total["wedge-progressing"] == 38
+    assert total["wedge-stale-confirmed"] == 10
+    assert total["wedge-absent-confirmed"] == 37
+    assert total["wedge-within-margin"] == 73
+
+
+def test_the_slow_starting_worker_is_never_touched():
+    """pi-glm-chiap03-ea911b09 is the case a naive absent-workspace rule kills.
+
+    It reported progress-missing three times and then went progress-fresh
+    nine times under the SAME claim revision: one real worker that took about
+    fifteen minutes to populate its workspace before producing anything.  An
+    empty workspace is a normal startup state, which is exactly why the
+    absent case is deadlined and not acted on the moment it is observed.
+    """
+    counts = _replay()["pi-glm-chiap03-ea911b09"]
+    assert counts["wedge-within-margin"] == 3
+    assert counts["wedge-progressing"] == 9
+    assert not set(counts) & WEDGE_ACTUATING_STATES
