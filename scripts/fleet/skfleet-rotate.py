@@ -3865,6 +3865,28 @@ _CLAIM_BOOKKEEPING=frozenset({"claim","release_claim","unassign","mero_observati
 # this walks is the same hold the reaper and the fold recognise.
 _CLAIM_CLOSING=frozenset({"release_claim","unassign","complete","void","archive"})
 _REAP_WRITER="fleet-liveness-reaper"
+# Bookkeeping that arrives as a LINK rather than as its own action, and so slips
+# past _CLAIM_BOOKKEEPING above. worker_liveness is the dispatcher's own
+# heartbeat: this seat's generation is still breathing. It describes the WORKER,
+# exactly like the mero_observation and WORKER_DIED rows already named above,
+# and it is written by the dispatcher on its five-minute tick whether or not the
+# worker under it ever touches the card.
+#
+# MEASURED ON CHI, 2026-09-19. Counting it as work on the card makes the ceiling
+# unreachable-by-forgiveness for any hold longer than one dispatch tick: the
+# heartbeat lands INSIDE every such window, _work_between then reports work, and
+# the claim is charged. Of the seven cards genuinely frozen that day, excluding
+# the heartbeat unfreezes four (724c2e52 7->3, 63d0474d 6->0, 9d6e9f72 6->2,
+# 05d6dd56 7->1 countable claims) with no amnesty and no change to _MAX_CLAIMS.
+# The three that remain frozen (34115541, 1960b107, 64384b83) carry real work
+# or real verdicts under their holds and are supposed to stay charged, and
+# 06a95c23, the 402-claim runaway, is untouched because its claims never close.
+_BOOKKEEPING_LINK_KEYS=frozenset({"worker_liveness"})
+
+def _is_bookkeeping_link(event):
+    """True when this event is a dispatcher heartbeat, not work on the card."""
+    return (event.get("action")=="link" and
+            _fold_key(event.get("link_key")) in _BOOKKEEPING_LINK_KEYS)
 
 def _work_epochs(cid):
     """When work was written ON this card, from the union of BOTH stores.
@@ -3877,6 +3899,7 @@ def _work_epochs(cid):
     for rows in (event_rows(cid),_load_evidence_events().get(cid,[])):
         for e in rows:
             if e.get("action") in _CLAIM_BOOKKEEPING: continue
+            if _is_bookkeeping_link(e): continue
             if str(e.get("writer") or "").startswith(_REAP_WRITER): continue
             epoch=_ts_epoch(e.get("ts"))
             if epoch>0: epochs.append(epoch)

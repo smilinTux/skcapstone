@@ -55,6 +55,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 
 FUNCTIONS = {
+    "_is_bookkeeping_link",
     "_claim_ceiling_hit",
     "_claim_amnesty_epoch",
     "_countable_claims",
@@ -69,6 +70,7 @@ CONSTANTS = {
     "_CLAIM_BOOKKEEPING",
     "_CLAIM_CLOSING",
     "_REAP_WRITER",
+    "_BOOKKEEPING_LINK_KEYS",
 }
 
 CID = "0aec5a64"
@@ -338,3 +340,95 @@ def test_churn_breaker_still_charges_an_open_claim(tmp_path):
     ]
     _write(tmp_path, rows)
     assert cb.read_signature(tmp_path, CID).claim_attempts == 6
+
+
+# ----------------------------------------------------------------------
+# The dispatcher's own heartbeat is not the card's work.
+#
+# MEASURED ON CHI, 2026-09-19. Eight cards were frozen at the ceiling on
+# chiap01. Their ledgers carry no verdict, no PASS, no candidate commit and no
+# evidence: the only thing written inside almost every hold is niobe's
+# five-minute ``worker_liveness`` link saying that generation is still
+# breathing. Counting it as work on the card charges the card for the
+# dispatcher's own timer, which is how a fleet-side defect became a permanent
+# freeze -- the same conversion this module's header describes, reached by a
+# different route, because ``worker_liveness`` arrives as a ``link`` action and
+# so never met ``_CLAIM_BOOKKEEPING``.
+#
+# Re-running the measured ledgers with the heartbeat excluded and no amnesty:
+# 724c2e52 7->3, 63d0474d 6->0, 9d6e9f72 6->2, 05d6dd56 7->1 countable claims,
+# four of the seven genuinely frozen cards released with _MAX_CLAIMS untouched.
+# ----------------------------------------------------------------------
+
+
+def _heartbeat(minutes: float, writer: str = "niobe", state: str = "active") -> dict:
+    """One dispatcher liveness link, exactly as niobe writes it."""
+    return {
+        "card_id": CID,
+        "action": "link",
+        "writer": writer,
+        "link_key": "worker_liveness",
+        "link_value": "%s|%032x|%s" % (SEAT, 0xAB, state),
+        "ts": _at(minutes),
+    }
+
+
+def test_the_dispatcher_heartbeat_inside_a_hold_does_not_charge_the_claim():
+    """A long hold with nothing under it but the five-minute liveness tick."""
+    # Nine holds of eleven minutes each, so a heartbeat lands inside every one.
+    rows = _cycles(9, hold_s=660.0, period_s=900.0)
+    beats = [_heartbeat((900.0 * i + 300.0) / 60.0) for i in range(9)]
+    ns = _ns(rows, evidence=beats)
+    assert ns["_countable_claims"](CID, 9) == 0
+    assert ns["_claim_ceiling_hit"](CID) is False
+
+
+def test_without_the_fix_the_heartbeat_would_charge_every_claim():
+    """Pin the defect itself: the heartbeat is the ONLY thing in the window."""
+    rows = _cycles(9, hold_s=660.0, period_s=900.0)
+    beats = [_heartbeat((900.0 * i + 300.0) / 60.0) for i in range(9)]
+    ns = _ns(rows, evidence=beats)
+    # The events are present and timestamped inside the holds ...
+    epochs = ns["_work_epochs"](CID)
+    assert epochs == [], "heartbeat must not appear in the card's work epochs"
+    # ... and would land inside the first hold if they were counted.
+    opened = ns["_ts_epoch"](rows[0]["ts"])
+    closed = ns["_ts_epoch"](rows[1]["ts"])
+    beat = ns["_ts_epoch"](beats[0]["ts"])
+    assert opened < beat < closed
+
+
+def test_real_work_in_the_same_hold_still_charges_the_claim():
+    """The fence: excluding the heartbeat must not excuse an actual attempt."""
+    rows = _cycles(9, hold_s=660.0, period_s=900.0)
+    beats = [_heartbeat((900.0 * i + 300.0) / 60.0) for i in range(9)]
+    beats.append(
+        {
+            "card_id": CID,
+            "action": "link",
+            "writer": SEAT,
+            "link_key": "verdict",
+            "link_value": "PASS_FOR_REVIEW",
+            "ts": _at((900.0 * 4 + 400.0) / 60.0),
+        }
+    )
+    ns = _ns(rows, evidence=beats)
+    assert ns["_countable_claims"](CID, 9) == 1
+
+
+def test_a_heartbeat_is_the_only_link_key_forgiven():
+    """A worker's own links are work; only the dispatcher's tick is not."""
+    ns = _ns([], evidence=[])
+    assert ns["_is_bookkeeping_link"](
+        {"action": "link", "link_key": "worker_liveness"}
+    )
+    # Fold-normalised spellings reach the same answer.
+    assert ns["_is_bookkeeping_link"](
+        {"action": "link", "link_key": "worker-liveness"}
+    )
+    for key in ("pr", "verdict", "evidence", "result", "claim_amnesty", "review_join"):
+        assert not ns["_is_bookkeeping_link"]({"action": "link", "link_key": key}), key
+    # A non-link event is never excused by key alone.
+    assert not ns["_is_bookkeeping_link"](
+        {"action": "verdict", "link_key": "worker_liveness"}
+    )
