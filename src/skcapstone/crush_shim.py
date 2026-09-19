@@ -1,4 +1,4 @@
-"""Crush shim - daemon entry point that bridges the crush CLI interface to claude.
+"""Crush shim - daemon entry point that bridges the crush CLI interface to Codex.
 
 Registered as the ``crush`` console_scripts entry point so that
 ``LocalProvider._find_crush_binary()`` discovers it on PATH.  When invoked
@@ -11,8 +11,8 @@ it:
 4. Writes ``{"status": "running", ...}`` to the state file.
 5. Enters a daemon loop that:
    - Polls the team comms inbox for incoming messages.
-   - For each task: dispatches to ``claude -p`` with the correct model and
-     system prompt derived from the soul blueprint.
+   - For each task: dispatches to ``codex exec`` with the worker context and
+     prompt derived from the soul blueprint.
    - Writes results to the agent outbox.
    - Updates the heartbeat in the state file every iteration.
 6. On SIGTERM/SIGINT: writes stopped state and exits cleanly.
@@ -27,6 +27,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -34,7 +35,47 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 _POLL_INTERVAL_SECONDS = 5
-_CLAUDE_BINARY = "claude"
+_CODEX_BINARY = "codex"
+_CODEX_DEFAULT_MODEL = "gpt-5.6-luna"
+_CODEX_TIER_MODELS = {
+    "s": "gpt-5.4-mini",
+    "small": "gpt-5.4-mini",
+    "fast": "gpt-5.4-mini",
+    "codex-fast": "gpt-5.4-mini",
+    "m": "gpt-5.6-luna",
+    "medium": "gpt-5.6-luna",
+    "mid": "gpt-5.6-luna",
+    "balanced": "gpt-5.6-luna",
+    "code": "gpt-5.6-luna",
+    "coding": "gpt-5.6-luna",
+    "codex-mid": "gpt-5.6-luna",
+    "l": "gpt-5.6-sol",
+    "large": "gpt-5.6-sol",
+    "frontier": "gpt-5.6-sol",
+    "codex": "gpt-5.6-sol",
+    "codex-frontier": "gpt-5.6-sol",
+}
+_CODEX_CAPACITY_FALLBACKS = {
+    "gpt-5.6-sol": "gpt-5.6-luna",
+    "gpt-5.6-luna": "gpt-5.4-mini",
+}
+
+
+def _resolve_codex_model(model: str) -> str:
+    """Resolve a logical S/M/L tier to the configured Codex model bucket."""
+    requested = (model or "").strip().lower()
+    if requested.startswith(("gpt-", "o1-", "o3-", "o4-")):
+        return model
+    return _CODEX_TIER_MODELS.get(requested, _CODEX_DEFAULT_MODEL)
+
+
+def _is_capacity_failure(stderr: str) -> bool:
+    """Allow one bounded model fallback for provider capacity failures only."""
+    message = str(stderr or "").lower()
+    return any(
+        marker in message
+        for marker in ("at capacity", "capacity unavailable", "overloaded")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +91,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="crush",
-        description="Crush shim - bridges crush CLI interface to claude backend",
+        description="Crush shim - bridges crush CLI interface to Codex backend",
     )
     sub = parser.add_subparsers(dest="command")
 
@@ -172,7 +213,7 @@ def build_system_prompt(session_config: Dict[str, Any]) -> str:
         session_config: Parsed session.json.
 
     Returns:
-        System prompt string for ``claude -p --system-prompt``.
+        Worker context string prepended to the Codex task prompt.
     """
     parts: List[str] = []
     soul_path = session_config.get("soul_blueprint")
@@ -207,55 +248,103 @@ def build_system_prompt(session_config: Dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Claude dispatch
+# Codex dispatch
 # ---------------------------------------------------------------------------
 
 
-def dispatch_to_claude(
+def dispatch_to_codex(
     prompt: str,
     model: str,
     system_prompt: str,
-    claude_binary: str = _CLAUDE_BINARY,
+    codex_binary: str = _CODEX_BINARY,
 ) -> Optional[str]:
-    """Call ``claude -p`` with the given prompt and return the output.
+    """Call ``codex exec`` with the given prompt and return the final message.
 
     Args:
         prompt: The user prompt to send.
-        model: Model name (e.g. ``claude-opus-4-6``).
-        system_prompt: System prompt for context.
-        claude_binary: Path to the claude CLI binary.
+        model: Logical worker model. Native Codex model names are passed
+            through; SK model tiers use the configured Codex default.
+        system_prompt: Worker context to prepend to the task.
+        codex_binary: Path to the Codex CLI binary.
 
     Returns:
-        Claude's response text, or None on failure.
+        Codex's final response text, or None on failure.
     """
-    cmd = [
-        claude_binary,
-        "-p",
-        "--model",
-        model,
-        "--system-prompt",
-        system_prompt,
-        "--dangerously-skip-permissions",
-        prompt,
-    ]
-
+    combined_prompt = f"WORKER CONTEXT:\n{system_prompt}\n\nTASK:\n{prompt}"
+    output_path = None
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=300,
+        output_handle = tempfile.NamedTemporaryFile(
+            prefix="skcapstone-codex-",
+            suffix=".response",
+            delete=False,
         )
-        if result.returncode == 0:
-            return result.stdout.strip()
-        logger.warning("Claude returned exit code %d: %s", result.returncode, result.stderr)
+        output_path = output_handle.name
+        output_handle.close()
+    except OSError as exc:
+        logger.error("Failed to create Codex response file: %s", exc)
+        return None
+
+    native_model = _resolve_codex_model(model)
+    try:
+        attempted_models = [native_model]
+        fallback = _CODEX_CAPACITY_FALLBACKS.get(native_model)
+        if fallback:
+            attempted_models.append(fallback)
+        for attempt, attempted_model in enumerate(attempted_models):
+            cmd = [
+                codex_binary,
+                "exec",
+                "--ephemeral",
+                "--skip-git-repo-check",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "--color",
+                "never",
+                "--output-last-message",
+                output_path,
+                "--model",
+                attempted_model,
+                combined_prompt,
+            ]
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            if result.returncode == 0:
+                response = (
+                    Path(output_path).read_text(encoding="utf-8").strip()
+                    if Path(output_path).exists()
+                    else result.stdout.strip()
+                )
+                return response or result.stdout.strip()
+            if attempt == 0 and fallback and _is_capacity_failure(result.stderr or ""):
+                logger.warning(
+                    "Codex model %s is at capacity; retrying bounded fallback %s",
+                    attempted_model,
+                    fallback,
+                )
+                continue
+            logger.warning("Codex returned exit code %d: %s", result.returncode, result.stderr)
+            return None
         return None
     except subprocess.TimeoutExpired:
-        logger.warning("Claude call timed out for prompt: %s...", prompt[:80])
+        logger.warning("Codex call timed out for prompt: %s...", prompt[:80])
         return None
     except OSError as exc:
-        logger.error("Failed to invoke claude: %s", exc)
+        logger.error("Failed to invoke Codex: %s", exc)
         return None
+    finally:
+        if output_path:
+            try:
+                Path(output_path).unlink()
+            except OSError:
+                pass
+
+
+# Keep the old import name for callers outside the daemon. The daemon itself
+# calls the Codex-named helper so Claude cannot be selected accidentally.
+dispatch_to_claude = dispatch_to_codex
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +356,7 @@ def _comms_root() -> Path:
     """Return the skcapstone comms root directory."""
     from . import SHARED_ROOT
 
-    return Path(SHARED_ROOT).expanduser() / "sync" / "comms"
+    return Path(SHARED_ROOT).expanduser() / "comms"
 
 
 def poll_inbox(team_name: str, agent_name: str) -> List[Path]:
@@ -280,10 +369,25 @@ def poll_inbox(team_name: str, agent_name: str) -> List[Path]:
     Returns:
         List of message file paths found in the inbox (sorted by name).
     """
-    inbox = _comms_root() / team_name / agent_name / "inbox"
+    inbox = _agent_channel_root(team_name, agent_name) / "inbox"
     if not inbox.is_dir():
         return []
     return sorted(inbox.iterdir())
+
+
+def _agent_channel_root(team_name: str, agent_name: str) -> Path:
+    """Resolve the live channel for an agent.
+
+    TeamEngine deployments use the deployment ID as the channel directory,
+    while older callers use the human-readable team name. Support both so a
+    worker cannot silently miss its mailbox.
+    """
+    root = _comms_root()
+    named = root / team_name / agent_name
+    if named.exists():
+        return named
+    matches = sorted(root.glob(f"*/{agent_name}"))
+    return matches[0] if matches else named
 
 
 def write_outbox(team_name: str, agent_name: str, message: Dict[str, Any]) -> None:
@@ -294,7 +398,7 @@ def write_outbox(team_name: str, agent_name: str, message: Dict[str, Any]) -> No
         agent_name: Agent instance name.
         message: Message dict to write as JSON.
     """
-    outbox = _comms_root() / team_name / agent_name / "outbox"
+    outbox = _agent_channel_root(team_name, agent_name) / "outbox"
     outbox.mkdir(parents=True, exist_ok=True)
     filename = f"{_now_iso().replace(':', '-')}.json"
     (outbox / filename).write_text(json.dumps(message, indent=2), encoding="utf-8")
@@ -319,7 +423,7 @@ def daemon_loop(
     crush_config: Dict[str, Any],
     state_file: str,
 ) -> None:
-    """Main daemon loop: poll inbox, dispatch to claude, write results.
+    """Main daemon loop: poll inbox, dispatch to Codex, write results.
 
     Args:
         session_config: Parsed session.json.
@@ -344,12 +448,18 @@ def daemon_loop(
                 break
             try:
                 msg_data = json.loads(msg_path.read_text(encoding="utf-8"))
-                prompt = msg_data.get("prompt") or msg_data.get("task") or str(msg_data)
+                payload = msg_data.get("payload")
+                prompt = (
+                    msg_data.get("prompt")
+                    or msg_data.get("task")
+                    or (payload.get("content") if isinstance(payload, dict) else None)
+                    or str(msg_data)
+                )
             except (json.JSONDecodeError, OSError):
                 prompt = None
 
             if prompt:
-                response = dispatch_to_claude(prompt, model, system_prompt)
+                response = dispatch_to_codex(prompt, model, system_prompt)
                 if response:
                     write_outbox(
                         team_name,

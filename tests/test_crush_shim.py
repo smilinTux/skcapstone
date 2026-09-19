@@ -4,7 +4,7 @@ Covers:
 - CLI argument parsing
 - Session and crush config loading
 - System prompt construction
-- Daemon loop (inbox polling, claude dispatch, state writing)
+- Daemon loop (inbox polling, Codex dispatch, state writing)
 - Graceful shutdown via SIGTERM
 - Health beacon / heartbeat writing
 """
@@ -23,7 +23,7 @@ from skcapstone.crush_shim import (
     build_arg_parser,
     build_system_prompt,
     daemon_loop,
-    dispatch_to_claude,
+    dispatch_to_codex,
     load_crush_config,
     load_session_config,
     parse_args,
@@ -238,46 +238,92 @@ class TestBuildSystemPrompt:
 
 
 # ---------------------------------------------------------------------------
-# Claude dispatch
+# Codex dispatch
 # ---------------------------------------------------------------------------
 
 
-class TestDispatchToClaude:
-    """Tests for dispatch_to_claude()."""
+class TestDispatchToCodex:
+    """Tests for dispatch_to_codex()."""
 
-    def test_calls_claude_binary(self):
+    def test_calls_codex_binary(self):
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="Hello!", stderr="")
-            result = dispatch_to_claude("Hello", "fast", "system prompt", "/bin/claude")
+            result = dispatch_to_codex("Hello", "fast", "system prompt", "/bin/codex")
         assert result == "Hello!"
         cmd = mock_run.call_args[0][0]
-        assert cmd[0] == "/bin/claude"
-        assert "-p" in cmd
+        assert cmd[0] == "/bin/codex"
+        assert cmd[1] == "exec"
 
     def test_passes_model_flag(self):
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
-            dispatch_to_claude("test", "claude-opus-4-6", "sp", "/bin/claude")
+            dispatch_to_codex("test", "gpt-5.6-sol", "sp", "/bin/codex")
         cmd = mock_run.call_args[0][0]
         model_idx = cmd.index("--model")
-        assert cmd[model_idx + 1] == "claude-opus-4-6"
+        assert cmd[model_idx + 1] == "gpt-5.6-sol"
+
+    @pytest.mark.parametrize(
+        ("logical_tier", "expected_model"),
+        [
+            ("s", "gpt-5.4-mini"),
+            ("fast", "gpt-5.4-mini"),
+            ("m", "gpt-5.6-luna"),
+            ("coding", "gpt-5.6-luna"),
+            ("l", "gpt-5.6-sol"),
+            ("large", "gpt-5.6-sol"),
+        ],
+    )
+    def test_maps_logical_tier_to_configured_codex_bucket(
+        self, logical_tier, expected_model
+    ):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+            dispatch_to_codex("test", logical_tier, "sp", "/bin/codex")
+        cmd = mock_run.call_args[0][0]
+        model_idx = cmd.index("--model")
+        assert cmd[model_idx + 1] == expected_model
+
+    def test_retries_one_capacity_fallback(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                MagicMock(returncode=1, stdout="", stderr="model at capacity"),
+                MagicMock(returncode=0, stdout="ok", stderr=""),
+            ]
+            result = dispatch_to_codex("test", "l", "sp", "/bin/codex")
+
+        assert result == "ok"
+        assert mock_run.call_count == 2
+        first_cmd = mock_run.call_args_list[0][0][0]
+        second_cmd = mock_run.call_args_list[1][0][0]
+        first_model_idx = first_cmd.index("--model")
+        second_model_idx = second_cmd.index("--model")
+        assert first_cmd[first_model_idx + 1] == "gpt-5.6-sol"
+        assert second_cmd[second_model_idx + 1] == "gpt-5.6-luna"
+
+    def test_non_codex_provider_name_uses_codex_default_bucket(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+            dispatch_to_codex("test", "claude-opus", "sp", "/bin/codex")
+        cmd = mock_run.call_args[0][0]
+        model_idx = cmd.index("--model")
+        assert cmd[model_idx + 1] == "gpt-5.6-luna"
 
     def test_returns_none_on_nonzero_exit(self):
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error")
-            result = dispatch_to_claude("test", "fast", "sp")
+            result = dispatch_to_codex("test", "fast", "sp")
         assert result is None
 
     def test_returns_none_on_timeout(self):
         import subprocess as sp
 
-        with patch("subprocess.run", side_effect=sp.TimeoutExpired("claude", 300)):
-            result = dispatch_to_claude("test", "fast", "sp")
+        with patch("subprocess.run", side_effect=sp.TimeoutExpired("codex", 300)):
+            result = dispatch_to_codex("test", "fast", "sp")
         assert result is None
 
     def test_returns_none_on_oserror(self):
         with patch("subprocess.run", side_effect=OSError("not found")):
-            result = dispatch_to_claude("test", "fast", "sp")
+            result = dispatch_to_codex("test", "fast", "sp")
         assert result is None
 
 
@@ -346,7 +392,7 @@ class TestStateWriting:
 
 
 class TestDaemonLoop:
-    """Tests for the daemon loop: polls inbox, calls claude, writes state."""
+    """Tests for the daemon loop: polls inbox, calls Codex, writes state."""
 
     def test_loop_runs_and_writes_heartbeat(self, tmp_path, session_config, crush_config):
         import skcapstone.crush_shim as shim
@@ -399,7 +445,7 @@ class TestDaemonLoop:
                 side_effect=lambda *a: next(inbox_calls, []),
             ):
                 with patch(
-                    "skcapstone.crush_shim.dispatch_to_claude",
+                    "skcapstone.crush_shim.dispatch_to_codex",
                     return_value="4",
                 ) as mock_dispatch:
                     with patch("skcapstone.crush_shim.write_outbox") as mock_outbox:
