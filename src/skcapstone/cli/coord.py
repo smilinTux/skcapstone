@@ -428,6 +428,39 @@ def register_coord_commands(main: click.Group) -> None:
     ):
         """Create a new task on the board."""
         from ..coordination import Board, Task, TaskPriority
+        from ..explicit_id_reservation import (
+            assert_available,
+            create_claimed_explicit_task,
+            create_explicit_task,
+            reserve_rejection,
+        )
+
+        request = {
+            "id": task_id,
+            "title": title,
+            "description": desc,
+            "priority": priority,
+            "tags": list(tag),
+            "created_by": by,
+            "acceptance_criteria": list(criteria),
+            "dependencies": list(dep),
+            "producer_identity": producer_identity,
+            "candidate_evidence_sha256": candidate_evidence_sha256,
+            "source_card": source_card,
+            "head_revision": head_revision,
+            "repository": repository,
+            "base_ref": base_ref,
+            "base_revision": base_revision,
+            "claim_for_me": claim_for_me,
+        }
+        home_path = Path(home).expanduser()
+        if task_id:
+            validate_task_id(task_id)
+            try:
+                assert_available(home_path, task_id)
+            except ValueError as exc:
+                raise click.ClickException(str(exc)) from None
+        validate_agent_name(by)
 
         labels = {str(value).strip().lower() for value in tag}
         governed_review = "review" in labels or any(
@@ -448,15 +481,18 @@ def register_coord_commands(main: click.Group) -> None:
             if not re.fullmatch(r"[0-9a-fA-F]{40}", str(head_revision or "")):
                 missing.append("head_revision")
             if missing:
-                raise click.ClickException(
-                    "incomplete governed review card; missing: " + ", ".join(missing)
-                )
+                message = "incomplete governed review card; missing: " + ", ".join(missing)
+                if task_id:
+                    reserve_rejection(home_path, task_id, request, by, message)
+                raise click.ClickException(message)
 
         from ..source_binding import source_binding_meta
 
         try:
             binding_meta = source_binding_meta(list(tag), repository, base_ref, base_revision)
         except ValueError as exc:
+            if task_id:
+                reserve_rejection(home_path, task_id, request, by, str(exc))
             raise click.ClickException(str(exc)) from None
 
         meta = {}
@@ -469,13 +505,9 @@ def register_coord_commands(main: click.Group) -> None:
             }
         meta.update(binding_meta)
 
-        validate_agent_name(by)
-        if task_id:
-            validate_task_id(task_id)
         for d in dep:
             validate_task_id(d)
 
-        home_path = Path(home).expanduser()
         board = Board(home_path)
         task = Task(
             **({"id": task_id} if task_id else {}),
@@ -504,13 +536,24 @@ def register_coord_commands(main: click.Group) -> None:
             if governed_review and owner.strip().lower() != "seraph":
                 raise click.ClickException("governed review cards may be claimed only by Seraph")
             try:
-                path, revision = board.create_claimed_task(task, owner)
+                path, revision = (
+                    create_claimed_explicit_task(board, task, owner, request, by)
+                    if task_id
+                    else board.create_claimed_task(task, owner)
+                )
             except (RuntimeError, ValueError) as exc:
                 raise click.ClickException(str(exc)) from None
             console.print(f"\n  [green]Created and claimed:[/] [{task.id}] {task.title}")
             console.print(f"  [dim]owner={owner} status=doing claim_revision={revision}[/]")
         else:
-            path = board.create_task(task)
+            try:
+                path = (
+                    create_explicit_task(board, task, request, by)
+                    if task_id
+                    else board.create_task(task)
+                )
+            except ValueError as exc:
+                raise click.ClickException(str(exc)) from None
             console.print(f"\n  [green]Created:[/] [{task.id}] {task.title}")
         console.print(f"  [dim]{path}[/]\n")
 
