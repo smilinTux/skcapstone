@@ -71,6 +71,12 @@ def _core(card_id: str, labels: list[str]) -> dict[str, object]:
         (["glm-only"], False, (("glm",), "required-lane:glm")),
         (["escalation-only"], False, (("escalate",), "required-lane:escalate")),
         ([], True, (("escalate",), "required-lane:escalate")),
+        # A codex pin plus an escalation is NOT a conflict. The escalate lane
+        # serves gpt-5.6-sol, which the gateway advertises as provider=codex,
+        # so escalating a codex-only card keeps it on the codex provider. When
+        # this pair failed closed, the card matched no lane and was dropped
+        # from every cycle forever while the host sat idle with free slots.
+        (["codex-only"], True, (("escalate",), "required-lane:escalate")),
         ([], False, (("qwen", "glm", "codex"), "ordinary")),
     ],
 )
@@ -85,7 +91,6 @@ def test_exact_lane_compatibility(
     ("labels", "escalation_required", "reason"),
     [
         (["codex-only", "glm-only"], False, "conflicting-lane-only:codex,glm"),
-        (["codex-only"], True, "conflicting-lane-only:codex,escalate"),
         (["glm-only", "escalation-only"], False, "conflicting-lane-only:escalate,glm"),
     ],
 )
