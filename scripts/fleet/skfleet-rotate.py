@@ -960,7 +960,8 @@ def _worker_mail_instructions(recipients):
     review_contact = recipients[-1]
     return (
         "- Return exact PASS, PASS_FOR_REVIEW, or BLOCKED with a real hashed "
-        "artifact, and notify %s by skmail.\n"
+        "artifact, and notify %s by skmail. A PASS_FOR_REVIEW is recorded with "
+        "skcapstone coord verdict, not coord link; see HOW TO RECORD YOUR VERDICT.\n"
         "\n"
         "HOW TO SEND MAIL. This is the ONLY mailbox. Use the command; do not invent a\n"
         "file format or a directory:\n"
@@ -6971,6 +6972,24 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
       "evidence, status, claim, label, dependency, and lifecycle write. Never create, "
       "append, rewrite, rename, or delete CardStore JSONL. Use CLI reads for normal "
       "verification; raw file inspection is emergency operator diagnostics only.\n\n"
+      "HOW TO RECORD YOUR VERDICT. Two commands, and which one you need depends on\n"
+      "whether anyone still has to review what you produced.\n"
+      "- PASS_FOR_REVIEW (or PASS_FOR_REREVIEW) means an independent reviewer on a\n"
+      "  DIFFERENT host must verify your candidate. That review cannot open unless\n"
+      "  your verdict names the bytes and the revision, so record it with:\n"
+      "    skcapstone coord verdict <card> PASS_FOR_REVIEW \\\n"
+      "      --candidate ~/.skcapstone/evidence/work/<card>/<file> \\\n"
+      "      --commit $(git rev-parse HEAD) --tree $(git rev-parse HEAD^{tree}) \\\n"
+      "      --ref refs/heads/<branch> --agent \"$SKAGENT\"\n"
+      "  The command hashes the candidate file itself, so write the candidate to that\n"
+      "  shared path FIRST. skcapstone coord link <card> verdict PASS_FOR_REVIEW is\n"
+      "  REFUSED: a link event has no field for a candidate, and 214 cards recorded\n"
+      "  that way sat for 14 days with no review opening for any of them.\n"
+      "  Record it LAST, after your branch and commit_sha links. A verdict is only\n"
+      "  current while nothing follows it on the card, so anything you write after it\n"
+      "  supersedes it and the review never opens.\n"
+      "- A terminal outcome, plain PASS or BLOCKED, has no candidate to bind and still\n"
+      "  uses skcapstone coord link <card> verdict <outcome> --agent \"$SKAGENT\".\n\n"
       "CARD %s (%s)\nTITLE: %s\nDESCRIPTION: %s\n\nACCEPTANCE CRITERIA:\n%s\n\n" % (cid,cid,core.get("kind"),core.get("title"),core.get("description"),ac))
     _seat = None if _elastic_review else seat_for(cid, core)
     # A seat-owned card runs under the seat's identity, not the lane's. The
