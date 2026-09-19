@@ -20,9 +20,10 @@ def test_failed_selection_excludes_active_and_unrelated_units():
 
 
 def test_session_selection_is_bounded():
-    assert hygiene.parse_sessions(
-        "codex-auto-dead\nuser-session\ncodex-auto-live\n"
-    ) == ["codex-auto-dead", "codex-auto-live"]
+    assert hygiene.parse_sessions("codex-auto-dead\nuser-session\ncodex-auto-live\n") == [
+        "codex-auto-dead",
+        "codex-auto-live",
+    ]
 
 
 def test_live_worker_is_not_orphan():
@@ -42,7 +43,9 @@ def test_live_worker_is_not_orphan():
 
 
 def test_cleanup_requires_explicit_flag(monkeypatch, capsys):
-    monkeypatch.setattr(hygiene, "report", lambda: ([hygiene.FailedUnit("skfleet-worker-dead.service")], []))
+    monkeypatch.setattr(
+        hygiene, "report", lambda: ([hygiene.FailedUnit("skfleet-worker-dead.service")], [])
+    )
     calls = []
     monkeypatch.setattr(hygiene.subprocess, "run", lambda *args, **kwargs: calls.append(args[0]))
     assert hygiene.main([]) == 0
@@ -51,7 +54,14 @@ def test_cleanup_requires_explicit_flag(monkeypatch, capsys):
 
 
 def test_cleanup_targets_only_selected_items(monkeypatch):
-    monkeypatch.setattr(hygiene, "report", lambda: ([hygiene.FailedUnit("skfleet-worker-dead.service")], [hygiene.OrphanSession("codex-auto-dead")]))
+    monkeypatch.setattr(
+        hygiene,
+        "report",
+        lambda: (
+            [hygiene.FailedUnit("skfleet-worker-dead.service")],
+            [hygiene.OrphanSession("codex-auto-dead")],
+        ),
+    )
     calls = []
     monkeypatch.setattr(hygiene.subprocess, "run", lambda *args, **kwargs: calls.append(args[0]))
     assert hygiene.main(["--cleanup"]) == 0
