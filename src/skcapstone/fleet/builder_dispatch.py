@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 from skcoord.card_store import CardStore
+from skcoord.coordination import TaskUnclaimable
 
 from ..atomic_io import atomic_write_text
 from ..coordination import Board
@@ -35,6 +37,8 @@ BUILDER_CAPACITY = 4
 _PROCESSES: dict[str, object] = {}
 _WORKER_TOOLS = "read,bash,edit,write,grep,find,ls"
 _BUNDLED_GUARD = Path(__file__).resolve().parents[3] / "scripts/fleet/pi-cardstore-guard.mjs"
+
+logger = logging.getLogger(__name__)
 
 
 class BuilderDispatchError(ValueError):
@@ -337,6 +341,14 @@ def decline_reason(
             return f"superseded-binding-running: node={view.name}"
         return None
     builders = [view for view in ready if _node_load(paths, view.name) < BUILDER_CAPACITY]
+    if not builders:
+        # The common real cause, and the one that used to reach the log as
+        # "unschedulable: unschedulable ()": every Ready builder is full, so
+        # the scheduler was handed nothing to choose between. Name the loads.
+        loads = ", ".join(
+            f"{view.name}={_node_load(paths, view.name)}/{BUILDER_CAPACITY}" for view in ready
+        )
+        return f"builders-at-capacity: {loads}"
     decision = scheduler.select(builders, scheduler.Workload("job", card_id))
     if decision.node is None:
         return f"unschedulable: {decision.reason}"
@@ -788,7 +800,41 @@ def _consume_available(
                     error=str(exc),
                 )
                 continue
-            Board(coordination_home).claim_task(owner, request["card_id"])
+            try:
+                Board(coordination_home).claim_task(owner, request["card_id"])
+            except TaskUnclaimable as exc:
+                # ziowk01-wsl, 2026-09-18: card 59553966 was voided and replaced
+                # while it sat in this queue, claim_task raised, and the bare
+                # ValueError unwound sknoded's whole main loop. One unusable
+                # card must cost one card, not the node worker. Only this typed
+                # refusal is caught: a corrupt store, an unreadable card core or
+                # a permissions failure still propagates and still kills the
+                # unit, because those are not survivable per-card conditions.
+                logger.warning(
+                    "builder dispatch skipping card %s on %s: unclaimable (%s): %s",
+                    request["card_id"],
+                    node,
+                    exc.reason,
+                    exc,
+                )
+                if not exc.terminal:
+                    # Ordinary contention (another owner, an unmet dependency)
+                    # clears on its own. Writing a terminal status here would
+                    # park the card forever, since offer() declines a request
+                    # generation whose status is terminal and nothing rewrites
+                    # an unchanged source binding. Leave the request untouched
+                    # and let the next pass retry it, costing no attempt.
+                    continue
+                return _write_status(
+                    paths,
+                    node,
+                    request,
+                    "blocked",
+                    attempt=int(prior.get("attempt") or 0),
+                    claim_released=False,
+                    error=f"unclaimable: {exc}",
+                    unclaimable_reason=exc.reason,
+                )
             card = CardStore(coordination_home).fold(request["card_id"])
             revision = str(card.meta.get("_claim_revision") or "") if card else ""
             if not card or card.owner != owner or not revision:

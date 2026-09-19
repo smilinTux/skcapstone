@@ -56,7 +56,13 @@ dependencies = [
     # the version carrying abandon_reason, rather than silently resolving to
     # 0.1.69 or any other real-but-lacking release. Do not lower this to make
     # the dependency resolve; the ordering fix is that skcoord ships first.
-    "skcoord>=0.1.77",
+    #
+    # Bumped again 2026-09-18: the builder dispatcher and sknoded's main loop
+    # now catch skcoord.coordination.TaskUnclaimable, which is the typed
+    # refusal that stops one voided card from killing the node worker. Newest
+    # published skcoord tag at the time of writing is v0.1.77, so the floor is
+    # again set one past it: skcoord ships first, then this resolves.
+    "skcoord>=0.1.78",
     "skmemory>=0.5.0",
     "skskills>=0.1.1",
 ]
