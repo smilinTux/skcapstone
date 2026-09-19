@@ -989,3 +989,67 @@ class TestTransportCheckNoThreadLeak:
             _check_transport()
         # Cleanup must happen in the finally, regardless of what the check found.
         fake.stop.assert_called_once()
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Version checks must not report a newer local build as "outdated"
+# ───────────────────────────────────────────────────────────────────────────
+
+
+def _pkg(name, installed, latest, status):
+    from skcapstone.version_check import PackageVersion
+
+    return PackageVersion(name=name, installed=installed, latest=latest, status=status)
+
+
+def test_check_versions_does_not_fail_a_build_ahead_of_pypi(monkeypatch):
+    """A dev/local install ahead of the last release is informational, not a failure.
+
+    Telling the operator to `pip install --upgrade` here would be telling them
+    to DOWNGRADE, and a permanently red check trains people to ignore the report.
+    """
+    import skcapstone.version_check as vc
+    from skcapstone.doctor import _check_versions
+
+    report = vc.VersionReport(
+        packages=[_pkg("skcapstone", "0.15.168.dev222+gd448c2fa", "0.15.166", vc.VERSION_AHEAD)]
+    )
+    monkeypatch.setattr(vc, "check_versions", lambda **kw: report)
+
+    checks = _check_versions()
+    assert len(checks) == 1
+    assert checks[0].passed is True
+    assert checks[0].unknown is False
+    assert checks[0].fix == ""
+    assert "ahead" in checks[0].description
+
+
+def test_check_versions_still_fails_a_genuinely_outdated_package(monkeypatch):
+    import skcapstone.version_check as vc
+    from skcapstone.doctor import _check_versions
+
+    report = vc.VersionReport(
+        packages=[_pkg("skmemory", "0.11.25", "0.11.26", vc.VERSION_OUTDATED)]
+    )
+    monkeypatch.setattr(vc, "check_versions", lambda **kw: report)
+
+    checks = _check_versions()
+    assert len(checks) == 1
+    assert checks[0].passed is False
+    assert checks[0].fix == "pip install --upgrade skmemory"
+
+
+def test_check_versions_emits_nothing_for_current_or_unknown(monkeypatch):
+    """Current packages stay silent; an unreachable PyPI must not invent a failure."""
+    import skcapstone.version_check as vc
+    from skcapstone.doctor import _check_versions
+
+    report = vc.VersionReport(
+        packages=[
+            _pkg("skcomms", "0.2.18", "0.2.18", vc.VERSION_CURRENT),
+            _pkg("capauth", "0.3.12", None, vc.VERSION_UNKNOWN),
+        ]
+    )
+    monkeypatch.setattr(vc, "check_versions", lambda **kw: report)
+
+    assert _check_versions() == []

@@ -37,6 +37,10 @@ dependencies = [
     "click>=8.1,<9.0",
     "cloud9>=1.0.0",
     "mcp>=1.0,<2.0",
+    # Imported directly by version_check for PEP 440 comparison. It was
+    # already present transitively, but a direct import of an undeclared
+    # transitive is a breakage waiting for someone else's dependency bump.
+    "packaging>=23.0",
     "pydantic>=2.0,<3.0",
     "pyyaml>=6.0,<7.0",
     "rich>=13.0,<14.0",

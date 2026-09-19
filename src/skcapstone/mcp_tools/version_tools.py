@@ -43,6 +43,7 @@ async def _handle_version_check(args: dict) -> list[TextContent]:
                     "installed": p.installed,
                     "latest": p.latest,
                     "up_to_date": p.up_to_date,
+                    "status": p.status,
                 }
                 for p in report.packages
             ],

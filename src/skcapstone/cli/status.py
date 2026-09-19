@@ -1097,7 +1097,7 @@ def register_status_commands(main: click.Group) -> None:
     @click.option("--json-out", is_flag=True, help="Output as machine-readable JSON.")
     def version_check(no_pypi: bool, json_out: bool):
         """Check ecosystem package versions against PyPI."""
-        from ..version_check import check_versions
+        from ..version_check import VERSION_AHEAD, VERSION_UNKNOWN, check_versions
 
         report = check_versions(check_pypi=not no_pypi)
 
@@ -1110,6 +1110,7 @@ def register_status_commands(main: click.Group) -> None:
                         "installed": p.installed,
                         "latest": p.latest,
                         "up_to_date": p.up_to_date,
+                        "status": p.status,
                     }
                     for p in report.packages
                 ],
@@ -1136,6 +1137,10 @@ def register_status_commands(main: click.Group) -> None:
 
             if not p.installed:
                 status_str = "[dim]\u2014[/]"
+            elif p.status == VERSION_AHEAD:
+                status_str = "[cyan]ahead of PyPI[/]"
+            elif p.status == VERSION_UNKNOWN:
+                status_str = "[dim]unknown[/]"
             elif p.up_to_date:
                 status_str = "[green]\u2713[/]"
             else:
