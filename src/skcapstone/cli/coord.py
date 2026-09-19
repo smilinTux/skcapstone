@@ -1455,6 +1455,12 @@ def register_coord_commands(main: click.Group) -> None:
         attributed to its writer and reversed by describing again. Only the
         options you pass are changed; pass an empty string to clear a field.
         """
+        from ..describe_guard import DegenerateTitleError, check_title
+
+        try:
+            check_title(title)
+        except DegenerateTitleError as exc:
+            raise click.ClickException(str(exc)) from exc
         from ..card import CardEvent, CardEventLog
 
         if title is None and description is None:
