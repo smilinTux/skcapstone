@@ -30,3 +30,22 @@ def test_worker_searches_are_bounded_to_exact_authorized_roots() -> None:
     assert "bounded filters, result limits, and timeouts" in instructions
     assert "find /, find /home" in instructions
     assert "equivalent broad traversal" in instructions
+
+
+def test_worker_search_instructions_are_actually_spliced_into_a_brief() -> None:
+    """The policy string alone is not enough: something must call the builder.
+
+    A prior version of this test only checked _worker_search_instructions()'s
+    OUTPUT, so deleting its one call site (the line that splices it into
+    _RAILS) still passed every assertion above while every worker brief
+    silently stopped carrying the policy. Reviewer c2d84daf hit exactly that
+    gap live: find /home then find / ran unbounded for 27+ minutes.
+    """
+    tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
+    calls_it = any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_worker_search_instructions"
+        for node in ast.walk(tree)
+    )
+    assert calls_it, "_worker_search_instructions() is defined but never called"

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **A worker brief could lose its mandatory filesystem-search policy with no
+  test noticing.** `tests/test_skfleet_worker_search_policy.py` asserted only
+  the OUTPUT of `_worker_search_instructions()` (the fail-closed policy added
+  after reviewer `c2d84daf` ran `find /home` then `find /`, 27+ minutes each),
+  never that anything actually called it. Deleting the one splice site at
+  `_worker_search_instructions() +` inside the `_RAILS` assembly (line ~7340)
+  left every existing assertion passing while every worker brief silently
+  stopped carrying the policy. Added
+  `test_worker_search_instructions_are_actually_spliced_into_a_brief`, which
+  AST-walks the script for a call to `_worker_search_instructions` and fails
+  if none exists; verified it fails when the splice line is removed and
+  passes once restored.
+
 - **A channel with right of first refusal had become the owner of an entire card
   class.** PR #635 (2026-09-11) removed every `builder_dispatch.eligible()` card
   from every regular host's lanes *unconditionally*, so a path built to feed one
