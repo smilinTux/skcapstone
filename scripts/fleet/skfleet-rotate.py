@@ -604,13 +604,59 @@ def _worker_workspace(default):
     return _resolve_workspace_root(configured) if configured else default
 
 
+# "source-only" was one label carrying two unrelated meanings at once. To this
+# dispatcher it was a ROUTING flag: the sole thing that made a repository /
+# base_ref / base_revision binding get demanded, verified and materialized.
+# To a worker it was a SAFETY constraint, spelled out verbatim in card
+# acceptance criteria: "Source-only. No live database write, provider, Inbox,
+# mailing, deployment, push, or external action." The conflation meant triage
+# could not fix a card's routing without stripping its safety constraint, and
+# could not tell which meaning a card relied on without reading its whole body.
+# The two are split here: routing is driven by the binding, safety by an
+# explicit label. "source-only" keeps BOTH meanings so no existing card changes
+# behaviour, which is why no relabelling pass is needed to land this.
+NO_EXTERNAL_ACTION_LABELS = ("no-external-action", "source-only")
+
+
+def _complete_source_binding(links, meta):
+    """True when a card carries every field a pinned workspace needs.
+
+    All three fields are required on purpose. A PARTIAL binding is a triage
+    defect, not a dispatch trigger: 511 live chi cards carry one with no
+    "source-only" label, and raising on them would convert each into a
+    WORKSPACE_BLOCKED skip. That would trade a checking win for a fleet-wide
+    liveness regression, which is the wrong direction to fail in.
+    """
+    def present(*keys):
+        return any(str(links.get(key) or meta.get(key) or "").strip() for key in keys)
+    return (
+        present("repository")
+        and present("base_ref", "named_base_ref")
+        and present("base_revision")
+    )
+
+
 def _source_workspace_spec(core, labels):
-    """Return the authenticated source binding required by a source card."""
+    """Return the authenticated source binding required by a source card.
+
+    Two triggers, either of which routes: the legacy "source-only" label, or a
+    complete binding on its own. The second is new. Measured on the chi board
+    2026-09-18 by folding every card in a fresh process, 79 live cards carried a
+    complete binding and NO "source-only" label, so this function never looked
+    at their bindings: a broken one among them would have been inert and never
+    checked. All 79 validate cleanly here, so widening the trigger blocks
+    nothing that dispatches today.
+
+    The labelled path is deliberately untouched, including its hard failure when
+    the binding is absent or partial. 2,612 chi cards carry "source-only" and
+    none are relabelled by this change, so they must behave byte-for-byte as
+    before.
+    """
     normalized = {str(label).strip().lower() for label in labels}
-    if "source-only" not in normalized:
-        return None
     links = core.get("links") if isinstance(core.get("links"), dict) else {}
     meta = core.get("meta") if isinstance(core.get("meta"), dict) else {}
+    if "source-only" not in normalized and not _complete_source_binding(links, meta):
+        return None
     link_repository = str(links.get("repository") or "").strip()
     meta_repository = str(meta.get("repository") or "").strip()
     if link_repository and meta_repository and link_repository != meta_repository:
@@ -985,6 +1031,45 @@ def _worker_search_instructions():
         "- Prefer rg or rg --files, with bounded filters, result limits, and timeouts.\n"
         "- Never run find /, find /home, or equivalent broad traversal. Never widen\n"
         "  a search beyond an authorized root; report BLOCKED if the target is absent.\n\n"
+    )
+
+
+def _worker_no_external_action_instructions(labels):
+    """Build the no-external-action rail for a card that declares the constraint.
+
+    Until this split the constraint had no home in code at all. It lived only as
+    prose in a card's acceptance criteria while the SAME label quietly drove
+    workspace routing, so the only lever triage had over routing also silently
+    governed whether a worker believed it could touch production. Giving the
+    safety half its own label is only safe if that half is actually carried
+    somewhere, so it is carried here.
+
+    "source-only" still triggers this rail, because that is the meaning the
+    existing 2,612 cards already give it in their own acceptance criteria. It is
+    the deprecated spelling, not a different constraint.
+
+    Note what this rail does NOT do: it does not rule on pushing a branch. Some
+    acceptance criteria list "push" among the forbidden actions while the
+    DEFINITION OF DONE rail makes pushing mandatory. That tension predates this
+    change and affects 265 live cards; resolving it by fiat here would silently
+    change what those cards mean. The rail defers to the card instead.
+    """
+    normalized = {str(label).strip().lower() for label in labels}
+    if not normalized.intersection(NO_EXTERNAL_ACTION_LABELS):
+        return ""
+    return (
+        "NO EXTERNAL ACTION. This card declares the constraint and it is binding:\n"
+        "- Read, analyse, and write evidence. Change no state outside your own\n"
+        "  workspace and the evidence you are asked to produce.\n"
+        "- No live database write, no provider call, no Inbox or mailing send, no\n"
+        "  deployment, no service restart, no config rollout, and no external\n"
+        "  request that changes state anywhere.\n"
+        "- Committing locally and recording evidence is allowed and expected.\n"
+        "- This card's own acceptance criteria govern any further restriction, and\n"
+        "  they win over the general rails above where they are more specific.\n"
+        "- If the card cannot be finished without an action this forbids, stop and\n"
+        "  report BLOCKED naming the exact action you would have had to take.\n"
+        "  Never take it and disclose it afterwards.\n\n"
     )
 
 
@@ -6963,7 +7048,8 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
       "- If you push a branch, say so and name it, because a pushed branch IS durable\n"
       "  and reachable from any host. That is the cheapest way to satisfy this.\n"
       "A SHA with no reachable bytes is not evidence. It is a promise that expired.\n"
-      + _worker_done_instructions(pr_required(core, _labels)))
+      + _worker_done_instructions(pr_required(core, _labels))
+      + _worker_no_external_action_instructions(_labels))
     brief=_RAILS + ("Work only SKCapstone card %s. The fleet selector has already claimed it "
       "for your exact agent identity. Verify that ownership before working and never "
       "claim or substitute another card. If ownership is absent, or a dependency is "
