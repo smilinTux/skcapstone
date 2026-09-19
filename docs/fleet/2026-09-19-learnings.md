@@ -455,22 +455,57 @@ enforced in the data rather than in the reader's discipline.
 
 ## 28. An eligibility verdict that does not check every gate
 
-`coord gates` reports a card eligible without ever checking its workspace
-binding. `src/skcapstone/coord_gate_diagnostic.py` (62 lines) checks
-unknown-card, dependency-blocked, the governed review gate reasons, a
-`do-not-claim` label, and terminal states, then sets `eligible = not reasons`
-(`:58`). The words workspace, worktree, repository, `base_ref` and
-`base_revision` do not appear in the file.
+`coord gates` reports a **claimed** card as eligible. Reproduced in a throwaway
+home:
 
-The dispatcher gates on exactly that, later and separately
-(`skfleet-rotate.py:7354-7367`, `WORKSPACE_BLOCKED`, via `_source_workspace_spec`
-at `:642`, which raises on conflicting, partial or invalid bindings). So a card
-can read `"eligible": true` from the diagnostic and never dispatch, and the
-operator surface and the dispatcher disagree with no way to see it.
+```
+coord claim b7ad2d6e --agent probe-writer
+coord gates b7ad2d6e
+  {"card_id":"b7ad2d6e","eligible":true,"reasons":[],"seat":null,...}
+```
+
+`src/skcapstone/coord_gate_diagnostic.py:42-51` computes `dependency_blocked`,
+`owned=card.owner is not None`, `capacity_available=busy < target` and
+`dependency_blocker_holds`, and passes all four to
+`governed_review_gate_reasons`. That function opens
+(`src/skcapstone/review_admission.py:288-289`):
+
+```python
+    normalized = {str(label).strip().lower() for label in labels}
+    if "review" not in normalized:
+        return ()
+```
+
+For any card without the `review` label it returns empty **before consulting a
+single one of those arguments**. The caller then computes
+`eligible = not reasons` (`:58`), so on a normal card the only reachable reasons
+are `do-not-claim` and `terminal`. Owned, dependency-blocked and over-capacity
+all read eligible. The inputs were gathered correctly and discarded.
+
+The workspace binding is the same gap seen from further out. It is checked in
+three places — at claim time in the dispatcher
+(`skfleet-rotate.py:7354-7367`, via `_source_workspace_spec` at `:642` and
+`_verify_source_workspace`), at offer time in `builder_dispatch`
+(`src/skcapstone/fleet/builder_dispatch.py:273-305`, builder-eligible cards
+only, consumed by a log line), and at authoring time in `source_binding_meta`
+(`src/skcapstone/source_binding.py:35-80`, now wired into `coord create` and the
+MCP `coord_create`, so a new unbound source-only card can no longer be
+authored). It is checked by **no surface that answers "can this card be
+worked?" for an operator**: not `coord gates`, not `coord board`/`kanban`, no
+MCP tool, and not the dispatcher's own pool construction
+(`_claimability_reason`, `_pool_v2_*`). That last one is why a sweep that
+repaired 262 bindings did not move the pool's `ready` count at all.
+
+One distinction to keep: `gates` does emit an `absent-source-binding` reason
+(`review_admission.py:298`), but that is the governed-review binding
+(`link_source_card` plus a 40-hex `link_head_revision`) on review-labelled cards
+only. It is a different thing from the dispatcher's
+repository/`base_ref`/`base_revision` workspace binding, and reading one as the
+other is how the gap stayed hidden.
 
 The adjacent instance is a card whose own fields disagree: a folded
 `status=DOING` sitting on `meta.voided=true, archived=true`. One is a lifecycle
-projection, the other is a flag, and nothing asserts they agree.
+projection, the other a flag, and nothing asserts they agree.
 
 **Contract.** A surface that answers "can this be worked?" runs every predicate
 the dispatcher runs, or it answers a narrower question and says so in its name.
@@ -480,9 +515,13 @@ the dispatcher runs, or it answers a narrower question and says so in its name.
 | Producer | the eligibility diagnostic |
 | Consumer | the operator deciding whether to intervene |
 | Recovery owner | the seat that owns dispatch |
-| Evidence | the diagnostic and the dispatcher share one predicate list, enumerated from the code |
-| Detection | **fold the board and diff the two answers; any card where they disagree is a defect in the diagnostic** — and a cross-field consistency pass (status vs `meta.voided`/`archived`) is the cheap version |
+| Evidence | every argument a gate accepts is either used on every path or not accepted |
+| Detection | **an early `return ()` placed above the use of the caller's arguments is the bug; a test that passes each blocking input in isolation and asserts a non-empty result catches all four at once** |
 | Fails closed | an unchecked predicate makes the answer `unknown`, not `eligible` |
+
+The cheap version of the whole contract: if a function takes four arguments and
+has a path that reads none of them, the caller's four measurements were wasted
+and the caller cannot tell.
 
 ---
 
