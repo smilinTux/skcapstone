@@ -1,0 +1,109 @@
+{
+  "attempted": "Reproduced PR and shared bytes, verified all 55 ledger entries, folded structural CardStore state, read every direct source cited by the eight semantic corrections, recomputed classifications and terminal counts, and inspected all 47 no-action remedies. Executed no proposed remedy or audited-card action.",
+  "blocked_on": {
+    "referent": "ac:2",
+    "value": "card"
+  },
+  "blocked_reason": "Acceptance criterion 2 cannot pass for the reviewed candidate because correction ledger entry 49 retains an invalid current dependency classification and the replacement summary counts contradict its corrected records.",
+  "card_id": "f55c5023",
+  "findings": [
+    {
+      "criterion": "ac:2",
+      "evidence": {
+        "audited_card_structural_dependencies": [],
+        "correction_ledger_index": 49,
+        "direct_event_note": "The preserved evidence also includes BLOCKED events with no machine referent, one malformed literal shell-substitution hash, and a later focused review event. No current dependency obstruction may be inferred from those bytes.",
+        "direct_referent": "card:db431f61",
+        "record_classification": "dependency",
+        "record_reason_terminal": true,
+        "referent_completed_at": "2026-08-27T21:58:25.656363+00:00",
+        "referent_structural_lifecycle": "done",
+        "replacement_snapshot_at": "2026-08-28T11:04:19.343281+00:00"
+      },
+      "id": "F1",
+      "required_correction": "Do not classify 79bb2305 as a current dependency obstruction using card:db431f61. Preserve the historical direct evidence and classify only what the current two-store join supports.",
+      "severity": "blocking",
+      "summary": "The corrected classification for 79bb2305 names an already complete dependency and is not a valid current dependency obstruction."
+    },
+    {
+      "criterion": "ac:2",
+      "evidence": {
+        "metadata_by_classification": {
+          "card_contradiction": 15,
+          "dependency": 5,
+          "human_gate": 1,
+          "no_current_obstruction_terminal": 23,
+          "supersession": 1,
+          "void_dependency": 2
+        },
+        "metadata_nonterminal": 8,
+        "recomputed_corrected_records": {
+          "blocked_contract_defect": 2,
+          "card_contradiction": 11,
+          "dependency": 4,
+          "human_gate": 2,
+          "no_current_obstruction_terminal": 23,
+          "pass_evidence_awaiting_structural_reconciliation": 1,
+          "pass_for_review_evidence": 1,
+          "supersession": 1,
+          "void_dependency": 2
+        },
+        "recomputed_record_terminal_false": 7
+      },
+      "id": "F2",
+      "required_correction": "Recompute all replacement summary counts from the corrected records with a serializer and verify them before publication.",
+      "severity": "blocking",
+      "summary": "source_snapshot_metadata counts were copied from the superseded report and do not describe the corrected records."
+    }
+  ],
+  "remedy_review": {
+    "all_47_records": {
+      "command": null,
+      "execution_status": "NO_ACTION_PROPOSED"
+    },
+    "authority_or_preconditions_required": false,
+    "result": "PASS_NO_ACTION_ONLY",
+    "supported_append_only_commands_proposed": []
+  },
+  "review_pr": "https://github.com/smilinTux/skcapstone/pull/248",
+  "reviewed_commit": "254fdb5cdf7283008a40b96c5bd29df5f5f5437c",
+  "reviewed_path": "docs/reviews/artifacts/a743f500/partition-00-corrected-replacement.json",
+  "reviewed_pr": "https://github.com/smilinTux/skcapstone/pull/244",
+  "reviewed_sha256": "e315f72bc38b07f48f15d6c1b28230b3fb07899402b8397579a6957fc8ae4b0a",
+  "reviewer": "pi-codex-f55c5023",
+  "schema": "skcapstone.fleet_unblock.corrected_review.v1",
+  "scope": {
+    "actions_executed": [],
+    "audited_cards_mutated": false,
+    "classification_or_evidence_corrections_reviewed": 8,
+    "correction_ledger_entries_reviewed": 55,
+    "external_actions_applied": false,
+    "records_reviewed": 47,
+    "unsupported_pseudo_action_corrections_reviewed": 47
+  },
+  "shared_source_path": "/home/skuser01/.skcapstone/evidence/work/a743f500/partition-00-corrected-replacement.json",
+  "source_identity": {
+    "blocked_review_sha256": "fa353609b4568d785a1465248a29498c32cd924b9092849feeadec24b04b26ce",
+    "manifest_hash_matches": true,
+    "pr_bytes_equal_shared_bytes": true,
+    "sidecar_hash_matches": true,
+    "superseded_report_sha256": "2c7491e935b00fef9ea060ae55ae3fa0091fc62c97ae2b39e01219416ed6939b"
+  },
+  "two_store_review": {
+    "direct_correction_sources_checked_for": [
+      "0a0e2a27",
+      "61bc82e3",
+      "73e446c7",
+      "79bb2305",
+      "9b2aeaeb",
+      "a060fa3d",
+      "bb11e415",
+      "f3fc2c25"
+    ],
+    "evidence_source": "Direct per-card evidence and verdict JSONL, plus separately recorded legacy evidence events where preserved",
+    "join_key": "exact card_id",
+    "structural_source": "/home/skuser01/.skcapstone/cards/<card_id>/core.json plus events/*.jsonl folded with CardStore",
+    "verdict_inferred_from_lifecycle_labels_dependencies_or_links": false
+  },
+  "verdict": "BLOCKED"
+}
