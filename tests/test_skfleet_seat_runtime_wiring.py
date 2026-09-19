@@ -123,7 +123,13 @@ def test_rotation_uses_the_deployed_runtime_interpreter() -> None:
 
 
 def test_rotation_launcher_is_installed_by_the_wheel() -> None:
-    """A package upgrade cannot leave the active dispatcher outside the wheel."""
+    """Every runtime file is still a script-files entry.
+
+    Unchanged from PR #591 (2026-09-09) and still load-bearing: a file in no
+    package is invisible to every version check (the incident that motivated
+    #591 in the first place). What changed, below, is only which COPY the
+    live units execute.
+    """
 
     pyproject = (ROOT / "pyproject.toml").read_text()
     for runtime_file in (
@@ -137,13 +143,44 @@ def test_rotation_launcher_is_installed_by_the_wheel() -> None:
     ):
         assert f'"scripts/fleet/{runtime_file}"' in pyproject
 
+
+def test_niobe_live_dispatcher_names_the_deployed_copy() -> None:
+    """The niobe-live unit must launch the copy the fleet actually runs.
+
+    This reverses the second half of PR #591 (2026-09-09), which pointed
+    `--dispatcher` at `%h/.skenv/bin/skfleet-rotate.py` on the rationale that
+    a package upgrade must not leave the active dispatcher outside the
+    wheel. That goal was right; the path was not. Measured on
+    chiap01/02/03/04/08 on 2026-09-19 via `systemctl --user show
+    skfleet-rotate.service -p ExecStart`, every host runs
+    `%h/.local/bin/skfleet-rotate.py` - the drop-in template already agrees
+    (see `test_rotation_uses_the_deployed_runtime_interpreter` above, fixed
+    by #808), but this unit's `--dispatcher` flag still named the pip copy,
+    which fails closed only because the wrong path also happens to exist
+    (`niobe_live_entrypoint.run_live` raises "Niobe dispatcher is missing"
+    only when the *named* path is absent, not when it is merely stale).
+
+    The operator's 2026-09-19 ruling: `~/.local/bin` is canonical for every
+    per-host fleet artifact. Do not "fix" this back to `.skenv/bin` - that
+    would silently reintroduce the exact defect this test closes.
+
+    This is a minimal, single-site fix. PR #811 (open at the time of this
+    change, `feat/fleet-version-coherence`) declares
+    `deployment_manifest.PER_HOST_ARTIFACTS` as the one place every per-host
+    artifact's deployed path is derived from, and rewires this same unit
+    plus `seat_cycle_entrypoint.py`'s two `sys.executable`-relative guesses
+    through it; that is the intended long-term single source of truth and
+    this test should be folded into its coverage once #811 merges, rather
+    than kept as a second, hand-maintained assertion of the same fact.
+    """
+
     for unit in (
         ROOT / "systemd/skfleet-niobe-live.service",
         ROOT / "src/skcapstone/data/systemd/skfleet-niobe-live.service",
     ):
         text = unit.read_text()
-        assert "%h/.skenv/bin/skfleet-rotate.py" in text
-        assert "%h/.local/bin/skfleet-rotate.py" not in text
+        assert "%h/.local/bin/skfleet-rotate.py" in text, unit
+        assert "%h/.skenv/bin/skfleet-rotate.py" not in text, unit
 
 
 def test_tank_and_atlas_prompts_preserve_role_fences() -> None:

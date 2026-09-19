@@ -736,7 +736,7 @@ skcapstone coord parity --check         # re-verify (exit non-zero on any residu
   a property of capauth / sk_pgp, not this repo.
 
 <!-- docs-evidence
-verified: 2026-09-18
+verified: 2026-09-19
 checks:
   - name: all six console scripts exist and there are still exactly six (section 3)
     run: test $(grep -cE '^[a-z-]+ = "skcapstone\.' pyproject.toml) -eq 6 && grep -qxF 'skcapstone = "skcapstone.cli:main"' pyproject.toml && grep -qxF 'skfleet = "skcapstone.fleet.cli:main"' pyproject.toml && grep -qxF 'skoperator = "skcapstone.operator_seat.cli:main"' pyproject.toml && grep -qxF 'skfleet-claim-expiry = "skcapstone.fleet.claim_expiry_cli:main"' pyproject.toml
@@ -774,4 +774,6 @@ checks:
     run: grep -qF '"model":os.environ.get("SKFLEET_CODEX_LANE_MODEL","sk-codex-mid")' scripts/fleet/skfleet-rotate.py
   - name: glm size levels and kimi models are still what section 6 documents
     run: grep -qF '_GLM_LEVEL_DEFAULTS={"S":"sk-glm-s","M":"sk-glm-m","L":"sk-glm-l","XL":"sk-glm-l"}' scripts/fleet/skfleet-rotate.py && grep -qF '"k3" if match and match.group(1)=="XL" else "kimi-for-coding"' scripts/fleet/skfleet-rotate.py
+  - name: no tracked doc or systemd unit still asserts .skenv/bin for the deployed dispatcher/wrapper (reverses PR #591, 2026-09-19 ruling - ~/.local/bin is canonical for per-host fleet artifacts)
+    run: ! grep -rlF --exclude-dir=.git --exclude=CHANGELOG.md --exclude-dir=changelog.d --exclude=SOP.md --exclude-dir=tests -e '.skenv/bin/skfleet-rotate.py' -e '.skenv/bin/skfleet-worker-wrapper.py' .
 -->

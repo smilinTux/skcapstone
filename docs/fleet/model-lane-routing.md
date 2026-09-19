@@ -164,7 +164,11 @@ Environment=SKFLEET_GLM_TARGET=3
 # Environment=SKFLEET_GLM_MODEL_L=sk-glm-l
 # Environment=SKFLEET_GLM_MODEL_XL=sk-glm-l
 Environment=SKFLEET_MAX_LAUNCH=8
-ExecStart=%h/.skenv/bin/python3 %h/.skenv/bin/skfleet-rotate.py --go
+# The interpreter stays wheel-owned (%h/.skenv/bin/python3); the dispatcher
+# script is the per-host deployed copy at %h/.local/bin, not the pip copy -
+# see scripts/fleet/systemd/skfleet-rotate.service.d/seat-runtime-python.conf
+# and the 2026-09-19 ruling reversing PR #591.
+ExecStart=%h/.skenv/bin/python3 %h/.local/bin/skfleet-rotate.py --go
 ```
 
 ## Related repairs landed with this routing (2026-09-03)

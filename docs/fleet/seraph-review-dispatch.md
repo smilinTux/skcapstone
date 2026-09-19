@@ -76,8 +76,10 @@ The second Seraph seat remains independently available during that process.
 Every claimant is checked against the candidate producer identity, so increasing
 capacity cannot permit a producer to review its own bytes.
 
-Installation must update the Python package, its wheel-owned
-`~/.skenv/bin/skfleet-rotate.py`, and the Seraph service unit from one reviewed
+Installation must update the Python package, the per-host deployed dispatcher
+at `~/.local/bin/skfleet-rotate.py` (a separate copy step from the package
+install - see `docs/fleet/activation-runbook.md`, "Install the package before
+copying the dispatcher script"), and the Seraph service unit from one reviewed
 commit, recording old and new
 SHA-256 hashes before the timer is restarted. Rollback restores all three
 pre-install bytes and runs `systemctl --user daemon-reload`; it does not delete
