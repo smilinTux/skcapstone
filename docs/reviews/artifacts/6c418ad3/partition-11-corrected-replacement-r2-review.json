@@ -1,0 +1,149 @@
+{
+  "acceptance_criteria": {
+    "ac_1": "PASS",
+    "ac_2": "PASS",
+    "ac_3": "PASS",
+    "ac_4": "PASS_ON_PUBLICATION_AND_NOTIFICATION"
+  },
+  "actions_applied": [],
+  "artifact_identity": {
+    "blocking_review_sha256": "24728ed7e976910860d018379d6d88bec756edd309b79c679844df804ad16f09",
+    "manifest_path": "docs/reviews/artifacts/a743f500/manifest-v2.json",
+    "manifest_sha256": "300c66eb6b05bea801d852adb82f7638bd40b00c7b70e5539ab2caabcca315a6",
+    "original_pr": "https://github.com/smilinTux/skcapstone/pull/244",
+    "replacement_path": "docs/reviews/artifacts/a743f500/partition-11-corrected-replacement-v2.json",
+    "replacement_pr": "https://github.com/smilinTux/skcapstone/pull/274",
+    "replacement_pr_head": "f21e893e7d6f29ab396c890bd11e3e9e0f627c60",
+    "replacement_sha256": "51aa08d6ba94b471943016c53df68ce13664bd2632d4f9846093c58fa0b352ec",
+    "shared_path": "/home/skuser01/.skcapstone/evidence/work/a743f500/partition-11-corrected-replacement-v2.json",
+    "v1_replaced_sha256": "cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c"
+  },
+  "correction_ledger_verification": [
+    {
+      "card_id": "9535bc80",
+      "defect_type": "omitted_verdict",
+      "direct_evidence": {
+        "artifact_sha256": "0890f14e099073207558ca2060f8de1cfd6234c096f7f612ad9ec2de8743b14b",
+        "file_sha256": "7eb1a623361da04347a0ef575d8b3ecdf3a9f292f4bbef7555631b6d14b70b52",
+        "line": 1,
+        "path": "/home/skuser01/.skcapstone/cards/9535bc80/acceptance_criteria_evidence.jsonl",
+        "verdict": "BLOCKED"
+      },
+      "result": "PASS",
+      "structural_core_sha256": "b1a26b98b7f58a3c4fe57348c5b093c4ab5179020b2afa355860ad503a613a3e"
+    },
+    {
+      "card_id": "f10a0e73",
+      "defect_type": "omitted_verdicts_and_unsafe_transition",
+      "direct_evidence": {
+        "events": [
+          {
+            "artifact_sha256": "6df545076b6a1750ed5249622cc4550b52918cf1b06621a99afe84e6d11b64b0",
+            "blocked_on": {
+              "referent": "ac:2",
+              "type": "card"
+            },
+            "line": 13,
+            "verdict": "BLOCKED"
+          },
+          {
+            "artifact_sha256": "f1e5b3294fe0b26d0bb124ff32261365e35b7fd0f327559fd1134239dce35557",
+            "blocked_on": {
+              "referent": "ac:2",
+              "type": "card"
+            },
+            "line": 18,
+            "verdict": "BLOCKED"
+          }
+        ],
+        "file_sha256": "9e4e4af84aad8a6781dc8690d812bb641215f56dd9a9fff10e4783d15262fef6",
+        "path": "/home/skuser01/.skcapstone/cards/f10a0e73/events/pi-codex-f10a0e73@chiap08.jsonl"
+      },
+      "result": "PASS",
+      "structural_core_sha256": "0bdc36b217ef87ecd65c827208d0c852ea5ac0055a10234747c1d5e365a090f7"
+    },
+    {
+      "card_id": "0994c010",
+      "defect_type": "reviewed_replacement_unsupported_pseudo_action",
+      "result": "PASS",
+      "structural_core_sha256": "934732e2f1740ff807b9ae7d4225845db9938127150c20a407fb4a2bd597ef9f",
+      "v2_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED"
+      }
+    },
+    {
+      "card_id": "5236382f",
+      "defect_type": "reviewed_replacement_unsupported_pseudo_action",
+      "result": "PASS",
+      "structural_core_sha256": "8831d6cf9fba0a63cda4502cada2bb58a07f56d69a3e69b6762850b7f8911b8a",
+      "v2_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED"
+      }
+    },
+    {
+      "card_id": "65e00fd9",
+      "defect_type": "reviewed_replacement_unsupported_pseudo_action",
+      "result": "PASS",
+      "structural_core_sha256": "475bbefcf15969762326d4666f907ac0ba1cb44124b2e90a32259201f6cf6419",
+      "v2_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED"
+      }
+    }
+  ],
+  "execution": {
+    "audited_card_repairs_applied": false,
+    "commands_executed": false,
+    "external_actions_applied": false
+  },
+  "ownership": {
+    "card_id": "6c418ad3",
+    "claim_event_id": "60c939e5c8a0402a853683ae3b9f1bae",
+    "claim_revision": "b7570369e931489ebd1b0a3a6771cb99",
+    "owner": "pi-codex-chiap02-6c418ad3",
+    "verified": true
+  },
+  "publication": {
+    "branch": "chore/6c418ad3-partition-11-review-r2",
+    "pr_url": "https://github.com/smilinTux/skcapstone/pull/294"
+  },
+  "remedy_contract": {
+    "no_action_dispositions": 5,
+    "nonempty_remedy_record_ids": [
+      "0994c010",
+      "5236382f",
+      "65e00fd9",
+      "9535bc80",
+      "f10a0e73"
+    ],
+    "null_commands": 5,
+    "result": "PASS",
+    "supported_command_proposals": 0
+  },
+  "reproduction": {
+    "all_named_source_json_and_jsonl_parsed": true,
+    "changed_record_ids_v1_to_v2": [
+      "0994c010",
+      "5236382f",
+      "65e00fd9"
+    ],
+    "correction_ledger_count": 5,
+    "named_source_files_parsed": 148,
+    "record_count": 40,
+    "record_ids_unique": true,
+    "replacement_pr_bytes_match_shared_bytes": true
+  },
+  "review_card_id": "6c418ad3",
+  "reviewer": "pi-codex-chiap02-6c418ad3",
+  "schema": "skcapstone.fleet_unblock.corrected_replacement_review.v2",
+  "source_card_id": "a743f500",
+  "two_store_review": {
+    "join_key": "exact card_id",
+    "result": "PASS",
+    "structural_and_direct_evidence_kept_separate": true,
+    "verdict_inferred_from_lifecycle_labels_dependencies_or_links": false
+  },
+  "verdict": "PASS"
+}
