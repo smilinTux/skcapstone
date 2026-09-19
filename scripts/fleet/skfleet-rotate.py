@@ -15,6 +15,9 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from skcapstone.card_store import CardStore
+from skcapstone.blocker_referent import (
+    REOPEN_REASON, REOPEN_WRITER, settled_blocker_reopen,
+)
 from skcapstone.coord_completion import GATED_EXIT_CODE
 from skcapstone.lifecycle_seats import LIFECYCLE_SEATS
 from skcapstone.coordination import Board
@@ -3429,6 +3432,119 @@ def _wake_retry_available(cid,generation):
     retries=sum(1 for launched in _wake_launch_times.get(cid,()) if launched>generation)
     return retries<_WAKE_RETRY_LIMIT
 
+# ---- blockers that already finished ----------------------------------------
+# _blocker_change_epoch above wakes a card when its blocker CHANGES after the
+# BLOCKED verdict. That is the right fence for a blocker still in motion and it
+# is UNREACHABLE for one that was already terminal when the verdict was
+# written: nothing further will ever happen to it, so no change can ever
+# arrive, so the card is parked for good.
+#
+# MEASURED ON chiap01 2026-09-18: 206 open cards carry a BLOCKED outcome.
+# Eleven name a referent whose fold is DONE with a completion timestamp EARLIER
+# than their own verdict. 885037c0 lost that race by half a second (referent
+# acfede01 completed at ...635.5, the block was written at ...636).
+#
+# The repair is a durable `reopen`, not a looser predicate, for two reasons.
+# One, blocked_backoff ALREADY honours reopen, so the read path is untouched
+# and the escape is visible to an operator with who/why/which-referents on it.
+# Two, the generation _blocker_change_epoch returns also fences retries through
+# _wake_retry_available: a generation in the past counts every past launch as a
+# retry, and a generation of "now" resets the fence every cycle and relaunches
+# forever. An event has neither hazard.
+#
+# BOUNDED. It walks the already-loaded outcome index, not the board: only cards
+# whose latest outcome is BLOCKED are considered (206 of 7167 on chiap01), and
+# only those fold a referent. The batch is capped so a first run on a long
+# backlog returns work at a rate the fleet can absorb.
+_SETTLED_REOPEN_MAX=int(os.environ.get("SKFLEET_SETTLED_REOPEN_MAX","25"))
+
+def _settled_blocker_facts(ref):
+    """Referent lifecycle facts, in the scheduler's own vocabulary."""
+    if not os.path.exists(os.path.join(CARDS,ref,"core.json")):
+        return {"state":"missing","human_gated":False,"outcome_blocked":True,"completed_at":0}
+    state=lifecycle_state(ref)
+    return {"state":state,
+            "human_gated":_human_gate(ref),
+            # _dep_satisfied is False for a card that folded DONE while its own
+            # latest outcome still reads BLOCKED. Column is not evidence.
+            "outcome_blocked":not _dep_satisfied(ref),
+            "completed_at":_completion_epoch(ref)}
+
+def settled_blocker_reopens(limit=None):
+    """Cards parked on blockers that have all already reached a real DONE.
+
+    Pure: it decides and returns, and writes nothing. The caller applies.
+    """
+    returned=[]; held={}
+    for cid,(ts,val) in sorted(_load_outcomes().items()):
+        if limit is not None and len(returned)>=limit:
+            break
+        if not (ts and re.match(r"^\s*BLOCKED",str(val or ""),re.I)):
+            continue
+        if not os.path.isdir(os.path.join(CARDS,cid)):
+            continue
+        # A done or voided card has nothing to return to the pool.
+        if lifecycle_state(cid) not in ("open","claimed"):
+            continue
+        reason=_latest_blocked_reason(cid,ts,val)
+        decision=settled_blocker_reopen(
+            cid,reason[0] if reason else None,list(reason[1]) if reason else [],
+            _settled_blocker_facts)
+        if not decision["reopen"]:
+            held[decision["hold"]]=held.get(decision["hold"],0)+1
+            continue
+        # Idempotent across hosts AND across cycles: the token names the
+        # blocker generation, so a card re-blocked on the same finished
+        # referents is NOT returned twice. That is what stops a block/reopen
+        # loop, and it leaves a repeat offender visible to a person.
+        if any(event.get("action")=="reopen" and
+               event.get("transition_id")==decision["transition_id"]
+               for event in event_rows(cid)):
+            held["already-returned"]=held.get("already-returned",0)+1
+            continue
+        returned.append((cid,decision))
+    return returned,held
+
+def reopen_settled_blockers(apply_changes):
+    """Emit one attributed reopen per card whose blockers have all finished."""
+    try:
+        returned,held=settled_blocker_reopens(_SETTLED_REOPEN_MAX)
+    except Exception as exc:
+        log(d,"BLOCKER_SETTLED_SWEEP_FAILED|%s|%s: %s"%(HOST,type(exc).__name__,exc))
+        return 0
+    log(d,"BLOCKER_SETTLED_PLAN|%s|returnable=%d|held=%s|apply=%s"%(
+        HOST,len(returned),
+        ",".join("%s=%d"%kv for kv in sorted(held.items())) or "-",
+        str(bool(apply_changes)).lower()))
+    applied=0
+    for cid,decision in returned:
+        log(d,"BLOCKER_SETTLED|%s|%s|referents=%s|generation=%s"%(
+            HOST,cid,",".join(decision["referents"]),decision["transition_id"]))
+        if not apply_changes:
+            continue
+        argv=[SKC,"coord","reopen",cid,"--agent",REOPEN_WRITER,
+              "--reason","%s referents=%s"%(REOPEN_REASON,",".join(decision["referents"])),
+              "--transition-id",decision["transition_id"]]
+        for ref in decision["referents"]:
+            argv+=["--referent",ref]
+        result=subprocess.run(argv,capture_output=True,text=True)
+        # coord prints an empty line on success and link can store an empty
+        # value while reporting success, so exit code is not evidence. Read the
+        # card's own stream back, bypassing the run-level event cache.
+        landed=any(event.get("action")=="reopen" and
+                   event.get("transition_id")==decision["transition_id"]
+                   for event in _acts_fresh(cid))
+        if landed:
+            applied+=1
+            _rows.pop(cid,None)
+        else:
+            log(d,"BLOCKER_SETTLED_REFUSED|%s|%s|rc=%d|%s"%(
+                HOST,cid,result.returncode,
+                (result.stderr or result.stdout or "").strip().replace("\n"," ")[:200]))
+    if apply_changes:
+        log(d,"BLOCKER_SETTLED_APPLIED|%s|returned=%d of %d"%(HOST,applied,len(returned)))
+    return applied
+
 # An amnesty must NAME the defect it forgives: <defect-ref>|<why>, both parts
 # non-empty, e.g. "PR-778|ownership-repartition-churn". A bare "reset" or an
 # empty value is refused, which is what keeps this from becoming a silent
@@ -4899,6 +5015,11 @@ else:
     _release_failed_startups()
     reap_dead_claims()
     _expire_idle_claims()
+
+# A card parked on a blocker that has already finished can never wake on its
+# own (see settled_blocker_reopens). Plan it in a dry run, apply it only with
+# --go, exactly like the other board repairs above.
+reopen_settled_blockers(not DRY)
 
 # ---- open provisional outcomes for review, then close reviewed work --------
 # A card that produced a candidate and had it independently reviewed and PASSED
