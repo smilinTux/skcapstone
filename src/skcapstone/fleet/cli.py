@@ -32,8 +32,8 @@ from . import profiles as profiles_mod
 from . import services as services_mod
 from . import sknoded as sknoded_mod
 from .explain import explain as explain_kind
-from .paths import default_paths, self_node_name
 from .guidance import enqueue_guidance
+from .paths import default_paths, self_node_name
 
 
 def _now_iso() -> str:
