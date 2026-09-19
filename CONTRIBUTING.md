@@ -69,6 +69,41 @@ before changing `README.md`, `SOP.md`, `SECURITY.md`, or `CHANGELOG.md`:
 
 ---
 
+## Settings: one declaration per fact
+
+**A number in prose with no assertion behind it is a defect.** That is the whole rule.
+It exists because a doc once contradicted *itself* — a table said 32, a paragraph three
+paragraphs up said 4 — and nothing detected it, because nothing checks prose against
+config. Three readers in a row reasoned from the stale half.
+
+Every fleet and gateway setting is registered in
+[`docs/fleet/SETTINGS-REGISTRY.md`](docs/fleet/SETTINGS-REGISTRY.md). Adding one:
+
+1. **A default that ships with the code** → a named constant in `src/` or `scripts/`,
+   one row in registry §1, and a **paired** tier-3 assertion in `SOP.md` that extracts
+   the number from the code *and* from the registry and compares them. Not a `grep -q`
+   for a literal: a literal grep passes when both sides are edited to the same wrong
+   value, and fails to notice when only the doc moves.
+2. **A per-node value** → a node spec label (`skfleet label <node> <key>=<value>`).
+   Not a constant, not a systemd drop-in, not a new file.
+3. **A per-host runtime value** → a systemd `Environment=`, plus a dated row in
+   registry §2 carrying the command that re-measures it.
+4. **A gateway pool ceiling** → the gateway YAML on the owning host, with a dated
+   rationale comment naming who measured what, plus a dated row in registry §2.
+
+Anything CI cannot reach (another host's YAML, a systemd unit, a deployed artifact) is
+recorded as a **dated measurement with a re-measure command**, never as a standing
+claim, and is stated in the registry and **nowhere else**. A second copy is the thing
+that rots; tier 3 asserts the single-declaration property for the values that have
+already drifted once.
+
+Writing the assertion: it goes in the `<!-- docs-evidence -->` block at the bottom of
+`SOP.md`, as `- name:` / `run:` (a one-line shell command, run from the repo root, exit
+0 = still true). Prove it can fail before you open the PR — break the config, watch it
+go red, put it back. An assertion nobody has seen fail is an assertion nobody has
+tested. To forbid a superseded value in prose, use `scripts/docs/prose_grep.sh`, which
+strips `SOP.md`'s own evidence block so the check does not match itself.
+
 ## Review path
 
 1. Open a PR against `main` with a clear description and the compliance checklist from
