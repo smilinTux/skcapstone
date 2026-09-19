@@ -19,16 +19,18 @@ NEUTRAL = {"S": "sk-s", "M": "sk-m", "L": "sk-l", "XL": "sk-xl"}
 
 
 @pytest.fixture(autouse=True)
-def installed_dispatcher(tmp_path, monkeypatch):
-    """Provide the wheel-owned launcher the seat dispatch paths require."""
+def installed_dispatcher(tmp_path):
+    """Provide the DEPLOYED launcher the seat dispatch paths actually run.
 
-    bindir = tmp_path / "skenv-bin"
-    bindir.mkdir()
-    interpreter = bindir / "python3"
-    interpreter.touch(mode=0o755)
-    dispatcher = bindir / "skfleet-rotate.py"
+    Placed under the estate home (tmp_path) at .local/bin, matching the
+    identical fixture in tests/test_seat_cycle_entrypoint.py. It used to be
+    placed next to a monkeypatched sys.executable, which put it in the PIP
+    copy's directory -- right only while the two copies matched.
+    """
+
+    dispatcher = tmp_path / ".local" / "bin" / "skfleet-rotate.py"
+    dispatcher.parent.mkdir(parents=True, exist_ok=True)
     dispatcher.touch(mode=0o755)
-    monkeypatch.setattr(seat_entrypoint.sys, "executable", str(interpreter))
     return dispatcher
 
 
