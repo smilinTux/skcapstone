@@ -152,12 +152,28 @@ def session_file(card: str, started: float | None) -> str | None:
     return newest
 
 
+#: Part types that carry a tool invocation. `toolCall` is what pi actually
+#: writes (verified against a live session on chiap01, 2026-09-19); the
+#: Anthropic-style `tool_use` is accepted too, because it costs one tuple
+#: entry and this file is read by a projector that must not silently emit
+#: `tool: null` for every row if the shape ever changes back.
+TOOL_CALL_TYPES = ("toolCall", "tool_use")
+
+
 def project(raw: str) -> dict | None:
-    """One raw session event -> a compact row. None for events with no content.
+    """One raw session event -> a compact row. None for unparseable lines.
 
     The projection is deliberately lossy. It keeps who spoke, which tool was
-    invoked, and a truncated preview. It drops tool payloads, which is where
-    essentially all of the 45-57 MB lives.
+    invoked, whether it failed, and a truncated preview. It drops the tool
+    payloads, which is where essentially all of the 45-57 MB lives.
+
+    Getting the tool name out is not obvious and the obvious guess is wrong.
+    An assistant event's content parts are ``{"type": "toolCall", "id",
+    "name", "arguments"}``, NOT the Anthropic-style ``tool_use``; and a
+    toolResult event carries no tool part at all, naming its tool in
+    ``message.toolName`` alongside an ``isError`` flag. Reading only
+    ``tool_use`` parses both cases to ``tool: null``, which is what an
+    earlier version of this did, on every single row.
     """
     try:
         d = json.loads(raw)
@@ -165,26 +181,36 @@ def project(raw: str) -> dict | None:
         return None
     msg = d.get("message") or {}
     role = msg.get("role") or d.get("type") or "?"
-    tool = None
+    # toolResult events name their tool at the message level.
+    tool = msg.get("toolName")
     text = ""
+    args = ""
     content = msg.get("content")
     if isinstance(content, list):
         for part in content:
             if not isinstance(part, dict):
                 continue
-            if part.get("type") == "tool_use":
-                tool = part.get("name")
+            if part.get("type") in TOOL_CALL_TYPES:
+                tool = tool or part.get("name")
+                if not args:
+                    args = json.dumps(part.get("arguments") or part.get("input") or "")
             chunk = part.get("text")
             if chunk and not text:
                 text = str(chunk)
     elif isinstance(content, str):
         text = content
-    return {
+    # An assistant turn that only invokes a tool has no text of its own; the
+    # tool arguments are the informative thing to show for it.
+    preview = " ".join((text or args).split())[:PREVIEW]
+    row = {
         "ts": d.get("timestamp"),
         "role": role,
         "tool": tool,
-        "preview": " ".join(text.split())[:PREVIEW],
+        "preview": preview,
     }
+    if msg.get("isError"):
+        row["error"] = True
+    return row
 
 
 def snapshot(host: str) -> list[dict]:

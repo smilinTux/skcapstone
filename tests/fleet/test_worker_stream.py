@@ -28,12 +28,36 @@ def mod():
 
 
 def _event(role: str, text: str = "", tool: str | None = None, ts: str = "2026-09-19T00:00:00Z"):
+    """An assistant event in the shape pi actually writes."""
     content: list[dict] = []
     if tool:
-        content.append({"type": "tool_use", "name": tool, "input": {"command": "x" * 20000}})
+        content.append(
+            {
+                "type": "toolCall",
+                "id": "call_1",
+                "name": tool,
+                "arguments": {"command": "x" * 20000},
+            }
+        )
     if text:
         content.append({"type": "text", "text": text})
     return json.dumps({"timestamp": ts, "message": {"role": role, "content": content}})
+
+
+def _tool_result(tool: str, text: str, is_error: bool = False):
+    """A toolResult event, which names its tool at the MESSAGE level."""
+    return json.dumps(
+        {
+            "timestamp": "2026-09-19T00:00:01Z",
+            "message": {
+                "role": "toolResult",
+                "toolCallId": "call_1",
+                "toolName": tool,
+                "isError": is_error,
+                "content": [{"type": "text", "text": text}],
+            },
+        }
+    )
 
 
 def _session(root: Path, card: str, events: list[str]) -> Path:
@@ -55,6 +79,62 @@ def test_project_keeps_role_tool_and_preview(mod):
     assert row["tool"] == "bash"
     assert row["preview"] == "hello world"
     assert row["ts"] == "2026-09-19T00:00:00Z"
+
+
+def test_project_reads_toolcall_not_tool_use(mod):
+    """REGRESSION. pi writes `toolCall` parts, not Anthropic-style `tool_use`.
+
+    Reading only `tool_use` made every row on every host project to
+    `tool: null`, losing the single most useful field for a dashboard.
+    Caught against a live session on chiap01, 2026-09-19.
+    """
+    row = mod.project(_event("assistant", tool="bash"))
+    assert row["tool"] == "bash"
+
+
+def test_project_accepts_tool_use_shape_too(mod):
+    raw = json.dumps(
+        {
+            "timestamp": "t",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "name": "grep", "input": {"q": "x"}}],
+            },
+        }
+    )
+    assert mod.project(raw)["tool"] == "grep"
+
+
+def test_project_reads_toolresult_tool_name_from_message(mod):
+    """REGRESSION. A toolResult carries no tool part; it names its tool in
+    `message.toolName`."""
+    row = mod.project(_tool_result("bash", "SKAGENT=pi-glm-chiap01"))
+    assert row["role"] == "toolResult"
+    assert row["tool"] == "bash"
+    assert row["preview"] == "SKAGENT=pi-glm-chiap01"
+    assert "error" not in row
+
+
+def test_project_flags_tool_errors(mod):
+    row = mod.project(_tool_result("bash", "command not found", is_error=True))
+    assert row["error"] is True
+
+
+def test_project_previews_arguments_when_turn_has_no_text(mod):
+    """A tool-only assistant turn has no text; show what it is running."""
+    raw = json.dumps(
+        {
+            "timestamp": "t",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "toolCall", "name": "bash", "arguments": {"command": "git status"}}
+                ],
+            },
+        }
+    )
+    row = mod.project(raw)
+    assert "git status" in row["preview"]
 
 
 def test_project_drops_tool_payload(mod):
