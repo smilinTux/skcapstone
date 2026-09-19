@@ -44,6 +44,14 @@ def _claim_event(
     return event
 
 
+#: Module-level constants the extracted functions close over. Extracted from
+#: the launcher's own AST rather than restated here, the way
+#: test_skfleet_claim_ceiling and test_skfleet_backoff_wake already do it: a
+#: literal copied into the harness would keep passing after the real constant
+#: changed, which is exactly the fidelity this seam exists to preserve.
+CONSTANTS = {"_REAP_WRITER"}
+
+
 def _load_functions(*names: str) -> dict[str, object]:
     """Load selected functions without executing the fleet launcher."""
     tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
@@ -53,7 +61,16 @@ def _load_functions(*names: str) -> dict[str, object]:
         if isinstance(node, ast.FunctionDef) and node.name in names
     }
     assert set(wanted) == set(names)
-    module = ast.Module(body=[wanted[name] for name in names], type_ignores=[])
+    constants = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and {t.id for t in node.targets if isinstance(t, ast.Name)} & CONSTANTS
+    ]
+    assert {
+        t.id for node in constants for t in node.targets if isinstance(t, ast.Name)
+    } == CONSTANTS
+    module = ast.Module(body=constants + [wanted[name] for name in names], type_ignores=[])
     namespace: dict[str, object] = {
         "collections": collections,
         "datetime": datetime,

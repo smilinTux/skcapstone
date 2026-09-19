@@ -37,6 +37,43 @@
   launch path never probes — it costs one request per model — and a run where
   nothing answers leaves the catalog alone rather than emptying the picker. The
   sync line now reports `models=<kept>|advertised=<total>|filter=<how>`.
+- **The claim ceiling now counts only claims a live worker actually worked; the
+  churn breaker deliberately still counts them all.**
+  107 cards on the chi fleet were frozen by `max_claims=5`, and almost none had
+  failed: the measured cause was seat churn. Card `0aec5a64` shows seat
+  `pi-glm-chiap01-0aec5a64` claiming and releasing its own card 120 times, median
+  hold 21.4 seconds, with nothing written between any claim and its release. The
+  seat's own wrapper released each time, and the deterministic ownership hash handed
+  the same card back on the next five-minute tick. Because `_claim_ceiling_hit` is
+  monotonic and never self-clears, a transient fleet-side defect became a permanent
+  card freeze.
+
+  A claim whose hold closed with no work recorded under it is no longer charged at
+  `_countable_claims`, and work is read from the union of both event stores, since a
+  worker's PASS lands only in the overlay. Fails closed: an open claim is always
+  charged, unparseable timestamps are charged, any write under the hold charges it,
+  and each claim is forgiven at most once.
+
+  `churn_breaker.count_claim_attempts` is deliberately NOT changed. An earlier
+  revision of this work moved both gates together, on the reasoning that otherwise
+  the breaker would refuse what the ceiling had just re-permitted. That reasoning
+  treated the two refusals as equivalent, and they are not. The ceiling is monotonic
+  and clears only by an operator-written `claim_amnesty` link; the breaker is
+  default-off and a refusal clears the moment anyone records one blocker sentence.
+  More importantly, an unworked hold is not a degenerate stand-in for the breaker's
+  signal, it IS the signal: cards reach the breaker precisely because no agent CAN
+  work them, so nothing is ever written under the hold. Measured on `83e498b6`, the
+  breaker's own motivating card: 57 attempts under the breaker's rule, 11 under the
+  ceiling's, and a pure claim/release loop scores 0 and could never trip the breaker
+  at all. Moving the breaker disabled it for exactly the cards it exists to catch,
+  and broke 8 of the 25 tests in `tests/test_churn_breaker.py`, including
+  `test_claim_release_cycles_by_one_owner_do_count`.
+
+  Measured over 7,212 live cards: frozen cards 16 to 9, and claims charged across
+  the 181 cards with five or more claims in 14 days 2201 to 1044, while genuinely
+  worked cards barely move (`82a101a1` 124 to 123). This does not stop the churn
+  loop itself; it stops the loop from permanently freezing cards. Needs deployment:
+  `~/.local/bin/skfleet-rotate.py` is a per-host artifact a git pull does not update.
 
 - **HTTP 503 was not recognised as a gateway failure, so a nine-hour outage was
   charged to the cards as failed work.** The launcher's `_GATEWAY_ERROR_RE`
