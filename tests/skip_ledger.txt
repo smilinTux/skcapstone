@@ -60,6 +60,18 @@ tests/test_uninstall_wizard.py::TestRemoveAuthKey
 # but BEFORE the artifact-existence asserts, so a partial pass reports as a skip.
 tests/operator_seat/test_fault_injection_drill.py::test_full_drill_runs_clean_against_an_isolated_root
 
+# A mid-test `pytest.importorskip("skos.gtd_ingest")`, so this one skips at the
+# CALL phase after the test has already started. Same skos CI-GAP as above; it
+# is listed separately because a mid-test skip can report a PARTIAL pass as a
+# clean skip, which is strictly worse than never starting.
+tests/test_human_wait.py::test_sync_gtd_is_idempotent_on_source_and_card_id
+
+# Asserts against whatever happens to be checked out at ~/clawd/soul-blueprints,
+# which no runner has. Rewrite with a tmp_path fixture and a monkeypatched repo
+# root, or drop it: test_list_available_with_no_repo already covers the absent
+# branch. Caught by this very guard on the first CI run.
+tests/test_soul_swap.py::TestSoulListDiscovery::test_soul_list_discovers_repo_blueprints
+
 # secret-scan.yml already downloads gitleaks 8.28.0; this test could run there
 # with SKCAPSTONE_GITLEAKS_BIN set instead of skipping in the unit suite.
 tests/test_workflow_secret_scan_refscope.py::test_gitleaks_fails_only_on_finding_ancestry

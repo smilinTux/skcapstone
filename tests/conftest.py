@@ -330,11 +330,23 @@ def _reason_of(report) -> str:
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_logreport(report):
-    # An xfail is reported as `skipped` but carries `wasxfail`. It is a
-    # declared expectation, not a silent absence, and the ledger must not cry
-    # wolf about it -- a gate that reds on legitimate things gets disabled, and
-    # a disabled gate is the absence this whole exercise is about.
-    if report.skipped and report.when == "setup" and not hasattr(report, "wasxfail"):
+    """Record a skip from ANY phase, not just setup.
+
+    The first version of this hook watched `when == "setup"` only, and CI
+    proved it blind to exactly the worst case: `pytest.importorskip` called
+    INSIDE a test body reports at the `call` phase, so
+    test_human_wait.py::test_sync_gtd_is_idempotent_on_source_and_card_id
+    skipped in CI and this guard said nothing. A mid-test skip is the most
+    dangerous kind there is, because it can fire AFTER some assertions have
+    passed and BEFORE the rest ever run, so a PARTIAL pass is reported as a
+    clean skip. A guard blind to that is the defect it was written to catch.
+
+    An xfail also reports as `skipped` but carries `wasxfail`. That is a
+    declared expectation, not a silent absence, and the ledger must not cry
+    wolf about it: a gate that reds on legitimate things gets disabled, and a
+    disabled gate is the absence this whole exercise is about.
+    """
+    if report.skipped and not hasattr(report, "wasxfail"):
         _record_skip(report.nodeid, _reason_of(report))
 
 
