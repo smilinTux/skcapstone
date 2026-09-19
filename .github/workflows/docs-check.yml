@@ -11,6 +11,6 @@ permissions:
   contents: read
 jobs:
   docs:
-    uses: smilinTux/sk-standards/.github/workflows/docs-check.yml@e8d352e1a4c136643106de36c0880310d9fb1ed6 # main
+    uses: smilinTux/sk-standards/.github/workflows/docs-check.yml@155071f7b7624444ea5fe70526d92aa09eac5342 # sk-standards#61: changelog.d/ fragment satisfies tier 2
     with:
       tiers: "1,2,3"
