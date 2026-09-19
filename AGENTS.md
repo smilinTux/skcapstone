@@ -71,6 +71,21 @@ Follow the project conventions:
 - Google-style docstrings on every function
 - Max 500 lines per file
 
+**Changelog: add a NEW file, never edit `CHANGELOG.md`.** Any PR touching `src/**`
+or `pyproject.toml` must record a changelog entry or the `docs / docs-check`
+tier-2 gate fails it. Record it as a new fragment:
+
+```bash
+cat > changelog.d/<your-branch-slug>.md <<'ENTRY'
+- Card `<id>`: what changed, and what was observably wrong before.
+ENTRY
+```
+
+One file per PR means two concurrent PRs never touch the same lines, so the
+rebase conflict that a shared `CHANGELOG.md` guarantees cannot happen. Editing
+`CHANGELOG.md` directly still satisfies the gate, but with other PRs open you
+will be resolving a conflict. See `changelog.d/README.md`.
+
 ## Step 5: Complete
 
 ```bash

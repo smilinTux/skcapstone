@@ -27,6 +27,27 @@ registry artifact selected by a fresh install contains the required API. A
 local source overlay has the same limitation. Do not publish skcapstone while
 the minimum required skcoord artifact is unavailable or unverified.
 
+## Changelog fragments, and why there is no "changelog build" step
+
+Entries land as `changelog.d/<slug>.md` fragments, one per PR, so concurrent PRs
+never conflict on a shared `CHANGELOG.md`. `python scripts/changelog_fragments.py`
+folds pending fragments into the `## Unreleased` section and deletes them.
+
+**There is no required cadence for running it, and it is not wired into CI.** That
+is deliberate and it is why this repo uses a local script instead of towncrier or
+scriv: both are built around a discrete release moment at which `build` runs, and
+this repo has none. As the next section describes, `publish.yml` cuts the next
+patch tag on *every* merge to `main`, so "assemble at release time" would mean
+"assemble on every merge", which is just the shared-file conflict again wearing a
+build step. Fold the fragments when the directory gets noisy, or when you are
+hand-cutting a minor or major version and want the notes collected under it.
+
+The script refuses to run if `CHANGELOG.md` contains more than one
+`## Unreleased` heading. It carried two identical ones for months, which made a
+naive "insert after the heading" ambiguous and broke at least one insert.
+
+---
+
 ## skcapstone: the tag is cut FOR you
 
 `.github/workflows/publish.yml` has a `tag` job gated on

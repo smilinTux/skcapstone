@@ -1403,8 +1403,6 @@
   its exact claim generation is released and CardStore confirms the card is
   currently claimable. The default remains `sk-codex-mid`.
 
-## Unreleased
-
 - Seat dispatch now asks SKGateway for a SIZE instead of a provider. The tank
   and ATLAS role-dispatch path in `src/skcapstone/seat_cycle_entrypoint.py`
   copied the environment and then `env.update`d `SKFLEET_CODEX_MODEL_S/M/L/XL`

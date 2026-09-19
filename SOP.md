@@ -326,7 +326,10 @@ skcapstone ships as **both** a service (the daemon) and a Python package.
 `version` field to bump in `pyproject.toml` (it is `dynamic = ["version"]`) and this
 repo has **no `package.json`** to mirror it into. The **tag is** the version.
 
-1. Add a dated `CHANGELOG.md` entry (Keep-a-Changelog).
+1. Record a changelog entry. Day to day that is a new `changelog.d/<slug>.md`
+   fragment (see `changelog.d/README.md`); fold pending fragments into
+   `CHANGELOG.md` with `python scripts/changelog_fragments.py` before cutting a
+   version you name by hand. Keep-a-Changelog style either way.
 2. `pytest.yml` green + `ci.yml` lint clean (§4).
 3. Merge to `main`. `.github/workflows/publish.yml` **cuts the next patch tag itself**
    when HEAD is not already tagged, then builds and publishes that tagged version in
