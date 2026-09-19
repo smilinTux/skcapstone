@@ -1,0 +1,18 @@
+[Unit]
+Description=Prune expired SKFleet rotation reports on the authority host
+Documentation=https://github.com/smilinTux/skcapstone
+ConditionHost=chiap08
+
+[Service]
+Type=oneshot
+ExecStart=%h/.skenv/bin/python3 %h/.local/bin/prune-fleet-rotation.py --authority-host chiap08 --days 7
+Nice=15
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.skcapstone/evidence/fleet-rotation %h/.skcapstone/evidence/fleet-rotation-reconciliation
+PrivateTmp=true
+
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=%h/.skenv/bin:/usr/local/bin:/usr/bin:/bin
