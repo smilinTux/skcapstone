@@ -506,6 +506,7 @@ _SEAT_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 DRY = "--go" not in sys.argv
 HOME=os.path.expanduser("~")
 CARDS=os.path.join(HOME,".skcapstone/cards")
+LEGACY_EVENTS=os.path.join(HOME,".skcapstone/coordination/card_events")
 EVID=os.path.join(HOME,".skcapstone/evidence/fleet-rotation")
 PI="/home/skuser01/.npm-global/bin/pi"
 PI_CARDSTORE_GUARD=os.environ.get(
@@ -1385,7 +1386,24 @@ def acquire_card_admission(
     return {"admitted": False, "reason": "contended-recovery", "receipt": None}
 
 _rows={}
+_legacy_rows=None
+def _load_legacy_rows():
+    """Read the sanctioned legacy overlay that CardStore folds with card logs."""
+    global _legacy_rows
+    if _legacy_rows is not None: return _legacy_rows
+    _legacy_rows={}
+    for f in sorted(glob.glob(os.path.join(LEGACY_EVENTS,"*.jsonl"))):
+        try:
+            for line in open(f,encoding="utf-8",errors="replace"):
+                try: event=json.loads(line)
+                except Exception: continue
+                cid=event.get("card_id")
+                if cid: _legacy_rows.setdefault(cid,[]).append(event)
+        except OSError: pass
+    return _legacy_rows
+
 def event_rows(cid):
+    """Return the same native plus legacy event union used by CardStore.fold."""
     if cid in _rows: return _rows[cid]
     ev=os.path.join(CARDS,cid,"events"); out=[]
     if os.path.isdir(ev):
@@ -1407,7 +1425,8 @@ def event_rows(cid):
                     if isinstance(_o, dict):
                         out.append(_o)
             except OSError: pass
-    out.sort(key=lambda e: (e.get("ts", ""), str(e.get("writer", "")), str(e.get("event_id", ""))))
+    out.extend(_load_legacy_rows().get(cid,()))
+    out.sort(key=lambda e: (e.get("ts", ""), str(e.get("writer", "")), str(e.get("seq", 0))))
     _rows[cid]=out; return out
 
 def acts(cid):
