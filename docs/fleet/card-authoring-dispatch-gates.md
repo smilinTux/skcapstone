@@ -170,6 +170,64 @@ The fleet also applies lifecycle reassessment, ITIL, prior-launch, review, and
 BLOCKED-backoff filters before or around this function. Passing the card-authoring
 checks alone does not guarantee dispatch.
 
+## The size marker is mandatory, and its absence is silent to `coord gates`
+
+**Every dispatchable title must carry exactly one of `[S]`, `[M]`, `[L]`, or
+`[XL]`.** A card without one is never dispatched on any host.
+
+This gate is not part of `authoritative_claimability()`, so it does not appear
+in the reasons above and `coord gates <id>` reports `eligible: true` for a card
+that can never run. The gate lives in the rotation's candidate scan:
+
+```python
+_LOGICAL_ROUTES = {"S": "sk-s", "M": "sk-m", "L": "sk-l", "XL": "sk-xl"}
+_GLM_SIZE_RE = re.compile(r"\[(S|M|XL|L)\]")
+
+_candidate_scan = _bounded_candidate_sequence(
+    (candidate for candidate in owned
+     if _logical_route_for(candidate[3], candidate[4]) is not None),
+    MAX_CANDIDATE_SCAN)
+```
+
+The size selects a capability bucket that SKGateway resolves to a member. It is
+fail-closed on purpose: no size means no bucket, and substituting one would
+silently run the work on a weaker model than its author intended.
+
+Three ways to fail it, all of which drop the card:
+
+| Title | Size | Result |
+| --- | --- | --- |
+| `Worker liveness oracle from pi session files` | none | dropped |
+| `[CARD][S][M] Ambiguous size` | two | dropped |
+| `[SKDASH-NAV-01][S] Add the nav icon masks` | one | `sk-s` |
+
+**A `sk-m` label does not substitute for the marker.** `_size_class_for()`
+consults size labels only when the folded title is EMPTY, which for a real card
+it never is. This is deliberate and pinned by
+`tests/test_skfleet_logical_routes.py`; a card carrying `sk-m` and an unsized
+title is still dropped.
+
+Observed 2026-09-19: five cards created without a size marker sat unclaimed
+across the chi fleet against 13 free seats on one host and 9 on another, while
+`coord gates` called all five eligible. Repaired with
+`coord describe <id> --title "[M] <original title>"`.
+
+### Reading the refusal
+
+An unsized drop happens before lane selection, so it records no lane reason.
+`SELECTION_EMPTY` now names it directly:
+
+```text
+SELECTION_EMPTY|chiap01|reason=unsized-cards ... unsized=1
+UNSIZED_SKIPPED|chiap01|count=1 ids=986c3e49 omitted=0
+```
+
+`reason=no-compatible-lane` is the catch-all else branch of
+`_selection_diagnostic()`. Before the `unsized` count existed it was also what
+an unsized card produced, which points at `lane_compatibility()` - a function
+that never saw the card. If you are reading `no-compatible-lane`, check
+`unsized=` on the same line first.
+
 ## BLOCKED backoff
 
 BLOCKED is an outcome, not a label. Outcomes fold through the controlled keys
@@ -328,3 +386,5 @@ claim command's own gate, is authoritative.
    claim gates for dispatch.
 7. If a deadline arrives while a gate remains, stop. Never substitute manual
    execution for authority.
+8. Put exactly one `[S]`/`[M]`/`[L]`/`[XL]` marker in every title. `coord gates`
+   does not check this and will not warn you.
