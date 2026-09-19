@@ -940,8 +940,26 @@ store logs **and** the sanctioned legacy paths (archive index plus the
 one store, or that orders events by file position, is a different algorithm that
 happens to resemble it.
 
-The cost of forgetting that was paid three times in one session, each time
-producing a confident number that was wrong.
+The cost of forgetting that was paid four times in one session, each time
+producing a confident number that was wrong, and each time caught by the author
+rather than by a reviewer:
+
+- **13 stuck claims that were not claimed.** A `claims.py` replay treated
+  `move`-to-done and `void` as the only terminal actions and missed `complete`.
+  Eleven of the twelve cards it named had no owner at all. The fold's answer was
+  six claims, all recent.
+- **2,866 live SKLEGAL cards on a 1,160-card board.** Same missing terminal
+  actions, this time also missing `archive`. Caught by the subset being larger
+  than its set, which is contract 9's detection rule doing its job. The real
+  figure was 607 of 1,160.
+- **15 successful writes reported as total failures.** The verifier read
+  `verb`/`kind`/`type` where the schema uses `action`, so it returned zero
+  regardless of what the command did. A bug report against a working `coord
+  label` was nearly filed.
+- **A claim census diverging on 75 of 143 cards.** Deleted — and then the same
+  pattern was rebuilt in the fleet monitor, which reported "27 held, 11 stuck"
+  where the authoritative answer was 19 and 2. Deleting a bad replay does not
+  help if the shape is reintroduced downstream.
 
 This is also why PR #786 existed. Inside the dispatcher itself,
 `_load_outcomes` and `_provisional_candidate` read both stores while
@@ -1013,3 +1031,105 @@ was missing.
 
 All three are the same omission at different points in time: nobody checked that
 the thing kept being true after the moment it was proven.
+
+---
+
+## 36. A refusal is a finding, and it has to be invited in writing
+
+Twice in this session an agent was told to destroy something and correctly
+refused.
+
+**Three of four "runaway" cards were finished work.** A brief named 106 frozen
+cards as runaways and listed four worst offenders to void. `0aec5a64`,
+`22244103` and `2587020f` each carry `verdict=PASS_FOR_REVIEW`, a hash-bound
+evidence bundle (`evidence_sha256=59265a3d…`, `a5d9cc0a…`,
+`artifact_sha256=57354d7a…`), commits, and open PRs on sklegal (#146, #147).
+`0aec5a64` even had a review card, `8c6ed8e4`. Only `06a95c23` — 402 claims,
+8 releases, zero artifacts — was a genuine runaway, and it was voided.
+
+(Those PRs are **open**, not merged. The story was retold once with "merged
+PRs" in it, which is a small thing and exactly the kind of small thing this
+document exists to stop. `gh pr view` says OPEN.)
+
+**A sha that could not be resolved was a typo, not a fabrication.** A review
+card, `3b172df0`, carried a review-target sha that resolved to nothing, and the
+instruction was to void it. Its producer card `19109200` carries the real
+commit:
+
+```
+on the review card (38 hex)   3b172df021eb2776e5e8d0e042ed7aa8aa9758
+on the producer card (40 hex) 3b172df021eb2776f5e8e9d0e042ed7aa8aa9758
+```
+
+Sixteen characters of shared prefix, one substitution at index 16, two dropped
+characters. Provenance: `pi-codex-chiap01-19109200` wrote the correct 40-char
+value as a link at 17:02:03 and created the review card thirty seconds later
+with the mangled 38-char copy. Of eleven cards in that batch, ten were voided
+and this one was refused.
+
+**Contract.** Any brief that authorises destruction carries an explicit
+verify-first clause, and a refusal is reported as a result rather than an
+exception.
+
+| | |
+|---|---|
+| Producer | whoever writes the destructive brief |
+| Consumer | the agent executing it |
+| Recovery owner | the brief's author |
+| Evidence | per item: the stated reason, re-verified against a fresh fold, before the action |
+| Detection | **a destructive batch that reports 100% completion is a batch nobody checked** — a refusal rate of exactly zero over a large batch is suspicious, not reassuring |
+| Fails closed | an item whose stated reason does not hold is reported, never actioned |
+
+The instruction has to be in the brief. The batch that caught the sha typo was
+told, in the brief, *"Do not void on my say-so. For each card, verify
+independently… If any card's stated reason does not hold up, do not void it.
+Report it instead."* The batch that caught the three finished cards had only a
+narrow "do not void a card that is already terminal" and its agent went well
+beyond what it was told. One of those two is a repeatable mechanism and the
+other is luck, and they should not be recorded as the same thing.
+
+---
+
+## 37. The first number is not the number, and some numbers are not numbers
+
+A verification run reported **1 local test failure**. Rechecked, the full suite
+was **3 failed, 9,707 passed, 14 skipped**. The first figure came from a `-x`
+run that stopped at the first failure; the second came from letting it finish.
+All three were then verified against `origin/main` and were pre-existing.
+
+One of the three does not have a value at all.
+`tests/test_skfleet_dispatch_integrity.py::test_five_host_candidate_inventory_counts_unique_ids`
+reads ambient live fleet state: `_run_watch_sample` (`:143-192`) passes the
+whole environment through (`env={**os.environ, "HOME": str(tmp_path), …}`) into
+the real `scripts/fleet/skfleet-distribution-watch.sh`, whose host list, local
+host and state directory all come from the environment with fleet defaults, and
+whose `sample()` ssh-probes every host that is not `$local_host`. The test's
+`ssh` stub matches `chiap01|chiap02|chiap03|chiap04`; **chiap08 falls straight
+through it to the real network.** Four back-to-back runs of that file on
+`origin/main`, same machine, no edits:
+
+```
+run 1: 12 passed
+run 2:  1 failed   (state=collector_fault)
+run 3:  2 failed
+run 4:  1 failed   (state=zero)
+```
+
+A second test in the same file, `test_escalation_only_sessions_keep_distribution_watch_up`,
+fails on the same mechanism.
+
+**Contract.** A test result is a number only if the same commit produces it
+twice.
+
+| | |
+|---|---|
+| Producer | the test suite |
+| Consumer | anyone deciding whether a change is safe |
+| Recovery owner | the test's owner |
+| Evidence | a full run, not a `-x` run, and each failure attributed against the base ref before the change is blamed or cleared |
+| Detection | **run a suspect test file three times on the same commit; a differing result means it reads ambient state, and it should be quarantined rather than re-run until green** |
+| Fails closed | a non-deterministic test is a failing test — a suite that is green only sometimes is not a gate |
+
+The `-x` detail generalises. **An early-exit run reports the position of the
+first failure, not the count of failures**, and the two get written down the
+same way.
