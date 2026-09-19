@@ -635,3 +635,25 @@ already read it.
 Every board measurement cited in this session's PRs says "measured in a fresh
 process" for exactly this reason, and that phrase should be read as a claim
 about method, not as a flourish.
+
+---
+
+## The one-line version
+
+The 2026-09-18 document's one-line version was: every failure was an unverified
+assertion. A day later the sharper statement is about *where* the verification
+was missing.
+
+- **Shape 1** is a missing check on **reachability**. Nothing asserted that the
+  mechanism ever ran. Detection: count the mechanism's successful outcomes over
+  a long window, and treat a hard zero as an alarm equal to a failure.
+- **Shape 2** is a missing check on **provenance**. Nothing asked who computed
+  the field. Detection: for every signal a decision depends on, name the process
+  that produced the value, and check whether it is the process the reader thinks
+  it describes.
+- **Shape 3** is a missing check on **persistence**. Something verified the
+  change once. Detection: compare content digests of what is running against
+  what was merged, on a timer, and report split state as worse than behind.
+
+All three are the same omission at different points in time: nobody checked that
+the thing kept being true after the moment it was proven.
