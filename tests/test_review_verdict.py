@@ -27,10 +27,10 @@ _SUCCESSFUL_CI = (
 )
 
 
-def _home(tmp_path, card_id, title, links=()):
+def _home(tmp_path, card_id, title, links=(), meta=None):
     card = tmp_path / "cards" / card_id
     card.mkdir(parents=True)
-    (card / "core.json").write_text(json.dumps({"title": title}))
+    (card / "core.json").write_text(json.dumps({"title": title, "meta": meta or {}}))
     ev = tmp_path / "coordination" / "card_events"
     ev.mkdir(parents=True)
     rows = [
@@ -87,16 +87,67 @@ def test_terminal_pass_with_complete_ci_satisfies_it(tmp_path):
     validate_review_completion("bbbbbbbb", "[X][REVIEW] review", home)
 
 
+def test_node_review_accepts_complete_hosted_checks_at_exact_head(tmp_path):
+    head = "7" * 40
+    home = _home(
+        tmp_path,
+        "bbbbbbbb",
+        "[X][REVIEW] review",
+        [
+            ("verdict", "PASS", "2026-08-28T03:00:00"),
+            ("hosted_checks", f"6/6 SUCCESS at exact head {head}", "2026-08-28T03:01:00"),
+        ],
+        meta={
+            "repository": "https://github.com/smilinTux/skgateway",
+            "link_head_revision": head,
+        },
+    )
+    validate_review_completion("bbbbbbbb", "[X][REVIEW] review", home)
+
+
+@pytest.mark.parametrize(
+    "hosted_checks",
+    [
+        None,
+        "5/6 SUCCESS at exact head {head}",
+        "6/6 PENDING at exact head {head}",
+        "6/6 SUCCESS at exact head " + "8" * 40,
+    ],
+)
+def test_node_review_fails_closed_without_complete_exact_head_checks(tmp_path, hosted_checks):
+    head = "7" * 40
+    links = [("verdict", "PASS", "2026-08-28T03:00:00")]
+    if hosted_checks is not None:
+        links.append(
+            (
+                "hosted_checks",
+                hosted_checks.format(head=head),
+                "2026-08-28T03:01:00",
+            )
+        )
+    home = _home(
+        tmp_path,
+        "bbbbbbbb",
+        "[X][REVIEW] review",
+        links,
+        meta={
+            "repository": "https://github.com/smilinTux/skgateway",
+            "link_head_revision": head,
+        },
+    )
+    with pytest.raises(ValueError, match="hosted checks"):
+        validate_review_completion("bbbbbbbb", "[X][REVIEW] review", home)
+
+
 @pytest.mark.parametrize("verdict", ["FAIL", "BLOCKED blocked_on=card referent=inc-01"])
-def test_negative_verdict_cannot_terminalize_governed_review(tmp_path, verdict):
+def test_terminal_negative_verdict_satisfies_review_completion(tmp_path, verdict):
     home = _home(
         tmp_path,
         "bbbbbbbb",
         "[X][REREVIEW] review",
         [("verdict", verdict, "2026-08-28T03:00:00")],
     )
-    with pytest.raises(ValueError, match="canonical PASS"):
-        validate_review_completion("bbbbbbbb", "[X][REREVIEW] review", home)
+    validate_review_completion("bbbbbbbb", "[X][REREVIEW] review", home)
 
 
 @pytest.mark.parametrize(

@@ -1,4 +1,4 @@
-"""Contract tests for the six lifecycle seats and Jarvis exclusion."""
+"""Contract tests for the five lifecycle seats and Jarvis exclusion."""
 
 import json
 from pathlib import Path
@@ -14,7 +14,7 @@ from skcapstone.lifecycle_seats import (
 )
 
 
-def test_all_six_profiles_share_the_runtime_contract() -> None:
+def test_all_five_profiles_share_the_runtime_contract() -> None:
     value = load_lifecycle_seat_profiles()
     assert set(value["seats"]) == LIFECYCLE_SEATS
     assert value["product_scope"] == ["skcapstone", "skdashboard", "skworld"]
@@ -71,7 +71,7 @@ def test_jarvis_is_emergency_only_and_keeps_requested_tools() -> None:
     }
 
 
-def test_source_placement_matches_the_six_profiles() -> None:
+def test_source_placement_matches_the_five_profiles() -> None:
     root = Path(__file__).parents[1]
     placement = json.loads((root / "scripts/fleet/seat-placement.json").read_text())
     assert set(placement["seats"]) == LIFECYCLE_SEATS
@@ -80,7 +80,7 @@ def test_source_placement_matches_the_six_profiles() -> None:
 
 def test_packaged_and_source_units_are_byte_identical() -> None:
     root = Path(__file__).parents[1]
-    for seat in ("tank", "atlas"):
+    for seat in ("atlas",):
         for suffix in ("service", "timer"):
             name = f"skfleet-{seat}.{suffix}"
             assert (root / "systemd" / name).read_bytes() == (
@@ -96,12 +96,12 @@ def test_mero_profile_cadence_matches_its_five_minute_timer() -> None:
     assert "OnUnitActiveSec=5min" in timer
 
 
-def test_control_plane_and_every_timer_have_exact_six_seat_five_minute_contract() -> None:
+def test_control_plane_and_every_timer_have_exact_five_seat_five_minute_contract() -> None:
     root = Path(__file__).parents[1]
-    # The record used to pin all six seats to the literal "chiap08", so the
+    # The record used to pin all five seats to the literal "chiap08", so the
     # only estate it could describe was the one it was written on. It is now
     # bound to whichever host the caller elects, and the contract under test
-    # is that all six land on that ONE host: the election is what guarantees
+    # is that all five land on that ONE host: the election is what guarantees
     # a single dispatcher per estate.
     control = load_seat_control_plane("some-elected-host")
     assert set(control["seats"]) == LIFECYCLE_SEATS
@@ -124,11 +124,11 @@ def test_profile_convergence_is_exact_idempotent_and_rollback_safe(tmp_path: Pat
     prior.parent.mkdir(parents=True)
     prior.write_text("prior\n")
 
-    first = converge_lifecycle_seats(home, rollback)
+    first = converge_lifecycle_seats(home, rollback, active_host="chiap08")
     installed = {
         seat: (home / "agents" / seat / PROFILE_FILENAME).read_bytes() for seat in LIFECYCLE_SEATS
     }
-    second = converge_lifecycle_seats(home, tmp_path / "rollback-second")
+    second = converge_lifecycle_seats(home, tmp_path / "rollback-second", active_host="chiap08")
     assert first["schema"] == second["schema"]
     assert set(installed) == LIFECYCLE_SEATS
     assert all(b'"poll_interval_seconds":300' in value for value in installed.values())
@@ -142,9 +142,16 @@ def test_profile_convergence_is_exact_idempotent_and_rollback_safe(tmp_path: Pat
         for value in installed.values()
     )
     assert all((home / "agents" / seat / STARTUP_FILENAME).is_file() for seat in LIFECYCLE_SEATS)
-    assert load_seat_control_plane() == json.loads(
+    assert load_seat_control_plane("chiap08") == json.loads(
         (home / "coordination/seat-control-plane.json").read_text()
     )
+    # The placement manifest belongs to the same write set as the control
+    # plane: it is generated, not hand-maintained, and every seat maps to
+    # exactly one host (seats are not depinned; a second host per seat would
+    # let two machines dispatch the same cards twice).
+    placement = json.loads((home / "coordination/seat-placement.json").read_text())
+    assert set(placement["seats"]) == LIFECYCLE_SEATS
+    assert all(hosts == ["chiap08"] for hosts in placement["seats"].values())
 
     rollback_lifecycle_seats(home, rollback)
     assert prior.read_text() == "prior\n"
@@ -154,6 +161,9 @@ def test_profile_convergence_is_exact_idempotent_and_rollback_safe(tmp_path: Pat
         not (home / "agents" / seat / STARTUP_FILENAME).exists() for seat in LIFECYCLE_SEATS
     )
     assert not (home / "coordination/seat-control-plane.json").exists()
+    # Rollback must undo the placement manifest in step with the control
+    # plane, never one without the other.
+    assert not (home / "coordination/seat-placement.json").exists()
 
 
 def test_profile_convergence_refuses_missing_or_mismatched_identity(tmp_path: Path) -> None:
@@ -162,9 +172,9 @@ def test_profile_convergence_refuses_missing_or_mismatched_identity(tmp_path: Pa
         identity = home / "agents" / seat / "identity/identity.json"
         identity.parent.mkdir(parents=True)
         identity.write_text(json.dumps({"name": seat.title()}))
-    (home / "agents/tank/identity/identity.json").write_text(json.dumps({"name": "Jarvis"}))
+    (home / "agents/atlas/identity/identity.json").write_text(json.dumps({"name": "Jarvis"}))
     try:
-        converge_lifecycle_seats(home, tmp_path / "rollback")
+        converge_lifecycle_seats(home, tmp_path / "rollback", active_host="chiap08")
     except ValueError as exc:
         assert "identity does not match" in str(exc)
     else:

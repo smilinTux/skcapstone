@@ -64,3 +64,48 @@ def test_terminal_review_verdict_remains_excluded_after_lifecycle_fold() -> None
     pool_append = source.index("pool.append", terminal_review)
 
     assert backoff < terminal_review < pool_append
+
+
+def test_governed_review_is_the_only_executable_review_state() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    reason = source[
+        source.index("def _claimability_reason") : source.index("def _authoritative_card_state")
+    ]
+    decision = source[
+        source.index("def authoritative_claimability") : source.index("def lifecycle_state")
+    ]
+
+    assert 'state["status"] == "review"' in reason
+    assert '"review" in normalized_labels' in reason
+    assert "not (_NOT_CLAIMABLE & normalized_labels)" in reason
+    assert 'return "governed-review"' in reason
+    assert 'reason in {"claimable", "governed-review"}' in decision
+    assert reason.index('return "governed-review"') < reason.index('return "review"')
+
+
+def test_governed_review_still_passes_link_before_claim() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    launch = source[source.index("for _pick_index,(_LANE,") :]
+
+    assignment = launch.index("_pool_v2_preclaim_handoff(")
+    claim = launch.index('claim=subprocess.run([SKC,"coord","claim"')
+    assert assignment < claim
+
+
+def test_review_admission_uses_same_snapshot_fence_as_hash_partition() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    authority = source[
+        source.index("def _pool_v2_authority_rows") : source.index("# Partition the CARD SPACE")
+    ]
+    preclaim = source[
+        source.index("def _pool_v2_preclaim_matches") : source.index("def _pool_v2_overlay")
+    ]
+    launch = source[source.index("# Last-moment re-check") :]
+
+    assert "_POOL_V2_ADMISSIONS" in authority
+    assert "_pool_v2_fingerprint(fresh) == _pool_v2_fingerprint(selected)" in preclaim
+    assert (
+        "fresh_claimability=authoritative_claimability(cid,core=_fresh_core,fresh=True)" in launch
+    )
+    assert "_pool_v2_preclaim_handoff(" in launch
+    assert "SKIPPED_ADMISSION_DRIFT" in launch

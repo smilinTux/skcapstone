@@ -44,6 +44,14 @@ def _claim_event(
     return event
 
 
+#: Module-level constants the extracted functions close over. Extracted from
+#: the launcher's own AST rather than restated here, the way
+#: test_skfleet_claim_ceiling and test_skfleet_backoff_wake already do it: a
+#: literal copied into the harness would keep passing after the real constant
+#: changed, which is exactly the fidelity this seam exists to preserve.
+CONSTANTS = {"_REAP_WRITER"}
+
+
 def _load_functions(*names: str) -> dict[str, object]:
     """Load selected functions without executing the fleet launcher."""
     tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
@@ -53,7 +61,16 @@ def _load_functions(*names: str) -> dict[str, object]:
         if isinstance(node, ast.FunctionDef) and node.name in names
     }
     assert set(wanted) == set(names)
-    module = ast.Module(body=[wanted[name] for name in names], type_ignores=[])
+    constants = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and {t.id for t in node.targets if isinstance(t, ast.Name)} & CONSTANTS
+    ]
+    assert {
+        t.id for node in constants for t in node.targets if isinstance(t, ast.Name)
+    } == CONSTANTS
+    module = ast.Module(body=constants + [wanted[name] for name in names], type_ignores=[])
     namespace: dict[str, object] = {
         "collections": collections,
         "datetime": datetime,
@@ -64,6 +81,7 @@ def _load_functions(*names: str) -> dict[str, object]:
         "os": os,
         "re": re,
         "ROTATION_HOSTS": ("chiap01", "chiap02", "chiap03", "chiap04", "chiap08"),
+        "DISPATCH_AGENT": "niobe",
     }
     exec(compile(module, str(ROTATE), "exec"), namespace)
     return namespace
@@ -139,6 +157,7 @@ def _reaper_fixture(
         "_fleet_launch_provenance",
         "_ineffective_suppresses",
         "_record_reap_outcome",
+        "_append_reaper_evidence",
         "reap_dead_claims",
     )
     released: list[list[str]] = []
@@ -182,6 +201,16 @@ def _reaper_fixture(
                 "mismatched": 0,
                 "duplicates": 0,
             },
+            # The progress pass runs inside reap_dead_claims but is not under
+            # test here; it has its own coverage in
+            # test_worker_progress_report.py and test_wedge_reaper.py. Stubbed
+            # exactly like _worker_health_snapshot above. The reporter stub
+            # records nothing because the reporter must still actuate nothing,
+            # and the wedge actuator is stubbed to return 0 so the absence
+            # path's own release accounting stays the only thing measured.
+            "_report_worker_progress": lambda *_args, **_kwargs: None,
+            "_reap_wedged_workers": lambda *_args, **_kwargs: 0,
+            "active_worker_units": lambda: [],
             "sh": lambda *_args: "",
             "seat_for": lambda card_id, _core: "link" if card_id == "deadbeef" else None,
             "subprocess": SimpleNamespace(run=fake_run),
@@ -833,6 +862,8 @@ def test_launch_failure_releases_the_exact_claimed_revision() -> None:
             "exact-revision",
             "--agent",
             "worker-owner",
+            "--abandon-reason",
+            "error",
         ]
     ]
 
@@ -875,7 +906,9 @@ def test_genuine_dead_fleet_claim_with_exact_generation_is_released(
             "--expected-claim-revision",
             revision,
             "--agent",
-            "jarvis",
+            "niobe",
+            "--abandon-reason",
+            "error",
         ]
     ]
 

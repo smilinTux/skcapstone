@@ -24,7 +24,10 @@ def _helpers() -> dict[str, object]:
                 isinstance(target, ast.Name) and target.id in wanted for target in node.targets
             )
         )
-        or (isinstance(node, ast.FunctionDef) and node.name == "_logical_route_for")
+        or (
+            isinstance(node, ast.FunctionDef)
+            and node.name in {"_size_class_for", "_logical_route_for"}
+        )
     ]
     namespace: dict[str, object] = {"re": re}
     exec(compile(ast.Module(body=body, type_ignores=[]), str(ROTATE), "exec"), namespace)
@@ -49,8 +52,25 @@ def test_missing_or_ambiguous_size_fails_closed(title: str) -> None:
     assert helper({"title": title}) is None
 
 
+def test_empty_title_uses_one_canonical_folded_size_label() -> None:
+    helper = _helpers()["_logical_route_for"]
+    assert helper({"title": ""}, ["review", "sk-l"]) == "sk-l"
+    assert helper({"title": ""}, ["sk-s", "sk-m"]) is None
+    assert helper({"title": ""}, ["review"]) is None
+
+
 def test_launch_never_replaces_logical_route_with_selected_member() -> None:
+    """The route identity names the SIZE, never a concrete pool member.
+
+    The identity is what preflight, health and evidence are keyed on, so if it
+    ever carries a member model instead of the size, those three start naming a
+    backend and the card's size is lost from the record.
+    """
     source = ROTATE.read_text(encoding="utf-8")
     assert 'model=str(_selected_route["model_or_bucket"])' not in source
     assert '"provider":"skgateway"' in source
-    assert '"logical_route":model' in source
+    assert '"logical_route":_bucket' in source
+    # `model` is now the LANE's resolution of the bucket (sk-codex-mid, sk-glm-m,
+    # kimi-for-coding). It is the right thing to SEND and the wrong thing to
+    # record as the identity, so it must never be assigned back to it.
+    assert '"logical_route":model' not in source

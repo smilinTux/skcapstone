@@ -77,16 +77,6 @@
       "owns": ["card_claim", "card_release", "worker_launch", "worker_stop", "reassignment", "rotation"],
       "denies": ["review_verdict", "merge", "deployment", "release", "application_actuation"]
     },
-    "tank": {
-      "identity": "tank",
-      "activation_state": "active_bounded",
-      "role": "release_install_operator",
-      "card_label": "seat-tank",
-      "cadence_seconds": 300,
-      "timeout_seconds": 300,
-      "owns": ["approved_artifact_release", "approved_artifact_install", "behavioral_verification", "rollback"],
-      "denies": ["source_authoring", "self_approval", "independent_review_of_own_release", "merge", "fleet_dispatch"]
-    },
     "atlas": {
       "identity": "atlas",
       "activation_state": "active_bounded",
@@ -94,8 +84,8 @@
       "card_label": "seat-atlas",
       "cadence_seconds": 300,
       "timeout_seconds": 300,
-      "owns": ["operational_observation", "authorized_action_execution", "postcondition_verification"],
-      "denies": ["coordination_board_ownership", "card_claim", "reviewer_assignment", "merge", "policy_change", "unratified_action"]
+      "owns": ["operational_observation", "authorized_action_execution", "postcondition_verification", "approved_artifact_release", "approved_artifact_install", "behavioral_verification", "rollback"],
+      "denies": ["coordination_board_ownership", "card_claim", "reviewer_assignment", "merge", "policy_change", "unratified_action", "source_authoring", "self_approval", "independent_review_of_own_release", "fleet_dispatch"]
     }
   },
   "jarvis": {

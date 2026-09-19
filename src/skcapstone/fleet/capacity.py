@@ -58,6 +58,53 @@ def _gpu_info() -> dict | None:
 RESERVE_CORES = 1
 RESERVE_RAM_GB = 1.0
 RESERVE_DISK_GB = 5.0
+RESERVE_RAM_KB = int(RESERVE_RAM_GB * 2**20)
+RESERVE_SWAP_KB = 262_144
+
+
+def parse_meminfo_kb(text: str) -> dict[str, int]:
+    """Parse MemAvailable/SwapTotal/SwapFree; fail closed when incomplete."""
+    values: dict[str, int] = {}
+    for line in text.splitlines():
+        if ":" not in line:
+            continue
+        key, rest = line.split(":", 1)
+        fields = rest.split()
+        if not fields:
+            continue
+        try:
+            values[key] = int(fields[0])
+        except ValueError as exc:
+            raise ValueError(f"meminfo field {key} is not an integer") from exc
+    required = ("MemAvailable", "SwapTotal", "SwapFree")
+    missing = [key for key in required if key not in values]
+    if missing:
+        raise ValueError("meminfo is missing required fields: " + ",".join(missing))
+    return {key: values[key] for key in required}
+
+
+def admit_headroom(
+    meminfo_text: str,
+    *,
+    mem_reserve_kb: int = RESERVE_RAM_KB,
+    swap_reserve_kb: int = RESERVE_SWAP_KB,
+) -> tuple[bool, str, dict[str, int] | None]:
+    """Fail closed when live memory or swap headroom is unsafe."""
+    try:
+        meminfo = parse_meminfo_kb(meminfo_text)
+    except ValueError as exc:
+        return False, str(exc), None
+    mem_available = meminfo["MemAvailable"]
+    swap_total = meminfo["SwapTotal"]
+    swap_free = meminfo["SwapFree"]
+    if mem_available < mem_reserve_kb:
+        return False, "unsafe-memory", meminfo
+    if swap_total < 0 or swap_free < 0 or swap_free > swap_total:
+        return False, "unsafe-swap", meminfo
+    # Reason: no-swap hosts (total 0) are fine; otherwise keep free reserve.
+    if swap_total > 0 and swap_free < swap_reserve_kb:
+        return False, "unsafe-swap", meminfo
+    return True, "ok", meminfo
 
 
 def allocatable(capacity: dict) -> dict:
