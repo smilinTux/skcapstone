@@ -6380,6 +6380,16 @@ def lane_compatibility(labels, escalation_required=False, qwen_allowed=True,
         )
     if escalation_required:
         required.add("escalate")
+    # A codex pin and an escalation are not really in conflict: the escalate
+    # lane's own model is a stronger GPT, so it already satisfies what
+    # codex-only asks for. Without this, a card pinned to codex that a worker
+    # escalated requires two lanes at once, matches neither, and is dropped from
+    # every cycle forever - 36 such drops on chiap01 in three hours, the same
+    # card each time, against 17 free slots. Every other pin stays in conflict
+    # on purpose: escalating a qwen-only or glm-only card onto a GPT would break
+    # a deliberate provider restriction, which is what those labels exist to do.
+    if required=={"codex","escalate"}:
+        required={"escalate"}
     if len(required)>1:
         return (),"conflicting-lane-only:%s"%",".join(sorted(required))
     if required:
