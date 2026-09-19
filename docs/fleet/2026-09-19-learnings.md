@@ -1012,28 +1012,6 @@ about method, not as a flourish.
 
 ---
 
-## The one-line version
-
-The 2026-09-18 document's one-line version was: every failure was an unverified
-assertion. A day later the sharper statement is about *where* the verification
-was missing.
-
-- **Shape 1** is a missing check on **reachability**. Nothing asserted that the
-  mechanism ever ran. Detection: count the mechanism's successful outcomes over
-  a long window, and treat a hard zero as an alarm equal to a failure.
-- **Shape 2** is a missing check on **provenance**. Nothing asked who computed
-  the field. Detection: for every signal a decision depends on, name the process
-  that produced the value, and check whether it is the process the reader thinks
-  it describes.
-- **Shape 3** is a missing check on **persistence**. Something verified the
-  change once. Detection: compare content digests of what is running against
-  what was merged, on a timer, and report split state as worse than behind.
-
-All three are the same omission at different points in time: nobody checked that
-the thing kept being true after the moment it was proven.
-
----
-
 ## 36. A refusal is a finding, and it has to be invited in writing
 
 Twice in this session an agent was told to destroy something and correctly
@@ -1133,3 +1111,33 @@ twice.
 The `-x` detail generalises. **An early-exit run reports the position of the
 first failure, not the count of failures**, and the two get written down the
 same way.
+
+---
+
+## The one-line version
+
+The 2026-09-18 document's one-line version was: every failure was an unverified
+assertion. A day later the sharper statement is about *where* the verification
+was missing.
+
+- **Shape 1** is a missing check on **reachability**. Nothing asserted that the
+  mechanism ever ran. Detection: count the mechanism's successful outcomes over
+  a long window, and treat a hard zero as an alarm equal to a failure.
+- **Shape 2** is a missing check on **provenance**. Nothing asked who computed
+  the field. Detection: for every signal a decision depends on, name the process
+  that produced the value, and check whether it is the process the reader thinks
+  it describes.
+- **Shape 3** is a missing check on **persistence**. Something verified the
+  change once. Detection: compare content digests of what is running against
+  what was merged, on a timer, and report split state as worse than behind.
+
+All three are the same omission at different points in time: nobody checked that
+the thing kept being true after the moment it was proven.
+
+The fourth section is the uncomfortable one, because the diagnosis produced four
+wrong counts, one canonical figure that is a `head -6` artifact now quoted in
+three files on main, one narrative invented by the fix that fixed it, and one
+test result that is not a number. Every one of those was caught by measuring
+again through a different path. None was caught by anyone being careful.
+
+---
