@@ -216,6 +216,41 @@ def _valid_entries(path: Path) -> list[dict[str, Any]]:
     return entries
 
 
+def current_manifest_by_node(home: Path | str) -> dict[str, dict[str, Any]]:
+    """Every node's most recently recorded manifest, keyed by node name.
+
+    Each node appends its own manifest to its OWN node-scoped history file
+    under the one Syncthing folder the whole estate shares, so a controller
+    (or any host) already has every peer's answer locally, with no ssh and
+    no new publishing step. This reads that existing store; it adds no
+    channel of its own.
+
+    A node with no history file, or whose history holds no parseable entry,
+    is simply absent from the result rather than present with a fabricated
+    manifest -- "this node has never recorded a deployment" and "this node
+    is on commit X" are different facts and a caller must be able to tell
+    them apart.
+
+    Rollback markers are not filtered out: the last recorded entry is what
+    the node is running NOW, whether it got there by deploying forward or
+    by rolling back, and "what is it running" is the only question this
+    answers.
+    """
+    by_node: dict[str, dict[str, Any]] = {}
+    # Derived from this node's OWN history path rather than re-deriving the
+    # status root separately, so the two can never disagree about where the
+    # fleet tree lives: <status>/node-<host>/rollout/history.jsonl.
+    status_root = _history_path(home).parent.parent.parent
+    if not status_root.is_dir():
+        return by_node
+    for node_dir in sorted(status_root.glob("node-*")):
+        entries = _valid_entries(node_dir / "rollout" / "history.jsonl")
+        if not entries:
+            continue
+        by_node[node_dir.name.removeprefix("node-")] = entries[-1]
+    return by_node
+
+
 def _is_rollback_entry(entry: dict[str, Any]) -> bool:
     return entry.get(_KIND_KEY) == "rollback"
 

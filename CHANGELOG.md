@@ -1951,6 +1951,16 @@
   All three now resolve through `deployment_manifest.deployed_artifact_path()`,
   and a regression guard fails the build on a fourth.
 
+- **`skcapstone fleet node drift --fleet` reports nodes that disagree with each
+  other.** Per-node drift detection structurally cannot catch a uniformly stale
+  fleet: every expected value a node compares against is read from that node's
+  own checkout, so five hosts on the wrong commit agree with themselves
+  perfectly. This reads the rollout history every node already publishes to the
+  shared fleet tree and reports any node outside the plurality as
+  `fleet:git_sha`, using the existing `Drift` records so `--json` and `--strict`
+  work unchanged. Opt-in, because during a staged rollout nodes are supposed to
+  disagree.
+
 All notable changes to **skcapstone** are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 

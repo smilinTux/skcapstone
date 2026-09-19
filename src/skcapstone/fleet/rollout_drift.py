@@ -291,6 +291,65 @@ def _load_readiness_module(repo_root: Path):
     return module
 
 
+def detect_fleet_incoherence(home: Path | str) -> list[Drift]:
+    """Do the estate's nodes agree with each other about what they run?
+
+    ``detect_drift`` answers "is THIS node internally consistent", and it
+    cannot answer this one: a node whose checkout, package and artifacts all
+    agree with each other is perfectly self-consistent while being the only
+    host in the estate on last week's commit. That is not a hypothetical
+    -- on 2026-09-19 all five chi hosts sat on a commit none of them had
+    any way to notice was not the one being rolled out.
+
+    Answered from the rollout history every node ALREADY publishes to its
+    own node-scoped path under the one Syncthing folder the estate shares
+    (``rollout_history.current_manifest_by_node``). No ssh, no new
+    publishing step, and no second reporting channel: the findings come
+    back as ordinary ``Drift`` records, so every existing reader of a drift
+    report -- text, ``--json``, ``--strict`` -- handles them unchanged.
+
+    The rule is plurality, not "whatever this host thinks": the largest
+    group of nodes agreeing on one ``git_sha`` is taken as expected, and
+    every node outside it is reported. That way the answer does not change
+    depending on which host you happen to run it from, which a "compare
+    everyone to me" rule would. An exact tie reports every node outside the
+    lowest-sorted group, deterministically, rather than picking silently.
+
+    Nodes with no recorded history are NOT reported: never having deployed
+    is a different fact from having deployed the wrong thing, and this
+    function must not invent the difference. ``fleet node drift`` prints the
+    count of such nodes separately.
+
+    Returns an empty list when fewer than two nodes have recorded anything,
+    since one node cannot disagree with itself.
+    """
+    from .rollout_history import current_manifest_by_node
+
+    by_node = current_manifest_by_node(home)
+    shas: dict[str, str] = {}
+    for node, entry in by_node.items():
+        sha = entry.get("git_sha")
+        if isinstance(sha, str) and sha:
+            shas[node] = sha.lower()
+    if len(shas) < 2:
+        return []
+
+    groups: dict[str, list[str]] = {}
+    for node, sha in shas.items():
+        groups.setdefault(sha, []).append(node)
+    if len(groups) == 1:
+        return []
+
+    # max() over (size, reverse-sorted sha) keeps ties deterministic: the
+    # lowest-sorted sha wins, so two runs on two hosts report the same set.
+    expected = max(groups, key=lambda sha: (len(groups[sha]), [-ord(c) for c in sha]))
+    return [
+        Drift("fleet:git_sha", "changed", expected, shas[node], node)
+        for node in sorted(shas)
+        if shas[node] != expected
+    ]
+
+
 def detect_drift(manifest: dict[str, Any], home: Path | str, repo_root: Path | str) -> list[Drift]:
     """Compare what ``home`` actually runs against ``manifest``.
 
