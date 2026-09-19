@@ -20,3 +20,9 @@ htmlcov/
 # but DO ship the bundled Syncthing ignore templates under defaults/
 !src/skcapstone/defaults/.stignore
 !src/skcapstone/defaults/**/.stignore
+
+# subagent-driven-development workspaces: per-plan scratch (ledger, task
+# briefs, implementer reports, review packages). The skill treats these as
+# git-ignored scratch, and a review package is a full -U10 diff, so they are
+# large and duplicate what git already holds.
+.superpowers/sdd/*/

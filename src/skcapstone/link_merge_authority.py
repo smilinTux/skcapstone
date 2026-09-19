@@ -15,6 +15,7 @@ _SENSITIVE = re.compile(
 _UNRESOLVED = re.compile(r"^\s*(FAIL|BLOCKED)\b", re.IGNORECASE)
 _GIT_SHA = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
 _SHA256 = re.compile(r"^[0-9a-f]{64}$", re.IGNORECASE)
+_MERGE_METHODS = ("squash", "rebase", "merge")
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,32 @@ class IndependentReview:
     verdict: str
     head_sha: str
     evidence_sha256: str
+
+
+@dataclass(frozen=True)
+class ProtectedMergePolicy:
+    """Explicit repository and protected-branch merge-method readback."""
+
+    repository_allowed: tuple[str, ...]
+    branch_allowed: tuple[str, ...]
+
+
+def resolve_protected_merge_method(policy: ProtectedMergePolicy | None) -> str | None:
+    """Select the preferred explicitly allowed method, or fail closed."""
+    if policy is None:
+        return None
+    repository = set(policy.repository_allowed)
+    protected_branch = set(policy.branch_allowed)
+    if not repository.issubset(_MERGE_METHODS) or not protected_branch.issubset(_MERGE_METHODS):
+        return None
+    return next(
+        (
+            method
+            for method in _MERGE_METHODS
+            if method in repository and method in protected_branch
+        ),
+        None,
+    )
 
 
 @dataclass(frozen=True)
@@ -41,6 +68,7 @@ class MergeCandidate:
     failed_checks: int
     review: IndependentReview | None
     lineage_outcomes: tuple[str, ...] = ()
+    merge_policy: ProtectedMergePolicy | None = None
 
 
 @dataclass(frozen=True)
@@ -51,6 +79,7 @@ class MergeDecision:
     head_sha: str
     evidence: tuple[str, ...]
     failures: tuple[str, ...]
+    merge_method: str | None
     escalation: str | None
     evidence_sha256: str
 
@@ -60,6 +89,7 @@ def evaluate_link_merge(candidate: MergeCandidate) -> MergeDecision:
     failures: list[str] = []
     review = candidate.review
     author = candidate.author.strip().lower()
+    merge_method = resolve_protected_merge_method(candidate.merge_policy)
 
     if not _GIT_SHA.fullmatch(candidate.head_sha):
         failures.append("invalid-exact-head")
@@ -67,6 +97,12 @@ def evaluate_link_merge(candidate: MergeCandidate) -> MergeDecision:
         failures.append("not-mergeable")
     if candidate.failed_checks:
         failures.append("failed-checks")
+    if merge_method is None:
+        failures.append(
+            "merge-policy-unavailable"
+            if candidate.merge_policy is None
+            else "no-protected-merge-method"
+        )
     if author in {"link", "seat-link"} or author.startswith(("link-", "pi-link-")):
         failures.append("authored-by-seat-link")
     if _SENSITIVE.search(" ".join((candidate.title, *candidate.categories))):
@@ -94,6 +130,7 @@ def evaluate_link_merge(candidate: MergeCandidate) -> MergeDecision:
         f"head={candidate.head_sha}",
         f"mergeable={str(candidate.mergeable).lower()}",
         f"failed_checks={candidate.failed_checks}",
+        f"merge_method={merge_method or ''}",
         f"review_evidence={review.evidence_sha256 if review else ''}",
     )
     payload = {
@@ -101,6 +138,7 @@ def evaluate_link_merge(candidate: MergeCandidate) -> MergeDecision:
         "eligible": not failures,
         "evidence": evidence,
         "failures": failures,
+        "merge_method": merge_method,
         "escalation": "Chef" if failures else None,
     }
     digest = hashlib.sha256(
@@ -111,6 +149,7 @@ def evaluate_link_merge(candidate: MergeCandidate) -> MergeDecision:
         head_sha=candidate.head_sha,
         evidence=evidence,
         failures=tuple(failures),
+        merge_method=merge_method if not failures else None,
         escalation="Chef" if failures else None,
         evidence_sha256=digest,
     )

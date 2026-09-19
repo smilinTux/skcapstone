@@ -233,11 +233,11 @@ async def _handle_coord_claim(args: dict) -> list[TextContent]:
 
     from pathlib import Path
 
-    from ..jarvis_emergency import authorize_jarvis_entrypoint
+    from ..jarvis_emergency import authorize_coord_mutation
     from ..seat_boundaries import Action
 
     auth = args.get("casey_authorization")
-    authorize_jarvis_entrypoint(
+    authorize_coord_mutation(
         agent_name,
         Action.CLAIM,
         task_id,
@@ -246,9 +246,15 @@ async def _handle_coord_claim(args: dict) -> list[TextContent]:
     )
     board = Board(_home())
     try:
+        from ..fleet.churn_breaker import assert_claim_permitted
+        from ..human_wait import assert_human_claim
         from ..review_admission import assert_governed_review_claim
 
+        # Same two asserts as the CLI claim path, for the same reason:
+        # Board.claim_task is not a gate, it is a mutation.
+        assert_human_claim(_home(), task_id, agent_name)
         assert_governed_review_claim(_home(), task_id, agent_name)
+        assert_claim_permitted(_home(), task_id, agent_name)
         agent = board.claim_task(agent_name, task_id, force=bool(args.get("force", False)))
         return _json_response(
             {
@@ -263,8 +269,13 @@ async def _handle_coord_claim(args: dict) -> list[TextContent]:
 
 
 async def _handle_coord_complete(args: dict) -> list[TextContent]:
-    """Complete a task on the board."""
-    from ..coord_completion import complete_coord_task
+    """Complete a task on the board.
+
+    A card with outstanding exit_gates is a normal, expected outcome, not an
+    error: complete_coord_task returns a GatesPending instead of an Agent,
+    and this reports it as a gated, still-open result rather than raising.
+    """
+    from ..coord_completion import GatesPending, complete_coord_task
 
     task_id = args.get("task_id", "")
     agent_name = args.get("agent_name", "")
@@ -273,11 +284,11 @@ async def _handle_coord_complete(args: dict) -> list[TextContent]:
 
     from pathlib import Path
 
-    from ..jarvis_emergency import authorize_jarvis_entrypoint
+    from ..jarvis_emergency import authorize_coord_mutation
     from ..seat_boundaries import Action
 
     auth = args.get("casey_authorization")
-    authorize_jarvis_entrypoint(
+    authorize_coord_mutation(
         agent_name,
         Action.COMPLETE_CARD,
         task_id,
@@ -286,9 +297,20 @@ async def _handle_coord_complete(args: dict) -> list[TextContent]:
     )
     home = _home()
     try:
-        agent = complete_coord_task(home, agent_name, task_id)
+        result = complete_coord_task(home, agent_name, task_id)
     except ValueError as exc:
         return _error_response(str(exc))
+
+    if isinstance(result, GatesPending):
+        return _json_response(
+            {
+                "completed": False,
+                "gated": True,
+                "task_id": task_id,
+                "outstanding": result.outstanding,
+            }
+        )
+    agent = result
 
     # Report minted Joules in the response (best-effort)
     joules_minted = 0
@@ -343,11 +365,11 @@ async def _handle_coord_create(args: dict) -> list[TextContent]:
     )
     from pathlib import Path
 
-    from ..jarvis_emergency import authorize_jarvis_entrypoint
+    from ..jarvis_emergency import authorize_coord_mutation
     from ..seat_boundaries import Action
 
     auth = args.get("casey_authorization")
-    authorize_jarvis_entrypoint(
+    authorize_coord_mutation(
         task.created_by,
         Action.CREATE_CARD,
         task.id,
@@ -374,6 +396,13 @@ async def _handle_coord_score(args: dict) -> list[TextContent]:
     if not task_id or "round" not in args or "score" not in args:
         return _error_response("task_id, round, and score are required")
 
+    from ..jarvis_emergency import authorize_coord_mutation
+    from ..seat_boundaries import Action, BoundaryError
+
+    try:
+        authorize_coord_mutation("coord-score", Action.SCORE_CARD, task_id, None, None)
+    except BoundaryError as exc:
+        return _error_response(str(exc))
     board = Board(_shared_root())
     try:
         path = board.score_task(
@@ -451,14 +480,14 @@ async def _handle_coord_move(args: dict) -> list[TextContent]:
 
     from pathlib import Path
 
-    from ..jarvis_emergency import authorize_jarvis_entrypoint
+    from ..jarvis_emergency import authorize_coord_mutation
     from ..seat_boundaries import Action
 
     actor = args.get("agent", "") or "coord-move"
     auth = args.get("casey_authorization")
 
     try:
-        authorize_jarvis_entrypoint(
+        authorize_coord_mutation(
             actor,
             Action.MOVE_CARD,
             f"{task_id}:{column}",

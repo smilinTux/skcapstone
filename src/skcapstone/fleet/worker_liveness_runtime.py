@@ -194,7 +194,24 @@ def collect_observations(
                     if current_processes is not None
                     else 0
                 ),
-                child_activity_at=heartbeat_at,
+                # NOT heartbeat_at. The wrapper beat is a shell timer running
+                # beside pi that writes disposition=RUNNING as a string
+                # literal, so assigning it here defined the CHILD's activity
+                # as the SUPERVISOR's own stamp, and made one signal look like
+                # two: _latest_activity takes max(heartbeat_at,
+                # child_activity_at), which reads as corroboration and was a
+                # single source counted twice. Card 139ec63d held for 6h19m43s
+                # with 77 consecutive worker_liveness=active rows and zero
+                # files ever written to its workspace.
+                #
+                # No independent measurement of the child exists in this
+                # observation, so the honest value is None (contract 24,
+                # docs/fleet/2026-09-19-learnings.md). _latest_activity still
+                # reads exactly the beat it always did, so nothing downstream
+                # changes; what changes is that the field stops claiming to be
+                # something it is not. Progress is read from what the worker
+                # WRITES, in worker_watchdog.classify_progress.
+                child_activity_at=None,
                 heartbeat_at=heartbeat_at,
                 terminal_marker=beat.get("terminal_marker"),
                 terminal_at=terminal_at,

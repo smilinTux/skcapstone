@@ -127,7 +127,7 @@ def test_no_size_silently_downgrades_to_a_smaller_bucket() -> None:
     assert resolved["SKFLEET_MODEL_L"] == "sk-l"
 
 
-@pytest.mark.parametrize("seat", ["tank", "atlas"])
+@pytest.mark.parametrize("seat", ["atlas"])
 def test_role_dispatch_defaults_to_neutral_buckets(tmp_path, monkeypatch, seat) -> None:
     captured = _dispatch_environment(monkeypatch, seat, tmp_path)
 
@@ -135,7 +135,7 @@ def test_role_dispatch_defaults_to_neutral_buckets(tmp_path, monkeypatch, seat) 
     assert {size: captured[f"SKFLEET_CODEX_MODEL_{size}"] for size in SIZES} == NEUTRAL
 
 
-@pytest.mark.parametrize("seat", ["tank", "atlas"])
+@pytest.mark.parametrize("seat", ["atlas"])
 def test_role_dispatch_carries_operator_configuration_to_the_child(
     tmp_path, monkeypatch, seat
 ) -> None:
@@ -204,7 +204,7 @@ def test_verification_accepts_every_bucket_the_dispatch_asked_for(
 ) -> None:
     """The launcher reports the job's logical route, so verification must take it."""
 
-    assert _verify(monkeypatch, tmp_path, "tank", model)["reason"] == "tank_dispatch_complete"
+    assert _verify(monkeypatch, tmp_path, "atlas", model)["reason"] == "atlas_dispatch_complete"
 
 
 def test_verification_accepts_a_configured_provider_pinned_override(tmp_path, monkeypatch) -> None:
@@ -221,7 +221,7 @@ def test_verification_still_refuses_a_model_the_dispatch_never_requested(
 ) -> None:
     """The gate stays real: an unrequested model is an invalid receipt."""
 
-    result = _verify(monkeypatch, tmp_path, "tank", "sk-glm-l")
+    result = _verify(monkeypatch, tmp_path, "atlas", "sk-glm-l")
 
-    assert result["reason"] == "tank_dispatch_failed"
+    assert result["reason"] == "atlas_dispatch_failed"
     assert result["dispatch_succeeded"] == 0

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
 
+from .lifecycle_seats import LIFECYCLE_SEATS as _CANONICAL_LIFECYCLE_SEATS
 from .skrsi_handoffs import FIRST_WAVE_HANDOFFS, HandoffContract  # noqa: F401
 from .skrsi_registry import AppendOnlyOutbox, SKRSIError, canonical_json, make_record
 
@@ -90,19 +91,21 @@ class FanoutReceipt:
     source_head: str = ""
 
 
-LIFECYCLE_SEATS = frozenset(
-    {"seraph", "link", "mero", "niobe", "tank", "atlas", "skcapstone", "skdashboard", "skworld"}
-)
+# Product routing scopes are not lifecycle seats; they are added on top of the
+# canonical roster rather than folded into skcapstone.lifecycle_seats.LIFECYCLE_SEATS
+# because they name products (SKCapstone, SKDashboard, SKWorld), not agents.
+_PRODUCT_ROUTING_SCOPES = frozenset({"skcapstone", "skdashboard", "skworld"})
+LIFECYCLE_SEATS = _CANONICAL_LIFECYCLE_SEATS | _PRODUCT_ROUTING_SCOPES
 DEFAULT_CHILD_MODEL = "sk-codex-mid"
 # Child lanes are narrower than their parent seat.  Jarvis is intentionally
 # absent: it is an authority seat, never a recurring lifecycle scheduler.
+# tank folded into atlas (spec 3.6); its verification lane moved with it.
 SEAT_CHILD_ROUTES = {
     "seraph": frozenset({"review"}),
     "link": frozenset({"integration", "review"}),
     "mero": frozenset({"lifecycle-analysis", "review"}),
     "niobe": frozenset({"dispatch"}),
-    "tank": frozenset({"verification"}),
-    "atlas": frozenset({"governance"}),
+    "atlas": frozenset({"governance", "verification"}),
     "skcapstone": frozenset({"lifecycle"}),
     "skdashboard": frozenset({"lifecycle"}),
     "skworld": frozenset({"lifecycle"}),

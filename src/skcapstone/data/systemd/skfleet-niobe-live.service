@@ -5,6 +5,7 @@ OnFailure=skfleet-rotate-alert.service
 
 [Service]
 Type=oneshot
+EnvironmentFile=-%h/.config/skcapstone/skfleet-niobe-live.env
 Environment=SKAGENT=niobe
 Environment=SKCAPSTONE_AGENT=niobe
 Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
