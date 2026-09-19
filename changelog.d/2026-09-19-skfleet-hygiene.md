@@ -1,0 +1,1 @@
+- Add bounded, report-first hygiene for failed `skfleet-worker-*` units and orphaned `codex-auto-*` tmux sessions.
