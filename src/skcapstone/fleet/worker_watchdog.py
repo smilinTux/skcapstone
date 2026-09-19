@@ -163,25 +163,39 @@ def classify_progress(
 
 # The ACTUATING deadline, which is deliberately not the classifying one.
 #
-# DEFAULT_PROGRESS_TIMEOUT_S (900s) is where a worker stops looking fresh.  It
-# is a reporting threshold and always was: the measured chi fleet is full of
-# genuinely-working workers past it, because a worker waiting on a model writes
-# nothing for minutes at a time.  Killing at 900s would destroy real work.
+# DEFAULT_PROGRESS_TIMEOUT_S (900s) is where a worker stops looking fresh. It
+# is a reporting threshold and always was. This is the deadline past which
+# silence stops being consistent with working.
 #
-# This is the deadline at which silence stops being consistent with working.
-# Measured margins it has to clear:
+# Measured: 158 WORKER_PROGRESS records, 12 distinct owners, 5 chi hosts,
+# 20260918T193007Z to 20260919T052500Z (the whole life of the report-only
+# pass). Full write-up in docs/fleet/wedged-worker-actuation.md.
 #
-#   observation                                   silence   source
-#   abe011e9, writing 2,351 files/hour            628s      2026-09-18 learnings s18
-#   9e15f83c, writing 216 files/hour              269s      2026-09-18 learnings s18
-#   worst genuinely-working gap seen on the fleet  (see docs/fleet/wedged-worker-actuation.md)
-#   139ec63d, the wedged worker                 22,680s     2026-09-19 incident
+#   state              n    min       p50      p95      max
+#   progress-fresh    38      2s       14s     132s     225s
+#   progress-stale    10  53,545s  55,795s  57,445s  57,445s
+#   progress-missing 110       no workspace write at all
 #
-# 14400s is 16x the classifying timeout and >20x the worst gap measured on a
-# worker that was genuinely working.  A worker legitimately silent for four
-# hours would be an unobserved class of work, so the cost of being wrong here
-# is bounded by evidence rather than by taste.
+# The two populations are cleanly BIMODAL: not one observation landed
+# anywhere in 225s..53,545s. That gap, not a percentile, is what makes a
+# threshold defensible here, and 14400s sits inside it with margin on both
+# sides:
+#
+#   worst gap on a worker that was genuinely working   628s   (2026-09-18 s18)
+#   worst progress-fresh observation                   225s   (this window)
+#   -> the threshold is 23x the former, 64x the latter
+#   lowest progress-stale observation ever seen     53,545s
+#   -> the threshold is 3.7x BELOW it
+#
+# Genuinely-working workers this threshold would have killed in the measured
+# window: ZERO. Exactly one owner was ever past it
+# (pi-qwen-chiap01-34115541, 10 observations, 53,545s to 57,445s) and it was
+# not working: its unit was crashlooping with 0-byte logs, and `scanned=1587`
+# never changed across the whole stale run, so not one file was added or
+# touched. Its later return to progress-fresh was a NEW generation's launch
+# touching the workspace, not the old process resuming.
 DEFAULT_WEDGE_TIMEOUT_S = 14400.0
+
 
 # Exactly two states actuate.  Widening this set is a deliberate act.
 WEDGE_ACTUATING_STATES = frozenset({"wedge-stale-confirmed", "wedge-absent-confirmed"})
