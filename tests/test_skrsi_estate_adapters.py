@@ -112,7 +112,7 @@ def test_source_head_deduplication_and_lifecycle_scope():
     assert len(receipts) == 1
     assert receipts[0].natural_key == "natural-a"
     with pytest.raises(SKRSIError, match="scope"):
-        fanout.allocate([eligible("bad", seat="tank", route="deploy")], snapshot, now=NOW)
+        fanout.allocate([eligible("bad", seat="atlas", route="deploy")], snapshot, now=NOW)
 
 
 def test_jarvis_is_not_a_recurring_lifecycle_seat():

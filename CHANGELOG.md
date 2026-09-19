@@ -2,6 +2,1432 @@
 
 ## Unreleased
 
+- **`docs/fleet/2026-09-19-learnings.md`**: the 2026-09-18/19 session written as
+  three recurring failure shapes rather than thirty incidents, contracts 20-37
+  continuing the numbering of the 2026-09-18 document (which is cited by number
+  from `tests/test_worker_progress_report.py`, `scripts/fleet/skfleet-rotate.py`
+  and `src/skcapstone/coord_slice_preflight.py`, so renumbering was not an
+  option). Shape 1, the mechanism that runs and processes nothing: a producer
+  that structurally cannot emit what its consumer requires, a named check with
+  no dispatch arm, a gate whose qualification has zero producers across 7,214
+  folded cards, and three silent-discard paths where a reader and its own health
+  check disagree about what "valid" means. Shape 2, the signal that lies: a
+  worker heartbeat that is a shell `while` loop with `disposition":"RUNNING"` as
+  a string literal (card `139ec63d` beat RUNNING for 6h19m43s against 0
+  workspace files ever and a 0-byte log), a version check comparing PEP 440
+  strings for equality, a claim counter charging worker deaths to the card, a
+  twelve-line log that is an alphabetical prefix rather than a sample, and
+  `coord gates` reporting a claimed card eligible because
+  `governed_review_gate_reasons` returns `()` above its own arguments. Shape 3,
+  the change that silently reverts: a systemd drop-in disabled by rename on
+  three hosts, a `default('6.2.2')` over a vault key nothing defines while
+  production hand-patches 11.1.2 into the render, an `app.ini.j2` rendering 30
+  keys against a live 52 (including two generated secrets), and five hosts
+  running three different wrapper builds for eight days. Four session claims are
+  corrected in place rather than repeated: the canonical "0 across 14 days and
+  1,660 rotations" is a `head -6` artifact of a journal retaining 9.8 days and
+  the lane last opened reviews on 2026-09-05; card `0339dc47` carries 22 link
+  rows at 22 timestamps, not six; the glm lane's 20-second death storm dates to
+  2026-09-03/04 and 09-09, before the rename, and its 503 cause is asserted
+  only by the prose in the drop-in that fixed it; and the sklegal hash gate's
+  "three weeks red" was the badge, not the check. Documentation only; no code,
+  no card, and no fleet configuration is touched.
+- **A wedged worker held a card for 6h18m and every liveness signal said it was
+  healthy.**
+  Measured on chi 2026-09-19, card `139ec63d`: zero workspace files written in
+  four hours, `pi` alive at 0.0% CPU in state `Sl`, a 0-byte worker stdout log,
+  and a wrapper beat reporting `disposition=RUNNING` at an age of 39 seconds
+  continuously for the entire 6h18m. All three existing release paths behaved
+  exactly as designed and none could see it: `reap_dead_claims` acts only when
+  every host reports the worker ABSENT and the unit was active, `_expire_idle_claims`
+  reads card events which a long task legitimately does not emit, and the liveness
+  reaper trusts beat freshness.
+
+  `classify_progress` has measured the one signal that separates working from
+  wedged (the newest write under the worker's own workspace) since 2026-09-18 and
+  was deliberately report-only pending a measurement day. That window is now
+  closed. 158 `WORKER_PROGRESS` records across 12 owners and 5 hosts show the two
+  populations are **bimodal**: `progress-fresh` tops out at 225s and the lowest
+  `progress-stale` observation ever seen is 53,545s, with nothing at all in
+  between. `DEFAULT_WEDGE_TIMEOUT_S` is 14400s, chosen from that gap: 23x above
+  the worst gap measured on a worker known to be working (628s) and 3.7x below the
+  lowest stale observation. Replaying all 158 records, exactly two of twelve owners
+  actuate and both were independently proven to be producing nothing; **zero
+  genuinely-working workers would have been killed**.
+
+  `_reap_wedged_workers` is a third release path, the inverse of the absence path
+  because it acts only on workers that are PRESENT. It stops the unit, records
+  `WORKER_WEDGED` on the card with the progress age, last write time and elapsed
+  hold, releases under a CAS on the exact claim revision, and confirms against a
+  fold re-read. `SKFLEET_WEDGE_MODE` gates it off by default, then `report`, then
+  `enforce`, exactly like the claim TTL rollout; `DRY` still gates the mutation.
+
+  A stale workspace and an absent workspace are NOT treated as the same evidence.
+  A stale mtime is a fact wherever the path came from. An absent workspace is a
+  fact only when the path came from the exact generation's admission receipt,
+  because otherwise the reporter inferred it from the owner name and a miss is a
+  measurement failure. This matters: the measurement caught a real worker
+  (`pi-glm-chiap03-ea911b09`) that reported `progress-missing` three times and then
+  `progress-fresh` nine times under the same claim revision, having taken about
+  fifteen minutes to populate its workspace. An empty workspace is a normal startup
+  state, so the absent case is deadlined rather than acted on when first seen.
+
+  What it will not catch is stated explicitly in
+  `docs/fleet/wedged-worker-actuation.md`, most importantly a **crashlooping**
+  worker: each relaunch touches the workspace, so it reads fresh forever.
+  `progress-fresh` is not proof of progress.
+- **The field named "child activity" was the supervisor's own timer.**
+  `worker_liveness_runtime.collect_observations` set
+  `child_activity_at=heartbeat_at`, so the CHILD's activity was defined as the
+  wrapper beat's stamp, and no independent measurement of the child existed
+  anywhere in the observation. It also made one signal look like two:
+  `_latest_activity` takes `max(heartbeat_at, child_activity_at)`, which reads
+  as corroboration and was a single source counted twice. Card `139ec63d` is
+  the cost: 6h19m43s held, 77 consecutive `worker_liveness=active` rows, and
+  zero files ever written to its workspace. The value is now `None`, which is
+  the fail-closed answer until a real measurement of the child exists.
+  `_latest_activity` still reads exactly the beat it always did, so nothing
+  downstream changes; what changes is that the field stops claiming to be
+  something it is not. Contract 24 of `docs/fleet/2026-09-19-learnings.md`: a
+  status field computed by the supervisor describes the supervisor.
+- **A wrapper beat is now `SHELL_ALIVE`, never `LIVE`.**
+  The deeper defect behind the hold above is a liveness signal that reports
+  RUNNING for a process doing nothing. The wrapper beat is a
+  `while :; do ...; sleep N; done` loop that is a SIBLING of `pi` rather than a
+  signal from it, and `"disposition":"RUNNING"` is a hardcoded literal, so it stays
+  fresh on a wedged worker by construction.
+
+  The beat was not made "honest" because it cannot be. Coupling it to `pi`'s
+  liveness would NOT have caught this incident, since `pi` was alive at 0.0% CPU
+  throughout, and having a 60-second shell loop scan the workspace is the expensive
+  thing `_workspace_progress_at` is bounded and early-exiting to avoid. A timer's
+  ceiling is that the shell has not exited. So the consumer stops lying instead:
+  `fleet_beat.classify()` returned `state=LIVE` for a fresh wrapper beat, which is
+  the incident in code form, and now returns `SHELL_ALIVE` with a note saying what
+  it proves. `LIVE` is reserved for agent beats, which carry a `progress_token`.
+  The beat record also gains a `proves` field so anything reading the files
+  directly is not misled either. Progress is read from what a worker WRITES.
+
+- **The Pi gateway sync filled the picker with models that cannot answer.**
+  `/v1/models` is a catalog, not a liveness list. Probed against a live gateway
+  on 2026-09-18: of the 108 ids advertised, 19 answered a one-token completion —
+  the rest were unknown upstream (404), uncredentialed (401), or had no live
+  backend (502/503). Neither of the cheap filters works: the gateway's own
+  `stale` flag missed badly (10 of the 19 working models carry it, 25 non-stale
+  ones fail) and `/health` backend status does not predict it either (the
+  `nvidia` backend reported `up` while 28 of its 37 models 404'd). `skpisync
+  --probe` now tries each advertised model once, concurrently, keeps only those
+  that answer, and caches the verdicts in `~/.pi/agent/.skgateway-live.json`;
+  later launch-path syncs intersect the catalog with that allowlist while it is
+  fresh (`SK_PI_SYNC_PROBE_TTL`, default 24h, keyed to the gateway URL). The
+  launch path never probes — it costs one request per model — and a run where
+  nothing answers leaves the catalog alone rather than emptying the picker. The
+  sync line now reports `models=<kept>|advertised=<total>|filter=<how>`.
+- **The claim ceiling now counts only claims a live worker actually worked; the
+  churn breaker deliberately still counts them all.**
+  107 cards on the chi fleet were frozen by `max_claims=5`, and almost none had
+  failed: the measured cause was seat churn. Card `0aec5a64` shows seat
+  `pi-glm-chiap01-0aec5a64` claiming and releasing its own card 120 times, median
+  hold 21.4 seconds, with nothing written between any claim and its release. The
+  seat's own wrapper released each time, and the deterministic ownership hash handed
+  the same card back on the next five-minute tick. Because `_claim_ceiling_hit` is
+  monotonic and never self-clears, a transient fleet-side defect became a permanent
+  card freeze.
+
+  A claim whose hold closed with no work recorded under it is no longer charged at
+  `_countable_claims`, and work is read from the union of both event stores, since a
+  worker's PASS lands only in the overlay. Fails closed: an open claim is always
+  charged, unparseable timestamps are charged, any write under the hold charges it,
+  and each claim is forgiven at most once.
+
+  `churn_breaker.count_claim_attempts` is deliberately NOT changed. An earlier
+  revision of this work moved both gates together, on the reasoning that otherwise
+  the breaker would refuse what the ceiling had just re-permitted. That reasoning
+  treated the two refusals as equivalent, and they are not. The ceiling is monotonic
+  and clears only by an operator-written `claim_amnesty` link; the breaker is
+  default-off and a refusal clears the moment anyone records one blocker sentence.
+  More importantly, an unworked hold is not a degenerate stand-in for the breaker's
+  signal, it IS the signal: cards reach the breaker precisely because no agent CAN
+  work them, so nothing is ever written under the hold. Measured on `83e498b6`, the
+  breaker's own motivating card: 57 attempts under the breaker's rule, 11 under the
+  ceiling's, and a pure claim/release loop scores 0 and could never trip the breaker
+  at all. Moving the breaker disabled it for exactly the cards it exists to catch,
+  and broke 8 of the 25 tests in `tests/test_churn_breaker.py`, including
+  `test_claim_release_cycles_by_one_owner_do_count`.
+
+  Measured over 7,212 live cards: frozen cards 16 to 9, and claims charged across
+  the 181 cards with five or more claims in 14 days 2201 to 1044, while genuinely
+  worked cards barely move (`82a101a1` 124 to 123). This does not stop the churn
+  loop itself; it stops the loop from permanently freezing cards. Needs deployment:
+  `~/.local/bin/skfleet-rotate.py` is a per-host artifact a git pull does not update.
+
+- **HTTP 503 was not recognised as a gateway failure, so a nine-hour outage was
+  charged to the cards as failed work.** The launcher's `_GATEWAY_ERROR_RE`
+  spelled out 400/404/408/429/502/504 and the worker wrapper kept a separate
+  substring table; neither included 503, which is the most common status the
+  gateway emits. Measured 2026-09-18 over all 2,980 worker-exit records on the
+  chi fleet: 2,202 carried a gateway status+JSON body and only 133 (6.0%) were
+  classified, leaving 2,901 records stamped `transport_failure: null`. 1,793 of
+  them were a 503. Seat `pi-glm-chiap01-0aec5a64` produced 120 of those against
+  bucket `sk-glm-s` between 06:17 and 15:22 UTC on 2026-09-09, each hold about
+  21 seconds with nothing written under it, re-dispatched every five minutes.
+
+  Both call sites now classify through one table in
+  `skcapstone.fleet.gateway_failure`, so a status the gateway starts emitting
+  cannot be recognised by one and missed by the other. Every 503 is treated as
+  pre-agent: no eligible bucket member, a full or timed-out capacity queue, a
+  quarantined model claim, or a declaring backend that is down. Named 502
+  upstream codes (`empty_upstream_response`, `invalid_upstream_completion`,
+  `upstream_unreachable`) join them, and a worker-CLI advisory ahead of the body
+  no longer hides it (86 records). Recognition of gateway bodies goes 133 to
+  2,137 of 2,202 (6.0% to 97.0%) with no record that used to classify losing its
+  class.
+
+  The deliberate fences hold: a generic 400 can be the agent's own bad request
+  and still charges the card (61 records), an unnamed 502 code still charges,
+  and a gateway error arriving after agent output is still substantive.
+
+- **The quarantine pattern never matched anything.** The wrapper looked for
+  `backend-claims-quarantined`; skgateway emits
+  `"type":"model_claim_quarantined"` with the prose "all backend claims for
+  model X are quarantined" (`src/proxy/router.mjs`, `claimQuarantinedResponse`).
+  474 chi exit records carried a quarantine 503 and none were classified. Both
+  spellings match now.
+
+- **Pi's `skgateway` model list drifted from the gateway the moment either
+  changed.** `~/.pi/agent/models.json` was hand-maintained, so on the dev node
+  Pi's picker offered 7 entries while the gateway advertised 108, and none of
+  the logical `sk-*` buckets or roles were selectable at all. The `pi` shell
+  wrapper in `sk-agent-picker.sh` now runs `skpisync` before launch, which
+  refreshes that one provider block from `GET $SK_GATEWAY_URL/v1/models` via
+  the new `sk-pi-gateway-sync.py`. The gateway is the source of truth for
+  everything it reports; where it is silent — the `sk-*` routes carry no model
+  card — the catalog's existing values are kept, so hand-tuned metadata such as
+  `sk-default`'s 32K `maxTokens` survives the refresh instead of collapsing to
+  a default. Writes are atomic and mode-preserving, the previous catalog is
+  snapshotted into `~/.pi/agent/backups/` (last 10 kept), and the same
+  symlink/owner/permission contract `skfleet-pi-model-catalog.py` enforces
+  applies here. Every other provider is untouched. An unreachable gateway warns
+  and launches Pi anyway rather than blocking it; `SK_PI_SYNC=0` skips the
+  refresh entirely.
+
+- **`source-only` meant two unrelated things at once, and a card could not say
+  which.** To the dispatcher it was a routing flag: `_source_workspace_spec`
+  returned `None` unless a card carried it, so the label was the only thing that
+  made a repository/base_ref/base_revision binding get demanded, verified and
+  materialized, and a binding on any other card was inert and never checked. To
+  a worker it was a safety constraint, written verbatim into acceptance
+  criteria: "Source-only. No live database write, provider, Inbox, mailing,
+  deployment, push, or external action." Triage therefore could not fix a card's
+  routing without stripping its safety constraint. Five read-only chiap08
+  host-ops cards (`ed3ad3c7`, `9912e905`, `e26fc5ac`, `760240ca`, `7a4d9c11`)
+  hit exactly that and had to be bound to a repository they do not use. Measured
+  by folding all 7,212 chi cards in a fresh process: 2,612 carry the label, 631
+  of those are live, and 265 of the live ones rely on BOTH senses at once.
+  Separately, 79 live cards carry a complete binding and no label, so the
+  dispatcher never looked at it; all 79 validate cleanly through the existing
+  validator. Routing now fires on the legacy label OR a complete binding on its
+  own, so those 79 get their binding checked and their pinned workspace. The
+  511 live cards with a PARTIAL binding and no label stay inert rather than
+  raising, because jamming them would trade a checking win for a fleet-wide
+  liveness regression. The labelled path is untouched, including its hard
+  failure on an absent or partial binding, so all 2,612 existing cards behave
+  byte-for-byte as before and no relabelling pass is needed to land this. Safety
+  gets its own routing-inert label, `no-external-action`, and the first home the
+  constraint has ever had in code: a worker brief rail, which `source-only` also
+  triggers as the deprecated spelling. Nothing in the routing path reads a label
+  to decide whether to check a binding any more, so a card cannot lose its
+  workspace by losing a label nor its safety constraint by a routing fix. See
+  `docs/fleet/source-only-split.md` for the census, the relabelling pass, and
+  the unresolved push/no-push tension the rail deliberately leaves open.
+  A third usage, `fleet.builder_dispatch.eligible()`, still requires the
+  literal label on purpose: it is an admission gate, and widening one admits
+  more work than anyone marked eligible. A relabelling pass must therefore
+  check `logical_route` before removing the label from any card.
+  NOTE: `~/.local/bin/skfleet-rotate.py` is a separately deployed per-host
+  artifact; this is inert on the fleet until it is redeployed to each chi host.
+
+- **A worker can now record a provisional PASS that the review opener will
+  actually admit.** `OPENED_REVIEW` was 0 across 14 days and 1,660 rotations on
+  the chi fleet while 214 cards logged `OPEN_REVIEW_EVIDENCE_BLOCKED` every
+  cycle, accruing 4 to 13 new cards a day. Measured on chiap01 across the
+  rotation actions logs: of 354 cards ever reported blocked that way, 305
+  carried their `PASS_FOR_REVIEW` ONLY as a kanban overlay `link` row and 346
+  carried no hash-bound candidate evidence anywhere, in either store. That
+  overlay row is byte-for-byte what `skcapstone coord link <card> verdict
+  PASS_FOR_REVIEW` writes, and it was not worker sloppiness: `coord link` builds
+  a `CardEvent`, whose fixed pydantic field set holds no `candidate_path` and no
+  `candidate_sha256`, so a verdict written through it structurally cannot carry
+  the binding a governed review requires. It was also the ONLY verdict command
+  the fleet had, named by the worker brief, `AGENTS.md`, `coord briefing` and
+  `coord --help` alike, so every worker followed the instruction and the
+  instruction could not produce an admissible verdict. New
+  `skcapstone coord verdict <card> <outcome> --candidate --commit --tree --ref
+  --agent` writes ONE native CardStore event carrying the verdict, the candidate
+  path, the sha256 it computes from that file (never a digest the caller typed),
+  and the typed commit/tree/ref the opener needs to bind a review card to a real
+  revision. `coord link` now refuses a provisional PASS and names the new verb,
+  the way the BLOCKED contract is already refused at the write path; the refusal
+  is scoped to `PASS_FOR_*`/`PASS_READY_*`, so a terminal plain `PASS` is
+  untouched. The review admission gate is NOT relaxed: handing a reviewer a
+  binding that never existed is exactly what it refuses to do. `~/.local/bin/
+  skfleet-rotate.py` is a per-host deployed artifact, so the updated worker
+  brief needs a deploy to reach live workers.
+- **A card voided mid-flight now skips with a logged reason instead of killing
+  the node worker.** ziowk01-wsl, 2026-09-18: card 59553966 was voided and
+  replaced by 59550966 during a source-binding repair while sknoded still held
+  it in its dispatch queue. `Board.claim_task` raised
+  `ValueError: Task 59553966 not found`, nothing between that raise and
+  `main_loop`'s `while True` caught it, and `sknoded.service` exited 1 losing
+  18h 15m of process state over one unusable card. `consume_one` now catches
+  skcoord's typed `TaskUnclaimable`: a terminal refusal
+  (absent/voided/archived/done) writes a `blocked` status for that exact
+  request generation, which is what makes `offer()` decline it, frees the
+  builder slot in `_node_load`, and gives `decline_reason` a real line to log
+  (nothing deletes the request file when a card is voided, so without that
+  status the node re-reads the same dead request every pass forever). A
+  non-terminal refusal (another owner, an unmet dependency) is logged and
+  retried, costing no attempt, because parking it would strand a recoverable
+  card permanently. `main_loop` catches exactly `TaskUnclaimable` and
+  `BuilderDispatchError` and continues; a corrupt store, a missing
+  coordination home, a permissions failure or any other error still terminates
+  the unit so systemd restarts it and the failure stays visible.
+- **`BUILDER_DISPATCH_IDLE` no longer logs an empty parenthesis.** An empty
+  candidate list left `excluded` empty, rendering as
+  `reason=unschedulable: unschedulable ()`. `scheduler.select` now says
+  `no candidate nodes were offered`, and `decline_reason` answers the common
+  real cause up front as `builders-at-capacity: node-ziowk01=4/4`.
+
+- **Claim ceiling: bounded per-card amnesty for defect-burned claims.** Claim
+  counts are monotonic over the append-only ledger, so the 5-claim ceiling
+  permanently excludes cards that churned because of an estate defect the
+  fleet has since fixed (the Sep 4-6 worker-death storm, the Sep 9
+  claim-release loop that took 7 SKLEGAL cards to 109-126 claims each, the
+  ownership repartition churn), and the only global escape, raising
+  `SKFLEET_MAX_CLAIMS` past 126, would also free the one genuine runaway
+  (06a95c23, 402 claims, zero worker logs). An operator can now grant one
+  card a `claim_amnesty` link naming the fixed defect
+  (`coord link <cid> claim_amnesty "PR-778|ownership-repartition-churn"`);
+  `_claim_ceiling_hit` and the claim-time churn breaker then charge only
+  claims NEWER than the latest well-formed amnesty. Everything fails closed:
+  no amnesty, a causeless amnesty (no `ref|why` shape), or a timestampless
+  or unparseable one leaves the card exactly as locked as before, nothing in
+  the ledger is rewritten, and a wrongly amnestied card burns at most
+  `_MAX_CLAIMS` more claims and re-locks. `CLAIM_CEILING_EXCLUDED` now also
+  logs WHY: total vs counted claims, the card's WORKER_DIED verdict count,
+  and whether an amnesty is in effect. Ships the mechanism only; no amnesty
+  event is written to any live board.
+- **A reused source workspace now resets itself onto the card's exact
+  base_revision instead of blocking forever.** Fleet workspaces live at
+  `~/.skcapstone/fleet/workspaces/<worker>` and are reused across claims, but
+  nothing ever moved HEAD back after a worker committed work and exited, while
+  `_verify_source_workspace` demanded `HEAD == base_revision` on reuse. Any
+  interrupted source card whose worker had committed was therefore permanently
+  `WORKSPACE_BLOCKED: workspace HEAD does not match exact base_revision` on
+  every later claim (measured 2026-09-18 on chi: 18 live source-only cards
+  across 21 workspaces, including 3f642f75 on chiap08, parked one commit past
+  its own base on its own feature branch). The reuse path in
+  `_materialize_worker_workspace` now verifies the tree is clean, fetches and
+  checks reachability exactly as before, then detaches back onto the exact
+  base_revision, but only when the current HEAD commit is anchored by at least
+  one ref, so committed custody is never orphaned; an unanchored HEAD still
+  fails closed with `workspace HEAD is not anchored by any ref; refusing
+  reset`. Configured `SKFLEET_WORKSPACE` checkouts keep the strict behavior
+  and are never reset.
+
+- **Fleet review opener: new review cards are admissible again.** Since the
+  governed review gate began requiring a seat label, typed producer evidence,
+  and a source binding, every card `fleet-review-opener` created was born
+  permanently inadmissible (`wrong-seat` plus `absent-source-binding`; 357
+  cards awaiting review, `eligible=0` every cycle), and since PR 567 its
+  `coord create` calls failed outright. The opener now creates cards the way
+  the one admitted producer (`link_review_work.py`) does: exactly one
+  `seat-seraph` label, typed `--producer-identity` and
+  `--candidate-evidence-sha256`, and a source binding of `--source-card`
+  (the parent) plus `--head-revision` (the producer's own 40-hex
+  `candidate_commit`). A verdict event that carries no typed
+  `candidate_commit` has no honest source binding, so the opener skips it
+  with a per-hour `OPEN_REVIEW_SOURCE_UNBOUND` diagnostic instead of
+  inventing a revision, and the post-create readback now refuses (and
+  fences) any card that folds back without the seat, the binding, or gate
+  admissibility. The gate itself is unchanged. Backfilling the existing
+  inadmissible cards is a separate operator decision.
+- **Builder dispatch: a declined card now logs why.** `builder_dispatch.offer`
+  returns None for reasons the operator could not see: a frozen plane, no
+  Ready `builder-standby` node, an invalid source binding, and, most commonly
+  on the chi fleet, a request whose retries are already spent (MAX_ATTEMPTS
+  reached), which parks the card forever under its current source binding.
+  Measured 2026-09-18: 17 of the 19 builder-eligible source-only cards in the
+  chi ready pool sat in exactly that state (terminal `failed attempt=2` on
+  node-ziowk01) with nothing in any log naming the reason. New read-only
+  `builder_dispatch.decline_reason()` mirrors offer()'s decline branches, and
+  the rotation loop on the Niobe host logs one
+  `BUILDER_DISPATCH_IDLE|host|card|reason=...` line per declined candidate
+  per cycle.
+
+- **Route preflight stopped being rejected for how it identifies itself.** The
+  gateway forwards the CALLER's `User-Agent` upstream, and the kimi upstream's
+  edge refuses python-urllib's default with HTTP 403. Measured on chiap01
+  2026-09-18: the identical request body returns 403 with the default agent and
+  does not with a conventional one. Every kimi preflight therefore failed, the
+  dispatcher logged `ROUTE_PREFLIGHT_BLOCKED ... reason=gateway rejected
+  preflight with HTTP 403`, and hosts whose owned card routed to kimi reported
+  `attempted=1 launched=0` cycle after cycle. The probe now sends
+  `PREFLIGHT_USER_AGENT`. The same request also stopped sending
+  `temperature: 0`, which the kimi backends reject outright, so the probe was
+  failing on exactly the backends most likely to need probing;
+  `scripts/gateway/skgw-warm` already omitted it for that reason. And the probe
+  asked for `max_tokens: 1`, which a reasoning model spends entirely on
+  reasoning, emitting no visible content and drawing an empty-upstream 502.
+  Measured on the live gateway, identical body varying only that value: 1 and 8
+  return 502, while 32, 64 and 128 return 200 with content. The budget is now
+  `PREFLIGHT_MAX_TOKENS = 64`. Three defects in one request, each of which alone
+  made a healthy route report as unhealthy.
+
+- **Fleet live publisher: an unmeasured host no longer advertises zero
+  capacity.** `skcapstone.fleet_live_publisher` hardcoded `"lanes": {}` in
+  every snapshot it wrote, and running 41 seconds after the dispatcher on the
+  packaged timers it clobbered the dispatcher's truthful lane table each
+  cycle, so `reporting_capacity` read capacity 0 for healthy hosts (chiap03
+  advertised 0 in the same cycle its own `SLOTS` line said `total_free=9`;
+  this fed the 2026-09-16 capacity-partition outage and still poisoned the
+  `owner_free=` selection diagnostic after PR #778). The publisher cannot
+  measure lanes itself (targets are estate configuration in the dispatcher's
+  unit environment, codex `free` is gateway-bounded), so it now carries the
+  dispatcher's most recent lane table forward unchanged with a `lanes_ts`
+  provenance stamp, drops it after the same 30-minute freshness fence the
+  readers apply, and otherwise publishes the explicit non-dict marker
+  `"lanes": "unknown"`, which capacity readers skip instead of summing to
+  zero. "Could not measure" and "measured zero free slots" are now
+  distinguishable in every snapshot.
+- **Fleet rotation: card ownership is a pure stable hash again; live capacity
+  no longer moves it.** The 2026-09-16 "place neutral cards on hosts with
+  capacity" change hashed neutral cards over "hosts whose latest fleet-live
+  snapshot advertises free lanes". That set differs per host and per cycle
+  (snapshots race over Syncthing, and the standalone fleet-live publisher
+  writes `lanes: {}`, advertising zero capacity for healthy hosts), so on
+  2026-09-18 the chi fleet partitioned the same ready pool over a different
+  roster every cycle (three consecutive chiap03 cycles used chiap01 alone,
+  then chiap01-04, then chiap01/02/04), hosts were excluded from their own
+  partition, and every host reported `owned=0` with free slots while ready
+  work existed. `_pool_v2_owner_map` now ignores the capacity snapshot for
+  ownership; a zero-capacity host's slice simply waits, which is the
+  documented cost of stable one-card-one-owner partitioning.
+- **Fleet rotation: `SELECTION_EMPTY` no longer misreports a builder-withheld
+  slice as `foreign-hash-partition`.** A host whose entire hash slice is
+  source-only builder work (the bulk of the current sklegal pool) logged the
+  self-contradicting `owned=0 ... owners=<this host>:N`. The diagnostic now
+  receives the withheld ids, reports `reason=builder-path-withheld` with
+  those ids, and always appends a `builder_withheld=<n>` field.
+
+- **The stalled-worker progress watchdog is now wired, REPORT ONLY.**
+  `classify_progress` in `skcapstone.fleet.worker_watchdog` existed, was
+  tested, and was called by nothing (contract 1,
+  `docs/fleet/2026-09-18-learnings.md`). The dispatcher's worker-health pass
+  in `scripts/fleet/skfleet-rotate.py` now classifies every live local worker
+  (enumerated from BOTH migration-era tmux sessions and systemd
+  `skfleet-worker-*.service` units; on 2026-09-18 all live chi workers were
+  units only) and logs one greppable `WORKER_PROGRESS|` line per worker, with
+  `actuation=report-only`; it kills, releases, and reaps nothing, so the
+  classification can be measured for a day before anyone considers acting on
+  it. `progress_at` is fed by the newest write under the worker's own
+  workspace (bounded, early-exiting scan), because measured on the two live
+  chi long-runners the wrapper beat is always fresh (a shell timer, 10s and
+  26s old on workers 4.9h and 4.2h in), the worker stdout log stays zero
+  bytes for the whole run, and the last card event was 2.2h and 4.0h stale
+  while both workers were writing files minutes before the measurement
+  (workspace ages 269s and 191s). Card events would have flagged both
+  genuinely working workers as stalled; workspace output does not. Tests
+  assert the call site, the report-only property, and the classification
+  behaviour against the lifted shipped source.
+- **The card decomposition preflight is now reachable:
+  `skcapstone coord slice-preflight <id>`.** `skcapstone.fleet.card_slicing`
+  had zero call sites. The new read-only subcommand folds one card through
+  CardStore, runs `recommend_decomposition`, and prints the scope signals,
+  the bounded/advisory/reject decision, any recommended leaves, and the
+  `CompositionVerificationContract` the parent retains after leaves complete
+  (`src/skcapstone/coord_slice_preflight.py`). It never creates or splits
+  cards; the report always carries `actuation=recommendation-only`.
+
+- **Two more contracts in `docs/fleet/2026-09-18-learnings.md`.** A worker can be
+  fully productive and completely invisible: two workers with card events 2.2 and
+  4.0 hours stale had written 216 and 2,351 files in the previous hour, so
+  liveness must be measured by workspace output rather than by CPU (an agent
+  waiting on a model is idle by every process metric) or by board events alone
+  (emitted at task boundaries, so a long task looks exactly like a dead one).
+  And capacity is not throughput: 48 slots running 2 workers looked like broken
+  dispatch and was starvation, 27 ready cards against a 5-host hash partition,
+  with the real constraint 357 cards behind a review gate reporting
+  `capacity=2 eligible=0` every cycle.
+- **Every coord mutation entrypoint now consults one per-seat capability
+  table, and an unknown identity is refused.** PR 766 fixed one seat by name;
+  the structural defect was that the gate was a deny-list with one entry, so
+  link, seraph, niobe, tank, atlas, and any future seat mutated the board
+  unchecked, and eleven mutating verbs (`void`, `describe`, `label`, `link`,
+  `reprioritize`, `amend-criteria`, `add/remove-dependency`, `satisfy-gate`,
+  `rehome`, `score`, and the archive/migrate/reconcile maintenance sweeps)
+  carried no authorization call at all. `seat_boundaries` now holds the single
+  decision function `require_coord_authority` over `COORD_SEAT_CAPABILITIES`
+  (base seat authority plus the named `SEAT_CARD_LIFECYCLE_ALLOWANCES`), and
+  `authorize_coord_mutation` (the generalized `authorize_jarvis_entrypoint`,
+  which remains as an alias) is called by every mutating coord CLI verb, MCP
+  handler, and the SDK. Identities are classified explicitly: exact seat names
+  are bound by their table row, known operators (chef, casey, lumina, ...) and
+  fleet workers / automation (`pi-codex-chiap04-<cardid>`, `cursor-*`,
+  `archive-done`, ...) pass as their own classes, the identityless CLI default
+  passes as the tool class, and a bare name the table does not know fails
+  closed. The card-lifecycle allowance for link, seraph, niobe, atlas, and
+  tank is deliberate and documented in place: measured on chi over 14 days,
+  those seats claim, move, and complete their own seat-labeled cards
+  (seraph 282 claims, link 118 moves) even though the charters read as if
+  they never touch card lifecycle, and refusing that silently would stop the
+  review and verification lanes. Mero gets no allowance. A coverage test
+  parses the entrypoint modules and fails when a mutating verb exists without
+  an authorization call, which is exactly how `release-claim` shipped without
+  one.
+
+
+- **Docs: the Mero (Overseer) seat boundary is now a verb list backed by
+  measurement, not the word "read-only".** The old prose boundary was violated
+  for eleven days undetected: writer `mero` produced 531 board mutations on chi
+  between 2026-08-31 and 2026-09-16 (327 `move`, 149 `release_claim`, 29
+  `complete`, 9 `void`, 9 `archive`, 8 `claim`), 90 percent in one controller
+  burst 2026-09-07 22:00 to 2026-09-08 02:59 UTC, against 10,637 in-charter
+  read-side events (95.1 percent of its output). The rewritten section in
+  `docs/fleet/seat-charters.md` states the seat's purpose in one sentence,
+  lists permitted verbs (`observe`, `recommend`, `create_card`, plus the
+  ungated verdict/evidence link family) and prohibited verbs with the measured
+  count and reason for each, rules the burst's live-claim releases (49 with an
+  owner active in the prior hour, 47 on claims under 2 hours old)
+  overstepping, assigns the genuinely needed stale-claim reaping (40 releases
+  after more than 24h of owner silence) to Niobe via the existing typed
+  recommendation contract rather than expanding mero's authority, and adds a
+  three-layer detection contract (PR 766 runtime refusal, negative tests, and
+  a shard-store audit query that provably flags the 2026-09-07 burst, to run
+  in Seraph's cycle, never mero's own).
+- **Seat charters: every running seat now has an explicit verb boundary.**
+  `docs/fleet/seat-charters.md` gains boundary sections for Seraph, Atlas, and
+  Jarvis (previously only Mero, Link, and Niobe had them), a dissolution
+  record for Tank naming the owner of each folded duty, and a runnable
+  event-store detection query keyed on prohibited verbs per writer identity.
+  Grounded in a 30-day card-event census on chi (2026-08-19 to 2026-09-18):
+  the census also recorded the drift each boundary flags at adoption,
+  including 11 post-charter Mero mutations, Atlas void/archive on seat-seraph
+  review cards, and 4,487 scheduled `jarvis` dispatch events written after
+  ADR-0006 removed Jarvis from recurring scheduling (the rotate script's
+  writer identity still defaults to `jarvis`, named in the Jarvis boundary as
+  the highest-value enforcement fix).
+- **`docs/fleet/2026-09-18-learnings.md`**: eleven failures from one day on chi,
+  each written as an SKRSI boundary contract (producer, consumer, recovery
+  owner, machine evidence, fail-closed condition) rather than as advice. They
+  share one shape, which is the shape SKRSI already names: something asserted a
+  state and nothing independently verified it. Covers the correct-but-unreachable
+  function, the valid route to the wrong backend, a fail-closed gate that could
+  not observe its own recovery, a distributed fence reading host-local state,
+  seat identity assumed by a tool flag, merged-is-not-running and why version
+  strings lie, services importing from trees agents work in, CI that ran twice
+  and starved the only complete gate, verifying through the path that wrote,
+  when a test fighting a change three times means the change is wrong, and the
+  unowned job. Extended with four more from the seat-authorization work:
+  coverage is the property (22 of 32 coord mutation entrypoints had no gate
+  at all, so the fix is an enumeration test where a new verb is mutating
+  until classified otherwise), an identity must be a resolved subject and
+  not a free string (the literal unexpanded `SKAGENT` wrote 12 events), a
+  seat retired on paper keeps writing until something checks (Tank wrote 18
+  events the day before its retirement), and name the boundary you cannot
+  reach yet (the coord CLI cannot reach the one PDP because `--agent` is
+  unauthenticated, so the gap is stated with its unblocking condition).
+- **The fleet dispatcher now writes the coordination board as `niobe`, the seat
+  ADR-0006 gave the job, instead of `jarvis`.** Measured on chi, 30 days to
+  2026-09-18: `jarvis` was the estate's most active writer at 12,230 events,
+  4,487 of them after ADR-0006 declared Jarvis outside recurring scheduling,
+  while the exact `niobe` identity showed 11. The cause was
+  `scripts/fleet/skfleet-rotate.py` hardcoding `--agent jarvis` at its three
+  reaper release sites (failed startups, absence-quorum reap, claim TTL). All
+  dispatcher-side board writes now resolve through one `_dispatch_writer()`
+  helper: default `niobe`, overridable ONLY by the explicit
+  `SKFLEET_DISPATCH_AGENT` variable. The ambient `SKAGENT` is deliberately not
+  consulted, because the chi hosts export `SKAGENT=jarvis` in `.bashrc`, and
+  the liveness cycle's `SKAGENT` fallback was the second, unnoticed spelling
+  through which any interactive run kept writing the board as jarvis. History
+  is untouched: events already written as `jarvis` stay exactly as recorded.
+  Pre-existing claims HELD by `jarvis` remain releasable and cannot be stolen:
+  the released owner travels separately in `--owner` and every release keeps
+  its `--expected-claim-revision` CAS fence, so only the audit identity on the
+  release event changes. Pinned by
+  `tests/fleet/test_dispatch_writer_identity.py` (verified red against the
+  unfixed script first).
+- **New check: merged versus running (`scripts/fleet/skfleet_merged_vs_running.py`).**
+  Answers the estate's most expensive unanswered question: is what we merged
+  actually what the fleet runs? Compares a git ref (default `origin/main`)
+  against every fleet host over read-only ssh, by CONTENT DIGEST, never a
+  version string (the skcoord incident: pip said 0.1.56, the module said 0.1.0,
+  on the same host). Per host it resolves the dispatcher unit's EFFECTIVE
+  ExecStart via `systemctl show` (drop-ins override the unit file's interpreter
+  on every chi host), hashes the script that ExecStart actually names, and
+  hashes every module of the skcapstone package that the unit's own interpreter
+  resolves via `find_spec` (no package code executed). A split fleet (hosts
+  disagreeing with EACH OTHER) is reported as a distinct, worse finding than a
+  uniformly-behind fleet, naming the hosts in each content group; an
+  unreachable host is UNKNOWN, never OK, and exit codes keep the three states
+  apart (0 in sync, 1 drift, 2 could-not-measure). Report only: it never
+  deploys, restarts, or repairs. Optional `--gtd-capture` upserts findings into
+  the unified GTD store deduped on a stable `(source, source_ref)`;
+  `--verdict-path` writes an atomic JSON verdict in the readiness-gate shape;
+  the hand-installed timer units live in `scripts/fleet/systemd/`. First live
+  run found a real split fleet: chiap01/02/03/08 running library content from
+  `d448c2fa` (three merged commits behind main) while chiap04's interpreter
+  resolved an uncommitted feature-branch checkout that matches no merged ref.
+- **CI stops running twice on every PR, and a hung suite can no longer hold a
+  merge for six hours.** `secret-scan.yml` used a bare `push:` and
+  `docs-check.yml` used `on: [push, pull_request]`. Neither filtered branches,
+  so a PR from a branch in this repo triggered both workflows TWICE, once for
+  the push and once for the pull_request: the same commit, the same result, and
+  double the runners. That showed up as duplicate `docs / docs-check` and
+  `gitleaks` rows in every PR's check list. Both are now scoped to `main`,
+  matching `ci.yml` and `providers.yml`, which already did this correctly.
+
+    - The wasted concurrency was not free. It starved the one job that needs
+      the time: measured 2026-09-18, `unit tests (py3.11)` completes in 153-185s
+      and `unit tests (py3.12)`, which runs the full deterministic suite rather
+      than the focused compatibility lane, needs 268-292s.
+    - `pytest.yml`'s `unit` job had NO `timeout-minutes`, so GitHub's default of
+      360 applied and a hung suite would hold a required check, and the merge
+      behind it, for six hours. Now 30 minutes: about six times the slowest
+      observed run, so a cold cache or a slow runner still passes while a real
+      hang fails in minutes.
+    - Note for anyone reading a cancelled py3.12 in the history: `pytest.yml`
+      sets `cancel-in-progress` for pull requests, so every force-push kills the
+      in-flight run. py3.11 finishes inside the usual gap between pushes and
+      py3.12 does not, which is why only py3.12 appeared to be failing. Rebasing
+      a PR repeatedly cancels the very check being waited on.
+
+- **Claim TTL counts the dispatcher's `worker_liveness` link as the owner being
+  alive.** That link is the strongest liveness signal the estate produces:
+  `skfleet-rotate` emits one every 2 to 3 minutes for each worker it observes
+  alive, its `writer` is the dispatcher, and the OWNER's name sits inside
+  `link_value` as `<owner>|<claim_revision>`. Matching only on `writer`
+  therefore ignored it entirely. Measured on chi: 133 of 133 evidence events
+  across a sample of live cards were exactly this kind, with the workers
+  themselves writing nothing at all, so a worker running past the TTL would
+  have had its card reclaimed while the dispatcher was actively recording it
+  alive. Found by phase 2 of the rollout, which is what report mode is for.
+  A liveness link naming a different owner still does not count.
+- **The dispatcher sends each lane's own model, not the bare size bucket.**
+  `_lane_model` resolves a card to the model its lane actually uses (a glm
+  level, the `SKFLEET_CODEX_MODEL_` override, `kimi-for-coding` or `k3`). It
+  existed and was called by NOTHING, so every lane shipped the bare bucket
+  `sk-s`/`sk-m`/`sk-l`/`sk-xl` as its model.
+
+    - This never errored, which is why it survived: the bare bucket IS a valid
+      gateway route, and it resolves to the LOCAL QWEN38 FALLBACK. A card sent
+      to the codex lane asked for `sk-m`, was answered by qwen38, and came back
+      with good work. The subscription backends were simply never asked.
+    - Measured on chi 2026-09-18 from 03:58 at the gateway: qwen38 served 467
+      requests from 5 local slots, while codex (32 slots) served 6, zai 1 and
+      kimi 2. A codex target of 30 could never be met.
+    - The size bucket stays the card's ROUTE IDENTITY. `logical_route` keeps the
+      bucket; only the model actually sent becomes the lane's resolution. The
+      unsized-card skip is unchanged, because a silent downgrade would hide lost
+      capability behind work that quietly got weaker.
+    - The guard in `tests/test_skfleet_logical_routes.py` now asserts at the
+      source level that both the launch site and the post-race recheck resolve a
+      lane model, and that the identity is never assigned the sent model. A test
+      of `_lane_model` alone passed for the entire time the fleet was misrouting.
+- **Worker startup ownership fence: a worker that does not own the folded claim
+  refuses to run.** Measured on chi 2026-09-18: two duplicate pairs across
+  chiap01/chiap02/chiap04, where a worker whose identity did not match the
+  card's folded `claim_owner` was doing live work anyway (and three hosts
+  claimed one card within 51 seconds). Root cause: every pre-launch recheck in
+  `skfleet-rotate.py` (the `fresh_claimability` refold, the post-claim identity
+  read, and the under-lock claim-displaced check) reads the host-local
+  Syncthing-replicated store, so another host's claim still in flight is
+  invisible to all of them, and `acquire_card_admission` is a host-local lock
+  that cannot see cross-host holders. The wrapper
+  (`skfleet-worker-wrapper.py`) now folds the card first thing at startup and,
+  when the folded owner is not itself, exits with a distinct
+  `ABORTED_NOT_CLAIM_OWNER|card=..|worker=..|observed_owner=..` line and a
+  `startup-aborted-not-claim-owner` startup report, before any work and
+  without appending any card event: the loser does not own the claim, so it
+  never releases, voids, or otherwise writes to the card. The fold is the
+  single arbiter; a fold that cannot be read never authorizes an abort. The
+  existing `fresh_claimability` recheck is unchanged, this is a second fence
+  behind it.
+- **Lane admission no longer refuses a healthy lane whose binding is stated
+  twice.** The rotator's health-lane list carried `(kimi, kimi-for-coding)`
+  both from `LANES` and from the unconditional kimi alias append (the glm and
+  codex expansions were guarded, kimi was not), so every sealed snapshot held
+  two identical healthy rows for that binding and `lane_health()`'s exact-match
+  check read them as ambiguity, refusing the lane as `unknown` on every cycle
+  with no path to recovery: no gateway state change alters how many times the
+  writer states a row. Measured live on chi 2026-09-18 04:01 CDT: the same
+  snapshot admitted glm and escalate as `healthy` while kimi read `unknown`,
+  the gateway's own `/health` reported both kimi backends up, and kimi sat at
+  0 of its worker slots across every rotation. Three-layer fix, none of which
+  weakens the fail-closed gate: the rotator's kimi expansion is now guarded
+  like glm and codex; `acquire_lane_snapshot()` seals one row per
+  `(lane, model)` binding; and `lane_health()` collapses byte-identical
+  duplicate rows into one observation before the exactness check. Rows that
+  DISAGREE for the same binding remain ambiguous and still fail closed.
+
+- **New runbook: `docs/fleet/starting-a-new-project.md`.** Start-to-finish guide
+  for standing up a new project on the coordination board: decomposition into
+  independently testable cards, the title size markers (`[S]`/`[M]`/`[L]`/`[XL]`)
+  and what each resolves to per lane, the silent skip of unsized cards
+  (`SKIPPED_LOGICAL_ROUTE`), dependency mechanics and their honest limits,
+  acceptance criteria that survive value drift, dispatch gates, and read-back
+  verification through the kanban fold. Every command is taken from
+  `cli/coord.py`, `cli/coord_amend.py`, `coord_completion.py`, or
+  `scripts/fleet/skfleet-rotate.py`.
+- **Docs: SK doc-standard compliance pass (README, SOP, docs-evidence).**
+  Fixed what was actually wrong rather than adding bulk. SOP §3 claimed "there
+  are five" console scripts while listing six (six is correct; the
+  `skfleet-claim-expiry` row was also indented out of the table). README's
+  "Related projects" still asserted skcapstone "holds no key material of its
+  own", the exact false claim SOP §9 corrected on 2026-08-15 (RSA-2048 TLS
+  key); it now matches §9. Removed README links to `../docs/AGENT_SCAFFOLDING.md`,
+  `../docs/API.md`, `../docs/PMA_INTEGRATION.md`, and `../docs/NEXTCLOUD.md`
+  (targets outside the repo that do not exist) and repaired the Quickstart path.
+  SOP §6 now documents the fleet dispatcher gateway environment verified on chi
+  2026-09-18: `SKFLEET_GATEWAY_URL` takes the gateway ROOT origin with no `/v1`
+  suffix (the `/v1` form 404ed the health/queue probes and caused three days of
+  zero dispatch), required per-lane session targets (chi currently codex 30,
+  glm 9, kimi 9), and lane model resolution that fails closed on a route the
+  gateway does not advertise. §8 gained matching Symptom/Check rows, including
+  the cold-gateway case (backends read `unknown` until a real request has been
+  served). The `docs-evidence` block gained four hermetic checks covering those
+  facts, and `verified:` moved to 2026-09-18.
+- **Gateway warm-start and kimi credential sync are now in the repo** rather
+  than living only on the host that runs them. `scripts/gateway/skgw-warm`
+  closes the cold-start deadlock: a backend reads `unknown` until
+  `recordOutcome()` runs, and `recordOutcome()` runs only after a request, so a
+  restarted gateway cannot clear its own health while fail-closed admission
+  refuses every unknown backend. `scripts/gateway/sync-kimi-auth.sh` moves the
+  kimi credential from the host that refreshes it to the host that serves it,
+  refusing a credential that is malformed, incomplete, expired, or OLDER than
+  the one already installed, and restarting the gateway only on a real change.
+  Documented in `docs/fleet/gateway-warm-and-kimi-auth.md`, with the deployed
+  drop-in kept verbatim in `reference/systemd/50-warm-backends.conf`.
+
+- **The dispatcher sends each lane's own model, not the bare size bucket.**
+  `_lane_model` resolves a card to the model its lane actually uses (a glm level
+  for glm, the `SKFLEET_MODEL_`/`SKFLEET_CODEX_MODEL_` override for codex,
+  `kimi-for-coding` or `k3` for kimi). It existed and was called by NOTHING, so
+  every lane shipped the bare bucket `sk-s`/`sk-m`/`sk-l`/`sk-xl` as its model.
+  The gateway advertises `sk-<size>-<public|internal|secret>` and not the bare
+  bucket, so every request fell through to the local qwen38 backend.
+
+    - Measured on chi 2026-09-18: `codex` (max 32) and `zai` (max 10) served
+      ZERO requests while `chiap08-qwen38` served all of them from 3 slots. The
+      estate's entire subscription capacity sat idle behind a 5-slot local
+      fallback, and a codex target of 30 could never be met because codex was
+      never asked for anything.
+    - Probed directly at the gateway the same day, which is what proves the
+      models themselves were fine: `sk-codex-mid` served by `gpt-5.6-luna`,
+      `glm-4.7` served by `glm-5.3-flash`, and `sk-m` served by `qwen3.8-27b`.
+    - The size bucket remains the card's ROUTE IDENTITY: `logical_route` in the
+      route identity stays the bucket and only `model_or_bucket` and the model
+      actually sent become the lane's resolution. The unsized-card skip is
+      unchanged, because a silent downgrade hides lost capability behind work
+      that quietly got weaker.
+    - A test asserts the launch site and the post-race recheck both call
+      `_lane_model`. A test of the function alone would have passed for the
+      entire time the fleet was misrouting.
+- **ATLAS operator surfaces now render the freeze store's tri-state honestly.**
+  `skcapstone atlas eyes` rendered an ABSENT freeze store as "[not frozen]",
+  which reads to a human as armed-and-healthy when the truth is "never
+  provisioned, refusing everything". That is the exact collapse
+  ACTUATION_READINESS_AND_FREEZE_STANDARD R4 forbids, in the dangerous
+  direction: it under-reports missing safety infrastructure as healthy.
+  Measured on all five chi hosts (freeze store absent on every one).
+  `is_frozen`'s deliberate semantics (absent reads not-frozen, corrupt fails
+  closed as frozen) are untouched; only display and status changed, all
+  derived from the shared `store.check_actuation_gate` guard.
+
+    - `eyes.assess` adds `freeze_state` (`frozen` / `active` / `unprovisioned`)
+      to the assessment, and `eyes.render` shows three distinct headlines:
+      `[FROZEN]`, `[active (freeze off)]`, and `[UNPROVISIONED]` with an
+      explanation that every actuation refuses until a human runs
+      `skoperator provision`.
+    - `loop.run_once` carries `freeze_state` in its result and appends an
+      UNPROVISIONED line to the operator report when no valid store exists.
+    - `brief_publish.render_html` / `render_markdown` render UNPROVISIONED as
+      its own state instead of falling through to "ALL QUIET".
+    - soak samples carry `freeze_state`, and the operator HTTP act refusal
+      payload includes it beside the raw `frozen` boolean.
+- **The read-only Overseer identity (`mero`) is now refused at the coord
+  mutation entrypoints.** ADR-0005 and `docs/fleet/seat-charters.md` define the
+  Overseer as read-only (observe, recommend, create), and the charter even
+  claims runtime enforcement, but the only identity the mutation surfaces ever
+  checked was Jarvis: `authorize_jarvis_entrypoint` returned immediately for
+  every other actor, and `coord release-claim` had no gate at all. Measured on
+  the chi estate (per-card shard store, writer `mero`, 14 days to 2026-09-18):
+  324 `move` and 147 `release_claim` events, written by an interactive
+  controller session passing `--agent mero`, not by the `skfleet-mero` timer,
+  whose census cycle is genuinely read-only. 55 of the 149 all-time releases
+  hit a claim whose owner had been active on the card within the previous
+  hour. `authorize_jarvis_entrypoint` now calls `require_authority` for the
+  exact `mero` identity before the Jarvis check, so `claim`, `move`,
+  `complete`, and `release-claim` fail closed as `mero` across the CLI and the
+  MCP handlers, while `coord create --by mero` and mero verdict links keep
+  working exactly as the coord briefing documents. `pi-mero-*` lane workers
+  are ordinary workers and are not affected.
+
+- **The read-only Overseer identity (`mero`) is now refused at the coord
+  mutation entrypoints.** ADR-0005 and `docs/fleet/seat-charters.md` define the
+  Overseer as read-only (observe, recommend, create), and the charter even
+  claims runtime enforcement, but the only identity the mutation surfaces ever
+  checked was Jarvis: `authorize_jarvis_entrypoint` returned immediately for
+  every other actor, and `coord release-claim` had no gate at all. Measured on
+  the chi estate (per-card shard store, writer `mero`, 14 days to 2026-09-18):
+  324 `move` and 147 `release_claim` events, written by an interactive
+  controller session passing `--agent mero`, not by the `skfleet-mero` timer,
+  whose census cycle is genuinely read-only. 55 of the 149 all-time releases
+  hit a claim whose owner had been active on the card within the previous
+  hour. `authorize_jarvis_entrypoint` now calls `require_authority` for the
+  exact `mero` identity before the Jarvis check, so `claim`, `move`,
+  `complete`, and `release-claim` fail closed as `mero` across the CLI and the
+  MCP handlers, while `coord create --by mero` and mero verdict links keep
+  working exactly as the coord briefing documents. `pi-mero-*` lane workers
+  are ordinary workers and are not affected.
+
+- **Readiness checks each unit against the interpreter it declares.** The gate
+  tested every unit's module imports against one interpreter (`--python-bin`),
+  but a unit is entitled to its own virtualenv and declares it in `ExecStart`.
+  Measured on chiap04: `hermes-gateway.service` runs
+  `/home/skuser01/.hermes/hermes-agent/venv/bin/python -m hermes_cli.main` and
+  had been active since 2026-08-27, yet readiness reported the module did not
+  import, because it tested `~/.skenv/bin/python3`. Under the unit's own
+  interpreter it imports fine. The staged rollout consults the readiness
+  verdict as its gate, so that false failure reported a healthy host as
+  not-ready and halted the rollout on it after a successful deploy.
+- **Cards blocked on the human operator now stop being dispatched, and appear in
+  the unified GTD.** A worker could already write
+  `BLOCKED blocked_on=human referent=approval:<x>`, and it achieved nothing:
+  card `83e498b6` carried exactly that verdict from 2026-08-28, and refill waves
+  claimed straight through `Board.claim_task`, which has no human gate, then
+  overwrote it as a retryable `blocked_on=capability`. That card now has 58
+  claims across 6 owners, 47 of them one seat re-claiming every 10 minutes, and
+  no agent can ever finish it because it needs a Tailscale admin console.
+  Separately, 16 open cards sat at `blocked_on=human` surfaced to nobody.
+
+    - `human_wait.waiting_on_human(home)` derives the queue from the EXISTING
+      `blocked_verdict` / `review_admission.parse_blocked_on_link` parsers, and
+      `assert_human_claim()` follows `assert_governed_review_claim`'s shape. No
+      new label, field, store, dashboard or push.
+    - The assert is called at `coord claim` and the MCP `_handle_coord_claim`.
+      `coord claim --force`'s help already promised "human gates still cannot be
+      bypassed" while no such gate existed.
+    - `skcapstone coord waiting-on-human [--sync-gtd]` lists the queue and
+      upserts each card as a GTD waiting-for, idempotent on
+      `(source="coord-human", source_ref=card_id)`.
+    - A later agent-written `blocked_on=capability` does NOT clear the hold;
+      only a human-authored approval, void or reopen discharges it.
+    - Known gap: `Board.claim_task` in the sibling skcoord package is the true
+      chokepoint and is untouched, so a caller reaching skcoord directly still
+      bypasses.
+- **Claim-time churn breaker: refuse a looping claim until the blocker is
+  recorded (ships DEFAULT OFF).** The claim ceiling stops dispatch only AFTER
+  five wasted claims and never asks why, and it never self-clears: the
+  scheduler's own comment says claim counts are monotonic and the only exits
+  are satisfying the gate, voiding, or raising the ceiling. Measured on chi:
+  `83e498b6` has 58 claims across 6 owners (47 of them one seat re-claiming
+  every 10 minutes) and needs a human's admin console; `bfbb2986` has 55 and
+  needs an unreachable host, while already labelled `not-claimable` and
+  refilled anyway. 117 cards are now permanently excluded, against a
+  dispatchable pool of roughly 29.
+
+    - `fleet/churn_breaker.py` refuses a claim on a card with roughly 5+ claim
+      attempts or 3+ distinct owners and no terminal state, until a blocker is
+      recorded. `SKFLEET_CHURN_BREAKER_MODE` is `off` / `report` / `enforce`,
+      mirroring `SKFLEET_CLAIM_TTL_MODE` including that `off` returns before
+      doing any work. Non-finite thresholds are rejected.
+    - No new vocabulary: re-permission requires the existing
+      `blocked_on=<kind> referent=<kind>:<id>`, read from the fold AND from
+      `coordination/card_events` where `coord link` actually lands.
+    - Same-owner re-claims are not miscounted: a worker re-claiming a card it
+      holds writes a second claim that one release settles.
+    - All six skcapstone call sites of `Board.claim_task` are covered, and a
+      test greps `src/` for `.claim_task(` so a seventh cannot be added
+      silently. `Board.claim_task` itself, in the sibling skcoord package,
+      remains a bypass.
+
+- **Shell-quote the staged rollout's remote command.** The staged rollout had
+  never once deployed to a remote host: every run halted on its first step with
+  git's usage text, which looks nothing like the real cause. `ssh host a b c`
+  does not deliver a, b and c as three remote argv entries; it JOINS them with
+  spaces and hands the result to the remote login shell to re-parse, so the
+  remote received `bash -lc git -C ~/work/skcapstone pull` and `bash -lc` took
+  only its first word as the command string, running bare `git` with the path
+  and `pull` landing in `$0`, `$1` and `$2`. Verified live against chiap03:
+  unquoted returns git's usage, quoted returns the revision.
+
+    - The existing tests could not catch this. They substitute a fake runner
+      and assert on the argv list, so the argv never reaches a real ssh and the
+      flattening never happens. The new tests re-join and re-split the argv the
+      way ssh and the remote shell actually do, across every deploy AND
+      rollback step, because `cd X && pip install -e .` and the cp step carry
+      spaces and shell operators too.
+    - Two adjacent gaps found while using it and deliberately NOT fixed here:
+      the gate reads the readiness verdict from the LOCAL home, so a rollout
+      driven from outside the estate fails its gate after a successful deploy;
+      and the `record` step runs before `pip_install` while importing
+      `rollout_history`, so a host whose installed package predates that module
+      cannot bootstrap itself through the rollout.
+
+- **Probe the gateway at its ROOT, not at the configured path.** The chi fleet
+  had not launched a worker in three days: 373 consecutive NOOP cycles with
+  every card blocked on
+  `LANE_ADMISSION_BLOCKED|codex=unknown,escalate=unknown,glm=unknown,kimi=unknown,qwen=unknown`,
+  while the gateway itself was healthy throughout. All three rotate hosts
+  carried `SKFLEET_GATEWAY_URL=http://<host>:18790/v1`, and `/health` and
+  `/queue` are served at the gateway root, so both probes 404ed, every lane
+  resolved to `unknown`, and `lane_health()` is fail-closed on unknown by
+  design. `e1ada0e7` had removed the hardcoded default and made the variable
+  mandatory, and the docs show `$SKFLEET_GATEWAY_URL/v1/chat/completions`
+  directly beside `$SKFLEET_GATEWAY_URL/health`, which makes folding `/v1` into
+  the base URL the natural operator mistake.
+
+    - `fleet_lane_health.gateway_root()` discards any path component, and is
+      applied in BOTH places that compare an endpoint: the snapshot seal in
+      `acquire_lane_snapshot` and the comparison inside `lane_health()`.
+      Normalizing only the first relabels the outage as `endpoint-mismatch`
+      with `errors: []`, which is strictly worse: the same total dispatch
+      outage with the one diagnostic that exposed it deleted.
+    - `fleet/review_capacity.acquire_review_route_snapshot` had the same defect
+      independently. It appends `/v1` itself for the models probe while
+      `/health` and `/queue` are root-relative, so a `/v1` base requested
+      `/v1/v1/models`, returned no routes, and reported zero review capacity.
+    - Both modules' existing test mocks resolved a request by its trailing path
+      segment only, so neither could distinguish `/v1/health` from `/health`.
+      Strict openers that route on the full path and 404 a miss were added,
+      each with a test proving the strict opener really does reject the
+      doubled prefix.
+
+- **Release a card claim whose owner has stopped touching it, without
+  requiring any host to prove the owner absent (ships DEFAULT OFF).** 349
+  claims were held on chi and unreleasable: `reap_dead_claims()` releases only
+  after every authoritative host proves absence, which is unsatisfiable when
+  liveness evidence is host-local, most owners are one-shot identities with no
+  process to find, and the store is partitioned. A second gate,
+  `_parse_worker_owner()`, skips any owner not shaped
+  `pi-<lane>-<host>-<cid>` before liveness logic runs, which alone accounts for
+  146 of the 349.
+
+    - `fleet/claim_expiry.py` decides, from events already on disk, which
+      claims are past an idle deadline (`SKFLEET_CLAIM_TTL_H`, default 48h,
+      non-finite values and anything under a 1 hour floor refused). Ownership
+      and the claim revision come from `CardStore.fold()`; a hand-rolled replay
+      was tried first and diverged from the fold on 75 of 143 held cards, so it
+      was deleted rather than patched.
+    - Liveness is measured across BOTH event stores. `coord link`, `verdict`
+      and `evidence` are written to `coordination/card_events/` (81,207 records
+      on chi) and never touch `cards/<id>/events/`, so an idle clock reading
+      only the per-card shards is blind to the entire review workflow: an
+      adversarial review demonstrated a worker posting verdicts being measured
+      as idle for its whole run and losing its card.
+    - Activity counts when written by the owner OR by a worker identity
+      referencing that card, because the owning identity is frequently not the
+      working one (29% of held cards had an owner that wrote nothing but its
+      own claim). Counting any writer is the opposite error: three held cards
+      had an owner idle 32 hours while a seat wrote within 10 minutes.
+    - `skfleet-claim-expiry` reports what would be reclaimed and never writes.
+      `_expire_idle_claims()` returns before importing anything when the mode
+      is off, so a host carrying the new script with an older package cannot
+      fail mid-cycle, and a store-read failure is contained rather than
+      aborting the rotation.
+
+- **Staged rollout and rollback: deploy to one node at a time, verify each,
+  halt on the first failure, and go back (nimble-factory Plan B3, phase
+  2).** Measured causes: phase 1 found four drift incidents by hand in one
+  session that no automated signal reported (see the rollout-observability
+  entry below), and a manual four-host roll on this same branch surfaced a
+  stale dispatcher copy on the first host taken (`chiap02`) before the same
+  step ever reached the other three; had all four gone at once, three hosts
+  would have been mid-change when the problem first showed up. This phase
+  turns that one measured-safe ordering into a mechanism instead of an
+  operator's memory.
+
+  - `rollout_history.record_deployment(home, manifest)` /
+    `previous_manifest(home)` give a node-scoped, append-only record of the
+    manifest a node ran before each change, so "the previous manifest" is a
+    fact rather than a reconstruction; before this, the only rollback
+    practice in this estate was hand-written `card_events` evidence with no
+    code behind it.
+  - `staged_rollout.plan_rollout`/`execute_rollout` deploy to nodes in a
+    given order, one at a time: record, then the same four steps
+    `docs/fleet/activation-runbook.md` already documents by hand (git pull,
+    pip install, copy the dispatcher script, converge), then gate with the
+    existing readiness verdict plus `node drift`'s own no-unambiguous-drift
+    rule, never a second notion of "healthy". The first node that fails to
+    deploy or fails its gate halts the rollout; every later node is left
+    untouched, never attempted.
+  - `staged_rollout.plan_rollback`/`execute_rollback` return nodes to
+    whatever `rollout` recorded for each of them, same staging and halt
+    rule. A node with no recorded previous manifest makes rollback refuse
+    outright rather than guess. Rollback re-runs the gate after every node,
+    including a successful one, on the same reasoning the forward path
+    already accepts the cost for: this estate has two documented cases of
+    an unverified change going unnoticed for a long time because nothing
+    checked after it landed (a release uninstalled for sixteen hours; a
+    dispatcher timer active-but-not-enabled for seven weeks).
+  - `skcapstone fleet rollout` and `skcapstone fleet rollback` are the CLI
+    surface, siblings of `fleet node drift`: report-only in spirit, `--json`
+    and `--strict` (non-zero exit, no output change) follow the same
+    contract. **`--apply` is required to execute for real; both default to
+    a dry run** that previews every node's plan, numbered, in visiting
+    order, with zero network or filesystem-writing calls.
+  - Documented in `docs/fleet/rollout-drift.md` (new section 4), with
+    pointers updated in `docs/fleet/activation-runbook.md` and
+    `docs/RELEASING.md`. **This is human-invoked, not an autonomous
+    actuator: nothing schedules it.** `Seat.ATLAS` is still bound to
+    `{OBSERVE, ACTUATE_APPLICATION, CREATE_CARD}` only, `Action.DEPLOY`
+    remains with the retired `Seat.TANK`, and ATLAS's ported
+    release-and-install duty is still recorded as inoperable in
+    `docs/fleet/seat-charters.md`, which now also states concretely what
+    granting `DEPLOY` would take given that the manifest, the gate, and the
+    rollback target it was missing now all exist.
+
+- **Rollout observability: a deployment manifest, a caller for the readiness
+  gate, and a drift check, quiet by default (nimble-factory Plan B3, phase
+  1).** Measured cause: four drift incidents found by hand in one session
+  that no automated signal reported, because a version string proved what
+  tag was installed and nothing about whether the installed files matched
+  it. Three different `skmail` binaries sat across five hosts, none matching
+  the repo, invisible to every version check because the file was never in
+  `pyproject.toml`'s `script-files` and so belonged to no package at all.
+  Separately, `skfleet-rotate.timer` was active but not enabled (no
+  `timers.target.wants` symlink) on all three rotate hosts for at least
+  seven weeks; a reboot on any of them would have stopped fleet dispatch
+  fleet-wide, with nothing reporting it. Found by following the same
+  investigation, fixed, and now checked continuously rather than by luck.
+
+  - `deployment_manifest.build_manifest(repo_root, home)` pins `revision` (a
+    content digest, not a timestamp, so identical state always compares
+    equal), `git_sha`, `package_version`, `required_env` (reused from the
+    readiness gate's own AST parse, never hand-typed), and `units`.
+  - `scripts/fleet/skfleet_readiness.py` finally has a caller
+    (`skfleet-readiness.service`/`.timer`, every 15 minutes), is scope-aware
+    via the paired timer's `ActiveState` rather than `is-enabled` (measured
+    identical across rotate and seat hosts, so useless for this), and writes
+    its verdict to a node-scoped path so five hosts sharing one Syncthing
+    folder do not overwrite each other's result.
+  - `rollout_drift.detect_drift` compares a node's installed content and
+    live state against a fresh manifest: `missing`, `changed`, and
+    `enablement_mismatch` findings, never collapsed into one label, plus the
+    enablement check widened to cover hand-installed critical units (the
+    dispatcher timer above was never in the shipped tree, so a shipped-only
+    check could never have caught the incident it exists for).
+  - `skcapstone fleet node drift` gives that check a caller. Run against
+    this checkout its default output was 20 drift lines, and 14 were units
+    this workstation never installs on purpose; the same shape was measured
+    on two live hosts against their own pinned commit. This estate has no
+    per-host role manifest, so "this host's role never installs it" cannot
+    be told apart from "a rollout should have installed it and did not."
+    Rather than guess, the default text output now lists every unambiguous
+    finding by name (`changed`, `enablement_mismatch`, `git_sha`) and folds
+    ambiguous `missing` findings into one count with a pointer to `--json`,
+    the flag that actually expands it (`--strict` only changes the exit
+    code; both still act on every finding, missing included).
+  - Documented in new `docs/fleet/rollout-drift.md`, with pointers from
+    `docs/fleet/activation-runbook.md`, `docs/fleet/seat-charters.md`, and
+    `docs/RELEASING.md`. **This phase observes and does not actuate: no
+    staged rollout, no rollback by manifest, and no change to ATLAS's
+    authority.** `Seat.ATLAS` is still bound to `{OBSERVE,
+    ACTUATE_APPLICATION, CREATE_CARD}` only, and its ported release-and-install
+    duty is recorded as inoperable pending further work.
+  - **Review follow-up, same phase.** A FAILED unit was previously
+    self-consistent with a disabled `UnitFileState` and produced zero
+    findings (the chiap08 seat unit that sat FAILED for weeks would never
+    have been caught by the code as first written); `detect_drift` now
+    reports a `failed` finding, in the default output. The readiness
+    gate's own unit pair existed in the repository and on no host, because
+    nothing installed it; `skfleet-readiness.service`/`.timer` are now in
+    `skcapstone.systemd.ALL_UNITS`, the list `skcapstone daemon install`
+    actually copies and enables (confirmed absent on chiap01 beforehand).
+    `deployment_manifest.write_manifest` had no caller; `skcapstone fleet
+    node manifest` is now that caller, publishing a manifest to a
+    node-scoped path without changing what `node drift` itself compares.
+    `detect_drift` now also digests every other `pyproject.toml`
+    `script-files` entry against `~/.skenv/bin/<name>`, not just the
+    dispatcher script, so the next divergent binary installed the same way
+    `skmail` was is no longer invisible either.
+
+- **Salvaged four pieces from a branch stranded on a production host.** `chiap08`,
+  the chi estate's elected control-plane host, was found running a local branch 12
+  commits ahead of main, 235 behind, never pushed. The branch itself must never be
+  merged: `git merge-tree` reports zero conflicts because it holds whole-file older
+  versions rather than conflicting lines, and merging it would have removed the
+  claim ceiling, casey-authorization, the gated exit code, gate-satisfaction
+  tracking and the commit-evidence gate, while shrinking the dispatcher from 6,842
+  lines to 4,480.
+
+  - `ProgressObservation` and `classify_progress()` in `fleet/worker_watchdog.py`,
+    a bounded progress-proof classifier, landed as a delta into main's current file
+    rather than by copying the branch's divergent version of that module.
+  - The worker file heartbeat is detached from worker pipes, so a worker's exit
+    evidence no longer depends on pipe state.
+  - Gateway-routing work is kept off the qwen lane. The original fix assumed two
+    call sites for `qwen_suitable()`; main has four, so all four are updated and a
+    test now counts them, making a future partial application fail loudly instead
+    of silently under-enforcing.
+  - **Workspace custody is verified before cleanup.** This covers a window the
+    commit-evidence gate structurally cannot see: that gate inspects a card at
+    `coord complete` or `coord move done`, so a worker that crashes or is reaped
+    beforehand leaves nothing behind and nothing notices. Custody is derived from
+    the card's `commit_sha` and `branch` links, reusing `commit_sha_is_valid`, and
+    the literal `none` sentinel satisfies it. `cleanup_decision()` is called at
+    every worker exit; only the destructive execution is deferred, behind an
+    explicit `# intentionally-unwired:` marker naming the reason.
+
+  Deliberately not taken: a `coord gates` consolidation that predates several
+  governance controls and would have silently regressed the diagnostic, and
+  `seat_shadow_entrypoint.py` with its units, which main renamed and reimplemented
+  in #638 after the old unit failed on enable.
+
+- **Docs: the tank-to-atlas fold moved the duty, not the authority; charter
+  now says so.** `docs/fleet/seat-charters.md` and
+  `docs/fleet/activation-runbook.md` now document that ATLAS's ported
+  release-and-install duty is inoperable pending spec A.4 / Plan B3: `Seat.ATLAS`
+  in `seat_boundaries.py` has no `DEPLOY` action, `_role_seat_metadata` in
+  `scripts/fleet/skfleet-rotate.py` still gates the artifact digest only on
+  the retired `tank` branch, and ATLAS's own dispatch-layer rail brief tells
+  workers not to deploy. No source, script, or test file changed; this is a
+  documentation-only correction so an operator reading the charter does not
+  conclude a governed release can be dispatched through ATLAS today. The
+  charter also states plainly what not to do: do not route a routine release
+  through the Casey-directed emergency gateway as a substitute, since
+  `JarvisEmergencyGateway` holds `DEPLOY` and `RELEASE_ARTIFACT` unbounded
+  with no artifact-digest fence, which is strictly worse than waiting for B3.
+  Added two measured rollout ordering constraints to the activation runbook:
+  upgrade every host's code before converging (an un-upgraded host's stale
+  `LIFECYCLE_SEATS` still contains tank, so a five-seat control-plane record
+  synced to it makes `load_control_plane` raise for all five seats on that
+  host), and converge only on the elected host (`converge_lifecycle_seats`
+  derives `active_host` from the local machine and overwrites the synced
+  record, so converging from the wrong host can leave two hosts each
+  believing they are elected during the Syncthing propagation window; a
+  code-side refusal for this is tracked separately and not yet confirmed
+  landed). Also documented that `rollback_lifecycle_seats` restores its
+  captured files sequentially with no staging, so a failure partway can
+  leave the control plane restored and the placement manifest not; an
+  operator rolling back should read back both files before trusting the
+  result.
+
+- **Fold the tank seat into atlas; seat depinning did not land (nimble-factory
+  Plan B2).** ADR-0005 names ATLAS as Operations, and ATLAS absorbed tank's real
+  activity (releases and rollback rehearsals, 26 events), so `LIFECYCLE_SEATS`
+  in `src/skcapstone/lifecycle_seats.py` is now five: link, mero, seraph,
+  niobe, atlas. The `skfleet-tank.service` / `skfleet-tank.timer` pair is
+  deleted from both systemd trees, and the bounded batch dispatch layer in
+  `seat_cycle_entrypoint.py` now accepts `atlas` only, not `{"tank", "atlas"}`.
+  `seat_manifest_audit.SEATS` now derives from `LIFECYCLE_SEATS` instead of
+  restating it as a second hardcoded roster, which is exactly the drift that
+  briefly had the audit still checking a seat, tank, that no longer existed.
+  `seat_boundaries.Seat.TANK` is
+  deliberately retained: tank is no longer a seat that runs, but it stays a
+  known actor in the authority model so its historical board actions still
+  resolve. `lifecycle_seats` also gained a generator for `seat-placement.json`,
+  so that manifest stops being hand-maintained; nothing in the repository
+  previously wrote it.
+
+  **Plan B2's other half, letting any host in an estate run any seat, did not
+  land, and is dropped rather than deferred.** Its premise was measured false:
+  the CardStore claim fence cannot exclude a concurrent second host. `fcntl.flock`
+  is taken on a card's local directory, and `~/.skcapstone` is a per-host local
+  ext4 volume replicated asynchronously by Syncthing, so the same card has
+  different inodes on different hosts, one flock per host, no cross-machine
+  exclusion. `acquire_card_admission` says as much in its own docstring: "ON
+  THIS HOST." `active_host` in `seat-control-plane.json` is therefore currently
+  the only cross-host exclusion the estate has, and seats remain host-pinned to
+  it. See [Amendment B](docs/superpowers/specs/2026-09-17-seat-exclusion-amendment.md)
+  for the measured cause, three options, and a recommendation. This change is
+  code and tests only: nothing here was rolled out to any live host, and no
+  live estate's `seat-placement.json` or `seat-control-plane.json` was touched.
+
+- **PR policy: branch push by default, PR per batch (nimble-factory Plan B1).**
+  Measured cause: of the six skcapstone workflows, `docs-check` and `secret-scan`
+  fire on any branch push and cost about 0.4 minutes total, while `ci`, `pytest`,
+  `providers`, and `publish` fire only on a PR or on `main`. The PR was where the
+  20 to 30 minute delay lived, and it was paid on every routine card. Separately,
+  over 1,200 live cards, only 15 percent are sensitive enough to need the
+  independent review a PR forces.
+
+  - The worker launch prompt's DEFINITION OF DONE no longer says "Work is NOT
+    done until it is an open pull request." The new default: branch first, never
+    commit to `main`, commit as soon as a fast check passes, push the branch, and
+    record the branch and the exact commit SHA as evidence.
+  - `pr_required(core)` in `scripts/fleet/skfleet-rotate.py` opens a PR only when
+    a card's title or a label matches `capauth`, `credential`, `custody`,
+    `issuer`, `secret`, `key`, `rollback`, `deploy`, `production`, `release`, or
+    `migration`. Every other card is batched into one PR per cycle by the
+    Integrator seat instead of one PR per card.
+  - Evidence moves from a PR URL to `skcapstone coord link <card> branch
+    <repo>:<branch-name>` and `skcapstone coord link <card> commit_sha
+    <40-character SHA>`. The branch link is repository-qualified because the
+    fleet dispatches across skcapstone, skcoord, skchat, and others, and a bare
+    branch name does not say which repository to fetch from. A card that needed
+    no repository change links `commit_sha` to the literal `none`, which is a
+    recorded decision rather than a gap.
+  - Dropping the PR requirement lowers traceability unless the replacement
+    evidence is actually required: measured on 544 completed cards under the old
+    PR-mandatory policy, only 26.8 percent carried any code-evidence link.
+    `complete_coord_task` and `coord move <id> done` now both refuse to complete
+    a card carrying a `repo:<name>` label unless it also carries a `commit_sha`
+    link, naming the command that supplies it. This enforcement is scoped to
+    cards with that label. The original 12.6 percent figure here (739 of 5,861
+    cards) was measured against raw `initial_labels`, not the folded labels the
+    gate actually reads (initial_labels plus every later `add_label` /
+    `remove_label` event); measured correctly, against folded labels, on a
+    400-card fold sample, the figure is approximately 23.2 percent. A card
+    without the label still routes to the code bridge by default and can
+    produce code without tripping this gate.
+
+- **Card lifecycle correctness (nimble-factory Plan A).** Measured cause: 444 open
+  cards, 235 claimed and then abandoned with no recorded reason, some claimed
+  hundreds of times. Cards looped because their acceptance criteria named an
+  external reviewer the worker could never be, and nothing capped re-dispatch or
+  recorded why a claim ended.
+
+  - Claim ceiling keyed on claim events rather than launch evidence, so a card
+    cannot be re-dispatched indefinitely. Ceiling exclusions are logged per card
+    and counted separately from ordinary backoff, because an exclusion that reads
+    as temporary backoff is invisible and permanent.
+  - `exit_gates` separate criteria a worker owns from criteria only another seat
+    can satisfy. `await_gates` records the worker-terminal state as a ledger fact,
+    and `coord satisfy-gate` clears each gate so the card becomes dispatchable
+    again. Both ship together: a producer without an exit converts a looping card
+    into a permanently stuck one.
+  - `coord complete` and `coord move <id> done` both refuse a card with
+    outstanding gates, naming the gates and their owners. Gating only the first
+    left the second as an unlocked side door, which reads as enforcement while
+    providing none.
+  - `--abandon-reason` on `coord release-claim`, recorded at every release site
+    the vocabulary can honestly describe. Where it cannot, the reason is omitted
+    rather than guessed: `_release_exact` is shared by seven callers with
+    genuinely different causes, and a wrong label is unfalsifiable afterwards.
+  - Fleet readiness gate refusing to start a node whose required environment
+    variables or modules are missing. The first deploy it ran against caught a
+    real configuration gap.
+  - `scripts/fleet/backfill_exit_gates.py` splits gate language out of existing
+    cards. Dry run by default; `--apply` writes a backup first because `core.json`
+    is the only copy of `acceptance_criteria` and there is no ledger to recover
+    from. It refuses to write a card whose split would leave no criteria at all.
+
+  Requires `skcoord>=0.1.77`. The floor is deliberately one past the newest
+  published tag so installing fails loudly rather than resolving to a real but
+  lacking release; see the comment in `pyproject.toml`.
+
+- Card `5f178417`: reconcile all running builder requests before filling up to
+  four exact-claim worker slots; preserve uncertain live generations and block
+  expired unclaimed offers without launch.
+
+- Card `3402048c`: re-fold builder offers before each prelaunch binding check;
+  durable mismatches block only the exact request generation without consuming
+  a launch attempt, while preserving source reconstruction and claim fences.
+
+- Card `53009558`: keep POOL_V2 source revisions anchored to raw `core.json`
+  when criteria events change the folded card, so unchanged preclaim snapshots
+  match while real source changes still fail closed.
+
+- Card `81da24f6`: bound assigned-review observation to the immutable POOL_V2
+  review snapshot so an empty Seraph selection emits its typed no-op before the
+  service deadline, and terminate and reap the dispatcher process group on
+  timeout while preserving diagnostics in an auditable health receipt.
+
+- Card `4dcb5258`: preserve canonical and Syncthing conflict files verbatim
+  instead of promoting, replacing, or deleting them by mtime; emit
+  hash-bound diagnostics without declaring either copy authoritative.
+
+- Card `4a80d2c9`: paginate the Mero blocker census across bounded cycles:
+  a census-local checkpoint at `mero_census/pagination.json` records the
+  window position so runs beyond the 4000-card cap deterministically sweep
+  the tail of the sorted card id list, the report carries a coverage
+  contract (window bounds, position, cycle, pass completion) proving
+  eventual full coverage, and the 200-finding cap defers rather than drops
+  unemitted findings; the checkpoint is committed atomically, touches no
+  card event or lifecycle field, and preserves observe/recommend-only
+  authority.
+
+- Card `ab2a3244`: accept systemd's active/running timer state during a proven
+  timer execution, avoiding a false rollout failure and redundant timer start.
+
+- Card `f6d18fcf`: serialize Tank, Seraph, and activation-selected Niobe in one
+  non-overlapping systemd generation, continue after bounded seat failures,
+  and retain the shared rotation lock as defense in depth.
+
+- Card `f6d18fcf`: give Seraph a bounded wait for the shared fleet rotation
+  lock while preserving Niobe's existing wait and nonblocking Tank and Atlas
+  behavior, with the Seraph lock, dispatch, and cleanup budget below the
+  300-second service deadline.
+
+- Card `9150a101`: propagate the bounded Seraph batch size through both
+  `SKFLEET_TARGET` and `SKFLEET_SEAT_TARGET` so the shared dispatcher does not
+  reject a manager environment that omits the required general target, and
+  provision Seraph with Niobe's existing configured gateway-route drop-in.
+
+- Card `4d90bd7a`: ship the host-neutral `skfleet-niobe-live.env.example` template in Python wheels and source distributions so packaged Niobe lane setup stays reviewable and content-free.
+
+- Card `5245b3a5`: bound both gateway route-preflight requests to Niobe's
+  inner cycle deadline and stop selection before workspace, claim, or launch
+  when the terminal-receipt reserve begins, preserving fail-closed routing and
+  a terminal cycle receipt before the outer dispatcher timeout.
+
+- Card `964aa0ae`: preserve the pre-claim lifecycle column when a claim is
+  released, so review-shaped backlog, ready, and doing cards remain withheld
+  until an explicit move to review; exclude `do-not-claim` reviews while
+  preserving governed review admission and success-only launch budgeting.
+
+- Card `83754e0e`: unify the governed review lifecycle so an unowned
+  review-column card carrying the exact `review` label folds to claimable
+  reason `governed-review` and dispatches through the bounded POOL_V2
+  admission snapshot, while every other review marker stays diagnostic-only
+  and fails closed; the Link recommendation and Niobe launch paths require
+  the same exact state, repairing POOL_V2-admitted cards withheld with
+  reason=review.
+
+- Card `27fd3463`: preflight repository and protected-branch merge policy,
+  select an allowed merge method deterministically, and fail closed before
+  mutation when policy is unavailable or disjoint.
+
+- Card `b35fdf93`: audit profile-required timers through their exact
+  `timers.target.wants` links and active waiting state, converge missing
+  enablement without activating allowed-only timers, and record every enable
+  or disable attempt in append-only attributable evidence.
+
+- Card `74a0c101`: make the authoritative review column mandatory for pool,
+  recommendation, and launch admission; exact governed-review claim release
+  restores review while a later explicit backlog move suspends dispatch.
+
+- Card `e058c2c8`: add a host-neutral workspace-runtime bootstrap that
+  atomically admits under a registry lock from live meminfo and exact
+  per-bucket occupancy via `fleet.capacity.admit_headroom`, then creates and
+  retires isolated per-card workspaces through thin injected (or default git)
+  actuators with exact path/binding checks and rollback, plus claim/unit
+  mapping, successor safety, and terminal-only Herdr reclaim selection, without
+  host or model contract bindings.
+
+- Card `d49c82a1`: bound stale source-ref probes so selectable Niobe
+  candidates cannot consume the cycle deadline, and terminate and reap the
+  dispatcher process group before recording timeout rc=70 diagnostics.
+
+- Card `970454ed`: bound Niobe scheduler work to ready and governed-review
+  candidates, and convert its fixed 270-second dispatcher timeout into an
+  auditable nonzero health receipt with preserved stdout and stderr.
+
+- Card `fe620f49`: route elastic governed reviews to the single configured
+  Niobe placement host, failing closed on missing, ambiguous, dirty, or
+  conflicting pinned placement while preserving ordinary and seat ownership.
+
+- Card `d6c08352`: preserve complete typed single-seat review markers across
+  executable lifecycle transitions, and resolve empty-title review routes from
+  exactly one canonical logical size label so released reviews can relaunch.
+
+- Card `0c678c8e`: include Pi-emitted `name` and `contextWindow` in the catalog
+  inventory fingerprint so identical logical IDs with metadata drift rewrite
+  `models.json` instead of reporting `changed=[]`.
+
+- Card `75de8848`: close Pi catalog review FAIL findings from `e1f4321e` /
+  PR 699 — no size downgrade, healthy logical routes only, health-aware
+  fingerprint, required `SKFLEET_GATEWAY_URL`, and gateway revision passed into
+  reconciliation.
+
+- Card `075a8493`: Pi's SKGateway catalog reconciler now selects only currently
+  advertised gateway routes, invalidates stale served-model names when the
+  gateway revision or inventory fingerprint changes, and falls a stale
+  `defaultModel` back across policy-compatible logical size capacity without
+  hardcoding host targets or concrete served model names.
+
+- Added an exact, reversible coordination command for quarantining one stale
+  ownerless projection bound to a voided card. Card-generation and projection
+  SHA-256 fences prevent stale or broadened mutations, and restoration verifies
+  both the quarantined bytes and the original retirement receipt.
+
+- The fleet liveness publisher now reads pane evidence only through an
+  explicit namespace-safe tmux socket (`SKFLEET_TMUX_SOCKET`, set to
+  `%t/skfleet/tmux.sock` by its `PrivateTmp=yes` unit). A missing, non-socket,
+  or unreachable socket fails closed without replacing the last published
+  snapshot; `failed to connect` is no longer accepted as empty-success
+  evidence. The oneshot preserves that runtime directory after exit so the
+  explicit socket remains available to the next publication cycle.
+
+- Review completion now uses exact-head hosted check totals for non-SKCapstone
+  repositories instead of imposing SKCapstone's Python check names. Missing,
+  partial, non-success, and stale hosted evidence still fail closed.
+
+- Card `353e53d2`: the lifecycle seat manifest audit
+  (`scripts/fleet/seat-manifest-audit.py`) now validates the documented
+  canonical seat schema (`sk.lifecycle-seat/v1`) instead of three obsolete
+  fields. The Link activation preflight had reported 18 false findings (3 per
+  seat) because the audit required `mail_protocol.read_all_recipient` (the
+  canonical field is `read_direct_and_all`), a `model_policy` block (canonical
+  manifests carry top-level `model_route`/`model_profile`), and a
+  `card_contract` block no canonical manifest carries. The audit now checks
+  the documented mailbox, logical route, and lifecycle fields
+  (`read_direct_and_all`, `model_route`/`model_profile` with card-scoped
+  opt-in escalation, `schema`, `activation_state`, `safe_retirement`,
+  `lifecycle_beat`) and still fails closed for genuinely missing
+  requirements. Identity, estate, duplicate-fingerprint, and required-file
+  checks are unchanged. Read-only toward operator manifests.
+
+- Builder source reconstruction failures now write request-bound, retry-bounded
+  status and continue to later queued work instead of terminating `sknoded`.
+
+- Fleet hosts can publish exact local worker and claim-generation liveness
+  through a dedicated read-only timer, without restoring per-host dispatch.
+  Reaper authority still requires fresh, valid evidence from every configured
+  host; centralized Niobe remains the only launch authority.
+
+- Fleet workers now classify an empty code-0 exit without an attributable
+  exact-claim card mutation as ineffective, apply bounded retry suppression,
+  and retire that worker generation's liveness projection as inactive. The
+  attribution window ends at exact release or supersession, so later writes
+  by the same worker cannot retroactively make the released attempt succeed.
+
+- Builder dispatch now releases the prior exact claim and blocks without
+  launching when a changed offer supersedes persisted status for the same card.
+
+- Card `7a13d0e1`: bound the Niobe dispatcher to 270 seconds, preserving its
+  240-second fair lock wait while leaving 30 seconds for cleanup before the
+  systemd service deadline.
+
+- The shared fleet rotation lock now gives Niobe a bounded acquisition wait
+  while Seraph and the other independent seats remain nonblocking. A
+  240-second Seraph cycle can no longer turn every one-minute Niobe timer beat
+  into `rotation_overlap`; all mutations still use the same exclusive lock.
+
+- Bound fleet review evidence discovery to explicit card references and
+  `evidence/work/<card_id>/` roots with deterministic time and file-count
+  budgets, and suppress Seraph/elastic redispatch while a machine-readable
+  dependency blocker remains unresolved. Re-eligibility returns only after the
+  named dependency publishes shared work-root bytes or completes with a
+  non-BLOCKED verdict, so temporary `do-not-claim` fences are no longer required
+  for that failure mode (card 4cd4dd63 / PR662).
+
+- Governed review placement and atomic claim authorization now consume one
+  host-neutral candidate contract. Qualified Link, Mero, Seraph, and
+  configured logical reviewers share every healthy, policy-compatible
+  SKGateway capacity domain that satisfies the card's size bucket. Producer
+  identities, unqualified or unavailable reviewers, exhausted capacity, and
+  stale claim generations remain fail-closed. Card metadata retains only
+  logical seats and size buckets, never a host, provider, or concrete model.
+- Dreaming stopped for 19 days (2026-08-25 to 2026-09-13) and the stack read the
+  silence as a quiet week. Three things were wrong at once. The "all LLM
+  providers unreachable" path called `_save_state()`, which bumps `dream_count`
+  and stamps `last_dream_at`, but never called `_record_dream()`, so a failure
+  armed the 2h cooldown off a dream that never happened and left no dream-log
+  entry. Separately, `_build_anchor_seeds_context` forwarded `self._agent_name`
+  straight into skmemory's `match_blooms_for_feb`; when the daemon could not
+  resolve an agent that value is `""`, which `get_agent_paths` rejects as an
+  unregistered profile id, and the `ValueError` escaped `_build_prompt` and
+  killed all 1864 scheduled runs before the LLM was ever called. A provider
+  outage is now recorded to `dream-log.json` with its `skipped_reason` and
+  leaves state untouched, so the next cycle retries immediately; anchor seeding
+  passes `None` (skmemory's documented "resolve the active agent" value) and
+  degrades to a blander dream instead of raising; and `dream-week-prep.sh`
+  splits dreams from skipped cycles behind an ENGINE HEALTH block so the weekly
+  reflection can no longer read an outage as steady state.
+
 - The fleet rotation's worker roster was a literal tuple of one estate's five
   chi hosts, so on a second estate the live dispatcher exited immediately with
   `NOOP|noroc2027|host is outside the authorized chiap01-chiap03 worker fleet`.
@@ -209,8 +1635,6 @@
   and producer identity independently. A failed launch is retryable only after
   its exact claim generation is released and CardStore confirms the card is
   currently claimable. The default remains `sk-codex-mid`.
-
-## Unreleased
 
 - Seat dispatch now asks SKGateway for a SIZE instead of a provider. The tank
   and ATLAS role-dispatch path in `src/skcapstone/seat_cycle_entrypoint.py`
@@ -446,6 +1870,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ---
 
 ## [Unreleased]
+
+### Added
+
+- **Card 6ba25aa4: record SKDASH-AUTH-IDENTITY-01R independent review verdict.**
+  Independent review of SKDashboard PR143 exact head f407bed: verified
+  fail-closed multi-principal authorization (unknown, expired, duplicate, and
+  mismatched principals all denied), confirmed DCE38 remains the fixed service
+  signer, and verified per-subject owner revision selection. Full test suite
+  724 passed; ruff clean. Verdict PASS recorded as an append-only evidence
+  link, with SHA256-hashed review report, on the shared CardStore.
 
 ### Fixed
 

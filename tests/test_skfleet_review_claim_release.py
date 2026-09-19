@@ -21,6 +21,24 @@ def _load(name: str, namespace: dict) -> dict:
     return namespace
 
 
+def _card_store(claims):
+    """Return a minimal fold compatible with the claimed generations."""
+
+    class Store:
+        def __init__(self, _home):
+            pass
+
+        def fold(self, card):
+            owner, _stamp, revision = claims[card]
+            return SimpleNamespace(
+                owner=owner,
+                title="[SKFLEET][REVIEW] exact candidate",
+                meta={"_claim_revision": revision},
+            )
+
+    return Store
+
+
 def test_releases_four_finished_claims_with_exact_cas_and_keeps_evidence(tmp_path: Path) -> None:
     cards = [f"0000000{index}" for index in range(1, 5)]
     card_root = tmp_path / "cards"
@@ -39,6 +57,9 @@ def test_releases_four_finished_claims_with_exact_cas_and_keeps_evidence(tmp_pat
         "glob": glob,
         "os": os,
         "re": re,
+        "Path": Path,
+        "CardStore": _card_store(claims),
+        "validate_review_completion": lambda *_args: None,
         "subprocess": SimpleNamespace(
             run=lambda argv, **_kwargs: calls.append(argv) or SimpleNamespace(returncode=0)
         ),
@@ -68,6 +89,8 @@ def test_releases_four_finished_claims_with_exact_cas_and_keeps_evidence(tmp_pat
             revision,
             "--agent",
             "fleet-review-closer",
+            "--abandon-reason",
+            "not-abandoned",
         ]
 
 
@@ -153,6 +176,60 @@ def test_live_process_and_changed_generation_are_never_released(tmp_path: Path) 
 
     assert namespace["release_finished_review_claims"]() == 0
     assert calls == []
+
+
+def test_incomplete_pass_records_rejection_without_release(tmp_path: Path) -> None:
+    card = "deadbeef"
+    owner = f"pi-seraph-chiap08-{card}"
+    revision = "revision-1"
+    card_root = tmp_path / "cards"
+    (card_root / card).mkdir(parents=True)
+    claims = {card: (owner, 1.0, revision)}
+    releases = []
+    rows = {card: object()}
+    evidence_dir = tmp_path / "worker-exits"
+    namespace = {
+        "HOST": "chiap08",
+        "AUTHORITY_HOST": "chiap08",
+        "DRY": False,
+        "CARDS": str(card_root),
+        "SKC": "skcapstone",
+        "glob": glob,
+        "os": os,
+        "re": re,
+        "Path": Path,
+        "CardStore": _card_store(claims),
+        "validate_review_completion": lambda *_args: (_ for _ in ()).throw(
+            ValueError("required ci_check_python311 is not successful")
+        ),
+        "datetime": __import__("datetime"),
+        "hashlib": hashlib,
+        "json": __import__("json"),
+        "_WORKER_EXIT_DIR": str(evidence_dir),
+        "subprocess": SimpleNamespace(
+            run=lambda argv, **_kwargs: releases.append(argv) or SimpleNamespace(returncode=0)
+        ),
+        "_current_claim_identity_fresh": lambda _card: claims[card],
+        "_durable_review_outcome": lambda _card: "PASS",
+        "_card_process_snapshot": lambda _card: {"sessions": [], "units": []},
+        "_rows": rows,
+        "_outcomes": {card: ("stamp", "PASS")},
+        "log": lambda *_args: None,
+        "d": str(tmp_path),
+    }
+    _load("_record_review_completion_rejection", namespace)
+    _load("release_finished_review_claims", namespace)
+
+    assert namespace["release_finished_review_claims"]() == 0
+    assert namespace["release_finished_review_claims"]() == 0
+    assert releases == []
+    assert card in rows
+    records = list(evidence_dir.glob("*.json"))
+    assert len(records) == 1
+    rejection = __import__("json").loads(records[0].read_text(encoding="utf-8"))
+    assert rejection["completion_failure"] == "review_completion_rejected"
+    assert rejection["claim_revision"] == revision
+    assert "ci_check_python311" in rejection["reason"]
 
 
 def test_release_runs_before_same_cycle_pool_build() -> None:

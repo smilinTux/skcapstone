@@ -47,7 +47,22 @@ dependencies = [
     # 0.1.46 changed parity absence semantics, 0.1.51 changed KanbanBoard.cards()
     # from failing closed to degrading one unreadable card. Neither was announced
     # because neither had to be: the floor was 0.1.44 and anything satisfied it.
-    "skcoord>=0.1.69",
+    #
+    # Bumped 2026-09-17: this branch calls Board.release_claim(abandon_reason=...),
+    # which does not exist in any skcoord release through 0.1.76 (verified against
+    # the skcoord repo: the feature lives only on its sibling spec branch, not yet
+    # merged to main or tagged). The floor is set one past the newest published
+    # tag so installing this package fails loudly until skcoord actually ships
+    # the version carrying abandon_reason, rather than silently resolving to
+    # 0.1.69 or any other real-but-lacking release. Do not lower this to make
+    # the dependency resolve; the ordering fix is that skcoord ships first.
+    #
+    # Bumped again 2026-09-18: the builder dispatcher and sknoded's main loop
+    # now catch skcoord.coordination.TaskUnclaimable, which is the typed
+    # refusal that stops one voided card from killing the node worker. Newest
+    # published skcoord tag at the time of writing is v0.1.77, so the floor is
+    # again set one past it: skcoord ships first, then this resolves.
+    "skcoord>=0.1.78",
     "skmemory>=0.5.0",
     "skskills>=0.1.1",
 ]
@@ -120,6 +135,7 @@ skcapstone-mcp = "skcapstone.mcp_server:main"
 crush = "skcapstone.crush_shim:main"
 skfleet = "skcapstone.fleet.cli:main"
 skoperator = "skcapstone.operator_seat.cli:main"
+skfleet-claim-expiry = "skcapstone.fleet.claim_expiry_cli:main"
 
 [project.urls]
 Homepage = "https://skcapstone.io"
@@ -137,15 +153,17 @@ script-files = [
     "scripts/fleet/link-lineage.py",
     "scripts/fleet/skfleet-link-producer.py",
     "scripts/fleet/skfleet-pi-model-catalog.py",
+    "scripts/fleet/skfleet_readiness.py",
     "scripts/fleet/skfleet-rotate.py",
     "scripts/fleet/skfleet-worker-wrapper.py",
+    "scripts/fleet/skmail",
     "scripts/fleet/skmail_work.py",
     "scripts/fleet/skmail_writer.py",
     "scripts/fleet/worktree-hygiene.py",
 ]
 
 [tool.setuptools.package-data]
-skcapstone = ["SKILL.md", "defaults/**/*.json", "defaults/**/*.yaml", "defaults/**/*.feb", "defaults/**/*.md", "defaults/.stignore", "defaults/**/.stignore", "data/*.json", "data/*.yaml", "data/*.sh", "data/systemd/*.service", "data/systemd/*.socket", "data/systemd/*.timer", "static/*.html", "static/**/*.css", "static/**/*.js"]
+skcapstone = ["SKILL.md", "defaults/**/*.json", "defaults/**/*.yaml", "defaults/**/*.feb", "defaults/**/*.md", "defaults/.stignore", "defaults/**/.stignore", "data/*.json", "data/*.yaml", "data/*.sh", "data/*.py", "data/systemd/*.service", "data/systemd/*.socket", "data/systemd/*.timer", "data/systemd/*.env.example", "static/*.html", "static/**/*.css", "static/**/*.js"]
 
 [tool.black]
 line-length = 99

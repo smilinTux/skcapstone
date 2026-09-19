@@ -1,13 +1,12 @@
 {
   "schema_version": 1,
-  "revision": "lifecycle-six-seat-v1",
+  "revision": "lifecycle-five-seat-v1",
   "active_host": "",
   "seats": {
     "link": [],
     "mero": [],
     "seraph": [],
     "niobe": [],
-    "tank": [],
     "atlas": []
   }
 }

@@ -79,7 +79,7 @@ def test_invalid_legacy_id_does_not_block_valid_subsequent_unit() -> None:
 
 def test_unit_identity_skip_precedes_workspace_and_claim() -> None:
     source = ROTATE.read_text(encoding="utf-8")
-    loop = source[source.index("for _LANE,(_,_,cid,core,_labels,_nb) in picks:") :]
+    loop = source[source.index("for _pick_index,") :]
     skip_at = loop.index("UNSUPPORTED_CARD_ID|")
     materialize_at = loop.index("workspace=_materialize_worker_workspace(")
     claim_at = loop.index('claim=subprocess.run([SKC,"coord","claim",cid')

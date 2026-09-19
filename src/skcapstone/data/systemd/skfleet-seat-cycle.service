@@ -1,0 +1,14 @@
+[Unit]
+Description=SKFleet serialized Tank, Seraph, and Niobe generation
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.skenv/bin/python3 -m skcapstone.fleet.seat_cycle_orchestrator
+TimeoutStartSec=960
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

@@ -17,6 +17,7 @@ from .seat_boundaries import (
     Action,
     canonical_human_principal,
     require_authority,
+    require_coord_authority,
     verify_casey_direction,
 )
 
@@ -25,15 +26,27 @@ Verifier = Callable[[bytes, str, str], bool]
 SCOPE = "skcapstone,skdashboard,skworld"
 
 
-def authorize_jarvis_entrypoint(
+def authorize_coord_mutation(
     actor: str,
     action: Action,
     target: str,
     authorization_path: Path | None,
     change_id: str | None,
 ) -> None:
-    """Gate a real mutation surface when its authenticated actor is Jarvis."""
-    if actor.strip().lower() != "jarvis":
+    """The one gate every coord mutation entrypoint calls.
+
+    Policy lives in ``seat_boundaries.require_coord_authority``: one
+    capability table keyed by seat, consulted for every actor, refusing an
+    identity the table and grammar do not know. This function adds only the
+    Jarvis leg: an action outside ``JARVIS_DIRECT_ACTIONS`` needs a verified
+    signed Casey direction. PR 766 gated exactly one seat (``mero``) here;
+    this generalizes that check so no seat is unchecked by default, while
+    ``pi-<seat>-*`` lane workers, humans, and system writers pass as their
+    own explicitly classified identities.
+    """
+    require_coord_authority(actor, action)
+    normalized = actor.strip().lower()
+    if normalized != "jarvis":
         return
     if action in JARVIS_DIRECT_ACTIONS:
         return
@@ -67,6 +80,11 @@ def authorize_jarvis_entrypoint(
         verifier=get_backend(profile.crypto_backend).verify,
     )
     consume_authorization(envelope, capauth_home / "operator" / "used-authorizations")
+
+
+#: Compatibility alias: the gate predates the per-seat capability table and
+#: several call sites and tests still import the historical name.
+authorize_jarvis_entrypoint = authorize_coord_mutation
 
 
 @dataclass(frozen=True)

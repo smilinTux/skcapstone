@@ -39,7 +39,16 @@ inspection is reserved for emergency operator diagnostics.
 Good:
 
 ```bash
-skcapstone coord link <card_id> verdict PASS_FOR_REVIEW --agent <your_name>
+# A PASS that owes an independent review must bind the bytes the reviewer
+# verifies. coord link has no field for a candidate, so it refuses this class.
+skcapstone coord verdict <card_id> PASS_FOR_REVIEW \
+  --candidate ~/.skcapstone/evidence/work/<card_id>/<file> \
+  --commit $(git rev-parse HEAD) --tree $(git rev-parse HEAD^{tree}) \
+  --ref refs/heads/<branch> --agent <your_name>
+# Record it LAST: anything written after a verdict supersedes it.
+
+# A terminal outcome (plain PASS, BLOCKED) has no candidate to bind:
+skcapstone coord link <card_id> verdict PASS --agent <your_name>
 skcapstone coord link <card_id> evidence <repo-relative-path> --agent <your_name>
 skcapstone coord move <card_id> review --agent <your_name>
 ```
@@ -61,6 +70,21 @@ Follow the project conventions:
 - Pytest tests (happy path + edge case + failure case)
 - Google-style docstrings on every function
 - Max 500 lines per file
+
+**Changelog: add a NEW file, never edit `CHANGELOG.md`.** Any PR touching `src/**`
+or `pyproject.toml` must record a changelog entry or the `docs / docs-check`
+tier-2 gate fails it. Record it as a new fragment:
+
+```bash
+cat > changelog.d/<your-branch-slug>.md <<'ENTRY'
+- Card `<id>`: what changed, and what was observably wrong before.
+ENTRY
+```
+
+One file per PR means two concurrent PRs never touch the same lines, so the
+rebase conflict that a shared `CHANGELOG.md` guarantees cannot happen. Editing
+`CHANGELOG.md` directly still satisfies the gate, but with other PRs open you
+will be resolving a conflict. See `changelog.d/README.md`.
 
 ## Step 5: Complete
 

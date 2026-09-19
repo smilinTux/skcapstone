@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,63 @@ def _bounded_sequence():
     namespace: dict[str, object] = {}
     exec(compile(ast.Module(body=[node], type_ignores=[]), str(ROTATE), "exec"), namespace)
     return namespace["_bounded_candidate_sequence"]
+
+
+def _candidate_scan(owned, limit):
+    tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
+    wanted = {"_GLM_SIZE_RE", "_LOGICAL_ROUTES"}
+    body = [
+        node
+        for node in tree.body
+        if (
+            isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id in wanted for target in node.targets
+            )
+        )
+        or (
+            isinstance(node, ast.FunctionDef)
+            and node.name
+            in {
+                "_size_class_for",
+                "_logical_route_for",
+                "_bounded_candidate_sequence",
+            }
+        )
+        or (
+            isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "_candidate_scan"
+                for target in node.targets
+            )
+        )
+    ]
+    namespace = {"re": re, "owned": owned, "MAX_CANDIDATE_SCAN": limit}
+    exec(compile(ast.Module(body=body, type_ignores=[]), str(ROTATE), "exec"), namespace)
+    return namespace["_candidate_scan"]
+
+
+def _launchable_predicate():
+    tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
+    node = next(
+        item
+        for item in tree.body
+        if isinstance(item, ast.FunctionDef) and item.name == "_has_launchable_pick"
+    )
+
+    def select(labels, _escalation, _order, remaining, *_args):
+        lane = "escalate" if "escalation-only" in labels else "codex"
+        return (lane, "compatible") if remaining.get(lane, 0) else (None, "full")
+
+    # qwen_suitable takes (core, labels) since gateway-routing work was kept
+    # off the qwen lane. The stub must track its real arity or every caller
+    # here fails with a TypeError that says nothing about capacity.
+    namespace = {
+        "qwen_suitable": lambda _core, _labels=None: True,
+        "select_compatible_lane": select,
+    }
+    exec(compile(ast.Module(body=[node], type_ignores=[]), str(ROTATE), "exec"), namespace)
+    return namespace["_has_launchable_pick"]
 
 
 def _fill(outcomes: list[tuple[str, bool]], seats: int, pool_bound: int) -> list[str]:
@@ -68,13 +126,41 @@ def test_duplicate_candidates_are_attempted_once_in_order() -> None:
     assert [candidate[2] for candidate in bounded] == ["a", "b", "c"]
 
 
+def test_invalid_size_route_is_excluded_before_bounded_attempt_truncation() -> None:
+    owned = [
+        (0, 0, "conflicting", {"title": "[S][M] Conflict"}, [], 0),
+        (1, 0, "valid", {"title": "[S] Valid"}, [], 0),
+    ]
+
+    assert [candidate[2] for candidate in _candidate_scan(owned, 1)] == ["valid"]
+
+
 def test_runtime_counts_only_successful_launches() -> None:
     source = ROTATE.read_text(encoding="utf-8")
-    assert "_bounded_candidate_sequence(owned, MAX_CANDIDATE_SCAN)" in source
-    assert "if launched>=MAX_LAUNCH or not any(launch_remaining.values()):" in source
+    assert "(candidate for candidate in owned" in source
+    assert "if _logical_route_for(candidate[3],candidate[4]) is not None)" in source
+    assert "if not _has_launchable_pick(" in source
     assert "_attempt_lane_name,_attempt_defer=select_compatible_lane(" in source
     assert "_attempt_remaining," in source
     assert "else:\n        launched+=1" in source
+
+
+def test_exhausted_elastic_budget_preserves_later_other_lane() -> None:
+    predicate = _launchable_predicate()
+    codex = ({"name": "codex"}, (0, 0, "codex-tail", {}, ["codex-only"], 0))
+    escalation = (
+        {"name": "escalate"},
+        (0, 0, "escalation", {}, ["escalation-only"], 0),
+    )
+    admissions = {
+        "codex-tail": (False, False, {"codex": (True, "healthy")}, True),
+        "escalation": (True, False, {"escalate": (True, "healthy")}, False),
+    }
+    remaining = {"codex": 1, "escalate": 1}
+    lane_order = ["codex", "escalate"]
+
+    assert predicate([codex], remaining, 0, lane_order, admissions) is False
+    assert predicate([codex, escalation], remaining, 0, lane_order, admissions) is True
 
 
 def test_prelaunch_recheck_uses_gateway_routes_for_producer_health() -> None:
@@ -87,3 +173,28 @@ def test_prelaunch_recheck_uses_gateway_routes_for_producer_health() -> None:
     assert '"codex" if "codex-only"' in block
     assert '_attempt_health["codex"]=(' in block
     assert 'bool(_producer_routes),"gateway-route-capacity"' in block
+
+
+def test_first_pass_elastic_review_uses_codex_health_and_capacity_only() -> None:
+    source = ROTATE.read_text(encoding="utf-8")
+    start = source.index("while _i<len(owned)")
+    end = source.index("if _lane_deferred:", start)
+    block = source[start:end]
+
+    assert "_elastic_review = _POOL_V2_ADMISSIONS.get(_card[2], {}).get(" in block
+    assert '_card_lane_health["codex"]=(' in block
+    assert 'remaining.get("codex",0)>0,"review-route-capacity"' in block
+    assert "if _elastic_review else remaining" in block
+
+
+def test_elastic_review_limit_counts_successes_not_preflight_candidates() -> None:
+    source = ROTATE.read_text(encoding="utf-8")
+
+    assert "_elastic_rows[:_elastic_limit]" not in source
+    assert "elastic_launch_remaining = _elastic_limit" in source
+    assert source.count('min(remaining.get("codex", 0), elastic_launch_remaining)') == 1
+    assert source.count("elastic_launch_remaining-=1") == 2
+
+    workspace_block = source.index('log(d,"WORKSPACE_BLOCKED|')
+    successful_launch = source.index("elastic_launch_remaining-=1", workspace_block)
+    assert successful_launch > source.index("else:\n        launched+=1", workspace_block)

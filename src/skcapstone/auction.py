@@ -286,8 +286,10 @@ class AuctionManager:
         # Claim the task on behalf of the winner
         try:
             from .coordination import Board
+            from .fleet.churn_breaker import assert_claim_permitted
 
             board = Board(self.shared_root)
+            assert_claim_permitted(self.shared_root, task_id, winner)
             board.claim_task(winner, task_id)
             logger.info(
                 "Auction %s: resolved - winner=%s (score=%.3f)",

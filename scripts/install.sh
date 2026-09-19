@@ -293,11 +293,11 @@ elif [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
         _installed=0
 
         # skcapstone services
-        # The six bounded lifecycle seat units are installed but NOT enabled:
+        # Bounded lifecycle seat units are installed but NOT enabled:
         # without them on disk the whole workflow layer is simply absent on a
         # fresh estate, which is how a new estate passed `fleet install --check`
-        # while running no seats at all. skfleet-niobe-live is deliberately
-        # excluded; it launches real agent runs and is an activation decision.
+        # while running no seats at all. The Niobe live service is packaged,
+        # but its legacy independent timer is deliberately excluded.
         for _unit in skcapstone.service skcapstone@.service \
                      skcapstone-memory-compress.service skcapstone-memory-compress.timer \
                      skcomms-heartbeat.service skcomms-heartbeat.timer \
@@ -306,8 +306,10 @@ elif [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
                      skfleet-link.service skfleet-link.timer \
                      skfleet-mero.service skfleet-mero.timer \
                      skfleet-niobe.service skfleet-niobe.timer \
+                     skfleet-niobe-live.service \
+                     skfleet-seat-cycle.service skfleet-seat-cycle.timer \
                      skfleet-seraph.service skfleet-seraph.timer \
-                     skfleet-tank.service skfleet-tank.timer; do
+                     skfleet-readiness.service skfleet-readiness.timer; do
             _src="$REPO_ROOT/systemd/$_unit"
             if [[ -f "$_src" ]]; then
                 # Substitute agent name in non-template units
@@ -320,6 +322,15 @@ elif [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
                 (( _installed++ ))
             fi
         done
+
+        _NIOBE_GATEWAY_DROPIN="$_UNIT_DIR/skfleet-niobe-live.service.d/70-gateway-endpoint.conf"
+        _SERAPH_GATEWAY_DROPIN="$_UNIT_DIR/skfleet-seraph.service.d/70-gateway-endpoint.conf"
+        if [[ -f "$_NIOBE_GATEWAY_DROPIN" ]]; then
+            mkdir -p "$(dirname "$_SERAPH_GATEWAY_DROPIN")"
+            cp "$_NIOBE_GATEWAY_DROPIN" "$_SERAPH_GATEWAY_DROPIN"
+            echo "  [OK] skfleet-seraph.service.d/70-gateway-endpoint.conf"
+            (( _installed++ ))
+        fi
 
         # skcomms services (sibling repo)
         _SKCOMMS_DIR="$(dirname "$REPO_ROOT")/skcomms/systemd"
