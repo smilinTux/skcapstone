@@ -103,7 +103,34 @@ def logical_route(labels: list[str] | tuple[str, ...]) -> str | None:
 
 
 def eligible(core: dict, labels: list[str] | tuple[str, ...]) -> bool:
-    """Return whether a card is a bounded provider-neutral source workload."""
+    """Return whether a card is a bounded provider-neutral source workload.
+
+    Eligibility is what the rotation uses to withhold a card from its local
+    lane, so a card this answers True for and the builder then cannot bind is
+    a card nobody works. Measured 2026-09-19: card 23554ec7 carries `sk-s` and
+    `source-only` but no `repository`, `base_ref` or `base_revision` at all.
+    It was withheld from the local lane every cycle and refused by the builder
+    every cycle, under the misleading message "repository must be
+    credential-free https" (the empty string simply is not https). A card the
+    builder cannot reconstruct is not a builder workload, so it is not
+    eligible, and it stays with the lane that can still reason about it.
+    """
+    if not _labels_eligible(core, labels):
+        return False
+    try:
+        _source(core)
+    except BuilderDispatchError:
+        return False
+    return True
+
+
+def _labels_eligible(core: dict, labels: list[str] | tuple[str, ...]) -> bool:
+    """Return whether the card's labels alone select the builder lane.
+
+    Split out from eligible() so decline_reason can still tell an operator
+    which of the two questions failed: a card that is not builder work at all,
+    or one that is but whose source binding will not parse.
+    """
     normalized = {str(label).strip().lower() for label in labels}
     return (
         logical_route(labels) is not None
@@ -365,7 +392,7 @@ def decline_reason(
     """
     if not store.actuation_allowed(paths):
         return "actuation-frozen"
-    if not eligible(core, labels):
+    if not _labels_eligible(core, labels):
         return "ineligible"
     card_id = str(core["id"]).lower()
     if not valid_name(card_id):

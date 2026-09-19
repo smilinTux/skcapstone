@@ -25,6 +25,15 @@
   established identity, so nothing in flight is re-addressed. A terminal
   `TaskUnclaimable` still parks the card at once: a voided, replaced card is
   a finding about the card, and no generation will make it claimable.
+- **A card with no source binding was withheld from every lane at once.**
+  `eligible()` read labels only, so card 23554ec7, which carries `sk-s` and
+  `source-only` but no `repository`, `base_ref` or `base_revision` at all, was
+  removed from its local lane as builder work and then refused by the builder
+  every cycle under the misleading `repository must be credential-free https`
+  (an empty string simply is not https). Eligibility now requires a source
+  binding the builder could actually reconstruct, so such a card stays with
+  the lane that can still reason about it. `decline_reason` keeps telling the
+  two apart: `ineligible` for labels, `invalid-source` for the binding.
 
 - **The Pi gateway sync filled the picker with models that cannot answer.**
   `/v1/models` is a catalog, not a liveness list. Probed against a live gateway

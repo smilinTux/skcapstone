@@ -1500,3 +1500,20 @@ def test_a_voided_card_parks_but_an_infrastructure_block_does_not(
     assert (
         builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer) is not None
     )
+
+
+def test_a_card_without_a_source_binding_is_not_a_builder_workload() -> None:
+    """Withholding a card the builder cannot bind leaves nobody able to work it."""
+    unbound = {"id": "23554ec7", "meta": {}}
+    assert not builder_dispatch.eligible(unbound, ["sk-s", "source-only"])
+    partial = {"id": "23554ec7", "meta": {"repository": "https://example.invalid/r.git"}}
+    assert not builder_dispatch.eligible(partial, ["sk-s", "source-only"])
+    assert builder_dispatch.eligible(_card(), ["sk-m", "source-only"])
+
+
+def test_credentialed_repository_is_still_refused(paths, operator, noded41) -> None:
+    """The credential fence is a real fence, not a side effect of the new check."""
+    _node(paths, operator, noded41)
+    leaked = {"id": "24b00004", "meta": dict(_card()["meta"])}
+    leaked["meta"]["repository"] = "https://user:token@github.com/smilinTux/skcapstone.git"
+    assert not builder_dispatch.eligible(leaked, ["sk-m", "source-only"])
