@@ -7,6 +7,8 @@ import json
 import os
 import re
 import subprocess
+import urllib.error
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,7 @@ from skcapstone.fleet_lane_health import (
     MAX_ENDPOINT_BYTES,
     acquire_lane_snapshot,
     active_gateway_revision,
+    gateway_root,
     lane_health,
 )
 
@@ -407,3 +410,250 @@ def test_snapshot_freshness_is_still_enforced_independently(tmp_path: Path) -> N
     )
     assert _admit(snapshot, "codex", "sk-codex") == (True, "healthy")
     assert _admit(snapshot, "codex", "sk-codex", now=2_000_000_600.0) == (False, "stale")
+
+
+# ---------------------------------------------------------------------------
+# Regression: a base URL carrying the OpenAI-compatible /v1 prefix.
+#
+# On 2026-09-18 all three chi rotate hosts had
+# SKFLEET_GATEWAY_URL=http://<host>:18790/v1, so the probe requested
+# /v1/health and /v1/queue. Both 404, both became HTTPError, every lane went
+# "unknown", and lane admission (fail-closed by design) blocked every card.
+# The fleet had not launched a worker in three days while the gateway was
+# healthy throughout.
+#
+# The pre-existing _opener mock could not catch this: it resolves a request
+# by taking only the final path segment (`"/" + url.rsplit("/", 1)[-1]`), so
+# ".../v1/health" and ".../health" are indistinguishable to it. The strict
+# opener below routes on the FULL path, the way a real server does.
+# ---------------------------------------------------------------------------
+
+
+def _strict_opener(documents: dict[str, dict[str, Any]], calls: list[str]):
+    """Route on the full URL path, and 404 anything that is not an exact hit."""
+
+    def open_url(url: str, *, timeout: float) -> Response:
+        calls.append(url)
+        path = urllib.parse.urlsplit(url).path.rstrip("/") or "/"
+        if path not in documents:
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)  # type: ignore[arg-type]
+        value = documents[path]
+        if isinstance(value, Exception):
+            raise value
+        return Response(value)
+
+    return open_url
+
+
+def test_gateway_root_discards_any_path_component() -> None:
+    assert gateway_root("http://chiap01:18790/v1") == "http://chiap01:18790"
+    assert gateway_root("http://chiap01:18790/v1/") == "http://chiap01:18790"
+    assert gateway_root("http://chiap01:18790") == "http://chiap01:18790"
+    assert gateway_root("  http://chiap01:18790/v1  ") == "http://chiap01:18790"
+    assert gateway_root("https://gw.example/v1/extra") == "https://gw.example"
+
+
+def test_gateway_root_leaves_an_undecomposable_value_alone() -> None:
+    """Never invent an origin out of something that is not a URL."""
+    assert gateway_root("not-a-url") == "not-a-url"
+    assert gateway_root("localhost:18790/") == "localhost:18790"
+
+
+def test_v1_suffixed_base_url_still_probes_the_root_endpoints(tmp_path: Path) -> None:
+    """The production failure, reproduced end to end with a strict server."""
+    calls: list[str] = []
+    snapshot = acquire_lane_snapshot(
+        ENDPOINT + "/v1",
+        LANES,
+        DOMAINS,
+        tmp_path / "lane-health.json",
+        "cycle-v1",
+        opener=_strict_opener(_documents(), calls),
+        revision_resolver=lambda _base: REVISION,
+        now=lambda: 2_000_000_000.0,
+    )
+    assert calls == [ENDPOINT + "/health", ENDPOINT + "/queue"], calls
+    assert snapshot["errors"] == []
+    assert snapshot["endpoint"] == ENDPOINT
+    healthy = [domain["state"] for lane in snapshot["lanes"] for domain in lane["domains"]]
+    assert "healthy" in healthy, healthy
+
+
+def test_strict_opener_would_have_caught_the_bug(tmp_path: Path) -> None:
+    """Guard the guard: prove the strict opener actually 404s a /v1 path, so
+    this regression test cannot silently start passing for the wrong reason.
+    """
+    calls: list[str] = []
+    opener = _strict_opener(_documents(), calls)
+    with pytest.raises(urllib.error.HTTPError):
+        opener(ENDPOINT + "/v1/health", timeout=8)
+
+
+def test_a_v1_base_url_is_admissible_end_to_end_not_just_sealed(tmp_path: Path) -> None:
+    """The blocker this test exists to prevent.
+
+    Normalizing only inside acquire_lane_snapshot seals the ROOT into
+    snapshot["endpoint"] while callers still pass the RAW env value to
+    lane_health, whose endpoint comparison then fails. That does not fix the
+    outage, it relabels it: every lane is refused with "endpoint-mismatch"
+    instead of "unknown", and because the probe now succeeds, errors is []
+    and the one signal that exposed the original 373-NOOP outage is gone.
+
+    So the assertion has to reach admissibility, not stop at the snapshot.
+    """
+    calls: list[str] = []
+    snapshot = acquire_lane_snapshot(
+        ENDPOINT + "/v1",
+        LANES,
+        DOMAINS,
+        tmp_path / "lane-health.json",
+        "cycle-v1-admit",
+        opener=_strict_opener(_documents(), calls),
+        revision_resolver=lambda _base: REVISION,
+        now=lambda: 2_000_000_000.0,
+    )
+    assert snapshot["errors"] == []
+
+    # The raw, /v1-suffixed value is what a caller actually holds.
+    admitted, reason = lane_health(
+        snapshot,
+        "codex",
+        "sk-codex",
+        cycle_id="cycle-v1-admit",
+        endpoint=ENDPOINT + "/v1",
+        capacity_domains=DOMAINS["codex"],
+        active_revision=REVISION,
+        now=2_000_000_000.0,
+    )
+    assert (admitted, reason) == (
+        True,
+        "healthy",
+    ), f"a /v1 base URL must be admissible end to end, got {(admitted, reason)}"
+
+
+def test_the_root_form_is_still_admissible(tmp_path: Path) -> None:
+    """Complement: normalizing must not break the correct form."""
+    calls: list[str] = []
+    snapshot = acquire_lane_snapshot(
+        ENDPOINT,
+        LANES,
+        DOMAINS,
+        tmp_path / "lh.json",
+        "cycle-root",
+        opener=_strict_opener(_documents(), calls),
+        revision_resolver=lambda _base: REVISION,
+        now=lambda: 2_000_000_000.0,
+    )
+    admitted, reason = lane_health(
+        snapshot,
+        "codex",
+        "sk-codex",
+        cycle_id="cycle-root",
+        endpoint=ENDPOINT,
+        capacity_domains=DOMAINS["codex"],
+        active_revision=REVISION,
+        now=2_000_000_000.0,
+    )
+    assert (admitted, reason) == (True, "healthy")
+
+
+def test_duplicate_identical_lane_bindings_are_one_observation(tmp_path: Path) -> None:
+    """A repeated (lane, model) binding must not read as ambiguous evidence.
+
+    Measured live on chi, 2026-09-18 04:01:14 CDT: the rotator's health-lane
+    list carried (kimi, kimi-for-coding) twice, once from LANES and once from
+    the unconditional kimi alias append, so every snapshot held two identical
+    healthy rows for that binding and lane_health() refused it as "unknown"
+    forever, on the same snapshot whose glm and escalate rows admitted fine.
+    The gateway's own /health said kimi was up the whole time. A fail-closed
+    gate refused positive evidence solely because it was written down twice.
+    """
+    lanes = [
+        {"name": "qwen", "model": "qwen-model"},
+        {"name": "kimi", "model": "kimi-for-coding"},
+        {"name": "kimi", "model": "kimi-for-coding"},
+        {"name": "kimi", "model": "k3"},
+    ]
+    domains = {"qwen": ("qwen-a", "qwen-b"), "kimi": ("codex",)}
+    snapshot = acquire_lane_snapshot(
+        ENDPOINT,
+        lanes,
+        domains,
+        tmp_path / "lane-health.json",
+        "cycle-1",
+        opener=_opener(_documents(), []),
+        revision_resolver=lambda endpoint: REVISION,
+        now=lambda: 2_000_000_000.0,
+    )
+    kimi_rows = [(row["lane"], row["model"]) for row in snapshot["lanes"] if row["lane"] == "kimi"]
+    assert kimi_rows == [("kimi", "kimi-for-coding"), ("kimi", "k3")]
+    assert lane_health(
+        snapshot,
+        "kimi",
+        "kimi-for-coding",
+        cycle_id="cycle-1",
+        endpoint=ENDPOINT,
+        capacity_domains=("codex",),
+        active_revision=REVISION,
+        now=2_000_000_001.0,
+    ) == (True, "healthy")
+
+
+def test_identical_duplicate_rows_in_a_sealed_snapshot_still_admit(tmp_path: Path) -> None:
+    """lane_health itself collapses byte-identical duplicates.
+
+    A deployed rotator that still emits the duplicate must recover on a library
+    upgrade alone, without a same-day script redeploy: two identical rows are
+    the same observation stated twice, not conflicting evidence.
+    """
+    snapshot, _, _ = _acquire(tmp_path, _documents())
+    duplicated = dict(snapshot)
+    qwen_row = next(row for row in snapshot["lanes"] if row["lane"] == "qwen")
+    duplicated["lanes"] = [*snapshot["lanes"], json.loads(json.dumps(qwen_row))]
+    assert _admit(duplicated, "qwen", "qwen-model") == (True, "healthy")
+
+
+def test_conflicting_duplicate_rows_still_fail_closed(tmp_path: Path) -> None:
+    """Two rows for one binding that DISAGREE stay refused: that is ambiguity."""
+    snapshot, _, _ = _acquire(tmp_path, _documents())
+    forged = dict(snapshot)
+    qwen_row = next(row for row in snapshot["lanes"] if row["lane"] == "qwen")
+    altered = json.loads(json.dumps(qwen_row))
+    altered["domains"] = [
+        {"capacity_domain": "qwen-a", "state": "owner-down"},
+        {"capacity_domain": "qwen-b", "state": "owner-down"},
+    ]
+    forged["lanes"] = [*snapshot["lanes"], altered]
+    assert _admit(forged, "qwen", "qwen-model") == (False, "unknown")
+
+
+def test_rotator_health_lanes_carry_no_duplicate_bindings() -> None:
+    """The rotator's generated health-lane list is duplicate-free, kimi included."""
+    script = Path(__file__).parents[1] / "scripts/fleet/skfleet-rotate.py"
+    tree = ast.parse(script.read_text(encoding="utf-8"))
+    start = next(
+        i
+        for i, node in enumerate(tree.body)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "_health_lanes" for t in node.targets)
+    )
+    end = next(i for i in range(start + 1, len(tree.body)) if isinstance(tree.body[i], ast.Assign))
+    namespace = {
+        "LANES": [
+            {"name": "codex", "model": "sk-codex-mid"},
+            {"name": "glm", "model": "sk-glm-s"},
+            {"name": "qwen", "model": "qwen-model"},
+            {"name": "kimi", "model": "kimi-for-coding"},
+            {"name": "escalate", "model": "gpt-strong"},
+        ],
+        "_GLM_LEVELS": {"S": "sk-glm-s", "M": "sk-glm-m", "L": "sk-glm-l", "XL": "sk-glm-l"},
+        "_SIZE_MODELS": {"S": "sk-s", "M": "sk-m", "L": "sk-l", "XL": "sk-xl"},
+    }
+    exec(
+        compile(ast.Module(body=tree.body[start:end], type_ignores=[]), str(script), "exec"),
+        namespace,
+    )
+    bindings = [(lane["name"], lane["model"]) for lane in namespace["_health_lanes"]]
+    assert len(bindings) == len(set(bindings)), bindings
+    assert ("kimi", "kimi-for-coding") in bindings
+    assert ("kimi", "k3") in bindings

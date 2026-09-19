@@ -21,14 +21,20 @@ ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 
 
 def _load_helpers(*names: str) -> dict[str, object]:
+    requested = set(names)
+    if "_pool_v2_dispatchable" in requested:
+        requested.add("_pool_v2_candidate_allowed")
     tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
     functions = {
         node.name: node
         for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name in names
+        if isinstance(node, ast.FunctionDef) and node.name in requested
     }
-    assert set(functions) == set(names)
-    module = ast.Module(body=[functions[name] for name in names], type_ignores=[])
+    assert set(functions) == requested
+    ordered = ["_pool_v2_candidate_allowed", *names]
+    module = ast.Module(
+        body=[functions[name] for name in ordered if name in functions], type_ignores=[]
+    )
     namespace: dict[str, object] = {
         "collections": collections,
         "hashlib": hashlib,
@@ -77,6 +83,70 @@ def test_pool_v2_dispatchable_refuses_backoff_overlay() -> None:
     assert dispatchable(admission) is False
     admission["overlay"] = {"backoff": False, "reason": "review"}
     assert dispatchable(admission) is True
+
+
+def test_governed_review_admission_is_dispatchable_not_review_withheld() -> None:
+    """Reproduce live POOL_V2-admitted + REVIEW_WITHHELD reason=review on main.
+
+    A governed review card (review column, exact review label) used to fold to
+    claimable=False with reason "review", so POOL_V2 admitted the snapshot yet
+    the launch loop withheld it with reason=review. The unified lifecycle makes
+    the same card claimable with reason "governed-review", which must be
+    dispatchable through the same bounded admission snapshot.
+    """
+    dispatchable = _load_helpers("_pool_v2_dispatchable")["_pool_v2_dispatchable"]
+    card_id = "83754e0e"
+    withheld_live = {
+        "card_id": card_id,
+        "claimable": False,
+        "reason": "review",
+        "governed_review": True,
+        "title": "[REVIEW] governed candidate",
+        "labels": ["review"],
+        "core": {"id": card_id},
+        "seraph_review_admitted": False,
+        "elastic_review_admitted": False,
+        "overlay": {"reason": "review"},
+        "source_revision": "b" * 64,
+    }
+    assert dispatchable(withheld_live) is False
+
+    refreshed = dict(withheld_live)
+    refreshed.update(
+        {
+            "claimable": True,
+            "reason": "governed-review",
+        }
+    )
+    assert dispatchable(refreshed) is True
+
+    ungoverned = dict(refreshed)
+    ungoverned["governed_review"] = False
+    assert dispatchable(ungoverned) is False
+
+
+def test_invalid_reviews_are_removed_before_bounded_truncation() -> None:
+    """Nine late-rejected reviews cannot hide valid later ordinary work."""
+    helpers = _load_helpers("_pool_v2_dispatchable", "_pool_v2_ready_ids")
+    decisions = [
+        SimpleNamespace(card_id=f"dead{index:04x}", eligible=True) for index in range(9)
+    ] + [SimpleNamespace(card_id="feedface", eligible=True)]
+    admissions = {
+        row.card_id: {
+            **_admission(row.card_id),
+            "governed_review": True,
+            "claimable": False,
+            "reason": "review",
+            "elastic_review_admitted": False,
+            "seraph_review_admitted": False,
+        }
+        for row in decisions[:-1]
+    }
+    admissions["feedface"] = _admission("feedface")
+
+    ready = helpers["_pool_v2_ready_ids"](decisions, admissions)
+
+    assert ready == {"feedface"}
 
 
 def test_seraph_admission_clears_when_blocked_backoff_holds() -> None:
@@ -146,6 +216,41 @@ def test_pool_v2_is_authoritative_for_large_only_v2_population() -> None:
     assert authoritative == set(ids)
     assert authoritative - legacy_ids == set(ids[2:])
     assert len(authoritative) == 45
+
+
+def test_pool_v2_ready_set_matches_tank_authority_for_live_65_row_shape() -> None:
+    """Seat fencing cannot turn a reported ready pool into empty authority."""
+    helpers = _load_helpers(
+        "_role_seat_metadata",
+        "_pool_v2_dispatchable",
+        "_pool_v2_ready_ids",
+        "_pool_v2_authority_rows",
+    )
+    helpers.update(
+        {
+            "_ONLY_SEAT": "tank",
+            "_CATEGORY_OPT_IN": "dispatch-approved",
+        }
+    )
+    ids = [f"{index:08x}" for index in range(65)]
+    decisions = [SimpleNamespace(card_id=card_id, eligible=True) for card_id in ids]
+    admissions = {card_id: _admission(card_id) for card_id in ids}
+
+    ready_ids = helpers["_pool_v2_ready_ids"](decisions, admissions)
+    rows, _ = helpers["_pool_v2_authority_rows"](
+        decisions,
+        admissions,
+        False,
+        {},
+        {"high": 1},
+        (),
+        "chiap08",
+    )
+
+    assert ready_ids == {row[2] for row in rows}
+    assert "or not _pool_v2_candidate_allowed(_POOL_V2_ADMISSIONS[cid])" in ROTATE.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_malformed_review_stale_drift_and_unknown_fail_closed() -> None:
@@ -334,10 +439,18 @@ def test_seraph_preclaim_batch_allows_distinct_heads_concurrently() -> None:
 def test_worker_runtime_contract_is_unchanged() -> None:
     """The authority repair does not alter Kimi, wrapper, heartbeat, or attribution."""
     source = ROTATE.read_text(encoding="utf-8")
-    assert "model=_logical_route_for(core,_labels)" in source
+    # The launch still derives the route from the CARD, but the bucket and the
+    # model are now two values rather than one: the bucket stays the route
+    # identity and the lane resolves the model actually sent. Before that split
+    # every lane shipped the bare bucket, which is a valid gateway route to the
+    # local qwen fallback, so the subscription backends were never asked for
+    # anything. This assertion pins the post-split shape; the seven below it are
+    # the ones this test exists for and are unchanged.
+    assert "_bucket=_logical_route_for(core,_labels)" in source
+    assert "model=_lane_model(_LANE,core) or _bucket" in source
     assert '"provider":"skgateway"' in source
     assert 'model=str(_selected_route["model_or_bucket"])' not in source
-    assert 'qwen_suitable(fresh_claimability["core"]),' in source
+    assert 'qwen_suitable(fresh_claimability["core"],fresh_claimability["labels"])' in source
     assert "SKFLEET_CARD_ID=%s SKFLEET_CLAIM_REVISION=%s SKFLEET_SESSION_ID=%s" in source
     assert '"--session",sess,"--worker-executable",PI,' in source
     assert "actor=name," in source

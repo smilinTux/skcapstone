@@ -318,7 +318,15 @@ def test_amend_criteria_is_reversible_by_reapplying(tmp_path):
     _seed(tmp_path, "ac000002", criteria=["original"])
     runner = CliRunner()
     for criteria in (["amended"], ["original"]):
-        args = ["coord", "amend-criteria", "ac000002", "--home", str(tmp_path), "--agent", "x"]
+        args = [
+            "coord",
+            "amend-criteria",
+            "ac000002",
+            "--home",
+            str(tmp_path),
+            "--agent",
+            "test-x",
+        ]
         for c in criteria:
             args += ["--criteria", c]
         assert runner.invoke(_main(), args).exit_code == 0

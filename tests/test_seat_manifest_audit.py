@@ -11,9 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from skcapstone.seat_manifest_audit import audit
-
-SEATS = ("link", "mero", "niobe", "tank", "seraph", "atlas")
+from skcapstone.seat_manifest_audit import SEATS, audit
 
 
 def _write(path: Path, value: object) -> None:
@@ -110,15 +108,15 @@ def test_all_lifecycle_seats_pass_manifest_audit(tmp_path: Path) -> None:
 
 def test_audit_catches_model_and_estate_drift(tmp_path: Path) -> None:
     home = _home(tmp_path)
-    role = _role(home, "tank")
+    role = _role(home, "atlas")
     role["model_profile"] = "wrong-model"
-    _save_role(home, "tank", role)
+    _save_role(home, "atlas", role)
     estate_path = home / "capauth" / "estate.json"
     estate = json.loads(estate_path.read_text(encoding="utf-8"))
     estate["identities"][4]["status"] = "revoked"
     estate_path.write_text(json.dumps(estate), encoding="utf-8")
     findings = audit(home)
-    assert any(f.seat == "tank" and f.field == "model_route" for f in findings)
+    assert any(f.seat == "atlas" and f.field == "model_route" for f in findings)
     assert any(f.seat == "seraph" and f.field == "estate" for f in findings)
 
 

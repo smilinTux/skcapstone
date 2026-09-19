@@ -541,6 +541,16 @@ def assess(
         )
 
     frozen = store.is_frozen(paths)
+    # Tri-state display status per ACTUATION_READINESS_AND_FREEZE_STANDARD R4:
+    # a status surface must never collapse "no human ever provisioned the
+    # freeze store" into "not frozen". `is_frozen` keeps its deliberate
+    # absent-as-not-frozen semantics for the fail-safe path; the DISPLAY
+    # state comes from the shared gate instead.
+    gate = store.check_actuation_gate(paths)
+    if gate.allowed:
+        freeze_state = "active"
+    else:
+        freeze_state = gate.reason or "unknown"
     freeze_reason = ""
     try:
         freeze_payload = json.loads(paths.freeze_path().read_text())
@@ -609,6 +619,7 @@ def assess(
         "schema": SCHEMA,
         "at": now,
         "frozen": frozen,
+        "freeze_state": freeze_state,
         "freeze_reason": freeze_reason,
         "apps": apps,
         "itil": itil,
@@ -745,15 +756,35 @@ def _lane_summary(lane: dict) -> str:
     return "; ".join(bits) if bits else "all quiet"
 
 
+#: Headline text per tri-state freeze status (ACTUATION_READINESS_AND_FREEZE
+#: R4). Three DISTINCT strings on purpose: an absent store used to render as
+#: "[not frozen]", which reads as armed-and-healthy when the truth is "never
+#: provisioned, refusing everything".
+_FREEZE_HEADLINES = {
+    "frozen": "FROZEN",
+    "active": "active (freeze off)",
+    "unprovisioned": "UNPROVISIONED",
+}
+
+
 def render(assessment: dict) -> str:
     """Render the assessment as a terse phone-readable report."""
     lines: list[str] = []
-    frozen = "FROZEN" if assessment["frozen"] else "not frozen"
-    lines.append(f"ATLAS EYES  {assessment['at']}  [{frozen}]")
+    # Missing/unknown freeze_state must never render as a reassuring default:
+    # fall back to the raw value so a human sees something is off.
+    state = assessment.get("freeze_state") or ("frozen" if assessment.get("frozen") else "unknown")
+    headline = _FREEZE_HEADLINES.get(state, f"freeze state {state}")
+    lines.append(f"ATLAS EYES  {assessment['at']}  [{headline}]")
     if assessment["frozen"]:
         reason = assessment["freeze_reason"] or "no reason recorded"
         lines.append(f"freeze: {reason}")
         lines.append("ATLAS is observing nothing. This pass is read-only and freeze-proof.")
+    elif state == "unprovisioned":
+        lines.append("freeze store: absent or invalid; no human operator has provisioned it.")
+        lines.append(
+            "Every actuation surface refuses (reason: unprovisioned) until a human "
+            "runs `skoperator provision`. This is NOT a healthy armed state."
+        )
     lines.append("")
 
     apps = assessment["apps"]

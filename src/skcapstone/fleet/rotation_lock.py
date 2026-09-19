@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from typing import TextIO
 
+SERAPH_LOCK_WAIT_SECONDS = 75
+
 
 def acquire_rotation_lock(
     path: Path,
@@ -15,10 +17,13 @@ def acquire_rotation_lock(
     wait_seconds: float = 240,
     poll_seconds: float = 0.1,
 ) -> TextIO | None:
-    """Acquire the exclusive lock, giving only Niobe a bounded wait."""
+    """Acquire the exclusive lock with bounded Niobe and Seraph waits."""
 
     lock = Path(path).open("w", encoding="utf-8")
-    deadline = time.monotonic() + (max(0, wait_seconds) if seat == "niobe" else 0)
+    bounded_wait = max(0, wait_seconds) if seat == "niobe" else 0
+    if seat == "seraph":
+        bounded_wait = min(max(0, wait_seconds), SERAPH_LOCK_WAIT_SECONDS)
+    deadline = time.monotonic() + bounded_wait
     while True:
         try:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)

@@ -193,12 +193,78 @@ def test_pool_owner_map_preserves_ordinary_and_seat_ownership(tmp_path: Path) ->
     assert owners["00000003"] == "chiap08"
     assert blocked == {}
 
+    capacity_owners, blocked = ns["_pool_v2_owner_map"](
+        rows,
+        "chiap08",
+        {"00000003"},
+        {"chiap03": 5, "chiap08": 0},
+    )
+    assert capacity_owners["00000001"] == "chiap08"
+    assert capacity_owners["00000002"] == ns["_partition_owner"]("00000002", HOSTS)
+    assert capacity_owners["00000003"] == "chiap08"
+    assert blocked == {}
+
+
+def test_host_neutral_owner_ignores_live_capacity_skew(tmp_path: Path) -> None:
+    """Live capacity skew never moves ownership off the stable all-host hash.
+
+    Regression for the 2026-09-18 chi fleet stall: ownership was hashed over
+    "hosts whose latest fleet-live snapshot advertises free lanes". That set
+    differs per host and per cycle (the snapshots race over Syncthing, and the
+    standalone publisher writes lanes={}), so every host partitioned the same
+    pool over a different roster, was routinely excluded from its own
+    partition, and reported owned=0 while free slots and ready work existed.
+    """
+    ns, _ = _load(str(tmp_path))
+    card_id = "cdf59956"
+    rows = [[2, 4, card_id, {}, [], 0]]
+    ns["_POOL_V2_ADMISSIONS"] = {}
+
+    assert ns["_partition_owner"](card_id, HOSTS) == "chiap03"
+    for viewing_host in ("chiap03", "chiap08"):
+        assert ns["_pool_v2_owner_map"](
+            rows,
+            viewing_host,
+            set(),
+            {"chiap03": 0, "chiap08": 5},
+        ) == ({card_id: "chiap03"}, {})
+
+
+def test_host_neutral_capacity_keeps_equal_and_all_zero_partitioning(tmp_path: Path) -> None:
+    """Equal positive capacity and no capacity preserve the stable host bucket."""
+    ns, _ = _load(str(tmp_path))
+    card_id = "cdf59956"
+    rows = [[2, 4, card_id, {}, [], 0]]
+    ns["_POOL_V2_ADMISSIONS"] = {}
+    expected = ns["_partition_owner"](card_id, HOSTS)
+
+    assert (
+        ns["_pool_v2_owner_map"](
+            rows,
+            "chiap08",
+            set(),
+            {host: 2 for host in HOSTS},
+        )[
+            0
+        ][card_id]
+        == expected
+    )
+    assert (
+        ns["_pool_v2_owner_map"](
+            rows,
+            "chiap08",
+            set(),
+            {host: 0 for host in HOSTS},
+        )[
+            0
+        ][card_id]
+        == expected
+    )
+
 
 def test_runtime_places_seats_before_generic_partitioning() -> None:
     source = Path(SRC).read_text(encoding="utf-8")
-    ownership = source.index(
-        "_OWNER_BY_ID, _SEAT_BLOCKED = _pool_v2_owner_map(pool, HOST, _PINNED_IDS)"
-    )
+    ownership = source.index("_OWNER_BY_ID, _SEAT_BLOCKED = _pool_v2_owner_map(")
     assert source.index("seat_for(cid, core)", source.index("def _pool_v2_owner_map")) < ownership
     assert ownership < source.index("owned=[x for x in pool")
     assert "SEAT_PLACEMENT_BLOCKED|%s|%s|%s" in source

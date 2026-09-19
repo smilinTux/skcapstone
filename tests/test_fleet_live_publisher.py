@@ -73,7 +73,7 @@ def test_publisher_reads_panes_through_the_explicit_socket(tmp_path: Path) -> No
     assert json.loads(target.read_text(encoding="utf-8")) == {
         "cards": ["aaaaaaaa", "bbbbbbbb"],
         "host": "chiap01",
-        "lanes": {},
+        "lanes": "unknown",
         "tmux_socket": str(socket_path),
         "ts": 1234.5,
         "workers": [
@@ -310,3 +310,151 @@ def test_packaged_timer_is_distinct_from_disabled_rotation_and_central_dispatch(
     assert "skfleet-rotate.timer remains disabled" in rollout
     assert "skfleet-niobe-live.timer remains the sole centralized dispatcher" in rollout
     assert "Do not execute these commands on this\nsource-repair card" in rollout
+
+
+# ---------------------------------------------------------------------------
+# Lane capacity: carry the dispatcher's verified numbers, never invent zeros.
+# The publisher used to hardcode `"lanes": {}`, which every consumer that sums
+# `free` reads as "this host has zero capacity". Running 41 seconds after the
+# dispatcher on the packaged timers, it clobbered the dispatcher's truthful
+# lane table every cycle, so chiap03 advertised capacity 0 while its own SLOTS
+# line said total_free=9.
+# ---------------------------------------------------------------------------
+
+
+def _dispatcher_snapshot(home: Path, host: str, ts: float, lanes: object) -> Path:
+    """Seed the snapshot the dispatcher's publish_live would have written."""
+    target = home / "evidence" / "fleet-live" / f"{host}.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps({"host": host, "ts": ts, "cards": [], "workers": [], "lanes": lanes}),
+        encoding="utf-8",
+    )
+    return target
+
+
+_CHIAP03_LANES = {
+    "codex": {"target": 7, "busy": 6, "free": 1},
+    "glm": {"target": 3, "busy": 0, "free": 3},
+    "kimi": {"target": 3, "busy": 0, "free": 3},
+    "qwen": {"target": 0, "busy": 0, "free": 0},
+    "escalate": {"target": 2, "busy": 0, "free": 2},
+}
+
+
+def test_snapshot_carries_dispatcher_lane_capacity(tmp_path: Path) -> None:
+    """A fresh dispatcher lane table survives the publisher's refresh intact."""
+    socket_path = _real_socket(tmp_path)
+    _dispatcher_snapshot(tmp_path, "chiap03", 900.0, _CHIAP03_LANES)
+
+    target = publish_host_snapshot(
+        home=tmp_path,
+        host="chiap03",
+        tmux_socket=str(socket_path),
+        store=_Store(),
+        runner=_unit_runner(),
+        now=lambda: 1000.0,
+    )
+
+    snap = json.loads(target.read_text(encoding="utf-8"))
+    assert snap["lanes"] == _CHIAP03_LANES
+    assert sum(lane["free"] for lane in snap["lanes"].values()) == 9
+    assert snap["lanes_ts"] == 900.0
+
+
+def test_unmeasured_capacity_never_reads_as_zero_capacity(tmp_path: Path) -> None:
+    """No lane source at publish time is 'unknown', never an empty (zero) map."""
+    socket_path = _real_socket(tmp_path)
+
+    target = publish_host_snapshot(
+        home=tmp_path,
+        host="chiap03",
+        tmux_socket=str(socket_path),
+        store=_Store(),
+        runner=_unit_runner(),
+        now=lambda: 1000.0,
+    )
+
+    snap = json.loads(target.read_text(encoding="utf-8"))
+    assert snap["lanes"] == "unknown"
+    assert not isinstance(snap["lanes"], dict)
+    assert "lanes_ts" not in snap
+
+
+def test_genuine_zero_capacity_is_distinct_from_unknown(tmp_path: Path) -> None:
+    """A dispatcher-measured all-busy host publishes zeros, not 'unknown'."""
+    socket_path = _real_socket(tmp_path)
+    saturated = {"codex": {"target": 7, "busy": 7, "free": 0}}
+    _dispatcher_snapshot(tmp_path, "chiap03", 990.0, saturated)
+
+    target = publish_host_snapshot(
+        home=tmp_path,
+        host="chiap03",
+        tmux_socket=str(socket_path),
+        store=_Store(),
+        runner=_unit_runner(),
+        now=lambda: 1000.0,
+    )
+
+    snap = json.loads(target.read_text(encoding="utf-8"))
+    assert snap["lanes"] == saturated
+    assert snap["lanes"] != "unknown"
+    assert sum(lane["free"] for lane in snap["lanes"].values()) == 0
+
+
+def test_stale_dispatcher_capacity_ages_out_to_unknown(tmp_path: Path) -> None:
+    """Lane data older than the reader's freshness fence is not re-freshened."""
+    socket_path = _real_socket(tmp_path)
+    _dispatcher_snapshot(tmp_path, "chiap03", 900.0, _CHIAP03_LANES)
+
+    target = publish_host_snapshot(
+        home=tmp_path,
+        host="chiap03",
+        tmux_socket=str(socket_path),
+        store=_Store(),
+        runner=_unit_runner(),
+        now=lambda: 900.0 + 30 * 60 + 1,
+    )
+
+    assert json.loads(target.read_text(encoding="utf-8"))["lanes"] == "unknown"
+
+
+def test_carried_capacity_keeps_original_measurement_time(tmp_path: Path) -> None:
+    """Repeated publisher runs never launder old capacity into fresh capacity."""
+    socket_path = _real_socket(tmp_path)
+    _dispatcher_snapshot(tmp_path, "chiap03", 900.0, _CHIAP03_LANES)
+    common = {
+        "home": tmp_path,
+        "host": "chiap03",
+        "tmux_socket": str(socket_path),
+        "store": _Store(),
+        "runner": _unit_runner(),
+    }
+
+    publish_host_snapshot(now=lambda: 1000.0, **common)
+    target = publish_host_snapshot(now=lambda: 1500.0, **common)
+    snap = json.loads(target.read_text(encoding="utf-8"))
+    assert snap["lanes"] == _CHIAP03_LANES
+    assert snap["lanes_ts"] == 900.0
+
+    target = publish_host_snapshot(now=lambda: 900.0 + 30 * 60 + 1, **common)
+    snap = json.loads(target.read_text(encoding="utf-8"))
+    assert snap["lanes"] == "unknown"
+    assert "lanes_ts" not in snap
+
+
+def test_legacy_empty_lane_map_is_treated_as_no_data(tmp_path: Path) -> None:
+    """The old hardcoded `{}` carries no measurement and must not persist."""
+    socket_path = _real_socket(tmp_path)
+    _dispatcher_snapshot(tmp_path, "chiap03", 990.0, {})
+
+    target = publish_host_snapshot(
+        home=tmp_path,
+        host="chiap03",
+        tmux_socket=str(socket_path),
+        store=_Store(),
+        runner=_unit_runner(),
+        now=lambda: 1000.0,
+    )
+
+    assert json.loads(target.read_text(encoding="utf-8"))["lanes"] == "unknown"

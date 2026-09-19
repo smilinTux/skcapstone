@@ -175,10 +175,10 @@ def run_diagnostics(home: Path, deep: bool = False) -> DiagnosticReport:
 # exists to catch it on its own terms.
 # ---------------------------------------------------------------------------
 
-#: The six bounded lifecycle seat timers. A seat without its timer never
+#: The five bounded lifecycle seat timers. A seat without its timer never
 #: runs, which is the state that reported ok=True with no workflow layer.
 SEAT_CYCLE_TIMERS = tuple(
-    f"skfleet-{seat}.timer" for seat in ("atlas", "link", "mero", "niobe", "seraph", "tank")
+    f"skfleet-{seat}.timer" for seat in ("atlas", "link", "mero", "niobe", "seraph")
 )
 
 #: Files in the SYNCED estate tree that are cheap to read and plausible
@@ -189,7 +189,7 @@ _SYNCED_ENV_GLOBS = ("*.env", "*.conf", "config/*.env", "config/*.conf", "config
 
 
 def _check_estate_seat_control_plane(home: Path) -> Check:
-    """Verify the estate has elected a host to run the six lifecycle seats.
+    """Verify the estate has elected a host to run the five lifecycle seats.
 
     Args:
         home: Agent home directory (the synced estate tree).
@@ -208,8 +208,8 @@ def _check_estate_seat_control_plane(home: Path) -> Check:
             description="Lifecycle seat control plane",
             passed=False,
             detail=(
-                f"{path} is absent, so all six lifecycle seats "
-                "(atlas, link, mero, niobe, seraph, tank) refuse to run"
+                f"{path} is absent, so all five lifecycle seats "
+                "(atlas, link, mero, niobe, seraph) refuse to run"
             ),
             fix=fix,
             category="estate",
@@ -242,7 +242,7 @@ def _check_estate_seat_control_plane(home: Path) -> Check:
             description="Lifecycle seat control plane",
             passed=False,
             detail=(
-                f"{path} must name an active_host and all six lifecycle seats; "
+                f"{path} must name an active_host and all five lifecycle seats; "
                 f"it names host={active or 'none'} seats={sorted(seats) if isinstance(seats, dict) else seats}"  # noqa: E501
             ),
             fix=f"Repair or delete the file, then run: {fix}",
@@ -270,7 +270,7 @@ def _check_estate_seat_control_plane(home: Path) -> Check:
         name="estate:seat-control-plane",
         description="Lifecycle seat control plane",
         passed=True,
-        detail=f"six seats elected on {where}",
+        detail=f"five seats elected on {where}",
         category="estate",
     )
 

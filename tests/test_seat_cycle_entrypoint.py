@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -306,6 +308,8 @@ def test_seraph_accepts_typed_launch_receipts_on_stderr(tmp_path, monkeypatch) -
 def test_seraph_dispatch_is_bounded_claimed_live_and_seat_scoped(
     tmp_path, monkeypatch, installed_dispatcher
 ) -> None:
+    monkeypatch.delenv("SKFLEET_TARGET", raising=False)
+    monkeypatch.setenv("SKFLEET_GATEWAY_URL", "https://gateway.example")
     captured = {}
     calls = []
 
@@ -347,7 +351,8 @@ def test_seraph_dispatch_is_bounded_claimed_live_and_seat_scoped(
     assert captured["SKFLEET_ONLY_SEAT"] == "seraph"
     assert captured["SKFLEET_MAX_LAUNCH"] == "2"
     assert captured["SKFLEET_SEAT_TARGET"] == "2"
-    assert "SKFLEET_TARGET" not in captured
+    assert captured["SKFLEET_TARGET"] == captured["SKFLEET_SEAT_TARGET"]
+    assert captured["SKFLEET_GATEWAY_URL"] == "https://gateway.example"
     assert captured["SKFLEET_MODEL_S"] == "sk-s"
     assert captured["SKFLEET_CODEX_MODEL_S"] == "sk-s"
     assert calls[1][-1] == "skfleet-worker-codex-review01.service"
@@ -398,6 +403,58 @@ def test_seraph_zero_eligible_work_is_truthful_noop(tmp_path, monkeypatch) -> No
         "suppressed": 0,
         "reason": "seraph_no_eligible_work",
     }
+
+
+def test_seraph_timeout_terminates_reaps_process_group_and_reports_cleanup(
+    tmp_path, monkeypatch
+) -> None:
+    child_pid = tmp_path / "child.pid"
+    dispatcher = tmp_path / "skenv-bin/skfleet-rotate.py"
+    dispatcher.write_text(
+        "#!/usr/bin/env python3\n"
+        "import pathlib, subprocess, time\n"
+        "child = subprocess.Popen(['sleep', '30'])\n"
+        f"pathlib.Path({str(child_pid)!r}).write_text(str(child.pid))\n"
+        "print('partial seraph output', flush=True)\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    dispatcher.chmod(0o755)
+    monkeypatch.setattr(seat_entrypoint, "_SERAPH_DISPATCH_TIMEOUT_SECONDS", 0.2)
+    monkeypatch.setattr(seat_entrypoint, "_DISPATCH_TERMINATE_GRACE_SECONDS", 0.2)
+
+    result = seraph_operation(tmp_path)
+
+    assert result["reason"] == "seraph_dispatch_timeout"
+    assert result["dispatch_failed"] == 1
+    assert result["exception_type"] == "TimeoutExpired"
+    assert result["cleanup"] == "process_group_reaped"
+    assert result["dispatcher_stdout"] == "partial seraph output\n"
+    pid = int(child_pid.read_text(encoding="utf-8"))
+    deadline = time.monotonic() + 1
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.01)
+    else:
+        pytest.fail("dispatcher child process group was not reaped")
+
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    summary = run_cycle(
+        seat="seraph",
+        home=tmp_path,
+        control_plane=control_path,
+        local_host="chiap08",
+        operation=lambda: result,
+    )
+    receipt = json.loads(
+        (tmp_path / "coordination/seat-cycles/seraph.health.jsonl").read_text(encoding="utf-8")
+    )
+    assert summary.cleanup == receipt["cleanup"] == "process_group_reaped"
+    assert summary.exception_type == receipt["exception_type"] == "TimeoutExpired"
 
 
 def test_seraph_zero_available_capacity_is_truthful_noop(tmp_path, monkeypatch) -> None:
@@ -925,8 +982,6 @@ def test_unit_templates_preserve_limits_and_disabled_install_contract() -> None:
     mero_timer = (root / "systemd/skfleet-mero.timer").read_text()
     seraph = (root / "systemd/skfleet-seraph.service").read_text()
     seraph_timer = (root / "systemd/skfleet-seraph.timer").read_text()
-    tank = (root / "systemd/skfleet-tank.service").read_text()
-    tank_timer = (root / "systemd/skfleet-tank.timer").read_text()
     atlas = (root / "systemd/skfleet-atlas.service").read_text()
     atlas_timer = (root / "systemd/skfleet-atlas.timer").read_text()
     niobe = (root / "systemd/skfleet-niobe-live.service").read_text()
@@ -955,27 +1010,34 @@ def test_unit_templates_preserve_limits_and_disabled_install_contract() -> None:
     assert "Environment=SKFLEET_GLM_TARGET=0" in niobe
     assert "Environment=SKFLEET_KIMI_TARGET=0" in niobe
     assert "skfleet-seraph.service" in seraph_timer
-    assert "--seat tank" in tank and "TimeoutStartSec=300" in tank
-    assert "SKFLEET_TANK_BATCH_SIZE=2" in tank
-    assert "ProtectHome=read-only" in tank
-    assert "ReadWritePaths=%h/.skcapstone/evidence %h/.skcapstone/fleet" in tank
-    assert "OnUnitActiveSec=5min" in tank_timer
     assert "--seat atlas" in atlas and "TimeoutStartSec=300" in atlas
     assert "SKFLEET_ATLAS_BATCH_SIZE=2" in atlas
     assert "ProtectHome=read-only" in atlas
     assert "ReadWritePaths=%h/.skcapstone/evidence %h/.skcapstone/fleet" in atlas
     assert "bounded postcondition verifier" in atlas
     assert "OnUnitActiveSec=5min" in atlas_timer
-    for seat in ("tank", "atlas"):
+    for seat in ("atlas",):
         assert (root / "systemd" / f"skfleet-{seat}.service").read_bytes() == (
             root / "src" / "skcapstone" / "data" / "systemd" / f"skfleet-{seat}.service"
         ).read_bytes()
+    assert not (root / "systemd/skfleet-tank.service").exists()
+    assert not (root / "systemd/skfleet-tank.timer").exists()
+    assert not (root / "src/skcapstone/data/systemd/skfleet-tank.service").exists()
+    assert not (root / "src/skcapstone/data/systemd/skfleet-tank.timer").exists()
 
 
-def test_tank_and_atlas_presence_cycles_do_not_run_link_work(tmp_path: Path) -> None:
+def test_installer_reuses_configured_niobe_gateway_route_for_seraph() -> None:
+    installer = (Path(__file__).parents[1] / "scripts/install.sh").read_text()
+
+    assert "skfleet-niobe-live.service.d/70-gateway-endpoint.conf" in installer
+    assert "skfleet-seraph.service.d/70-gateway-endpoint.conf" in installer
+    assert 'cp "$_NIOBE_GATEWAY_DROPIN" "$_SERAPH_GATEWAY_DROPIN"' in installer
+
+
+def test_atlas_presence_cycles_do_not_run_link_work(tmp_path: Path) -> None:
     control_path = tmp_path / "control.json"
     control(control_path)
-    for seat in ("tank", "atlas"):
+    for seat in ("atlas",):
         result = run_cycle(
             seat=seat,
             home=tmp_path / "home",
@@ -992,7 +1054,7 @@ def test_tank_and_atlas_presence_cycles_do_not_run_link_work(tmp_path: Path) -> 
         assert result.cards_examined == 0
 
 
-@pytest.mark.parametrize("seat", ["tank", "atlas"])
+@pytest.mark.parametrize("seat", ["atlas"])
 def test_role_dispatch_is_bounded_and_seat_scoped(tmp_path, monkeypatch, seat) -> None:
     captured = {}
     card_id = "a8100007"
@@ -1046,7 +1108,7 @@ def test_role_dispatch_is_bounded_and_seat_scoped(tmp_path, monkeypatch, seat) -
     ]
 
 
-@pytest.mark.parametrize("seat", ["tank", "atlas"])
+@pytest.mark.parametrize("seat", ["atlas"])
 def test_role_dispatch_rotation_overlap_is_truthful_noop(tmp_path, monkeypatch, seat) -> None:
     monkeypatch.setattr(
         "skcapstone.seat_cycle_entrypoint.subprocess.run",
@@ -1062,14 +1124,20 @@ def test_role_dispatch_rotation_overlap_is_truthful_noop(tmp_path, monkeypatch, 
     assert result["suppressed"] == 0
 
 
-@pytest.mark.parametrize("seat", ["tank", "atlas"])
+@pytest.mark.parametrize("seat", ["atlas"])
 @pytest.mark.parametrize("batch", ["0", "-1", "9", "invalid"])
 def test_role_dispatch_rejects_invalid_batch(tmp_path, monkeypatch, seat, batch) -> None:
     monkeypatch.setenv(f"SKFLEET_{seat.upper()}_BATCH_SIZE", batch)
     assert role_dispatch_operation(tmp_path, seat)["reason"] == f"{seat}_batch_size_invalid"
 
 
-@pytest.mark.parametrize("seat", ["tank", "atlas"])
+def test_role_dispatch_rejects_the_retired_tank_seat_name(tmp_path) -> None:
+    """Tank folded into atlas; the batch dispatcher must not still accept it."""
+
+    assert role_dispatch_operation(tmp_path, "tank")["reason"] == "tank_batch_size_invalid"
+
+
+@pytest.mark.parametrize("seat", ["atlas"])
 def test_role_dispatch_rejects_missing_wheel_owned_dispatcher(tmp_path, monkeypatch, seat) -> None:
     bindir = tmp_path / "venv" / "bin"
     bindir.mkdir(parents=True)

@@ -13,6 +13,7 @@ while only a successful release may idle it.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import sys
@@ -54,7 +55,9 @@ def make_flaky_board(failures: int):
         def __init__(self, home):
             super().__init__(home)
 
-        def release_claim(self, owner, task_id, *, actor, expected_claim_revision):
+        def release_claim(
+            self, owner, task_id, *, actor, expected_claim_revision, abandon_reason=None
+        ):
             state["calls"].append((owner, task_id, actor, expected_claim_revision))
             if len(state["calls"]) <= failures:
                 raise TimeoutError("timed out acquiring board mutation lock")
@@ -63,6 +66,7 @@ def make_flaky_board(failures: int):
                 task_id,
                 actor=actor,
                 expected_claim_revision=expected_claim_revision,
+                abandon_reason=abandon_reason,
             )
 
     return FlakyBoard, state
@@ -117,6 +121,49 @@ def test_release_retries_transient_board_lock_timeout(claimed_board, monkeypatch
     assert all(wait == module.LOCK_RELEASE_RETRY_BACKOFF_SECONDS for wait in sleeps)
 
 
+def test_release_records_not_abandoned_after_review_completion(claimed_board, monkeypatch) -> None:
+    """release_superseded_review_claim only runs after validate_review_completion
+    passes, so the release it performs is a durable finish, not an abandonment.
+    It must pass not-abandoned rather than leaving the CardStore event with no
+    reason at all.
+    """
+    module, values, _home = claimed_board
+    recorded: list[dict[str, object]] = []
+
+    class RecordingBoard:
+        def __init__(self, _home):
+            pass
+
+        def release_claim(
+            self, owner, task_id, *, actor, expected_claim_revision, abandon_reason=None
+        ):
+            recorded.append(
+                {
+                    "owner": owner,
+                    "task_id": task_id,
+                    "actor": actor,
+                    "expected_claim_revision": expected_claim_revision,
+                    "abandon_reason": abandon_reason,
+                }
+            )
+            return True
+
+    monkeypatch.setattr("skcoord.coordination.Board", RecordingBoard)
+    values.review_supersession = {"current_head": "2" * 40}
+
+    assert module.release_superseded_review_claim(values) is True
+
+    assert recorded == [
+        {
+            "owner": values.owner,
+            "task_id": values.card,
+            "actor": values.owner,
+            "expected_claim_revision": values.claim_revision,
+            "abandon_reason": "not-abandoned",
+        }
+    ]
+
+
 def test_release_does_not_retry_non_timeout_failures(monkeypatch) -> None:
     module = load_module()
 
@@ -140,6 +187,56 @@ def test_release_does_not_retry_non_timeout_failures(monkeypatch) -> None:
     values.review_supersession = {"current_head": "2" * 40}
 
     with pytest.raises(RuntimeError, match="exact claim was not released"):
+        module.release_superseded_review_claim(values)
+
+
+def test_release_does_not_retry_abandon_reason_interface_mismatch(
+    claimed_board, monkeypatch
+) -> None:
+    """The installed skcoord predates abandon_reason. Retrying the identical
+    call cannot help, and the release genuinely did not happen, so this must
+    fail truthfully (RuntimeError, the same contract as persistent lock
+    contention) rather than crash the finalizer with a raw TypeError.
+    """
+    module, values, _home = claimed_board
+    calls = []
+
+    class MismatchedBoard(Board):
+        def __init__(self, home):
+            super().__init__(home)
+
+        def release_claim(self, *_args, **kwargs):
+            calls.append(kwargs)
+            raise TypeError("release_claim() got an unexpected keyword argument 'abandon_reason'")
+
+    monkeypatch.setattr("skcoord.coordination.Board", MismatchedBoard)
+    values.review_supersession = {"current_head": "2" * 40}
+
+    with pytest.raises(RuntimeError, match="exact claim was not released") as excinfo:
+        module.release_superseded_review_claim(values)
+
+    assert isinstance(excinfo.value.__cause__, TypeError)
+    assert len(calls) == 1
+
+
+def test_release_does_not_swallow_an_unrelated_type_error(claimed_board, monkeypatch) -> None:
+    """Only the known abandon_reason signature mismatch degrades. Any other
+    TypeError is a real bug and must still surface as itself, not vanish
+    into a truthful-looking RuntimeError.
+    """
+    module, values, _home = claimed_board
+
+    class BuggyBoard(Board):
+        def __init__(self, home):
+            super().__init__(home)
+
+        def release_claim(self, *_args, **_kwargs):
+            raise TypeError("'NoneType' object is not subscriptable")
+
+    monkeypatch.setattr("skcoord.coordination.Board", BuggyBoard)
+    values.review_supersession = {"current_head": "2" * 40}
+
+    with pytest.raises(TypeError, match="NoneType"):
         module.release_superseded_review_claim(values)
 
 
@@ -331,3 +428,82 @@ def test_persistent_release_failure_keeps_owner_projection_active(monkeypatch, t
         and event.get("expected_claim_revision") == values.claim_revision
     ]
     assert releases == []
+
+
+def test_incomplete_pass_keeps_exact_claim_and_projection(monkeypatch, tmp_path) -> None:
+    """Hashed PASS evidence without canonical CI cannot escape cleanup."""
+    module, store, projection, values = _terminal_board_setup(tmp_path)
+    card = tmp_path / ".skcapstone" / "cards" / values.card
+    core = json.loads((card / "core.json").read_text(encoding="utf-8"))
+    core["title"] = "[SKFLEET][REVIEW] exact candidate"
+    (card / "core.json").write_text(json.dumps(core), encoding="utf-8")
+    evidence = tmp_path / "review.md"
+    evidence.write_text("reviewed exact bytes\n", encoding="utf-8")
+    events = tmp_path / ".skcapstone" / "coordination" / "card_events"
+    events.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {
+            "card_id": values.card,
+            "action": "link",
+            "link_key": "verdict",
+            "link_value": "PASS",
+            "ts": "2026-09-15T16:00:00Z",
+        },
+        {
+            "card_id": values.card,
+            "action": "link",
+            "link_key": "evidence",
+            "link_value": str(evidence),
+            "ts": "2026-09-15T16:00:01Z",
+        },
+        {
+            "card_id": values.card,
+            "action": "link",
+            "link_key": "evidence_sha256",
+            "link_value": hashlib.sha256(evidence.read_bytes()).hexdigest(),
+            "ts": "2026-09-15T16:00:02Z",
+        },
+    ]
+    (events / "review.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+    monkeypatch.setattr(module.Path, "home", classmethod(lambda _cls: tmp_path))
+    idle_calls = []
+    monkeypatch.setattr(module, "idle_owner_projection", lambda *call: idle_calls.append(call))
+
+    for _attempt in range(2):
+        with pytest.raises(RuntimeError, match="review completion rejected"):
+            module.finalize_worker_exit(values, None)
+
+    assert store.fold(values.card).owner == values.owner
+    assert idle_calls == []
+    assert json.loads(projection.read_text(encoding="utf-8"))["current_task"] == values.card
+    records = list(values.evidence_dir.glob("*.json"))
+    assert len(records) == 1
+    rejection = json.loads(records[0].read_text(encoding="utf-8"))
+    assert rejection["completion_failure"] == "review_completion_rejected"
+    assert rejection["claim_revision"] == values.claim_revision
+    assert "ci_check_python311" in rejection["reason"]
+
+
+def test_newer_same_owner_revision_fences_review_cleanup(claimed_board, monkeypatch) -> None:
+    module, values, home = claimed_board
+    store = CardStore(home)
+    store.append_event(
+        values.card,
+        "claim",
+        values.owner,
+        owner=values.owner,
+        claim_revision="generation-2",
+    )
+    calls = []
+    monkeypatch.setattr(
+        "skcoord.coordination.Board.release_claim",
+        lambda *_args, **kwargs: calls.append(kwargs) or True,
+    )
+
+    with pytest.raises(RuntimeError, match="exact claim was not released"):
+        module.release_superseded_review_claim(values)
+
+    assert calls == []
+    assert store.fold(values.card).meta["_claim_revision"] == "generation-2"
