@@ -575,8 +575,7 @@ make the rule sharper, and two of them are the most valuable findings here.
 
 ---
 
-## 34. The fold is the only authority; a hand-rolled replay is a second
-implementation
+## 34. The fold is the only authority
 
 `CardStore.fold()` (`skcoord/src/skcoord/card_store.py:1440`) is not a
 convenience wrapper over a list of events. It merges the union of the card's own
