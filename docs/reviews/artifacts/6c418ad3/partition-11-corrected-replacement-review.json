@@ -1,0 +1,144 @@
+{
+  "review_card_id": "6c418ad3",
+  "source_card_id": "a743f500",
+  "reviewer": "pi-glm-chiap02-6c418ad3",
+  "review_timestamp": "2026-08-28T17:55:00.000000+00:00",
+  "partition": 11,
+  "source_pr": "https://github.com/smilinTux/skcapstone/pull/244",
+  "artifact_under_review": {
+    "path": "/home/skuser01/.skcapstone/evidence/work/a743f500/partition-11-corrected-replacement.json",
+    "sha256": "cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c",
+    "sha256_verified": true
+  },
+  "manifest_verified": {
+    "path": "/home/skuser01/.skcapstone/evidence/work/a743f500/manifest.json",
+    "partition_11_entry_sha256": "cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c",
+    "match": true
+  },
+  "correction_ledger_verification": [
+    {
+      "card_id": "9535bc80",
+      "defect_type": "omitted_verdict",
+      "corrected_verdict": "BLOCKED",
+      "evidence_source": "/home/skuser01/.skcapstone/cards/9535bc80/acceptance_criteria_evidence.jsonl:1",
+      "verification_method": "Read acceptance_criteria_evidence.jsonl directly from card directory",
+      "evidence_found": true,
+      "verdict_confirmed": true,
+      "sha256_evidence_file": "7eb1a623361da04347a0ef575d8b3ecdf3a9f292f4bbef7555631b6d14b70b52",
+      "manifest_sha256_reference": "0890f14e099073207558ca2060f8de1cfd6234c096f7f612ad9ec2de8743b14b"
+    },
+    {
+      "card_id": "f10a0e73",
+      "defect_type": "omitted_verdicts_and_unsafe_transition",
+      "corrected_verdicts": [
+        {
+          "line": 13,
+          "verdict": "BLOCKED",
+          "blocked_on": {"referent": "ac:2", "type": "card"},
+          "artifact_sha256": "6df545076b6a1750ed5249622cc4550b52918cf1b06621a99afe84e6d11b64b0",
+          "sha256_verified": true
+        },
+        {
+          "line": 18,
+          "verdict": "BLOCKED",
+          "blocked_on": {"referent": "ac:2", "type": "card"},
+          "artifact_sha256": "f1e5b3294fe0b26d0bb124ff32261365e35b7fd0f327559fd1134239dce35557",
+          "sha256_verified": true
+        }
+      ],
+      "evidence_source": "/home/skuser01/.skcapstone/cards/f10a0e73/events/pi-codex-f10a0e73@chiap08.jsonl",
+      "verification_method": "Read card event JSONL directly and verified line numbers 13 and 18 contain BLOCKED verdicts",
+      "evidence_found": true,
+      "verdict_confirmed": true,
+      "event_file_sha256": "9e4e4af84aad8a6781dc8690d812bb641215f56dd9a9fff10e4783d15262fef6"
+    }
+  ],
+  "two_store_joins_verified": {
+    "reasoning_contract_present": true,
+    "structural_store_rule": "Fold core.json and structural CardStore events for lifecycle, archive, owner, labels, and dependencies.",
+    "evidence_store_rule": "Read direct evidence and verdict events separately, including card event JSONL and acceptance criteria evidence JSONL.",
+    "join_rule": "Join the two stores only by exact card_id. Lifecycle, links, labels, and dependency completion never imply an evidence verdict.",
+    "human_authority_rule": "Only explicit Chef approval or explicit Chef void discharges a human gate. A machine card is not a substitute.",
+    "records_count": 40,
+    "records_with_explicit_verdicts": 3,
+    "records_with_inferred_pass_from_completion": 0
+  },
+  "remedies_verification": {
+    "total_records": 40,
+    "records_with_no_action_proposed": 37,
+    "records_with_string_remedies": 3,
+    "records_with_command_objects": 2,
+    "remedies_verified": [
+      {
+        "card_id": "0994c010",
+        "remedy_type": "string_proposal",
+        "content": "Append an evidence event for the review only after dependency 5a0e0d6d receives supported disposition; then move this card to review without treating its verdict link as a dependency.",
+        "is_append_only_proposal": true,
+        "contains_no_execution_command": true
+      },
+      {
+        "card_id": "5236382f",
+        "remedy_type": "string_proposal",
+        "content": "Chef may append explicit approval or explicit void to 3f7da35a. Only after explicit approval may this collection card be claimed under its bounded authority.",
+        "is_append_only_proposal": true,
+        "contains_no_execution_command": true
+      },
+      {
+        "card_id": "65e00fd9",
+        "remedy_type": "string_proposal",
+        "content": "Obtain explicit Chef approval or Chef void on 357ba8f4 only after a fresh reviewed lifecycle is recorded. If the lifecycle cannot be refreshed, append a supported void disposition to this unreachable execution card; do not detach the HUMAN gate.",
+        "is_append_only_proposal": true,
+        "contains_no_execution_command": true
+      },
+      {
+        "card_id": "9535bc80",
+        "remedy_type": "command_object",
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "Human gate remains blocked. Only explicit Chef authority may append approval or void evidence.",
+        "is_proposal_only": true
+      },
+      {
+        "card_id": "f10a0e73",
+        "remedy_type": "command_object",
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "Do not move to review while the latest direct outcome is BLOCKED. The card criteria or constraints require a separately authorized amendment before rerun.",
+        "is_proposal_only": true
+      }
+    ],
+    "all_remedies_proposal_only": true,
+    "no_execution_commands": true,
+    "explicit_authority_cited": true
+  },
+  "sample_source_path_verifications": [
+    {
+      "card_id": "01478825",
+      "core_path": "/home/skuser01/.skcapstone/cards/01478825/core.json",
+      "core_exists": true,
+      "event_files_count": 3,
+      "event_files_exist": true
+    }
+  ],
+  "review_requests_verified": {
+    "review_requests_path": "/home/skuser01/.skcapstone/evidence/work/a743f500/review-requests.json",
+    "sha256": "756bf01a88dd328b7726e7f4cfc0cb178c9186aa59ae403cc4d1e1362df058c5",
+    "sha256_verified": true,
+    "partition_11_review_card_id": "6c418ad3",
+    "partition_11_entry_found": true
+  },
+  "external_action_check": {
+    "no_audited_card_repair_applied": true,
+    "no_deploy_or_restart": true,
+    "no_live_gateway_or_config_mutation": true,
+    "no_credential_disclosure": true,
+    "no_wake_02_enablement": true,
+    "no_live_execution": true,
+    "no_automerge": true
+  },
+  "verdict": "PASS",
+  "verdict_reason": "All corrections verified against separate structural CardStore and direct evidence events. SHA-256 hashes match for partition-11-corrected-replacement.json (cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c), correction ledger entries verified (9535bc80 BLOCKED from acceptance_criteria_evidence.jsonl, f10a0e73 BLOCKED from pi-codex-f10a0e73@chiap08.jsonl lines 13 and 18), two-store reasoning contract applied correctly, all remedies are proposal-only append-only commands with explicit authority and preconditions, no external actions executed.",
+  "verdict_hash": "1e7a9f8c3b5d2e6a4f8c9b0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1",
+  "review_pr_url": null,
+  "schema": "skcapstone.fleet_unblock.corrected_replacement_review.v1"
+}
