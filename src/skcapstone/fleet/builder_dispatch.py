@@ -33,7 +33,10 @@ LEASE_SECONDS = 900
 TERMINAL_STATES = {"completed", "blocked", "failed", "stale"}
 MAX_ATTEMPTS = 2
 MATCH_RETRY_LIMIT = 3
+#: The builder ceiling for a node no operator has tuned. Per-node overrides
+#: live on the node spec's `builder-capacity` label; see _node_capacity().
 BUILDER_CAPACITY = 4
+CAPACITY_LABEL = "builder-capacity"
 _PROCESSES: dict[str, object] = {}
 _WORKER_TOOLS = "read,bash,edit,write,grep,find,ls"
 _BUNDLED_GUARD = Path(__file__).resolve().parents[3] / "scripts/fleet/pi-cardstore-guard.mjs"
@@ -162,6 +165,40 @@ def _ready_builders(paths: FleetPaths) -> list[NodeView]:
     return result
 
 
+def _node_capacity(paths: FleetPaths, node: str) -> int:
+    """Return how many concurrent dispatches one builder node accepts.
+
+    One hardcoded ceiling cannot serve a fleet whose builders differ by a
+    factor of four in cores and RAM: the same number that saturates a small
+    box leaves a large one idle. The ceiling is therefore a property of the
+    node, set by an operator on the node spec's `builder-capacity` label
+    (`skfleet label <node> builder-capacity=N`), which is already the
+    per-node, synced, partial-update surface for exactly this kind of fact.
+
+    An unusable value falls back to the default rather than raising. This
+    runs inside the rotation cycle for every candidate card on the estate,
+    so one typo must not take the cycle down for every other node. The
+    fallback is observable: `builders-at-capacity` reports the ceiling that
+    actually applied, so a label that did not take effect still reads `/4`.
+
+    Args:
+        paths: The fleet object tree to read the node spec from.
+        node: The node object name, e.g. "node-ziowk01".
+
+    Returns:
+        A positive dispatch ceiling, defaulting to BUILDER_CAPACITY.
+    """
+    spec = store.read_spec(paths, "node", node) or {}
+    raw = (spec.get("labels") or {}).get(CAPACITY_LABEL)
+    if raw is None:
+        return BUILDER_CAPACITY
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return BUILDER_CAPACITY
+    return value if value > 0 else BUILDER_CAPACITY
+
+
 def _node_load(paths: FleetPaths, node: str) -> int:
     """Return the number of nonterminal remote dispatches on one node."""
     load = 0
@@ -176,6 +213,18 @@ def _node_load(paths: FleetPaths, node: str) -> int:
             continue
         load += 1
     return load
+
+
+def _under_capacity(paths: FleetPaths, ready: list[NodeView]) -> list[NodeView]:
+    """Return the Ready builders still below their own dispatch ceiling.
+
+    Shared by offer() and decline_reason() so the two cannot disagree about
+    which builders were available: a refusal that names a ceiling the offer
+    did not apply is worse than no refusal at all.
+    """
+    return [
+        view for view in ready if _node_load(paths, view.name) < _node_capacity(paths, view.name)
+    ]
 
 
 def offer(
@@ -233,7 +282,7 @@ def offer(
         selected_node = view.name
         break
     if selected_node is None:
-        builders = [view for view in ready if _node_load(paths, view.name) < BUILDER_CAPACITY]
+        builders = _under_capacity(paths, ready)
         decision = scheduler.select(builders, scheduler.Workload("job", card_id))
         if decision.node is None:
             return None
@@ -340,13 +389,14 @@ def decline_reason(
         if same_generation and prior.get("state") == "running":
             return f"superseded-binding-running: node={view.name}"
         return None
-    builders = [view for view in ready if _node_load(paths, view.name) < BUILDER_CAPACITY]
+    builders = _under_capacity(paths, ready)
     if not builders:
         # The common real cause, and the one that used to reach the log as
         # "unschedulable: unschedulable ()": every Ready builder is full, so
         # the scheduler was handed nothing to choose between. Name the loads.
         loads = ", ".join(
-            f"{view.name}={_node_load(paths, view.name)}/{BUILDER_CAPACITY}" for view in ready
+            f"{view.name}={_node_load(paths, view.name)}/{_node_capacity(paths, view.name)}"
+            for view in ready
         )
         return f"builders-at-capacity: {loads}"
     decision = scheduler.select(builders, scheduler.Workload("job", card_id))
@@ -731,7 +781,7 @@ def _consume_available(
                     error="unclaimed offer expired",
                 )
                 continue
-            if active >= BUILDER_CAPACITY:
+            if active >= _node_capacity(paths, node):
                 continue
             attempt = int(prior.get("attempt") or 0) + 1
             owner = f"pi-builder-standby-{node}-{request['card_id']}"

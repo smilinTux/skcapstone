@@ -1329,3 +1329,130 @@ def test_decline_reason_is_none_when_offer_would_place(paths, operator, noded41)
     request = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
     assert request is not None
     assert builder_dispatch.decline_reason(paths, _card(), ["sk-m", "source-only"]) is None
+
+
+def _node_with_capacity(paths, operator, capacity) -> None:
+    """Admit node-ziowk01 carrying one operator-set builder-capacity label."""
+    labels = {"host": "ziowk01"}
+    if capacity is not None:
+        labels["builder-capacity"] = capacity
+    store.write_spec(
+        paths,
+        "node",
+        "node-ziowk01",
+        {"role": "builder-standby", "actuate": True, "cordoned": False},
+        writer=operator,
+        labels=labels,
+    )
+    sknoded.run_once(paths, "node-ziowk01")
+
+
+def _fill(paths, count, writer):
+    """Offer `count` distinct cards and return what each offer answered."""
+    return [
+        builder_dispatch.offer(
+            paths,
+            _card() | {"id": f"24b{number:05d}"},
+            ["sk-m", "source-only"],
+            writer=writer,
+        )
+        for number in range(1, count + 1)
+    ]
+
+
+def test_an_unlabelled_node_keeps_the_default_ceiling(paths, operator, noded41) -> None:
+    """Nothing changes for a node no operator has tuned."""
+    _node(paths, operator, noded41)
+    assert (
+        builder_dispatch._node_capacity(paths, "node-ziowk01") == builder_dispatch.BUILDER_CAPACITY
+    )
+    assert builder_dispatch._node_capacity(paths, "node-ziowk01") == 4
+
+
+def test_a_label_raises_one_nodes_ceiling_above_the_default(paths, operator, noded41) -> None:
+    """A box with headroom takes more than four, set per node, not globally."""
+    _node_with_capacity(paths, operator, "7")
+    writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
+    assert builder_dispatch._node_capacity(paths, "node-ziowk01") == 7
+    offers = _fill(paths, 8, writer)
+    assert all(offer is not None for offer in offers[:7])
+    assert offers[7] is None
+    assert builder_dispatch._node_load(paths, "node-ziowk01") == 7
+
+
+def test_a_label_lowers_one_nodes_ceiling_below_the_default(paths, operator, noded41) -> None:
+    """The same knob throttles a box that cannot take four."""
+    _node_with_capacity(paths, operator, "2")
+    writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
+    offers = _fill(paths, 3, writer)
+    assert all(offer is not None for offer in offers[:2])
+    assert offers[2] is None
+
+
+def test_the_capacity_refusal_names_the_per_node_ceiling(paths, operator, noded41) -> None:
+    """An operator reading the log must see the ceiling that actually applied.
+
+    ``node-ziowk01=2/4`` when the real ceiling is 2 would send them looking for
+    a bug in a dispatcher that is behaving exactly as configured.
+    """
+    _node_with_capacity(paths, operator, "2")
+    writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
+    _fill(paths, 2, writer)
+    reason = builder_dispatch.decline_reason(
+        paths, _card() | {"id": "24b00099"}, ["sk-m", "source-only"]
+    )
+    assert reason == "builders-at-capacity: node-ziowk01=2/2"
+
+
+@pytest.mark.parametrize("value", ["", "  ", "eight", "0", "-3", "4.5"])
+def test_an_unusable_capacity_label_falls_back_to_the_default(
+    paths, operator, noded41, value
+) -> None:
+    """A typo throttles nobody and crashes nothing.
+
+    The dispatcher runs every rotation cycle for the whole fleet, so one
+    malformed label must not take the cycle down. It falls back to the default
+    and the refusal line reports ``/4``, which is the signal that the label did
+    not take effect.
+    """
+    _node_with_capacity(paths, operator, value)
+    assert builder_dispatch._node_capacity(paths, "node-ziowk01") == 4
+
+
+def test_the_node_fills_the_slots_its_own_label_allows(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    """The node-side launch gate reads the same per-node ceiling as the offer.
+
+    Two ceilings that disagree would either strand offered cards the node
+    refuses to launch, or let the node launch past what the scheduler sized.
+    """
+    _node_with_capacity(paths, operator, "6")
+    writer = store.Writer(role="scheduler", node="niobe", identity="")
+    requests = _fill(paths, 6, writer)
+    assert all(request is not None for request in requests)
+    folded = {request["card_id"]: _folded(id=request["card_id"]) for request in requests}
+    launches = []
+
+    def claim(_self, owner, card_id):
+        folded[card_id].owner = owner
+        folded[card_id].meta = dict(_card()["meta"], _claim_revision=f"claim-{card_id}")
+
+    monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda _self, card_id: folded[card_id])
+    monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(builder_dispatch, "_proc_start_ticks", lambda pid: str(pid))
+
+    def launch(_command, workspace):
+        launches.append(workspace)
+        return SimpleNamespace(pid=100 + len(launches), poll=lambda: None)
+
+    builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=launch,
+        materializer=lambda _request, workspace: workspace,
+    )
+    assert len(launches) == 6
+    assert len(set(launches)) == 6
