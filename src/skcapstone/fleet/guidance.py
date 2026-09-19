@@ -1,4 +1,5 @@
 """Producer-side guidance queue for supervised fleet work."""
+
 from __future__ import annotations
 
 import json
@@ -48,13 +49,22 @@ def enqueue_guidance(card_id: str, text: str, *, root: Path | None = None) -> di
         for line in path.read_text(encoding="utf-8").splitlines():
             try:
                 item = json.loads(line)
-                if now - datetime.fromisoformat(item["ts"].replace("Z", "+00:00")).timestamp() < 3600:
+                if (
+                    now - datetime.fromisoformat(item["ts"].replace("Z", "+00:00")).timestamp()
+                    < 3600
+                ):
                     recent.append(item)
             except (json.JSONDecodeError, KeyError, ValueError):
                 continue
     if len(recent) >= MAX_PER_HOUR:
         raise ValueError("guidance rate limit exceeded: at most 3 requests per card per hour")
-    request = {"ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "author": author, "host": socket.gethostname(), "card": card_id, "text": text}
+    request = {
+        "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "author": author,
+        "host": socket.gethostname(),
+        "card": card_id,
+        "text": text,
+    }
     encoded = json.dumps(request, sort_keys=True, separators=(",", ":"))
     # Record through the coord CLI, never by touching CardStore files.
     try:
