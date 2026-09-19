@@ -1224,3 +1224,41 @@ def test_default_gate_node_pins_the_manifest_sha_for_a_remote_node(monkeypatch, 
     staged_rollout.default_gate_node("chiap02", {"git_sha": "c0ffee00", "units": []}, home=home)
 
     assert seen["expect_git_sha"] == "c0ffee00"
+
+
+def test_declaring_an_artifact_is_enough_to_deploy_it():
+    """The invariant that makes "cannot be forgotten" true.
+
+    Both the forward and the rollback path must carry exactly one copy step
+    per declared per-host artifact, targeting the deployed location. A
+    hardcoded step would satisfy this only by coincidence today and would
+    stop satisfying it the moment PER_HOST_ARTIFACTS grows -- which is
+    precisely the failure that left skfleet-worker-wrapper.py undeployed.
+    """
+    from skcapstone.fleet.deployment_manifest import (
+        PER_HOST_ARTIFACTS,
+        PER_HOST_BIN_RELATIVE_DIR,
+    )
+
+    bin_dir = PER_HOST_BIN_RELATIVE_DIR.as_posix()
+    for steps in (_DEPLOY_STEPS, _ROLLBACK_STEPS):
+        copy_steps = [(n, t) for n, t in steps if n.startswith("copy_")]
+        assert len(copy_steps) == len(PER_HOST_ARTIFACTS), (
+            f"{len(copy_steps)} copy steps for {len(PER_HOST_ARTIFACTS)} declared "
+            f"artifacts: {[n for n, _ in copy_steps]}"
+        )
+        for artifact in PER_HOST_ARTIFACTS:
+            target = f"~/{bin_dir}/{artifact.name}"
+            assert any(
+                artifact.as_posix() in t and t.rstrip().endswith(target) for _, t in copy_steps
+            ), f"no step copies {artifact.as_posix()} to {target}"
+
+
+def test_copy_steps_are_ordered_after_the_package_install():
+    """Order is load-bearing: a new script against an old package is the
+    exact shape of the 2026-09-19 outage, only with the halves swapped."""
+    names = [n for n, _ in _DEPLOY_STEPS]
+    assert names.index("pip_install") < min(
+        i for i, n in enumerate(names) if n.startswith("copy_")
+    )
+    assert max(i for i, n in enumerate(names) if n.startswith("copy_")) < names.index("converge")

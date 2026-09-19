@@ -53,6 +53,8 @@
   remote, so cross-host agreement falls out of the existing gate rather than
   a second fleet-wide report. The installed-package finding is renamed
   `git_sha` -> `package:git_sha` so a report names which surface is stale.
+  `skwork-sweep.py`, which was declared in no package at all yet runs from
+  a live unit on all five hosts, is now a declared per-host artifact.
 
 - **`docs/fleet/2026-09-19-learnings.md`**: the 2026-09-18/19 session written as
   three recurring failure shapes rather than thirty incidents, contracts 20-37

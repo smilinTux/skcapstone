@@ -72,9 +72,21 @@ PER_HOST_BIN_RELATIVE_DIR = Path(".local") / "bin"
 #:
 #: Adding a per-host artifact later means adding one entry HERE. Everything
 #: that copies or grades these files derives from this tuple.
+#: ``skwork-sweep.py`` is here for a second, independent reason: it is
+#: declared in NO package at all. It is not a ``script-files`` entry, so pip
+#: never installs it and section 2b of ``rollout_drift`` cannot see it,
+#: exactly like the skmail incident that module's docstring records (three
+#: different binaries across five hosts, invisible because the file belonged
+#: to no package). It is nevertheless deployed to ``~/.local/bin`` and run by
+#: a live systemd unit on all five chi hosts. Declaring it HERE, rather than
+#: in ``script-files``, is deliberate: ``script-files`` would make pip place
+#: a second copy in ``~/.skenv/bin`` that no host has today, so every host
+#: would immediately report a spurious ``script:`` missing finding. This is
+#: the list of things the ROLLOUT deploys, which is the true statement.
 PER_HOST_ARTIFACTS: tuple[Path, ...] = (
     DISPATCHER_RELATIVE_PATH,
     WORKER_WRAPPER_RELATIVE_PATH,
+    Path("scripts") / "fleet" / "skwork-sweep.py",
 )
 
 _MANIFEST_FIELDS = ("git_sha", "package_version", "required_env", "units")

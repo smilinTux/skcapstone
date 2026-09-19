@@ -16,6 +16,15 @@
   `PER_HOST_ARTIFACTS` tuple the rollout copies from, so a stale deployed
   worker wrapper is a reported finding instead of an invisible one.
 
+- **`skwork-sweep.py` was declared in no package at all.** Not a
+  `script-files` entry, so pip never installed it and the drift detector's
+  `script:` pass could not see it - the same shape as the skmail incident.
+  It is nevertheless deployed to `~/.local/bin` and run by a live systemd
+  unit on all five chi hosts. It is now a declared per-host artifact, so the
+  rollout copies it and drift grades it. Deliberately NOT added to
+  `script-files`: that would make pip place a second copy in `~/.skenv/bin`
+  that no host has, and every host would report a spurious missing script.
+
 ### Added
 
 - **The checkout version surface, `checkout:git_sha`.** A chi host carries
