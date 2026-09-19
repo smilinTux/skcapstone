@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import bisect
 import collections
 import datetime
 import os
@@ -15,11 +16,19 @@ ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 FUNCTIONS = {
     "_claim_ceiling_hit",
     "_countable_claims",
+    "_work_epochs",
+    "_work_between",
     "_claim_amnesty_epoch",
     "_fold_key",
     "_ts_epoch",
 }
-CONSTANTS = {"_MAX_CLAIMS", "_AMNESTY_VALUE_RE"}
+CONSTANTS = {
+    "_MAX_CLAIMS",
+    "_AMNESTY_VALUE_RE",
+    "_CLAIM_BOOKKEEPING",
+    "_CLAIM_CLOSING",
+    "_REAP_WRITER",
+}
 
 
 def _load_ceiling_namespace(acts_result: collections.Counter) -> dict:
@@ -36,6 +45,7 @@ def _load_ceiling_namespace(acts_result: collections.Counter) -> dict:
     namespace = {
         "os": os,
         "re": re,
+        "bisect": bisect,
         "datetime": datetime,
         "collections": collections,
         "acts": lambda cid: acts_result,

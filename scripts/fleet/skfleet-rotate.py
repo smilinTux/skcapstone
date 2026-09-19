@@ -8,7 +8,7 @@ Fixes two defects found 03:50Z:
      rotation deadlocked at busy=8 and NOOPed. Workers launched with -p exit on
      their own, so a slot is simply a live codex-auto-* session. No retire logic.
 """
-import json,os,glob,subprocess,sys,time,fcntl,datetime,hashlib,collections,re,importlib.util,shlex
+import bisect,json,os,glob,subprocess,sys,time,fcntl,datetime,hashlib,collections,re,importlib.util,shlex
 import importlib.metadata
 import shutil
 from pathlib import Path
@@ -3461,6 +3461,39 @@ def _claim_amnesty_epoch(cid):
         if epoch>latest: latest=epoch
     return latest
 
+# Lifecycle bookkeeping, as opposed to work ON the card. Same vocabulary
+# _card_mutated_during_report already uses for the same question. The reaper's
+# own rows are bookkeeping too: a WORKER_DIED verdict and a mero_observation
+# describe the WORKER, not the card.
+_CLAIM_BOOKKEEPING=frozenset({"claim","release_claim","unassign","mero_observation",
+                              "review_assignment_launch","review_assignment_recommendation"})
+# Actions that close the claim in force. Mirrors _claim_identity, so the window
+# this walks is the same hold the reaper and the fold recognise.
+_CLAIM_CLOSING=frozenset({"release_claim","unassign","complete","void","archive"})
+_REAP_WRITER="fleet-liveness-reaper"
+
+def _work_epochs(cid):
+    """When work was written ON this card, from the union of BOTH stores.
+
+    The per-card shards carry structure and the coordination overlay carries
+    verdicts, links and evidence; a worker's PASS lands only in the second one.
+    Reading either alone would call a real attempt unworked.
+    """
+    epochs=[]
+    for rows in (event_rows(cid),_load_evidence_events().get(cid,[])):
+        for e in rows:
+            if e.get("action") in _CLAIM_BOOKKEEPING: continue
+            if str(e.get("writer") or "").startswith(_REAP_WRITER): continue
+            epoch=_ts_epoch(e.get("ts"))
+            if epoch>0: epochs.append(epoch)
+    epochs.sort()
+    return epochs
+
+def _work_between(epochs,opened,closed):
+    """True when anything was written on the card inside one claim's hold."""
+    i=bisect.bisect_left(epochs,opened)
+    return i<len(epochs) and epochs[i]<=closed
+
 def _countable_claims(cid,total):
     """Claims charged against the ceiling: those NEWER than the latest amnesty.
 
@@ -3470,11 +3503,44 @@ def _countable_claims(cid,total):
     so a wrongly amnestied card burns at most _MAX_CLAIMS more claims and
     locks again. A claim whose own timestamp will not parse is charged,
     never forgiven.
+
+    Claims the liveness reaper CERTIFIED dead (see _worker_died_revisions)
+    are excluded on the same terms, and need no operator act: the estate
+    already proved that generation's worker was gone. Measured 2026-09-18,
+    this is what froze the board. 107 cards hit the ceiling with claims and
+    releases matching almost exactly and zero completions; one seat claimed
+    and released its own card 120 times, and the reaper issued 287 releases
+    across 29 of them. None of that was the cards failing. Charging a card
+    for a worker that died before doing anything charges the wrong party,
+    and because the counter is monotonic it turns a transient fleet defect
+    into a permanent freeze.
+
+    The two exclusions never double-forgive: each claim is examined once.
+    The genuine runaway is unaffected. 06a95c23 had 8 releases against 402
+    claims, so at most 8 of them can carry a certification, and it stays
+    locked.
     """
     epoch=_claim_amnesty_epoch(cid)
-    if epoch<=0: return total
-    forgiven=sum(1 for e in event_rows(cid)
-                 if e.get("action")=="claim" and 0<_ts_epoch(e.get("ts"))<=epoch)
+    work=_work_epochs(cid)
+    forgiven=0
+    opened=0.0
+    for e in event_rows(cid):
+        action=e.get("action")
+        if action=="claim":
+            stamp=_ts_epoch(e.get("ts"))
+            # Forgiven by amnesty, and never forgiven twice: the window this
+            # claim opens is dropped rather than examined again below.
+            if epoch>0 and 0<stamp<=epoch:
+                forgiven+=1; opened=0.0; continue
+            # A second claim before any release supersedes the first. The
+            # earlier hold never closed, so it is charged.
+            opened=stamp
+        elif action in _CLAIM_CLOSING:
+            if opened>0:
+                closed=_ts_epoch(e.get("ts"))
+                if closed>=opened and not _work_between(work,opened,closed):
+                    forgiven+=1
+            opened=0.0
     return max(total-forgiven,0)
 
 def _claim_ceiling_hit(cid):
@@ -3491,7 +3557,11 @@ def _claim_ceiling_hit(cid):
 
     Claims older than the card's latest well-formed claim_amnesty link are
     excluded from the count (see _claim_amnesty_epoch), so a defect the
-    estate has since fixed stops charging the cards it churned.
+    estate has since fixed stops charging the cards it churned, as are
+    claims whose worker the liveness reaper proved dead (see
+    _worker_died_revisions). What remains is the count of claims a LIVE
+    worker made on this card and did not finish, which is the only thing
+    this gate was ever trying to measure.
     """
     counts=acts(cid)
     if counts.get("complete") or counts.get("await_gates"):
@@ -4415,7 +4485,7 @@ def _record_reap_outcome(cid, owner, claim_revision, claim_ts):
             "card_id": str(cid),
             "action": "verdict",
             "verdict": "WORKER_DIED",
-            "writer": "fleet-liveness-reaper",
+            "writer": _REAP_WRITER,
             "ts": stamp,
         },
         {
@@ -4424,13 +4494,13 @@ def _record_reap_outcome(cid, owner, claim_revision, claim_ts):
             "action": "link",
             "link_key": "worker_died",
             "link_value": "owner=%s claim_revision=%s" % (owner, claim_revision),
-            "writer": "fleet-liveness-reaper",
+            "writer": _REAP_WRITER,
             "ts": stamp,
         },
     ]
     try:
         os.makedirs(_EVID_DIR, exist_ok=True)
-        path = os.path.join(_EVID_DIR, "fleet-liveness-reaper.jsonl")
+        path = os.path.join(_EVID_DIR, _REAP_WRITER + ".jsonl")
         with open(path, "a+b") as fh:
             fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
             try:
