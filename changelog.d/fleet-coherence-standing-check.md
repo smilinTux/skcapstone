@@ -30,3 +30,15 @@
   reading the same tree reach the same conclusion; ties break
   deterministically. A node that cannot name its commit is reported, never
   counted as agreeing.
+
+### Fixed
+
+- **`scripts/ci/required-checks.sh` now says plainly that it is a gate, not a
+  waiter.** Used as a poll-loop break condition straight after a push it
+  misfires: GitHub takes tens of seconds to create check runs, so a freshly
+  pushed head legitimately reports `ABSENT` for contexts whose workflows have
+  not started. Measured on PR #817 - both unit-test contexts `ABSENT` seconds
+  after a push, `IN_PROGRESS` a minute later. "Not created yet" and "never
+  going to be created" are identical in the API; only elapsed time separates
+  them, which is a judgement the caller has to make, so the script documents
+  it rather than guessing.

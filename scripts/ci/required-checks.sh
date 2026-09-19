@@ -18,6 +18,20 @@
 #   scripts/ci/required-checks.sh <pr-number> [--repo owner/name] [--branch main]
 #
 # Exit 0 only when every required context is present AND successful.
+#
+# THIS IS A GATE, NOT A WAITER. Read it immediately before merging, when the
+# workflows have had time to register. Do not use ABSENT as a loop-breaking
+# condition straight after a push: GitHub takes tens of seconds to create
+# check runs, so a freshly pushed head legitimately reports ABSENT for
+# contexts whose workflows simply have not started yet. Measured on PR #817:
+# ABSENT for both unit-test contexts seconds after a push, then IN_PROGRESS
+# for the same two a minute later.
+#
+# The distinction the script cannot make for you is WHY a context is absent:
+# "not created yet" and "never going to be created" look identical in the
+# API. Only elapsed time separates them. So when polling, wait for every
+# required context to reach a terminal state, and treat a context that is
+# STILL absent after the other workflows have finished as the real thing.
 set -euo pipefail
 
 PR=""
