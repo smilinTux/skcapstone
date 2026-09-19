@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- **A transient node failure permanently refused a card on the builder path.**
+  `offer()` and `decline_reason()` parked a card the moment its per-node
+  dispatch status reached a terminal state, and the only forgiveness was two
+  attempts on `failed`. `blocked` was terminal at attempt 0. Measured on the
+  chi estate 2026-09-19: 20 cards were frozen on `node-ziowk01`, and not one of
+  them was a finding about the card. 37 were offers that expired before the
+  node consumed them, 13 were invalidated by an amendment, 8 were workers that
+  exited without ever recording a verdict while sknoded was crash-looping and
+  the `chiap01-qwen38` gateway replica was timing out. With every builder
+  candidate withheld from the local lane, both hosts chose nothing at all:
+  `SELECTION_EMPTY reason=builder-path-withheld`. Clearing the request files
+  does not help, because `request_id` is a content hash of the source binding,
+  so a re-offer mints the identical address the stale status still matches.
+  A dispatch status now charges the card's retry budget only when a worker
+  actually reached a verdict (`completion` set), which is the rule the claim
+  ceiling (#790) and the gateway-failure policy (#794) already apply. An
+  unworked terminal is forgiven by minting the next `generation`: a new
+  `request_id` under a fresh lease, which is what makes the retry reachable at
+  all. Forgiveness is bounded by `MAX_GENERATIONS`, so a revision that simply
+  cannot be fetched still comes to rest. Requests at generation 0 keep their
+  established identity, so nothing in flight is re-addressed. A terminal
+  `TaskUnclaimable` still parks the card at once: a voided, replaced card is
+  a finding about the card, and no generation will make it claimable.
+
 - **The Pi gateway sync filled the picker with models that cannot answer.**
   `/v1/models` is a catalog, not a liveness list. Probed against a live gateway
   on 2026-09-18: of the 108 ids advertised, 19 answered a one-token completion —
