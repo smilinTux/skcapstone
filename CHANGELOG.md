@@ -76,6 +76,20 @@
   `docs/fleet/wedged-worker-actuation.md`, most importantly a **crashlooping**
   worker: each relaunch touches the workspace, so it reads fresh forever.
   `progress-fresh` is not proof of progress.
+- **The field named "child activity" was the supervisor's own timer.**
+  `worker_liveness_runtime.collect_observations` set
+  `child_activity_at=heartbeat_at`, so the CHILD's activity was defined as the
+  wrapper beat's stamp, and no independent measurement of the child existed
+  anywhere in the observation. It also made one signal look like two:
+  `_latest_activity` takes `max(heartbeat_at, child_activity_at)`, which reads
+  as corroboration and was a single source counted twice. Card `139ec63d` is
+  the cost: 6h19m43s held, 77 consecutive `worker_liveness=active` rows, and
+  zero files ever written to its workspace. The value is now `None`, which is
+  the fail-closed answer until a real measurement of the child exists.
+  `_latest_activity` still reads exactly the beat it always did, so nothing
+  downstream changes; what changes is that the field stops claiming to be
+  something it is not. Contract 24 of `docs/fleet/2026-09-19-learnings.md`: a
+  status field computed by the supervisor describes the supervisor.
 - **A wrapper beat is now `SHELL_ALIVE`, never `LIVE`.**
   The deeper defect behind the hold above is a liveness signal that reports
   RUNNING for a process doing nothing. The wrapper beat is a
