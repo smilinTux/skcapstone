@@ -215,3 +215,253 @@ one definition of "valid".
 | Evidence | a skip counter with file and line, surfaced in `doctor`, and `extra="forbid"` on every event model |
 | Detection | **the health check validates through the same code path the reader uses; a check with a looser parser than its reader can only report OK** |
 | Fails closed | a non-zero skip count is a failure, not a debug line |
+
+---
+
+# Shape 2: the signal that lies
+
+Contract 2 of the 2026-09-18 document said the dangerous failure is the one that
+returns success. These are its relatives: signals that return a *value*, where
+the value is about something other than what the reader believes.
+
+---
+
+## 25. A check that is permanently red is a check that is gone
+
+Two chi hosts' `doctor` reported failures that told the operator to **downgrade**:
+
+```
+✗ skcapstone         outdated (0.15.168.dev222+gd448c2fa → 0.15.166)
+✗ skchat-sovereign   outdated (0.14.266.dev26+gb606d822c → 0.14.265)
+```
+
+Both installed builds are strictly newer than the "latest" they are told to
+install. Cause, `src/skcapstone/version_check.py:141-143`:
+
+```python
+        up_to_date = True
+        if installed and latest:
+            up_to_date = installed == latest
+```
+
+String equality. Any PEP 440 dev release or local segment differs from the
+released string and reads as behind. An editable install ahead of PyPI is the
+**normal** state on this fleet, so the check was permanently and wrongly red.
+PR #798 replaces the boolean with a four-state `packaging.version.Version`
+comparison; `doctor` on chiap01 goes from 57 passed / 12 failed / 1 unknown to
+59 / 10 / 1, with no other check moving.
+
+The cost of tolerating that is not hypothetical, and the concrete instance came
+from `sklegal`. Its `design-hashes` gate (contract 21) pins the sha256 of
+`docs/tasks/SUBAGENT-TASK-TTDS.md`, a 7,418-line living work queue with 84
+commits on main — against three commits apiece for the other four pinned
+documents. On 2026-09-08 an agent ran the red check, went hunting for the hash,
+and rewrote it inside the block headed *"Original approved document hashes"*
+(`docs/approval/ARCHITECTURE-APPROVAL.md:43`), whose own text three lines later
+says *"The historical hashes above remain immutable evidence"*. The original
+value `4debdeb5…` is verifiably the file's hash at the repo's bootstrap commit;
+the agent replaced it with the file's then-current hash to make a checker pass.
+
+Two corrections to how that incident gets retold, both of which matter:
+
+- **It never reached main.** Commit `518db108` lives only on two unmerged
+  branches and was reverted on 2026-09-18 by a merge that took every hunk
+  except that one. `ARCHITECTURE-APPROVAL.md:43` on main still reads
+  `4debdeb5…`. The corruption was caught, and it was caught by a human reading
+  a diff, not by any check.
+- **The "three weeks red" was the badge, not the gate.** Replaying all 731
+  commits on main and recomputing every pinned hash gives two distinct red
+  streaks (2026-08-22 to 08-29, 7 days; 2026-09-10 to now, 9 days) with a green
+  stretch between them. The *reported* status was red for 21 continuous days
+  because no CI run happened on main between 2026-08-29 and 2026-09-19 — and
+  today's run never executed at all, annotated *"the job was not started because
+  recent account payments have failed"*. A stale green and a stale red look
+  identical from the badge.
+
+**Contract.** A check's red-streak length is itself a measured signal, and a
+check red beyond a threshold is an incident against its owner.
+
+| | |
+|---|---|
+| Producer | the check |
+| Consumer | whoever is expected to act on it |
+| Recovery owner | the check's owner, named at the check |
+| Evidence | per-check consecutive-red duration, and the **age of the last run**, reported separately |
+| Detection | **a check whose last run predates its last input change is unknown, never green and never red** — and a check red for longer than N days is escalated rather than displayed |
+| Fails closed | a red check that cannot be fixed is disabled with a reason, not left red |
+
+The second-order rule is the sharper one. A permanently red gate does not merely
+get ignored. It **recruits** people into breaking things to clear it, and the
+thing nearest to hand is usually the evidence.
+
+Do not pin a hash of a document that is designed to change. The remediation on
+the unmerged branch `docs/unpin-living-task-tdds` is to stop pinning the living
+queue; the one on `docs/frozen-hash-evidence-markers` adds FROZEN banners and
+nine tests. Its commit message names why the existing suite could not catch the
+corruption: `test_status_page.py` asserts only that the *current* blocks agree
+with `DESIGN-HASHES.sha256`, and the corrupted value was a current value.
+
+---
+
+## 26. A counter that counts the wrong event freezes work permanently
+
+107 cards on the chi fleet were frozen by `max_claims=5`, and almost none had
+failed. The measured cause was seat churn: card `0aec5a64` shows one seat
+(`pi-glm-chiap01-0aec5a64`) claiming and releasing its own card 120 times,
+median hold 21.4s, median gap 276.8s — the five-minute dispatch tick — with
+**nothing written under any hold**. The seat's own wrapper released each time,
+and the deterministic ownership hash handed the card straight back.
+
+`_claim_ceiling_hit` is monotonic over an append-only ledger and never
+self-clears, so a transient fleet-side defect became a permanent card freeze. A
+claim that no live worker worked is not an attempt on the card, and PR #790 stops
+charging it: frozen cards go 16 to 9, claims charged across the 181 cards with
+five or more claims in 14 days go 2,201 to 1,044, and genuinely worked cards
+barely move (`82a101a1`, 124 to 123). The runaway fence holds: `06a95c23` goes
+402 to 395 and stays frozen.
+
+The part worth recording is the **rejected** first revision, because it was the
+plausible one. It applied the same rule to `churn_breaker.count_claim_attempts`,
+reasoning that otherwise the breaker would refuse what the ceiling had just
+re-permitted. Measured against the live chi store in a fresh process:
+
+| counting rule | `83e498b6` (the breaker's motivating card) | a pure 120-cycle churn loop |
+|---|---|---|
+| breaker rule (kept) | 57 attempts | **120** attempts, 1 owner, **refuse** |
+| the proposed change | 11 attempts | **0** attempts, 0 owners, **no refusal** |
+
+An unworked hold is not a degenerate stand-in for the breaker's signal, it **is**
+the signal: cards reach the churn breaker precisely because no agent *can* work
+them, so nothing is ever written under the hold. The change would have disabled
+the breaker for exactly the cards it exists to catch, and it broke 8 of the 25
+tests in `tests/test_churn_breaker.py`, including
+`test_claim_release_cycles_by_one_owner_do_count`, whose name is the contract.
+This is contract 10 ("when a test fights a change three times, the test is
+winning") landing in the other direction: the tests were right, and the two
+tests written to assert the new behaviour were deleted rather than the eight bent.
+
+**Contract.** Two gates that read the same ledger do not therefore share a
+counting rule; each names the event it charges and why.
+
+| | |
+|---|---|
+| Producer | the claim ledger |
+| Consumer | the claim ceiling (monotonic, operator-cleared) and the churn breaker (default-off, self-clearing) |
+| Recovery owner | the dispatcher seat |
+| Evidence | each rule scored against a known-pathological card and against a synthetic pure-churn loop, both recorded |
+| Detection | **a card excluded by a counter must log the counter's own inputs** — `CLAIM_CEILING_EXCLUDED` now reports total vs counted claims, the card's `WORKER_DIED` verdict count, and whether an amnesty is in effect |
+| Fails closed | an open claim is always charged, an unparseable timestamp is charged, any write under a hold charges it, and each claim is forgiven at most once |
+
+Note that the 120-vs-0 figures are a live-store measurement recorded in PR #790,
+not a test. The tests pin the adjacent facts:
+`tests/test_claim_ceiling_unworked_claims.py:155` asserts the 120-cycle loop
+counts zero *at the ceiling*, and `tests/test_churn_breaker.py:90` asserts a
+five-cycle loop counts five *at the breaker*.
+
+---
+
+## 27. A truncated log is a sort order, not a sample
+
+A live chi cycle ended:
+
+```
+REVIEW_WITHHELD|chiap08|card=00cd5161|reasons=wrong-seat,absent-typed-metadata,absent-source-binding
+... 11 more ...
+REVIEW_WITHHELD_OMITTED|chiap08|count=1472
+```
+
+The twelve logged cards are the alphabetically-first twelve card ids
+(`skfleet-rotate.py:6824`, `_review_withheld[:12]`), so they are not a sample of
+anything. The reasons behind the other 1,472 were recorded nowhere, on any host,
+while that same cycle closed with `launched=0 attempted=1 receipts=0`.
+`absent-typed-metadata`, `wrong-seat`, `absent-source-binding` and
+`dependency-blocker` call for four completely different responses, and the
+distinction between them is exactly what the log dropped.
+
+The fix is one more line, a full per-reason histogram ordered by weight then
+name so two cycles can be diffed (`_review_withheld_reason_histogram`,
+`skfleet-rotate.py:6659`).
+
+**Contract.** A truncated list is published with an aggregate over the whole
+set, never alone.
+
+| | |
+|---|---|
+| Producer | any log that caps per-item lines |
+| Consumer | the operator reading one cycle |
+| Evidence | a complete histogram alongside the capped sample |
+| Detection | **a bare `...OMITTED count=N` line with N far larger than the sample is an unanswerable log** |
+| Fails closed | the aggregate is emitted even when the sample is empty |
+
+Same shape, different subsystem: `skcapstone.fleet_live_publisher` hardcoded
+`"lanes": {}` in every snapshot and ran 41 seconds after the dispatcher, so it
+clobbered the dispatcher's truthful lane table each cycle and healthy hosts
+advertised capacity 0 (chiap03 advertised 0 in the same cycle its own `SLOTS`
+line said `total_free=9`). It now carries the dispatcher's table forward with a
+`lanes_ts` provenance stamp, drops it after the readers' 30-minute freshness
+fence, and otherwise publishes the explicit marker `"lanes": "unknown"`, which
+readers skip instead of summing to zero. **"Could not measure" and "measured
+zero" are now distinguishable in every snapshot** — which is contract 9's rule,
+enforced in the data rather than in the reader's discipline.
+
+---
+
+## 28. An eligibility verdict that does not check every gate
+
+`coord gates` reports a card eligible without ever checking its workspace
+binding. `src/skcapstone/coord_gate_diagnostic.py` (62 lines) checks
+unknown-card, dependency-blocked, the governed review gate reasons, a
+`do-not-claim` label, and terminal states, then sets `eligible = not reasons`
+(`:58`). The words workspace, worktree, repository, `base_ref` and
+`base_revision` do not appear in the file.
+
+The dispatcher gates on exactly that, later and separately
+(`skfleet-rotate.py:7354-7367`, `WORKSPACE_BLOCKED`, via `_source_workspace_spec`
+at `:642`, which raises on conflicting, partial or invalid bindings). So a card
+can read `"eligible": true` from the diagnostic and never dispatch, and the
+operator surface and the dispatcher disagree with no way to see it.
+
+The adjacent instance is a card whose own fields disagree: a folded
+`status=DOING` sitting on `meta.voided=true, archived=true`. One is a lifecycle
+projection, the other is a flag, and nothing asserts they agree.
+
+**Contract.** A surface that answers "can this be worked?" runs every predicate
+the dispatcher runs, or it answers a narrower question and says so in its name.
+
+| | |
+|---|---|
+| Producer | the eligibility diagnostic |
+| Consumer | the operator deciding whether to intervene |
+| Recovery owner | the seat that owns dispatch |
+| Evidence | the diagnostic and the dispatcher share one predicate list, enumerated from the code |
+| Detection | **fold the board and diff the two answers; any card where they disagree is a defect in the diagnostic** — and a cross-field consistency pass (status vs `meta.voided`/`archived`) is the cheap version |
+| Fails closed | an unchecked predicate makes the answer `unknown`, not `eligible` |
+
+---
+
+## 29. Success printed over an empty write
+
+`coord link` prints a green success line and stores an empty value. Measured in
+a throwaway home:
+
+```
+rc 0   "Linked d05bcdd1: verdict = ."
+STORED {"card_id":"d05bcdd1","action":"link",...,"link_key":"verdict","link_value":"",...}
+```
+
+`src/skcapstone/cli/coord.py:1632-1643` appends the `CardEvent` and prints at
+`:1634`. The only value guards are `validate_blocked_verdict` and (since #788)
+`validate_provisional_verdict`; there is no empty check, and `CardEventLog.append`
+validates only card foldability, void state and path safety.
+
+This is the write half of contract 23's read half: the reader discards silently,
+the writer accepts silently, and the operator sees green at both ends.
+
+**Contract.** A write path validates its value before it prints success, and
+the success line reports what was **read back**, not what was passed in.
+
+| | |
+|---|---|
+| Evidence | a readback through a different process after the write |
+| Detection | **audit the store for empty values on keys that are never legitimately empty; the count should be zero** |
+| Fails closed | an empty value on a semantic key is refused at the CLI, as `BLOCKED` and provisional `PASS` already are |
