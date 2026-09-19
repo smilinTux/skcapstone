@@ -312,7 +312,11 @@ def _reason_of(report) -> str:
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_logreport(report):
-    if report.skipped and report.when == "setup":
+    # An xfail is reported as `skipped` but carries `wasxfail`. It is a
+    # declared expectation, not a silent absence, and the ledger must not cry
+    # wolf about it -- a gate that reds on legitimate things gets disabled, and
+    # a disabled gate is the absence this whole exercise is about.
+    if report.skipped and report.when == "setup" and not hasattr(report, "wasxfail"):
         _record_skip(report.nodeid, _reason_of(report))
 
 
