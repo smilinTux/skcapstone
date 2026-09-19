@@ -234,10 +234,20 @@ def classify_progress(
 # 14400 to 7200 also halves the seat loss on the incident it was built for.
 #
 # This deadline is only applied to source=session-mtime. A workspace-mtime
-# reading is reported and never actuated: its gap distribution overlaps the
-# healthy one outright (productive sessions were measured going up to
-# 29,181s between workspace writes), so no threshold on it separates wedged
-# from working.
+# reading is reported and never actuated, for two independent reasons.
+#
+# First, its gap distribution overlaps the healthy one outright: productive
+# sessions were measured going up to 29,181s between workspace writes.
+#
+# Second, and decisively, an entire card class is REQUIRED to write nothing.
+# 2,601 of 6,901 folded cards (37.7%), and 20 of the 41 currently in DOING,
+# carry the `source-only` label, and their acceptance criteria say so
+# outright: "Read-only audit. No edits, commit, push". Their deliverable is
+# card evidence and mail, not a diff. Under a workspace-mtime deadline every
+# one of them is a kill candidate from the moment it starts, so arming that
+# signal would have reaped about half of all active work for complying with
+# its own card. The transcript has no such blind spot: an auditor reading the
+# tree writes a record per turn like any other worker.
 DEFAULT_WEDGE_TIMEOUT_S = 7200.0
 
 

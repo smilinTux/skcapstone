@@ -17,10 +17,14 @@ the worker and is preferred when present, with the source recorded in the
 `WORKER_PROGRESS` log line.
 
 Only the transcript may actuate. A workspace-mtime reading is reported and
-never acted on, because its gap distribution overlaps the healthy one:
-productive sessions were measured going up to 29,181s between file writes.
-Total absence (no workspace and no transcript) keeps the existing
-absent-reaper deadline.
+never acted on. Its gaps overlap the healthy population (productive sessions
+were measured going up to 29,181s between file writes), and more decisively
+an entire card class is required to write nothing: 2,601 of 6,901 cards
+(37.7%), and 20 of the 41 in DOING, are labelled `source-only` with
+acceptance criteria reading "Read-only audit. No edits, commit, push".
+Arming a workspace-mtime deadline would have reaped about half of all active
+work for complying with its own card. Total absence (no workspace and no
+transcript) keeps the existing absent-reaper deadline.
 
 `DEFAULT_WEDGE_TIMEOUT_S` 14400 -> 7200, re-derived over 2,754 fleet
 sessions: the longest silence inside a session whose worker kept working was
