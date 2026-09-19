@@ -161,6 +161,117 @@ def classify_progress(
     return "progress-fresh"
 
 
+# The ACTUATING deadline, which is deliberately not the classifying one.
+#
+# DEFAULT_PROGRESS_TIMEOUT_S (900s) is where a worker stops looking fresh.  It
+# is a reporting threshold and always was: the measured chi fleet is full of
+# genuinely-working workers past it, because a worker waiting on a model writes
+# nothing for minutes at a time.  Killing at 900s would destroy real work.
+#
+# This is the deadline at which silence stops being consistent with working.
+# Measured margins it has to clear:
+#
+#   observation                                   silence   source
+#   abe011e9, writing 2,351 files/hour            628s      2026-09-18 learnings s18
+#   9e15f83c, writing 216 files/hour              269s      2026-09-18 learnings s18
+#   worst genuinely-working gap seen on the fleet  (see docs/fleet/wedged-worker-actuation.md)
+#   139ec63d, the wedged worker                 22,680s     2026-09-19 incident
+#
+# 14400s is 16x the classifying timeout and >20x the worst gap measured on a
+# worker that was genuinely working.  A worker legitimately silent for four
+# hours would be an unobserved class of work, so the cost of being wrong here
+# is bounded by evidence rather than by taste.
+DEFAULT_WEDGE_TIMEOUT_S = 14400.0
+
+# Exactly two states actuate.  Widening this set is a deliberate act.
+WEDGE_ACTUATING_STATES = frozenset({"wedge-stale-confirmed", "wedge-absent-confirmed"})
+
+
+def classify_wedge(
+    observation: ProgressObservation,
+    *,
+    now: datetime,
+    claim_age_s: float | None,
+    receipt_local: bool,
+    progress_timeout_s: float = DEFAULT_PROGRESS_TIMEOUT_S,
+    wedge_timeout_s: float = DEFAULT_WEDGE_TIMEOUT_S,
+) -> str:
+    """Classify whether a live-but-silent worker has stopped producing work.
+
+    Observes and classifies only; like everything else in this module it never
+    releases, kills or reaps.  Every branch that is not positive proof of
+    silence returns a refusal, because the failure this guards against is
+    ending a worker that was going to finish.
+
+    A stale workspace and an absent workspace are NOT the same evidence and
+    are not treated as such:
+
+    * a stale mtime is a fact about this worker whatever path it was read
+      from, so it needs no receipt;
+    * an absent workspace is only a fact when the path came from the exact
+      generation's admission receipt.  Otherwise the caller inferred the path
+      from the owner name and a miss is a measurement failure, which must
+      never read as a kill signal.
+    """
+    state = classify_progress(observation, now=now, progress_timeout_s=progress_timeout_s)
+    if state == "progress-fresh":
+        # Long is not the same as wedged.  Elapsed time is never evidence.
+        return "wedge-progressing"
+    if state not in {"progress-stale", "progress-missing"}:
+        # progress-exited belongs to the absence reaper, which carries a
+        # cross-host quorum gate this path deliberately does not have.
+        return "wedge-refused-" + state
+    if claim_age_s is None or claim_age_s < 0:
+        return "wedge-unmeasured"
+    if state == "progress-missing":
+        if not receipt_local:
+            return "wedge-unmeasured"
+        if claim_age_s <= wedge_timeout_s:
+            return "wedge-within-margin"
+        return "wedge-absent-confirmed"
+    progress = _parse_time(observation.progress_at)
+    if progress is None:
+        return "wedge-refused-progress-malformed"
+    age = (now.astimezone(timezone.utc) - progress).total_seconds()
+    if age <= wedge_timeout_s:
+        return "wedge-within-margin"
+    return "wedge-stale-confirmed"
+
+
+def wedge_actuation_fenced(
+    observation: ProgressObservation,
+    *,
+    owner: str,
+    claim_revision: str,
+    now: datetime,
+    claim_age_s: float | None,
+    receipt_local: bool,
+    progress_timeout_s: float = DEFAULT_PROGRESS_TIMEOUT_S,
+    wedge_timeout_s: float = DEFAULT_WEDGE_TIMEOUT_S,
+) -> bool:
+    """Return whether a caller may offer an exact wedged-worker release.
+
+    An interface, not an actuator, exactly like
+    :func:`startup_actuation_fenced`.  The caller still has to stop the unit,
+    release under a CAS on this claim revision, and confirm the release
+    against a fresh fold.  A newer generation fails the fence here and is
+    never released on an older generation's observation.
+    """
+    if owner != observation.owner or claim_revision != observation.claim_revision:
+        return False
+    return (
+        classify_wedge(
+            observation,
+            now=now,
+            claim_age_s=claim_age_s,
+            receipt_local=receipt_local,
+            progress_timeout_s=progress_timeout_s,
+            wedge_timeout_s=wedge_timeout_s,
+        )
+        in WEDGE_ACTUATING_STATES
+    )
+
+
 def classify_startup(
     observation: StartupObservation,
     *,
