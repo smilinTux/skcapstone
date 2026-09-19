@@ -33,6 +33,7 @@ from . import services as services_mod
 from . import sknoded as sknoded_mod
 from .explain import explain as explain_kind
 from .paths import default_paths, self_node_name
+from .guidance import enqueue_guidance
 
 
 def _now_iso() -> str:
@@ -46,6 +47,18 @@ def _operator() -> store.Writer:
 @click.group(name="fleet")
 def fleet() -> None:
     """SKWorld fleet control plane (skfleet)."""
+
+
+@fleet.command("nudge")
+@click.argument("card_id")
+@click.argument("text")
+def nudge_cmd(card_id: str, text: str) -> None:
+    """Queue guidance for CARD_ID and record it as card evidence."""
+    try:
+        request = enqueue_guidance(card_id, text)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(jsonlib.dumps(request, sort_keys=True))
 
 
 @fleet.command("nodes")
