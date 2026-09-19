@@ -69,6 +69,51 @@ before changing `README.md`, `SOP.md`, `SECURITY.md`, or `CHANGELOG.md`:
 
 ---
 
+## Observability invariant (read this before adding any check)
+
+**A green that can be produced by absence is not a green.**
+
+Any signal a consumer treats as a pass MUST be able to distinguish *observed and
+healthy* from *not observed*. If the two states are indistinguishable downstream,
+the signal is not a gate, it is decoration, and it will certify whatever it
+stopped looking at.
+
+This is not theoretical. On 2026-09-19 the same defect landed three times in one
+day in three disguises, and **not one of them reported red**. They reported
+absent, skipped, or truncated, and every consumer rendered that as green:
+
+| Signal | What it did | What it looked like |
+|---|---|---|
+| `docs / docs-check` | unresolvable `uses:` ref, so the workflow died before creating a job and published **no check run at all** | not failing, so healthy |
+| a `skipif`-gated test | gated on a binary no runner has, so it can never fail the build | a green test |
+| `gh pr list --limit 60` | returned exactly the limit | a complete list |
+
+The rules that follow from it, all of which CI now enforces:
+
+1. **Absence is its own outcome, never a pass.** Give it a distinct exit path.
+   `scripts/ci/required-checks.sh` is the reference implementation: it reports
+   `ABSENT` separately from pending and `exit 2`s when branch protection is
+   unreadable rather than assuming a list.
+2. **"I could not look" must never render as "I looked and it was fine."**
+   A guard that cannot reach its evidence exits non-zero. See
+   `scripts/ci/workflow_refs.py` exit 2.
+3. **Report what you could not read.** A summary computed from partial input
+   must say so (`CardStore.dropped`, skcoord #126).
+4. **A count is not an identity.** Never conclude from "N checks, 0 failing";
+   ask which *required contexts* are present and green. Counting cannot see a
+   missing row.
+5. **A number in prose with no assertion behind it is a defect.** Put it in
+   `docs/fleet/SETTINGS-REGISTRY.md` or back it with a `docs-evidence` check.
+6. **A guard that has never been observed failing is a guess.** Every gate in
+   this repo ships a negative control that deliberately breaks it and proves it
+   goes red (`docs_check.py --self-test`, `workflow_refs.py --self-test`).
+7. **A guard cannot be its own witness.** Never let the only check on X live
+   inside X. The workflow-ref guard runs in `unit tests` and `shim-imports`,
+   two required contexts with no cross-repo `uses:` of their own, precisely
+   because a broken `docs-check` ref cannot be caught by `docs-check`.
+
+---
+
 ## Review path
 
 1. Open a PR against `main` with a clear description and the compliance checklist from

@@ -68,6 +68,18 @@ jobs:
         run: bash scripts/check-no-shim-imports.sh
       - name: No raw CardStore write instructions
         run: python scripts/check-coord-write-guidance.py
+      # Does every workflow ref actually resolve? This job is the right host
+      # for the question because it has NO cross-repo `uses:` of its own, so
+      # it still runs when a cross-repo ref is broken. The gate it protects
+      # (docs / docs-check) cannot check its own ref: a workflow whose `uses:`
+      # will not resolve dies before creating a job and publishes no check run
+      # at all, so it goes ABSENT rather than red. That happened twice on
+      # 2026-09-19. Exit 2 (could not reach the API) fails this step on
+      # purpose: "I could not look" must never render as "I looked".
+      - name: Workflow refs resolve
+        run: python scripts/ci/workflow_refs.py --resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   build:
     runs-on: ubuntu-latest

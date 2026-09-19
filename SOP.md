@@ -774,4 +774,10 @@ checks:
     run: grep -qF '"model":os.environ.get("SKFLEET_CODEX_LANE_MODEL","sk-codex-mid")' scripts/fleet/skfleet-rotate.py
   - name: glm size levels and kimi models are still what section 6 documents
     run: grep -qF '_GLM_LEVEL_DEFAULTS={"S":"sk-glm-s","M":"sk-glm-m","L":"sk-glm-l","XL":"sk-glm-l"}' scripts/fleet/skfleet-rotate.py && grep -qF '"k3" if match and match.group(1)=="XL" else "kimi-for-coding"' scripts/fleet/skfleet-rotate.py
+  - name: every workflow ref is a full sha and no reusable-workflow pin is abbreviated
+    run: python scripts/ci/workflow_refs.py
+  - name: the workflow-ref guard still has a working negative control
+    run: python scripts/ci/workflow_refs.py --self-test
+  - name: the workflow-ref guard runs from a context that survives a broken cross-repo ref
+    run: grep -qF 'python scripts/ci/workflow_refs.py --resolve' .github/workflows/ci.yml && test -f tests/test_workflow_ref_pins.py && ! grep -qE 'uses:[[:space:]]+[^./[:space:]][^[:space:]]*/\.github/workflows/' .github/workflows/pytest.yml .github/workflows/ci.yml
 -->
