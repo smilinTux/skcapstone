@@ -297,8 +297,26 @@ def _ledger_prefixes() -> tuple[str, ...]:
     )
 
 
+def _matches(nodeid: str, entry: str) -> bool:
+    """Prefix match, plus a single `*` wildcard.
+
+    A parametrized gate puts its discriminator at the END of the nodeid
+    (`...::test_x[skvoice]`), which no prefix can reach without also
+    whitelisting every other param of the same test.
+
+    Deliberately NOT fnmatch: a nodeid's param suffix is `[skvoice]`, which
+    fnmatch reads as a character class meaning "one of s,k,v,o,i,c,e". It
+    matched nothing and would have silently let 16 skvoice skips through as
+    "declared". A matcher that quietly matches nothing is the same defect as a
+    gate that quietly observes nothing, so this stays boring on purpose."""
+    if "*" not in entry:
+        return nodeid.startswith(entry)
+    pre, _, post = entry.partition("*")
+    return nodeid.startswith(pre) and nodeid.endswith(post)
+
+
 def _record_skip(nodeid: str, reason: str) -> None:
-    if any(nodeid.startswith(p) for p in _ledger_prefixes()):
+    if any(_matches(nodeid, e) for e in _ledger_prefixes()):
         return
     _UNDECLARED_SKIPS[nodeid] = reason
 

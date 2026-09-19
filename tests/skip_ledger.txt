@@ -32,7 +32,6 @@ tests/test_cli_completions.py
 # so on a runner the drift guards catch nothing. Fix by installing skos from
 # git in pytest.yml exactly as skharness and skdashboard already are.
 tests/test_model_router.py::TestRegistryRoleFold
-tests/test_model_router.py::test_missing_registry_returns_none_never_crashes
 tests/operator_seat/test_skos_adapter.py
 tests/test_gtd_locked_sink.py::test_mcp_and_skos_sink_share_one_store_lock
 tests/operator_seat/test_manifest_adapter_conformance.py::test_manifest_operator_block_matches_adapter[skos]
@@ -40,8 +39,8 @@ tests/operator_seat/test_manifest_adapter.py::test_operatorapp_from_shipped_mani
 
 # 16 tests. `skvoice` is likewise in no extra and installed by nothing. The
 # parametrize id advertises skvoice adapter coverage that does not exist in CI.
-tests/test_integration_backbone.py::TestStandaloneMode::test_adapter_contract[skvoice]
-tests/test_integration_backbone.py::TestIntegratedMode::test_adapter_contract[skvoice]
+tests/test_integration_backbone.py::TestStandaloneMode::*[skvoice]
+tests/test_integration_backbone.py::TestIntegratedMode::*[skvoice]
 
 # setuptools-scm is a PEP 517 build-system requirement only; it is never in the
 # runtime env of an editable install. One `pip install setuptools-scm` in
@@ -72,4 +71,4 @@ tests/test_skfleet_pi_tool_allowlist.py::test_pi_denies_a_direct_mcp_tool_and_me
 
 # --- MATRIX: correct, interpreter-dependent ------------------------------
 # tomllib is stdlib from 3.11; skips only on the py3.10 matrix leg.
-tests/test_version_single_source.py::test_pyproject_is_parseable_without_tomli
+tests/test_version_single_source.py::test_pyproject_declares_the_version_dynamic
