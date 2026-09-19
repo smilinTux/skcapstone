@@ -355,6 +355,97 @@ def decline_reason(
     return None
 
 
+DURABLE_DECLINE_PREFIXES = (
+    "parked:",
+    "terminal:",
+    "invalid-card-id",
+    "invalid-source:",
+)
+
+
+def durable_decline(reason: str | None) -> bool:
+    """Return whether a decline_reason() answer will not change on its own.
+
+    The rotation withholds every builder candidate from its local lanes so the
+    Niobe path can hand it to a builder without racing a lane for the claim.
+    That is correct only while the builder might actually take the card. When
+    the refusal is permanent the card is withheld from a taker that will never
+    come, and the host logs ``builder-path-withheld`` with free seats.
+
+    The split is between refusals rooted in the CARD and refusals rooted in
+    fleet CAPACITY:
+
+    * ``parked:`` / ``terminal:`` - the card already carries a same-binding,
+      same-generation terminal status whose budget is spent. ``offer()``
+      returns None and mints no new generation, and ``parked()`` is monotone
+      (completed, unclaimable, worked at the attempt ceiling, or the
+      generation ceiling), so nothing in the dispatch tree can undo it.
+    * ``invalid-card-id`` / ``invalid-source:`` - ``offer()`` RAISES on these
+      before it writes anything at all, so no request can exist.
+
+    Everything else is capacity, and capacity flips without the owning host
+    seeing it: ``builders-at-capacity`` when a slot drains, ``unschedulable``
+    on the next scheduler pass, ``superseded-binding-running`` when the run
+    ends, ``actuation-frozen`` when an operator thaws the plane, and
+    ``no-ready-builder`` the instant a builder joins. ``no-ready-builder`` is
+    the one that looks durable and is not: when the builder arrives EVERY
+    candidate becomes offerable in the same cycle, so releasing on it races
+    the whole slice at once rather than one card.
+
+    Prefix matching carries the classification across #802, which renames
+    ``terminal:`` to ``parked:`` and moves unworked terminals OUT of the
+    durable class by forgiving them with a fresh generation. This function
+    reads decline_reason()'s answer rather than re-deriving the rule, so that
+    forgiveness narrows the release set automatically and the two cannot
+    drift apart.
+
+    Args:
+        reason: One decline_reason() answer, or None when offerable.
+
+    Returns:
+        True when the builder will not take this card as things stand.
+    """
+    if not reason:
+        return False
+    return str(reason).startswith(DURABLE_DECLINE_PREFIXES)
+
+
+def partition_withheld(
+    card_ids: list[str] | tuple[str, ...],
+    decline_for: Callable[[str], str | None],
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Split this host's owned builder candidates into withheld and released.
+
+    Pure: it reads nothing and writes nothing itself. ``decline_for`` supplies
+    the per-card decline_reason() answer, which is what makes the rotation's
+    release decision testable without running a scheduler.
+
+    A lookup that fails is WITHHELD, never released. The release is the only
+    direction that can put a lane and a builder on the same card, so an
+    unreadable fleet tree must fail towards the behaviour that has no race.
+
+    Args:
+        card_ids: This host's owned builder candidates, in pool order.
+        decline_for: Returns decline_reason() for one card id.
+
+    Returns:
+        (withheld ids, released (id, reason) pairs), both in input order.
+    """
+    withheld: list[str] = []
+    released: list[tuple[str, str]] = []
+    for card_id in card_ids:
+        try:
+            reason = decline_for(card_id)
+        except (OSError, ValueError, KeyError):
+            withheld.append(card_id)
+            continue
+        if durable_decline(reason):
+            released.append((card_id, str(reason)))
+        else:
+            withheld.append(card_id)
+    return withheld, released
+
+
 def _write_status(paths: FleetPaths, node: str, request: dict, state: str, **extra) -> dict:
     """Write one node-attributed state for an exact request generation."""
     payload = {

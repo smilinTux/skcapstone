@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- **A card withheld for a builder that will never take it left seats idle.**
+  Every builder candidate was removed from its owning host's lanes
+  unconditionally, so a host whose whole hash slice was builder work selected
+  nothing: `SELECTION_EMPTY|chiap08|reason=builder-path-withheld pool=21
+  owned=0 target=5 free=5`. Measured on the chi estate 2026-09-19, all five
+  hosts sat at `owned=0` with 65 free seats between them. The label was
+  corrected on 2026-09-18 without fixing the idleness, and an accurate name for
+  a host doing nothing is still a host doing nothing.
+  `builder_dispatch.durable_decline()` splits `decline_reason()`'s vocabulary
+  into refusals rooted in the CARD and refusals rooted in fleet CAPACITY. Only
+  the card-rooted ones are released: `parked:`/`terminal:` (a same-binding
+  terminal status whose budget is spent, which `offer()` will not re-offer) and
+  `invalid-card-id`/`invalid-source:` (`offer()` raises before it writes, so no
+  request can exist). Capacity reasons stay withheld, because they flip without
+  the owning host seeing it and a release would race a lane against a builder
+  for one claim. `no-ready-builder` is classified capacity, not durable: a
+  builder joining makes the host's entire slice offerable in the same cycle.
+  `partition_withheld()` is pure and fail-closed, so the decision is testable
+  without running a scheduler and an unreadable fleet tree withholds rather
+  than releases.
+
 - **The Pi gateway sync filled the picker with models that cannot answer.**
   `/v1/models` is a catalog, not a liveness list. Probed against a live gateway
   on 2026-09-18: of the 108 ids advertised, 19 answered a one-token completion —
