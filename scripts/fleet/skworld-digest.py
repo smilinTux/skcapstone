@@ -177,11 +177,44 @@ except Exception as exc:
     return out
 
 
+#: Workers that are alive but producing nothing, counted as workspace silence.
+#:
+#: A wedged worker is invisible to every other surface: the process is alive,
+#: its socket to the gateway is ESTABLISHED, and systemd reports the unit
+#: active. Measured on 2026-09-19, five of six long-running workers sat in
+#: epoll for 111 to 276 minutes while every liveness check said RUNNING; one
+#: had written nothing in its entire 139 minute life. The only observable that
+#: separated them from the single genuinely-working peer on the same host was
+#: whether anything in the workspace had changed (2 minutes vs 111+).
+#:
+#: Thresholds are deliberately equal and conservative: only workers older than
+#: 30 minutes count, and only if the workspace has been untouched for 30
+#: minutes. This is a reporting signal, not an actuator; PR #799's reaper owns
+#: stopping anything, and its own threshold is derived separately.
+_SILENT_WORKER_PROBE = r"""
+now=$(date +%s); n=0
+for u in $(systemctl --user list-units 'skfleet-worker-*' --no-legend 2>/dev/null | awk '{print $1}'); do
+  cid=$(echo "$u" | grep -oE '[0-9a-f]{8}' | tail -1); [ -z "$cid" ] && continue
+  ts=$(systemctl --user show "$u" -p ActiveEnterTimestamp --value 2>/dev/null)
+  st=$(date -d "$ts" +%s 2>/dev/null) || continue
+  age=$(( (now - st) / 60 )); [ "$age" -lt 30 ] && continue
+  ws=$(ls -d ~/.skcapstone/fleet/workspaces/*"$cid"* 2>/dev/null | head -1); [ -z "$ws" ] && continue
+  last=$(find "$ws" -type f -printf '%T@\n' 2>/dev/null | sort -rn | head -1 | cut -d. -f1)
+  q=$(( (now - ${last:-$now}) / 60 )); [ "$q" -ge 30 ] && n=$((n+1))
+done
+echo "$n"
+"""
+
+
 def collect_host(host):
     """One host: workers by lane, timer health, and its view of the pool."""
     script = (
-        "printf '%s\\t' \"$(tmux ls 2>/dev/null | grep -c '^codex-auto-')\"; "
-        "printf '%s\\t' \"$(tmux ls 2>/dev/null | grep -c '^glm-auto-')\"; "
+        # Workers are systemd units, not tmux sessions. The tmux counters this
+        # replaced read 0 on every host on 2026-09-19 while 8 workers ran as
+        # skfleet-worker-*.service. A digest reporting zero workers during real
+        # work is worse than no digest.
+        "printf '%s\\t' \"$(systemctl --user list-units 'skfleet-worker-codex-*' --no-legend 2>/dev/null | wc -l)\"; "
+        "printf '%s\\t' \"$(systemctl --user list-units 'skfleet-worker-glm-*' --no-legend 2>/dev/null | wc -l)\"; "
         "printf '%s\\t' \"$(systemctl --user is-active skfleet-rotate.timer 2>/dev/null)\"; "
         "printf '%s\\t' \"$(journalctl --user -u skfleet-rotate.service --no-pager -o cat -n 30 2>/dev/null "
         "| grep -oE 'ready=[0-9]+' | tail -1 | cut -d= -f2)\"; "
@@ -193,6 +226,7 @@ def collect_host(host):
         "| grep -c 'BLOCKED|.*lifecycle')\""
     )
     raw = _ssh(host, script, timeout=18)
+    silent = _ssh(host, _SILENT_WORKER_PROBE, timeout=20)
     if not raw:
         return {"host": host, "up": False}
     f = (raw.split("\t") + [""] * 7)[:7]
@@ -209,6 +243,7 @@ def collect_host(host):
         "timer": f[2] or "unknown",
         "ready": num(f[3]), "backoff": num(f[4]),
         "launched20m": num(f[5]) or 0, "aborts": num(f[6]) or 0,
+        "silent": num((silent or "").strip()) or 0,
     }
 
 
@@ -302,6 +337,14 @@ def assess(gw, lanes, hosts, board):
                        "Check credentials and upstream provider health."))
     workers = sum((h.get("codex", 0) + h.get("glm", 0)) for h in hosts if h.get("up"))
     ready = sum(h.get("ready") or 0 for h in hosts if h.get("up"))
+    silent_total = sum(h.get("silent") or 0 for h in hosts if h.get("up"))
+    if silent_total:
+        alerts.append(("critical",
+                       f"{silent_total} worker(s) alive but producing nothing",
+                       "Older than 30 min with a workspace untouched for 30 min. "
+                       "A wedged worker holds its claim, its seat and a gateway "
+                       "slot while every liveness surface reports RUNNING."))
+
     if workers == 0 and ready > 0:
         alerts.append(("warn", f"No workers running while {ready} card(s) read as ready",
                        "Cards may be owned by a host that is down, or excluded after the pool count."))
