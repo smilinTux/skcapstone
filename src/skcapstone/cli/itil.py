@@ -506,6 +506,36 @@ def register_itil_commands(main: click.Group) -> None:
         except ValueError as exc:
             console.print(f"\n  [red]Error:[/red] {exc}\n")
 
+    @change.command("preflight")
+    @click.argument("change_id")
+    @click.option("--agent", default="executor", help="Agent/system running the preflight")
+    @click.option(
+        "--passed/--failed",
+        "passed",
+        default=None,
+        required=True,
+        help="Whether the execution preflight passed",
+    )
+    @click.option("--reason", required=True, help="Outcome or failure reason")
+    def change_preflight(change_id, agent, passed, reason):
+        """Record the fail-closed execution preflight without mutating the target."""
+        from ..itil import ITILManager
+
+        if passed is None:
+            raise click.ClickException("pass --passed or --failed")
+        mgr = ITILManager(Path(SHARED_ROOT).expanduser())
+        try:
+            chg = mgr.record_change_preflight(
+                change_id,
+                agent,
+                passed=passed,
+                reason=reason,
+            )
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+        verdict = "PASS" if passed else "FAIL"
+        console.print(f"\n  [bold]{verdict}[/bold] preflight recorded for {chg.id}\n")
+
     @change.command("validate")
     @click.argument("change_id")
     @click.option("--agent", default="ci", help="Agent/system attaching the verdict")
