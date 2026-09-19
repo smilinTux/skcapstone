@@ -15,6 +15,7 @@ most _MAX_CLAIMS more claims and re-locks.
 from __future__ import annotations
 
 import ast
+import bisect
 import collections
 import datetime
 import json
@@ -34,10 +35,18 @@ FUNCTIONS = {
     "_claim_ceiling_hit",
     "_claim_amnesty_epoch",
     "_countable_claims",
+    "_work_epochs",
+    "_work_between",
     "_fold_key",
     "_ts_epoch",
 }
-CONSTANTS = {"_MAX_CLAIMS", "_AMNESTY_VALUE_RE"}
+CONSTANTS = {
+    "_MAX_CLAIMS",
+    "_AMNESTY_VALUE_RE",
+    "_CLAIM_BOOKKEEPING",
+    "_CLAIM_CLOSING",
+    "_REAP_WRITER",
+}
 
 CID = "aabbccdd"
 
@@ -56,6 +65,7 @@ def _ns(card_events: list[dict], evidence: list[dict]) -> dict:
     namespace = {
         "os": os,
         "re": re,
+        "bisect": bisect,
         "datetime": datetime,
         "collections": collections,
         "acts": lambda cid: collections.Counter(e.get("action") for e in card_events),
