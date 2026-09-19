@@ -14,9 +14,9 @@ than replaced with a third notion of "healthy" for the tests.
 
 from __future__ import annotations
 
-import shlex
-
 import json
+import shlex
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -25,6 +25,8 @@ from skcapstone.fleet.paths import paths_for_home
 from skcapstone.fleet.rollout_drift import Drift
 from skcapstone.fleet.rollout_history import previous_manifest, record_deployment
 from skcapstone.fleet.staged_rollout import (
+    _DEPLOY_STEPS,
+    _ROLLBACK_STEPS,
     DeployOutcome,
     GateOutcome,
     NodeResult,
@@ -248,7 +250,9 @@ def test_default_deploy_records_before_the_change_locally(
 
     entries = _valid_entries(_history_path(home))
     assert entries == [manifest]
-    assert len(calls) == 4  # git pull, pip install, copy, converge -- record was direct
+    # One call per deploy step; the copy steps are derived from
+    # PER_HOST_ARTIFACTS, so adding an artifact must not break this test.
+    assert len(calls) == len(_DEPLOY_STEPS)  # record was direct, not a runner call
 
 
 def test_default_deploy_records_before_change_remotely(home: Path) -> None:
@@ -271,7 +275,7 @@ def test_default_deploy_records_before_change_remotely(home: Path) -> None:
     outcome = default_deploy_node("chiap02", manifest, home=home, runner=fake_runner)
 
     assert outcome.ok is True
-    assert len(calls) == 5  # record, git pull, pip install, copy, converge
+    assert len(calls) == len(_DEPLOY_STEPS) + 1  # + the remote record call
     first_cmd = " ".join(calls[0])
     assert "ssh" in calls[0]
     assert "record_deployment" in first_cmd
@@ -975,7 +979,7 @@ def test_default_rollback_deploy_node_records_before_the_change_locally(
     # in -- but every manifest field survives unchanged.
     assert entries[0]["revision"] == manifest["revision"]
     assert entries[0]["git_sha"] == manifest["git_sha"]
-    assert len(calls) == 4  # checkout, pip install, copy, converge
+    assert len(calls) == len(_ROLLBACK_STEPS)  # record was direct, not a runner call
 
 
 def test_default_rollback_deploy_node_checks_out_the_manifests_git_sha(home: Path) -> None:
@@ -1020,7 +1024,7 @@ def test_default_rollback_deploy_node_records_before_change_remotely(home: Path)
     outcome = default_rollback_deploy_node("chiap02", manifest, home=home, runner=fake_runner)
 
     assert outcome.ok is True
-    assert len(calls) == 5  # record, checkout, pip install, copy, converge
+    assert len(calls) == len(_ROLLBACK_STEPS) + 1  # + the remote record call
     first_cmd = " ".join(calls[0])
     assert "ssh" in calls[0]
     assert "record_deployment" in first_cmd
@@ -1135,3 +1139,88 @@ def test_every_deploy_step_survives_the_same_flattening():
                 "-lc",
                 command,
             ], f"step {name!r} would be mangled: {shlex.split(rejoined)!r}"
+
+
+# ---------------------------------------------------------------------------
+# Version coherence: the controller's pin reaches the remote
+#
+# Without a pin, `fleet node drift` on the remote builds its manifest from
+# the remote's OWN checkout, so every expected value it compares against is
+# read from the same checkout it is grading. A node that never pulled agrees
+# with itself perfectly and reports clean -- on all five hosts at once, which
+# is exactly what happened on 2026-09-19. Passing --expect-git-sha is what
+# turns that tautology into a real comparison, and, because every node in one
+# rollout is gated against the SAME pin, it is also what makes the nodes'
+# agreement with each other fall out of the existing gate instead of needing
+# a second fleet-wide report.
+# ---------------------------------------------------------------------------
+
+
+def _capture_remote_drift_command(expect_git_sha):
+    from skcapstone.fleet.staged_rollout import _remote_drift
+
+    calls = []
+
+    def runner(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(
+            argv, 0, stdout=json.dumps({"node": "chiap02", "drifts": []}), stderr=""
+        )
+
+    _remote_drift("chiap02", "~/work/skcapstone", runner, expect_git_sha)
+    return " ".join(calls[0])
+
+
+def test_remote_drift_passes_the_pinned_sha_through():
+    command = _capture_remote_drift_command("deadbeef")
+    assert "--expect-git-sha deadbeef" in command
+
+
+def test_remote_drift_omits_the_flag_when_nothing_is_pinned():
+    """An unpinned call must not send an empty flag value, which the remote
+    would parse as a pin of the empty string and then report every checkout
+    as drifted."""
+    command = _capture_remote_drift_command(None)
+    assert "--expect-git-sha" not in command
+
+
+def test_remote_drift_quotes_the_pinned_sha():
+    """The pin reaches the remote through `ssh <node> bash -lc <command>`, so
+    it is re-parsed by TWO shells before it is an argv element. The property
+    under test is what the remote finally sees, not what the string looks
+    like locally: an unquoted value would let a metacharacter in the pin run
+    as a command on every node in the rollout.
+    """
+    from skcapstone.fleet.staged_rollout import _ssh
+
+    hostile = "dead beef; rm -rf /"
+    argv = shlex.split(" ".join(_ssh("chiap02", "X").copy()))  # sanity: _ssh round-trips
+    assert argv[:3] == ["ssh", "chiap02", "bash"]
+
+    command = _capture_remote_drift_command(hostile)
+    # First shell: the local one, re-splitting the argv _ssh built.
+    outer = shlex.split(command)
+    assert outer[:4] == ["ssh", "chiap02", "bash", "-lc"]
+    # Second shell: the remote `bash -lc`, re-splitting its own argument.
+    inner = shlex.split(outer[4])
+    assert hostile in inner, f"the pin was not one argv element on the remote: {inner}"
+    assert inner[inner.index("--expect-git-sha") + 1] == hostile
+
+
+def test_default_gate_node_pins_the_manifest_sha_for_a_remote_node(monkeypatch, home):
+    """The gate is where the pin has to be applied: it is the only place
+    that holds both the rollout's manifest and the remote node."""
+    from skcapstone.fleet import staged_rollout
+
+    seen = {}
+
+    def fake_remote_drift(node, remote_repo_root, runner, expect_git_sha=None):
+        seen["expect_git_sha"] = expect_git_sha
+        return [], ""
+
+    monkeypatch.setattr(staged_rollout, "_remote_drift", fake_remote_drift)
+    monkeypatch.setattr(staged_rollout, "_readiness_verdict", lambda node, home_path: (True, ""))
+
+    staged_rollout.default_gate_node("chiap02", {"git_sha": "c0ffee00", "units": []}, home=home)
+
+    assert seen["expect_git_sha"] == "c0ffee00"

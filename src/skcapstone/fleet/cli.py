@@ -763,6 +763,20 @@ def node_endpoint_audit_cmd(status_file, as_json: bool, strict: bool) -> None:
         raise SystemExit(1)
 
 
+#: Artifacts whose ``missing`` finding is never a role difference.
+#:
+#: ``git_sha`` is the pre-rename name of ``package:git_sha``; a controller
+#: running this code may be gating a node that still reports the old name
+#: over ``fleet node drift --json``, and a rename must not quietly turn an
+#: unambiguous finding into a suppressed one mid-rollout.
+#:
+#: ``checkout:git_sha`` missing means git could not read the checkout at
+#: all, and ``package:git_sha`` missing means the installed distribution
+#: could not be read at all. Neither is a per-unit question about this
+#: host's role, so neither is ever ambiguous.
+_UNAMBIGUOUS_MISSING_ARTIFACTS = frozenset({"git_sha", "package:git_sha", "checkout:git_sha"})
+
+
 def _drift_is_role_ambiguous(drift) -> bool:
     """True when ``drift`` cannot be told from a legitimate role difference.
 
@@ -795,7 +809,7 @@ def _drift_is_role_ambiguous(drift) -> bool:
     """
     return (
         drift.kind == "missing"
-        and drift.artifact != "git_sha"
+        and drift.artifact not in _UNAMBIGUOUS_MISSING_ARTIFACTS
         and not drift.artifact.startswith("script:")
     )
 
@@ -831,9 +845,24 @@ def _default_repo_root() -> Path:
     default=None,
     help="Estate home to inspect for installed artifacts (default: $HOME).",
 )
+@click.option(
+    "--expect-git-sha",
+    "expect_git_sha",
+    default=None,
+    help=(
+        "Pin the commit this node is supposed to be on. Without it, the manifest is "
+        "built from --repo-root and the checkout can only ever agree with itself."
+    ),
+)
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
 @click.option("--strict", is_flag=True, help="Exit 1 when any drift is found.")
-def node_drift_cmd(repo_root: Path | None, home: Path | None, as_json: bool, strict: bool) -> None:
+def node_drift_cmd(
+    repo_root: Path | None,
+    home: Path | None,
+    expect_git_sha: str | None,
+    as_json: bool,
+    strict: bool,
+) -> None:
     """Report rollout drift for this node against a fresh manifest. REPORT ONLY.
 
     Builds a deployment manifest (Task 1's ``build_manifest``) from
@@ -871,6 +900,16 @@ def node_drift_cmd(repo_root: Path | None, home: Path | None, as_json: bool, str
 
     try:
         manifest = deployment_manifest.build_manifest(resolved_repo_root, resolved_home)
+        if expect_git_sha:
+            # Replace the self-derived sha with the caller's pin and mark it
+            # as pinned, which is what unlocks the checkout:git_sha surface
+            # in detect_drift. Without this the manifest's git_sha came from
+            # this very checkout, so comparing the checkout against it is a
+            # tautology that can never fail -- the exact blind spot that let
+            # five uniformly-stale hosts report clean.
+            manifest = dict(manifest)
+            manifest["git_sha"] = expect_git_sha
+            manifest["checkout_git_sha_pinned"] = True
         drifts = rollout_drift.detect_drift(manifest, resolved_home, resolved_repo_root)
     except (OSError, RuntimeError) as exc:
         raise click.ClickException(

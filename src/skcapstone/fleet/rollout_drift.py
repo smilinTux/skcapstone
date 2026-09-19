@@ -38,6 +38,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,7 +46,11 @@ from typing import Any
 
 import tomllib
 
-from .deployment_manifest import CANONICAL_SYSTEMD_RELATIVE_DIR, DISPATCHER_RELATIVE_PATH
+from .deployment_manifest import (
+    CANONICAL_SYSTEMD_RELATIVE_DIR,
+    PER_HOST_ARTIFACTS,
+    PER_HOST_BIN_RELATIVE_DIR,
+)
 from .paths import self_node_name
 
 #: Not in the shipped systemd/ tree (see the module docstring: the dispatcher
@@ -165,6 +170,46 @@ def _installed_git_sha(home: Path) -> str | None:
         if match:
             return match.group(1).lower()
     return None
+
+
+def _checkout_git_sha(repo_root: Path) -> str | None:
+    """The commit the node's own CHECKOUT is sitting on, or None.
+
+    This is the THIRD version surface, and the one nothing was reading.
+    ``_installed_git_sha`` above answers "what commit was the installed
+    package built from"; the artifact digests answer "do the deployed
+    copies match the checkout". Neither can answer "is the checkout itself
+    the commit it is supposed to be" -- because every expected digest in
+    this module is READ FROM that same checkout. A node whose checkout is
+    stale therefore grades itself against its own stale content and reports
+    a clean bill of health, on every surface, indefinitely.
+
+    That is not hypothetical: on 2026-09-19 all five chi hosts reported a
+    package version of ``dev222+gd448c2fa`` while their checkouts sat at a
+    different commit, and no check in this module or the readiness gate
+    emitted anything. It is also why ``detect_drift`` only reports this
+    surface when the manifest was pinned by somebody else: see the
+    ``checkout:git_sha`` block in ``detect_drift``.
+
+    Returns None (never a fabricated sha) when git cannot answer, so a
+    caller can tell "the checkout is at the wrong commit" from "there is no
+    readable checkout here at all" -- two different problems with two
+    different fixes, the same distinction ``_sha256_file`` draws for files.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "--short=8", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    sha = result.stdout.strip()
+    if result.returncode != 0 or not sha:
+        return None
+    return sha.lower()
 
 
 def _sha_matches(expected: str, found: str) -> bool:
@@ -317,14 +362,41 @@ def detect_drift(manifest: dict[str, Any], home: Path | str, repo_root: Path | s
         elif found_digest != expected_digest:
             drifts.append(Drift(artifact, "changed", expected_digest, found_digest, host))
 
-    # 2. The dispatcher script: a separate deployment step from the package,
-    # so it gets its own scope check and its own digest comparison.
+    # 2. Every per-host artifact: each is a separate deployment step from
+    # the package (an explicit ``cp`` into ~/.local/bin, see
+    # staged_rollout._copy_steps), so the set gets its own scope check and
+    # its own digest comparison.
+    #
+    # Driven by deployment_manifest.PER_HOST_ARTIFACTS, the same tuple the
+    # rollout copies from, rather than naming the dispatcher alone. The
+    # previous single-artifact version could not see a stale
+    # ~/.local/bin/skfleet-worker-wrapper.py, and that file is what the
+    # dispatcher actually execs: skfleet-rotate.py resolves it as
+    # os.path.dirname(__file__)/skfleet-worker-wrapper.py, so the deployed
+    # dispatcher always loads the wrapper sitting beside it, never the
+    # package's copy in ~/.skenv/bin that section 2b below grades. A
+    # rollout that shipped a new dispatcher calling an old wrapper would
+    # have been invisible to every check in this module.
+    #
+    # Scoped by the DISPATCHER unit for the whole set on purpose: these
+    # artifacts exist to serve skfleet-rotate.service, so a host that
+    # genuinely does not carry that role carries none of them, and a
+    # "missing" finding there would be a role difference, not drift --
+    # exactly the distinction unit_in_scope exists to draw.
+    #
+    # Compared with _sha256_file, not _sha256_script_body: this copy is
+    # made by ``cp``, which rewrites nothing, so the deployed bytes must
+    # equal the repo's bytes exactly. (Section 2b's ~/.skenv/bin copies are
+    # placed by pip, which DOES rewrite the shebang, hence the different
+    # digest helper there.)
     dispatcher_in_scope, _err, _checked = scope_of(DISPATCHER_UNIT_NAME)
     if dispatcher_in_scope is not False:
-        expected_digest = _sha256_file(repo_root / DISPATCHER_RELATIVE_PATH)
-        if expected_digest is not None:
-            found_digest = _sha256_file(home / ".local" / "bin" / DISPATCHER_RELATIVE_PATH.name)
-            artifact = f"dispatcher:{DISPATCHER_RELATIVE_PATH.name}"
+        for relative_path in PER_HOST_ARTIFACTS:
+            expected_digest = _sha256_file(repo_root / relative_path)
+            if expected_digest is None:
+                continue  # the repo no longer ships this artifact
+            found_digest = _sha256_file(home / PER_HOST_BIN_RELATIVE_DIR / relative_path.name)
+            artifact = f"dispatcher:{relative_path.name}"
             if found_digest is None:
                 drifts.append(Drift(artifact, "missing", expected_digest, None, host))
             elif found_digest != expected_digest:
@@ -361,13 +433,43 @@ def detect_drift(manifest: dict[str, Any], home: Path | str, repo_root: Path | s
         elif found_digest != expected_digest:
             drifts.append(Drift(artifact, "changed", expected_digest, found_digest, host))
 
-    # 3. git_sha: the installed distribution's embedded commit hash.
+    # 3. package:git_sha -- the installed distribution's embedded commit
+    # hash. This is the SECOND of the three version surfaces a chi host
+    # carries, and the one the 2026-09-19 outage tripped over: an ad-hoc
+    # deploy ran `git pull` and copied the dispatcher but skipped
+    # `pip install -e .`, so the checkout moved, the script moved, and the
+    # installed package did not. Named "package:" rather than the bare
+    # "git_sha" it used to be, so a reader of a drift report can tell at a
+    # glance WHICH surface is stale rather than having to know which of the
+    # three a bare name refers to.
     expected_sha = manifest.get("git_sha", "")
     found_sha = _installed_git_sha(home)
     if found_sha is None:
-        drifts.append(Drift("git_sha", "missing", expected_sha, None, host))
+        drifts.append(Drift("package:git_sha", "missing", expected_sha, None, host))
     elif not _sha_matches(expected_sha, found_sha):
-        drifts.append(Drift("git_sha", "changed", expected_sha, found_sha, host))
+        drifts.append(Drift("package:git_sha", "changed", expected_sha, found_sha, host))
+
+    # 3b. checkout:git_sha -- the FIRST surface: the commit the node's own
+    # checkout is on. Reported only when the caller pinned an expectation
+    # from OUTSIDE this node (``manifest["checkout_git_sha_pinned"]``),
+    # because when the manifest was built from this very checkout (the
+    # plain ``fleet node drift`` path) the comparison is a tautology and
+    # would be noise, not a signal.
+    #
+    # This is the only check here that can catch a UNIFORMLY stale node:
+    # everything else in this module compares installed state against
+    # repo_root, and repo_root IS the checkout, so a node that never pulled
+    # agrees with itself perfectly on every other surface. It is also what
+    # makes "do all five hosts agree with each other" answerable without a
+    # second, fleet-wide reporting channel: gate every node against ONE
+    # pinned manifest and cross-host agreement is a consequence, not a
+    # separate report. ``staged_rollout._remote_drift`` does exactly that.
+    if manifest.get("checkout_git_sha_pinned"):
+        found_checkout = _checkout_git_sha(repo_root)
+        if found_checkout is None:
+            drifts.append(Drift("checkout:git_sha", "missing", expected_sha, None, host))
+        elif not _sha_matches(expected_sha, found_checkout):
+            drifts.append(Drift("checkout:git_sha", "changed", expected_sha, found_checkout, host))
 
     # 4. Unit enablement versus activity: the timer case above is a latent
     # total outage no content digest would catch, because the unit file was

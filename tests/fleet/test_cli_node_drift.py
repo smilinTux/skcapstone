@@ -473,3 +473,60 @@ def test_real_pipeline_end_to_end(tmp_path):
     # An empty host has no dist-info at all: git_sha must read as missing.
     assert "git_sha" in result.output
     assert "missing" in result.output
+
+
+# ------------------------------------------------- version coherence ---
+#
+# --expect-git-sha is what lets a caller from OUTSIDE this node pin the
+# commit it is supposed to be on. Without it the manifest is built from
+# --repo-root, so the checkout can only ever agree with itself and a
+# uniformly stale node reports clean on every surface.
+
+
+def _captured_manifest(tmp_path, monkeypatch, fake_manifest, extra_args):
+    seen = {}
+
+    def fake_detect(manifest, home, repo_root):
+        seen.update(manifest)
+        return []
+
+    monkeypatch.setattr(rollout_drift, "detect_drift", fake_detect)
+    result = CliRunner().invoke(
+        fleet,
+        ["node", "drift", "--repo-root", str(tmp_path), "--home", str(tmp_path), *extra_args],
+        env=_env(),
+    )
+    assert result.exit_code == 0, result.output
+    return seen, result
+
+
+def test_expect_git_sha_replaces_the_self_derived_sha(tmp_path, monkeypatch, fake_manifest):
+    seen, result = _captured_manifest(
+        tmp_path, monkeypatch, fake_manifest, ["--expect-git-sha", "c0ffee00"]
+    )
+
+    assert seen["git_sha"] == "c0ffee00"
+    assert seen["checkout_git_sha_pinned"] is True
+    # The report must name the sha it actually graded against, not the one
+    # this checkout happens to be on.
+    assert "c0ffee00" in result.output
+
+
+def test_without_the_flag_the_checkout_surface_stays_locked(tmp_path, monkeypatch, fake_manifest):
+    """Unpinned, the manifest's git_sha came from this very checkout, so the
+    comparison is a tautology; detect_drift must not be told to run it."""
+    seen, _ = _captured_manifest(tmp_path, monkeypatch, fake_manifest, [])
+
+    assert seen["git_sha"] == "abc12345"
+    assert "checkout_git_sha_pinned" not in seen
+
+
+def test_checkout_git_sha_is_never_treated_as_role_ambiguous():
+    """A missing checkout means git could not read it at all, which is not a
+    question about this host's role -- so it must never be summarised away.
+    """
+    from skcapstone.fleet.cli import _drift_is_role_ambiguous
+
+    for artifact in ("checkout:git_sha", "package:git_sha", "git_sha"):
+        drift = Drift(artifact, "missing", "deadbeef", None, "node-under-test")
+        assert not _drift_is_role_ambiguous(drift), artifact
