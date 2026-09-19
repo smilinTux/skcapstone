@@ -171,6 +171,7 @@ def load_observation_feed(
     *,
     now: datetime | None = None,
     max_age: timedelta = DEFAULT_MAX_AGE,
+    prior_evidence_sha256: str | None = None,
 ) -> LinkObservationFeed:
     """Load one fresh, self-hashed feed or raise a bounded input error."""
 
@@ -194,6 +195,8 @@ def load_observation_feed(
         raise ObservationFeedError("observation_feed_payload_malformed") from exc
     if supplied_hash != expected_hash:
         raise ObservationFeedError("observation_feed_evidence_mismatch")
+    if prior_evidence_sha256 is not None and supplied_hash == prior_evidence_sha256:
+        raise ObservationFeedError("observation_feed_replayed")
     timestamp = _parse_time(observed_at)
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if timestamp > current + timedelta(seconds=30):
