@@ -37,6 +37,15 @@
   `BUILDER_RELEASED_TO_LANE` line per released card, and `builder_returned=` on
   the `SELECTION_EMPTY` diagnostic.
 
+- **The readiness gate grades the rotate script that actually runs.**
+  `skfleet-readiness.service` graded `~/.skenv/bin/skfleet-rotate.py`, but the
+  live drop-in on chiap01/02/03/04/08 runs `~/.local/bin/skfleet-rotate.py`.
+  The tracked `seat-runtime-python.conf` template had drifted from the
+  hand-patched copy deployed on every host. Both are corrected, and the
+  packaged unit tree under `src/skcapstone/data/systemd/` is re-synced with
+  the canonical one so a cold PyPI install does not reintroduce the wrong
+  path.
+
 - **`docs/fleet/2026-09-19-learnings.md`**: the 2026-09-18/19 session written as
   three recurring failure shapes rather than thirty incidents, contracts 20-37
   continuing the numbering of the 2026-09-18 document (which is cited by number
