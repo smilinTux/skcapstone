@@ -22,3 +22,17 @@
   `sys.executable`. The source check tokenizes before matching so it fires
   on code and not on the docstring that has to warn about the pattern, and
   carries a negative control proving it can still fail.
+
+### Changed
+
+- **`tests/test_skfleet_seat_runtime_wiring.py` no longer asserts PR #591's
+  `~/.skenv/bin` dispatcher path.** #591 (2026-09-09) moved every reference
+  there and locked it, on the rationale that a package upgrade must not leave
+  the active dispatcher outside the wheel. The migration never reached the
+  hosts: measured ten days later, all five chi hosts execute
+  `~/.local/bin/skfleet-rotate.py`, so the repo asserted one path while the
+  fleet ran another and two consumers graded/launched a file nothing runs.
+  #591's goal is now met directly instead of by assumption, through
+  `PER_HOST_ARTIFACTS` plus the rollout's generated copy steps and the drift
+  detector's content digest. A new assertion requires every dispatcher
+  consumer to name the same copy, because two dispatchers is the failure mode.
