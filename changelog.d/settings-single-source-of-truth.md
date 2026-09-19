@@ -41,3 +41,14 @@
   at `maxQueue: 8` — so they now point at the registry, and an assertion forbids the
   superseded pair from reappearing. The account-family limits (30 / 16), a genuinely
   different fact, stay where they were measured.
+
+- **Two more duplication sites pinned.** `systemd/` and `src/skcapstone/data/systemd/`
+  are byte-identical 43-file trees, so every `Environment=SKFLEET_*` value is declared
+  twice and an edit can land in one copy only; tier 3 now asserts `diff -rq` between
+  them. And the codex lane model is pinned in five places across `src/` and `scripts/`
+  (`skfleet-rotate.py`, `skrsi_estate_adapters.py`, `seat_manifest_audit.py`,
+  `lifecycle_seats.py`, `lifecycle-seat-profiles.json`); an assertion requires all five
+  to be the same string. The pattern is deliberately `"sk-codex-[a-z]+"`, not
+  `"sk-codex[a-z-]*"`: the broader form matched the legitimate `model.startswith("sk-codex")`
+  prefix test in `skworld-digest.py` and red-flagged a correct file, and a gate that
+  cries wolf gets waived.

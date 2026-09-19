@@ -804,4 +804,8 @@ checks:
     run: ! ./scripts/docs/prose_grep.sh '`sk-codex`' docs/ SOP.md README.md
   - name: kimi gateway ceilings are declared in the settings registry and nowhere else
     run: ! ./scripts/docs/prose_grep.sh 'kimi[^.]{0,40}max: *(28|14)([^0-9]|$)|max: *(28|14)[^.]{0,40}kimi' docs/ SOP.md README.md
+  - name: the two systemd trees stay byte-identical, so a unit edit cannot land in only one
+    run: diff -rq systemd/ src/skcapstone/data/systemd/
+  - name: every repo pin of the codex lane model is the same string
+    run: test $(grep -rhoE '"sk-codex-[a-z]+"' src/ scripts/ | sort -u | wc -l) -eq 1
 -->

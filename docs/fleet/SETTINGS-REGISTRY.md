@@ -115,6 +115,7 @@ mechanism PR #805 introduces. Every node takes the §1 default until it merges.
 | `~/.local/bin/skfleet-rotate.py` on each rotate host | `scripts/fleet/skfleet-rotate.py` | the deploy path, **not** `git pull` |
 | `~/.pi/agent/models.json` on a worker | the lane model env the dispatcher passes | the pi harness setup |
 | `CHANGELOG.md` release sections | `changelog.d/*.md` fragments | `scripts/changelog_fragments.py` |
+| `src/skcapstone/data/systemd/` | `systemd/` at the repo root | kept byte-identical; tier 3 asserts it |
 
 ⚠️ **The deployed rotate script drifts between hosts and CI cannot see it.** Measured
 2026-09-19: chiap01 and chiap03 carry a 370031-byte copy, chiap08 a 355727-byte copy.
