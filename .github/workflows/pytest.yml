@@ -4,11 +4,31 @@ name: pytest
 # a focused compatibility lane on Python 3.11. Main, schedule, and reusable
 # release calls run the complete advertised Python 3.10 through 3.14 matrix.
 # Required check names remain "unit tests (py3.11)" and "unit tests (py3.12)".
+#
+# merge_group (prerequisite for a GitHub merge queue, not yet enabled) is
+# treated IDENTICALLY to pull_request everywhere in this file: same 2-version
+# matrix, same py3.12-full/py3.11-compat-lane split, same "docs-only" skip
+# eligibility. Without that, adding merge_group alone would have silently
+# widened the matrix to all 5 Python versions AND made every one of them run
+# the full ~16-minute suite (since the existing `!= 'pull_request'` checks
+# throughout this file all evaluate true for merge_group by default) - a
+# 5x-per-queue-run cost increase with no corresponding safety gain, since
+# py3.12 already runs the complete deterministic suite either way.
+#
+# The one place merge_group is treated MORE conservatively than pull_request:
+# `DOCS_ONLY_ALLOWED` (the "impact" step below) is deliberately left
+# false for merge_group by omission - the docs-only test-skip never applies
+# in the merge queue, even for a change that would have qualified as a PR.
+# That is a safety choice, not an oversight: the merge queue is the last gate
+# before main, and forcing the full suite there is cheap insurance against a
+# batch whose cumulative diff classification is less certain than a single
+# PR's.
 
 on:
   workflow_call:
   pull_request:
     branches: [main]
+  merge_group:
   schedule:
     - cron: "17 7 * * 1"
 
@@ -16,6 +36,13 @@ permissions:
   contents: read
 
 concurrency:
+  # github.event.pull_request.number is empty for merge_group, so this falls
+  # back to github.ref - GitHub gives every merge-queue entry its own
+  # temporary ref (refs/heads/gh-readonly-queue/...), so different entries
+  # never collide in this group. cancel-in-progress deliberately stays
+  # pull_request-only: a merge-queue entry that gets cancelled mid-run when a
+  # newer entry supersedes it needs GitHub's own queue handling, not a blind
+  # cancel here.
   group: pytest-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
@@ -37,11 +64,16 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # merge_group carries no pull_request context; the event itself
+          # names the base being tested.
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           BEFORE_SHA: ${{ github.event.before }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = pull_request ]; then
             base="$PR_BASE_SHA"
+          elif [ "$EVENT_NAME" = merge_group ]; then
+            base="$MERGE_GROUP_BASE_SHA"
           elif [ -n "$BEFORE_SHA" ] && ! [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
             base="$BEFORE_SHA"
           else
@@ -52,13 +84,16 @@ jobs:
       - id: impact
         name: Classify documentation-only change
         env:
+          # Deliberately pull_request-only (see file header): the merge
+          # queue never gets the docs-only skip, even when it would have
+          # qualified as a PR.
           DOCS_ONLY_ALLOWED: ${{ github.event_name == 'pull_request' }}
         run: scripts/ci/classify-test-impact.sh "${{ steps.range.outputs.base_sha }}" "$GITHUB_SHA"
       - id: matrix
         env:
           EVENT_NAME: ${{ github.event_name }}
         run: |
-          if [ "$EVENT_NAME" = pull_request ]; then
+          if [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = merge_group ]; then
             echo 'value=["3.11","3.12"]' >> "$GITHUB_OUTPUT"
           else
             echo 'value=["3.10","3.11","3.12","3.13","3.14"]' >> "$GITHUB_OUTPUT"
@@ -188,9 +223,14 @@ jobs:
             "skdashboard @ git+https://github.com/smilinTux/skdashboard@${DASHBOARD_SHA}" \
             "skharness @ git+https://github.com/smilinTux/skharness@${HARNESS_SHA}"
       - name: Run complete deterministic unit suite
+        # PR-scoped (pull_request or merge_group): only py3.12 runs the full
+        # suite, matching the 2-version matrix above. Anything else (push to
+        # main, schedule, a reusable workflow_call): every matrix version
+        # runs it, unchanged from before merge_group existed.
         if: >-
           needs.classify.outputs.docs-only != 'true' &&
-          (github.event_name != 'pull_request' || matrix.python-version == '3.12')
+          ((github.event_name != 'pull_request' && github.event_name != 'merge_group') ||
+           matrix.python-version == '3.12')
         run: |
           python -m pytest tests/ \
             --strict-markers \
@@ -199,7 +239,8 @@ jobs:
       - name: Build and run Python 3.11 compatibility lane
         if: >-
           needs.classify.outputs.docs-only != 'true' &&
-          github.event_name == 'pull_request' && matrix.python-version == '3.11'
+          (github.event_name == 'pull_request' || github.event_name == 'merge_group') &&
+          matrix.python-version == '3.11'
         env:
           BASE_SHA: ${{ needs.classify.outputs.base-sha }}
         run: scripts/ci/run-python311-compat.sh "$BASE_SHA" "$GITHUB_SHA"
