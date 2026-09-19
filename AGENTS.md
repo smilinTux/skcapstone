@@ -3,6 +3,18 @@
 This file provides instructions for ANY AI agent working on SKCapstone,
 regardless of tool, IDE, or platform.
 
+## 🔴 Orchestrating the fleet? Run FROM the estate you are controlling
+
+If you are on `chiap08` (or any chi host) and about to run `skfleet`,
+`skcapstone fleet`, or anything that touches fleet readiness/rollout: a
+controller must run **inside** the estate it controls. `nor` (`noroc2027`)
+and `chi` are disjoint Syncthing shares with separate CardStores, so running
+a chi rollout from `noroc2027` reads every chi readiness verdict as
+**MISSING**, not "unhealthy" — the rollout halts on node one as if it failed
+a real check. Full rule, verified reach/versions, and the known-good
+entrypoints (`skfleet rollout`, dry-run by default): see
+[`docs/fleet/runbook-chiap08-controller.md`](docs/fleet/runbook-chiap08-controller.md).
+
 ## Step 1: Learn the Coordination Protocol
 
 ```bash
