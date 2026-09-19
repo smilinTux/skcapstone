@@ -178,6 +178,56 @@ def test_a_released_card_cannot_also_be_offered(paths, operator, noded41) -> Non
     assert path.read_bytes() == before, "a released card was re-offered to the builder"
 
 
+@pytest.mark.parametrize(
+    "status",
+    [
+        {"state": "blocked", "attempt": 0, "error": "unclaimed offer expired"},
+        {"state": "blocked", "attempt": 0, "error": "offered card changed"},
+        {"state": "failed", "attempt": 1},
+        {"state": "failed", "attempt": builder_dispatch.MAX_ATTEMPTS},
+        {
+            "state": "failed",
+            "attempt": builder_dispatch.MAX_ATTEMPTS,
+            "completion": {"verdict": "FAIL"},
+        },
+        {"state": "stale", "attempt": 1},
+        {"state": "completed", "attempt": 1, "completion": {"verdict": "PASS"}},
+        {"state": "running", "attempt": 1},
+    ],
+)
+def test_release_implies_offer_writes_nothing(paths, operator, noded41, status) -> None:
+    """The safety property, asserted against offer() rather than a table.
+
+    Every terminal and nonterminal dispatch status the chi board actually
+    carries, including the four shapes #802 measured on node-ziowk01. For each
+    one: if the card is released, offer() must leave the dispatch tree exactly
+    as it was. This is deliberately version-independent. #802 forgives unworked
+    terminals with a fresh generation, which moves several of these rows OUT of
+    the released set; the assertion still holds either way, because it asks
+    offer() in the same state decline_reason() just read instead of assuming
+    which rows are durable.
+    """
+    _node(paths, operator, noded41)
+    request = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=_writer())
+    builder_dispatch._write_status(paths, "node-ziowk01", request, **status)
+    reason = builder_dispatch.decline_reason(paths, _card(), ["sk-m", "source-only"])
+    if not builder_dispatch.durable_decline(reason):
+        pytest.skip(f"withheld, not released: {reason}")
+    before = _dispatch_tree(paths)
+    assert (
+        builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=_writer()) is None
+    )
+    assert _dispatch_tree(paths) == before, f"released card re-offered under {reason!r}"
+
+
+def _dispatch_tree(paths) -> dict[str, bytes]:
+    """Every request the Niobe path has written, as raw bytes."""
+    root = paths.root / "dispatch"
+    return {
+        str(path.relative_to(root)): path.read_bytes() for path in sorted(root.rglob("*.json"))
+    }
+
+
 def test_an_invalid_card_id_is_released_and_never_written(paths, operator, noded41) -> None:
     """offer() raises before it writes, so no builder can ever claim this."""
     _node(paths, operator, noded41)
