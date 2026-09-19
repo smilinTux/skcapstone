@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+- **`docs/fleet/2026-09-19-learnings.md`**: the 2026-09-18/19 session written as
+  three recurring failure shapes rather than thirty incidents, contracts 20-37
+  continuing the numbering of the 2026-09-18 document (which is cited by number
+  from `tests/test_worker_progress_report.py`, `scripts/fleet/skfleet-rotate.py`
+  and `src/skcapstone/coord_slice_preflight.py`, so renumbering was not an
+  option). Shape 1, the mechanism that runs and processes nothing: a producer
+  that structurally cannot emit what its consumer requires, a named check with
+  no dispatch arm, a gate whose qualification has zero producers across 7,214
+  folded cards, and three silent-discard paths where a reader and its own health
+  check disagree about what "valid" means. Shape 2, the signal that lies: a
+  worker heartbeat that is a shell `while` loop with `disposition":"RUNNING"` as
+  a string literal (card `139ec63d` beat RUNNING for 6h19m43s against 0
+  workspace files ever and a 0-byte log), a version check comparing PEP 440
+  strings for equality, a claim counter charging worker deaths to the card, a
+  twelve-line log that is an alphabetical prefix rather than a sample, and
+  `coord gates` reporting a claimed card eligible because
+  `governed_review_gate_reasons` returns `()` above its own arguments. Shape 3,
+  the change that silently reverts: a systemd drop-in disabled by rename on
+  three hosts, a `default('6.2.2')` over a vault key nothing defines while
+  production hand-patches 11.1.2 into the render, an `app.ini.j2` rendering 30
+  keys against a live 52 (including two generated secrets), and five hosts
+  running three different wrapper builds for eight days. Four session claims are
+  corrected in place rather than repeated: the canonical "0 across 14 days and
+  1,660 rotations" is a `head -6` artifact of a journal retaining 9.8 days and
+  the lane last opened reviews on 2026-09-05; card `0339dc47` carries 22 link
+  rows at 22 timestamps, not six; the glm lane's 20-second death storm dates to
+  2026-09-03/04 and 09-09, before the rename, and its 503 cause is asserted
+  only by the prose in the drop-in that fixed it; and the sklegal hash gate's
+  "three weeks red" was the badge, not the check. Documentation only; no code,
+  no card, and no fleet configuration is touched.
+
 - **The Pi gateway sync filled the picker with models that cannot answer.**
   `/v1/models` is a catalog, not a liveness list. Probed against a live gateway
   on 2026-09-18: of the 108 ids advertised, 19 answered a one-token completion —
