@@ -4863,11 +4863,42 @@ def _event_identity(event):
     ).encode()).hexdigest()
 
 
+def _outcome_scan_rows(cid):
+    """Return every event that can carry an outcome for one card.
+
+    Card events live in two stores.  The structure store
+    (``cards/<id>/events``, read by ``event_rows``) holds what native
+    CardStore writers append.  The legacy kanban overlay
+    (``coordination/card_events/*.jsonl``, read by ``_load_evidence_events``)
+    is the post-cutover hot backup, and it is where ``coord link`` lands --
+    which is how the overwhelming majority of provisional PASS verdicts on
+    this fleet are actually recorded.
+
+    ``_load_outcomes`` already selects the folded outcome from the union of
+    both stores.  Anything that then re-derives the exact event behind that
+    outcome must read the same union, or it fails closed on every card whose
+    verdict was written with ``coord link``: the outcome is selected, the
+    event behind it is never found, and the card is reported as missing
+    evidence it plainly has.  Identity-dedupe so an event mirrored into both
+    stores counts once rather than reading as two conflicting outcomes.
+    """
+    seen = set()
+    rows = []
+    for event in list(event_rows(cid)) + list(_load_evidence_events().get(cid, ())):
+        identity = json.dumps(event, sort_keys=True, separators=(",", ":"))
+        if identity in seen:
+            continue
+        seen.add(identity)
+        rows.append(event)
+    rows.sort(key=_event_sort_key)
+    return rows
+
+
 def _matching_outcome_events(card_id, outcome_ts, verdict):
     """Return the exact CardStore events carrying one folded outcome."""
     wanted = str(verdict or "").strip().upper()
     return [
-        event for event in event_rows(card_id)
+        event for event in _outcome_scan_rows(card_id)
         if str(event.get("ts") or "") == str(outcome_ts or "")
         and str(_outcome_event_value(event) or "").strip().upper() == wanted
     ]
@@ -4877,7 +4908,7 @@ def _generation_invalidated(card_id, outcome_event):
     """Whether later source work made an outcome generation stale."""
     boundary = _event_sort_key(outcome_event)
     structural = {"describe", "amend_criteria", "add_dependency", "remove_dependency"}
-    for event in event_rows(card_id):
+    for event in _outcome_scan_rows(card_id):
         if _event_sort_key(event) <= boundary:
             continue
         action = str(event.get("action") or "")
@@ -5005,7 +5036,7 @@ def _provisional_candidate(parent, outcome_ts, token):
     candidate evidence fails closed.
     """
     matching = []
-    rows = list(event_rows(parent)) + list(_load_evidence_events().get(parent, ()))
+    rows = _outcome_scan_rows(parent)
     for event in rows:
         if str(event.get("ts") or "") != str(outcome_ts or ""):
             continue
@@ -6488,6 +6519,29 @@ def _health_for(lane,model):
         endpoint=_GATEWAY_ENDPOINT,capacity_domains=_CAPACITY_DOMAINS[lane],
         active_revision=_active_gateway_revision)
 
+def _review_withheld_reason_histogram(withheld):
+    """Return a stable per-reason count for every withheld review card.
+
+    The per-card REVIEW_WITHHELD lines are capped at twelve, so on a live board
+    the remaining reasons are invisible: an operator sees a bare omitted count
+    and cannot tell whether review capacity is being lost to absent typed
+    metadata, a wrong seat, or an ordinary dependency wait that clears on its
+    own. Counting every reason keeps the whole shape of the withholding in one
+    line. Ordering is by weight then name so the line is stable between cycles
+    and a diff of two cycles means something.
+    """
+    counts = {}
+    for _card_id, reasons in withheld:
+        for reason in str(reasons).split(","):
+            reason = reason.strip()
+            if reason:
+                counts[reason] = counts.get(reason, 0) + 1
+    return ",".join(
+        "%s=%d" % (reason, counts[reason])
+        for reason in sorted(counts, key=lambda name: (-counts[name], name))
+    )
+
+
 def _bounded_candidate_sequence(candidates, limit):
     """Return a stable, duplicate-free candidate sequence for one rotation.
 
@@ -6634,6 +6688,10 @@ for _cid,_reasons in _review_withheld[:12]:
     log(d,"REVIEW_WITHHELD|%s|card=%s|reasons=%s"%(HOST,_cid,_reasons))
 if len(_review_withheld)>12:
     log(d,"REVIEW_WITHHELD_OMITTED|%s|count=%d"%(HOST,len(_review_withheld)-12))
+if _review_withheld:
+    log(d,"REVIEW_WITHHELD_REASONS|%s|total=%d|%s"%(
+        HOST,len(_review_withheld),
+        _review_withheld_reason_histogram(_review_withheld)))
 
 
 def _observe_assigned_reviews():
