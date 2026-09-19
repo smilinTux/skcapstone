@@ -22,7 +22,7 @@ permissions:
   contents: read
 jobs:
   docs:
-    uses: smilinTux/sk-standards/.github/workflows/docs-check.yml@8a799322af9fb6b6b765988d3a8683c6761f7195 # sk-standards#61 as MERGED to main: changelog.d/ fragment satisfies tier 2
+    uses: smilinTux/sk-standards/.github/workflows/docs-check.yml@ffa53c20d7e8 # sk-standards main incl #61 (changelog.d fragment) and #62 (merge_group tier-2 fix)
     with:
       tiers: "1,2,3"
       # BOTH refs must name a commit REACHABLE FROM sk-standards main.
@@ -51,4 +51,4 @@ jobs:
       # NOT make the changelog.d/ fragment widening take effect in CI (see
       # PR description). Pinning both makes the gate's actual rules
       # reproducible from this file alone.
-      standards-ref: "8a799322af9fb6b6b765988d3a8683c6761f7195"
+      standards-ref: "ffa53c20d7e8"
