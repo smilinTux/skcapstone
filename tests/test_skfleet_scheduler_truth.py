@@ -18,11 +18,11 @@ def test_pool_report_exposes_owned_and_unleased_work() -> None:
     assert 'reason.startswith("owned-")' in source
 
 
-def test_worker_health_is_observed_before_jarvis_releases() -> None:
+def test_worker_health_is_observed_before_dispatcher_releases() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     health = source.index("MeroObservation(", source.index("def reap_dead_claims"))
     outcome = source.index("_record_reap_outcome(", health)
-    release = source.index('"--agent", "jarvis"', outcome)
+    release = source.index('"--agent", DISPATCH_AGENT', outcome)
 
     assert health < outcome < release
     assert "WORKER_HEALTH|%s|sessions=%d claims_exact=%d" in source

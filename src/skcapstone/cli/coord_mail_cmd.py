@@ -107,7 +107,7 @@ def register_coord_mail_commands(coord: click.Group) -> None:
     @click.option(
         "--host",
         default=None,
-        help="Host to elect for the six lifecycle seats. Defaults to this machine.",
+        help="Host to elect for the five lifecycle seats. Defaults to this machine.",
     )
     def coord_bootstrap(home, agent, estate, host):
         """Create the coordination skeleton and the estate's seat plane.

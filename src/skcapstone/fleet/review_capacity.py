@@ -13,7 +13,7 @@ from typing import Any, Callable, Mapping, Sequence
 from skcapstone.review_admission import LOGICAL_REVIEWER_SEATS, reviewer_candidate_reasons
 from skcapstone.seat_boundaries import canonical_principal
 
-from ..fleet_lane_health import MAX_AGE_SECONDS, _domain_state
+from ..fleet_lane_health import MAX_AGE_SECONDS, _domain_state, gateway_root
 
 _SIZE = {"S": 0, "M": 1, "L": 2, "XL": 3}
 _LOCAL_POLICY = {"local-only", "no-egress", "sovereign-only"}
@@ -51,7 +51,15 @@ def acquire_review_route_snapshot(
     now: Callable[[], float] = time.time,
 ) -> dict[str, Any]:
     """Seal one bounded model, health, and queue view for Seraph selection."""
-    endpoint = base_url.rstrip("/")
+    # Normalize to the gateway ORIGIN. This function appends "/v1" itself for
+    # the models probe while /health and /queue are root-relative, so a base
+    # URL that already carries "/v1" would request /v1/v1/models, /v1/health
+    # and /v1/queue: all three 404, routes comes back empty, and
+    # aggregate_review_capacity reports zero codex capacity. That is a total
+    # review outage from a config value that looks right, and it is the same
+    # trap that cost this fleet three days of zero dispatch through
+    # fleet_lane_health on 2026-09-18.
+    endpoint = gateway_root(base_url)
     observed_at = now()
     try:
         models_doc = _fetch(endpoint + "/v1/models", opener)

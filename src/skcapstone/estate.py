@@ -22,7 +22,7 @@ ONE DELIBERATE EXCEPTION, stated loudly because it looks like a violation of
 the rule above: ``coordination/seat-control-plane.json`` carries
 ``active_host`` and stays in the SYNCED tree. That field is not host-local
 truth, it is an estate-wide ELECTION: its entire job is to guarantee that
-exactly one host in the estate runs the six lifecycle seats. If each host
+exactly one host in the estate runs the five lifecycle seats. If each host
 answered "am I the active host?" from its own XDG file, two hosts could both
 answer yes and both dispatch the same cards, which is precisely the
 duplicate-dispatch failure the gate exists to prevent. Estate separation is

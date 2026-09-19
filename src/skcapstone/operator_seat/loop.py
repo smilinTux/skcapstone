@@ -226,6 +226,7 @@ def _run_once(
         emit(report)
         return {
             "frozen": True,
+            "freeze_state": "frozen",
             "brief": None,
             "route": None,
             "proposals": [],
@@ -610,9 +611,22 @@ def _run_once(
     report = brain.format_report(the_brief, proposals)
     if outcomes:
         report += "\ndispositions: " + "; ".join(f"{o['action']} {o['outcome']}" for o in outcomes)
+    # Tri-state display status (ACTUATION_READINESS_AND_FREEZE_STANDARD R4).
+    # is_frozen was False at the top of this pass, so the gate here can only
+    # say active or unprovisioned (or frozen on a mid-pass toggle race). An
+    # unprovisioned estate must report as such, never as quietly healthy:
+    # the guard already refuses actuation, this makes the REPORT say so.
+    gate = store.check_actuation_gate(paths)
+    freeze_state = "active" if gate.allowed else (gate.reason or "unknown")
+    if freeze_state == store.REASON_UNPROVISIONED:
+        report += (
+            "\nfreeze store: UNPROVISIONED. No human operator has provisioned the "
+            "kill switch; every actuation refuses until `skoperator provision` runs."
+        )
     emit(report)
     return {
         "frozen": False,
+        "freeze_state": freeze_state,
         "brief": the_brief,
         "route": route,
         "proposals": proposals,

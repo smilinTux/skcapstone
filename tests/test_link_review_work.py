@@ -180,7 +180,7 @@ def test_ready_review_card_reproduces_reviewer_preflight_rejection(tmp_path):
     result = reconcile_review_work(home, item, evidence_sha256="6" * 64)
 
     assert result.launchable is False
-    assert result.reason == "review card is not unclaimed review work"
+    assert result.reason == "review card is not unclaimed governed review work"
 
 
 def test_duplicate_matching_cards_fail_closed(tmp_path):

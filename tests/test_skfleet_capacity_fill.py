@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,40 @@ def _bounded_sequence():
     return namespace["_bounded_candidate_sequence"]
 
 
+def _candidate_scan(owned, limit):
+    tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
+    wanted = {"_GLM_SIZE_RE", "_LOGICAL_ROUTES"}
+    body = [
+        node
+        for node in tree.body
+        if (
+            isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id in wanted for target in node.targets
+            )
+        )
+        or (
+            isinstance(node, ast.FunctionDef)
+            and node.name
+            in {
+                "_size_class_for",
+                "_logical_route_for",
+                "_bounded_candidate_sequence",
+            }
+        )
+        or (
+            isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "_candidate_scan"
+                for target in node.targets
+            )
+        )
+    ]
+    namespace = {"re": re, "owned": owned, "MAX_CANDIDATE_SCAN": limit}
+    exec(compile(ast.Module(body=body, type_ignores=[]), str(ROTATE), "exec"), namespace)
+    return namespace["_candidate_scan"]
+
+
 def _launchable_predicate():
     tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
     node = next(
@@ -34,7 +69,13 @@ def _launchable_predicate():
         lane = "escalate" if "escalation-only" in labels else "codex"
         return (lane, "compatible") if remaining.get(lane, 0) else (None, "full")
 
-    namespace = {"qwen_suitable": lambda _core: True, "select_compatible_lane": select}
+    # qwen_suitable takes (core, labels) since gateway-routing work was kept
+    # off the qwen lane. The stub must track its real arity or every caller
+    # here fails with a TypeError that says nothing about capacity.
+    namespace = {
+        "qwen_suitable": lambda _core, _labels=None: True,
+        "select_compatible_lane": select,
+    }
     exec(compile(ast.Module(body=[node], type_ignores=[]), str(ROTATE), "exec"), namespace)
     return namespace["_has_launchable_pick"]
 
@@ -85,9 +126,19 @@ def test_duplicate_candidates_are_attempted_once_in_order() -> None:
     assert [candidate[2] for candidate in bounded] == ["a", "b", "c"]
 
 
+def test_invalid_size_route_is_excluded_before_bounded_attempt_truncation() -> None:
+    owned = [
+        (0, 0, "conflicting", {"title": "[S][M] Conflict"}, [], 0),
+        (1, 0, "valid", {"title": "[S] Valid"}, [], 0),
+    ]
+
+    assert [candidate[2] for candidate in _candidate_scan(owned, 1)] == ["valid"]
+
+
 def test_runtime_counts_only_successful_launches() -> None:
     source = ROTATE.read_text(encoding="utf-8")
-    assert "_bounded_candidate_sequence(owned, MAX_CANDIDATE_SCAN)" in source
+    assert "(candidate for candidate in owned" in source
+    assert "if _logical_route_for(candidate[3],candidate[4]) is not None)" in source
     assert "if not _has_launchable_pick(" in source
     assert "_attempt_lane_name,_attempt_defer=select_compatible_lane(" in source
     assert "_attempt_remaining," in source

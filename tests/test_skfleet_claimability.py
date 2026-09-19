@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import ast
+import collections
 import hashlib
 import json
 import os
 import re
+import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from skcapstone.review_admission import governed_review_seat, qualified_reviewer_seats
+from skcapstone.coordination import AgentFile, Board
 
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
@@ -30,6 +34,14 @@ def _load_claimability() -> dict[str, object]:
         "authoritative_claimability",
         "_governed_review_metadata",
         "_pool_v2_admission",
+        "_pool_v2_authority_rows",
+        "_pool_v2_candidate_allowed",
+        "_pool_v2_dispatchable",
+        "_pool_v2_ready_ids",
+        "_pool_v2_fingerprint",
+        "_pool_v2_preclaim_matches",
+        "_legacy_projection_owners",
+        "_legacy_selector_decision",
     }
     tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
     nodes = {
@@ -70,7 +82,198 @@ def _load_claimability() -> dict[str, object]:
     }
     module = ast.Module(body=[nodes[name] for name in names], type_ignores=[])
     exec(compile(module, str(ROTATE), "exec"), namespace)
+    namespace["_legacy_projection_owners"] = lambda _cid, fresh=False: ()
     return namespace
+
+
+def test_legacy_only_owner_is_excluded_and_cleared_owner_reenters_pool() -> None:
+    """A legacy claim blocks admission before route preflight; clearing it restores work."""
+    namespace = _load_claimability()
+    core = _core("f16c182c")
+    namespace["_legacy_projection_owners"] = lambda _cid, fresh=False: ("jarvis",)
+    owned = namespace["authoritative_claimability"]("f16c182c", core)
+    assert owned["claimable"] is False
+    assert owned["reason"] == "legacy-owned"
+    assert (
+        namespace["_pool_v2_dispatchable"](
+            namespace["_pool_v2_admission"]("f16c182c", core, owned)
+        )
+        is False
+    )
+
+    namespace["_legacy_projection_owners"] = lambda _cid, fresh=False: ()
+    cleared = namespace["authoritative_claimability"]("f16c182c", core, fresh=True)
+    assert cleared["claimable"] is True
+    assert cleared["reason"] == "claimable"
+
+
+def test_conflicting_legacy_and_native_claim_fails_closed() -> None:
+    """Disagreeing owner evidence is reported for reconciliation."""
+    namespace = _load_claimability()
+    core = _core("c26a1015")
+    namespace["_strict_card_events"] = lambda _cid, fresh=False: [
+        _claim("2026-09-16T10:00:00Z", "native", "rev-a")
+    ]
+    namespace["_legacy_projection_owners"] = lambda _cid, fresh=False: ("jarvis",)
+    decision = namespace["authoritative_claimability"]("c26a1015", core)
+    assert decision["claimable"] is False
+    assert decision["reason"].startswith("malformed:LegacyOwnerConflict")
+
+
+def test_legacy_claim_arriving_after_selection_blocks_preclaim() -> None:
+    """A newly projected claim changes the bounded admission before preflight."""
+    namespace = _load_claimability()
+    core = _core("f16c182c")
+    selected = namespace["_pool_v2_admission"](
+        "f16c182c", core, namespace["authoritative_claimability"]("f16c182c", core)
+    )
+    namespace["_legacy_projection_owners"] = lambda _cid, fresh=False: ("jarvis",)
+    fresh = namespace["_pool_v2_admission"](
+        "f16c182c",
+        core,
+        namespace["authoritative_claimability"]("f16c182c", core, fresh=True),
+    )
+    assert selected["source_revision"] != fresh["source_revision"]
+    assert namespace["_pool_v2_preclaim_matches"](selected, fresh) is False
+
+
+def test_natural_projection_read_tracks_claim_and_clear(tmp_path: Path) -> None:
+    """One cycle reads the board projection and the next fresh cycle sees its clear."""
+    board = Board(tmp_path / ".skcapstone")
+    board.ensure_dirs()
+    board.save_agent(AgentFile(agent="jarvis", claimed_tasks=["f16c182c"]))
+    namespace = _load_claimability()
+    namespace.update(
+        Board=Board,
+        Path=Path,
+        HOME=str(tmp_path),
+        collections=collections,
+        _legacy_projection_claims=None,
+    )
+    exec(
+        compile(
+            ast.Module(
+                body=[
+                    next(
+                        node
+                        for node in ast.parse(ROTATE.read_text()).body
+                        if isinstance(node, ast.FunctionDef)
+                        and node.name == "_legacy_projection_owners"
+                    )
+                ],
+                type_ignores=[],
+            ),
+            str(ROTATE),
+            "exec",
+        ),
+        namespace,
+    )
+    assert namespace["_legacy_projection_owners"]("f16c182c") == ("jarvis",)
+    board.save_agent(AgentFile(agent="jarvis", claimed_tasks=[]))
+    assert namespace["_legacy_projection_owners"]("f16c182c", fresh=True) == ()
+
+
+def test_legacy_selector_and_pool_v2_agree_on_projection_owner(tmp_path: Path) -> None:
+    """Both selectors withhold the same ready card before gateway work."""
+    namespace = _load_claimability()
+    core = _core("f16c182c")
+    core_path = tmp_path / "core.json"
+    core_path.write_text(json.dumps(core), encoding="utf-8")
+    namespace.update(
+        excluded=set(),
+        _REVIEW_READBACK_BLOCKED=set(),
+        unclaimable=lambda _cid: False,
+        itil_terminal=lambda _cid: False,
+        lifecycle_state=lambda _cid: "open",
+        outcome_lifecycle_bucket=lambda _lifecycle, _review: "open",
+        awaiting_review=lambda _cid: False,
+        blocked_backoff=lambda _cid: False,
+        terminal_review_verdict=lambda _cid, _core: False,
+        _legacy_projection_owners=lambda _cid, fresh=False: ("jarvis",),
+    )
+    legacy = namespace["_legacy_selector_decision"]("f16c182c", core_path)
+    decision = namespace["authoritative_claimability"]("f16c182c", core)
+    admission = namespace["_pool_v2_admission"]("f16c182c", core, decision)
+    assert legacy["reason"] == "legacy-owned"
+    assert legacy["eligible"] is False
+    assert namespace["_pool_v2_dispatchable"](admission) is False
+
+
+def test_projection_cycle_held_cleared_then_native_claimed(tmp_path: Path) -> None:
+    """A complete selector cycle with real board projections never dispatches owners."""
+    board = Board(tmp_path / ".skcapstone")
+    board.ensure_dirs()
+    core = _core("f16c182c")
+    core_path = tmp_path / "core.json"
+    core_path.write_text(json.dumps(core), encoding="utf-8")
+    namespace = _load_claimability()
+    namespace.update(
+        Board=Board,
+        Path=Path,
+        HOME=str(tmp_path),
+        collections=collections,
+        _legacy_projection_claims=None,
+        excluded=set(),
+        _REVIEW_READBACK_BLOCKED=set(),
+        unclaimable=lambda _cid: False,
+        itil_terminal=lambda _cid: False,
+        lifecycle_state=lambda _cid: "open",
+        outcome_lifecycle_bucket=lambda _lifecycle, _review: "open",
+        awaiting_review=lambda _cid: False,
+        blocked_backoff=lambda _cid: False,
+        terminal_review_verdict=lambda _cid, _core: False,
+    )
+    exec(
+        compile(
+            ast.Module(
+                body=[
+                    next(
+                        node
+                        for node in ast.parse(ROTATE.read_text()).body
+                        if isinstance(node, ast.FunctionDef)
+                        and node.name == "_legacy_projection_owners"
+                    )
+                ],
+                type_ignores=[],
+            ),
+            str(ROTATE),
+            "exec",
+        ),
+        namespace,
+    )
+
+    namespace["_strict_card_events"] = lambda _cid, fresh=False: [
+        _claim("2026-09-15T10:00:00Z", "jarvis", "rev-old"),
+        _release("2026-09-15T11:00:00Z", "jarvis", "jarvis", "rev-old"),
+    ]
+    board.save_agent(
+        AgentFile(
+            agent="jarvis",
+            last_seen="2020-01-01T00:00:00Z",
+            claimed_tasks=["f16c182c"],
+        )
+    )
+    held = namespace["_legacy_selector_decision"]("f16c182c", core_path)
+    assert held["reason"] == "legacy-owned"
+    assert not held["eligible"]
+    assert not namespace["_pool_v2_dispatchable"](
+        namespace["_pool_v2_admission"]("f16c182c", core, held["decision"])
+    )
+
+    board.save_agent(AgentFile(agent="jarvis", claimed_tasks=[]))
+    namespace["_legacy_projection_owners"]("f16c182c", fresh=True)
+    cleared = namespace["_legacy_selector_decision"]("f16c182c", core_path)
+    assert cleared["eligible"]
+    assert namespace["_pool_v2_dispatchable"](
+        namespace["_pool_v2_admission"]("f16c182c", core, cleared["decision"])
+    )
+
+    namespace["_strict_card_events"] = lambda _cid, fresh=False: [
+        _claim("2026-09-16T10:00:00Z", "native", "rev-a")
+    ]
+    native = namespace["_legacy_selector_decision"]("f16c182c", core_path)
+    assert not native["eligible"]
+    assert native["reason"].startswith("owned-")
 
 
 def _core(card_id: str, *, labels: list[str] | None = None) -> dict[str, object]:
@@ -369,8 +572,8 @@ def test_review_markers_are_not_executable_after_claim_release() -> None:
         assert namespace["_claimability_reason"](core, state) == "review"
 
 
-def test_released_64c201a1_review_keeps_elastic_admission_after_empty_title() -> None:
-    """Exact claim, move-doing, describe-empty, release review regression."""
+def test_released_64c201a1_review_stays_withheld_until_explicit_move_review() -> None:
+    """A release cannot manufacture governed review lifecycle authority."""
     namespace = _load_claimability()
     core = {
         **_core("64c201a1", labels=["review", "seat-seraph", "sk-s"]),
@@ -392,7 +595,7 @@ def test_released_64c201a1_review_keeps_elastic_admission_after_empty_title() ->
     state = namespace["_fold_claimability"](core, events)
     reason = namespace["_claimability_reason"](core, state)
     state.update(
-        claimable=False,
+        claimable=reason in {"claimable", "governed-review"},
         reason=reason,
         core={**core, "title": state["title"], "links": state["links"]},
         source_revision="c" * 64,
@@ -400,8 +603,28 @@ def test_released_64c201a1_review_keeps_elastic_admission_after_empty_title() ->
     )
     admission = namespace["_pool_v2_admission"]("64c201a1", core, state)
 
+    assert state["status"] == "backlog"
     assert reason == "review"
-    assert admission["elastic_review_admitted"] is True
+    assert admission["governed_review"] is True
+    assert admission["elastic_review_admitted"] is False
+
+    reviewed = namespace["_fold_claimability"](
+        core,
+        [*events, _event("2026-09-13T01:04:00Z", "operator", "move", column="review")],
+    )
+    reviewed_reason = namespace["_claimability_reason"](core, reviewed)
+    reviewed.update(
+        claimable=reviewed_reason in {"claimable", "governed-review"},
+        reason=reviewed_reason,
+        core={**core, "title": reviewed["title"], "links": reviewed["links"]},
+        source_revision="e" * 64,
+        host_pin=None,
+    )
+    assert reviewed_reason == "governed-review"
+    assert (
+        namespace["_pool_v2_admission"]("64c201a1", core, reviewed)["elastic_review_admitted"]
+        is True
+    )
 
     paused = namespace["_fold_claimability"](
         core,
@@ -418,6 +641,130 @@ def test_released_64c201a1_review_keeps_elastic_admission_after_empty_title() ->
         namespace["_pool_v2_admission"]("64c201a1", core, paused)["elastic_review_admitted"]
         is False
     )
+
+
+@pytest.mark.parametrize("column", ["backlog", "ready", "doing"])
+def test_release_claim_preserves_nonreview_column(column: str) -> None:
+    """Ownership release never changes lifecycle without an explicit move."""
+    namespace = _load_claimability()
+    core = {
+        **_core("deadbeef", labels=["review", "seat-seraph", "sk-s"]),
+        "links": {
+            "producer_identity": "producer",
+            "candidate_evidence_sha256": "a" * 64,
+            "link_source_card": "source01",
+            "link_head_revision": "b" * 40,
+        },
+    }
+    events = []
+    if column != "backlog":
+        events.append(_event("2026-09-15T01:00:00Z", "owner", "move", column=column))
+    events.extend(
+        [
+            _claim("2026-09-15T01:01:00Z", "owner", "revision-1"),
+            _release("2026-09-15T01:02:00Z", "owner", "owner", "revision-1"),
+        ]
+    )
+
+    state = namespace["_fold_claimability"](core, events)
+
+    assert state["status"] == column
+    assert namespace["_claimability_reason"](core, state) == "review"
+
+
+def test_claim_origin_status_is_captured_once_per_claim_generation() -> None:
+    """Owned moves cannot replace either generation's pre-claim column."""
+    namespace = _load_claimability()
+    core = _core("deadbeef")
+    events = [
+        _claim("2026-09-15T01:00:00Z", "owner", "revision-1"),
+        _event("2026-09-15T01:01:00Z", "owner", "move", column="ready"),
+        _event("2026-09-15T01:02:00Z", "owner", "move", column="review"),
+        _release("2026-09-15T01:03:00Z", "owner", "owner", "revision-1"),
+        _event("2026-09-15T01:04:00Z", "operator", "move", column="ready"),
+        _claim("2026-09-15T01:05:00Z", "owner", "revision-2"),
+        _event("2026-09-15T01:06:00Z", "owner", "move", column="doing"),
+        _release("2026-09-15T01:07:00Z", "owner", "owner", "revision-2"),
+    ]
+
+    state = namespace["_fold_claimability"](core, events)
+
+    assert state["status"] == "ready"
+    assert state["claim_origin_status"] is None
+
+
+def test_a6a2f0f9_owned_moves_do_not_replace_preclaim_backlog() -> None:
+    """The exact live lifecycle is withheld before bounded selection."""
+    namespace = _load_claimability()
+    core = {
+        **_core("a6a2f0f9", labels=["sklegal", "review", "source-only", "sk-s", "seat-seraph"]),
+        "title": "[SKLEGAL][S][REVIEW] Verify migration",
+        "links": {
+            "producer_identity": "codex-3406cf8d",
+            "candidate_evidence_sha256": "a" * 64,
+            "link_source_card": "3406cf8d",
+            "link_head_revision": "b" * 40,
+        },
+    }
+    lifecycle = [
+        _claim("2026-09-11T23:46:41Z", "seraph", "revision-1"),
+        _event("2026-09-11T23:46:44Z", "seraph", "move", column="doing"),
+        _event("2026-09-11T23:48:30Z", "seraph", "move", column="ready"),
+        _event("2026-09-11T23:52:05Z", "seraph", "move", column="review"),
+        _release("2026-09-12T01:13:58Z", "jarvis", "seraph", "revision-1"),
+    ]
+    stale = namespace["_fold_claimability"](core, lifecycle)
+    stale_reason = namespace["_claimability_reason"](core, stale)
+    stale.update(
+        claimable=stale_reason in {"claimable", "governed-review"},
+        reason=stale_reason,
+        core={**core, "title": stale["title"], "links": stale["links"]},
+        source_revision="c" * 64,
+        host_pin=None,
+    )
+    stale_admission = namespace["_pool_v2_admission"]("a6a2f0f9", core, stale)
+    valid_admission = {
+        "card_id": "feedface",
+        "claimable": True,
+        "reason": "claimable",
+        "governed_review": False,
+        "host_pin": None,
+        "title": "Later valid work",
+        "labels": ["skcapstone", "sk-s"],
+        "core": {"id": "feedface"},
+        "overlay": {"backoff": False},
+        "source_revision": "d" * 64,
+    }
+    decisions = [
+        SimpleNamespace(card_id="a6a2f0f9", eligible=True),
+        SimpleNamespace(card_id="feedface", eligible=True),
+    ]
+
+    ready = namespace["_pool_v2_ready_ids"](
+        decisions,
+        {"a6a2f0f9": stale_admission, "feedface": valid_admission},
+    )
+    rows, _pinned = namespace["_pool_v2_authority_rows"](
+        decisions,
+        {"a6a2f0f9": stale_admission, "feedface": valid_admission},
+        False,
+        {},
+        {None: 4},
+        (),
+        "chiap03",
+    )
+
+    assert stale["status"] == "backlog"
+    assert stale_reason == "sensitive-category"
+    assert stale_admission["elastic_review_admitted"] is False
+    assert ready == {"feedface"}
+    assert [row[2] for row in rows[:1]] == ["feedface"]
+
+    explicit_review = namespace["_fold_claimability"](
+        core,
+        [*lifecycle, _event("2026-09-12T01:14:00Z", "jarvis", "move", column="review")],
+    )
+    assert namespace["_claimability_reason"](core, explicit_review) == "governed-review"
 
 
 @pytest.mark.parametrize(
@@ -536,6 +883,81 @@ def test_refreshed_description_criteria_and_review_links_are_folded() -> None:
         "producer_identity": "producer-new",
         "candidate_evidence_sha256": digest,
     }
+
+
+def test_legacy_pool_input_preserves_raw_core_revision_after_criteria_amendment(
+    tmp_path: Path,
+) -> None:
+    """The real legacy selection path must agree with a fresh raw preclaim."""
+    namespace = _load_claimability()
+    card_id = "cdf59956"
+    raw_core = {
+        **_core(card_id),
+        "acceptance_criteria": ["original criterion"],
+    }
+    core_path = tmp_path / "core.json"
+    core_path.write_text(json.dumps(raw_core), encoding="utf-8")
+    events = [
+        _event(
+            "2026-09-16T01:00:00Z",
+            "dev208",
+            "amend_criteria",
+            criteria=["amended criterion"],
+        )
+    ]
+    namespace["_strict_card_events"] = lambda _cid, fresh=False: list(events)
+    namespace.update(
+        excluded=set(),
+        _REVIEW_READBACK_BLOCKED=set(),
+        unclaimable=lambda _cid: False,
+        itil_terminal=lambda _cid: False,
+        lifecycle_state=lambda _cid: "open",
+        outcome_lifecycle_bucket=lambda _state, _review: "open",
+        awaiting_review=lambda _cid: False,
+        blocked_backoff=lambda _cid: False,
+        terminal_review_verdict=lambda _cid, _core: False,
+    )
+    source = ROTATE.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    selector = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_legacy_selector_decision"
+    )
+    exec(compile(ast.Module(body=[selector], type_ignores=[]), str(ROTATE), "exec"), namespace)
+    legacy = namespace["_legacy_selector_decision"](card_id, str(core_path))
+    assert legacy["eligible"] is True
+    assert legacy["core"] == raw_core
+    assert legacy["decision"]["core"]["acceptance_criteria"] == ["amended criterion"]
+
+    selection = source.split('    core=legacy["core"]', 1)[1].split("# How many OTHER cards", 1)[0]
+    namespace.update(
+        cid=card_id,
+        legacy=legacy,
+        HOST="chiap03",
+        _PINNED_IDS=set(),
+        ENG=(),
+        PRI={"None": 4},
+        pool=[],
+        _pool_v2_inputs=[],
+        _pool_v2_input_ids=set(),
+    )
+    exec('core=legacy["core"]\n' + textwrap.dedent(selection), namespace)
+    assert namespace["pool"][0][3]["acceptance_criteria"] == ["amended criterion"]
+    selected_core = namespace["_pool_v2_inputs"][0][1]
+    selected = namespace["authoritative_claimability"](card_id, selected_core)
+    fresh = namespace["authoritative_claimability"](card_id, raw_core, fresh=True)
+    assert selected["source_revision"] == fresh["source_revision"]
+    assert selected["core"] == fresh["core"]
+    selected_admission = namespace["_pool_v2_admission"](card_id, selected_core, selected)
+    fresh_admission = namespace["_pool_v2_admission"](card_id, raw_core, fresh)
+    assert namespace["_pool_v2_preclaim_matches"](selected_admission, fresh_admission)
+
+    changed = {**raw_core, "acceptance_criteria": ["external change"]}
+    changed_fresh = namespace["authoritative_claimability"](card_id, changed, fresh=True)
+    assert selected["source_revision"] != changed_fresh["source_revision"]
+    changed_admission = namespace["_pool_v2_admission"](card_id, changed, changed_fresh)
+    assert not namespace["_pool_v2_preclaim_matches"](selected_admission, changed_admission)
 
 
 def test_malformed_lifecycle_fails_closed_with_reason() -> None:

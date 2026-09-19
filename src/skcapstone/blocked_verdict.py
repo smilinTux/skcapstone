@@ -205,6 +205,22 @@ def blocked_on_referent(value: str) -> str | None:
     return None
 
 
+def blocked_on_category(value: str) -> str | None:
+    """Return the category named by a verdict's blocked_on, or None.
+
+    The same anchor-then-category walk ``validate_blocked_verdict`` performs,
+    exposed so that readers of the queue do not re-parse the verdict by hand.
+    A hand-rolled second parser is how two readers of the same text end up
+    disagreeing about which cards are held.
+    """
+    text = str(value or "")
+    anchor = _BLOCKED_ON_RE.search(text)
+    if not anchor:
+        return None
+    cat = _CATEGORY_RE.search(text[anchor.end() :])
+    return cat.group(1).lower() if cat else None
+
+
 def validate_blocked_verdict(key: str, value: str) -> None:
     """Raise ValueError if a BLOCKED verdict does not say what is blocking.
 
@@ -246,13 +262,11 @@ def validate_blocked_verdict(key: str, value: str) -> None:
     # human and capability keep free-form referents on purpose: an approval name
     # or a missing capability has no id, and demanding one would push workers
     # back toward saying nothing.
-    anchor = _BLOCKED_ON_RE.search(text)
-    tail = text[anchor.end() :] if anchor else text
-    cat = _CATEGORY_RE.search(tail)
-    if cat and cat.group(1).lower() in _CARD_CATEGORIES:
+    category = blocked_on_category(text)
+    if category in _CARD_CATEGORIES:
         if not _CARD_ID_RE.search(referent):
             raise ValueError(
-                f"blocked_on={cat.group(1).lower()} needs a card id, not "
+                f"blocked_on={category} needs a card id, not "
                 f"{referent!r}. Name the card that is in the way, for example "
                 "blocked_on=dependency referent=card:04b218cd or "
                 "referent=inc-0e190b2f. If the blocker is not a card, use "
@@ -280,12 +294,7 @@ def validate_blocked_verdict(key: str, value: str) -> None:
     # not need this: naming a blocking card IS the explanation. Naming a criterion
     # is not, because the only fix is to rewrite that criterion, and nobody can
     # rewrite a fault they cannot see.
-    if (
-        cat
-        and cat.group(1).lower() == "card"
-        and _CRITERION_RE.search(text)
-        and not states_a_contradiction(text)
-    ):
+    if category == "card" and _CRITERION_RE.search(text) and not states_a_contradiction(text):
         raise ValueError(
             "blocked_on=card names a criterion but not the contradiction. Say WHY "
             "it cannot be satisfied as written: state what the criterion requires "

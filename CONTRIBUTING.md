@@ -77,8 +77,14 @@ before changing `README.md`, `SOP.md`, `SECURITY.md`, or `CHANGELOG.md`:
 3. At least one maintainer review. Security-sensitive changes (daemon HTTP surface,
    auth, secret handling, self-healing) get an extra security-focused pass.
 4. Squash or rebase-merge once approved; keep `main` linear and releasable.
-5. User-visible changes add a `CHANGELOG.md` entry (Keep-a-Changelog, under
-   `[Unreleased]` until the next tagged release).
+5. User-visible changes add a changelog entry. **Add a new
+   `changelog.d/<slug>.md` fragment rather than editing `CHANGELOG.md`.** One file
+   per PR means two concurrent PRs never touch the same lines, so the rebase
+   conflict a single shared changelog guarantees becomes structurally impossible;
+   fragments are folded in by `python scripts/changelog_fragments.py`. Write the
+   fragment exactly as you would the `## Unreleased` bullet, Keep-a-Changelog
+   style. Editing `CHANGELOG.md` directly still satisfies the gate and is still
+   right for a release-assembly commit. Full workflow: `changelog.d/README.md`.
 
 ---
 

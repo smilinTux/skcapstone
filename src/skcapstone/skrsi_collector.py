@@ -120,9 +120,9 @@ ESTATE_ADAPTERS = {
         ("skfleet", "SKFleet", "niobe"),
         ("skmail", "SKMail envelope index", "mero"),
         ("route-attribution", "SKGateway audit metadata", "atlas"),
-        ("evidence-reference", "SKCapstone evidence index", "tank"),
+        ("evidence-reference", "SKCapstone evidence index", "atlas"),
         ("cleanup", "SKFleet cleanup journal", "niobe"),
-        ("recovery", "SKFleet recovery journal", "tank"),
+        ("recovery", "SKFleet recovery journal", "atlas"),
     )
 }
 

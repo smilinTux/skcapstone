@@ -422,3 +422,25 @@ def test_skdashboard_is_wired_into_the_seat(monkeypatch):
     # positionally, so a mismatch here would misattribute another app's polarity).
     assert "skdashboard" in loop.CONDITION_SCHEMAS
     assert set(loop.CONDITION_SCHEMAS["skdashboard"]) == set(skdashboard_adapter.CONDITIONS)
+
+
+def test_loop_unprovisioned_pass_reports_unprovisioned(tmp_path, monkeypatch):
+    """No freeze store was ever provisioned: the pass still observes (the
+    guard, not the report, blocks actuation) but its result and report must
+    carry the tri-state truth, never a quietly healthy reading (standard R4)."""
+    paths, _ = _enroll(tmp_path, monkeypatch)
+    assert not paths.freeze_path().exists()
+    out = []
+    res = loop.run_once(paths, now_iso="2026-07-29T00:00:00Z", emit=out.append)
+    assert res["frozen"] is False
+    assert res["freeze_state"] == "unprovisioned"
+    assert "UNPROVISIONED" in res["report"]
+
+
+def test_loop_provisioned_active_pass_reports_active(tmp_path, monkeypatch):
+    paths, _ = _enroll(tmp_path, monkeypatch)
+    human = store.Writer(role="operator", node="node-158", identity="chef")
+    store.set_frozen(paths, False, writer=human)
+    res = loop.run_once(paths, now_iso="2026-07-29T00:00:00Z", emit=lambda _s: None)
+    assert res["freeze_state"] == "active"
+    assert "UNPROVISIONED" not in res["report"]
