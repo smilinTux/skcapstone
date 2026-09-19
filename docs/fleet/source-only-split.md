@@ -72,6 +72,30 @@ manual read of 631 descriptions, and a card can rely on the safety sense while
 phrasing it in a way the pattern misses. It is reported to show that both senses
 are genuinely in live use, which it does decisively at 265 cards carrying both.
 
+### Counts are a snapshot of a moving board
+
+The fleet dispatches continuously, so these figures drift. Two censuses taken
+twenty minutes apart on 2026-09-18 read 631 then 621 live labelled cards, and 18
+then 13 jammed. The proportions and the conclusion are stable; the exact
+integers are as-of-run, not constants. Anything that needs a precise number
+should re-fold rather than quote this table.
+
+### Verified against the live board, not only against tests
+
+The old and new `_source_workspace_spec` were both extracted by AST and run over
+every live chi card, comparing outcomes pairwise:
+
+| old -> new | Cards |
+| --- | --- |
+| routes -> routes | 608 |
+| no workspace -> no workspace | 511 |
+| **no workspace -> routes** | **79** |
+| blocked -> blocked | 13 |
+| **regressions (lost routing, or newly blocked)** | **0** |
+
+No card that routes today stops routing, and no card is newly blocked. The only
+change is the 79 whose bindings were being ignored.
+
 ## The design
 
 Keep `source-only` as the safety constraint, which is its plain-English meaning
