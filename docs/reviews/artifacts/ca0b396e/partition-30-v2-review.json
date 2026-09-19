@@ -1,0 +1,112 @@
+{
+  "acceptance": {
+    "ac1": "PASS: immutable v2 bytes, replaced v1 bytes, original blocked review bytes, and blocking rereview bytes were hashed and parsed. The PR blob, shared v2 artifact, sidecar, and manifest all agree on SHA-256 883fa9dcf26cee01d7bca97293a8f0347d71309bb44897774e9bf5c74cf5ce8f. The 43 sorted records and four correction ledger entries were reproduced.",
+    "ac2": "BLOCKED: the report normalizes evidence verdicts from folded_link entries. At least 22 top-level records have a non-NOT_RECORDED normalized verdict whose only explicit entry store is folded_link. This directly conflicts with the stated join contract and the criterion forbidding verdict inference from links.",
+    "ac3": "BLOCKED: the human-gate remedies for 357ba8f4 and aba8ec0d are prose strings that mention future append activity but do not explicitly declare no action and do not provide an exact supported command, authority, and preconditions. The 84cee038 release command retains an <authorized-actor> placeholder, so it is a command template rather than an exact command, and its authority is only the circular phrase authorized lifecycle actor."
+  },
+  "actions_applied": [],
+  "attempted": [
+    "Verified the append-only claim event assigns ca0b396e to pi-codex-chiap02-ca0b396e and confirmed the producer identity is distinct.",
+    "Fetched PR 274 head f21e893e7d6f29ab396c890bd11e3e9e0f627c60 and compared its v2 blob byte for byte with the shared immutable artifact.",
+    "Recomputed hashes for v2, v1, manifest-v2, the original blocked review, the blocking rereview, and correction source event files. Parsed the JSON artifact and every line of the cited JSONL event files.",
+    "Compared all 43 v1 and v2 records. Only 03bf6be6 changed, replacing the unsupported dependency pseudo-action with an explicit NO_ACTION_PROPOSED object. Verified the four-entry correction ledger covers 289315d7, 96d65096, 84cee038, and 03bf6be6.",
+    "Inspected all proposed remedies and the installed release-claim, add-dependency, and remove-dependency command help without executing any remedy or audited-card action."
+  ],
+  "audited_card_repair_applied": false,
+  "blocked_on": {
+    "criterion": "ac:2",
+    "explanation": "AC2 requires that no verdict be inferred from links, but the reviewed artifact normalizes verdicts solely from folded_link entries for multiple records.",
+    "referent": "card:ca0b396e",
+    "type": "card"
+  },
+  "blocking_findings": [
+    {
+      "criterion": "ac:2",
+      "finding": "The report says links_treated_as_authority is false while deriving normalized verdicts solely from folded_link values. Examples include 01cf9986 PASS, 2cb98eac PASS_FOR_REVIEW, 49894e18 FAIL, 79ddb67c BLOCKED, and 855ef00a BLOCKED. Structural CardStore links were not joined to separately hashed direct evidence events by exact card_id. The normalized verdicts therefore violate the exact two-store contract."
+    },
+    {
+      "criterion": "ac:3",
+      "finding": "Records 357ba8f4 and aba8ec0d contain prose remedies rather than explicit no-action dispositions or exact supported commands with authority and preconditions. Record 84cee038 uses the placeholder <authorized-actor> and generic authority authorized lifecycle actor, so the proposal is not an exact command bound to named authority."
+    }
+  ],
+  "correction_ledger_verification": [
+    {
+      "card_id": "289315d7",
+      "finding": "v2 preserves terminal_void, nonterminal false, NOT_RECORDED direct verdict, and explicit NO_ACTION_PROPOSED.",
+      "result": "PASS"
+    },
+    {
+      "card_id": "96d65096",
+      "finding": "v2 preserves terminal_void, nonterminal false, NOT_RECORDED direct verdict, and explicit NO_ACTION_PROPOSED.",
+      "result": "PASS"
+    },
+    {
+      "card_id": "84cee038",
+      "finding": "v2 preserves claim_projection_inconsistency_unproven_stale and does not infer current worker absence. Remedy exactness remains blocked under ac:3.",
+      "result": "PASS_FOR_CLASSIFICATION_ONLY"
+    },
+    {
+      "card_id": "03bf6be6",
+      "finding": "v2 replaces the pseudo-action identified by b6eedf67 with explicit NO_ACTION_PROPOSED and leaves the dependency obstruction intact.",
+      "result": "PASS"
+    }
+  ],
+  "external_or_audited_action_applied": false,
+  "identity": {
+    "card_id": "ca0b396e",
+    "distinct_identity": true,
+    "producer": "pi-codex-chiap08-a743f500",
+    "reviewer": "pi-codex-chiap02-ca0b396e"
+  },
+  "immutable_sources": {
+    "blocking_rereview": {
+      "path": "/home/skuser01/.skcapstone/evidence/work/b6eedf67/partition-30-corrected-replacement-review.json",
+      "sha256": "88277b9066099c5894bc1831580d7d4027256ec5565aee3704e37d29a4b95a45",
+      "size": 6912
+    },
+    "manifest_v2": {
+      "path": "docs/reviews/artifacts/a743f500/manifest-v2.json",
+      "sha256": "300c66eb6b05bea801d852adb82f7638bd40b00c7b70e5539ab2caabcca315a6"
+    },
+    "original_blocked_review": {
+      "path": "/home/skuser01/.skcapstone/evidence/work/3ad01333/review-verdict-pi-codex-3ad01333.json",
+      "sha256": "51899693d6ae9d68b3797ef53bf37204e3168424d3813ea6b64d04601926b6b4"
+    },
+    "v1": {
+      "path": "/home/skuser01/.skcapstone/evidence/work/a743f500/partition-30-corrected-replacement.json",
+      "sha256": "783875c5a86a5cd06ffec5a1a1f431f137724b26adab1c8be797896b9bb38458",
+      "size": 175252
+    },
+    "v2": {
+      "path": "docs/reviews/artifacts/a743f500/partition-30-corrected-replacement-v2.json",
+      "pr_blob_shared_exact": true,
+      "serializer_exact": "json.dumps(indent=2, sort_keys=True, ensure_ascii=False) plus newline",
+      "sha256": "883fa9dcf26cee01d7bca97293a8f0347d71309bb44897774e9bf5c74cf5ce8f",
+      "size": 176630
+    }
+  },
+  "reproduction": {
+    "actions_applied_in_source": 0,
+    "correction_ledger_count": 4,
+    "nonterminal_count": 4,
+    "record_count": 43,
+    "record_ids_sorted": true,
+    "record_ids_unique": true,
+    "repository_or_external_action_applied_in_source": false,
+    "v1_to_v2_changed_record_ids": [
+      "03bf6be6"
+    ],
+    "v2_json_roundtrip": true,
+    "v2_trailing_newline": true
+  },
+  "reviewed_command_contract": {
+    "dependency_supported_syntax": [
+      "skcapstone coord add-dependency TASK_ID --dependency TEXT --reason TEXT --agent TEXT",
+      "skcapstone coord remove-dependency TASK_ID --dependency TEXT --reason TEXT --agent TEXT"
+    ],
+    "executed": false,
+    "release_claim_supported_syntax": "skcapstone coord release-claim TASK_ID --owner TEXT --agent TEXT"
+  },
+  "schema": "skcapstone.fleet_unblock.v2_independent_review.v1",
+  "verdict": "BLOCKED"
+}
