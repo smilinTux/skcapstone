@@ -22,9 +22,25 @@ permissions:
   contents: read
 jobs:
   docs:
-    uses: smilinTux/sk-standards/.github/workflows/docs-check.yml@155071f7b7624444ea5fe70526d92aa09eac5342 # sk-standards#61: changelog.d/ fragment satisfies tier 2
+    uses: smilinTux/sk-standards/.github/workflows/docs-check.yml@8a799322af9fb6b6b765988d3a8683c6761f7195 # sk-standards#61 as MERGED to main: changelog.d/ fragment satisfies tier 2
     with:
       tiers: "1,2,3"
+      # BOTH refs must name a commit REACHABLE FROM sk-standards main.
+      # 155071f7 (the previous value of both) was PR #61's HEAD commit on
+      # `feat/changelog-fragment-tier2`. #61 was squash-merged, so main got a
+      # DIFFERENT sha and the branch was deleted, leaving 155071f7 reachable
+      # from nothing. `uses:` could not resolve it, so the workflow failed
+      # BEFORE creating any job -- conclusion=failure with
+      # latest_check_runs_count=0. That produces NO `docs / docs-check` check
+      # run at all, so the gate did not go red, it went ABSENT: `gh pr checks`
+      # simply stopped listing it, and every merge to main from 08:46Z onward
+      # ran with no docs enforcement of any kind, tier 3 included.
+      #
+      # A required check that stops reporting is indistinguishable from one
+      # that was never configured. Verify a repin with
+      # `gh api repos/smilinTux/sk-standards/compare/main...<sha> --jq .status`
+      # -- it must say "identical" or "behind", never "diverged".
+      #
       # NOTE: the `uses:@SHA` pin above only freezes which version of THIS
       # workflow's orchestration (steps/inputs) runs. The actual validator
       # (scripts/docs_check.py) is fetched separately by that workflow from
@@ -35,4 +51,4 @@ jobs:
       # NOT make the changelog.d/ fragment widening take effect in CI (see
       # PR description). Pinning both makes the gate's actual rules
       # reproducible from this file alone.
-      standards-ref: "155071f7b7624444ea5fe70526d92aa09eac5342"
+      standards-ref: "8a799322af9fb6b6b765988d3a8683c6761f7195"
