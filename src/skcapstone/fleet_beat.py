@@ -6,6 +6,23 @@ sent via skmail, append-only, auditable. This module handles the state half.
 
 The invariant (verbatim from the protocol review): no lease state is derived
 from beat evidence alone; beats only corroborate preconditioned claim events.
+
+What a WRAPPER beat proves, exactly (measured 2026-09-19): that the worker's
+bash shell has not exited.  Nothing more.  The wrapper beat is written by a
+``while :; do ...; sleep N; done`` loop that is a SIBLING of the ``pi``
+process, not a signal from it, so it stays fresh at full cadence on a worker
+that is doing nothing at all.  On 2026-09-19 a worker held card 139ec63d for
+6h18m having written zero files, with ``pi`` alive at 0.0% CPU and a 0-byte
+stdout log, while its beat reported ``disposition=RUNNING`` at an age of 39
+seconds continuously for the whole 6h18m.
+
+This is not a bug in the beat, it is the ceiling of what a timer can know, and
+no amount of work on the producer raises it: even coupling the beat to
+``pi``'s liveness would have reported RUNNING for that entire incident,
+because ``pi`` was alive the whole time.  So the fix is on the consumer side.
+A wrapper beat classifies as SHELL_ALIVE and never as LIVE.  Whether a worker
+is PROGRESSING is a different question, answered by what it writes, in
+``skcapstone.fleet.worker_watchdog.classify_progress``.
 """
 
 from __future__ import annotations
@@ -51,6 +68,9 @@ class Beat:
     beat_at: float = 0.0  # epoch seconds, writer's clock
     sequence: int = 0  # monotonic per writer
     progress_token: str = ""  # agent-only, opaque to monitor
+    # The scope of this record. A wrapper beat proves shell liveness; only
+    # an agent beat carrying a CHANGING progress_token evidences progress.
+    proves: str = "shell-liveness"
 
     @property
     def age_s(self) -> float:
@@ -88,6 +108,7 @@ def write_beat(
         beat_at=time.time(),
         sequence=sequence,
         progress_token=progress_token,
+        proves="progress-token" if emitter == "agent" else "shell-liveness",
     )
 
     beats_dir.mkdir(parents=True, exist_ok=True)
@@ -105,6 +126,7 @@ def write_beat(
                 "beat_at": beat.beat_at,
                 "sequence": beat.sequence,
                 "progress_token": beat.progress_token,
+                "proves": beat.proves,
             }
         ),
         encoding="utf-8",
@@ -187,6 +209,7 @@ def read_beats(beats_dir: Path) -> list[Beat]:
                     beat_at=float(raw.get("beat_at", 0)),
                     sequence=int(raw.get("sequence", 0)),
                     progress_token=str(raw.get("progress_token", "")),
+                    proves=str(raw.get("proves", "shell-liveness")),
                 )
             )
         except (json.JSONDecodeError, ValueError, OSError):
@@ -207,7 +230,10 @@ class BeatThresholds:
 class BeatClassification:
     """The result of classifying one worker's beats."""
 
-    state: str  # LIVE | STALLED | BLOCKED | DEAD | NEVER_STARTED | UNKNOWN
+    # LIVE is reserved for agent beats, which carry a progress_token. A
+    # wrapper beat can only ever reach SHELL_ALIVE: see the module docstring.
+    state: str  # LIVE | SHELL_ALIVE | STALLED | BLOCKED | DEAD |
+    #             NEVER_STARTED | UNKNOWN
     evidence: str  # agent_beat | wrapper_beat | none
     age_s: float  # seconds since last beat (0 if never)
     disposition: str = ""  # from the beat, if any
@@ -287,6 +313,20 @@ def classify(
             evidence=evidence,
             age_s=age,
             note="no beat for %.0fs (above shadow alert threshold)" % age,
+        )
+
+    if evidence != "agent_beat":
+        # A fresh wrapper beat is a fresh TIMER, and a timer cannot be
+        # evidence that work is happening. Returning LIVE here is what let a
+        # wedged worker hold a claim for 6h18m while every dashboard reading
+        # this function called it healthy.
+        return BeatClassification(
+            state="SHELL_ALIVE",
+            evidence=evidence,
+            age_s=age,
+            disposition=best.disposition,
+            note="wrapper beat is a timer in the worker's shell; it proves the "
+            "shell has not exited and nothing about progress",
         )
 
     return BeatClassification(

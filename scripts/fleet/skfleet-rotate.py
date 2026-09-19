@@ -7689,6 +7689,16 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
     # one CardStore fence. The child must never release independently.
     _bi = _beat_interval()
     _bf_path = "~/.skcapstone/fleet/beats/" + name + ".json"
+    # The beat carries "proves" because "disposition":"RUNNING" is a hardcoded
+    # literal, not an observation. This loop is a SIBLING of pi, not a signal
+    # from it, so it keeps beating at full cadence on a worker that is doing
+    # nothing: measured 2026-09-19, card 139ec63d held 6h18m with zero
+    # workspace writes, pi alive at 0.0% CPU, and a beat age that never went
+    # above 39 seconds. Coupling the beat to pi's liveness would not have
+    # helped, because pi was alive the whole time. A timer can only ever prove
+    # that the shell has not exited, so the record now says exactly that and
+    # consumers are expected to read progress from what the worker WRITES
+    # (skcapstone.fleet.worker_watchdog.classify_progress) instead.
     child=(
         "beat() { while :; do "
         "trap 'trap - HUP INT TERM; "
@@ -7698,6 +7708,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         "echo '{\"owner\":\"%s\",\"card_id\":\"%s\",\"claim_revision\":\"%s\","
         "\"session_id\":\"%s\","
         "\"emitter\":\"wrapper\",\"disposition\":\"RUNNING\","
+        "\"proves\":\"shell-liveness\","
         "\"beat_at\":'$(date +%%s)',\"elapsed_s\":'$SECONDS'}' "
         "> %s.tmp 2>/dev/null && mv %s.tmp %s 2>/dev/null || true; "
         "sleep %s & wait $!; done; }; "
