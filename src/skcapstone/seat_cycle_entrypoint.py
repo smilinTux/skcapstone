@@ -18,7 +18,7 @@ import subprocess
 import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -33,6 +33,7 @@ from .link_review_work import load_review_work, reconcile_review_work_batch
 from .mero_census import run_blocker_census
 from .seat_boundaries import BoundaryError, canonical_principal
 from .seat_cycle_guard import CycleResult, SeatCycleGuard
+from .seat_cycle_overlap import RecurringCycleSchedule, seat_cycle_runs_overlap
 from .seat_mail import poll_mail, startup_hello
 
 _SEATS = LIFECYCLE_SEATS
@@ -49,6 +50,10 @@ _SUBPROCESS_RUN = subprocess.run
 _NOOP = re.compile(
     r"^NOOP_RECEIPT\|(?P<host>[^|]+)\|reason=(?P<reason>[^|]+)" r"\|seat=(?P<seat>[^|]+)$"
 )
+_CYCLE_SCHEDULES = {
+    "link": RecurringCycleSchedule("*/5 * * * *", timedelta(minutes=2)),
+    "mero": RecurringCycleSchedule("2-57/5 * * * *", timedelta(minutes=3)),
+}
 
 # A seat asks SKGateway for a SIZE, never for a provider. The gateway resolves
 # sk-s, sk-m, sk-l, or sk-xl to a member that meets the capability floor and the
@@ -206,6 +211,8 @@ def run_cycle(
     local_host: str | None = None,
     dry_run: bool = False,
     operation: Callable[[], dict[str, int]] | None = None,
+    schedules: Mapping[str, RecurringCycleSchedule] = _CYCLE_SCHEDULES,
+    schedule_clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
 ) -> CycleSummary:
     """Run one fenced lifecycle-seat cycle, or record a bounded no-op."""
 
@@ -223,6 +230,24 @@ def run_cycle(
             cycle_id="inactive-host",
             result="inactive_host_refused",
             reason=f"active_host={control['active_host']}",
+        )
+        _append_health(home, summary)
+        return summary
+
+    if seat == "mero" and seat_cycle_runs_overlap(
+        "link",
+        schedules["link"],
+        "mero",
+        schedules["mero"],
+        after=schedule_clock(),
+    ):
+        summary = CycleSummary(
+            seat=seat,
+            host=host,
+            control_revision=revision,
+            cycle_id="schedule-overlap",
+            result="schedule_overlap_deferred",
+            reason="higher_priority_cycle=link",
         )
         _append_health(home, summary)
         return summary

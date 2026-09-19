@@ -7,6 +7,7 @@ import json
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,6 +24,7 @@ from skcapstone.seat_cycle_entrypoint import (
     run_cycle,
     seraph_operation,
 )
+from skcapstone.seat_cycle_overlap import RecurringCycleSchedule
 
 
 @pytest.fixture(autouse=True)
@@ -132,6 +134,66 @@ def test_dry_run_is_fenced_and_bounded(tmp_path: Path) -> None:
     assert result.result == "dry_run"
     assert result.recommendations == 0
     assert called == []
+
+
+def test_overlapping_link_and_mero_schedule_defers_only_mero(tmp_path: Path) -> None:
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    schedules = {
+        "link": RecurringCycleSchedule("5 * * * *", timedelta(minutes=20)),
+        "mero": RecurringCycleSchedule("15 * * * *", timedelta(minutes=10)),
+    }
+    called: list[bool] = []
+
+    result = run_cycle(
+        seat="mero",
+        home=tmp_path / "home",
+        control_plane=control_path,
+        local_host="chiap08",
+        operation=lambda: called.append(True) or {"recommendations": 1},
+        schedules=schedules,
+        schedule_clock=lambda: datetime(2026, 9, 5, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert result.result == "schedule_overlap_deferred"
+    assert result.reason == "higher_priority_cycle=link"
+    assert called == []
+    health = (tmp_path / "home/coordination/seat-cycles/mero.health.jsonl").read_text()
+    assert "schedule_overlap_deferred" in health
+
+    link_result = run_cycle(
+        seat="link",
+        home=tmp_path / "home",
+        control_plane=control_path,
+        local_host="chiap08",
+        operation=lambda: {"recommendations": 1},
+        schedules=schedules,
+        schedule_clock=lambda: datetime(2026, 9, 5, 12, 0, tzinfo=timezone.utc),
+    )
+    assert link_result.result == "complete"
+
+
+def test_nonoverlapping_schedule_emits_no_deferral(tmp_path: Path) -> None:
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    schedules = {
+        "link": RecurringCycleSchedule("5 * * * *", timedelta(minutes=10)),
+        "mero": RecurringCycleSchedule("15 * * * *", timedelta(minutes=10)),
+    }
+
+    result = run_cycle(
+        seat="mero",
+        home=tmp_path / "home",
+        control_plane=control_path,
+        local_host="chiap08",
+        operation=lambda: {"recommendations": 1},
+        schedules=schedules,
+        schedule_clock=lambda: datetime(2026, 9, 5, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert result.result == "complete"
+    health = (tmp_path / "home/coordination/seat-cycles/mero.health.jsonl").read_text()
+    assert "deferred" not in health
 
 
 def test_active_cycle_records_operation_summary(tmp_path: Path) -> None:
