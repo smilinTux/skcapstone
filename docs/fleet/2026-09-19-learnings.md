@@ -512,3 +512,55 @@ the success line reports what was **read back**, not what was passed in.
 | Evidence | a readback through a different process after the write |
 | Detection | **audit the store for empty values on keys that are never legitimately empty; the count should be zero** |
 | Fails closed | an empty value on a semantic key is refused at the CLI, as `BLOCKED` and provisional `PASS` already are |
+
+---
+
+# Shape 3: the change that silently reverts
+
+Contract 6 of the 2026-09-18 document said merged is not running. These are the
+four mechanisms by which a change that *was* running stops, with nothing
+reporting the transition.
+
+---
+
+## 33. A deployed artifact is not the repository
+
+`~/.local/bin/skfleet-rotate.py` and `~/.local/bin/skfleet-worker-wrapper.py`
+are per-host copies. A `git pull` does not touch them, `pip install` does not
+touch them, and `pip show` cannot see them: the wrapper was never in
+`pyproject.toml`'s `script-files`, so it belongs to no package a version check
+covers.
+
+The estate has measured this repeatedly (`scripts/fleet/skfleet_merged_vs_running.py`,
+module docstring): on 2026-09-18 the lane-model-routing fix was merged while all
+five chi hosts kept running the pre-fix `skfleet-rotate.py` (md5 `8c400694`),
+and during that window the gateway served 467 requests from a 5-slot local
+fallback while codex's 32 slots served 6 and zai's 10 served 1. It was found
+only because a separate audit happened to look. Earlier: three different
+`skmail` binaries across five hosts, none matching the repo;
+`skfleet-rotate.timer` active but **not enabled** on all three rotate hosts for
+at least seven weeks, so a reboot on any of them would have stopped fleet
+dispatch estate-wide with nothing reporting it.
+
+Every PR in this session that changed the dispatcher or the worker brief ends
+with the same line, and it is not boilerplate: **merging changes nothing until
+the artifact is copied.** PRs #777, #788 and #790 all ship behaviour that does
+not reach a live worker until a deploy runs.
+
+**Contract.** The unit of deployment is the artifact, and the check compares
+content digests on the host against the merged ref.
+
+| | |
+|---|---|
+| Producer | the merged ref |
+| Consumer | the path each unit actually executes |
+| Recovery owner | Operations |
+| Evidence | per host, per artifact: OK / DRIFT / UNKNOWN by content digest, never a version string |
+| Detection | **SPLIT FLEET is a distinct and worse finding than uniformly-behind** — hosts that disagree with each other disagree about semantics |
+| Fails closed | an unreachable or unmeasurable host is UNKNOWN, never OK |
+
+The tooling for this already exists and is read-only
+(`skcapstone fleet node drift`, `skfleet_merged_vs_running.py`,
+`docs/fleet/rollout-drift.md`). The gap is not the check. The gap is that
+nothing runs it on a timer, so it answers the question only when somebody
+already suspects the answer.
