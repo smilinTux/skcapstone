@@ -1,367 +1,478 @@
-"""Return a card whose recorded blocker has since completed.
+"""Find cards whose exact card blockers now fold to DONE.
 
-A worker that cannot finish a card records why in its verdict:
-
-    BLOCKED. blocked_on=card referent=card:c818148b
-
-That is a real blocking relationship, but it lives as prose inside an evidence
-link rather than as a dependency edge on the card. Nothing on the board watches
-it. When c818148b later completes, the card it was blocking stays blocked, and
-the only thing that can return it is a person noticing.
-
-MEASURED ON THE LIVE BOARD, 2026-08-28. Of the 14 cards most often cited as
-blockers, SEVEN were already DONE. Sweeping every open card whose latest
-outcome was BLOCKED:
-
-    12  every cited blocker had completed
-    41  still genuinely blocked
-     0  citing a referent that does not exist
-
-Those 12 were not waiting on work. They were waiting on someone to look.
-
-WHY A SWEEP AND NOT A ROTATION CHANGE. The rotation decides what to launch and
-runs on every host every cycle; this is a board repair that only needs to run
-occasionally, and it mutates card labels rather than dispatching work. Keeping
-it separate means the rotation stays a scheduler, and this stays auditable on
-its own.
-
-SAFE BY DEFAULT. Reports without mutating unless given --go, because returning
-a card puts it back in front of a worker and that should be a deliberate act.
-
-ON CONCURRENCY, AND WHY THE RACE IS LEFT IN. The once-per-verdict guard reads a
-card's label and then writes it, and those two steps are not atomic across
-hosts: SKCoord provides host-local card locks and writer-local transition IDs,
-not global compare-and-append. Five hosts run this on a timer, so two can both
-observe a card as unlabelled and both label it.
-
-That race is real and is deliberately tolerated, because its consequence is
-bounded to a redundant event. Labels are a set, so a doubly-labelled card is
-labelled once. There is one card, so it returns to the pool once. No verdict is
-rewritten, no approval is discharged, and nothing is cleared: this flags for
-reconciliation and a reader still judges the evidence. The cost of losing the
-race is a duplicate add_label line in a log.
-
-Eliminating it would mean building fleet-wide compare-and-append, a primitive
-nothing else here needs, to prevent a duplicate log entry. If the failure mode
-were a lost verdict or a twice-discharged approval this would be the wrong call
-and the guard would need a real lock.
+The sweep is intentionally strict. Only a latest outcome beginning with
+``BLOCKED`` and containing one exact ``blocked_on=card`` token plus one or
+more distinct ``referent=card:<8 lowercase hex>`` tokens can qualify.
+Everything ambiguous fails closed.
 """
 
 from __future__ import annotations
 
-import glob
+import hashlib
 import json
 import os
 import re
+from contextlib import ExitStack
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
-#: Link keys that carry a card's outcome. Matches the spellings the store
-#: actually uses, the same shape-based test the blocked verdict validator uses.
+from skcoord.card import CardEvent, CardEventLog, Column
+from skcoord.card_store import CardStore, card_mutation_lock
+
+from .coord_amendments import is_voided
+
+LABEL = "blocker-now-done"
+VERDICT_MARKER_KEY = "blocker_return_marker"
+STALE_LABEL = "successor-passed"
+
 _OUTCOME_KEY_RE = re.compile(
     r"(verdict|outcome|result|disposition|review_decision)", re.IGNORECASE
 )
+_BLOCKED_RE = re.compile(r"^\s*BLOCKED\b")
+_BLOCKED_ON_MARKER_RE = re.compile(r"\bblocked_on\b")
+_BLOCKED_ON_TOKEN_RE = re.compile(
+    r"\bblocked_on=(dependency|card|human|capability)(?=$|[\s,.;|}\]])"
+)
+_REFERENT_MARKER_RE = re.compile(r"\breferent\b")
+_REFERENT_TOKEN_RE = re.compile(r"\breferent=card:([0-9a-f]{8})(?=$|[\s,.;|}\]])")
+_CRITERION_RE = re.compile(r"\bac\s*[:=]\s*\d+\b", re.IGNORECASE)
 
-_BLOCKED_RE = re.compile(r"^\s*BLOCKED", re.IGNORECASE)
-
-#: Cheap line-level prefilter so a full JSON parse is only paid for lines that
-#: could carry an outcome at all.
-_OUTCOME_HINT_RE = re.compile(r"verdict|outcome|result|disposition|review_decision", re.IGNORECASE)
-
-#: A cited card, in the shapes workers write: `referent=card:c818148b`,
-#: `referent: c818148b`, `Referent 04b218cd`. The prefix is optional because
-#: both spellings appear on the board.
-_REFERENT_RE = re.compile(r"referent[\"']?\s*[=:]?\s*[\"']?(?:card:)?([0-9a-f]{8})", re.IGNORECASE)
-
-#: Link keys that name the card carrying out a repair or an independent
-#: re-review of THIS card. When one of those passes, the block that named it is
-#: answered, but nothing on the board propagates that back to the parent.
-#:
-#: MEASURED 2026-08-28. Twelve cards read BLOCKED whose own named successor had
-#: already PASSED, most within fifteen minutes of the block:
-#:
-#:     72d9bfe5  blocked 07:12  independent_rereview 01cf9986 PASS 07:17
-#:     8e33f3c3  blocked 07:53  rereview_card        473f24af PASS 08:04
-#:     2ead9e49  blocked 09:48  successor_engineering f4d669ea PASS 09:58
-#:
-#: The fixes landed almost immediately. The verdicts were never updated, so the
-#: board carried days of walls that no longer existed.
+#: Link keys naming the card that repairs or independently re-reviews THIS card.
+#: When one passes, the block that named it is answered, but nothing on the
+#: board propagates that back, so the parent keeps reading BLOCKED.
 _SUCCESSOR_KEY_RE = re.compile(
     r"(repair_card|repair|rereview|re_review|reviewed_by|successor)", re.IGNORECASE
 )
 
-#: Evidence lives in the coordination store under link_key/link_value. The
-#: bare key/value spelling is a legacy layout still present in older files.
-_KEY_FIELDS = ("link_key", "key")
-_VALUE_FIELDS = ("link_value", "value")
+#: A verdict declaring work only READY for review. Not a pass, and it must never
+#: discharge a block: 6dd21df9 recorded PASS_FOR_INDEPENDENT_REVIEW and its own
+#: review, 335c91c6, then BLOCKED. Treating the first as a pass would have
+#: cleared ae993252, the card gating two production approval gates.
+_PROVISIONAL_PASS_RE = re.compile(r"^PASS[_-](FOR|READY)", re.IGNORECASE)
+
+#: Separators that terminate the leading token of a verdict. A PASS routinely
+#: explains what it supersedes and so contains BLOCKED in prose; substring
+#: matching reports real passes as refusals.
+_HEAD_SEPARATORS = ("|", ";", ":", ",", ".")
 
 
-def _first(event: dict, fields: tuple[str, ...]) -> str:
-    for f in fields:
-        v = event.get(f)
-        if v:
-            return str(v)
-    return ""
+@dataclass(frozen=True)
+class Verdict:
+    """One latest outcome with a stable source identity."""
+
+    card_id: str
+    ts: str
+    writer: str
+    seq: int
+    occurrence: int
+    action: str
+    key: str
+    value: str
+
+    @property
+    def identity(self) -> str:
+        """Return a non-secret digest identifying these exact verdict bytes."""
+        raw = json.dumps(
+            [
+                self.card_id,
+                self.ts,
+                self.writer,
+                self.seq,
+                self.occurrence,
+                self.action,
+                self.key,
+                self.value,
+            ],
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def is_blocked_outcome(key: str, value: str) -> bool:
-    """True when this link records an outcome that declares the card BLOCKED."""
-    return bool(_OUTCOME_KEY_RE.search(str(key or ""))) and bool(
-        _BLOCKED_RE.match(str(value or ""))
-    )
+@dataclass(frozen=True)
+class Candidate:
+    """A target card and the exact verdict that made it returnable."""
+
+    card_id: str
+    verdict: Verdict
+    referents: tuple[str, ...]
 
 
-def cited_referents(value: str) -> list[str]:
-    """Card ids named as the blocker by a BLOCKED verdict, lowercased."""
-    return [m.group(1).lower() for m in _REFERENT_RE.finditer(str(value or ""))]
+@dataclass
+class SweepReport:
+    """Read-only classification of latest card outcomes."""
+
+    candidates: list[Candidate] = field(default_factory=list)
+    held: dict[str, str] = field(default_factory=dict)
 
 
-def _latest_blocked(home: Path) -> dict[str, tuple[str, str]]:
-    """Map card id to its most recent BLOCKED verdict text.
+@dataclass(frozen=True)
+class StaleBlock:
+    """A block contradicted by a later pass on the card it named."""
 
-    A card that was blocked and later passed must not appear here, so this
-    tracks the latest outcome of ANY kind and keeps it only if that latest one
-    is a refusal.
-    """
-    latest: dict[str, tuple[str, str]] = {}
-    events = home / "coordination" / "card_events"
-    for path in sorted(glob.glob(str(events / "*.jsonl"))):
-        with open(path, errors="ignore") as fh:
-            for line in fh:
-                # Cheap prefilter. It must admit PASS verdicts too: a card
-                # blocked in June and passed in August is not blocked, and
-                # filtering on the word BLOCKED would hide the PASS that
-                # supersedes it.
-                if not _OUTCOME_HINT_RE.search(line):
-                    continue
+    card_id: str
+    verdict: Verdict
+    link: str
+    successor: str
+    passed_at: str
+
+
+@dataclass(frozen=True)
+class ApplyReceipt:
+    """Per-card result retained for audit and failure reporting."""
+
+    card_id: str
+    verdict_id: str
+    state: str
+    detail: str
+    returncode: int = 0
+
+
+def _ordered_events(home: Path) -> list[CardEvent]:
+    """Read overlay events in canonical order with legacy link aliases."""
+    log = CardEventLog(home)
+    events: list[CardEvent] = []
+    directory_fd = log._open_existing_event_directory()
+    if directory_fd is None:
+        return events
+    try:
+        for name in sorted(os.listdir(directory_fd)):
+            if not name.endswith(".jsonl"):
+                continue
+            raw = log._read_regular_file_bytes(directory_fd, name)
+            if raw is None:
+                continue
+            for line in raw.decode("utf-8").splitlines():
                 try:
-                    event = json.loads(line)
-                except ValueError:
+                    row = json.loads(line)
+                    if not isinstance(row, dict):
+                        continue
+                    if not row.get("link_key"):
+                        row["link_key"] = row.get("key")
+                    if not row.get("link_value"):
+                        row["link_value"] = row.get("value")
+                    events.append(CardEvent.model_validate(row))
+                except Exception:  # noqa: BLE001 - match CardEventLog compatibility
                     continue
-                key = _first(event, _KEY_FIELDS)
-                if not _OUTCOME_KEY_RE.search(key):
-                    continue
-                card_id = event.get("card_id")
-                if not card_id:
-                    continue
-                stamp = str(event.get("ts") or "")
-                value = _first(event, _VALUE_FIELDS)
-                prev = latest.get(str(card_id))
-                if prev is None or stamp >= prev[0]:
-                    latest[str(card_id)] = (stamp, value)
-    return {
-        cid: (stamp, value)
-        for cid, (stamp, value) in latest.items()
-        if _BLOCKED_RE.match(value or "")
-    }
+    finally:
+        os.close(directory_fd)
+    return sorted(events, key=lambda e: (e.ts, e.writer, e.seq))
 
 
-def latest_blocked_verdicts(home: Path) -> dict[str, str]:
-    """Map card id to its most recent BLOCKED verdict text."""
-    return {cid: value for cid, (_stamp, value) in _latest_blocked(home).items()}
+def _latest_outcomes(home: Path) -> dict[str, Verdict]:
+    """Return the latest outcome event for each card."""
+    latest: dict[str, Verdict] = {}
+    occurrences: dict[tuple[str, str, str, int, str, str, str], int] = {}
+    for event in _ordered_events(home):
+        key = str(event.link_key or "")
+        if event.action != "link" or not _OUTCOME_KEY_RE.search(key):
+            continue
+        value = str(event.link_value or "")
+        event_key = (
+            event.card_id,
+            event.ts,
+            event.writer,
+            event.seq,
+            event.action,
+            key,
+            value,
+        )
+        occurrence = occurrences.get(event_key, 0) + 1
+        occurrences[event_key] = occurrence
+        latest[event.card_id] = Verdict(
+            card_id=event.card_id,
+            ts=event.ts,
+            writer=event.writer,
+            seq=event.seq,
+            occurrence=occurrence,
+            action=event.action,
+            key=key,
+            value=value,
+        )
+    return latest
 
 
-def last_labelled(home: Path, label: str) -> dict[str, str]:
-    """Map card id to the last time `label` was applied to it.
+def exact_card_referents(value: str) -> tuple[tuple[str, ...], str | None]:
+    """Parse the only verdict shape safe enough for automatic return."""
+    text = str(value or "")
+    if not _BLOCKED_RE.match(text):
+        return (), "latest outcome is not exact BLOCKED"
 
-    Labels are written to the coordination evidence store as add_label events,
-    not to the card's own event log, which is the same two-store split that has
-    caught this codebase before.
-    """
-    seen: dict[str, str] = {}
-    events = home / "coordination" / "card_events"
-    for path in sorted(glob.glob(str(events / "*.jsonl"))):
-        with open(path, errors="ignore") as fh:
-            for line in fh:
-                if label not in line:
-                    continue
-                try:
-                    event = json.loads(line)
-                except ValueError:
-                    continue
-                if event.get("action") != "add_label" or event.get("label") != label:
-                    continue
-                card_id = str(event.get("card_id") or "")
-                stamp = str(event.get("ts") or "")
-                if card_id and stamp > seen.get(card_id, ""):
-                    seen[card_id] = stamp
-    return seen
+    categories = list(_BLOCKED_ON_TOKEN_RE.finditer(text))
+    if len(categories) != 1 or categories[0].group(1) != "card":
+        return (), "blocked_on must contain exactly one card category"
+    if len(_BLOCKED_ON_MARKER_RE.findall(text)) != 1:
+        return (), "blocked_on contains malformed or duplicate markers"
+    if _CRITERION_RE.search(text):
+        return (), "acceptance-criterion referents are not cards"
+
+    matches = list(_REFERENT_TOKEN_RE.finditer(text))
+    if not matches:
+        return (), "no exact lowercase card referent"
+    if len(_REFERENT_MARKER_RE.findall(text)) != len(matches):
+        return (), "referent contains bare, malformed, or overlong tokens"
+    referents = tuple(match.group(1) for match in matches)
+    if len(set(referents)) != len(referents):
+        return (), "duplicate card referents are ambiguous"
+    return referents, None
+
+
+def _is_superseded(labels: list[str]) -> bool:
+    """Return whether folded labels mark a card as superseded."""
+    lowered = {label.lower() for label in labels}
+    return "superseded" in lowered or any(label.startswith("superseded-") for label in lowered)
+
+
+def _card_state(home: Path, store: CardStore, card_id: str) -> str:
+    """Classify one card through its current canonical fold."""
+    try:
+        card = store.fold(card_id)
+        if card is None:
+            return "missing"
+        if is_voided(home, card_id):
+            return "voided"
+        if _is_superseded(card.labels):
+            return "superseded"
+        if card.archived:
+            return "archived"
+        if card.status != Column.DONE:
+            return "not-DONE"
+        return "DONE"
+    except (OSError, RuntimeError, ValueError):
+        return "unreadable"
+
+
+def _returned_verdicts(home: Path, label: str) -> dict[str, set[str]]:
+    """Return exact verdict identities already labelled successfully."""
+    returned: dict[str, set[str]] = {}
+    for event in _ordered_events(home):
+        if (
+            event.action == "add_label"
+            and event.label == label
+            and event.link_key == VERDICT_MARKER_KEY
+            and event.link_value
+        ):
+            returned.setdefault(event.card_id, set()).add(event.link_value)
+    return returned
 
 
 def find_returnable(
-    home: Path, is_done, is_open, label: str = "blocker-now-done"
-) -> tuple[list[str], int, int]:
-    """Cards whose every cited blocker has completed.
+    home: Path, *, label: str = LABEL, card_ids: set[str] | None = None
+) -> SweepReport:
+    """Classify latest blocked verdicts without mutating the board."""
+    home = Path(home).expanduser()
+    store = CardStore(home)
+    returned = _returned_verdicts(home, label)
+    report = SweepReport()
 
-    Args:
-        home: The .skcapstone root.
-        is_done: Callable taking an 8-hex prefix, returning True if that card is
-            DONE, False if not, and None if no such card exists.
-        is_open: Callable taking a card id, returning True if it is still open.
-        label: The return label. A card already carrying it from AFTER its
-            current verdict has been returned for that verdict and is skipped,
-            so the sweep is safe to run on a timer. A NEW refusal recorded
-            after the label makes the card eligible again.
-
-    Returns:
-        (returnable card ids, count still blocked, count citing a missing card)
-    """
-    returnable: list[str] = []
-    still_blocked = 0
-    missing = 0
-    labelled_at = last_labelled(home, label)
-    for card_id, (stamp, verdict) in _latest_blocked(home).items():
-        if not is_open(card_id):
+    for card_id, verdict in sorted(_latest_outcomes(home).items()):
+        if card_ids is not None and card_id not in card_ids:
             continue
-        # Already returned for THIS refusal. Labelling does not erase the
-        # verdict, so without this the same cards return on every run and
-        # their backoff resets forever.
-        if labelled_at.get(card_id, "") >= stamp and labelled_at.get(card_id):
+        if not _BLOCKED_RE.match(verdict.value):
             continue
-        referents = cited_referents(verdict)
-        if not referents:
+        target_state = _card_state(home, store, card_id)
+        if target_state == "DONE" or target_state in {
+            "missing",
+            "voided",
+            "superseded",
+            "archived",
+            "unreadable",
+        }:
+            report.held[card_id] = f"target-{target_state}"
             continue
-        states = [is_done(r) for r in referents]
-        if any(s is None for s in states):
-            missing += 1
-        elif all(states):
-            returnable.append(card_id)
-        else:
-            still_blocked += 1
-    return sorted(returnable), still_blocked, missing
+        if verdict.identity in returned.get(card_id, set()):
+            report.held[card_id] = "already-returned-for-verdict"
+            continue
+        referents, error = exact_card_referents(verdict.value)
+        if error:
+            report.held[card_id] = error
+            continue
+        states = [(referent, _card_state(home, store, referent)) for referent in referents]
+        failures = [f"{referent}:{state}" for referent, state in states if state != "DONE"]
+        if failures:
+            report.held[card_id] = "referent-not-DONE " + ",".join(failures)
+            continue
+        report.candidates.append(Candidate(card_id, verdict, referents))
+
+    return report
 
 
-def _verdict_head(value: str) -> str:
-    """The leading token of a verdict, uppercased.
-
-    A PASS routinely explains what it supersedes, so it contains the word
-    BLOCKED in prose. Substring matching reads those as refusals; only the
-    leading token is the verdict.
-    """
+def verdict_head(value: str) -> str:
+    """The leading token of a verdict, uppercased."""
     head = str(value or "").strip()
-    for sep in ("|", ";", ":", ",", "."):
-        head = head.split(sep)[0]
-    return head.strip().split()[0].upper() if head.strip() else ""
-
-
-#: A verdict that only declares work READY for review. It is not a pass and
-#: must never discharge a block: 6dd21df9 records PASS_FOR_INDEPENDENT_REVIEW
-#: and its own independent review, 335c91c6, then blocked. Treating the first
-#: as a pass would have reported ae993252's block as stale while the review it
-#: was waiting on had actually failed.
-_PROVISIONAL_PASS_RE = re.compile(r"^PASS[_-](FOR|READY)", re.IGNORECASE)
+    for separator in _HEAD_SEPARATORS:
+        head = head.split(separator)[0]
+    head = head.strip()
+    return head.split()[0].upper() if head else ""
 
 
 def is_discharging_pass(value: str) -> bool:
-    """True only for a completed PASS, not one awaiting its own review."""
-    head = _verdict_head(value)
+    """True only for a completed PASS, never one still awaiting its own review."""
+    head = verdict_head(value)
     if not head.startswith("PASS"):
         return False
     return not _PROVISIONAL_PASS_RE.match(head)
 
 
-def latest_outcomes(home: Path) -> dict[str, tuple[str, str]]:
-    """Every card's most recent outcome, as {card_id: (timestamp, value)}."""
-    latest: dict[str, tuple[str, str]] = {}
-    events = home / "coordination" / "card_events"
-    for path in sorted(glob.glob(str(events / "*.jsonl"))):
-        if ".bak" in path:
+def _successor_links(home: Path) -> dict[str, list[tuple[str, str]]]:
+    """Cards each card names as its repair or re-review: {card: [(key, target)]}."""
+    links: dict[str, list[tuple[str, str]]] = {}
+    for event in _ordered_events(home):
+        if event.action != "link":
             continue
-        with open(path, errors="ignore") as fh:
-            for line in fh:
-                if not _OUTCOME_HINT_RE.search(line):
-                    continue
-                try:
-                    event = json.loads(line)
-                except ValueError:
-                    continue
-                if not _OUTCOME_KEY_RE.search(_first(event, _KEY_FIELDS)):
-                    continue
-                card_id = str(event.get("card_id") or "")[:8]
-                value = _first(event, _VALUE_FIELDS)
-                if not card_id or not value:
-                    continue
-                stamp = str(event.get("ts") or "")
-                if card_id not in latest or stamp >= latest[card_id][0]:
-                    latest[card_id] = (stamp, value)
-    return latest
-
-
-def successor_links(home: Path) -> dict[str, list[tuple[str, str]]]:
-    """Cards each card names as its repair or re-review, as {card: [(key, target)]}."""
-    out: dict[str, list[tuple[str, str]]] = {}
-    events = home / "coordination" / "card_events"
-    for path in sorted(glob.glob(str(events / "*.jsonl"))):
-        if ".bak" in path:
+        key = str(event.link_key or "")
+        if not _SUCCESSOR_KEY_RE.search(key):
             continue
-        with open(path, errors="ignore") as fh:
-            for line in fh:
-                if "link" not in line:
-                    continue
-                try:
-                    event = json.loads(line)
-                except ValueError:
-                    continue
-                key = _first(event, _KEY_FIELDS)
-                if not _SUCCESSOR_KEY_RE.search(key):
-                    continue
-                card_id = str(event.get("card_id") or "")[:8]
-                target = _first(event, _VALUE_FIELDS).strip()[:8]
-                if card_id and len(target) == 8 and target != card_id:
-                    out.setdefault(card_id, []).append((key, target))
-    return out
+        target = str(event.link_value or "").strip()[:8]
+        if event.card_id and len(target) == 8 and target != event.card_id:
+            links.setdefault(event.card_id, []).append((key, target))
+    return links
 
 
-def find_stale_blocks(home: Path, is_open=None, label: str = "successor-passed") -> list[dict]:
+def find_stale_blocks(home: Path, *, label: str = STALE_LABEL) -> list[StaleBlock]:
     """Cards reading BLOCKED whose own named successor has since PASSED.
 
-    The successor's PASS must come AFTER the block. A successor that passed
-    earlier answered some previous refusal, not this one, and treating it as
-    current would clear a live block on stale evidence.
+    The successor's PASS must come AFTER the block. An earlier pass answered
+    some previous refusal, and clearing a live block on it would be wrong.
 
-    Deliberately does NOT skip closed cards, which is the difference between
-    this and find_returnable. A stale verdict does its damage through whoever
-    READS it, not through the card's own column. 2c35d28b folded to DONE and
-    still held four approval gates shut for five days, because the gates read
-    its verdict and saw BLOCKED. Filtering to open cards would have hidden the
-    single worst instance on the board. is_open is accepted only so a caller
-    can narrow the scan, and is ignored by default.
+    Deliberately does NOT skip closed cards, which is where this differs from
+    find_returnable. A stale verdict does its damage through whoever READS it,
+    not through the card's own column: 2c35d28b folded to DONE and still held
+    four approval gates shut for five days, because the gates read its verdict
+    and saw BLOCKED. Filtering closed cards would hide the worst instance.
+
+    MEASURED 2026-08-28. Thirteen cards were in this state, most repaired within
+    fifteen minutes of the block that named the repair.
     """
-    outcomes = latest_outcomes(home)
-    links = successor_links(home)
-    labelled_at = last_labelled(home, label)
-    stale: list[dict] = []
-    for card_id, (stamp, verdict) in outcomes.items():
-        if not _verdict_head(verdict).startswith("BLOCK"):
+    home = Path(home).expanduser()
+    outcomes = _latest_outcomes(home)
+    links = _successor_links(home)
+    already = _returned_verdicts(home, label)
+    stale: list[StaleBlock] = []
+    for card_id, verdict in sorted(outcomes.items()):
+        if not _BLOCKED_RE.match(verdict.value):
             continue
-        if is_open is not None and not is_open(card_id):
-            continue
-        if labelled_at.get(card_id, "") >= stamp and labelled_at.get(card_id):
+        if verdict.identity in already.get(card_id, set()):
             continue
         for key, target in links.get(card_id, []):
             hit = outcomes.get(target)
-            if not hit:
+            if hit is None or not is_discharging_pass(hit.value):
                 continue
-            t_stamp, t_verdict = hit
-            if is_discharging_pass(t_verdict) and t_stamp > stamp:
-                stale.append(
-                    {
-                        "card": card_id,
-                        "blocked_at": stamp,
-                        "link": key,
-                        "successor": target,
-                        "passed_at": t_stamp,
-                    }
+            if hit.ts <= verdict.ts:
+                continue
+            stale.append(StaleBlock(card_id, verdict, key, target, hit.ts))
+            break
+    return stale
+
+
+def _append_label(home: Path, candidate: Candidate, label: str, agent: str) -> None:
+    """Append the fixed label and exact verdict marker as one durable event."""
+    CardEventLog(home).append(
+        CardEvent(
+            card_id=candidate.card_id,
+            action="add_label",
+            label=label,
+            writer=agent,
+            link_key=VERDICT_MARKER_KEY,
+            link_value=candidate.verdict.identity,
+        )
+    )
+
+
+def apply_candidate(
+    home: Path,
+    candidate: Candidate,
+    *,
+    agent: str,
+    label: str = LABEL,
+    writer: Callable[[Path, Candidate, str, str], None] | None = None,
+) -> ApplyReceipt:
+    """Label one candidate once while holding the supported host-local lock.
+
+    Two hosts can still append the same marker concurrently because SKCoord has
+    no fleet-wide compare-and-append. That race is bounded to a duplicate event:
+    labels fold as a set, the card returns once, and no verdict or approval is
+    discharged. This sweep only flags work for later reconciliation.
+    """
+    home = Path(home).expanduser()
+    writer = writer or _append_label
+    try:
+        with ExitStack() as locks:
+            for card_id in sorted({candidate.card_id, *candidate.referents}):
+                locks.enter_context(card_mutation_lock(home, card_id))
+            current = find_returnable(home, label=label, card_ids={candidate.card_id})
+            fresh = next(
+                (
+                    item
+                    for item in current.candidates
+                    if item.card_id == candidate.card_id
+                    and item.verdict.identity == candidate.verdict.identity
+                ),
+                None,
+            )
+            if fresh is None:
+                reason = current.held.get(candidate.card_id, "verdict changed")
+                return ApplyReceipt(
+                    candidate.card_id,
+                    candidate.verdict.identity,
+                    "skipped",
+                    reason,
                 )
-                break
-    return sorted(stale, key=lambda r: r["card"])
+
+            try:
+                writer(home, candidate, label, agent)
+            except Exception as exc:  # noqa: BLE001 - preserve every writer failure
+                if candidate.verdict.identity in _returned_verdicts(home, label).get(
+                    candidate.card_id, set()
+                ):
+                    return ApplyReceipt(
+                        candidate.card_id,
+                        candidate.verdict.identity,
+                        "labelled",
+                        f"durable label observed after writer error: {exc}",
+                    )
+                return ApplyReceipt(
+                    candidate.card_id,
+                    candidate.verdict.identity,
+                    "failed",
+                    str(exc) or "label writer failed without detail",
+                    1,
+                )
+            after = find_returnable(home, label=label, card_ids={candidate.card_id})
+            if after.held.get(candidate.card_id) != "already-returned-for-verdict":
+                return ApplyReceipt(
+                    candidate.card_id,
+                    candidate.verdict.identity,
+                    "failed",
+                    "label writer returned success but no durable marker was observed",
+                    1,
+                )
+            return ApplyReceipt(
+                candidate.card_id,
+                candidate.verdict.identity,
+                "labelled",
+                "durable label and exact verdict marker observed",
+            )
+    except Exception as exc:  # noqa: BLE001 - one card must not hide later results
+        return ApplyReceipt(
+            candidate.card_id,
+            candidate.verdict.identity,
+            "failed",
+            str(exc),
+            1,
+        )
 
 
-def card_dir_lookup(home: Path):
-    """Resolve an 8-hex prefix to a card directory name, or None."""
-    cards = home / "cards"
-
-    def lookup(prefix: str):
-        matches = [os.path.basename(p) for p in glob.glob(str(cards / (prefix + "*")))]
-        return matches[0] if matches else None
-
-    return lookup
+def apply_candidates(
+    home: Path,
+    candidates: list[Candidate],
+    *,
+    agent: str,
+    label: str = LABEL,
+    writer: Callable[[Path, Candidate, str, str], None] | None = None,
+) -> list[ApplyReceipt]:
+    """Apply every candidate and retain every per-card result."""
+    return [
+        apply_candidate(home, item, agent=agent, label=label, writer=writer) for item in candidates
+    ]
