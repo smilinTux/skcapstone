@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from skcapstone.fleet import gateway_failure
+
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 
@@ -44,6 +46,11 @@ def _namespace() -> dict[str, object]:
         "os": os,
         "re": re,
         "time": time,
+        # The launcher classifies through the shared table the worker wrapper
+        # uses, so the extracted namespace must carry it too.
+        "GATEWAY_ERROR_RE": gateway_failure.GATEWAY_ERROR_RE,
+        "TRANSPORT_FAILURE_CLASSES": gateway_failure.TRANSPORT_FAILURE_CLASSES,
+        "classify_gateway_failure": gateway_failure.classify_gateway_failure,
     }
     exec(compile(ast.Module(nodes, type_ignores=[]), str(ROTATE), "exec"), namespace)
     assert FUNCTIONS <= namespace.keys()
