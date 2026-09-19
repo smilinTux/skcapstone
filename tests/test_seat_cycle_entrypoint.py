@@ -920,8 +920,6 @@ def test_unit_templates_preserve_limits_and_disabled_install_contract() -> None:
     mero_timer = (root / "systemd/skfleet-mero.timer").read_text()
     seraph = (root / "systemd/skfleet-seraph.service").read_text()
     seraph_timer = (root / "systemd/skfleet-seraph.timer").read_text()
-    tank = (root / "systemd/skfleet-tank.service").read_text()
-    tank_timer = (root / "systemd/skfleet-tank.timer").read_text()
     atlas = (root / "systemd/skfleet-atlas.service").read_text()
     atlas_timer = (root / "systemd/skfleet-atlas.timer").read_text()
     niobe = (root / "systemd/skfleet-niobe-live.service").read_text()
@@ -950,21 +948,20 @@ def test_unit_templates_preserve_limits_and_disabled_install_contract() -> None:
     assert "Environment=SKFLEET_GLM_TARGET=0" in niobe
     assert "Environment=SKFLEET_KIMI_TARGET=0" in niobe
     assert "skfleet-seraph.service" in seraph_timer
-    assert "--seat tank" in tank and "TimeoutStartSec=300" in tank
-    assert "SKFLEET_TANK_BATCH_SIZE=2" in tank
-    assert "ProtectHome=read-only" in tank
-    assert "ReadWritePaths=%h/.skcapstone/evidence %h/.skcapstone/fleet" in tank
-    assert "OnUnitActiveSec=5min" in tank_timer
     assert "--seat atlas" in atlas and "TimeoutStartSec=300" in atlas
     assert "SKFLEET_ATLAS_BATCH_SIZE=2" in atlas
     assert "ProtectHome=read-only" in atlas
     assert "ReadWritePaths=%h/.skcapstone/evidence %h/.skcapstone/fleet" in atlas
     assert "bounded postcondition verifier" in atlas
     assert "OnUnitActiveSec=5min" in atlas_timer
-    for seat in ("tank", "atlas"):
+    for seat in ("atlas",):
         assert (root / "systemd" / f"skfleet-{seat}.service").read_bytes() == (
             root / "src" / "skcapstone" / "data" / "systemd" / f"skfleet-{seat}.service"
         ).read_bytes()
+    assert not (root / "systemd/skfleet-tank.service").exists()
+    assert not (root / "systemd/skfleet-tank.timer").exists()
+    assert not (root / "src/skcapstone/data/systemd/skfleet-tank.service").exists()
+    assert not (root / "src/skcapstone/data/systemd/skfleet-tank.timer").exists()
 
 
 def test_installer_reuses_configured_niobe_gateway_route_for_seraph() -> None:
@@ -975,10 +972,10 @@ def test_installer_reuses_configured_niobe_gateway_route_for_seraph() -> None:
     assert 'cp "$_NIOBE_GATEWAY_DROPIN" "$_SERAPH_GATEWAY_DROPIN"' in installer
 
 
-def test_tank_and_atlas_presence_cycles_do_not_run_link_work(tmp_path: Path) -> None:
+def test_atlas_presence_cycles_do_not_run_link_work(tmp_path: Path) -> None:
     control_path = tmp_path / "control.json"
     control(control_path)
-    for seat in ("tank", "atlas"):
+    for seat in ("atlas",):
         result = run_cycle(
             seat=seat,
             home=tmp_path / "home",
@@ -995,7 +992,7 @@ def test_tank_and_atlas_presence_cycles_do_not_run_link_work(tmp_path: Path) -> 
         assert result.cards_examined == 0
 
 
-@pytest.mark.parametrize("seat", ["tank", "atlas"])
+@pytest.mark.parametrize("seat", ["atlas"])
 def test_role_dispatch_is_bounded_and_seat_scoped(tmp_path, monkeypatch, seat) -> None:
     captured = {}
     card_id = "a8100007"
@@ -1049,7 +1046,7 @@ def test_role_dispatch_is_bounded_and_seat_scoped(tmp_path, monkeypatch, seat) -
     ]
 
 
-@pytest.mark.parametrize("seat", ["tank", "atlas"])
+@pytest.mark.parametrize("seat", ["atlas"])
 def test_role_dispatch_rotation_overlap_is_truthful_noop(tmp_path, monkeypatch, seat) -> None:
     monkeypatch.setattr(
         "skcapstone.seat_cycle_entrypoint.subprocess.run",
@@ -1065,14 +1062,20 @@ def test_role_dispatch_rotation_overlap_is_truthful_noop(tmp_path, monkeypatch, 
     assert result["suppressed"] == 0
 
 
-@pytest.mark.parametrize("seat", ["tank", "atlas"])
+@pytest.mark.parametrize("seat", ["atlas"])
 @pytest.mark.parametrize("batch", ["0", "-1", "9", "invalid"])
 def test_role_dispatch_rejects_invalid_batch(tmp_path, monkeypatch, seat, batch) -> None:
     monkeypatch.setenv(f"SKFLEET_{seat.upper()}_BATCH_SIZE", batch)
     assert role_dispatch_operation(tmp_path, seat)["reason"] == f"{seat}_batch_size_invalid"
 
 
-@pytest.mark.parametrize("seat", ["tank", "atlas"])
+def test_role_dispatch_rejects_the_retired_tank_seat_name(tmp_path) -> None:
+    """Tank folded into atlas; the batch dispatcher must not still accept it."""
+
+    assert role_dispatch_operation(tmp_path, "tank")["reason"] == "tank_batch_size_invalid"
+
+
+@pytest.mark.parametrize("seat", ["atlas"])
 def test_role_dispatch_rejects_missing_wheel_owned_dispatcher(tmp_path, monkeypatch, seat) -> None:
     bindir = tmp_path / "venv" / "bin"
     bindir.mkdir(parents=True)

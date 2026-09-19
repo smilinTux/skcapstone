@@ -7,6 +7,111 @@ This is the shortest safe path to full role-specific capacity. Routine work is
 automatic and notify-only. Casey is interrupted only when a governing catalog
 or policy requires a human decision.
 
+**Seats remain host-pinned.** A 2026-09-16 proposal to let any host in the
+estate run any seat did not land: the CardStore claim fence it would have
+relied on cannot exclude a concurrent second host, since each host holds a
+separate local copy of `~/.skcapstone` replicated asynchronously by
+Syncthing. See [Amendment B](../superpowers/specs/2026-09-17-seat-exclusion-amendment.md)
+for the measured cause and the options for a future fix. Niobe keeps a
+minimal timer presence on at least two hosts as supervisor of last resort,
+because dispatch cannot bootstrap through the thing it dispatches; see
+[seat-charters.md](./seat-charters.md#cold-start-constraint).
+
+**ATLAS cannot perform a governed release or install today.** The tank fold
+(2026-09-17) moved the duty into ATLAS's charter but not the authority: no
+seat holds `DEPLOY`, the artifact-digest gate is still on the retired tank
+branch of the dispatch-layer metadata check, and ATLAS's own rail brief
+forbids deploying. See [seat-charters.md, ATLAS release and install duty:
+inoperable pending
+B3](./seat-charters.md#atlas-release-and-install-duty-inoperable-pending-b3)
+before dispatching or approving any release work through this runbook. Do
+not route a routine release through the Casey-directed emergency gateway as
+a workaround; it is unbounded and has no digest fence, so that path is
+strictly worse than waiting for B3.
+
+## Rollout ordering constraints
+
+Read this before running anything below on more than one host. Both
+constraints are measured against the current code, not theoretical.
+
+**1. Upgrade every host before converging.** Old code running against new
+synced data is an availability cliff, not a graceful degrade. `_SEATS` in
+`skcapstone.seat_cycle_entrypoint` is bound to `LIFECYCLE_SEATS` at import
+time. On a host still running the pre-fold six-seat code, `LIFECYCLE_SEATS`
+still contains `tank`. If a five-seat control plane record (written by an
+upgraded host's convergence) reaches that host through Syncthing,
+`load_control_plane` compares the synced record's seat set against the
+local, stale `LIFECYCLE_SEATS` and raises, because five does not equal six.
+That raise happens once, before any individual seat is processed, so it
+fails closed for **all five seats on that host**, not just the missing one.
+This fails safe rather than dispatching under a mismatched roster, but if
+the un-upgraded host happens to be the currently elected `active_host`, the
+result is the whole seat layer stopping on that host until the code
+upgrade lands. Upgrade code on every host in the rotation before running
+convergence anywhere.
+
+**2. Converge only on the elected host.** `converge_lifecycle_seats` derives
+`active_host` from the local machine (`local_host(active_host)` with no
+argument) and writes it into the synced `seat-control-plane.json`, which
+every host reads. Running convergence on a host that is not the current
+election overwrites that synced record to name the wrong host. During the
+Syncthing propagation window this can produce two hosts each reading a
+control-plane record that names itself as `active_host`, and both then
+consider themselves authorized to dispatch.
+
+This is now enforced in code as well as by discipline. `converge_lifecycle_seats`
+refuses when an existing synced record elects a different host, naming both:
+
+```
+refusing to converge: the synced control plane elects 'chiap08',
+but this convergence would write 'noroc2027'.
+```
+
+Keep the operator discipline anyway. The refusal protects a host that can read
+the synced record, and Syncthing is asynchronous, so a host that has not yet
+received the current record cannot be protected by it.
+
+**3. Install the package before copying the dispatcher script.** These are two
+separate deployment steps and the order is load bearing. `skfleet-rotate.py` is
+installed per host at `~/.local/bin/skfleet-rotate.py`, while `skcapstone`
+itself is installed into `~/.skenv`. The dispatcher imports from the package
+(`from skcapstone.coord_completion import GATED_EXIT_CODE`), so copying a newer
+script onto a host whose package is older fails at import and takes that host's
+dispatcher down entirely:
+
+```
+ImportError: cannot import name 'GATED_EXIT_CODE' from 'skcapstone.coord_completion'
+```
+
+Installing the package first is always safe, because an older script does not
+reference symbols added later. So: package, then script, then converge. This
+mirrors the skcoord rule, where skcoord must ship and install before the
+skcapstone code that calls its new parameters.
+
+**This exact ordering is what `skcapstone fleet rollout` now automates, one
+node at a time, halting at the first node that fails rather than continuing
+past it.** It is still human-invoked (dry run by default, `--apply` required
+to execute), and it still runs constraint 4 below as its own gate after each
+node; it does not remove the need to know these four constraints, it removes
+the need to remember and re-apply them by hand across several hosts. See
+[rollout-drift.md, section
+4](rollout-drift.md#4-staged-rollout-and-rollback-nimble-factory-plan-b3-phase-2)
+for the command reference, including `skcapstone fleet rollback` for
+returning a node to whatever it ran before.
+
+**4. Verify what actually landed, on each host, after the steps above.**
+A version string cannot prove any of the three constraints above were
+actually followed; only content and live state can. Run
+`skcapstone fleet node drift` on each host after upgrading: `changed` catches
+a package or unit file that did not update, `git_sha` catches a host still
+on the old commit, and `enablement_mismatch` catches a unit whose file is
+correct but whose enabled state is not, the exact shape of the seven-week
+`skfleet-rotate.timer` incident that motivated this check. See
+[rollout-drift.md](rollout-drift.md) for the full command reference and how
+to read its output. `skcapstone fleet rollout` runs this same check as its
+per-node gate; `node drift` itself remains report-only and does not stage,
+deploy, or roll anything back on its own.
+
 ## 0. Local preflight
 
 Run on chiap08 from the SKCapstone workspace:
@@ -100,11 +205,7 @@ scope, the five fleet actions only, explicit denial of merge, deploy,
 application actuation, and external dispatch, the immutable card core hash,
 the named unit, exact rollback action, and a future expiry.
 
-## 4. Tank and Seraph
-
-Tank is active as a card-scoped worker, not a permanent daemon. Tank executes
-only an exact approved release or deployment card with pinned artifact and
-rollback evidence.
+## 4. Seraph
 
 Seraph uses the bounded `skfleet-seraph.timer` on the active control-plane
 host. Each invocation may claim and launch at most one canonical review card,
@@ -115,11 +216,33 @@ notify-only; production authority remains an external gate.
 
 ## 5. ATLAS and Jarvis
 
+**Tank is retired as a running seat and its duties are folded into ATLAS**
+(spec `2026-09-16-nimble-factory-design.md` section 3.6, landed 2026-09-17).
+The `skfleet-tank.service` / `skfleet-tank.timer` pair no longer ships in
+either systemd tree, and `LIFECYCLE_SEATS` in
+`src/skcapstone/lifecycle_seats.py` is five entries, not six. Tank's real
+activity, card-scoped release and installation of exact approved artifacts
+with pinned rollback evidence, is now part of ATLAS's scope alongside its
+existing postcondition-verification duty. `seat_boundaries.Seat.TANK` is
+still present in the authority-model enum so Tank's historical board actions
+keep resolving; it just no longer receives dispatched work or runs a cycle.
+
+**That ported release and install duty is inoperable today.** ATLAS's
+allowed-action set in `seat_boundaries.py` does not include `DEPLOY`, the
+dispatch-layer digest check in `skfleet-rotate.py` still gates only the
+retired `tank` branch, and ATLAS's own rail brief tells workers not to
+deploy. See [seat-charters.md, ATLAS release and install duty: inoperable
+pending
+B3](./seat-charters.md#atlas-release-and-install-duty-inoperable-pending-b3)
+for the full accounting. Do not activate this runbook expecting ATLAS to
+perform a governed release; only its verification duty is live.
+
 ATLAS is active for bounded presence and exact card-scoped operations. Its
-presence cycle reads SKMail and emits health but does not claim work or actuate.
-An operations card reaches ATLAS through Niobe and remains subject to the
-ActionIntent catalog, exact capability, rollback, and verification gates.
-Routine catalog-authorized work is notify-only.
+presence cycle reads SKMail and emits health but does not claim work or actuate
+outside an admitted, labeled batch. An operations card reaches ATLAS through
+Niobe and remains subject to the ActionIntent catalog, exact capability,
+rollback, and verification gates. Routine catalog-authorized work is
+notify-only.
 
 Jarvis remains Casey's assistant. Jarvis may use card, fleet, and verification
 tools immediately when Casey directs it. Merge, deployment, release, and
@@ -131,6 +254,16 @@ exact action, target, change, and `skcapstone,skdashboard,skworld` scope before
 calling the mutation. A missing or mismatched direction fails closed.
 
 ## Rollback
+
+**This section is a historical record of the 2026-09-06 Niobe cutover.** It
+predates the 2026-09-17 fold of tank into atlas: the `skfleet-tank.timer`
+named below existed on 2026-09-06 and no longer exists today, since the
+`skfleet-tank.service` / `skfleet-tank.timer` pair was deleted from both
+systemd trees. Do not run the `--legacy-timer skfleet-tank.timer` example
+verbatim on a current host; there is nothing left to disable under that name.
+The general shape (stop the orchestrator, prove the forbidden units are
+inactive, only then re-enable a legacy timer) still applies to seraph and
+niobe.
 
 Disable only the affected unit, preserve evidence, and return the seat to its
 last safe state. The approved Niobe rollback is:
@@ -187,17 +320,24 @@ rolls back through its card-pinned artifact procedure. Seraph rolls back by
 disabling `skfleet-seraph.timer`, preserving append-only review evidence, and
 reverting its pinned source commit. A feed failure disables Link's eligibility
 input; it does not trigger GitHub mutations.
-### Converge the six lifecycle profiles
+### Converge the five lifecycle profiles
 
 After independently reviewed package installation and before enabling timers,
 converge the packaged control record and role profiles into the existing
 sovereign agent homes. The command refuses missing or mismatched identities and
 captures every replaced file in an exact rollback bundle.
 
+As of 2026-09-17 this converges five profiles (`link`, `mero`, `seraph`,
+`niobe`, `atlas`), not six: tank is folded into atlas and no longer has its
+own converged profile. Older rollback bundles under a
+`lifecycle-six-seat-<change-id>` directory name predate the fold; name new
+bundles `lifecycle-five-seat-<change-id>` so the directory name does not
+imply a roster that no longer exists.
+
 ```bash
 python -m skcapstone.lifecycle_seats converge \
   --home "$HOME/.skcapstone" \
-  --rollback-dir "$HOME/.skcapstone/rollback/lifecycle-six-seat-<change-id>"
+  --rollback-dir "$HOME/.skcapstone/rollback/lifecycle-five-seat-<change-id>"
 ```
 
 Rollback fails closed if any installed target changed after convergence:
@@ -205,5 +345,22 @@ Rollback fails closed if any installed target changed after convergence:
 ```bash
 python -m skcapstone.lifecycle_seats rollback \
   --home "$HOME/.skcapstone" \
-  --rollback-dir "$HOME/.skcapstone/rollback/lifecycle-six-seat-<change-id>"
+  --rollback-dir "$HOME/.skcapstone/rollback/lifecycle-five-seat-<change-id>"
 ```
+
+**Known gap: rollback is not staged, so a failure partway can leave the
+control plane restored and the placement manifest not.**
+`rollback_lifecycle_seats` in `src/skcapstone/lifecycle_seats.py` restores
+the captured files sequentially, in the order convergence wrote them:
+`coordination/seat-control-plane.json` first, then
+`coordination/seat-placement.json`, then each seat's per-agent profile and
+startup files. Each file is hash-checked before it is touched, and a
+mismatch raises immediately, which is fail-closed for that file, but it does
+not roll back files already restored earlier in the same run, and it never
+reaches files later in the sequence. If rollback stops after the control
+plane but before the placement manifest, the two are left inconsistent.
+**After any rollback, read back both
+`coordination/seat-control-plane.json` and
+`coordination/seat-placement.json` and confirm they agree before assuming
+the seat layer is in its prior state.** A partial rollback that raised is
+not a completed rollback.

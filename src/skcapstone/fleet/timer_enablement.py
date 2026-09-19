@@ -16,7 +16,7 @@ from skcapstone.estate import sovereign_home
 
 Runner = Callable[..., object]
 GOVERNED_SEAT_SERVICES = (
-    "skfleet-tank.service",
+    "skfleet-atlas.service",
     "skfleet-seraph.service",
     "skfleet-niobe.service",
     "skfleet-niobe-live.service",
@@ -64,11 +64,11 @@ def forbidden_timers(profile: dict) -> list[str]:
 
 
 def approved_legacy_timers(home: Path) -> frozenset[str]:
-    """Return Tank, Seraph, and exactly one activation-selected Niobe timer."""
+    """Return Atlas, Seraph, and exactly one activation-selected Niobe timer."""
 
     from .seat_cycle_orchestrator import select_niobe_timer
 
-    return frozenset({"skfleet-tank.timer", "skfleet-seraph.timer", select_niobe_timer(home)})
+    return frozenset({"skfleet-atlas.timer", "skfleet-seraph.timer", select_niobe_timer(home)})
 
 
 def legacy_timer_rollback_profile(legacy_timers: list[str], *, home: Path) -> dict:

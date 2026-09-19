@@ -63,6 +63,48 @@ def test_pool_with_free_capacity_and_empty_local_partition_is_truthful() -> None
     assert "owner_free=" in detail
 
 
+def test_builder_withheld_slice_is_not_reported_as_foreign() -> None:
+    """A slice handed to the builder path must not read as a foreign partition.
+
+    Regression for the 2026-09-18 chi fleet logs: a host whose entire hash
+    slice was source-only builder work logged the self-contradicting line
+    ``owned=0 ... owners=<this host>:N`` under ``foreign-hash-partition``.
+    """
+    helpers = _load_helpers()
+    local = "chiap03"
+    owned_ids = []
+    candidate = 0
+    while len(owned_ids) < 3:
+        card_id = f"{candidate:08x}"
+        if helpers["_partition_owner"](card_id, HOSTS) == local:
+            owned_ids.append(card_id)
+        candidate += 1
+    pool = [_row(card_id) for card_id in owned_ids]
+
+    detail = helpers["_selection_diagnostic"](
+        pool,
+        [],
+        _lanes(target=4, free=4),
+        lambda card_id: helpers["_partition_owner"](card_id, HOSTS),
+        {host: 1 for host in HOSTS},
+        owned_ids,
+    )
+
+    assert "reason=builder-path-withheld" in detail
+    assert "builder_withheld=3" in detail
+    assert "foreign-hash-partition" not in detail
+    assert "ids=" + ",".join(sorted(owned_ids)) in detail
+
+
+def test_builder_withheld_count_is_always_reported() -> None:
+    helpers = _load_helpers()
+    detail = helpers["_selection_diagnostic"](
+        [_row("a")], [], _lanes(target=2, free=2), lambda _card_id: "chiap01"
+    )
+    assert "reason=foreign-hash-partition" in detail
+    assert "builder_withheld=0" in detail
+
+
 @pytest.mark.parametrize(
     ("pool", "owned", "lanes", "expected"),
     [

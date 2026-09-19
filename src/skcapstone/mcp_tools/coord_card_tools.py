@@ -145,6 +145,15 @@ async def _handle_coord_describe(args: dict) -> list[TextContent]:
     if title is None and description is None:
         return _error_response("title and/or description are required")
 
+    from ..jarvis_emergency import authorize_coord_mutation
+    from ..seat_boundaries import Action, BoundaryError
+
+    try:
+        authorize_coord_mutation(
+            args.get("agent", "") or "", Action.DESCRIBE_CARD, task_id, None, None
+        )
+    except BoundaryError as exc:
+        return _error_response(str(exc))
     home = _shared_root()
     agent = args.get("agent", "") or ""
     try:
@@ -176,6 +185,15 @@ async def _handle_coord_label(args: dict) -> list[TextContent]:
     if not task_id or not label:
         return _error_response("task_id and label are required")
 
+    from ..jarvis_emergency import authorize_coord_mutation
+    from ..seat_boundaries import Action, BoundaryError
+
+    try:
+        authorize_coord_mutation(
+            args.get("agent", "") or "", Action.LABEL_CARD, task_id, None, None
+        )
+    except BoundaryError as exc:
+        return _error_response(str(exc))
     remove = bool(args.get("remove", False))
     action = "remove_label" if remove else "add_label"
     CardEventLog(_shared_root()).append(
@@ -194,6 +212,15 @@ async def _handle_coord_link(args: dict) -> list[TextContent]:
     if not task_id or not key or not value:
         return _error_response("task_id, key, and value are required")
 
+    from ..jarvis_emergency import authorize_coord_mutation
+    from ..seat_boundaries import Action, BoundaryError
+
+    try:
+        authorize_coord_mutation(
+            args.get("agent", "") or "", Action.LINK_CARD, task_id, None, None
+        )
+    except BoundaryError as exc:
+        return _error_response(str(exc))
     try:
         CardEventLog(_shared_root()).append(
             CardEvent(
@@ -217,6 +244,15 @@ async def _handle_coord_reprioritize(args: dict) -> list[TextContent]:
     priority = args.get("priority", "")
     if not task_id or not priority:
         return _error_response("task_id and priority are required")
+    from ..jarvis_emergency import authorize_coord_mutation
+    from ..seat_boundaries import Action, BoundaryError
+
+    try:
+        authorize_coord_mutation(
+            args.get("agent", "") or "", Action.REPRIORITIZE_CARD, task_id, None, None
+        )
+    except BoundaryError as exc:
+        return _error_response(str(exc))
     try:
         reprioritize(_shared_root(), task_id, priority, args.get("agent", "") or "")
     except ValueError as exc:
@@ -233,6 +269,15 @@ async def _handle_coord_amend_criteria(args: dict) -> list[TextContent]:
     if not task_id or not criteria:
         return _error_response("task_id and at least one criterion are required")
 
+    from ..jarvis_emergency import authorize_coord_mutation
+    from ..seat_boundaries import Action, BoundaryError
+
+    try:
+        authorize_coord_mutation(
+            args.get("agent", "") or "", Action.AMEND_CRITERIA, task_id, None, None
+        )
+    except BoundaryError as exc:
+        return _error_response(str(exc))
     home = _shared_root()
     try:
         amend_criteria(home, task_id, list(criteria), args.get("agent", "") or "")
@@ -256,6 +301,15 @@ async def _handle_coord_void(args: dict) -> list[TextContent]:
     reason = args.get("reason", "")
     if not task_id or not reason:
         return _error_response("task_id and reason are required")
+    from ..jarvis_emergency import authorize_coord_mutation
+    from ..seat_boundaries import Action, BoundaryError
+
+    try:
+        authorize_coord_mutation(
+            args.get("agent", "") or "", Action.VOID_CARD, task_id, None, None
+        )
+    except BoundaryError as exc:
+        return _error_response(str(exc))
     try:
         void_card(_shared_root(), task_id, reason, args.get("agent", "") or "")
     except ValueError as exc:

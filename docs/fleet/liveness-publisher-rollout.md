@@ -25,6 +25,22 @@ socket can no longer publish false-empty evidence that would satisfy the
 all-known-host freshness gate. A truthful empty view requires a reachable
 server on the explicit socket that reports zero sessions.
 
+## Lane capacity: carried, never fabricated
+
+The publisher does not measure lane capacity. Lane targets are estate
+configuration in the dispatcher's unit environment, and the codex lane's
+`free` is bounded by live gateway route capacity; the publisher can see
+neither. It used to hardcode `lanes: {}`, which consumers that sum `free`
+read as "zero free capacity", so a publisher run 41 seconds after the
+dispatcher overwrote the dispatcher's truthful lane table with zeros every
+cycle. The publisher now carries the most recent lane table forward
+unchanged, stamped with the time it was measured (`lanes_ts`), and drops it
+once it is older than the 30-minute freshness fence the readers already
+apply. When no fresh measurement exists it publishes the explicit marker
+`"lanes": "unknown"`, which capacity readers skip (the host reports no
+capacity data) instead of counting as zero. "Could not measure" and
+"measured zero free slots" are therefore never the same snapshot.
+
 After independent review and a separate human-authorized execution card, stage
 the packaged service and timer on every host in the estate's `rotation_hosts`
 list. The execution card must also point the worker tmux servers at the same

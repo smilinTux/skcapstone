@@ -69,7 +69,13 @@ def _launchable_predicate():
         lane = "escalate" if "escalation-only" in labels else "codex"
         return (lane, "compatible") if remaining.get(lane, 0) else (None, "full")
 
-    namespace = {"qwen_suitable": lambda _core: True, "select_compatible_lane": select}
+    # qwen_suitable takes (core, labels) since gateway-routing work was kept
+    # off the qwen lane. The stub must track its real arity or every caller
+    # here fails with a TypeError that says nothing about capacity.
+    namespace = {
+        "qwen_suitable": lambda _core, _labels=None: True,
+        "select_compatible_lane": select,
+    }
     exec(compile(ast.Module(body=[node], type_ignores=[]), str(ROTATE), "exec"), namespace)
     return namespace["_has_launchable_pick"]
 

@@ -648,12 +648,12 @@ def verify_role_dispatch(
     seat: str,
     accepted_models: Iterable[str] | None = None,
 ) -> dict[str, int | str]:
-    """Verify a bounded Tank or ATLAS selector result.
+    """Verify a bounded ATLAS selector result.
 
     Args:
         home: Estate home holding the card store.
         completed: Finished dispatcher process whose receipts are verified.
-        seat: ``tank`` or ``atlas``.
+        seat: ``atlas``.
         accepted_models: Models a receipt may name. Defaults to the resolved
             size class buckets, which is what the dispatch path asked for. This
             check used to require the literal ``sk-codex-mid``, which no launch
@@ -808,7 +808,7 @@ def _failed_claim_is_retryable(
 
 
 def role_dispatch_operation(home: Path, seat: str) -> dict[str, int | str]:
-    """Launch one configurable, bounded Tank or ATLAS batch."""
+    """Launch one configurable, bounded ATLAS batch."""
 
     dispatcher = Path(sys.executable).parent / "skfleet-rotate.py"
     if not dispatcher.is_file() or not os.access(dispatcher, os.X_OK):
@@ -825,7 +825,7 @@ def role_dispatch_operation(home: Path, seat: str) -> dict[str, int | str]:
         batch_size = int(os.environ.get(env_name, "2"))
     except ValueError:
         batch_size = 0
-    if seat not in {"tank", "atlas"} or not 1 <= batch_size <= _MAX_ROLE_BATCH:
+    if seat != "atlas" or not 1 <= batch_size <= _MAX_ROLE_BATCH:
         return {
             "cards_examined": 0,
             "recommendations": 0,
@@ -976,7 +976,7 @@ def main(argv: list[str] | None = None) -> int:
         def operation() -> dict[str, int | str]:
             return link_operation(args.home, feed_path)
 
-    elif args.seat in {"tank", "atlas"}:
+    elif args.seat == "atlas":
 
         def operation() -> dict[str, int | str]:
             return role_dispatch_operation(args.home, args.seat)

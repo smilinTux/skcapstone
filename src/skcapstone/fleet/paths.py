@@ -86,6 +86,29 @@ def default_paths() -> FleetPaths:
     return FleetPaths(root=Path(root).expanduser())
 
 
+def paths_for_home(home: Path | str) -> FleetPaths:
+    """The fleet tree anchored under an explicit home, ignoring SKFLEET_ROOT.
+
+    ``default_paths`` honors ``SKFLEET_ROOT`` and the real OS home, which is
+    correct for a live process but wrong for a caller that must resolve to
+    the fleet tree under a specific, given home no matter what the
+    environment says -- most often a throwaway ``tmp_path`` in a test, which
+    must never be one unset environment variable away from touching the
+    live, Syncthing-shared sovereign home. This is the second (and only
+    other) place allowed to know where under a home the fleet tree sits, so
+    a caller such as ``rollout_history`` never has to spell the sovereign
+    home's name out for itself a second time.
+
+    Args:
+        home: The home directory the fleet tree sits under (a real user
+            home in production, a throwaway directory in tests).
+
+    Returns:
+        A :class:`FleetPaths` rooted at ``<home>/<sovereign home>/fleet``.
+    """
+    return FleetPaths(root=Path(home).expanduser() / Path(SOVEREIGN_HOME).name / "fleet")
+
+
 def self_node_name() -> str:
     """This machine's node name (SKFLEET_NODE override, else hostname).
 

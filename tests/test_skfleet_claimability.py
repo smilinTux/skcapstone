@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import collections
 import hashlib
 import json
 import os
@@ -14,6 +15,7 @@ from types import SimpleNamespace
 import pytest
 
 from skcapstone.review_admission import governed_review_seat, qualified_reviewer_seats
+from skcapstone.coordination import AgentFile, Board
 
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
@@ -38,6 +40,8 @@ def _load_claimability() -> dict[str, object]:
         "_pool_v2_ready_ids",
         "_pool_v2_fingerprint",
         "_pool_v2_preclaim_matches",
+        "_legacy_projection_owners",
+        "_legacy_selector_decision",
     }
     tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
     nodes = {
@@ -78,7 +82,198 @@ def _load_claimability() -> dict[str, object]:
     }
     module = ast.Module(body=[nodes[name] for name in names], type_ignores=[])
     exec(compile(module, str(ROTATE), "exec"), namespace)
+    namespace["_legacy_projection_owners"] = lambda _cid, fresh=False: ()
     return namespace
+
+
+def test_legacy_only_owner_is_excluded_and_cleared_owner_reenters_pool() -> None:
+    """A legacy claim blocks admission before route preflight; clearing it restores work."""
+    namespace = _load_claimability()
+    core = _core("f16c182c")
+    namespace["_legacy_projection_owners"] = lambda _cid, fresh=False: ("jarvis",)
+    owned = namespace["authoritative_claimability"]("f16c182c", core)
+    assert owned["claimable"] is False
+    assert owned["reason"] == "legacy-owned"
+    assert (
+        namespace["_pool_v2_dispatchable"](
+            namespace["_pool_v2_admission"]("f16c182c", core, owned)
+        )
+        is False
+    )
+
+    namespace["_legacy_projection_owners"] = lambda _cid, fresh=False: ()
+    cleared = namespace["authoritative_claimability"]("f16c182c", core, fresh=True)
+    assert cleared["claimable"] is True
+    assert cleared["reason"] == "claimable"
+
+
+def test_conflicting_legacy_and_native_claim_fails_closed() -> None:
+    """Disagreeing owner evidence is reported for reconciliation."""
+    namespace = _load_claimability()
+    core = _core("c26a1015")
+    namespace["_strict_card_events"] = lambda _cid, fresh=False: [
+        _claim("2026-09-16T10:00:00Z", "native", "rev-a")
+    ]
+    namespace["_legacy_projection_owners"] = lambda _cid, fresh=False: ("jarvis",)
+    decision = namespace["authoritative_claimability"]("c26a1015", core)
+    assert decision["claimable"] is False
+    assert decision["reason"].startswith("malformed:LegacyOwnerConflict")
+
+
+def test_legacy_claim_arriving_after_selection_blocks_preclaim() -> None:
+    """A newly projected claim changes the bounded admission before preflight."""
+    namespace = _load_claimability()
+    core = _core("f16c182c")
+    selected = namespace["_pool_v2_admission"](
+        "f16c182c", core, namespace["authoritative_claimability"]("f16c182c", core)
+    )
+    namespace["_legacy_projection_owners"] = lambda _cid, fresh=False: ("jarvis",)
+    fresh = namespace["_pool_v2_admission"](
+        "f16c182c",
+        core,
+        namespace["authoritative_claimability"]("f16c182c", core, fresh=True),
+    )
+    assert selected["source_revision"] != fresh["source_revision"]
+    assert namespace["_pool_v2_preclaim_matches"](selected, fresh) is False
+
+
+def test_natural_projection_read_tracks_claim_and_clear(tmp_path: Path) -> None:
+    """One cycle reads the board projection and the next fresh cycle sees its clear."""
+    board = Board(tmp_path / ".skcapstone")
+    board.ensure_dirs()
+    board.save_agent(AgentFile(agent="jarvis", claimed_tasks=["f16c182c"]))
+    namespace = _load_claimability()
+    namespace.update(
+        Board=Board,
+        Path=Path,
+        HOME=str(tmp_path),
+        collections=collections,
+        _legacy_projection_claims=None,
+    )
+    exec(
+        compile(
+            ast.Module(
+                body=[
+                    next(
+                        node
+                        for node in ast.parse(ROTATE.read_text()).body
+                        if isinstance(node, ast.FunctionDef)
+                        and node.name == "_legacy_projection_owners"
+                    )
+                ],
+                type_ignores=[],
+            ),
+            str(ROTATE),
+            "exec",
+        ),
+        namespace,
+    )
+    assert namespace["_legacy_projection_owners"]("f16c182c") == ("jarvis",)
+    board.save_agent(AgentFile(agent="jarvis", claimed_tasks=[]))
+    assert namespace["_legacy_projection_owners"]("f16c182c", fresh=True) == ()
+
+
+def test_legacy_selector_and_pool_v2_agree_on_projection_owner(tmp_path: Path) -> None:
+    """Both selectors withhold the same ready card before gateway work."""
+    namespace = _load_claimability()
+    core = _core("f16c182c")
+    core_path = tmp_path / "core.json"
+    core_path.write_text(json.dumps(core), encoding="utf-8")
+    namespace.update(
+        excluded=set(),
+        _REVIEW_READBACK_BLOCKED=set(),
+        unclaimable=lambda _cid: False,
+        itil_terminal=lambda _cid: False,
+        lifecycle_state=lambda _cid: "open",
+        outcome_lifecycle_bucket=lambda _lifecycle, _review: "open",
+        awaiting_review=lambda _cid: False,
+        blocked_backoff=lambda _cid: False,
+        terminal_review_verdict=lambda _cid, _core: False,
+        _legacy_projection_owners=lambda _cid, fresh=False: ("jarvis",),
+    )
+    legacy = namespace["_legacy_selector_decision"]("f16c182c", core_path)
+    decision = namespace["authoritative_claimability"]("f16c182c", core)
+    admission = namespace["_pool_v2_admission"]("f16c182c", core, decision)
+    assert legacy["reason"] == "legacy-owned"
+    assert legacy["eligible"] is False
+    assert namespace["_pool_v2_dispatchable"](admission) is False
+
+
+def test_projection_cycle_held_cleared_then_native_claimed(tmp_path: Path) -> None:
+    """A complete selector cycle with real board projections never dispatches owners."""
+    board = Board(tmp_path / ".skcapstone")
+    board.ensure_dirs()
+    core = _core("f16c182c")
+    core_path = tmp_path / "core.json"
+    core_path.write_text(json.dumps(core), encoding="utf-8")
+    namespace = _load_claimability()
+    namespace.update(
+        Board=Board,
+        Path=Path,
+        HOME=str(tmp_path),
+        collections=collections,
+        _legacy_projection_claims=None,
+        excluded=set(),
+        _REVIEW_READBACK_BLOCKED=set(),
+        unclaimable=lambda _cid: False,
+        itil_terminal=lambda _cid: False,
+        lifecycle_state=lambda _cid: "open",
+        outcome_lifecycle_bucket=lambda _lifecycle, _review: "open",
+        awaiting_review=lambda _cid: False,
+        blocked_backoff=lambda _cid: False,
+        terminal_review_verdict=lambda _cid, _core: False,
+    )
+    exec(
+        compile(
+            ast.Module(
+                body=[
+                    next(
+                        node
+                        for node in ast.parse(ROTATE.read_text()).body
+                        if isinstance(node, ast.FunctionDef)
+                        and node.name == "_legacy_projection_owners"
+                    )
+                ],
+                type_ignores=[],
+            ),
+            str(ROTATE),
+            "exec",
+        ),
+        namespace,
+    )
+
+    namespace["_strict_card_events"] = lambda _cid, fresh=False: [
+        _claim("2026-09-15T10:00:00Z", "jarvis", "rev-old"),
+        _release("2026-09-15T11:00:00Z", "jarvis", "jarvis", "rev-old"),
+    ]
+    board.save_agent(
+        AgentFile(
+            agent="jarvis",
+            last_seen="2020-01-01T00:00:00Z",
+            claimed_tasks=["f16c182c"],
+        )
+    )
+    held = namespace["_legacy_selector_decision"]("f16c182c", core_path)
+    assert held["reason"] == "legacy-owned"
+    assert not held["eligible"]
+    assert not namespace["_pool_v2_dispatchable"](
+        namespace["_pool_v2_admission"]("f16c182c", core, held["decision"])
+    )
+
+    board.save_agent(AgentFile(agent="jarvis", claimed_tasks=[]))
+    namespace["_legacy_projection_owners"]("f16c182c", fresh=True)
+    cleared = namespace["_legacy_selector_decision"]("f16c182c", core_path)
+    assert cleared["eligible"]
+    assert namespace["_pool_v2_dispatchable"](
+        namespace["_pool_v2_admission"]("f16c182c", core, cleared["decision"])
+    )
+
+    namespace["_strict_card_events"] = lambda _cid, fresh=False: [
+        _claim("2026-09-16T10:00:00Z", "native", "rev-a")
+    ]
+    native = namespace["_legacy_selector_decision"]("f16c182c", core_path)
+    assert not native["eligible"]
+    assert native["reason"].startswith("owned-")
 
 
 def _core(card_id: str, *, labels: list[str] | None = None) -> dict[str, object]:

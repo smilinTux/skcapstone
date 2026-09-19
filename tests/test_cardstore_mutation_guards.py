@@ -48,7 +48,7 @@ def test_cli_rejects_coreless_mutation_without_writing(tmp_path, monkeypatch, ar
     before = _storage_snapshot(tmp_path)
 
     result = CliRunner().invoke(
-        _main(), ["coord", *arguments, "--home", str(tmp_path), "--agent", "reviewer"]
+        _main(), ["coord", *arguments, "--home", str(tmp_path), "--agent", "test-reviewer"]
     )
 
     assert result.exit_code == 1
@@ -75,7 +75,7 @@ async def test_mcp_rejects_coreless_mutation_without_writing(
     monkeypatch.setattr(coord_card_tools, "_shared_root", lambda: tmp_path)
     before = _storage_snapshot(tmp_path)
 
-    result = await handler({"task_id": "legacy02", "agent": "reviewer", **arguments})
+    result = await handler({"task_id": "legacy02", "agent": "test-reviewer", **arguments})
     payload = json.loads(result[0].text)
 
     assert "no foldable core" in payload["error"]

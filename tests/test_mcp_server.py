@@ -496,6 +496,40 @@ class TestCoordTools:
             assert complete_parsed["completed"] is True
             assert task_id in complete_parsed["completed_tasks"]
 
+    @pytest.mark.asyncio
+    async def test_coord_complete_gated_card_reports_outstanding_gates(
+        self, initialized_agent_home: Path
+    ):
+        """A card with outstanding exit_gates must not raise AttributeError.
+
+        Fix 3: this handler used to do ``agent.agent`` on whatever
+        complete_coord_task returned and caught only ValueError, so a gated
+        card (a GatesPending, not an Agent) blew up with an uncaught
+        AttributeError on what the docstring calls a normal outcome.
+        """
+        from skcapstone.coordination import Board, Task
+
+        board = Board(initialized_agent_home)
+        board.ensure_dirs()
+        board.create_task(Task(id="cafef00d", title="gated mcp task"))
+        board.claim_task("mcp-builder", "cafef00d")
+        core_path = initialized_agent_home / "cards" / "cafef00d" / "core.json"
+        core = json.loads(core_path.read_text())
+        core["exit_gates"] = [{"gate": "independent-review", "owner": "seraph"}]
+        core_path.write_text(json.dumps(core))
+
+        with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(initialized_agent_home)):
+            result = await call_tool(
+                "coord_complete",
+                {"task_id": "cafef00d", "agent_name": "mcp-builder"},
+            )
+
+        parsed = _extract_json(result)
+        assert "error" not in parsed
+        assert parsed["completed"] is False
+        assert parsed["gated"] is True
+        assert parsed["outstanding"][0]["gate"] == "independent-review"
+
 
 # ---------------------------------------------------------------------------
 # SKComms tool tests (graceful fallback)

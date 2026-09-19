@@ -7,6 +7,18 @@ the user runtime directory below ``/run/user/$UID``; the packaged unit sets
 it explicitly and keeps ``PrivateTmp=yes``. Any missing, non-socket, or
 unreachable path fails closed: no snapshot is written and the last published
 evidence stays intact.
+
+Lane capacity is not measured here. The fleet rotation dispatcher
+(its ``publish_live`` step) owns the lane table (target, busy, free
+per lane): its targets are estate configuration in its own unit environment
+and its codex ``free`` is bounded by live gateway route capacity, none of
+which this strictly host-local oneshot can observe. This publisher therefore
+carries the dispatcher's most recent lane table forward unchanged, stamped
+with the time it was measured (``lanes_ts``), and publishes the explicit
+marker ``"lanes": "unknown"`` when no sufficiently fresh measurement exists.
+It never writes an empty lane map: ``{}`` reads as "zero free capacity" to
+every consumer that sums ``free``, and an unmeasured host must never look
+like a saturated one.
 """
 
 from __future__ import annotations
@@ -30,6 +42,54 @@ _SESSION_RE = re.compile(r"^(?:codex|glm|qwen|kimi|esc)-auto-([0-9a-f]{8})$")
 _UNIT_RE = re.compile(r"^skfleet-worker-(?:codex|glm|qwen|kimi|escalate)-([0-9a-f]{8})\.service$")
 _HOST_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,62}$")
 _TMUX_SOCKET_ENV = "SKFLEET_TMUX_SOCKET"
+
+#: Explicit "no lane measurement available" marker. Deliberately not a dict:
+#: the reader (the dispatcher's ``reporting_capacity``) skips a snapshot
+#: whose ``lanes`` is not a dict, so an unmeasured host drops out of the
+#: capacity map entirely instead of reporting capacity 0.
+LANES_UNKNOWN = "unknown"
+
+#: How long a dispatcher lane measurement stays worth republishing. Mirrors
+#: the dispatcher's ``LIVE_FRESH`` fence (a report older than this says
+#: nothing about now). Past this age the carried table is dropped
+#: and the snapshot says ``unknown`` rather than laundering stale capacity
+#: under a fresh snapshot timestamp.
+_LANE_CAPACITY_FRESH = 30 * 60
+
+
+def _carried_lane_capacity(target: Path, now_ts: float) -> tuple[dict | str, float | None]:
+    """Return the dispatcher's lane table to carry forward, or the unknown marker.
+
+    Args:
+        target: The host snapshot path about to be replaced.
+        now_ts: The timestamp the new snapshot will carry.
+
+    Returns:
+        ``(lanes, lanes_ts)`` where ``lanes`` is the prior snapshot's
+        non-empty lane dict and ``lanes_ts`` the time it was measured, when
+        that measurement is present, plausibly timestamped, and no older than
+        ``_LANE_CAPACITY_FRESH``; otherwise ``(LANES_UNKNOWN, None)``. The
+        measurement time is the prior snapshot's own ``lanes_ts`` when it has
+        one (a snapshot this publisher wrote), else the prior ``ts`` (a
+        snapshot the dispatcher wrote), so repeated publisher runs never
+        refresh the provenance of a table they did not measure.
+    """
+    try:
+        prior = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return LANES_UNKNOWN, None
+    if not isinstance(prior, dict):
+        return LANES_UNKNOWN, None
+    lanes = prior.get("lanes")
+    if not isinstance(lanes, dict) or not lanes:
+        return LANES_UNKNOWN, None
+    try:
+        lanes_ts = float(prior.get("lanes_ts") or prior.get("ts") or 0)
+    except (TypeError, ValueError):
+        return LANES_UNKNOWN, None
+    if not 0 < lanes_ts <= now_ts or now_ts - lanes_ts > _LANE_CAPACITY_FRESH:
+        return LANES_UNKNOWN, None
+    return lanes, lanes_ts
 
 
 def _resolve_tmux_socket(explicit: str | None) -> Path:
@@ -166,14 +226,18 @@ def publish_host_snapshot(
 
     target = home / "evidence" / "fleet-live" / f"{host}.json"
     target.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = now()
+    lanes, lanes_ts = _carried_lane_capacity(target, timestamp)
     payload = {
         "host": host,
-        "ts": now(),
+        "ts": timestamp,
         "cards": sorted(cards),
         "workers": workers,
-        "lanes": {},
+        "lanes": lanes,
         "tmux_socket": str(socket_path),
     }
+    if lanes_ts is not None:
+        payload["lanes_ts"] = lanes_ts
     with tempfile.NamedTemporaryFile(
         "w", encoding="utf-8", dir=target.parent, prefix=f".{host}.", delete=False
     ) as stream:

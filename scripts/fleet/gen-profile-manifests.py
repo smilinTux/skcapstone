@@ -71,12 +71,14 @@ CONTROL_REQUIRED = [
 ]
 
 #: Legacy independently scheduled seat timers. The control role forbids them
-#: because the single seat-cycle timer serializes Tank, Seraph, and Niobe.
+#: because the single seat-cycle timer serializes Seraph and Niobe. Tank was
+#: a third member of that serialized set until spec 3.6 folded it into
+#: Atlas, which keeps its own independent timer below rather than joining
+#: this forbidden list; skfleet-tank.timer no longer exists to forbid.
 SERIALIZED_SEAT_MUST_NOT = [
     "skfleet-niobe-live.timer",
     "skfleet-niobe.timer",
     "skfleet-seraph.timer",
-    "skfleet-tank.timer",
 ]
 SEAT_CYCLE_TIMERS = [f"skfleet-{seat}.timer" for seat in ("atlas", "link", "mero")] + [
     "skfleet-link-producer.timer",
@@ -86,7 +88,7 @@ SEAT_CYCLE_TIMERS = [f"skfleet-{seat}.timer" for seat in ("atlas", "link", "mero
 #: Seat services the control role permits but does not mandate. Niobe live is
 #: selected per generation from activation; its independent timer is forbidden.
 SEAT_ALLOWED_EXTRA = [
-    f"skfleet-{seat}.service" for seat in ("atlas", "link", "mero", "niobe", "seraph", "tank")
+    f"skfleet-{seat}.service" for seat in ("atlas", "link", "mero", "niobe", "seraph")
 ] + [
     "skfleet-link-producer.service",
     "skfleet-seat-cycle.service",
@@ -239,9 +241,9 @@ def build_control() -> dict:
                 "The single control seat (.158, node-noroc2027). Holds the full "
                 "sovereign tree and runs the control-plane loops. Changes almost "
                 "nothing, which is the point. Atlas, Link, and Mero retain "
-                "bounded timers; one required seat-cycle timer serializes Tank, "
-                "Seraph, and activation-selected Niobe so generations cannot "
-                "overlap. Individual Tank, Seraph, Niobe, and Niobe-live timers "
+                "bounded timers; one required seat-cycle timer serializes "
+                "Seraph and activation-selected Niobe so generations cannot "
+                "overlap. Individual Seraph, Niobe, and Niobe-live timers "
                 "are forbidden alongside that orchestrator. " + _IGNORE_RULE + " " + _ADR_LINK
             ),
             "units": _units_block(
