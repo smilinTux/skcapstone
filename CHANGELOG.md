@@ -187,6 +187,30 @@
   binding that never existed is exactly what it refuses to do. `~/.local/bin/
   skfleet-rotate.py` is a per-host deployed artifact, so the updated worker
   brief needs a deploy to reach live workers.
+- **A card voided mid-flight now skips with a logged reason instead of killing
+  the node worker.** ziowk01-wsl, 2026-09-18: card 59553966 was voided and
+  replaced by 59550966 during a source-binding repair while sknoded still held
+  it in its dispatch queue. `Board.claim_task` raised
+  `ValueError: Task 59553966 not found`, nothing between that raise and
+  `main_loop`'s `while True` caught it, and `sknoded.service` exited 1 losing
+  18h 15m of process state over one unusable card. `consume_one` now catches
+  skcoord's typed `TaskUnclaimable`: a terminal refusal
+  (absent/voided/archived/done) writes a `blocked` status for that exact
+  request generation, which is what makes `offer()` decline it, frees the
+  builder slot in `_node_load`, and gives `decline_reason` a real line to log
+  (nothing deletes the request file when a card is voided, so without that
+  status the node re-reads the same dead request every pass forever). A
+  non-terminal refusal (another owner, an unmet dependency) is logged and
+  retried, costing no attempt, because parking it would strand a recoverable
+  card permanently. `main_loop` catches exactly `TaskUnclaimable` and
+  `BuilderDispatchError` and continues; a corrupt store, a missing
+  coordination home, a permissions failure or any other error still terminates
+  the unit so systemd restarts it and the failure stays visible.
+- **`BUILDER_DISPATCH_IDLE` no longer logs an empty parenthesis.** An empty
+  candidate list left `excluded` empty, rendering as
+  `reason=unschedulable: unschedulable ()`. `scheduler.select` now says
+  `no candidate nodes were offered`, and `decline_reason` answers the common
+  real cause up front as `builders-at-capacity: node-ziowk01=4/4`.
 
 - **Claim ceiling: bounded per-card amnesty for defect-burned claims.** Claim
   counts are monotonic over the append-only ledger, so the 5-claim ceiling
