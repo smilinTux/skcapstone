@@ -2466,24 +2466,36 @@ def _check_versions() -> list[Check]:
     checks = []
 
     try:
-        from .version_check import check_versions
+        from . import version_check as vc
 
-        report = check_versions(check_pypi=True)
+        report = vc.check_versions(check_pypi=True)
         for pkg in report.packages:
             if not pkg.installed:
                 continue
-            if pkg.up_to_date:
-                continue
-            checks.append(
-                Check(
-                    name=f"version:{pkg.name}",
-                    description=f"{pkg.name} outdated ({pkg.installed} \u2192 {pkg.latest})",
-                    passed=False,
-                    detail=f"installed: {pkg.installed}, latest: {pkg.latest}",
-                    fix=f"pip install --upgrade {pkg.name}",
-                    category="packages",
+            if pkg.status == vc.VERSION_OUTDATED:
+                checks.append(
+                    Check(
+                        name=f"version:{pkg.name}",
+                        description=f"{pkg.name} outdated ({pkg.installed} \u2192 {pkg.latest})",
+                        passed=False,
+                        detail=f"installed: {pkg.installed}, latest: {pkg.latest}",
+                        fix=f"pip install --upgrade {pkg.name}",
+                        category="packages",
+                    )
                 )
-            )
+            elif pkg.status == vc.VERSION_AHEAD:
+                # Normal for an editable install built from a checkout past the
+                # last release. Reported so the operator can see the comparison
+                # was made, but as a pass: the only "fix" would be a downgrade.
+                checks.append(
+                    Check(
+                        name=f"version:{pkg.name}",
+                        description=f"{pkg.name} ahead of PyPI ({pkg.installed} > {pkg.latest})",
+                        passed=True,
+                        detail=f"installed: {pkg.installed}, latest on PyPI: {pkg.latest}",
+                        category="packages",
+                    )
+                )
     except Exception as exc:
         logger.warning("Version check failed (non-fatal): %s", exc)
 

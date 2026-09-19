@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- **`skcapstone doctor` told the operator to downgrade.** The ecosystem version
+  check compared installed against PyPI with string equality
+  (`installed == latest`), so every editable install built from a checkout past
+  the last release was reported as outdated with a suggested fix of
+  `pip install --upgrade`. On chiap01 that was 2 of the 12 reported failures:
+  `skcapstone 0.15.168.dev222+gd448c2fa → 0.15.166` and
+  `skchat-sovereign 0.14.266.dev26+gb606d822c → 0.14.265`, in both cases the
+  installed build being strictly NEWER than the "latest" it was told to install.
+  A dev checkout is the normal state on this fleet, so the check was permanently
+  and wrongly red, which is how a governance signal stops being read at all.
+  `version_check` now compares with `packaging.version.Version` (PEP 440, so
+  `.devN` and `+g<sha>` sort correctly) and reports four states instead of a
+  boolean: current, outdated, ahead, unknown. Ahead is a **pass** carrying the
+  comparison rather than a failure, because the only available "fix" would be a
+  downgrade; unknown (PyPI unreachable, unparseable version) emits nothing
+  rather than defaulting to "you are behind". `skcapstone version-check` gained
+  an `ahead of PyPI` row and a `status` field in its JSON, as did the
+  `version_check` MCP tool. `packaging` is now a declared dependency instead of
+  an undeclared transitive.
+
 - **The Pi gateway sync filled the picker with models that cannot answer.**
   `/v1/models` is a catalog, not a liveness list. Probed against a live gateway
   on 2026-09-18: of the 108 ids advertised, 19 answered a one-token completion —

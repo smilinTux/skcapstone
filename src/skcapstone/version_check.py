@@ -15,7 +15,55 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Optional
 
+from packaging.version import InvalidVersion, Version
+
 logger = logging.getLogger(__name__)
+
+# Comparison outcomes. Deliberately four states, not a boolean.
+#
+# Editable installs built from a checkout that is ahead of the last PyPI
+# release are the NORMAL state on this fleet, and the previous string-equality
+# test ("installed == latest") classified every one of them as outdated, with
+# a suggested fix of `pip install --upgrade` that would in fact DOWNGRADE the
+# host. A check that is permanently and wrongly red trains operators to ignore
+# the whole report, so AHEAD is reported as informational rather than as a
+# failure, and a comparison we cannot make is reported as UNKNOWN rather than
+# defaulting to "you are behind".
+VERSION_CURRENT = "current"
+VERSION_OUTDATED = "outdated"
+VERSION_AHEAD = "ahead"
+VERSION_UNKNOWN = "unknown"
+
+
+def compare_versions(installed: Optional[str], latest: Optional[str]) -> str:
+    """Compare two versions under PEP 440.
+
+    Handles development releases (``.devN``) and local version segments
+    (``+g<sha>``), which setuptools-scm produces for any install built from a
+    git checkout.
+
+    Args:
+        installed: Installed version string, or None.
+        latest: Latest published version string, or None.
+
+    Returns:
+        One of VERSION_CURRENT, VERSION_OUTDATED, VERSION_AHEAD,
+        VERSION_UNKNOWN.
+    """
+    if not installed or not latest:
+        return VERSION_UNKNOWN
+    try:
+        have = Version(installed)
+        want = Version(latest)
+    except InvalidVersion as exc:
+        logger.debug("version_check.py could not parse a version: %s", exc)
+        return VERSION_UNKNOWN
+    if have < want:
+        return VERSION_OUTDATED
+    if have > want:
+        return VERSION_AHEAD
+    return VERSION_CURRENT
+
 
 ECOSYSTEM_PACKAGES = [
     "skmemory",
@@ -36,13 +84,22 @@ class PackageVersion:
         name: Package name.
         installed: Installed version, or None if not installed.
         latest: Latest version on PyPI, or None if unavailable.
-        up_to_date: Whether installed matches latest.
+        status: PEP 440 comparison outcome (see VERSION_* constants).
     """
 
     name: str
     installed: Optional[str] = None
     latest: Optional[str] = None
-    up_to_date: bool = True
+    status: str = VERSION_UNKNOWN
+
+    @property
+    def up_to_date(self) -> bool:
+        """Whether there is nothing to upgrade.
+
+        True for CURRENT, AHEAD and UNKNOWN: only a package we can prove is
+        behind its published release warrants an upgrade prompt.
+        """
+        return self.status != VERSION_OUTDATED
 
 
 @dataclass
@@ -138,16 +195,12 @@ def check_versions(
         installed = _get_installed_version(name)
         latest = _get_pypi_version(name) if check_pypi else None
 
-        up_to_date = True
-        if installed and latest:
-            up_to_date = installed == latest
-
         report.packages.append(
             PackageVersion(
                 name=name,
                 installed=installed,
                 latest=latest,
-                up_to_date=up_to_date,
+                status=compare_versions(installed, latest),
             )
         )
 
