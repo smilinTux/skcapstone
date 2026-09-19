@@ -178,6 +178,116 @@ def _node_load(paths: FleetPaths, node: str) -> int:
     return load
 
 
+def _lease_expired(request: dict, now: datetime) -> bool:
+    """Return whether an unanswered offer's lease has run out.
+
+    Mirrors the consumer's own reading exactly (``_consume_available`` treats a
+    missing or unparseable ``lease_expires_at`` as ``datetime.min`` and blocks
+    the request): a lease this scheduler cannot parse is one the node will
+    never honour, so it is expired here too rather than holding the card
+    against a run that can no longer happen.
+    """
+    try:
+        expires = datetime.strptime(request["lease_expires_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except (KeyError, TypeError, ValueError):
+        return True
+    return now > expires
+
+
+def request_holds_card(request: dict, status: dict, now: datetime) -> bool:
+    """Return whether one request/status pair means the builder holds the card.
+
+    This is the whole admission contract in one predicate. A builder-eligible
+    card is withheld from the local lanes ONLY while the builder path actively
+    holds it, which is exactly two situations:
+
+    * the node has answered this exact request generation with a non-terminal
+      state (``accepted``/``running``/``frozen``), so a worker is on it or is
+      about to be; or
+    * the node has not answered this generation at all and the offer lease has
+      not yet expired, which is the window between Niobe writing the request
+      and the remote claim event reaching this host over Syncthing.
+
+    Everything else means the builder is NOT holding the card: a terminal
+    status (``completed``/``blocked``/``failed``/``stale``) and an offer that
+    expired unclaimed both leave the card unowned. Before 2026-09-19 those
+    cards were withheld anyway, because the rotation withheld on
+    ``eligible()`` alone: measured on chi, ``026a08d9`` (terminal
+    ``failed``/attempt 2) and ``23554ec7`` (a binding no offer can even be
+    written for) were held away from 54 free local seats by a builder that
+    could never take either of them.
+
+    Args:
+        request: One dispatch request record, or {} when none exists.
+        status: The paired dispatch status record, or {} when none exists.
+        now: The instant to judge the offer lease against.
+
+    Returns:
+        True when the builder path is actively holding this card.
+    """
+    if not request:
+        return False
+    if status.get("request_id") == request.get("request_id"):
+        return status.get("state") not in TERMINAL_STATES
+    return not _lease_expired(request, now)
+
+
+def held_card_ids(paths: FleetPaths, *, now: datetime | None = None) -> set[str]:
+    """Return every card the builder path is actively holding right now.
+
+    Read from the dispatch tree itself rather than from ``_ready_builders()``,
+    deliberately: a node demoted out of the builder role, cordoned, or deleted
+    from the registry while a worker is mid-flight still holds the card it
+    claimed, and keying the answer on role would release that card to a local
+    lane while a remote worker was running it.
+
+    A record this cannot read counts as HELD. The release is the only direction
+    that can put a lane and a builder on the same card, so an unreadable
+    record must fail towards the behaviour that has no race. An unreadable
+    dispatch TREE raises, so the caller can fall back to withholding
+    everything rather than silently reporting an idle builder path.
+
+    Args:
+        paths: The fleet object tree carrying dispatch requests and statuses.
+        now: The instant to judge offer leases against; defaults to now.
+
+    Returns:
+        The set of card ids the builder path holds.
+
+    Raises:
+        BuilderDispatchError: The dispatch tree could not be enumerated.
+    """
+    root = paths.root / "dispatch"
+    stamp = now or _now()
+    held: set[str] = set()
+    try:
+        entries = root.iterdir() if root.exists() else ()
+        nodes = sorted(entry for entry in entries if entry.is_dir())
+    except OSError as exc:
+        raise BuilderDispatchError(f"dispatch tree is unreadable: {root}") from exc
+    for node_dir in nodes:
+        try:
+            requests = sorted(node_dir.glob("*.json"))
+        except OSError as exc:
+            raise BuilderDispatchError(f"dispatch tree is unreadable: {node_dir}") from exc
+        for path in requests:
+            # The filename is the card id by construction (request_path), so a
+            # request too malformed to name its own card still names one here.
+            card_id = path.stem
+            try:
+                request = _load(path) or {}
+                card_id = str(request.get("card_id") or card_id)
+                status = _load(status_path(paths, node_dir.name, card_id)) or {}
+            except BuilderDispatchError:
+                held.add(card_id)
+                continue
+            if request_holds_card(request, status, stamp):
+                held.add(card_id)
+    return held
+
+
 def offer(
     paths: FleetPaths,
     core: dict,

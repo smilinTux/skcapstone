@@ -204,6 +204,32 @@ def _bounded_ids(card_ids, limit=12):
     return ",".join(shown) or "-", max(0, len(values) - len(shown))
 
 
+def _builder_partition(owned_rows, candidate_ids, held_ids):
+    """Split this host's owned rows by whether the builder path holds the card.
+
+    Pure, so the admission decision is testable without a fleet tree or a
+    scheduler. A row is withheld only when it is BOTH a builder candidate and
+    currently held; a candidate the builder is not holding stays with this
+    host's lanes, and a non-candidate is never touched.
+
+    Args:
+        owned_rows: This host's hash-owned pool rows (card id at index 2).
+        candidate_ids: The ids `builder_dispatch.eligible()` accepted.
+        held_ids: The ids `builder_dispatch.held_card_ids()` reported.
+
+    Returns:
+        (kept rows, withheld ids, returned ids), each in input order.
+    """
+    withheld = [
+        row[2] for row in owned_rows if row[2] in candidate_ids and row[2] in held_ids
+    ]
+    returned = [
+        row[2] for row in owned_rows if row[2] in candidate_ids and row[2] not in held_ids
+    ]
+    held = set(withheld)
+    return [row for row in owned_rows if row[2] not in held], withheld, returned
+
+
 def _full_reassessment_path(host, evidence_root, authority_host=None):
     """Keep exactly one shared full report, written only by its authority host.
 
@@ -279,7 +305,7 @@ def _partition_owner(card_id, hosts, pinned_host=None):
 
 
 def _selection_diagnostic(pool, owned, lanes, owner_for, host_capacity=None,
-                          builder_withheld=()):
+                          builder_withheld=(), builder_returned=()):
     """Classify why an authoritative pool produced no local selection.
 
     This is diagnostic only. It never changes ownership or claimability, so the
@@ -292,6 +318,11 @@ def _selection_diagnostic(pool, owned, lanes, owner_for, host_capacity=None,
     line ``owned=0 ... owners=<this host>:N`` under the FALSE reason
     ``foreign-hash-partition`` (observed fleet-wide on chi, 2026-09-18, while
     every host sat idle with free slots).
+
+    ``builder_returned`` names the candidates the builder path was NOT holding
+    this tick, which this host therefore kept. It is logged beside the withheld
+    count so one grep shows whether an idle host is idle because the builder
+    holds its slice or for some other reason entirely.
     """
     pool_ids = [row[2] for row in pool]
     owned_ids = [row[2] for row in owned]
@@ -320,9 +351,10 @@ def _selection_diagnostic(pool, owned, lanes, owner_for, host_capacity=None,
     ) or "-"
     return (
         "reason=%s pool=%d owned=%d target=%d free=%d ids=%s omitted=%d "
-        "owners=%s owner_free=%s builder_withheld=%d"
+        "owners=%s owner_free=%s builder_withheld=%d builder_returned=%d"
         % (reason, len(pool), len(owned), total_target, total_free, bounded,
-           omitted, owner_counts, owner_free, len(builder_ids))
+           omitted, owner_counts, owner_free, len(builder_ids),
+           len(tuple(builder_returned)))
     )
 
 
@@ -6639,9 +6671,24 @@ def owns(cid):
     return owner_host(cid) == HOST
 owned=[x for x in pool if owns(x[2])]
 
-# Source-only logical-route cards belong to the Niobe builder path. Remove them
-# from every regular host before any lane can claim them, then let only the host
-# carrying Niobe's public placement publish the remote request.
+# Source-only logical-route cards are offered to the Niobe builder path first,
+# and are withheld from this host's lanes ONLY while that path actively holds
+# them: a live non-terminal dispatch request, or an offer still inside its
+# lease. Eligibility alone withholds nothing. PR #635 made the withhold
+# unconditional to make ziowk01 dispatch reachable, which turned a right of
+# first refusal into ownership of the whole card class: measured on chi
+# 2026-09-19, 14-16 of a 19-20 card pool sat on one 4-slot node (13
+# `builders-at-capacity` refusals in a single tick) while owner_free advertised
+# 54 free local seats, and cards the builder had terminally failed (026a08d9)
+# or could never offer at all (23554ec7) were withheld from everybody too.
+# "The builder cannot take this right now" must never mean "nobody may have it".
+#
+# This cannot open a double-claim window. It creates no claim path: the local
+# lanes claim through the CardStore fence they already used, the remote node
+# claims for itself through the same fence, and a card the builder has claimed
+# is no longer READY, so it is not in this pool at all. The only window a
+# release could widen is offer-to-remote-claim, and that window is precisely
+# what held_card_ids() reports as held.
 _builder_candidates = [
     candidate
     for candidate in pool
@@ -6650,10 +6697,30 @@ _builder_candidates = [
     )
 ]
 _builder_candidate_ids = {candidate[2] for candidate in _builder_candidates}
-_builder_withheld_ids = [
-    candidate[2] for candidate in owned if candidate[2] in _builder_candidate_ids
-]
-owned = [candidate for candidate in owned if candidate[2] not in _builder_candidate_ids]
+try:
+    _builder_held_ids = builder_dispatch.held_card_ids(default_fleet_paths())
+except (builder_dispatch.BuilderDispatchError, OSError) as _exc:
+    # A dispatch tree this host cannot read cannot prove the builder path is
+    # idle, so fall back to the pre-2026-09-19 full withhold. Parked cards are
+    # recoverable on the next readable tick; two workers on one card are not.
+    log(d, "BUILDER_HOLD_SCAN_FAILED|%s|%s" % (HOST, _exc))
+    _builder_held_ids = set(_builder_candidate_ids)
+owned, _builder_withheld_ids, _builder_returned_ids = _builder_partition(
+    owned, _builder_candidate_ids, _builder_held_ids
+)
+for _returned_id in _builder_returned_ids:
+    log(d, "BUILDER_RELEASED_TO_LANE|%s|%s|reason=not-actively-held" % (HOST, _returned_id))
+log(
+    d,
+    "BUILDER_WITHHOLD|%s|withheld=%d|returned=%d|withheld_ids=%s|returned_ids=%s"
+    % (
+        HOST,
+        len(_builder_withheld_ids),
+        len(_builder_returned_ids),
+        _bounded_ids(_builder_withheld_ids)[0],
+        _bounded_ids(_builder_returned_ids)[0],
+    ),
+)
 
 # Niobe may place one generic medium source card on a Ready builder standby.
 # The remote node claims the card itself, so the CardStore fence remains the
@@ -7172,7 +7239,8 @@ def _observe_assigned_reviews():
 if not picks:
     _observe_assigned_reviews()
     detail = _selection_diagnostic(
-        pool, owned, LANES, owner_host, _HOST_CAPACITY, _builder_withheld_ids)
+        pool, owned, LANES, owner_host, _HOST_CAPACITY, _builder_withheld_ids,
+        _builder_returned_ids)
     log(d,"SELECTION_EMPTY|%s|%s"%(HOST,detail))
     log(d,"NOOP|%s|selection empty: %s"%(HOST,detail))
     log(d,"NOOP_RECEIPT|%s|reason=%s|seat=%s"%
