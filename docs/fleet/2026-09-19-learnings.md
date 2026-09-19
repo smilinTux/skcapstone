@@ -238,6 +238,16 @@ Three instances, one mechanism.
   `CardEvent` validation passes `store:cards` as "OK" and is dropped by the
   reader with no trace — invisible to both.** The scan even computes a `lineno`
   and never uses it, so its own problem strings cannot name the offending line.
+
+  The live instance: `coordination/card_events/chiap08.jsonl` is 70,189 lines
+  and 25 MB, and exactly two of those lines never reach a fold. Line **19798**
+  is well-formed JSON using the wrong key names (`card`/`event` instead of
+  `card_id`/`action`), so `CardEvent` rejects it with
+  `card_id Field required` and `action Field required`; it is a hand-written
+  `verdict` link for card `086ea05c` stamped `2026-09-01T08:45:00Z`, a round
+  backdated second where its neighbours carry microsecond precision. Line
+  **19797** is not JSON at all — 355 bytes of bare prose about the same card.
+  A fold of all 7,214 chi cards reports zero errors.
 - `CardEvent` declares no `model_config`, so pydantic's default `extra="ignore"`
   applies. Passing `candidate_sha256=` to it succeeds, returns a valid model,
   and the field is gone. Measured directly:
@@ -295,12 +305,39 @@ than `DEFAULT_HEARTBEAT_TIMEOUT_S` as evidence the worker lives, so the reaper
 that exists to free wedged claims cannot fire on a wedged worker whose shell is
 still up.
 
-Measurement on the two live chi long-runners made the same point from the other
-side (PR #777): beat ages of 10s and 26s on workers 4.9 and 4.2 hours in,
-against a worker stdout log that was 0 bytes for the entire run and last card
-events 2.2 and 4.0 hours stale. The beat separates *alive* from *dead*. It says
-nothing at all about *working*, which is the question every consumer was asking
-it.
+The consumer makes it explicit. `worker_liveness_runtime.collect_observations`
+globs `fleet/beats/*.json` (`:104`) and then sets
+`child_activity_at=heartbeat_at` (`:197`) — **the field named "child activity"
+is defined as the shell timer's own stamp.** No separate measurement of the
+child exists anywhere in the observation. A second timer does the same thing in
+the Python wrapper: `maintain_process_record`
+(`skfleet-worker-wrapper.py:176-178`) writes `completion_state="running"` every
+60 seconds with a pid it captured once and never polls.
+
+Card `139ec63d` is that failure at full length. Worker
+`pi-glm-chiap03-139ec63d` held its claim for **6h19m43s**
+(2026-09-18T22:57:47Z to 2026-09-19T05:17:30Z). Its beat file is still on disk
+with `"disposition":"RUNNING"` and `elapsed_s: 22742`, last written 41.9
+seconds before release. The dispatcher wrote **77 consecutive
+`worker_liveness=active` link rows** over 6h15m at a median 301.5-second gap.
+And:
+
+- its workspace contains **0 files, ever** — the directory mtime is frozen at
+  22:02:50Z, 55 minutes *before* the claim began;
+- its log, `fleet/logs/139ec63d-20260918T225716Z.log`, is **0 bytes**, created
+  at dispatch and never written.
+
+(The 0.0% CPU reading from the session could not be re-derived; the pid is long
+gone and no historical sample is retained. The zero files and zero log bytes are
+consistent with it and stand on their own.) Note that a 0-byte log is not itself
+a signal here: **942 of ~945** worker logs on chiap01 are 0 bytes, because Pi
+writes nothing until exit.
+
+Measurement on two genuinely working long-runners makes the same point from the
+other side (PR #777): beat ages of 10s and 26s on workers 4.9 and 4.2 hours in,
+0-byte logs throughout, last card events 2.2 and 4.0 hours stale, and workspace
+writes 269 and 191 seconds old. The beat separates *alive* from *dead*. It says
+nothing about *working*, which is the question every consumer was asking it.
 
 **Contract.** A liveness signal is derived from the work, or it is labelled as a
 process-alive signal and no consumer is allowed to read it as progress.
@@ -550,9 +587,15 @@ only. It is a different thing from the dispatcher's
 repository/`base_ref`/`base_revision` workspace binding, and reading one as the
 other is how the gap stayed hidden.
 
-The adjacent instance is a card whose own fields disagree: a folded
-`status=DOING` sitting on `meta.voided=true, archived=true`. One is a lifecycle
-projection, the other a flag, and nothing asserts they agree.
+The adjacent instance is a card whose own fields disagree. `1960a101` folds on
+chiap01, chiap03 and chiap08 alike as `status=Column.DOING` with
+`archived=True` and `meta.voided=True` (voided 2026-09-16T07:25:31Z, two
+minutes after its last `move` to `doing`). The cause is in the fold itself:
+`skcoord/card_store.py:1495-1502`, the `void` branch sets `archived`, clears
+`owner` and `_claim_revision`, and writes the `voided*` meta — and **never
+touches `card.status`**. `void_terminal_actions` suppresses only *subsequent*
+moves, so any card voided out of `doing` folds as DOING permanently. One field
+is a lifecycle projection, the other a flag, and nothing asserts they agree.
 
 **Contract.** A surface that answers "can this be worked?" runs every predicate
 the dispatcher runs, or it answers a narrower question and says so in its name.
