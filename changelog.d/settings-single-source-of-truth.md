@@ -52,3 +52,13 @@
   `"sk-codex[a-z-]*"`: the broader form matched the legitimate `model.startswith("sk-codex")`
   prefix test in `skworld-digest.py` and red-flagged a correct file, and a gate that
   cries wolf gets waived.
+
+- **The bare `name 32` form only counts inside a markdown table row.** Run against the
+  373-file memory corpus, the checker red-flagged the very note this work came from, on
+  the sentence recording its own history: "Chef raised codex 4 to 32 and zai 4 to 10 on
+  2026-08-25". That is correct prose, not a contradiction, and a checker that fails a
+  correct document is one waiver away from being decorative. The keyword form ("codex is
+  max 4") still applies everywhere; the keyword-free form now applies only on lines
+  starting with `|`, which is where it is a value claim rather than narration. Verified:
+  repo clean, memory corpus clean, and the verbatim original-defect reconstruction still
+  red on both line numbers.

@@ -34,25 +34,26 @@ from pathlib import Path
 # value in each shape: a markdown table cell (`| backends | codex 32, zai 10, ... |`,
 # carrying no keyword at all) and a sentence (`codex is max 32, NOT 4`). A pattern
 # that understood only the prose form read that note as self-consistent.
-FACTS: dict[str, str] = {
+FACTS: dict[str, tuple[str, str | None]] = {
     # keyword form ("codex is max 32") | table-cell form ("| codex 32, zai 10 |")
     "codex gateway pool ceiling": (
-        r"codex[^.\n]{0,60}?(?:max|ceiling|slots?)\b[^.\n]{0,20}?(\d{1,4})"
-        r"|\bcodex[ \t|]+(\d{1,4})\b"
+        r"codex[^.\n]{0,60}?(?:max|ceiling|slots?)\b[^.\n]{0,20}?(\d{1,4})",
+        r"\bcodex[ \t|]+(\d{1,4})\b",
     ),
     "zai/glm gateway pool ceiling": (
-        r"\bzai\b[^.\n]{0,60}?(?:max|ceiling|slots?)\b[^.\n]{0,20}?(\d{1,4})"
-        r"|\bzai[ \t|]+(\d{1,4})\b"
+        r"\bzai\b[^.\n]{0,60}?(?:max|ceiling|slots?)\b[^.\n]{0,20}?(\d{1,4})",
+        r"\bzai[ \t|]+(\d{1,4})\b",
     ),
     "chiap08-qwen38 pool ceiling": (
-        r"chiap08-qwen38[^.\n]{0,40}?(?:max|slots?)\b[^.\n]{0,15}?(\d{1,4})"
-        r"|chiap08-qwen38[ \t|]+(\d{1,4})\b"
+        r"chiap08-qwen38[^.\n]{0,40}?(?:max|slots?)\b[^.\n]{0,15}?(\d{1,4})",
+        r"chiap08-qwen38[ \t|]+(\d{1,4})\b",
     ),
     "codex lane default model": (
-        r"(?:codex lane|SKFLEET_CODEX_LANE_MODEL)[^.\n]{0,60}?`(sk-codex[a-z-]*)`"
+        r"(?:codex lane|SKFLEET_CODEX_LANE_MODEL)[^.\n]{0,60}?`(sk-codex[a-z-]*)`",
+        None,
     ),
-    "builder dispatch ceiling": r"BUILDER_CAPACITY[^.\n]{0,40}?(\d{1,4})",
-    "chi fleet gateway port": r"chiap01[^.\n\s]{0,4}?:(\d{4,5})",
+    "builder dispatch ceiling": (r"BUILDER_CAPACITY[^.\n]{0,40}?(\d{1,4})", None),
+    "chi fleet gateway port": (r"chiap01[^.\n\s]{0,4}?:(\d{4,5})", None),
 }
 
 # The docs-evidence block in SOP.md holds the assertions themselves, which quote these
@@ -68,9 +69,15 @@ def scan(path: Path) -> list[str]:
     if path.name == "SOP.md":
         text = EVIDENCE.sub("", text)
     problems = []
-    for fact, pattern in FACTS.items():
+    for fact, (prose, table) in FACTS.items():
         seen: dict[str, int] = {}
         for n, line in enumerate(text.splitlines(), 1):
+            # The bare `name 32` form is only a value claim inside a markdown table
+            # row. In running prose it is usually history ("Chef raised codex 4 to
+            # 32"), and reading that as a contradiction red-flags a correct document.
+            pattern = prose
+            if table and line.lstrip().startswith("|"):
+                pattern = f"{prose}|{table}"
             for m in re.finditer(pattern, line, re.I):
                 value = next((g for g in m.groups() if g), None)
                 if value is not None:
