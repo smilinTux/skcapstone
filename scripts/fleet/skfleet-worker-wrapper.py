@@ -335,10 +335,7 @@ def _fold_link_key(key: object) -> str:
 def _claim_opened_at(events: list, claim_revision: str) -> str:
     """Timestamp of the claim this process holds, or "" when it cannot be found."""
     for event in events:
-        if (
-            event.get("action") == "claim"
-            and event.get("claim_revision") == claim_revision
-        ):
+        if event.get("action") == "claim" and event.get("claim_revision") == claim_revision:
             return str(event.get("ts") or "")
     return ""
 
@@ -374,9 +371,7 @@ def durable_verdict_recorded(home: Path, card: str, events: list, revision: str)
     if not opened:
         return False
     for event in events:
-        if event.get("action") in ("verdict", "blocked") and str(
-            event.get("ts") or ""
-        ) >= opened:
+        if event.get("action") in ("verdict", "blocked") and str(event.get("ts") or "") >= opened:
             return True
     try:
         rows = _overlay_rows(home, card)
@@ -387,9 +382,7 @@ def durable_verdict_recorded(home: Path, card: str, events: list, revision: str)
             continue
         if str(event.get("ts") or "") < opened:
             continue
-        if not any(
-            key in _fold_link_key(event.get("link_key")) for key in _OUTCOME_LINK_KEYS
-        ):
+        if not any(key in _fold_link_key(event.get("link_key")) for key in _OUTCOME_LINK_KEYS):
             continue
         if _OUTCOME_VALUE_RE.match(str(event.get("link_value") or "")):
             return True

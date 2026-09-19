@@ -228,9 +228,10 @@ def test_an_unreadable_overlay_reports_unknown_not_success(tmp_path):
     home = tmp_path / ".skcapstone"
     (home / "coordination").mkdir(parents=True)
     ns = _ns()
-    assert ns["durable_verdict_recorded"](
-        home, CARD, [_claim("2026-09-19T13:30:00+00:00")], REV
-    ) is False
+    assert (
+        ns["durable_verdict_recorded"](home, CARD, [_claim("2026-09-19T13:30:00+00:00")], REV)
+        is False
+    )
 
 
 def test_the_release_call_no_longer_hardcodes_not_abandoned():
