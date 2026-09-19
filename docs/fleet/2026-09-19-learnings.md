@@ -569,6 +569,136 @@ reporting the transition.
 
 ---
 
+## 31. An absent key is a working default until the day it is not
+
+The Forgejo runner template renders
+
+```
+image: code.forgejo.org/forgejo/runner:{{ skgit.RUNNER_VERSION | default('6.2.2') }}
+```
+
+(`v1/ansible/optional/skgit/src/config/skgit/skgit-runners.yml.j2:61`, identical
+in all four SKStacks trees), and **no vault anywhere defines `RUNNER_VERSION`**.
+Decrypting every vaulted `group_vars` file under `optional`, `shared`,
+`standalone` and `core` returns zero hits; the vault the playbook actually
+selects carries one runner key, `RUNNER_REGISTRATION_TOKEN`. So every render
+produces 6.2.2.
+
+Production runs **11.1.2**. `docker exec skgit-prod-runner forgejo-runner
+--version` says so, and the rendered
+`/var/data/config/skgit-prod/skgit-runners.yml` differs from its template in
+exactly sixteen places: fifteen are `{{ env }}` substitutions and one is line
+61, where `11.1.2` was hand-patched into the **output**. Both images are cached
+on the host and the playbook's `template:` task carries no `force: no`, so the
+next `deploy_skgit-prod.yml` silently downgrades the runner by five major
+versions.
+
+Note which way round this is, because the instinct is to get it backwards. The
+README (`v1/README.md:450`) is **correct about production**. The template
+default is the stale value, the live state is right, and the deploy is what
+would break it. A drift check that trusts the repository as the source of truth
+would "fix" a working host.
+
+Two claims that did **not** survive measurement, recorded because retelling them
+would have made the fix wrong:
+
+- 6.2.2 does top out at node20 (`strings /bin/forgejo-runner` on the cached
+  image shows the contiguous literal `node12node16node20`; 11.1.2 adds
+  `node24`). But **no workflow on this Forgejo pins node24.** A `git grep`
+  across every ref of all 53 bare repos, for `node24` and for
+  `actions/{checkout,setup-node,cache,upload-artifact,download-artifact}@v[56]`,
+  returns zero hits; the actual pins are `checkout@v3/@v4`, `setup-node@v4`,
+  `setup-python@v5`. So "CI could never work" is false. The downgrade is a real
+  regression risk for a different and currently unexercised reason.
+- This is the **nor** estate (`skstack01-douno`, runners on norap1001, Forgejo
+  on norap1002), not chi.
+
+**Contract.** A template default is a value somebody chose once. Where the live
+value differs, the deploy is a regression until proven otherwise.
+
+| | |
+|---|---|
+| Producer | the template default, and the vault that may override it |
+| Consumer | the rendered file, and the container it starts |
+| Recovery owner | whoever owns the deploy |
+| Evidence | render the template with the real selected vault and diff against the live file, **before** the deploy, not after |
+| Detection | **a `default(...)` filter over a key no vault defines is an unpinned production value; enumerate them and require each to be either defined or deliberately defaulted** |
+| Fails closed | a render that would change a running value stops and reports, rather than writing |
+
+A hand-patched rendered file is the tell. It means somebody already found the
+template wrong, fixed the symptom where it was visible, and left the cause where
+it will fire again.
+
+---
+
+## 32. A template narrower than the live config is a deletion waiting to run
+
+`app.ini.j2` for skgit renders **30 keys across 9 sections** against the real
+selected vault (63 template lines, 39 `KEY =` lines in source, minus the
+`{% if skgit.email_enabled %}` mailer block and a guarded `TOKEN`). The live
+`/var/data/skgit-prod/config/app.ini` has **52 keys across 14 sections**, and
+has not been touched since March.
+
+The deploy task (`deploy_skgit-prod.yml:154-161`) is a plain `template:` with no
+`force: no` and no backup. So a wholesale deploy destroys **22 keys** and adds
+none back:
+
+```
+WORK_PATH                       repository.ENABLE_PUSH_CREATE_USER
+server.START_SSH_SERVER         repository.ENABLE_PUSH_CREATE_ORG
+server.LFS_START_SERVER         repository.MAX_CREATION_LIMIT
+server.LFS_JWT_SECRET           repository.DEFAULT_PUSH_CREATE_PRIVATE
+lfs.LFS_START_SERVER            repository.upload.{ENABLED,FILE_MAX_SIZE,MAX_FILES}
+lfs.{MAX_FILE_SIZE,MAX_BATCH_SIZE}
+git.MAX_GIT_DIFF_LINES          oauth2.JWT_SECRET
+git.timeout.{DEFAULT,MIGRATE,MIRROR,CLONE,PULL,GC}
+```
+
+Two of those are generated secrets. Losing `oauth2.JWT_SECRET` invalidates every
+issued OAuth2 token; losing `server.LFS_JWT_SECRET` breaks in-flight LFS auth.
+Neither is recoverable by re-running the deploy.
+
+`START_SSH_SERVER` and `LFS_START_SERVER` appear **only** in that hand-edited
+file: not in `app.ini.j2`, and not in `skgit.env.j2` either (the live
+`skgit.env` holds 39 `FORGEJO__*` variables and neither key is among them), so
+the env-to-ini injection would not restore them. Git-over-SSH on :222 is
+Forgejo's own Go server, which is exactly what `START_SSH_SERVER` gates:
+
+```
+$ nc skgit.skstack01.douno.it 222     ->  SSH-2.0-Go
+$ ssh -p 222 git@skgit.skstack01.douno.it
+Hi there, chefboyrdave2.1! ... Forgejo does not provide shell access.
+```
+
+and the LFS store behind `LFS_START_SERVER` holds **17 GB in 34,384 objects**.
+
+There is a second, worse layer. The live `skgit.yml` is a render of
+`skstacks-v2-work`'s template, **not** of `skstacks-prod`, the tree a deploy
+would use: 179 lines matching v2-work up to Jinja substitution, against
+`skstacks-prod`'s 162 lines differing in 103. Deploying from the prod tree would
+additionally revert the SSH TCP service port label from 222 to 22 and drop a
+hardened `pg_dumpall` backup block. **The live configuration was rendered from a
+tree that is not the one anybody would deploy from**, and nothing records which
+tree produced which file.
+
+**Contract.** A deploy that overwrites a live config file first proves the
+render is a superset of what is there.
+
+| | |
+|---|---|
+| Producer | the template plus the selected vault |
+| Consumer | the running service |
+| Recovery owner | whoever owns the deploy |
+| Evidence | key-set diff of rendered-vs-live, per section, with generated secrets called out separately |
+| Detection | **any key present live and absent from the render is a deletion; report the count before the deploy, and fail on a non-zero count** |
+| Fails closed | the deploy refuses rather than truncating, and takes a timestamped backup it can restore from |
+
+The provenance rule is the one that generalises past this service: **a rendered
+artifact records the template tree and commit that produced it.** Without that
+stamp, "redeploy the current config" is not a defined operation.
+
+---
+
 ## 33. A deployed artifact is not the repository
 
 `~/.local/bin/skfleet-rotate.py` and `~/.local/bin/skfleet-worker-wrapper.py`
