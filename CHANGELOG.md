@@ -1955,11 +1955,13 @@
   other.** Per-node drift detection structurally cannot catch a uniformly stale
   fleet: every expected value a node compares against is read from that node's
   own checkout, so five hosts on the wrong commit agree with themselves
-  perfectly. This reads the rollout history every node already publishes to the
-  shared fleet tree and reports any node outside the plurality as
-  `fleet:git_sha`, using the existing `Drift` records so `--json` and `--strict`
-  work unchanged. Opt-in, because during a staged rollout nodes are supposed to
-  disagree.
+  perfectly. The readiness gate now publishes `installed_git_sha` in the verdict
+  it already writes every 15 minutes to the shared fleet tree, and the new check
+  reads those verdicts, reporting any node outside the plurality as
+  `fleet:installed_git_sha`. Existing `Drift` records, so `--json` and `--strict`
+  work unchanged. Not built on `rollout_history`, which this fleet's deployments
+  bypass and which was measured an hour stale. Opt-in, because during a staged
+  rollout nodes are supposed to disagree.
 
 All notable changes to **skcapstone** are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).

@@ -278,6 +278,43 @@ def unit_in_scope(unit: str) -> tuple[bool | None, str | None, str]:
     return in_scope, None, checked_unit
 
 
+_DIST_INFO_GIT_SHA_RE = re.compile(r"\+g([0-9a-f]+)", re.IGNORECASE)
+
+
+def installed_git_sha():
+    """The git commit embedded in the installed skcapstone distribution.
+
+    setuptools_scm bakes the short git hash into the version it derives from
+    the git tag, and that version is part of the dist-info directory name
+    itself (skcapstone-0.15.168.dev266+g0c8dcd6b.dist-info), so this needs
+    only a glob under the one place SK* packages install. No subprocess, no
+    file open, no import of skcapstone -- this script is stdlib-only on
+    purpose and stays that way.
+
+    Published in the verdict so the estate can answer a question no
+    single-node check can: do the nodes agree with EACH OTHER about what
+    they are running. Every node already writes this verdict every 15
+    minutes to the one Syncthing folder the estate shares, so that question
+    becomes readable from any host with no new publishing step. See
+    skcapstone.fleet.rollout_drift.detect_fleet_incoherence.
+
+    Deliberately a content identifier and not the semantic version: 0.15.168
+    reads identically across unrelated commits, which is exactly what let
+    the 2026-09-19 outage hide.
+
+    Returns None (never a guess) when it cannot be read, so a reader can
+    tell "this node is on commit X" from "this node could not say", which
+    are different facts. This NEVER affects the ready verdict: a node whose
+    dist-info cannot be globbed is not thereby unready.
+    """
+    home = Path(os.path.expanduser("~"))
+    for dist_info in sorted(home.glob(".skenv/lib/python3.*/site-packages/skcapstone-*.dist-info")):
+        match = _DIST_INFO_GIT_SHA_RE.search(dist_info.name)
+        if match:
+            return match.group(1).lower()
+    return None
+
+
 def write_verdict(path: Path, ok: bool, lines: list[str]) -> None:
     """Write the gate's verdict as JSON, atomically (tmp file, then
     ``os.replace``), so a reader never observes a half-written file: it is
@@ -295,6 +332,7 @@ def write_verdict(path: Path, ok: bool, lines: list[str]) -> None:
         "checked_at": datetime.datetime.now(datetime.timezone.utc)
         .isoformat(timespec="seconds")
         .replace("+00:00", "Z"),
+        "installed_git_sha": installed_git_sha(),
         "lines": lines,
     }
     data = json.dumps(payload, sort_keys=True, indent=2).encode("utf-8") + b"\n"

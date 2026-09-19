@@ -2,26 +2,31 @@
 
 - **`skcapstone fleet node drift --fleet`: do the estate's nodes agree with
   each OTHER?** `detect_drift` answers "is this node internally consistent"
-  and structurally cannot answer this one: a node whose checkout, package and
-  deployed artifacts all agree is perfectly self-consistent while being the
-  only host in the estate on last week's commit. On 2026-09-19 all five chi
-  hosts sat on a commit none of them had any way to notice was not the one
-  being rolled out.
+  and structurally cannot answer this one: every expected value it compares
+  against is read from the node's own checkout, so a host that never pulled
+  agrees with itself perfectly, forever. On 2026-09-19 all five chi hosts did
+  exactly that at once.
 
-  Answered from the rollout history every node already publishes to its own
-  node-scoped path under the shared fleet tree, so there is no ssh, no new
-  publishing step and no second reporting channel: findings come back as
-  ordinary `Drift` records with `artifact="fleet:git_sha"`, and `--json`,
-  `--strict` and the text output all handle them unchanged. The JSON payload
-  now carries `host` per finding, because a fleet finding is about a peer.
+  The readiness gate now publishes `installed_git_sha` in its verdict (a
+  dist-info glob, stdlib only, never affects the `ready` result), and the new
+  `detect_fleet_incoherence` reads those verdicts. That file is already
+  written every 15 minutes to the shared fleet tree and already read by
+  `staged_rollout._readiness_verdict`, so there is no ssh, no new publishing
+  step and no second reporting channel. Findings are ordinary `Drift` records
+  with `artifact="fleet:installed_git_sha"`, so text output, `--json` and
+  `--strict` all work unchanged. The JSON payload now carries `host` per
+  finding, because a fleet finding is about a peer.
 
-  Opt-in on purpose, and deliberately NOT folded into `detect_drift`: the
-  staged rollout gates each node with `detect_drift`, and during a staged
-  rollout the nodes are supposed to disagree, so folding it in would make
-  every staged rollout fail at its second node.
+  Deliberately NOT built on `rollout_history`, the obvious-looking substrate:
+  it is written only by `staged_rollout.record_deployment`, and this fleet's
+  deployments do not all go through it. Measured on 2026-09-19, every node's
+  recorded manifest said `0c8dcd6b` while every node's checkout was on
+  `112b2ef4`. A check built on it answers "coherent" from records that agree
+  only because they are equally out of date.
 
-  The rule is plurality, not "compare everyone to me", so two operators on
-  two hosts reach the same conclusion about the same estate. Ties resolve
-  deterministically. A node that has never recorded a deployment is not
-  reported: never having deployed is a different fact from having deployed
-  the wrong thing.
+  Opt-in, and not folded into `detect_drift`: the staged rollout gates each
+  node with `detect_drift`, and during a staged rollout nodes are supposed to
+  disagree. Plurality rather than "compare everyone to me", so two operators
+  reading the same tree reach the same conclusion; ties break
+  deterministically. A node that cannot name its commit is reported, never
+  counted as agreeing.

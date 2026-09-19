@@ -573,7 +573,7 @@ def test_fleet_findings_name_the_peer_they_are_about(tmp_path, monkeypatch, fake
     monkeypatch.setattr(
         rollout_drift,
         "detect_fleet_incoherence",
-        lambda h: [Drift("fleet:git_sha", "changed", "deadbeef", "0bad0bad", "chiap04")],
+        lambda h: [Drift("fleet:installed_git_sha", "changed", "deadbeef", "0bad0bad", "chiap04")],
     )
 
     result = CliRunner().invoke(
@@ -582,7 +582,7 @@ def test_fleet_findings_name_the_peer_they_are_about(tmp_path, monkeypatch, fake
         env=_env(),
     )
 
-    assert "fleet:git_sha" in result.output
+    assert "fleet:installed_git_sha" in result.output
     assert "on chiap04" in result.output, (
         "a fleet finding is about a PEER; without the host name the reader "
         f"would read it as a fact about this node: {result.output}"
@@ -595,7 +595,7 @@ def test_fleet_findings_exit_nonzero_under_strict(tmp_path, monkeypatch, fake_ma
     monkeypatch.setattr(
         rollout_drift,
         "detect_fleet_incoherence",
-        lambda h: [Drift("fleet:git_sha", "changed", "deadbeef", "0bad0bad", "chiap04")],
+        lambda h: [Drift("fleet:installed_git_sha", "changed", "deadbeef", "0bad0bad", "chiap04")],
     )
 
     result = CliRunner().invoke(
@@ -623,7 +623,7 @@ def test_json_carries_the_host_so_a_peer_finding_is_attributable(
     monkeypatch.setattr(
         rollout_drift,
         "detect_fleet_incoherence",
-        lambda h: [Drift("fleet:git_sha", "changed", "deadbeef", "0bad0bad", "chiap04")],
+        lambda h: [Drift("fleet:installed_git_sha", "changed", "deadbeef", "0bad0bad", "chiap04")],
     )
 
     result = CliRunner().invoke(
