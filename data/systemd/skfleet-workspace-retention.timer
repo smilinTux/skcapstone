@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly SKFleet worker workspace retention
+
+[Timer]
+OnCalendar=weekly
+Persistent=true
+RandomizedDelaySec=30m
+Unit=skfleet-workspace-retention.service
+
+[Install]
+WantedBy=timers.target
