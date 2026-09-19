@@ -23,6 +23,7 @@ CARD_RE = re.compile(r"\b([0-9a-f]{8})\b", re.I)
 _REVIEWER_SCHEMA = "skfleet.reviewer-identity/v1"
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _TERMINAL_REVIEW = frozenset({"PASS", "FAIL", "BLOCKED"})
+_TERMINAL_REVIEW_PREFIX = re.compile(r"^(PASS|FAIL|BLOCKED)(?:$|[\s|:])")
 _MAX_REVIEW_WORK = 50
 
 
@@ -116,6 +117,12 @@ def _revision(home: Path, card_id: str, card: dict[str, Any] | None = None) -> s
 def _pr_number(text: str) -> int | None:
     m = PR_RE.search(text)
     return int(m.group(1)) if m else None
+
+
+def _terminal_review_verdict(value: object) -> str | None:
+    """Return the typed terminal token while retaining explanatory text."""
+    match = _TERMINAL_REVIEW_PREFIX.match(str(value or "").strip().upper())
+    return match.group(1) if match else None
 
 
 def _review_is_bound_to_pr(
@@ -214,7 +221,7 @@ def reconcile(
         def review_terminal(card: dict[str, Any]) -> bool:
             status = str(card.get("status") or "").lower().split(".")[-1]
             links = card.get("links") if isinstance(card.get("links"), dict) else {}
-            verdict = str(links.get("verdict") or links.get("outcome") or "").strip().upper()
+            verdict = _terminal_review_verdict(links.get("verdict") or links.get("outcome") or "")
             return status == "done" and verdict in _TERMINAL_REVIEW
 
         sources = [c for c in candidates if not is_review(c)]
@@ -238,10 +245,8 @@ def reconcile(
             source_generation = _revision(home, source["id"], source)
             review_revision = _revision(home, review["id"], review)
             review_links = review.get("links") if isinstance(review.get("links"), dict) else {}
-            review_verdict = (
-                str(review_links.get("verdict") or review_links.get("outcome") or "")
-                .strip()
-                .upper()
+            review_verdict = _terminal_review_verdict(
+                review_links.get("verdict") or review_links.get("outcome") or ""
             )
             if source_generation and review_revision:
                 records[f"{repository}#{number}"] = {
