@@ -221,6 +221,11 @@ def capture(assessment: dict, endpoints: dict[str, str | None]) -> dict:
         "schema": SCHEMA,
         "at": assessment.get("at", _now_iso()),
         "frozen": bool(assessment.get("frozen", False)),
+        # Tri-state display status carried through from eyes.assess (standard
+        # R4): a sample from an unprovisioned estate must not read as healthy.
+        "freeze_state": str(
+            assessment.get("freeze_state") or ("frozen" if assessment.get("frozen") else "unknown")
+        ),
         "apps": apps,
     }
 

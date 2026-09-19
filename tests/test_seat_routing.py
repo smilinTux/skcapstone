@@ -29,6 +29,7 @@ def _load(home, placement=None, placement_error=None):
         "seat_for",
         "_seat_is_provisioned",
         "_seat_owner",
+        "_pool_v2_owner_map",
         "_worker_owner",
     }
     fns = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
@@ -135,11 +136,135 @@ def test_seat_owner_one_multiple_missing_pin_and_ordinary(tmp_path: Path) -> Non
     assert ordinary[1] == "ordinary"
 
 
+def test_elastic_review_owner_requires_one_clean_niobe_placement(tmp_path: Path) -> None:
+    ns, _ = _load(str(tmp_path), {"niobe": ("chiap08",)})
+    card_id = "64c201a1"
+    row = [2, 4, card_id, {}, [], 0]
+    admission = {"elastic_review_admitted": True, "host_pin": None}
+    ns["_POOL_V2_ADMISSIONS"] = {card_id: admission}
+
+    assert ns["_partition_owner"](card_id, HOSTS) == "chiap03"
+    assert ns["_pool_v2_owner_map"]([row], "chiap08", set()) == (
+        {card_id: "chiap08"},
+        {},
+    )
+    admission["host_pin"] = "chiap08"
+    assert ns["_pool_v2_owner_map"]([row], "chiap08", set()) == (
+        {card_id: "chiap08"},
+        {},
+    )
+    admission["host_pin"] = None
+
+    for placement, error, reason in (
+        ({}, None, "seat-unprovisioned:niobe"),
+        ({"niobe": ("chiap03", "chiap08")}, None, "seat-nonunique:niobe"),
+        ({"niobe": ("chiap08",)}, "manifest-schema", "seat-manifest:manifest-schema"),
+    ):
+        ns["_SEAT_PLACEMENT"] = placement
+        ns["_SEAT_PLACEMENT_ERROR"] = error
+        assert ns["_pool_v2_owner_map"]([row], "chiap08", set()) == (
+            {card_id: "unassigned:" + reason},
+            {card_id: reason},
+        )
+
+    ns["_SEAT_PLACEMENT"] = {"niobe": ("chiap08",)}
+    ns["_SEAT_PLACEMENT_ERROR"] = None
+    admission["host_pin"] = "chiap03"
+    assert ns["_pool_v2_owner_map"]([row], "chiap08", set()) == (
+        {card_id: "unassigned:seat-pin-conflict:niobe:chiap03"},
+        {card_id: "seat-pin-conflict:niobe:chiap03"},
+    )
+
+
+def test_pool_owner_map_preserves_ordinary_and_seat_ownership(tmp_path: Path) -> None:
+    ns, labels = _load(str(tmp_path), {"link": ("chiap08",), "niobe": ("chiap08",)})
+    labels["00000001"] = ["seat-link"]
+    rows = [
+        [2, 4, "00000001", {}, [], 0],
+        [2, 4, "00000002", {}, [], 0],
+        [2, 4, "00000003", {}, [], 0],
+    ]
+    ns["_POOL_V2_ADMISSIONS"] = {}
+
+    owners, blocked = ns["_pool_v2_owner_map"](rows, "chiap08", {"00000003"})
+
+    assert owners["00000001"] == "chiap08"
+    assert owners["00000002"] == ns["_partition_owner"]("00000002", HOSTS)
+    assert owners["00000003"] == "chiap08"
+    assert blocked == {}
+
+    capacity_owners, blocked = ns["_pool_v2_owner_map"](
+        rows,
+        "chiap08",
+        {"00000003"},
+        {"chiap03": 5, "chiap08": 0},
+    )
+    assert capacity_owners["00000001"] == "chiap08"
+    assert capacity_owners["00000002"] == ns["_partition_owner"]("00000002", HOSTS)
+    assert capacity_owners["00000003"] == "chiap08"
+    assert blocked == {}
+
+
+def test_host_neutral_owner_ignores_live_capacity_skew(tmp_path: Path) -> None:
+    """Live capacity skew never moves ownership off the stable all-host hash.
+
+    Regression for the 2026-09-18 chi fleet stall: ownership was hashed over
+    "hosts whose latest fleet-live snapshot advertises free lanes". That set
+    differs per host and per cycle (the snapshots race over Syncthing, and the
+    standalone publisher writes lanes={}), so every host partitioned the same
+    pool over a different roster, was routinely excluded from its own
+    partition, and reported owned=0 while free slots and ready work existed.
+    """
+    ns, _ = _load(str(tmp_path))
+    card_id = "cdf59956"
+    rows = [[2, 4, card_id, {}, [], 0]]
+    ns["_POOL_V2_ADMISSIONS"] = {}
+
+    assert ns["_partition_owner"](card_id, HOSTS) == "chiap03"
+    for viewing_host in ("chiap03", "chiap08"):
+        assert ns["_pool_v2_owner_map"](
+            rows,
+            viewing_host,
+            set(),
+            {"chiap03": 0, "chiap08": 5},
+        ) == ({card_id: "chiap03"}, {})
+
+
+def test_host_neutral_capacity_keeps_equal_and_all_zero_partitioning(tmp_path: Path) -> None:
+    """Equal positive capacity and no capacity preserve the stable host bucket."""
+    ns, _ = _load(str(tmp_path))
+    card_id = "cdf59956"
+    rows = [[2, 4, card_id, {}, [], 0]]
+    ns["_POOL_V2_ADMISSIONS"] = {}
+    expected = ns["_partition_owner"](card_id, HOSTS)
+
+    assert (
+        ns["_pool_v2_owner_map"](
+            rows,
+            "chiap08",
+            set(),
+            {host: 2 for host in HOSTS},
+        )[
+            0
+        ][card_id]
+        == expected
+    )
+    assert (
+        ns["_pool_v2_owner_map"](
+            rows,
+            "chiap08",
+            set(),
+            {host: 0 for host in HOSTS},
+        )[
+            0
+        ][card_id]
+        == expected
+    )
+
+
 def test_runtime_places_seats_before_generic_partitioning() -> None:
     source = Path(SRC).read_text(encoding="utf-8")
-    ownership = source.index(
-        "_OWNER_BY_ID, _SEAT_BLOCKED = _pool_v2_owner_map(pool, HOST, _PINNED_IDS)"
-    )
+    ownership = source.index("_OWNER_BY_ID, _SEAT_BLOCKED = _pool_v2_owner_map(")
     assert source.index("seat_for(cid, core)", source.index("def _pool_v2_owner_map")) < ownership
     assert ownership < source.index("owned=[x for x in pool")
     assert "SEAT_PLACEMENT_BLOCKED|%s|%s|%s" in source

@@ -38,7 +38,7 @@ def _review_home(tmp_path: Path, title: str, state: str | None) -> Path:
     board = Board(home)
     board.ensure_dirs()
     board.create_task(Task(id="abcd1234", title="completion parity fixture"))
-    board.claim_task("reviewer", "abcd1234")
+    board.claim_task("test-reviewer", "abcd1234")
     core = home / "cards" / "abcd1234" / "core.json"
     payload = json.loads(core.read_text())
     payload["title"] = title
@@ -72,7 +72,7 @@ def _review_home(tmp_path: Path, title: str, state: str | None) -> Path:
 def _cli_complete(home: Path) -> tuple[bool, str]:
     result = CliRunner().invoke(
         _main(),
-        ["coord", "complete", "abcd1234", "--home", str(home), "--agent", "reviewer"],
+        ["coord", "complete", "abcd1234", "--home", str(home), "--agent", "test-reviewer"],
     )
     return result.exit_code == 0, result.output
 
@@ -80,7 +80,7 @@ def _cli_complete(home: Path) -> tuple[bool, str]:
 def _cli_move(home: Path) -> tuple[bool, str]:
     result = CliRunner().invoke(
         _main(),
-        ["coord", "move", "abcd1234", "done", "--home", str(home), "--agent", "reviewer"],
+        ["coord", "move", "abcd1234", "done", "--home", str(home), "--agent", "test-reviewer"],
     )
     return result.exit_code == 0, result.output
 
@@ -88,7 +88,7 @@ def _cli_move(home: Path) -> tuple[bool, str]:
 async def _mcp_complete(home: Path) -> tuple[bool, str]:
     with patch("skcapstone.mcp_tools._helpers.AGENT_HOME", str(home)):
         result = await call_tool(
-            "coord_complete", {"task_id": "abcd1234", "agent_name": "reviewer"}
+            "coord_complete", {"task_id": "abcd1234", "agent_name": "test-reviewer"}
         )
     payload = json.loads(result[0].text)
     return "error" not in payload, str(payload)
@@ -98,7 +98,7 @@ async def _mcp_move(home: Path) -> tuple[bool, str]:
     with patch("skcapstone.mcp_tools._helpers.SHARED_ROOT", str(home)):
         result = await call_tool(
             "coord_move",
-            {"task_id": "abcd1234", "column": "done", "agent": "reviewer"},
+            {"task_id": "abcd1234", "column": "done", "agent": "test-reviewer"},
         )
     payload = json.loads(result[0].text)
     return "error" not in payload, str(payload)
@@ -148,4 +148,4 @@ async def test_cli_mcp_fail_closed_for_noncanonical_or_incomplete_ci(
     home = _review_home(tmp_path, title, state)
     ok, detail = await _invoke(home, entrypoint)
     assert not ok, detail
-    assert Board(home).load_agent("reviewer").current_task == "abcd1234"
+    assert Board(home).load_agent("test-reviewer").current_task == "abcd1234"

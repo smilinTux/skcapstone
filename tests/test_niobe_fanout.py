@@ -682,7 +682,7 @@ def test_production_dispatcher_uses_one_niobe_path_before_claim_and_launch() -> 
     source = (Path(__file__).parents[1] / "scripts" / "fleet" / "skfleet-rotate.py").read_text(
         encoding="utf-8"
     )
-    loop = source[source.index("for _LANE,(_,_,cid,core,_labels,_nb) in picks:") :]
+    loop = source[source.index("for _pick_index,") :]
     authorize = loop.index("pending_fanout_request(")
     materialize = loop.index('state="materialized"')
     claim = loop.index('claim=subprocess.run([SKC,"coord","claim",cid')

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import bisect
 import collections
 import datetime
 import glob
@@ -34,12 +35,21 @@ FUNCTIONS = {
     "_dependency_state_change_epoch",
     "_blocker_change_epoch",
     "_wake_retry_available",
+    "_claim_amnesty_epoch",
+    "_countable_claims",
+    "_work_epochs",
+    "_work_between",
+    "_claim_ceiling_hit",
+    "acts",
     "blocked_backoff",
     "_material_change_since",
     "awaiting_review",
     "needs_escalation",
 }
 CONSTANTS = {
+    "_CLAIM_BOOKKEEPING",
+    "_CLAIM_CLOSING",
+    "_REAP_WRITER",
     "_OUTCOME_KEYS",
     "_OUTCOME_VALUE_RE",
     "_PIPE_OUTCOME_RE",
@@ -57,6 +67,8 @@ CONSTANTS = {
     "_PASS_RE",
     "_ESCALATE_LABEL",
     "_CAPABILITY_VERDICT_RE",
+    "_MAX_CLAIMS",
+    "_AMNESTY_VALUE_RE",
 }
 
 
@@ -72,6 +84,7 @@ def _load_backoff_namespace() -> dict[str, object]:
             if names & CONSTANTS:
                 nodes.append(node)
     namespace = {
+        "bisect": bisect,
         "collections": collections,
         "datetime": datetime,
         "glob": glob,

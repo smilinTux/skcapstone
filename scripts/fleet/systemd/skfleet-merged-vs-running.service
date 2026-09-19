@@ -1,0 +1,35 @@
+# Merged versus running: is what we merged actually what the fleet runs?
+#
+# Hand-installed on exactly ONE auditing host that holds read-only ssh access
+# to the fleet hosts (the same hand-installed pattern as skfleet-rotate.service
+# itself; see skcapstone.fleet.rollout_drift.ALLOWED_UNSHIPPED_UNITS for why
+# the dispatcher units live outside the shipped tree). Do NOT enable this
+# fleet-wide: one auditor, one verdict.
+#
+# Adjust the repo path below to the auditing host's checkout
+# (~/work/skcapstone on the chi hosts, ~/clawd/skcapstone-repos/skcapstone on
+# the operator workstation).
+#
+# Failure routing per OBSERVABILITY_AND_SCHEDULING_STANDARD: the check exits
+# nonzero on drift (1) or on any unmeasurable host (2), which fails this
+# oneshot and fires the estate's existing skcapstone-alert@ hook, and
+# --gtd-capture upserts the finding into the unified GTD store deduped on a
+# stable (source, source_ref) so a re-run patches one item instead of nagging.
+
+[Unit]
+Description=Merged vs running: verify every fleet host runs what main merged, by content digest
+Documentation=https://github.com/smilinTux/skcapstone/blob/main/scripts/fleet/skfleet_merged_vs_running.py
+OnFailure=skcapstone-alert@skfleet-merged-vs-running.service
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.skenv/bin/python3 %h/work/skcapstone/scripts/fleet/skfleet_merged_vs_running.py --repo-root %h/work/skcapstone --fetch --gtd-capture --verdict-path %h/.skcapstone/fleet/status/node-%H/merged-vs-running/verdict.json
+TimeoutStartSec=300
+Nice=15
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

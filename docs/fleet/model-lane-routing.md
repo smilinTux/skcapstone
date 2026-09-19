@@ -221,3 +221,44 @@ pi and opencode declare all four model ids under the skgateway provider
 (`k3` carries a 1000000-token context window). Requesting a declared model
 whose owning backend is in cooldown fails closed with 503
 `model_owner_backend_down` instead of spraying to unrelated providers.
+
+## The bucket is the identity, the lane model is what is sent
+
+Two different things were sharing one variable, which is why this went unnoticed
+for so long.
+
+- The **size bucket** (`sk-s`, `sk-m`, `sk-l`, `sk-xl`) is the card's ROUTE
+  IDENTITY. Preflight, lane health and evidence are all keyed on it, so it must
+  keep naming the size and must never be replaced by a backend name.
+- The **lane model** is what the worker actually asks the gateway for, and each
+  lane resolves the bucket differently: codex to `SKFLEET_CODEX_MODEL_<SIZE>`
+  (chi pins all four to `sk-codex-mid`), glm to the level table above, kimi to
+  `kimi-for-coding` or `k3` for `[XL]`.
+
+`_lane_model` did that resolution, and until 2026-09-18 it was called by
+nothing. Every lane sent the bare bucket as its model.
+
+This never raised an error, which is the whole reason it survived: **the bare
+bucket is a valid gateway route.** It resolves to the local qwen38 fallback. So
+a card dispatched to the codex lane asked for `sk-m`, was answered by qwen38,
+and returned perfectly good work. The subscription backends were simply never
+asked for anything.
+
+Measured on chi 2026-09-18 from 03:58, at the gateway:
+
+```
+chiap08-qwen38    5 slots    467 requests
+codex            32 slots      6 requests
+zai              10 slots      1 request
+kimi                          2 requests
+```
+
+A codex target of 30 could never be met, because codex was never asked. The
+operator's own `SKFLEET_CODEX_MODEL_M=sk-codex-mid` override was set on every
+rotate host and had no effect for the same reason.
+
+The guard for this lives in `tests/test_skfleet_logical_routes.py`. It asserts
+at the SOURCE level that both the launch site and the post-race recheck resolve
+a lane model, because a test of `_lane_model` on its own passed happily for the
+entire time the fleet was misrouting every request. A function can be correct
+and unreachable at once, and only the call site tells you which.

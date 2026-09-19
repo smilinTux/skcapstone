@@ -503,8 +503,10 @@ class SubAgentSpawner:
         """Claim a coordination board task for the spawned agent."""
         try:
             from .coordination import Board
+            from .fleet.churn_breaker import assert_claim_permitted
 
             board = Board(home=self._home)
+            assert_claim_permitted(self._home, task_id, agent_name)
             board.claim_task(agent_name, task_id)
             logger.info("Claimed coord task %s for %s", task_id, agent_name)
         except Exception as exc:
