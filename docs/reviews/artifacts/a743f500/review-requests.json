@@ -1,0 +1,27 @@
+{
+  "card_id": "a743f500",
+  "pull_request": "https://github.com/smilinTux/skcapstone/pull/244",
+  "review_cards": [
+    {
+      "card_id": "f55c5023",
+      "partition": 0
+    },
+    {
+      "card_id": "6c418ad3",
+      "partition": 11
+    },
+    {
+      "card_id": "6464e55d",
+      "partition": 15
+    },
+    {
+      "card_id": "e9a5695c",
+      "partition": 19
+    },
+    {
+      "card_id": "b6eedf67",
+      "partition": 30
+    }
+  ],
+  "schema": "skcapstone.fleet_unblock.review_requests.v1"
+}
