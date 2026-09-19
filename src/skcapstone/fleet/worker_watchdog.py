@@ -194,7 +194,51 @@ def classify_progress(
 # never changed across the whole stale run, so not one file was added or
 # touched. Its later return to progress-fresh was a NEW generation's launch
 # touching the workspace, not the old process resuming.
-DEFAULT_WEDGE_TIMEOUT_S = 14400.0
+#
+# RE-DERIVED 2026-09-19 against the agent transcript, and lowered 14400 ->
+# 7200, because the signal underneath it changed.
+#
+# The bimodality above was partly an artifact of the source. Workspace mtime
+# counted DIRECTORY mtimes, and an ordinary `git status` bumps `.git` without
+# writing any file, so the "progress-fresh" population was measuring git
+# reads. On 2026-09-19 six chi workers that had produced zero edit/write tool
+# calls, zero commits and zero dirty files across 2.5h to 6h all reported
+# progress_age_s=11..26 and classified wedge-progressing. No value of this
+# constant could have fired, because the oracle never went stale.
+#
+# The reporter now reads the agent's own session transcript instead
+# (_session_progress_at), and that signal IS sharply bimodal. Measured over
+# 2,754 fleet sessions with >=20 events, all four chi worker hosts, the
+# longest silence inside a session whose worker went on to keep working:
+#
+#   p50   p90   p95    p99    p99.9    max
+#    45s  184s  300s   513s   1,350s   2,558s
+#
+#   sessions with a max gap above 3,600s:      0 / 2,754
+#   sessions with a max gap above 1 hour:      0 / 2,754
+#   the 139ec63d incident sat silent for  22,680s (6h18m)
+#
+# The empty band is 2,558s .. 22,680s. 7200 sits inside it, and two
+# independent bounds put it there rather than a percentile:
+#
+#   worst observed healthy silence                 2,558s -> 2.8x below
+#   largest bash tool timeout ever issued by any
+#     worker (a full `pytest` run, and the longest
+#     a single tool call can hold the transcript
+#     silent by construction)                      3,600s -> 2.0x below
+#   the one known wedge                           22,680s -> 3.2x above
+#
+# Genuinely-working workers this threshold would have killed, replayed over
+# all 2,754 sessions: ZERO. At 3,600s it is also zero, but that equals the
+# maximum legal single tool call, so it is not left as the margin. Halving
+# 14400 to 7200 also halves the seat loss on the incident it was built for.
+#
+# This deadline is only applied to source=session-mtime. A workspace-mtime
+# reading is reported and never actuated: its gap distribution overlaps the
+# healthy one outright (productive sessions were measured going up to
+# 29,181s between workspace writes), so no threshold on it separates wedged
+# from working.
+DEFAULT_WEDGE_TIMEOUT_S = 7200.0
 
 
 # Exactly two states actuate.  Widening this set is a deliberate act.

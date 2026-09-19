@@ -319,15 +319,27 @@ def test_no_genuinely_working_worker_would_have_been_killed():
 
 
 def test_every_fresh_observation_refuses():
-    """38 of 38 progress-fresh records classify as progressing, none actuate."""
+    """38 of 38 progress-fresh records classify as progressing, none actuate.
+
+    The absent and within-margin counts moved on 2026-09-19 when the deadline
+    was re-derived from the agent transcript and lowered 14400 -> 7200: 25
+    records crossed from wedge-within-margin to wedge-absent-confirmed,
+    because the absent case is deadlined on claim age. Every one of the 25
+    belongs to pi-glm-chiap03-139ec63d, the incident worker this reaper was
+    built for, which is why the actuated SET in
+    test_no_genuinely_working_worker_would_have_been_killed is unchanged.
+    The progress-fresh and stale totals are untouched by the new deadline.
+    """
     per_owner = _replay()
     total = Counter()
     for counts in per_owner.values():
         total.update(counts)
     assert total["wedge-progressing"] == 38
     assert total["wedge-stale-confirmed"] == 10
-    assert total["wedge-absent-confirmed"] == 37
-    assert total["wedge-within-margin"] == 73
+    assert total["wedge-absent-confirmed"] == 62
+    assert total["wedge-within-margin"] == 48
+    # The 25 that moved are all one owner, and it is the incident.
+    assert per_owner["pi-glm-chiap03-139ec63d"]["wedge-absent-confirmed"] == 62
 
 
 def test_the_slow_starting_worker_is_never_touched():

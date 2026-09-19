@@ -3025,6 +3025,26 @@ def _worker_health_snapshot(session_names):
 _PROGRESS_SCAN_CAP = 20000
 _PROGRESS_FRESH_EXIT_S = 60.0
 
+# Directory names whose contents are tool scratch, never work product. A
+# worker that only re-runs pytest/ruff/uv still rewrites these every cycle,
+# which is exactly how 1960b107 read as progress-fresh on chi for 2.5h while
+# producing nothing: its newest entry was .tools/uv-cache/..., then
+# .pytest_cache/v/cache/nodeids, then .ruff_cache. Measured 2026-09-19.
+_PROGRESS_IGNORED_DIRS = frozenset({
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".mypy_cache",
+    ".tox",
+    ".nox",
+    ".cache",
+    "uv-cache",
+    "node_modules",
+    ".venv",
+    "venv",
+    "htmlcov",
+})
+
 
 def _workspace_progress_at(workspace, cap=_PROGRESS_SCAN_CAP,
                            fresh_within=_PROGRESS_FRESH_EXIT_S, now=None):
@@ -3036,6 +3056,16 @@ def _workspace_progress_at(workspace, cap=_PROGRESS_SCAN_CAP,
     that took 2,351 files in an hour. Returns (newest_epoch_or_None,
     entries_scanned, truncated). .git is scanned on purpose: index and object
     writes are genuine work product.
+
+    Only REGULAR FILES carry the timestamp. A directory's mtime moves when a
+    transient file is created and unlinked inside it, which is not a write of
+    anything: on chi 2026-09-19 every wedged worker's `.git` directory had an
+    mtime 30-60s old while every file inside it, `.git/index` included, was
+    2.5-6h old. Counting the directory made the newest-write signal read
+    `progress_age_s=11..26` for six workers that had produced zero edits,
+    zero commits and zero dirty files between them, so the reaper classified
+    all of them `wedge-progressing` and `wedge_timeout_s` was never reached.
+    Directories are still DESCENDED, just not timestamped.
     """
     now = time.time() if now is None else now
     newest = None
@@ -3057,6 +3087,16 @@ def _workspace_progress_at(workspace, cap=_PROGRESS_SCAN_CAP,
                 truncated = True
                 break
             try:
+                is_dir = entry.is_dir(follow_symlinks=False)
+            except OSError:
+                continue
+            if is_dir:
+                if entry.name not in _PROGRESS_IGNORED_DIRS:
+                    stack.append(entry.path)
+                continue
+            try:
+                if not entry.is_file(follow_symlinks=False):
+                    continue
                 stamp = entry.stat(follow_symlinks=False).st_mtime
             except OSError:
                 continue
@@ -3064,12 +3104,42 @@ def _workspace_progress_at(workspace, cap=_PROGRESS_SCAN_CAP,
                 newest = stamp
                 if now - newest <= fresh_within:
                     return newest, scanned, truncated
-            try:
-                if entry.is_dir(follow_symlinks=False):
-                    stack.append(entry.path)
-            except OSError:
-                pass
     return newest, scanned, truncated
+
+
+_SESSION_ROOT = os.path.join(HOME, ".pi/agent/sessions")
+
+
+def _session_progress_at(workspace, root=_SESSION_ROOT):
+    """Newest write to the agent's own transcript: the SHARPEST progress signal.
+
+    ``pi`` appends one JSON record per assistant turn and per tool result to
+    ``<root>/<slugged-workspace-path>/<stamp>_<uuid>.jsonl`` while it runs, so
+    the file's mtime is the last moment the agent did anything at all. That is
+    strictly sharper than the newest workspace write, which only moves when the
+    agent writes a FILE and therefore cannot tell "reading and reasoning" apart
+    from "stopped".
+
+    The slug is pi's own encoding of the absolute workspace path; rather than
+    reimplement it, match on the workspace basename, which already carries
+    lane, host and card and is unique per worker.
+
+    Returns (newest_epoch_or_None, files_considered).
+    """
+    base = os.path.basename(str(workspace).rstrip("/"))
+    if not base:
+        return None, 0
+    newest = None
+    seen = 0
+    for path in glob.glob(os.path.join(root, "*" + base + "--", "*.jsonl")):
+        try:
+            stamp = os.stat(path).st_mtime
+        except OSError:
+            continue
+        seen += 1
+        if newest is None or stamp > newest:
+            newest = stamp
+    return newest, seen
 
 
 def _report_worker_progress(session_names, units=(), now=None):
@@ -3127,8 +3197,21 @@ def _report_worker_progress(session_names, units=(), now=None):
                 claim_revision = fresh_revision or ""
                 workspace = os.path.join(
                     HOME, ".skcapstone/fleet/workspaces", owner)
-            progress_ts, scanned, truncated = _workspace_progress_at(
-                workspace, now=now)
+            # Session transcript first, workspace mtime only as a fallback
+            # report. Measured on chi 2026-09-19 across 2,754 fleet sessions:
+            # the longest a live worker ever went between transcript writes
+            # was 2,558s, while the 139ec63d incident sat silent for 22,680s.
+            # Workspace mtime cannot make that call: on the same day six
+            # workers with zero edits, zero commits and zero dirty files all
+            # read progress_age_s=11..26 because their `.git` DIRECTORY was
+            # touched by ordinary `git status` reads.
+            progress_ts, seen = _session_progress_at(workspace)
+            if progress_ts is not None:
+                source, scanned, truncated = "session-mtime", seen, False
+            else:
+                source = "workspace-mtime"
+                progress_ts, scanned, truncated = _workspace_progress_at(
+                    workspace, now=now)
             progress_at = (
                 datetime.datetime.fromtimestamp(
                     progress_ts, datetime.timezone.utc).isoformat()
@@ -3146,15 +3229,29 @@ def _report_worker_progress(session_names, units=(), now=None):
             # newest of a bounded prefix, so it can UNDER-report freshness.
             # Harmless in a report, fatal in a kill, so a truncated scan is
             # refused for actuation outright rather than trusted.
-            wedge = ("wedge-unmeasured" if truncated else classify_wedge(
-                observation, now=now_dt, claim_age_s=claim_age,
-                receipt_local=local))
+            # Only evidence the threshold was derived from may actuate.
+            # A truncated scan did not find the newest write, it found the
+            # newest of a bounded prefix, so it can UNDER-report freshness.
+            # A workspace-mtime READING is reported and never acted on: its
+            # gap distribution overlaps the healthy one (productive workers
+            # were measured going up to 29,181s between file writes), so no
+            # threshold on it separates wedged from working. Total absence is
+            # not a reading and keeps its own deadline: no workspace AND no
+            # transcript is the progress-missing case the absent reaper was
+            # built for, and a slow-starting worker is now covered twice over,
+            # because pi writes its transcript from the first turn.
+            measurable = progress_ts is None or source == "session-mtime"
+            wedge = ("wedge-unmeasured"
+                     if truncated or not measurable
+                     else classify_wedge(
+                         observation, now=now_dt, claim_age_s=claim_age,
+                         receipt_local=local))
             log(d, "WORKER_PROGRESS|%s|%s|%s|owner=%s|claim_revision=%s|"
                    "state=%s|progress_age_s=%s|timeout_s=%d|"
-                   "source=workspace-mtime|scanned=%d|truncated=%s|receipt=%s|"
+                   "source=%s|scanned=%d|truncated=%s|receipt=%s|"
                    "wedge=%s|wedge_timeout_s=%d|actuation=%s" %
                 (HOST, session, cid, owner, claim_revision, state, age,
-                 int(DEFAULT_PROGRESS_TIMEOUT_S), scanned,
+                 int(DEFAULT_PROGRESS_TIMEOUT_S), source, scanned,
                  str(truncated).lower(), "local" if local else "absent",
                  wedge, int(DEFAULT_WEDGE_TIMEOUT_S), _wedge_mode() or "off"))
             records.append({
@@ -3163,6 +3260,7 @@ def _report_worker_progress(session_names, units=(), now=None):
                 "expected_claim_revision": fresh_revision or "",
                 "state": state, "wedge": wedge, "observation": observation,
                 "progress_at": progress_ts, "progress_age_s": age,
+                "progress_source": source,
                 "claim_age_s": claim_age, "claim_ts": fresh_ts,
                 "receipt_local": local, "truncated": truncated,
             })

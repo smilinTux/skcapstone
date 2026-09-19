@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import ast
 import datetime
+import glob
 import json
 import os
 import time
@@ -140,14 +141,18 @@ def _reporter_namespace(tmp_path, lines):
     namespace = _lift(
         [
             "_workspace_progress_at",
+            "_session_progress_at",
             "_report_worker_progress",
             "_admission_lock_path",
             "_read_admission_receipt",
             "_PROGRESS_SCAN_CAP",
             "_PROGRESS_FRESH_EXIT_S",
+            "_PROGRESS_IGNORED_DIRS",
+            "_SESSION_ROOT",
         ],
         {
             "os": os,
+            "glob": glob,
             "json": json,
             "time": time,
             "datetime": datetime,
@@ -192,9 +197,12 @@ def test_stale_workspace_reports_progress_stale(tmp_path):
     # nothing acts.
     assert "actuation=off" in progress[0]
     # A two-hour-old write is progress-stale and is emphatically NOT wedged.
-    # 900s is where a worker stops looking fresh; 14400s is where it may be
-    # ended. The gap between them is the entire safety margin.
-    assert "wedge=wedge-within-margin" in progress[0]
+    # With no transcript to read, the reading is workspace mtime, and a
+    # workspace-mtime reading is never actuated at all: productive workers
+    # were measured going up to 29,181s between file writes, so the stale and
+    # working populations overlap and no threshold on it separates them.
+    assert "wedge=wedge-unmeasured" in progress[0]
+    assert "source=workspace-mtime" in progress[0]
     assert "|codex-auto-cafe0001|cafe0001|" in progress[0]
     assert "owner=pi-codex-test-cafe0001" in progress[0]
 
@@ -286,3 +294,168 @@ def test_workspace_scan_is_bounded(tmp_path):
     newest, scanned, truncated = namespace["_workspace_progress_at"](str(workspace), cap=5)
     assert truncated is True
     assert scanned <= 5
+
+
+# ---------------------------------------------------------------------------
+# The transcript oracle (2026-09-19).
+#
+# Workspace mtime could not tell a reading worker from a stopped one, and it
+# was additionally saturated by directory mtimes: `git status` writes no file
+# but still bumps `.git`, so six chi workers with zero edits, zero commits and
+# zero dirty files across 2.5h to 6h every one reported progress_age_s=11..26
+# and classified wedge-progressing. The reaper could never fire.
+# ---------------------------------------------------------------------------
+
+
+def _session_file(tmp_path, workspace, age_s):
+    """Write a pi transcript for this workspace, aged age_s seconds."""
+    slug = tmp_path / ".pi" / "agent" / "sessions" / f"--slugged-{workspace.name}--"
+    slug.mkdir(parents=True, exist_ok=True)
+    path = slug / "2026-09-19T08-00-00-000Z_01a0b8c3.jsonl"
+    path.write_text('{"type":"message"}\n', encoding="utf-8")
+    stamp = time.time() - age_s
+    os.utime(path, (stamp, stamp))
+    return path
+
+
+def test_a_directory_mtime_is_not_progress(tmp_path):
+    """The `.git` bug: a transient file created and unlinked bumps the dir.
+
+    Every wedged chi worker on 2026-09-19 had a `.git` directory 30-60s old
+    while every file inside it, `.git/index` included, was hours old. Nothing
+    had been written; ordinary git reads move the directory.
+    """
+    lines = []
+    namespace, workspace = _reporter_namespace(tmp_path, lines)
+    old = time.time() - 3 * 3600
+    marker = workspace / "output.txt"
+    marker.write_text("work", encoding="utf-8")
+    os.utime(marker, (old, old))
+    git = workspace / ".git"
+    git.mkdir()
+    index = git / "index"
+    index.write_text("i", encoding="utf-8")
+    os.utime(index, (old, old))
+    os.utime(workspace, (old, old))
+    # .git itself is fresh, exactly as a `git status` leaves it.
+    newest, _scanned, _truncated = namespace["_workspace_progress_at"](str(workspace))
+    assert newest is not None
+    assert (
+        time.time() - newest > 3600
+    ), "a fresh directory mtime was counted as a write; that is the bug"
+
+
+def test_tool_caches_are_not_progress(tmp_path):
+    """A worker that only re-runs pytest/ruff/uv is not making progress."""
+    lines = []
+    namespace, workspace = _reporter_namespace(tmp_path, lines)
+    old = time.time() - 3 * 3600
+    marker = workspace / "output.txt"
+    marker.write_text("work", encoding="utf-8")
+    os.utime(marker, (old, old))
+    for cache in (".pytest_cache", ".ruff_cache", "__pycache__", "node_modules"):
+        noisy = workspace / cache / "v"
+        noisy.mkdir(parents=True)
+        (noisy / "nodeids").write_text("fresh", encoding="utf-8")
+    os.utime(workspace, (old, old))
+    newest, _scanned, _truncated = namespace["_workspace_progress_at"](str(workspace))
+    assert newest is not None
+    assert time.time() - newest > 3600
+
+
+def test_a_live_transcript_beats_a_stale_workspace(tmp_path):
+    """The six-worker case: reading and reasoning is not being stopped.
+
+    This is the assertion that protects a worker doing hours of read-only
+    investigation. Its workspace has not been touched since checkout; its
+    transcript is seconds old; it must read fresh and must never be a wedge
+    candidate.
+    """
+    lines = []
+    namespace, workspace = _reporter_namespace(tmp_path, lines)
+    old = time.time() - 6 * 3600
+    marker = workspace / "output.txt"
+    marker.write_text("work", encoding="utf-8")
+    os.utime(marker, (old, old))
+    os.utime(workspace, (old, old))
+    _session_file(tmp_path, workspace, age_s=5)
+    namespace["_report_worker_progress"](["codex-auto-cafe0001"])
+    progress = [line for line in lines if line.startswith("WORKER_PROGRESS|")]
+    assert len(progress) == 1, lines
+    assert "source=session-mtime" in progress[0]
+    assert "state=progress-fresh" in progress[0]
+    assert "wedge=wedge-progressing" in progress[0]
+
+
+def test_a_silent_transcript_past_the_deadline_is_a_wedge(tmp_path):
+    """The 139ec63d shape: alive, holding the claim, transcript frozen."""
+    lines = []
+    namespace, workspace = _reporter_namespace(tmp_path, lines)
+    (workspace / "output.txt").write_text("work", encoding="utf-8")
+    _session_file(tmp_path, workspace, age_s=DEFAULT_WEDGE_TIMEOUT_S + 600)
+    namespace["_report_worker_progress"](["codex-auto-cafe0001"])
+    progress = [line for line in lines if line.startswith("WORKER_PROGRESS|")]
+    assert len(progress) == 1, lines
+    assert "source=session-mtime" in progress[0]
+    assert "wedge=wedge-stale-confirmed" in progress[0]
+
+
+def test_a_silent_transcript_inside_the_deadline_is_never_a_wedge(tmp_path):
+    lines = []
+    namespace, workspace = _reporter_namespace(tmp_path, lines)
+    _session_file(tmp_path, workspace, age_s=DEFAULT_WEDGE_TIMEOUT_S - 600)
+    namespace["_report_worker_progress"](["codex-auto-cafe0001"])
+    progress = [line for line in lines if line.startswith("WORKER_PROGRESS|")]
+    assert "wedge=wedge-within-margin" in progress[0]
+
+
+def test_only_the_transcript_may_actuate(tmp_path):
+    """No transcript, no kill. Workspace mtime reports and never acts."""
+    lines = []
+    namespace, workspace = _reporter_namespace(tmp_path, lines)
+    old = time.time() - 30 * 3600
+    marker = workspace / "output.txt"
+    marker.write_text("work", encoding="utf-8")
+    os.utime(marker, (old, old))
+    os.utime(workspace, (old, old))
+    namespace["_report_worker_progress"](["codex-auto-cafe0001"])
+    progress = [line for line in lines if line.startswith("WORKER_PROGRESS|")]
+    assert "source=workspace-mtime" in progress[0]
+    # 30h stale, far past any deadline, and still refused.
+    assert "wedge=wedge-unmeasured" in progress[0]
+
+
+def test_the_newest_transcript_wins_when_a_worker_has_several(tmp_path):
+    lines = []
+    namespace, workspace = _reporter_namespace(tmp_path, lines)
+    slug = tmp_path / ".pi" / "agent" / "sessions" / f"--slugged-{workspace.name}--"
+    slug.mkdir(parents=True)
+    for index, age in enumerate((40000.0, 20.0, 9000.0)):
+        path = slug / f"session-{index}.jsonl"
+        path.write_text("{}", encoding="utf-8")
+        os.utime(path, (time.time() - age, time.time() - age))
+    newest, seen = namespace["_session_progress_at"](
+        str(workspace), root=str(tmp_path / ".pi" / "agent" / "sessions")
+    )
+    assert seen == 3
+    assert time.time() - newest < 60
+
+
+def test_the_deadline_clears_the_longest_legal_tool_call():
+    """A single bash call may hold the transcript silent for its timeout.
+
+    The largest timeout any chi worker has ever issued is 3600s, a full
+    pytest run. The deadline must sit above it by construction, or a worker
+    running the test suite is a kill candidate.
+    """
+    assert DEFAULT_WEDGE_TIMEOUT_S > 3600.0
+
+
+def test_the_deadline_clears_the_worst_observed_healthy_silence():
+    """2,558s, measured over 2,754 fleet sessions on 2026-09-19."""
+    assert DEFAULT_WEDGE_TIMEOUT_S > 2558.0
+
+
+def test_the_deadline_stays_below_the_known_incident():
+    """139ec63d sat silent 22,680s. The deadline must fire well before that."""
+    assert DEFAULT_WEDGE_TIMEOUT_S < 22680.0
