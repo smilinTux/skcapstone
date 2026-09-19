@@ -407,3 +407,25 @@ def test_the_reporter_still_does_not_actuate():
     reporter = _function(_tree(), "_report_worker_progress")
     forbidden = {"run", "Popen", "_stop_wedged_unit", "_record_wedge_outcome"}
     assert not _called_names(reporter) & forbidden
+
+
+def test_the_pass_cannot_abort_the_rotation_cycle():
+    """A watchdog has no business breaking dispatch.
+
+    The progress pass runs between the quorum gate and ``_expire_idle_claims``
+    plus the review-and-close phases, all inside one unguarded module-scope
+    call.  An exception escaping it would reap nothing AND silently drop the
+    rest of the rotation, which is the same trap the eager ``GATED_EXIT_CODE``
+    import and the claim TTL store read both sprang before.
+    """
+    health = _function(_tree(), "reap_dead_claims")
+    guarded = [
+        node
+        for node in ast.walk(health)
+        if isinstance(node, ast.Try)
+        and "_reap_wedged_workers" in _called_names(ast.Module(body=node.body, type_ignores=[]))
+    ]
+    assert guarded, "the wedge pass is not wrapped in a try"
+    handlers = guarded[0].handlers
+    assert len(handlers) == 1
+    assert isinstance(handlers[0].type, ast.Name) and handlers[0].type.id == "Exception"

@@ -4806,8 +4806,18 @@ def reap_dead_claims():
         "duplicates=%d" %
         (HOST, health["sessions"], health["claims_exact"], health["mismatched"],
          health["duplicates"]))
-    _reap_wedged_workers(
-        _report_worker_progress(worker_sessions, active_worker_units()))
+    # Neither the measurement nor the actuation may abort the cycle. Both run
+    # unguarded between the quorum gate above and _expire_idle_claims plus the
+    # review-and-close phases below, so an exception here would reap nothing
+    # AND silently drop the rest of the rotation. The same class of trap has
+    # already bitten this script twice (the eager GATED_EXIT_CODE import, and
+    # the claim TTL store read). A watchdog has no business breaking dispatch.
+    try:
+        _reap_wedged_workers(
+            _report_worker_progress(worker_sessions, active_worker_units()))
+    except Exception as exc:                          # noqa: BLE001
+        log(d, "WEDGE_PASS_FAILED|%s|%s|%s"
+            % (HOST, type(exc).__name__, str(exc)[:160]))
     if not oldest or nhosts < REAP_QUORUM:
         log(d, "REAP|%s|quorum_shortage reporting=%d known=%d need>=%d; reaped nothing"
             % (HOST, nhosts, known, REAP_QUORUM))
