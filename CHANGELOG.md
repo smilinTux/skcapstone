@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+- **Nothing checked that installed dependencies met this project's own declared
+  floors, so the fleet ran a contract it did not satisfy.** At 05:28:29 UTC on
+  2026-09-19 an auto-pull fast-forwarded `~/work/skcapstone` on all five chi
+  hosts onto a commit adding a module-level
+  `from skcoord.coordination import TaskUnclaimable`. That symbol ships in
+  skcoord 0.1.78+; every host had 0.1.77. `scripts/fleet/skfleet-rotate.py`
+  imports `builder_dispatch` at line 41, so from 05:33 UTC the entire fleet
+  rotation was dead on all five hosts, every lane, with `ImportError` — found an
+  hour later by someone chasing an unrelated symptom. The declared floor was
+  right the whole time (`pyproject.toml` said `skcoord>=0.1.78`); nothing
+  compared it against the running environment. These are editable installs, so
+  `git pull` updates the code and `pyproject.toml` together and never
+  re-resolves dependencies; and `doctor` compares installed versions against
+  *PyPI latest*, not against the project's own floors, so a host can satisfy
+  doctor completely while sitting below a floor its own code requires.
+  New `skcapstone.dependency_floors` reads the requirements skcapstone declares
+  — preferring the checkout's `pyproject.toml`, which is what `git pull` just
+  updated, over installed distribution metadata, which on an editable install is
+  a stale snapshot of the last `pip install -e .` — and compares them against
+  what is actually installed, via `packaging.requirements.Requirement` and
+  `packaging.version.Version` rather than string comparison. Surfaced as a new
+  `dependency_floors` preflight check, so it runs on every daemon startup and on
+  `skcapstone preflight`, not only when a human thinks to look.
+  Reported as a **non-critical failure**: red in the CLI table and `logger.error`
+  in the daemon, but it does not abort startup. Gating on it would be wrong, and
+  `pyproject.toml` says why — the skcoord floor is deliberately set "one past the
+  newest published tag" so that installs fail until the dependency actually
+  ships, which means "below the declared floor" is a state the maintainers
+  intentionally create in the window between a floor bump landing in git and the
+  dependency publishing. Failing closed there would convert that intended window
+  into an outage: the same downtime this check exists to prevent, rebranded as a
+  refusal. Absent *optional* dependencies are not violations (an unused extra is
+  a choice), but an installed extra below its floor is. Unparseable versions stay
+  silent rather than guess, and pre-releases are accepted so the dev builds that
+  are normal on this fleet do not read as violations. Verified against the live
+  environment: 41 declared requirements, zero false positives, and the one real
+  violation correctly reported.
+
 - **The Pi gateway sync filled the picker with models that cannot answer.**
   `/v1/models` is a catalog, not a liveness list. Probed against a live gateway
   on 2026-09-18: of the 108 ids advertised, 19 answered a one-token completion —

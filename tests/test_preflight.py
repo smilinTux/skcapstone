@@ -470,6 +470,7 @@ class TestPreflightCheckerRunAll:
         assert names == {
             "python",
             "packages",
+            "dependency_floors",
             "ollama",
             "identity",
             "home_dirs",
