@@ -15,7 +15,6 @@ import re
 import signal
 import socket
 import subprocess
-import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -26,6 +25,7 @@ from skcoord.card import Column
 from skcoord.card_store import CardStore
 
 from .estate import host_lifecycle_claim
+from .fleet.deployment_manifest import DISPATCHER_RELATIVE_PATH, deployed_artifact_path
 from .lifecycle_seats import LIFECYCLE_SEATS
 from .link_cycle import recommend_one_reviewer
 from .link_observation_feed import ObservationFeedError, load_observation_feed
@@ -582,7 +582,7 @@ def _run_seraph_dispatcher(
 def seraph_operation(home: Path) -> dict[str, int | str]:
     """Launch one configurable, bounded Seraph review batch."""
 
-    dispatcher = Path(sys.executable).parent / "skfleet-rotate.py"
+    dispatcher = deployed_artifact_path(DISPATCHER_RELATIVE_PATH.name)
     if not dispatcher.is_file() or not os.access(dispatcher, os.X_OK):
         return {
             "cards_examined": 0,
@@ -810,7 +810,7 @@ def _failed_claim_is_retryable(
 def role_dispatch_operation(home: Path, seat: str) -> dict[str, int | str]:
     """Launch one configurable, bounded ATLAS batch."""
 
-    dispatcher = Path(sys.executable).parent / "skfleet-rotate.py"
+    dispatcher = deployed_artifact_path(DISPATCHER_RELATIVE_PATH.name)
     if not dispatcher.is_file() or not os.access(dispatcher, os.X_OK):
         return {
             "cards_examined": 0,

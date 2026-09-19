@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Three more sites named a per-host artifact's path by convention.**
+  `skfleet-niobe-live.service` passed `--dispatcher %h/.skenv/bin/skfleet-rotate.py`
+  and `seat_cycle_entrypoint.py` derived the dispatcher twice as
+  `Path(sys.executable).parent / "skfleet-rotate.py"`. Both resolve to the
+  copy pip leaves in `~/.skenv/bin`, not the copy the rollout deploys to
+  `~/.local/bin` that the units actually execute. The failure mode was worse
+  than a missing file: the wrong path exists, so the `is_file()` guard passed
+  and a stale dispatcher would have run silently instead of failing closed.
+  All three now resolve through `deployment_manifest.deployed_artifact_path()`,
+  and a regression guard fails the build on a fourth.
+
 - **A channel with right of first refusal had become the owner of an entire card
   class.** PR #635 (2026-09-11) removed every `builder_dispatch.eligible()` card
   from every regular host's lanes *unconditionally*, so a path built to feed one

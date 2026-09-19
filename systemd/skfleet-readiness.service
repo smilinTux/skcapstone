@@ -6,7 +6,7 @@ After=network-online.target
 [Service]
 Type=oneshot
 Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/.skenv/bin/python3 %h/.skenv/bin/skfleet_readiness.py --rotate-script %h/.skenv/bin/skfleet-rotate.py --units-dir %h/.config/systemd/user --python-bin %h/.skenv/bin/python3 --env-from-systemd skfleet-rotate.service --verdict-path %h/.skcapstone/fleet/status/node-%H/readiness/verdict.json
+ExecStart=%h/.skenv/bin/python3 %h/.skenv/bin/skfleet_readiness.py --rotate-script %h/.local/bin/skfleet-rotate.py --units-dir %h/.config/systemd/user --python-bin %h/.skenv/bin/python3 --env-from-systemd skfleet-rotate.service --verdict-path %h/.skcapstone/fleet/status/node-%H/readiness/verdict.json
 TimeoutStartSec=120
 Nice=15
 NoNewPrivileges=yes

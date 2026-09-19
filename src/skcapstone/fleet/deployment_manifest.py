@@ -92,6 +92,37 @@ PER_HOST_ARTIFACTS: tuple[Path, ...] = (
 _MANIFEST_FIELDS = ("git_sha", "package_version", "required_env", "units")
 
 
+def deployed_artifact_path(name: str, home: Path | str | None = None) -> Path:
+    """Where a per-host artifact ACTUALLY lives on a node.
+
+    ``name`` is a basename from ``PER_HOST_ARTIFACTS`` (e.g.
+    ``"skfleet-rotate.py"``).
+
+    Every one of these scripts exists at TWO paths on a live host, placed by
+    two unrelated mechanisms:
+
+      ``~/.skenv/bin/<name>``   a side effect of ``pip install -e .``, because
+                                the script is a ``script-files`` entry.
+      ``~/.local/bin/<name>``   an explicit ``cp`` in the rollout's deploy
+                                step. This is the one the units execute:
+                                confirmed live on chiap01/02/03/04/08, whose
+                                ``skfleet-rotate.service`` ExecStart names it.
+
+    Nothing keeps the two equal. Today they happen to match on all five
+    hosts, so a caller that guessed wrong has been getting the right answer
+    by luck; the first rollout that copies one and not the other makes the
+    guess wrong with no error and no report.
+
+    Callers must NEVER derive this from ``Path(sys.executable).parent``.
+    That resolves to ``~/.skenv/bin`` -- the pip copy, not the deployed one
+    -- and it fails in the most expensive way available: the wrong file
+    EXISTS, so an ``is_file()`` guard passes and a stale dispatcher runs
+    silently, instead of failing closed the way a missing file would.
+    """
+    base = Path(home) if home is not None else Path.home()
+    return base / PER_HOST_BIN_RELATIVE_DIR / name
+
+
 def _canonical_json(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
 
