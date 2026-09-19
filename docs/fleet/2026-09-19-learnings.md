@@ -564,3 +564,75 @@ The tooling for this already exists and is read-only
 `docs/fleet/rollout-drift.md`). The gap is not the check. The gap is that
 nothing runs it on a timer, so it answers the question only when somebody
 already suspects the answer.
+
+---
+
+# Verification discipline: the diagnosis failed too
+
+Contract 9 of the 2026-09-18 document already said to verify through a different
+path than the one that wrote it. This session produced enough new instances to
+make the rule sharper, and two of them are the most valuable findings here.
+
+---
+
+## 34. The fold is the only authority; a hand-rolled replay is a second
+implementation
+
+`CardStore.fold()` (`skcoord/src/skcoord/card_store.py:1440`) is not a
+convenience wrapper over a list of events. It merges the union of the card's own
+store logs **and** the sanctioned legacy paths (archive index plus the
+`card_events` overlay) in `(ts, writer, seq)` order. Any analysis that iterates
+one store, or that orders events by file position, is a different algorithm that
+happens to resemble it.
+
+The cost of forgetting that was paid three times in one session, each time
+producing a confident number that was wrong.
+
+This is also why PR #786 existed. Inside the dispatcher itself,
+`_load_outcomes` and `_provisional_candidate` read both stores while
+`_matching_outcome_events` and `_generation_invalidated` read only the structure
+store. `coord link` writes to the overlay, and `coord link` was how nearly every
+provisional PASS on this fleet was recorded, so the review opener selected an
+outcome and then failed to find the event behind it. Measured on chiap01: of the
+214 cards blocked that way, **212 have exactly one matching outcome event and it
+is in the overlay every time**. The opener reported cards as missing evidence it
+had never looked for.
+
+**Contract.** Board facts come from the fold. A replay is permitted only as a
+test *of* the fold, never as a source of a finding.
+
+| | |
+|---|---|
+| Producer | `CardStore.fold()` |
+| Consumer | every count, audit, report and dashboard |
+| Recovery owner | the store's owner |
+| Evidence | the reader is the shipped fold, called as an API, not reimplemented |
+| Detection | **one helper returning the identity-deduped union of both stores, with every reader routed through it** (`_outcome_scan_rows`), so "every event that can carry an outcome" has exactly one definition |
+| Fails closed | a reader that cannot reach one store reports UNKNOWN, not zero |
+
+---
+
+## 35. Re-fold in a fresh process
+
+`CardStore` caches legacy mutations per instance and never invalidates them:
+`self._legacy_cache` (`card_store.py:452-455`), loaded once in `_legacy_events`
+(`:1431-1438`). A long-lived instance therefore serves overlay state frozen at
+its first fold, and a link written after that read back as `None`.
+
+The same method has a second, quieter mode: if `load_legacy_mutations` raises,
+the cache is set to `{}` and a warning is logged, after which every fold on that
+instance silently returns no legacy events at all. One warning, then an
+indefinite stream of confidently wrong folds.
+
+**Contract.** A measurement of live state is taken in a process that has not
+already read it.
+
+| | |
+|---|---|
+| Evidence | fresh process, fresh `CardStore`, for every measurement quoted in a report |
+| Detection | **re-run the measurement in a new process before it becomes a finding; two runs that disagree mean the cache, not the board** |
+| Fails closed | a degraded cache load fails the fold rather than serving an empty legacy set |
+
+Every board measurement cited in this session's PRs says "measured in a fresh
+process" for exactly this reason, and that phrase should be read as a claim
+about method, not as a flourish.
