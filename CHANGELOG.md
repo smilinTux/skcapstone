@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- **`source-only` meant two unrelated things at once, and a card could not say
+  which.** To the dispatcher it was a routing flag: `_source_workspace_spec`
+  returned `None` unless a card carried it, so the label was the only thing that
+  made a repository/base_ref/base_revision binding get demanded, verified and
+  materialized, and a binding on any other card was inert and never checked. To
+  a worker it was a safety constraint, written verbatim into acceptance
+  criteria: "Source-only. No live database write, provider, Inbox, mailing,
+  deployment, push, or external action." Triage therefore could not fix a card's
+  routing without stripping its safety constraint. Five read-only chiap08
+  host-ops cards (`ed3ad3c7`, `9912e905`, `e26fc5ac`, `760240ca`, `7a4d9c11`)
+  hit exactly that and had to be bound to a repository they do not use. Measured
+  by folding all 7,212 chi cards in a fresh process: 2,612 carry the label, 631
+  of those are live, and 265 of the live ones rely on BOTH senses at once.
+  Separately, 79 live cards carry a complete binding and no label, so the
+  dispatcher never looked at it; all 79 validate cleanly through the existing
+  validator. Routing now fires on the legacy label OR a complete binding on its
+  own, so those 79 get their binding checked and their pinned workspace. The
+  511 live cards with a PARTIAL binding and no label stay inert rather than
+  raising, because jamming them would trade a checking win for a fleet-wide
+  liveness regression. The labelled path is untouched, including its hard
+  failure on an absent or partial binding, so all 2,612 existing cards behave
+  byte-for-byte as before and no relabelling pass is needed to land this. Safety
+  gets its own routing-inert label, `no-external-action`, and the first home the
+  constraint has ever had in code: a worker brief rail, which `source-only` also
+  triggers as the deprecated spelling. Nothing in the routing path reads a label
+  to decide whether to check a binding any more, so a card cannot lose its
+  workspace by losing a label nor its safety constraint by a routing fix. See
+  `docs/fleet/source-only-split.md` for the census, the relabelling pass, and
+  the unresolved push/no-push tension the rail deliberately leaves open.
+  NOTE: `~/.local/bin/skfleet-rotate.py` is a separately deployed per-host
+  artifact; this is inert on the fleet until it is redeployed to each chi host.
+
 - **A worker can now record a provisional PASS that the review opener will
   actually admit.** `OPENED_REVIEW` was 0 across 14 days and 1,660 rotations on
   the chi fleet while 214 cards logged `OPEN_REVIEW_EVIDENCE_BLOCKED` every
