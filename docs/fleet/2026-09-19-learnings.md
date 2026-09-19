@@ -1,15 +1,23 @@
 # 2026-09-18/19: three failure shapes, and the contracts that name them
 
 A fleet-repair session running from 2026-09-18 into 2026-09-19 closed around
-thirty findings on the chi estate. Listing thirty incidents would be useless.
-They collapse into **three shapes**, and each shape has a detection test that is
-cheap, general, and was not being run anywhere.
+thirty findings, mostly on the chi estate and two on nor. Listing thirty
+incidents would be useless. They collapse into **three shapes**, and each shape
+has a detection test that is cheap, general, and was not being run anywhere.
+
+Where a claim from the session did not survive re-measurement it is corrected
+in place rather than dropped, because the correction is usually the more useful
+half. Four such corrections are marked below.
 
 This is a companion to `docs/fleet/2026-09-18-learnings.md`, which established
 the format: a named producer, a named consumer, a named **recovery owner**,
-machine evidence that **fails closed**. Contracts here continue that document's
-numbering from 20, so "contract N" stays unambiguous across both (tests and
-source comments already cite "contract 1" by number).
+machine evidence that **fails closed**. Contracts here are 20 to 37, continuing
+that document's numbering rather than restarting it, so "contract N" stays
+unambiguous across both. Tests and source comments already cite "contract 1" by
+number (`tests/test_worker_progress_report.py:3`,
+`scripts/fleet/skfleet-rotate.py:2965`,
+`src/skcapstone/coord_slice_preflight.py:4`), which is why renumbering was not
+an option and a separate dated document was.
 
 Every contract below also names **how you would detect the failure**, because
 the through-line of all three shapes is that none of them were visible. Several
