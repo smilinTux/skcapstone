@@ -825,7 +825,9 @@ def _consume_available(
                     # an unchanged source binding. Leave the request untouched
                     # and let the next pass retry it, costing no attempt.
                     continue
-                return _write_status(
+                # Keep going: skipping ONE card must not stop this pass from
+                # servicing the rest of the queue, which is the whole point.
+                result = _write_status(
                     paths,
                     node,
                     request,
@@ -835,6 +837,7 @@ def _consume_available(
                     error=f"unclaimable: {exc}",
                     unclaimable_reason=exc.reason,
                 )
+                continue
             card = CardStore(coordination_home).fold(request["card_id"])
             revision = str(card.meta.get("_claim_revision") or "") if card else ""
             if not card or card.owner != owner or not revision:

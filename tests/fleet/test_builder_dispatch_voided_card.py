@@ -13,6 +13,7 @@ Cards are voided and replaced at fleet scale, so this recurs on every rebind.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -210,3 +211,59 @@ def test_main_loop_still_dies_on_infrastructure_failure(paths, monkeypatch) -> N
 
     with pytest.raises(OSError, match="unreadable"):
         sknoded.main_loop(paths, "node-ziowk01", interval=0, actuation_interval=0)
+
+
+def test_one_voided_card_does_not_stall_the_rest_of_the_queue(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    """Skipping a card means skipping THAT card, not abandoning the pass."""
+    store.write_spec(
+        paths,
+        "node",
+        "node-ziowk01",
+        {"role": "builder-standby", "actuate": True, "cordoned": False},
+        writer=operator,
+        labels={"host": "ziowk01"},
+    )
+    sknoded.run_once(paths, "node-ziowk01")
+    writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
+    for card_id in ("59553966", "59550966"):
+        builder_dispatch.offer(
+            paths,
+            _card(card_id),
+            ["sk-m", "source-only"],
+            writer=writer,
+            now=datetime.now(timezone.utc),
+        )
+    folded = {cid: _folded(cid) for cid in ("59553966", "59550966")}
+    launched = []
+
+    def _claim(_self, owner, card_id):
+        if card_id == "59553966":
+            raise TaskUnclaimable(card_id, "voided", f"Task {card_id} was voided")
+        folded[card_id].owner = owner
+        folded[card_id].meta = dict(_card(card_id)["meta"], _claim_revision=f"claim-{card_id}")
+
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda _s, cid: folded[cid])
+    monkeypatch.setattr(builder_dispatch.Board, "claim_task", _claim)
+    monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_a, **_k: True)
+    monkeypatch.setattr(builder_dispatch, "_proc_start_ticks", lambda pid: str(pid))
+
+    def _launch(_command, workspace):
+        launched.append(workspace)
+        return SimpleNamespace(pid=4242, poll=lambda: None)
+
+    builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=_launch,
+        materializer=lambda _r, w: w,
+    )
+
+    assert len(launched) == 1 and "59550966" in str(launched[0])
+    voided_status = json.loads(
+        builder_dispatch.status_path(paths, "node-ziowk01", "59553966").read_text()
+    )
+    assert voided_status["state"] == "blocked"
+    assert voided_status["unclaimable_reason"] == "voided"
