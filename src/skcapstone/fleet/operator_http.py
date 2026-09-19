@@ -756,11 +756,16 @@ def route(
         if err is not None:
             return err
         frozen = store.is_frozen(deps.paths)
+        gate = store.check_actuation_gate(deps.paths)
         return HttpResponse(
             501,
             {
                 "error": "act is reserved, not implemented in P1",
                 "frozen": frozen,
+                # Tri-state per ACTUATION_READINESS_AND_FREEZE_STANDARD R4:
+                # `frozen: false` alone would read as armed-and-ready even
+                # when no freeze store was ever provisioned.
+                "freeze_state": "active" if gate.allowed else (gate.reason or "unknown"),
                 "note": (
                     "the act migration (standard section on non-goals) is out "
                     "of scope for this surface; this path exists only so a "

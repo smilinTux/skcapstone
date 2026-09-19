@@ -114,7 +114,7 @@ def test_bootstrap_creates_the_seat_control_plane(dirs: dict[str, Path]) -> None
     data = json.loads(path.read_text())
     assert data["schema_version"] == 1
     assert data["active_host"] == "testhost"
-    assert data["revision"] == "tst-lifecycle-six-seat-v1"
+    assert data["revision"] == "tst-lifecycle-five-seat-v1"
     assert set(data["seats"]) == set(LIFECYCLE_SEATS)
     assert all(hosts == ["testhost"] for hosts in data["seats"].values())
 
@@ -340,9 +340,9 @@ def test_doctor_seat_units_pass_fail_and_unknown(tmp_path: Path) -> None:
     unit_dir.mkdir()
     none_installed = _check_estate_seat_units(unit_dir)
     assert not none_installed.passed and not none_installed.unknown
-    assert "6 of 6 seat timers absent" in none_installed.detail
+    assert "5 of 5 seat timers absent" in none_installed.detail
 
-    for seat in ("atlas", "link", "mero", "niobe", "seraph", "tank"):
+    for seat in ("atlas", "link", "mero", "niobe", "seraph"):
         (unit_dir / f"skfleet-{seat}.timer").write_text("[Timer]\n")
     assert _check_estate_seat_units(unit_dir).passed
 

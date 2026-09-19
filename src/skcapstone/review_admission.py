@@ -154,18 +154,29 @@ def reviewer_capacity(
         load_route_occupancy,
     )
 
-    match = re.search(r"\[(S|M|L|XL)\]", str(core.get("title") or ""))
+    title = str(core.get("title") or "")
+    title_sizes = re.findall(r"\[(S|M|L|XL)\]", title)
+    label_sizes = {
+        value
+        for value, route in {"S": "sk-s", "M": "sk-m", "L": "sk-l", "XL": "sk-xl"}.items()
+        if route in {str(label).strip().lower() for label in labels}
+    }
+    size = (
+        title_sizes[0]
+        if title and len(title_sizes) == 1
+        else next(iter(label_sizes)) if not title and len(label_sizes) == 1 else None
+    )
     path = home / "evidence" / "fleet-review-routes.json"
     try:
         snapshot = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return 0, 0
     occupancy, ambiguous = load_route_occupancy(home)
-    if match is None or ambiguous:
+    if size is None or ambiguous:
         return 0, 0
     routes = eligible_review_routes(
         snapshot,
-        match.group(1),
+        size,
         labels,
         producer,
         reviewer,

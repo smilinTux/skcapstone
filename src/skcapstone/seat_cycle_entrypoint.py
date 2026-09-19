@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -42,6 +43,9 @@ _LAUNCH = re.compile(
 )
 _MAX_SERAPH_BATCH = 8
 _MAX_ROLE_BATCH = 8
+_SERAPH_DISPATCH_TIMEOUT_SECONDS = 180
+_DISPATCH_TERMINATE_GRACE_SECONDS = 5
+_SUBPROCESS_RUN = subprocess.run
 _NOOP = re.compile(
     r"^NOOP_RECEIPT\|(?P<host>[^|]+)\|reason=(?P<reason>[^|]+)" r"\|seat=(?P<seat>[^|]+)$"
 )
@@ -125,6 +129,10 @@ class CycleSummary:
     reason: str | None = None
     source_revision: str | None = None
     evidence_sha256: str | None = None
+    exception_type: str | None = None
+    cleanup: str | None = None
+    dispatcher_stdout: str | None = None
+    dispatcher_stderr: str | None = None
     mailbox_poll_at: str | None = None
     mailbox_ok: bool = False
     mailbox_new_messages: int = 0
@@ -271,6 +279,20 @@ def run_cycle(
             ),
             evidence_sha256=(
                 str(values["evidence_sha256"]) if values.get("evidence_sha256") else None
+            ),
+            exception_type=(
+                str(values["exception_type"]) if values.get("exception_type") else None
+            ),
+            cleanup=str(values["cleanup"]) if values.get("cleanup") else None,
+            dispatcher_stdout=(
+                str(values["dispatcher_stdout"])
+                if values.get("dispatcher_stdout") is not None
+                else None
+            ),
+            dispatcher_stderr=(
+                str(values["dispatcher_stderr"])
+                if values.get("dispatcher_stderr") is not None
+                else None
             ),
             **mailbox.as_dict(),
         )
@@ -512,6 +534,51 @@ def _failed_launch_is_retryable(
     )
 
 
+def _run_seraph_dispatcher(
+    command: list[str], *, environment: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    """Run Seraph in an isolated process group and reap it on timeout."""
+
+    if subprocess.run is not _SUBPROCESS_RUN:
+        return subprocess.run(
+            command,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=_SERAPH_DISPATCH_TIMEOUT_SECONDS,
+        )
+    process = subprocess.Popen(
+        command,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=_SERAPH_DISPATCH_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            stdout, stderr = process.communicate(timeout=_DISPATCH_TERMINATE_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            stdout, stderr = process.communicate()
+        raise subprocess.TimeoutExpired(
+            command,
+            _SERAPH_DISPATCH_TIMEOUT_SECONDS,
+            output=stdout if stdout is not None else exc.stdout,
+            stderr=stderr if stderr is not None else exc.stderr,
+        ) from exc
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
 def seraph_operation(home: Path) -> dict[str, int | str]:
     """Launch one configurable, bounded Seraph review batch."""
 
@@ -542,6 +609,7 @@ def seraph_operation(home: Path) -> dict[str, int | str]:
     env.update(
         {
             "SKFLEET_ONLY_SEAT": "seraph",
+            "SKFLEET_TARGET": str(batch_size),
             "SKFLEET_SEAT_TARGET": str(batch_size),
             "SKFLEET_QWEN_TARGET": "0",
             "SKFLEET_GLM_TARGET": "0",
@@ -551,9 +619,26 @@ def seraph_operation(home: Path) -> dict[str, int | str]:
     )
     # Seraph reviews only [S] work, so only that bucket is resolved here.
     env.update(resolve_size_class_models(env, sizes=("S",)))
-    completed = subprocess.run(
-        [str(dispatcher), "--go"], env=env, capture_output=True, text=True, timeout=240
-    )
+    try:
+        completed = _run_seraph_dispatcher([str(dispatcher), "--go"], environment=env)
+    except subprocess.TimeoutExpired as exc:
+        stdout = (
+            exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout
+        )
+        stderr = (
+            exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr
+        )
+        return {
+            "cards_examined": 0,
+            "recommendations": 0,
+            "suppressed": 1,
+            "dispatch_failed": 1,
+            "reason": "seraph_dispatch_timeout",
+            "exception_type": type(exc).__name__,
+            "cleanup": "process_group_reaped",
+            "dispatcher_stdout": stdout or "",
+            "dispatcher_stderr": stderr or "",
+        }
     return verify_seraph_dispatch(home, completed)
 
 
@@ -563,12 +648,12 @@ def verify_role_dispatch(
     seat: str,
     accepted_models: Iterable[str] | None = None,
 ) -> dict[str, int | str]:
-    """Verify a bounded Tank or ATLAS selector result.
+    """Verify a bounded ATLAS selector result.
 
     Args:
         home: Estate home holding the card store.
         completed: Finished dispatcher process whose receipts are verified.
-        seat: ``tank`` or ``atlas``.
+        seat: ``atlas``.
         accepted_models: Models a receipt may name. Defaults to the resolved
             size class buckets, which is what the dispatch path asked for. This
             check used to require the literal ``sk-codex-mid``, which no launch
@@ -723,7 +808,7 @@ def _failed_claim_is_retryable(
 
 
 def role_dispatch_operation(home: Path, seat: str) -> dict[str, int | str]:
-    """Launch one configurable, bounded Tank or ATLAS batch."""
+    """Launch one configurable, bounded ATLAS batch."""
 
     dispatcher = Path(sys.executable).parent / "skfleet-rotate.py"
     if not dispatcher.is_file() or not os.access(dispatcher, os.X_OK):
@@ -740,7 +825,7 @@ def role_dispatch_operation(home: Path, seat: str) -> dict[str, int | str]:
         batch_size = int(os.environ.get(env_name, "2"))
     except ValueError:
         batch_size = 0
-    if seat not in {"tank", "atlas"} or not 1 <= batch_size <= _MAX_ROLE_BATCH:
+    if seat != "atlas" or not 1 <= batch_size <= _MAX_ROLE_BATCH:
         return {
             "cards_examined": 0,
             "recommendations": 0,
@@ -891,7 +976,7 @@ def main(argv: list[str] | None = None) -> int:
         def operation() -> dict[str, int | str]:
             return link_operation(args.home, feed_path)
 
-    elif args.seat in {"tank", "atlas"}:
+    elif args.seat == "atlas":
 
         def operation() -> dict[str, int | str]:
             return role_dispatch_operation(args.home, args.seat)

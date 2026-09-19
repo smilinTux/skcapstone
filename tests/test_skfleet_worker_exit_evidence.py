@@ -7,10 +7,15 @@ import ast
 import importlib.util
 import json
 import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 
 import pytest
+
+from skcapstone.card_store import CardCore
+from skcapstone.fleet import gateway_failure
 
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
@@ -27,6 +32,7 @@ def _wrapper():
 
 def _scheduler_namespace() -> dict[str, object]:
     wanted = {
+        "_completion_retry_held",
         "_latest_transport_failure_epoch",
         "_transport_failure_logs",
         "_transport_failure_claims",
@@ -43,6 +49,8 @@ def _scheduler_namespace() -> dict[str, object]:
         "_ROTATION_EVID",
         "_TRANSPORT_FAILURE_CLASSES",
         "_TRANSPORT_RETRY_COOLDOWN_S",
+        "_COMPLETION_RETRY_COOLDOWN_S",
+        "_COMPLETION_FAILURE_CLASSES",
     }
     nodes = []
     for node in ast.parse(ROTATE.read_text(encoding="utf-8")).body:
@@ -58,10 +66,94 @@ def _scheduler_namespace() -> dict[str, object]:
         "os": os,
         "time": time,
         "HOME": "/unused",
+        "TRANSPORT_FAILURE_CLASSES": gateway_failure.TRANSPORT_FAILURE_CLASSES,
         "_ts_epoch": lambda value: time.mktime(time.strptime(value[:19], "%Y-%m-%dT%H:%M:%S")),
     }
     exec(compile(ast.Module(nodes, type_ignores=[]), str(ROTATE), "exec"), namespace)
     return namespace
+
+
+def test_zero_output_success_requires_exact_claim_mutation(tmp_path, monkeypatch) -> None:
+    module = _wrapper()
+    home = tmp_path / ".skcapstone"
+    home.mkdir()
+    store = module.CardStore(home)
+    store.create(CardCore(id="deadbeef", title="synthetic"))
+    store.append_event("deadbeef", "claim", "worker", owner="worker", claim_revision="rev-7")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    args = argparse.Namespace(card="deadbeef", owner="worker", claim_revision="rev-7")
+
+    assert module.zero_output_success(args, 0) == (False, "no_card_mutation")
+
+    store.append_event("deadbeef", "link", "worker", link_key="evidence", link_value="evidence.md")
+    assert module.zero_output_success(args, 0) == (True, "exact_claim_mutated")
+    store.append_event(
+        "deadbeef",
+        "release_claim",
+        "worker",
+        released_owner="worker",
+        expected_claim_revision="rev-7",
+    )
+    store.append_event("deadbeef", "link", "worker", link_key="evidence", link_value="late.md")
+    assert module.zero_output_success(args, 0) == (True, "exact_claim_mutated")
+
+
+def test_zero_output_success_does_not_attribute_mutation_after_release(
+    tmp_path, monkeypatch
+) -> None:
+    module = _wrapper()
+    home = tmp_path / ".skcapstone"
+    home.mkdir()
+    store = module.CardStore(home)
+    store.create(CardCore(id="deadbeef", title="synthetic"))
+    store.append_event("deadbeef", "claim", "worker", owner="worker", claim_revision="rev-7")
+    store.append_event(
+        "deadbeef",
+        "release_claim",
+        "worker",
+        released_owner="worker",
+        expected_claim_revision="rev-7",
+    )
+    store.append_event("deadbeef", "link", "worker", link_key="evidence", link_value="late.md")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    args = argparse.Namespace(card="deadbeef", owner="worker", claim_revision="rev-7")
+
+    assert module.zero_output_success(args, 0) == (False, "claim_released")
+
+
+def test_zero_output_retry_is_bounded(tmp_path: Path) -> None:
+    namespace = _scheduler_namespace()
+    evidence = tmp_path / "worker-exits"
+    evidence.mkdir()
+    (evidence / "deadbeef-one.json").write_text(
+        json.dumps(
+            {
+                "card_id": "deadbeef",
+                "attempted_at": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+                "completion_failure": "no_card_mutation",
+            }
+        ),
+        encoding="utf-8",
+    )
+    namespace.update(
+        {
+            "_WORKER_EXIT_DIR": str(evidence),
+            "_COMPLETION_RETRY_COOLDOWN_S": 300,
+        }
+    )
+
+    assert namespace["_completion_retry_held"]("deadbeef") is True
+    (evidence / "deadbeef-one.json").write_text(
+        json.dumps(
+            {
+                "card_id": "deadbeef",
+                "attempted_at": "2000-01-01T00:00:00+00:00",
+                "completion_failure": "no_card_mutation",
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert namespace["_completion_retry_held"]("deadbeef") is False
 
 
 @pytest.mark.parametrize(
@@ -326,6 +418,69 @@ def test_launcher_routes_every_lane_through_exit_wrapper() -> None:
     assert "subprocess.run(_worker_launch_command(unit,workspace,inner)" in source
 
 
+def test_detached_beat_cannot_strand_wrapper_after_immediate_child_exit(
+    tmp_path: Path,
+) -> None:
+    """The file heartbeat must not retain the wrapper's captured pipes."""
+    home = tmp_path / "home"
+    beat = home / ".skcapstone" / "fleet" / "beats" / "owner.json"
+    released = home / ".skcapstone" / "fleet" / "released-revision-1"
+    stdout = home / ".skcapstone" / "fleet" / "logs" / "deadbeef.log"
+    evidence = home / ".skcapstone" / "evidence" / "fleet-worker-exits"
+    beat.parent.mkdir(parents=True)
+    child = (
+        f"release_claim() {{ echo revision-1 > {released}; }}; "
+        f"beat() {{ while :; do echo running > {beat}; sleep 60; done; }}; "
+        "beat </dev/null >/dev/null 2>&1 & BEAT=$!; "
+        "stop_beat() { kill $BEAT 2>/dev/null || true; "
+        f"wait $BEAT 2>/dev/null || true; rm -f -- {beat}; }}; "
+        "trap 'stop_beat; release_claim' EXIT; echo done; exit 0"
+    )
+    command = [
+        sys.executable,
+        str(WRAPPER),
+        "--card",
+        "deadbeef",
+        "--owner",
+        "pi-codex-chiap08-deadbeef",
+        "--claim-revision",
+        "revision-1",
+        "--host",
+        "chiap08",
+        "--lane",
+        "codex",
+        "--model",
+        "sk-codex-mid",
+        "--stdout",
+        str(stdout),
+        "--evidence-dir",
+        str(evidence),
+        "--",
+        "bash",
+        "-lc",
+        child,
+    ]
+
+    started = time.monotonic()
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        env={
+            "HOME": str(home),
+            "PATH": "/usr/bin:/bin",
+            "PYTHONPATH": str(ROOT / "src"),
+        },
+        timeout=3,
+    )
+
+    assert result.returncode == 0
+    assert time.monotonic() - started < 3
+    assert not beat.exists()
+    assert released.read_text(encoding="utf-8").strip() == "revision-1"
+    source = ROTATE.read_text(encoding="utf-8")
+    assert "beat </dev/null >/dev/null 2>&1 & BEAT=$!;" in source
+
+
 def test_idle_owner_projection_defers_to_locked_reconciler(tmp_path, monkeypatch) -> None:
     home = tmp_path / "home"
     agents = home / ".skcapstone" / "coordination" / "agents"
@@ -363,3 +518,182 @@ def test_idle_owner_projection_ignores_identity_mismatch(tmp_path, monkeypatch) 
     before = path.read_text(encoding="utf-8")
     _wrapper().idle_owner_projection("pi-codex-chiap08-deadbeef")
     assert path.read_text(encoding="utf-8") == before
+
+
+# ---- workspace lifecycle wiring (salvaged and reworked from a45aed76) ------
+#
+# Ported from the stranded chiap08 branch (origin/fix/68a14a4f-seat-model-
+# repoint, commit a45aed76). That version left every custody field the ported
+# module checked at None forever, and cleanup_decision() itself was never
+# called from anywhere the fleet actually runs. These tests instead prove
+# cleanup_decision() is reachable from record_workspace_lifecycle_decision,
+# which every fleet worker's own exit path calls, and that the decision it
+# writes reflects the card's real commit_sha/branch links (Plan B1, commit
+# 621c358d), not a hardcoded assumption.
+
+
+def _init_repo(path: Path, branch: str = "card-branch") -> None:
+    """Create a tiny, real Git repository with one commit on ``branch``."""
+    subprocess.run(["git", "init", "-q", "-b", branch, str(path)], check=True)
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.email", "fixture@example.invalid"], check=True
+    )
+    subprocess.run(["git", "-C", str(path), "config", "user.name", "Fixture"], check=True)
+    (path / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(path), "add", "tracked.txt"], check=True)
+    subprocess.run(["git", "-C", str(path), "commit", "-qm", "fixture"], check=True)
+
+
+def test_record_workspace_lifecycle_decision_reaches_cleanup_eligible(
+    tmp_path, monkeypatch
+) -> None:
+    """cleanup_decision() must actually report CLEANUP_ELIGIBLE, reached
+    through the wrapper's own exit path, once the card's commit_sha and
+    branch links are genuine and the workspace is clean."""
+    module = _wrapper()
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    _init_repo(workspace)
+    head = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    coord_home = home / ".skcapstone"
+    coord_home.mkdir(parents=True)
+    store = module.CardStore(coord_home)
+    store.create(CardCore(id="deadbeef", title="synthetic"))
+    store.append_event("deadbeef", "link", "worker", link_key="commit_sha", link_value=head)
+    store.append_event(
+        "deadbeef", "link", "worker", link_key="branch", link_value="fixture:card-branch"
+    )
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.chdir(workspace)
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        module, "emit_work_mail", lambda args, kind, body: calls.append((kind, body))
+    )
+    evidence = tmp_path / "evidence"
+    args = argparse.Namespace(
+        card="deadbeef",
+        claim_revision="rev-1",
+        owner="worker",
+        evidence_dir=evidence,
+        mail_recipient="jarvis",
+        host="chiap08",
+    )
+
+    module.record_workspace_lifecycle_decision(args, "success")
+
+    payload = json.loads((evidence / "deadbeef-rev-1-workspace.json").read_text(encoding="utf-8"))
+    assert payload["state"] == "CLEANUP_ELIGIBLE"
+    assert "CLEANUP_ELIGIBLE" in calls[-1][1]
+
+
+def test_record_workspace_lifecycle_decision_refuses_without_custody(
+    tmp_path, monkeypatch
+) -> None:
+    """No commit_sha/branch link at all must refuse cleanup, not default it in."""
+    module = _wrapper()
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    _init_repo(workspace)
+    coord_home = home / ".skcapstone"
+    coord_home.mkdir(parents=True)
+    module.CardStore(coord_home).create(CardCore(id="deadbeef", title="synthetic"))
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.chdir(workspace)
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        module, "emit_work_mail", lambda args, kind, body: calls.append((kind, body))
+    )
+    evidence = tmp_path / "evidence"
+    args = argparse.Namespace(
+        card="deadbeef",
+        claim_revision="rev-1",
+        owner="worker",
+        evidence_dir=evidence,
+        mail_recipient="jarvis",
+        host="chiap08",
+    )
+
+    module.record_workspace_lifecycle_decision(args, "success")
+
+    payload = json.loads((evidence / "deadbeef-rev-1-workspace.json").read_text(encoding="utf-8"))
+    assert payload["state"] == "HANDOFF_REQUIRED"
+    assert "custody-unverified" in calls[-1][1]
+
+
+def test_wrapper_exit_path_calls_workspace_lifecycle_decision_end_to_end(
+    tmp_path,
+) -> None:
+    """Run the real wrapper end to end and prove cleanup_decision() is reached
+    from a genuine worker exit, not only from a direct unit call. A card with
+    its commit_sha and branch already linked (as Plan B1 requires before a
+    worker exits) must leave a CLEANUP_ELIGIBLE workspace manifest behind."""
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    _init_repo(workspace)
+    head = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    coord_home = home / ".skcapstone"
+    coord_home.mkdir(parents=True)
+    store = _wrapper().CardStore(coord_home)
+    store.create(CardCore(id="deadbeef", title="synthetic"))
+    # A real worker always holds its claim at launch (skfleet-rotate.py claims
+    # before launching), and the wrapper's startup ownership fence refuses to
+    # run without one, so the fixture claims the way production does.
+    store.append_event("deadbeef", "claim", "worker", owner="worker", claim_revision="rev-1")
+    store.append_event("deadbeef", "link", "worker", link_key="commit_sha", link_value=head)
+    store.append_event(
+        "deadbeef", "link", "worker", link_key="branch", link_value="fixture:card-branch"
+    )
+    stdout = home / "logs" / "deadbeef.log"
+    evidence = home / ".skcapstone" / "evidence" / "fleet-worker-exits"
+    command = [
+        sys.executable,
+        str(WRAPPER),
+        "--card",
+        "deadbeef",
+        "--owner",
+        "worker",
+        "--claim-revision",
+        "rev-1",
+        "--host",
+        "chiap08",
+        "--lane",
+        "codex",
+        "--model",
+        "sk-codex-mid",
+        "--stdout",
+        str(stdout),
+        "--evidence-dir",
+        str(evidence),
+        "--",
+        "bash",
+        "-lc",
+        "echo done; exit 0",
+    ]
+
+    result = subprocess.run(
+        command,
+        cwd=str(workspace),
+        capture_output=True,
+        env={
+            "HOME": str(home),
+            "PATH": "/usr/bin:/bin",
+            "PYTHONPATH": str(ROOT / "src"),
+        },
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr.decode()
+    manifest = evidence / "deadbeef-rev-1-workspace.json"
+    assert manifest.is_file()
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    assert payload["state"] == "CLEANUP_ELIGIBLE"

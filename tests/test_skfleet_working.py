@@ -177,6 +177,38 @@ def test_herdr_mismatch_or_dead_evidence_remains_stale(monkeypatch, row_changes,
     )
 
 
+def test_idle_herdr_without_exact_card_ownership_stays_stale(monkeypatch):
+    """Foreground-idle panes lacking exact name+cwd card ownership fail closed.
+
+    Herdr process-info is foreground-only. skcapstone must not invent owned
+    background work via host-wide process heuristics.
+    """
+    monitor = load_monitor()
+    monkeypatch.setattr(
+        monitor.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "result": {
+                        "agents": [
+                            herdr_agent(
+                                agent_status="idle",
+                                name=None,
+                                cwd="/mnt/cloud/onedrive/projects/DAVE-AI/sklegal",
+                                pane_id="wQ:p3E",
+                            )
+                        ]
+                    }
+                }
+            ),
+        ),
+    )
+
+    assert monitor.join_herdr_evidence([stale_projection(monitor)])[0].projection_state == "stale"
+
+
 def test_historical_pane_remains_stale(monkeypatch):
     """Pane history outside the current agent list never becomes liveness."""
     monitor = load_monitor()

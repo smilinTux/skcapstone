@@ -24,6 +24,26 @@ def _load(*names: str) -> dict[str, object]:
         if isinstance(node, ast.FunctionDef) and node.name in names
     }
     assert set(nodes) == set(names)
+
+    # Module-level constants the loaded functions close over. Without these the
+    # exec'd function bodies raise NameError on any module global, which would
+    # otherwise push shared vocabulary (such as the safety label names) into
+    # duplicated literals inside each function purely to satisfy this harness.
+    # This only ADDS names to the namespace; no assertion above is relaxed.
+    def _is_literal_constant(node: ast.stmt) -> bool:
+        if not isinstance(node, ast.Assign):
+            return False
+        if not all(
+            isinstance(target, ast.Name) and target.id.isupper() for target in node.targets
+        ):
+            return False
+        try:
+            ast.literal_eval(node.value)
+        except (ValueError, SyntaxError, TypeError):
+            return False
+        return True
+
+    constants = [node for node in tree.body if _is_literal_constant(node)]
     namespace: dict[str, object] = {
         "Path": Path,
         "os": os,
@@ -33,7 +53,11 @@ def _load(*names: str) -> dict[str, object]:
         "urlsplit": urlsplit,
     }
     exec(
-        compile(ast.Module([nodes[name] for name in names], []), str(ROTATE), "exec"),
+        compile(
+            ast.Module(constants + [nodes[name] for name in names], []),
+            str(ROTATE),
+            "exec",
+        ),
         namespace,
     )
     return namespace
@@ -42,6 +66,7 @@ def _load(*names: str) -> dict[str, object]:
 def _helpers() -> dict[str, object]:
     return _load(
         "_resolve_workspace_root",
+        "_complete_source_binding",
         "_source_workspace_spec",
         "_normalize_credential_free_https_remote",
         "_select_matching_source_remote",
@@ -461,6 +486,66 @@ def test_matching_non_origin_remote_passes_repository_verification() -> None:
     ] in calls
 
 
+def test_remote_fetch_timeout_is_bounded_without_timing_out_local_git() -> None:
+    verify = _helpers()["_verify_source_workspace"]
+    observed: list[tuple[list[str], object]] = []
+
+    def runner(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        observed.append((command, kwargs.get("timeout")))
+        if _is_remote_listing(command):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                _remote_listing({"origin": "https://github.com/smilinTux/sklegal"}),
+                "",
+            )
+        if "fetch" in command:
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    with pytest.raises(ValueError, match="reconstructability_blocked: workspace fetch timed out"):
+        verify(
+            "/tmp/workspace",
+            "https://github.com/smilinTux/sklegal",
+            "main",
+            "a" * 40,
+            runner=runner,
+        )
+    assert next(timeout for command, timeout in observed if "fetch" in command) <= 15
+    assert all(timeout is None for command, timeout in observed if "fetch" not in command)
+
+
+def test_remote_clone_timeout_is_bounded_and_cleans_temporary_workspace(tmp_path: Path) -> None:
+    materialize = _helpers()["_materialize_worker_workspace"]
+    target = tmp_path / "worker"
+    observed_timeout: object = None
+
+    def timeout(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal observed_timeout
+        observed_timeout = kwargs.get("timeout")
+        temporary = Path(command[-1])
+        temporary.mkdir()
+        (temporary / "partial").write_text("partial", encoding="utf-8")
+        raise subprocess.TimeoutExpired(command, observed_timeout)
+
+    with pytest.raises(ValueError, match="workspace materialization timed out"):
+        materialize(
+            str(target),
+            {
+                "links": {
+                    "repository": "https://github.com/smilinTux/sklegal",
+                    "base_ref": "main",
+                    "base_revision": "a" * 40,
+                }
+            },
+            ["source-only"],
+            runner=timeout,
+        )
+    assert observed_timeout <= 15
+    assert not target.exists()
+    assert not list(tmp_path.glob(".*.materializing-*"))
+
+
 def test_ambiguous_matching_remotes_fail_closed() -> None:
     select = _helpers()["_select_matching_source_remote"]
 
@@ -523,3 +608,247 @@ def test_materialization_precedes_claim_in_scheduler_source() -> None:
     claim_at = source.index("claim=subprocess.run(", materialize_at)
     assert preflight_at < materialize_at < claim_at
     assert "os.makedirs(workspace,exist_ok=True)" not in source
+
+
+def _stale_workspace_runner(
+    remotes: dict[str, str],
+    stale: str,
+    exact: str,
+    anchors: str,
+    issued: list[list[str]],
+):
+    """Simulate a clean workspace parked at a prior card's commit."""
+    state = {"reset": False}
+
+    def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        issued.append(list(command))
+        if _is_remote_listing(command):
+            return subprocess.CompletedProcess(command, 0, _remote_listing(remotes), "")
+        if "status" in command or "fetch" in command or "merge-base" in command:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if "checkout" in command:
+            state["reset"] = True
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if "for-each-ref" in command:
+            return subprocess.CompletedProcess(command, 0, anchors, "")
+        if command[-1] == "HEAD^{commit}":
+            head = exact if state["reset"] else stale
+            return subprocess.CompletedProcess(command, 0, head + "\n", "")
+        return subprocess.CompletedProcess(command, 0, exact + "\n", "")
+
+    return runner
+
+
+def test_stale_clean_workspace_is_reset_to_exact_base_revision(
+    tmp_path: Path,
+) -> None:
+    materialize = _helpers()["_materialize_worker_workspace"]
+    target = tmp_path / "worker"
+    (target / ".git").mkdir(parents=True)
+    issued: list[list[str]] = []
+    runner = _stale_workspace_runner(
+        {"origin": "https://github.com/smilinTux/sklegal"},
+        stale="b" * 40,
+        exact="a" * 40,
+        anchors="refs/heads/feat/prior-claim-work\n",
+        issued=issued,
+    )
+
+    result = materialize(
+        str(target),
+        {
+            "links": {
+                "repository": "https://github.com/smilinTux/sklegal",
+                "base_ref": "main",
+                "base_revision": "a" * 40,
+            }
+        },
+        ["source-only"],
+        runner=runner,
+    )
+    assert result == str(target)
+    resets = [c for c in issued if "checkout" in c and "a" * 40 in c]
+    assert resets, "expected a detached checkout of the exact base_revision"
+    assert "--detach" in resets[0]
+
+
+def test_stale_unanchored_workspace_stays_blocked(tmp_path: Path) -> None:
+    materialize = _helpers()["_materialize_worker_workspace"]
+    target = tmp_path / "worker"
+    (target / ".git").mkdir(parents=True)
+    issued: list[list[str]] = []
+    runner = _stale_workspace_runner(
+        {"origin": "https://github.com/smilinTux/sklegal"},
+        stale="b" * 40,
+        exact="a" * 40,
+        anchors="",
+        issued=issued,
+    )
+
+    with pytest.raises(ValueError, match="not anchored"):
+        materialize(
+            str(target),
+            {
+                "links": {
+                    "repository": "https://github.com/smilinTux/sklegal",
+                    "base_ref": "main",
+                    "base_revision": "a" * 40,
+                }
+            },
+            ["source-only"],
+            runner=runner,
+        )
+    assert not [c for c in issued if "checkout" in c]
+
+
+def test_configured_stale_workspace_is_not_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    materialize = _helpers()["_materialize_worker_workspace"]
+    target = tmp_path / "configured"
+    (target / ".git").mkdir(parents=True)
+    monkeypatch.setenv("SKFLEET_WORKSPACE", str(target))
+    issued: list[list[str]] = []
+    runner = _stale_workspace_runner(
+        {"origin": "https://github.com/smilinTux/sklegal"},
+        stale="b" * 40,
+        exact="a" * 40,
+        anchors="refs/heads/feat/prior-claim-work\n",
+        issued=issued,
+    )
+
+    with pytest.raises(ValueError, match="does not match exact base_revision"):
+        materialize(
+            str(tmp_path / "unused"),
+            {
+                "links": {
+                    "repository": "https://github.com/smilinTux/sklegal",
+                    "base_ref": "main",
+                    "base_revision": "a" * 40,
+                }
+            },
+            ["source-only"],
+            runner=runner,
+        )
+    assert not [c for c in issued if "checkout" in c]
+
+
+# ---------------------------------------------------------------------------
+# source-only carried two unrelated meanings at once (routing + safety).
+# The tests below pin the split: routing now also fires on a complete binding,
+# so the safety half can be expressed on its own without a card's binding
+# silently going unchecked. See docs/fleet/source-only-split.md.
+# ---------------------------------------------------------------------------
+
+
+_COMPLETE_BINDING = {
+    "repository": "https://github.com/smilinTux/skcapstone.git",
+    "base_ref": "main",
+    "base_revision": "b" * 40,
+}
+
+
+def test_complete_binding_without_the_label_is_still_routed() -> None:
+    """A binding is honoured even when nobody applied ``source-only``.
+
+    Measured on the chi board 2026-09-18 by folding every card in a fresh
+    process: 79 live cards carried a complete repository/base_ref/base_revision
+    binding and no ``source-only`` label, so the dispatcher never looked at the
+    binding at all. All 79 validate cleanly through this function, which is why
+    widening the trigger blocks nothing that dispatches today.
+    """
+    spec = _helpers()["_source_workspace_spec"]
+    assert spec({"links": dict(_COMPLETE_BINDING)}, []) == (
+        _COMPLETE_BINDING["repository"],
+        "main",
+        "b" * 40,
+    )
+    assert spec({"meta": dict(_COMPLETE_BINDING)}, []) == (
+        _COMPLETE_BINDING["repository"],
+        "main",
+        "b" * 40,
+    )
+
+
+def test_partial_binding_without_the_label_does_not_jam_dispatch() -> None:
+    """A partial binding and no label stays inert rather than blocking.
+
+    This is deliberately NOT symmetric with the labelled path. 511 live chi
+    cards carry a partial binding and no ``source-only`` label; raising on them
+    would turn every one into a ``WORKSPACE_BLOCKED`` skip, trading a checking
+    win for a fleet-wide liveness regression. A partial binding is a triage
+    defect to be reported, not a dispatch trigger.
+    """
+    spec = _helpers()["_source_workspace_spec"]
+    assert spec({"links": {"repository": _COMPLETE_BINDING["repository"]}}, []) is None
+    assert spec({"links": {"base_revision": "c" * 40}}, []) is None
+    assert (
+        spec(
+            {"links": {"repository": _COMPLETE_BINDING["repository"], "base_ref": "main"}},
+            [],
+        )
+        is None
+    )
+
+
+def test_no_external_action_label_never_demands_a_binding() -> None:
+    """The safety label is routing-inert, which is the whole point of the split.
+
+    ``source-only`` forces a binding to exist (see
+    ``test_source_card_requires_exact_repository_and_base``). A card whose only
+    need is "take no external action" can therefore now say so without being
+    forced to invent a repository it does not use, and without triage having to
+    strip a safety constraint to unjam its routing.
+    """
+    spec = _helpers()["_source_workspace_spec"]
+    assert spec({}, ["no-external-action"]) is None
+    assert spec({"links": {}}, ["no-external-action"]) is None
+
+
+def test_no_external_action_alongside_a_binding_still_routes() -> None:
+    """Declaring safety does not waive a binding the card actually carries."""
+    spec = _helpers()["_source_workspace_spec"]
+    assert spec({"links": dict(_COMPLETE_BINDING)}, ["no-external-action"]) == (
+        _COMPLETE_BINDING["repository"],
+        "main",
+        "b" * 40,
+    )
+
+
+def test_source_only_without_a_binding_still_fails_closed() -> None:
+    """Regression fence: the legacy label keeps its strict contract.
+
+    2,612 chi cards carry ``source-only`` and none of them are being relabelled
+    by this change, so the labelled path must behave byte-for-byte as before.
+    If this assertion is ever relaxed, those cards start dispatching without the
+    pinned checkout they were authored against.
+    """
+    spec = _helpers()["_source_workspace_spec"]
+    with pytest.raises(ValueError, match="repository"):
+        spec({"links": {}}, ["source-only"])
+
+
+def test_no_external_action_rail_reaches_the_worker_brief() -> None:
+    """Both labels emit the constraint; an unlabelled card emits nothing."""
+    rail = _load("_worker_no_external_action_instructions")[
+        "_worker_no_external_action_instructions"
+    ]
+    assert rail([]) == ""
+    assert "NO EXTERNAL ACTION" in rail(["no-external-action"])
+    assert "NO EXTERNAL ACTION" in rail(["Source-Only"])
+    assert "acceptance criteria" in rail(["source-only"])
+
+
+def test_safety_label_names_match_the_library_constants() -> None:
+    """The dispatcher is a separately deployed artifact, so pin the vocabulary.
+
+    ``~/.local/bin/skfleet-rotate.py`` is copied per host and a git pull does
+    not update it. If the script and the library ever disagree on the spelling
+    of the safety label, a card would carry a constraint one side honours and
+    the other ignores, which is exactly the failure this split exists to end.
+    """
+    from skcapstone.source_binding import NO_EXTERNAL_ACTION_LABELS
+
+    source = ROTATE.read_text(encoding="utf-8")
+    for label in NO_EXTERNAL_ACTION_LABELS:
+        assert f'"{label}"' in source

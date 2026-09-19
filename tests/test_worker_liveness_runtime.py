@@ -531,3 +531,69 @@ def test_timer_entrypoint_uses_relocated_fleet_root(
     ]
     assert len(calls) == 1
     assert calls[0].args == []
+
+
+def test_child_activity_is_never_the_wrapper_beats_own_timestamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The field named "child activity" must not be the supervisor's timer.
+
+    ``collect_observations`` used to set ``child_activity_at=heartbeat_at``.
+    The wrapper beat is a ``while :; do ...; sleep N; done`` loop that runs
+    beside ``pi`` and writes ``disposition=RUNNING`` as a string literal, so
+    that assignment defined the child's activity as the shell timer's own
+    stamp.  No independent measurement of the child existed anywhere in the
+    observation.
+
+    It also made one signal look like two.  ``_latest_activity`` takes
+    ``max(heartbeat_at, child_activity_at)``, which reads as corroboration
+    and was a single source counted twice.  Card ``139ec63d`` is the cost:
+    6h19m43s held, 77 consecutive ``worker_liveness=active`` rows, zero files
+    ever written to its workspace.
+
+    Contract 24 of docs/fleet/2026-09-19-learnings.md: a status field computed
+    by the supervisor describes the supervisor.  Only a field the supervised
+    process itself had to produce describes the supervised process.  Until
+    such a measurement exists this is None, which is the fail-closed answer
+    and leaves ``_latest_activity`` reading exactly the beat it always did.
+    """
+    unit = "skfleet-worker-codex-deadbeef.service"
+    beat_path = tmp_path / "fleet" / "beats" / "worker.json"
+    beat_path.parent.mkdir(parents=True)
+    beat_path.write_text(
+        json.dumps(
+            {
+                "agent": "worker",
+                "card_id": "deadbeef",
+                "claim_revision": "generation-1",
+                "unit": unit,
+                "pid": 123,
+                "process_tree": [123],
+                "cgroup": f"/user.slice/{unit}",
+                "emitter": "wrapper",
+                "disposition": "RUNNING",
+                "beat_at": NOW.timestamp(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runtime, "_claim_revision", lambda *_: "generation-1")
+    monkeypatch.setattr(runtime, "workspace_custody", lambda *_: None)
+
+    def runner(_argv: list[str]) -> SimpleNamespace:
+        return SimpleNamespace(
+            returncode=0,
+            stdout="ExecMainPID=123\nControlGroup=\nActiveState=active\nWorkingDirectory=\n",
+        )
+
+    row = runtime.collect_observations(tmp_path, runner=runner, cgroup_root=tmp_path)[0]
+    assert row.heartbeat_at is not None, "the beat itself must still be read"
+    assert row.child_activity_at is None
+
+
+def test_the_collector_does_not_assign_the_beat_to_child_activity() -> None:
+    """Assert the assignment itself, so it cannot quietly come back."""
+    source = (ROOT / "src" / "skcapstone" / "fleet" / "worker_liveness_runtime.py").read_text(
+        encoding="utf-8"
+    )
+    assert "child_activity_at=heartbeat_at" not in source

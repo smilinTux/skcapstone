@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
@@ -22,6 +23,25 @@ class RoutePreflight:
         return asdict(self)
 
 
+PREFLIGHT_MAX_TOKENS = 64
+"""Token budget for the preflight probe.
+
+Large enough that a reasoning model still emits one visible token. Measured on
+chi 2026-09-18: budgets of 1 and 8 produce an empty upstream response and a 502,
+32 and above return content. A probe too small to produce output reports a
+healthy route as unhealthy.
+"""
+
+PREFLIGHT_USER_AGENT = "skfleet-route-preflight/1.0"
+"""Sent on every preflight probe.
+
+The gateway forwards the caller's User-Agent upstream, so the agent string is
+not cosmetic: an upstream edge that refuses unknown clients refuses the probe,
+and the dispatcher reads that as an unhealthy route rather than a rejected
+client. Keep it a conventional token.
+"""
+
+
 def _json_response(response: Any) -> dict[str, Any]:
     raw = response.read(MAX_RESPONSE_BYTES + 1)
     if len(raw) > MAX_RESPONSE_BYTES:
@@ -37,6 +57,8 @@ def resolve_and_preflight(
     logical_route: str,
     *,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    deadline: float | None = None,
+    clock: Callable[[], float] = time.monotonic,
     opener: Callable[..., Any] = urllib.request.urlopen,
 ) -> RoutePreflight:
     """Require current advertisement, then exercise that exact dispatch route."""
@@ -44,8 +66,18 @@ def resolve_and_preflight(
     if not route:
         raise ValueError("logical route is required")
     base = gateway_url.rstrip("/")
+
+    def request_timeout() -> float:
+        """Return a per-request timeout bounded by the shared deadline."""
+        if deadline is None:
+            return timeout
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise TimeoutError("gateway preflight deadline exhausted")
+        return min(timeout, remaining)
+
     try:
-        with opener(base + "/v1/models", timeout=timeout) as response:
+        with opener(base + "/v1/models", timeout=request_timeout()) as response:
             catalog = _json_response(response)
         rows = catalog.get("data")
         current = (
@@ -65,15 +97,37 @@ def resolve_and_preflight(
                 {
                     "model": route,
                     "messages": [{"role": "user", "content": "Reply OK."}],
-                    "max_tokens": 1,
-                    "temperature": 0,
+                    # Measured against the live chi gateway 2026-09-18, identical
+                    # body, varying only this value: 1 and 8 return HTTP 502,
+                    # while 32, 64 and 128 return 200 with content "OK". kimi is
+                    # a reasoning model and spends a tiny budget entirely on
+                    # reasoning, emitting no visible content, which the gateway
+                    # reports as an empty upstream response. A probe that cannot
+                    # afford one visible token measures the budget, not the
+                    # route. 64 leaves margin above the observed 32 floor and is
+                    # paid once per route per cycle.
+                    "max_tokens": PREFLIGHT_MAX_TOKENS,
+                    # No temperature. The kimi backends REJECT temperature 0, so
+                    # sending it fails the probe on exactly the backends most
+                    # likely to need probing. The same omission is already in
+                    # scripts/gateway/skgw-warm for the same reason.
                     "stream": False,
                 }
             ).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                # The gateway forwards the CALLER's User-Agent upstream, and the
+                # kimi upstream's edge rejects python-urllib's default with HTTP
+                # 403. Measured on chiap01 2026-09-18: the identical request body
+                # returns 403 with the default agent and does not with a
+                # conventional one. Every kimi preflight therefore failed, and
+                # the dispatcher logged ROUTE_PREFLIGHT_BLOCKED and launched
+                # nothing on hosts whose owned card routed to kimi.
+                "User-Agent": PREFLIGHT_USER_AGENT,
+            },
             method="POST",
         )
-        with opener(request, timeout=timeout) as response:
+        with opener(request, timeout=request_timeout()) as response:
             body = _json_response(response)
             headers = response.headers
         served = str(headers.get("x-sk-model-served") or body.get("model") or "").strip()

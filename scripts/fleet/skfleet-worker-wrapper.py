@@ -17,8 +17,23 @@ import time
 from pathlib import Path
 
 from skcapstone.card_store import CardStore
-from skcapstone.fleet.terminal_capacity import retire_worker_generation
+from skcapstone.fleet.gateway_failure import (  # noqa: F401
+    TRANSPORT_FAILURE_CLASSES,
+    TRANSPORT_PATTERNS,
+    classify_transport_diagnostic,
+)
+from skcapstone.fleet.terminal_capacity import (
+    is_abandon_reason_signature_mismatch,
+    retire_worker_generation,
+)
 from skcapstone.fleet.worker_watchdog import StartupObservation, classify_startup
+from skcapstone.fleet.workspace_lifecycle import (
+    WorkspaceProof,
+    cleanup_decision,
+    recovery_manifest,
+    write_manifest,
+)
+from skcapstone.review_verdict import validate_review_completion
 from skcapstone.seat_mail import poll_mail, startup_hello
 
 
@@ -263,22 +278,117 @@ def record_review_supersession(args: argparse.Namespace, stderr: bytes) -> Path 
     return path
 
 
+LOCK_RELEASE_ATTEMPTS = 3
+LOCK_RELEASE_RETRY_BACKOFF_SECONDS = 0.5
+
+
+def record_review_completion_rejection(args: argparse.Namespace, reason: str) -> None:
+    """Persist one immutable rejection for the exact cleanup claim."""
+    attempted_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    payload = {
+        "attempted_at": attempted_at,
+        "card_id": args.card,
+        "claim_revision": args.claim_revision,
+        "owner": args.owner,
+        "completion_failure": "review_completion_rejected",
+        "reason": reason,
+    }
+    digest = hashlib.sha256(f"{args.card}\0{args.claim_revision}\0{reason}".encode()).hexdigest()[
+        :16
+    ]
+    args.evidence_dir.mkdir(parents=True, exist_ok=True)
+    path = args.evidence_dir / f"{args.card}-{digest}.json"
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        if all(existing.get(key) == payload[key] for key in payload if key != "attempted_at"):
+            return
+        raise
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, sort_keys=True)
+        handle.write("\n")
+
+
 def release_superseded_review_claim(args: argparse.Namespace) -> bool:
-    """CAS-release this exact terminal generation through the locked Board."""
+    """CAS-release this exact terminal generation through the locked Board.
+
+    Board and card lock contention is transient: the locks are held only for
+    the duration of one mutation. Retry the exact CAS release a bounded
+    number of times so a temporarily contended lock cannot convert completed
+    worker work into a failed process. Every retry carries the same
+    ``expected_claim_revision``, so a release that landed before a timeout
+    folds to the idempotent already-released check below instead of a second
+    mutation. After the bound, fail truthfully with the contention chained.
+    """
     from skcoord.coordination import Board
 
     home = Path.home() / ".skcapstone"
-    try:
-        released = Board(home).release_claim(
-            args.owner,
-            args.card,
-            actor=args.owner,
-            expected_claim_revision=args.claim_revision,
+    store = CardStore(home)
+    card = store.fold(args.card)
+    if (
+        card is not None
+        and card.owner is None
+        and not card.meta.get("_claim_revision")
+        and any(
+            event.get("action") == "release_claim"
+            and event.get("released_owner") == args.owner
+            and event.get("expected_claim_revision") == args.claim_revision
+            for event in store._read_events(args.card)
         )
-    except (RuntimeError, ValueError):
-        released = False
+    ):
+        return True
+    if (
+        card is None
+        or card.owner != args.owner
+        or card.meta.get("_claim_revision") != args.claim_revision
+    ):
+        raise RuntimeError("terminal worker exact claim was not released")
+    try:
+        validate_review_completion(args.card, card.title, home)
+    except ValueError as exc:
+        record_review_completion_rejection(args, str(exc))
+        raise RuntimeError(f"review completion rejected: {exc}") from exc
+    released = False
+    contention: TimeoutError | TypeError | None = None
+    for attempt in range(LOCK_RELEASE_ATTEMPTS):
+        try:
+            released = Board(home).release_claim(
+                args.owner,
+                args.card,
+                actor=args.owner,
+                expected_claim_revision=args.claim_revision,
+                abandon_reason="not-abandoned",
+            )
+            contention = None
+            break
+        except TimeoutError as exc:
+            contention = exc
+            if attempt + 1 < LOCK_RELEASE_ATTEMPTS:
+                time.sleep(LOCK_RELEASE_RETRY_BACKOFF_SECONDS)
+        except TypeError as exc:
+            if not is_abandon_reason_signature_mismatch(exc):
+                raise
+            # The installed skcoord predates abandon_reason. Every retry
+            # carries the same call, so this is not transient: retrying
+            # cannot help. The release genuinely did not happen, so fail
+            # through to the truthful-failure path below rather than
+            # pretending the release succeeded. Logged loudly and distinctly
+            # from an ordinary release failure so an operator can tell the
+            # two apart and re-resolve the dependency instead of chasing a
+            # phantom lock-contention bug.
+            sys.stderr.write(
+                "release_claim() interface mismatch for "
+                f"{args.card} owner={args.owner}: installed skcoord predates "
+                f"the abandon_reason parameter; claim was not released: {exc}\n"
+            )
+            contention = exc
+            released = False
+            break
+        except (RuntimeError, ValueError):
+            released = False
+            break
     if not released:
-        store = CardStore(home)
         card = store.fold(args.card)
         released = bool(
             card is not None
@@ -292,7 +402,7 @@ def release_superseded_review_claim(args: argparse.Namespace) -> bool:
             )
         )
     if not released:
-        raise RuntimeError("terminal worker exact claim was not released")
+        raise RuntimeError("terminal worker exact claim was not released") from contention
     return True
 
 
@@ -359,17 +469,6 @@ def monitor_startup(
 
 
 STDERR_LIMIT = 2048
-TRANSPORT_PATTERNS = {
-    "rate_limited": re.compile(r"(?:\b429\b|rate.?limit)", re.I),
-    "model_owner_backend_down": re.compile(r"model_owner_backend_down", re.I),
-    "backend_claims_quarantined": re.compile(r"backend-claims-quarantined", re.I),
-    "invalid_upstream_tool_calls": re.compile(r"invalid_upstream_tool_calls", re.I),
-    "connection_failure": re.compile(
-        r"connection (?:error|failed|failure|refused|reset|timed? ?out)|"
-        r"failed to connect|network is unreachable|temporary failure in name resolution",
-        re.I,
-    ),
-}
 SECRET_RE = re.compile(
     r"(?i)(authorization:\s*(?:bearer|basic)\s+|"
     r"(?:api[_-]?key|access[_-]?token|password|secret)\s*[=:]\s*)\S+"
@@ -378,11 +477,14 @@ TOKEN_RE = re.compile(r"\b(?:sk-[A-Za-z0-9_-]{12,}|[A-Za-z0-9_-]{32,})\b")
 
 
 def classify_transport_failure(text: str) -> str | None:
-    """Return the allow-listed pre-agent transport failure class."""
-    for kind, pattern in TRANSPORT_PATTERNS.items():
-        if pattern.search(text):
-            return kind
-    return None
+    """Return the allow-listed pre-agent transport failure class.
+
+    The table lives in skcapstone.fleet.gateway_failure so the launcher's
+    classifier cannot drift from this one. It did: until 2026-09-18 neither
+    recognised 503, and 1,793 of the chi fleet's 2,980 worker-exit records
+    were a 503 scored as ordinary failed work.
+    """
+    return classify_transport_diagnostic(text)
 
 
 def classify_pre_agent_failure(stdout: bytes, stderr: bytes, rc: int) -> str | None:
@@ -393,15 +495,34 @@ def classify_pre_agent_failure(stdout: bytes, stderr: bytes, rc: int) -> str | N
         return classify_transport_failure(redact_stderr(stderr))
     text = stdout.decode("utf-8", errors="replace").strip()
     if not re.match(
-        r"(?:HTTP\s+)?(?:429|5\d\d)\b|model_owner_backend_down\b|"
-        r"backend-claims-quarantined\b|invalid_upstream_tool_calls\b|"
+        r"(?:HTTP\s+)?(?:4(?:04|29)|5\d\d)\b|model_owner_backend_down\b|"
+        r"(?:backend|model)[-_ ]claims?[-_ ]quarantined\b|invalid_upstream_tool_calls\b|"
         r"connection (?:error|failed|failure|refused|reset|timed? ?out)\b|"
-        r"failed to connect\b",
+        r"failed to connect\b|unable to generate parser\b|"
+        r"automatic parser generation failed\b",
         text,
         re.I,
     ):
         return None
     return classify_transport_failure(text)
+
+
+def card_description_generation(card_id: str) -> str:
+    """Return the immutable content generation one offer was minted against.
+
+    The folded description carries the exact candidate identity (reviewed head,
+    outcome generation, candidate digest) and never changes across the
+    claim/release churn of one relaunch cycle. A changed description is a new
+    generation and must not inherit an older generation's rejection hold.
+    """
+    try:
+        card = CardStore(Path.home() / ".skcapstone").fold(card_id)
+    except (OSError, ValueError):
+        return ""
+    description = str(getattr(card, "description", "") or "")
+    if not description:
+        return ""
+    return hashlib.sha256(description.encode("utf-8")).hexdigest()
 
 
 def redact_stderr(stderr: bytes) -> str:
@@ -446,8 +567,66 @@ def idle_owner_projection(
     del owner, card_id, claim_revision
 
 
-def record_terminal_exit(args: argparse.Namespace, stderr: bytes, rc: int) -> None:
-    """Create one immutable, claim-scoped terminal evidence record."""
+def zero_output_success(args: argparse.Namespace, rc: int) -> tuple[bool, str]:
+    """Accept an empty successful exit only after this claim mutated its card."""
+    if rc != 0:
+        return False, "child_exit"
+    try:
+        store = CardStore(Path.home() / ".skcapstone")
+        events = store._read_events(args.card) + store._legacy_events(args.card)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return False, "cardstore_unavailable"
+    events.sort(
+        key=lambda event: (
+            str(event.get("ts") or ""),
+            str(event.get("writer") or ""),
+            event.get("seq", 0),
+        )
+    )
+    claims = [
+        index
+        for index, event in enumerate(events)
+        if event.get("action") == "claim"
+        and event.get("owner") == args.owner
+        and event.get("claim_revision") == args.claim_revision
+    ]
+    if not claims:
+        return False, "claim_missing"
+    later = events[claims[-1] + 1 :]
+    boundary = next(
+        (
+            index
+            for index, event in enumerate(later)
+            if event.get("action") in {"claim", "reopen", "release_claim", "void"}
+        ),
+        len(later),
+    )
+    window = later[:boundary]
+    mutated = any(
+        event.get("writer") == args.owner
+        and event.get("action") in {"link", "move", "complete", "amend", "describe"}
+        for event in window
+    )
+    if mutated:
+        return True, "exact_claim_mutated"
+    if boundary < len(later):
+        action = later[boundary].get("action")
+        return False, "claim_released" if action == "release_claim" else "stale_claim"
+    return False, "no_card_mutation"
+
+
+def record_terminal_exit(
+    args: argparse.Namespace,
+    stderr: bytes,
+    rc: int,
+    completion_failure: str | None = None,
+) -> None:
+    """Create one immutable, claim-scoped terminal evidence record.
+
+    ``card_generation`` must be the launch-time capture on ``args`` so a stale
+    candidate-A rejection that finishes after the card advances to B stays
+    attributed to A and cannot hold B.
+    """
     stdout_size = args.stdout.stat().st_size
     stdout_tail = b""
     if stdout_size <= STDERR_LIMIT:
@@ -460,6 +639,7 @@ def record_terminal_exit(args: argparse.Namespace, stderr: bytes, rc: int) -> No
     payload = {
         "attempted_at": attempted_at,
         "card_id": args.card,
+        "card_generation": str(getattr(args, "card_generation", "") or ""),
         "child_exit_code": rc,
         "claim_revision": args.claim_revision,
         "host": args.host,
@@ -470,6 +650,7 @@ def record_terminal_exit(args: argparse.Namespace, stderr: bytes, rc: int) -> No
         "stderr": redacted,
         "stdout_log": args.stdout.name,
         "transport_failure": failure,
+        "completion_failure": completion_failure,
     }
     digest = hashlib.sha256(
         f"{args.card}\0{args.claim_revision}\0{attempted_at}".encode()
@@ -480,6 +661,87 @@ def record_terminal_exit(args: argparse.Namespace, stderr: bytes, rc: int) -> No
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, sort_keys=True)
         handle.write("\n")
+
+
+def record_workspace_lifecycle_decision(args: argparse.Namespace, outcome: str) -> None:
+    """Record a real cleanup-eligibility decision; never delete anything here.
+
+    Reads live Git state of this process's own cwd, which is the exact
+    directory skfleet-rotate.py's _worker_launch_command binds as the
+    systemd unit's working directory, so it is genuinely this worker's
+    workspace, not an assertion about it. Combined with the card's current
+    commit_sha/branch custody links, this makes
+    skcapstone.fleet.workspace_lifecycle.cleanup_decision reachable from a
+    real worker exit for the first time: the ported version
+    (stranded commit a45aed76) defined and tested that function but nothing
+    in production ever called it.
+
+    Execution stays out of scope on purpose. This never calls
+    cleanup_worktree(execute=True): docs/fleet/workspace-lifecycle.md and
+    scripts/fleet/skfleet-rotate.py's worker prompt both say an agent must
+    never delete its own workspace, so the decision this writes is a record
+    for a later, separate, authorized cleanup pass to act on, not an action
+    taken here.
+    # intentionally-unwired: workspace deletion. No such later pass exists
+    # in this codebase yet (workspace_runtime.retire_workspace has no
+    # production caller either); building one is out of this task's scope.
+    """
+    try:
+        home = Path.home() / ".skcapstone"
+        status = subprocess.run(
+            ["git", "status", "--porcelain=v1", "-z"], capture_output=True, check=False
+        )
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False
+        )
+        branch = subprocess.run(
+            ["git", "branch", "--show-current"], capture_output=True, text=True, check=False
+        )
+        toplevel = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        entries = [item for item in status.stdout.split(b"\0") if item]
+        proof = WorkspaceProof(
+            card_id=args.card,
+            claim_revision=args.claim_revision,
+            workspace=str(Path.cwd().resolve()),
+            branch=branch.stdout.strip(),
+            head=head.stdout.strip(),
+            porcelain_sha256=hashlib.sha256(status.stdout).hexdigest(),
+            dirty_paths=sum(not item.startswith(b"??") for item in entries),
+            untracked_paths=sum(item.startswith(b"??") for item in entries),
+            active_processes=0,
+            recovery_instructions=(
+                f"Open exact workspace {Path.cwd().resolve()}",
+                f"Verify card {args.card} claim generation {args.claim_revision}",
+                "Preserve dirty bytes and unique commits before any cleanup decision",
+            ),
+            outcome=outcome,
+        )
+        repository = (
+            Path(toplevel.stdout.strip())
+            if toplevel.returncode == 0 and toplevel.stdout.strip()
+            else None
+        )
+        decision = cleanup_decision(proof, home=home, repository=repository)
+        manifest = recovery_manifest(proof, decision.state)
+        path = args.evidence_dir / f"{args.card}-{args.claim_revision}-workspace.json"
+        digest = write_manifest(path, manifest)
+        emit_work_mail(
+            args,
+            "agent.status",
+            f"workspace_state={decision.state.value} manifest_sha256={digest} "
+            f"reasons={','.join(decision.reasons)}",
+        )
+    except Exception as exc:  # noqa: BLE001 - a broken read must not fail the worker
+        emit_work_mail(
+            args,
+            "work.blocked",
+            f"workspace_state=RECOVERABLE_QUARANTINE reason={type(exc).__name__}",
+        )
 
 
 def parse_args() -> argparse.Namespace:
@@ -528,6 +790,30 @@ def preflight_worktree() -> int:
             "resolve it by hand before starting a worker\n"
         )
     return r.returncode
+
+
+def foreign_claim_owner(args: argparse.Namespace) -> str | None:
+    """Return the folded claim owner when it is not this worker, else None.
+
+    Cross-host exclusion fence. Every pre-launch recheck in skfleet-rotate.py
+    (fresh_claimability, the post-claim identity read, the under-lock
+    claim-displaced check) reads the host-local store, so a claim written on
+    another host and still in Syncthing flight is invisible to all of them.
+    By the time this wrapper starts, the winning claim has usually synced in,
+    so the same CardStore fold that skfleet-working displays is re-read here
+    and its owner is the single arbiter: no tiebreak, no timestamp compare.
+    A fold that cannot be read proves nothing and never authorizes an abort.
+    """
+    try:
+        card = CardStore(Path.home() / ".skcapstone").fold(args.card)
+    except (OSError, TypeError, ValueError):
+        return None
+    if card is None:
+        return None
+    owner = str(card.owner or "")
+    if owner == args.owner:
+        return None
+    return owner or "unclaimed"
 
 
 def preflight_mailbox(args: argparse.Namespace) -> bool:
@@ -601,12 +887,32 @@ def finalize_terminal_capacity(args: argparse.Namespace, child: subprocess.Popen
         publish_terminal_capacity(args, child)
     except (OSError, ValueError) as exc:
         sys.stderr.write(f"terminal capacity publication failed: {exc}\n")
+    except TypeError as exc:
+        if not is_abandon_reason_signature_mismatch(exc):
+            raise
+        # retire_worker_generation already degrades this internally, but a
+        # future caller under it could still surface the same mismatch here.
+        # Same rule as above: log loudly and distinctly, then let the
+        # existing "capacity did not publish, claim release still tried
+        # separately" contract carry the failure, instead of crashing the
+        # finalizer over a known, already-tracked packaging gap.
+        sys.stderr.write(
+            "terminal capacity publication failed: installed skcoord "
+            f"predates the abandon_reason parameter (interface mismatch): {exc}\n"
+        )
     return released
 
 
 def finalize_worker_exit(args: argparse.Namespace, child: subprocess.Popen | None) -> None:
-    """Release exact custody before removing the worker projection."""
-    terminalized = not hasattr(args, "review_supersession")
+    """Release exact custody before removing the worker projection.
+
+    Only a release that actually succeeded proves the terminal transition, so
+    the projection may be idled solely on that success. When the release fails
+    truthfully (for example persistent board lock contention exhausting the
+    bounded retries), the exception propagates and the projection stays
+    active for fenced reconciliation.
+    """
+    terminalized = False
     try:
         terminalized = finalize_terminal_capacity(args, child)
     finally:
@@ -618,6 +924,19 @@ def main() -> int:
     """Run the child, tee stderr to the journal, and record terminal evidence."""
     args = parse_args()
     args.started_at = int(time.time())
+    observed_owner = foreign_claim_owner(args)
+    if observed_owner is not None:
+        # The authoritative fold names another worker as the claim owner, so
+        # this process has no custody. It exits before any work and before
+        # any card mutation: no release, no void, no event. Releasing an
+        # owner's live claim is how running work gets stolen; the loser's
+        # only correct move is to disappear and leave the card alone.
+        sys.stderr.write(
+            "ABORTED_NOT_CLAIM_OWNER|card=%s|worker=%s|observed_owner=%s\n"
+            % (args.card, args.owner, observed_owner)
+        )
+        write_startup_report(args, os.getpid(), "startup-aborted-not-claim-owner")
+        return 2
     preflight = preflight_worktree()
     if preflight == 2:
         write_startup_report(args, os.getpid(), "startup-preflight-blocked")
@@ -626,6 +945,9 @@ def main() -> int:
         write_startup_report(args, os.getpid(), "startup-mailbox-unavailable")
         return 2
     args.stdout.parent.mkdir(parents=True, exist_ok=True)
+    # Capture before child launch: exit recording must not re-fold a later
+    # candidate generation if the card advances while this worker is running.
+    args.card_generation = card_description_generation(args.card)
 
     def _stop(signum: int, _frame: object) -> None:
         raise SystemExit(128 + signum)
@@ -669,7 +991,14 @@ def main() -> int:
             args.review_supersession = final_supersession
         record_review_supersession(args, stderr)
         result_code = 75 if hasattr(args, "review_supersession") else child.returncode
-        record_terminal_exit(args, stderr, result_code)
+        completion_failure = None
+        if result_code == 0 and args.stdout.stat().st_size == 0:
+            valid, reason = zero_output_success(args, result_code)
+            if not valid:
+                result_code = 75
+                completion_failure = reason
+        record_terminal_exit(args, stderr, result_code, completion_failure)
+        record_workspace_lifecycle_decision(args, "success" if result_code == 0 else "failure")
         write_process_record(
             args,
             pid=child.pid,

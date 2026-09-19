@@ -28,6 +28,10 @@ def register_coord_amend_commands(coord: click.Group) -> None:
     @click.option("--agent", default=None, help="Writer name (defaults to host).")
     def coord_add_dependency(task_id, dependency_id, reason, home, agent):
         """Append an idempotent dependency gate without rewriting card birth facts."""
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation(agent or "", Action.AMEND_DEPENDENCIES, task_id, None, None)
         from ..coord_amendments import add_dependency
         from ._validators import validate_task_id
 
@@ -50,6 +54,10 @@ def register_coord_amend_commands(coord: click.Group) -> None:
     @click.option("--agent", default=None, help="Writer name (defaults to host).")
     def coord_remove_dependency(task_id, dependency_id, reason, home, agent):
         """Append a reversible dependency rollback without rewriting card birth facts."""
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation(agent or "", Action.AMEND_DEPENDENCIES, task_id, None, None)
         from ..coord_amendments import remove_dependency
         from ._validators import validate_task_id
 
@@ -81,6 +89,10 @@ def register_coord_amend_commands(coord: click.Group) -> None:
         appended event, attributed to its writer and reversed by
         reprioritizing again.
         """
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation(agent or "", Action.REPRIORITIZE_CARD, task_id, None, None)
         from ..coord_amendments import reprioritize
 
         home_path = Path(home).expanduser()
@@ -103,6 +115,10 @@ def register_coord_amend_commands(coord: click.Group) -> None:
         appended event carrying the full replacement list (latest event
         wins), attributed to its writer and reversed by amending again.
         """
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation(agent or "", Action.AMEND_CRITERIA, task_id, None, None)
         from ..coord_amendments import amend_criteria, current_acceptance_criteria
 
         if not criteria:
@@ -139,6 +155,10 @@ def register_coord_amend_commands(coord: click.Group) -> None:
         minting path), and never appears in 'coord changelog' output. The
         card stays on disk and remains foldable for audit.
         """
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation(agent or "", Action.VOID_CARD, task_id, None, None)
         from ..coord_amendments import void_card
 
         home_path = Path(home).expanduser()

@@ -293,7 +293,13 @@ def save_samples(samples: dict[str, dict[str, int]], path: Path = STATE_PATH) ->
 
 
 def join_herdr_evidence(rows: list[Worker]) -> list[Worker]:
-    """Clear stale projection state only for an exact current Herdr join."""
+    """Clear stale projection state only for an exact current Herdr join.
+
+    Exact pane ownership is name+cwd card identity from ``herdr agent list``.
+    Herdr ``pane process-info`` is foreground-only today, so owned background
+    work is not repository-visible; inventing it via host process walks is
+    forbidden. Fail closed until Herdr exposes stable owned-background evidence.
+    """
     try:
         result = subprocess.run(
             ["herdr", "agent", "list"],

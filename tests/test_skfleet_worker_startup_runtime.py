@@ -29,6 +29,27 @@ from skcapstone.seat_mail import MailPoll
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def record_success_mutation(tmp_path, module, args):
+    home = tmp_path / ".skcapstone"
+    home.mkdir(exist_ok=True)
+    store = module.CardStore(home)
+    store.create(CardCore(id=args.card, title="synthetic"))
+    store.append_event(
+        args.card,
+        "claim",
+        args.owner,
+        owner=args.owner,
+        claim_revision=args.claim_revision,
+    )
+    store.append_event(
+        args.card,
+        "link",
+        args.owner,
+        link_key="evidence",
+        link_value="synthetic-evidence.md",
+    )
+
+
 @pytest.mark.parametrize(
     "fault",
     [
@@ -107,7 +128,9 @@ def test_next_cycle_release_requires_negative_proof_and_fresh_fence(tmp_path, mo
             "--expected-claim-revision",
             "rev-1",
             "--agent",
-            "jarvis",
+            "niobe",
+            "--abandon-reason",
+            "error",
         ]
         claim[:] = [None, None, None]
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -125,6 +148,7 @@ def test_next_cycle_release_requires_negative_proof_and_fresh_fence(tmp_path, mo
         HOST="host-1",
         DRY=False,
         SKC="skcapstone",
+        DISPATCH_AGENT="niobe",
         Path=Path,
         subprocess=subprocess,
         json=json,
@@ -281,6 +305,8 @@ def test_wrapper_reports_early_child_exit_without_waiting_for_deadline(
         evidence_dir=tmp_path / "evidence/worker-exits",
     )
     monkeypatch.setattr(module, "parse_args", lambda: args)
+    if preflight == 0:
+        record_success_mutation(tmp_path, module, args)
     started = time.monotonic()
     assert module.main() == preflight
     assert time.monotonic() - started < 5.0
@@ -358,6 +384,8 @@ def test_wrapper_publishes_terminal_capacity_on_every_child_exit(tmp_path, monke
         evidence_dir=tmp_path / "evidence/worker-exits",
     )
     monkeypatch.setattr(module, "parse_args", lambda: args)
+    if exit_code == 0:
+        record_success_mutation(tmp_path, module, args)
 
     assert module.main() == exit_code
     assert module.publish_terminal_capacity(args, None) is False
