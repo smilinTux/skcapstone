@@ -14,3 +14,14 @@ jobs:
     uses: smilinTux/sk-standards/.github/workflows/docs-check.yml@155071f7b7624444ea5fe70526d92aa09eac5342 # sk-standards#61: changelog.d/ fragment satisfies tier 2
     with:
       tiers: "1,2,3"
+      # NOTE: the `uses:@SHA` pin above only freezes which version of THIS
+      # workflow's orchestration (steps/inputs) runs. The actual validator
+      # (scripts/docs_check.py) is fetched separately by that workflow from
+      # sk-standards at `standards-ref`, which defaults to the FLOATING
+      # `main` branch. Without this explicit standards-ref, skcapstone's
+      # tier-2/3 behavior silently follows sk-standards main regardless of
+      # the SHA pin above - discovered because bumping the SHA pin alone did
+      # NOT make the changelog.d/ fragment widening take effect in CI (see
+      # PR description). Pinning both makes the gate's actual rules
+      # reproducible from this file alone.
+      standards-ref: "155071f7b7624444ea5fe70526d92aa09eac5342"
