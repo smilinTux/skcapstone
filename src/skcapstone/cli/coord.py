@@ -1449,6 +1449,12 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", default=None, help="Writer name (defaults to host).")
     def coord_describe(task_id, title, description, home, agent):
+        from ..describe_guard import DegenerateTitleError, check_title
+
+        try:
+            check_title(title)
+        except DegenerateTitleError as exc:
+            raise click.ClickException(str(exc)) from exc
         """Edit a card's title/description (folded, never rewrites core.json).
 
         Birth facts stay write-once: the edit is one appended event, so it is
