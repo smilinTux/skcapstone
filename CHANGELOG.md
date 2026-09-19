@@ -50,6 +50,23 @@
   `BUILDER_RELEASED_TO_LANE` line per released card, and `builder_returned=` on
   the `SELECTION_EMPTY` diagnostic.
 
+- **Rollout deploys and grades every per-host artifact, and the checkout
+  surface is finally visible.** A chi host carries three version surfaces that
+  can each go stale alone: the git checkout, the installed package, and the
+  artifacts explicitly copied to `~/.local/bin`. Nothing compared them, which
+  is how the 2026-09-19 dispatch outage ran for an hour with every check
+  green. `staged_rollout`'s copy steps and `rollout_drift.detect_drift` now
+  both derive from one declared `deployment_manifest.PER_HOST_ARTIFACTS`
+  tuple, so `skfleet-worker-wrapper.py` (which the dispatcher loads from its
+  own directory, never from the installed package) is deployed and graded
+  instead of being correct by accident. `fleet node drift --expect-git-sha`
+  adds the `checkout:git_sha` finding, which is the only check that can catch
+  a uniformly stale node: every other expected value is read FROM the
+  checkout being graded. The rollout gate passes the manifest's sha to each
+  remote, so cross-host agreement falls out of the existing gate rather than
+  a second fleet-wide report. The installed-package finding is renamed
+  `git_sha` -> `package:git_sha` so a report names which surface is stale.
+
 - **The readiness gate grades the rotate script that actually runs.**
   `skfleet-readiness.service` graded `~/.skenv/bin/skfleet-rotate.py`, but the
   live drop-in on chiap01/02/03/04/08 runs `~/.local/bin/skfleet-rotate.py`.
