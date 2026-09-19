@@ -518,3 +518,4 @@ def _sanitize_topic(topic: str) -> str:
 def _unsanitize_topic(dirname: str) -> str:
     """Reverse of _sanitize_topic."""
     return dirname.replace("--", "/").replace("_", " ")
+# proof-of-gate: temporary no-op comment, reverted before merge (see PR body)
