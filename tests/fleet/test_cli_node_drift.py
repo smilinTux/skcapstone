@@ -291,7 +291,13 @@ def test_json_lists_every_missing_drift_by_name_regardless_of_default_summary(
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["drifts"] == [
-        {"artifact": "unit:a.service", "kind": "missing", "expected": "deadbeef", "found": None}
+        {
+            "artifact": "unit:a.service",
+            "kind": "missing",
+            "expected": "deadbeef",
+            "found": None,
+            "host": "node-under-test",
+        }
     ]
 
 
@@ -313,7 +319,13 @@ def test_json_output_carries_every_field(tmp_path, monkeypatch, fake_manifest):
     assert payload["node"] == "node-under-test"
     assert payload["git_sha"] == "abc12345"
     assert payload["drifts"] == [
-        {"artifact": "git_sha", "kind": "changed", "expected": "deadbeef", "found": "c0ffee00"}
+        {
+            "artifact": "git_sha",
+            "kind": "changed",
+            "expected": "deadbeef",
+            "found": "c0ffee00",
+            "host": "node-under-test",
+        }
     ]
 
 
@@ -530,3 +542,104 @@ def test_checkout_git_sha_is_never_treated_as_role_ambiguous():
     for artifact in ("checkout:git_sha", "package:git_sha", "git_sha"):
         drift = Drift(artifact, "missing", "deadbeef", None, "node-under-test")
         assert not _drift_is_role_ambiguous(drift), artifact
+
+
+def test_fleet_findings_are_off_by_default(tmp_path, monkeypatch, fake_manifest):
+    """Not folded into detect_drift on purpose.
+
+    `fleet rollout` gates each node with detect_drift, and during a staged
+    rollout the nodes are SUPPOSED to disagree (node 1 deployed, node 5 not
+    yet). Folding this in unconditionally would make every staged rollout
+    fail at its second node.
+    """
+    called = []
+    monkeypatch.setattr(rollout_drift, "detect_drift", lambda m, h, r: [])
+    monkeypatch.setattr(
+        rollout_drift, "detect_fleet_incoherence", lambda h: called.append(h) or []
+    )
+
+    result = CliRunner().invoke(
+        fleet,
+        ["node", "drift", "--repo-root", str(tmp_path), "--home", str(tmp_path)],
+        env=_env(),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert called == [], "the fleet check must not run without --fleet"
+
+
+def test_fleet_findings_name_the_peer_they_are_about(tmp_path, monkeypatch, fake_manifest):
+    monkeypatch.setattr(rollout_drift, "detect_drift", lambda m, h, r: [])
+    monkeypatch.setattr(
+        rollout_drift,
+        "detect_fleet_incoherence",
+        lambda h: [Drift("fleet:git_sha", "changed", "deadbeef", "0bad0bad", "chiap04")],
+    )
+
+    result = CliRunner().invoke(
+        fleet,
+        ["node", "drift", "--repo-root", str(tmp_path), "--home", str(tmp_path), "--fleet"],
+        env=_env(),
+    )
+
+    assert "fleet:git_sha" in result.output
+    assert "on chiap04" in result.output, (
+        "a fleet finding is about a PEER; without the host name the reader "
+        f"would read it as a fact about this node: {result.output}"
+    )
+
+
+def test_fleet_findings_exit_nonzero_under_strict(tmp_path, monkeypatch, fake_manifest):
+    """FAIL LOUDLY: an incoherent fleet must be actionable by a script."""
+    monkeypatch.setattr(rollout_drift, "detect_drift", lambda m, h, r: [])
+    monkeypatch.setattr(
+        rollout_drift,
+        "detect_fleet_incoherence",
+        lambda h: [Drift("fleet:git_sha", "changed", "deadbeef", "0bad0bad", "chiap04")],
+    )
+
+    result = CliRunner().invoke(
+        fleet,
+        [
+            "node",
+            "drift",
+            "--repo-root",
+            str(tmp_path),
+            "--home",
+            str(tmp_path),
+            "--fleet",
+            "--strict",
+        ],
+        env=_env(),
+    )
+
+    assert result.exit_code == 1, result.output
+
+
+def test_json_carries_the_host_so_a_peer_finding_is_attributable(
+    tmp_path, monkeypatch, fake_manifest
+):
+    monkeypatch.setattr(rollout_drift, "detect_drift", lambda m, h, r: [])
+    monkeypatch.setattr(
+        rollout_drift,
+        "detect_fleet_incoherence",
+        lambda h: [Drift("fleet:git_sha", "changed", "deadbeef", "0bad0bad", "chiap04")],
+    )
+
+    result = CliRunner().invoke(
+        fleet,
+        [
+            "node",
+            "drift",
+            "--repo-root",
+            str(tmp_path),
+            "--home",
+            str(tmp_path),
+            "--fleet",
+            "--json",
+        ],
+        env=_env(),
+    )
+
+    payload = json.loads(result.output)
+    assert payload["drifts"][0]["host"] == "chiap04"

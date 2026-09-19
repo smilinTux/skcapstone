@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **`skcapstone fleet node drift --fleet` reports nodes that disagree with each
+  other.** Per-node drift detection structurally cannot catch a uniformly stale
+  fleet: every expected value a node compares against is read from that node's
+  own checkout, so five hosts on the wrong commit agree with themselves
+  perfectly. This reads the rollout history every node already publishes to the
+  shared fleet tree and reports any node outside the plurality as
+  `fleet:git_sha`, using the existing `Drift` records so `--json` and `--strict`
+  work unchanged. Opt-in, because during a staged rollout nodes are supposed to
+  disagree.
+
 - **Three more sites named a per-host artifact's path by convention.**
   `skfleet-niobe-live.service` passed `--dispatcher %h/.skenv/bin/skfleet-rotate.py`
   and `seat_cycle_entrypoint.py` derived the dispatcher twice as

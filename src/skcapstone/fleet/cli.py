@@ -854,12 +854,22 @@ def _default_repo_root() -> Path:
         "built from --repo-root and the checkout can only ever agree with itself."
     ),
 )
+@click.option(
+    "--fleet",
+    "include_fleet",
+    is_flag=True,
+    help=(
+        "Also report nodes that disagree with each OTHER, read from the rollout "
+        "history every node already publishes to the shared fleet tree."
+    ),
+)
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
 @click.option("--strict", is_flag=True, help="Exit 1 when any drift is found.")
 def node_drift_cmd(
     repo_root: Path | None,
     home: Path | None,
     expect_git_sha: str | None,
+    include_fleet: bool,
     as_json: bool,
     strict: bool,
 ) -> None:
@@ -911,6 +921,15 @@ def node_drift_cmd(
             manifest["git_sha"] = expect_git_sha
             manifest["checkout_git_sha_pinned"] = True
         drifts = rollout_drift.detect_drift(manifest, resolved_home, resolved_repo_root)
+        if include_fleet:
+            # Deliberately opt-in, and deliberately NOT inside detect_drift:
+            # the staged rollout gates each node with detect_drift, and during
+            # a staged rollout the nodes are SUPPOSED to disagree (node 1
+            # deployed, node 5 not yet). Folding this in unconditionally would
+            # make every staged rollout fail at its second node. It is still
+            # the same command and the same Drift records, so --json and
+            # --strict handle it with no new reporting path.
+            drifts = drifts + rollout_drift.detect_fleet_incoherence(resolved_home)
     except (OSError, RuntimeError) as exc:
         raise click.ClickException(
             f"could not compute drift from repo root {resolved_repo_root}: {exc}"
@@ -929,6 +948,7 @@ def node_drift_cmd(
                             "kind": d.kind,
                             "expected": d.expected,
                             "found": d.found,
+                            "host": d.host,
                         }
                         for d in drifts
                     ],
@@ -948,7 +968,13 @@ def node_drift_cmd(
         if not unambiguous:
             click.echo("  (no unambiguous drift: no changed content, enablement, or git_sha)")
         for d in unambiguous:
-            click.echo(f"  {d.kind:20} {d.artifact:40} expected={d.expected!r} found={d.found!r}")
+            # fleet: findings are about a PEER, so they name the host they
+            # are about; every other finding is about this node.
+            where = f" on {d.host}" if d.artifact.startswith("fleet:") else ""
+            click.echo(
+                f"  {d.kind:20} {d.artifact:40} expected={d.expected!r} "
+                f"found={d.found!r}{where}"
+            )
         if ambiguous:
             click.echo(
                 f"  {len(ambiguous)} unit(s)/dispatcher script reported missing, not listed: "
