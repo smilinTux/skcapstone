@@ -134,15 +134,14 @@ TOOLS: list[Tool] = [
 
 
 async def _handle_coord_describe(args: dict) -> list[TextContent]:
+    """Edit a card's title/description via one appended overlay event."""
+    from ..card import CardEvent, CardEventLog
     from ..describe_guard import DegenerateTitleError, check_title
 
     try:
         check_title(args.get("title"))
     except DegenerateTitleError as exc:
         return _error_response(str(exc))
-
-"""Edit a card's title/description via one appended overlay event."""
-    from ..card import CardEvent, CardEventLog
 
     task_id = args.get("task_id", "")
     if not task_id:
