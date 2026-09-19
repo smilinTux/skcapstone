@@ -12,14 +12,33 @@ Every other provider in the catalog is left untouched.
 
 Stdlib only, so it runs on the system interpreter without a venv.
 
+`/v1/models` is a CATALOG, not a liveness list. Measured 2026-09-18 against a
+live gateway: of the 108 ids it advertised, 19 answered a one-token completion.
+The rest were unknown upstream (404), uncredentialed (401), or had no live
+backend (502/503). Neither the entry's own `stale` flag nor `/health` backend
+status predicts which: 10 of the 19 working models were flagged stale, and the
+`nvidia` backend reported `up` while 28 of its 37 models 404'd.
+
+So an unfiltered sync fills Pi's picker with models that cannot answer. `--probe`
+tries every candidate once, concurrently, and caches the ids that responded in
+`<pi dir>/.skgateway-live.json`; later launch-path syncs intersect the catalog
+with that allowlist while it is fresh. Probing is never done on the launch path
+— it costs one request per model — so run `skpisync --probe` after the gateway's
+backends change, or from a timer.
+
 Env knobs:
   SK_GATEWAY_URL             gateway base URL (default http://localhost:18780)
   SK_PI_GATEWAY_PROVIDER     provider key to rewrite (default skgateway)
   PI_CODING_AGENT_DIR        Pi agent dir (default ~/.pi/agent)
-  SK_PI_SYNC_TIMEOUT         fetch timeout, seconds (default 5)
+  SK_PI_SYNC_TIMEOUT         catalog fetch timeout, seconds (default 5)
   SK_PI_SYNC_SKIP_STALE      1 = drop models the gateway flags stale
   SK_PI_SYNC_ONLY            regex; keep only model ids that match
   SK_PI_SYNC_DEFAULT_CTX     contextWindow for models with no card (default 131072)
+  SK_PI_SYNC_PROBE           1 = probe on this run, as if --probe were passed
+  SK_PI_SYNC_PROBE_TIMEOUT   per-model probe timeout, seconds (default 20)
+  SK_PI_SYNC_PROBE_WORKERS   concurrent probes (default 10)
+  SK_PI_SYNC_PROBE_TTL       seconds an allowlist stays authoritative (default 86400,
+                             0 = never expires)
 """
 
 from __future__ import annotations
@@ -32,8 +51,10 @@ import re
 import stat
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 DEFAULT_GATEWAY = "http://localhost:18780"
@@ -139,6 +160,64 @@ def to_pi_model(entry: dict, previous: dict[str, dict], default_ctx: int) -> dic
     return model
 
 
+def allowlist_path(catalog: Path) -> Path:
+    return catalog.parent / ".skgateway-live.json"
+
+
+def probe_model(base: str, model_id: str, timeout: float) -> bool:
+    """One cheap completion. True only if the gateway actually answered for it."""
+    payload = json.dumps(
+        {
+            "model": model_id,
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 1,
+        }
+    ).encode()
+    request = urllib.request.Request(
+        f"{base}/v1/chat/completions",
+        data=payload,
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return 200 <= response.status < 300
+    except (urllib.error.URLError, OSError, TimeoutError, ValueError):
+        return False
+
+
+def probe_all(base: str, entries: list[dict]) -> list[str]:
+    timeout = float(os.environ.get("SK_PI_SYNC_PROBE_TIMEOUT", "20"))
+    workers = max(1, int(os.environ.get("SK_PI_SYNC_PROBE_WORKERS", "10")))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        verdicts = pool.map(
+            lambda item: (item["id"], probe_model(base, item["id"], timeout)), entries
+        )
+        return [model_id for model_id, alive in verdicts if alive]
+
+
+def read_allowlist(catalog: Path, base: str) -> set[str] | None:
+    """Cached probe verdicts, or None when absent, expired or for another gateway."""
+    path = allowlist_path(catalog)
+    try:
+        cached = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if cached.get("gateway") != base:
+        return None
+    ttl = float(os.environ.get("SK_PI_SYNC_PROBE_TTL", "86400"))
+    if ttl and time.time() - float(cached.get("generated", 0)) > ttl:
+        return None
+    live = cached.get("live")
+    return set(live) if isinstance(live, list) else None
+
+
+def write_allowlist(catalog: Path, base: str, live: list[str]) -> None:
+    path = allowlist_path(catalog)
+    payload = {"generated": int(time.time()), "gateway": base, "live": sorted(live)}
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    path.chmod(0o600)
+
+
 def select(entries: list[dict]) -> list[dict]:
     if os.environ.get("SK_PI_SYNC_SKIP_STALE") == "1":
         entries = [item for item in entries if not item.get("stale")]
@@ -222,6 +301,18 @@ def main() -> int:
         action="store_true",
         help="report drift without writing (exit 1 when the catalog is stale)",
     )
+    parser.add_argument(
+        "--probe",
+        action="store_true",
+        default=os.environ.get("SK_PI_SYNC_PROBE") == "1",
+        help="send one cheap completion per model and keep only those that answer, "
+        "caching the verdicts for later launch-path syncs",
+    )
+    parser.add_argument(
+        "--no-allowlist",
+        action="store_true",
+        help="ignore any cached probe verdicts and sync the whole catalog",
+    )
     args = parser.parse_args()
 
     base = args.gateway.rstrip("/")
@@ -242,6 +333,28 @@ def main() -> int:
         )
         return 0
 
+    advertised = len(entries)
+    filtered_by = "none"
+    if args.probe:
+        live = probe_all(base, entries)
+        if not live:
+            print(
+                "PI_GATEWAY_SYNC_UNAVAILABLE|EmptyProbe|no advertised model answered",
+                file=sys.stderr,
+            )
+            return 0
+        if not args.check:
+            write_allowlist(args.catalog, base, live)
+        entries = [item for item in entries if item["id"] in set(live)]
+        filtered_by = "probe"
+    elif not args.no_allowlist:
+        allowed = read_allowlist(args.catalog, base)
+        if allowed is not None:
+            kept = [item for item in entries if item["id"] in allowed]
+            if kept:
+                entries = kept
+                filtered_by = "allowlist"
+
     try:
         info = _secure_regular_file(args.catalog)
         document = json.loads(args.catalog.read_text(encoding="utf-8"))
@@ -257,7 +370,10 @@ def main() -> int:
         return 2
 
     state = "changed" if changed else "current"
-    print(f"PI_GATEWAY_SYNC|{state}|provider={args.provider}|models={len(entries)}")
+    print(
+        f"PI_GATEWAY_SYNC|{state}|provider={args.provider}|models={len(entries)}"
+        f"|advertised={advertised}|filter={filtered_by}"
+    )
     return 1 if changed and args.check else 0
 
 

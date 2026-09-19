@@ -470,6 +470,11 @@ function cursor-agent {
 # GET $SK_GATEWAY_URL/v1/models. Other providers are untouched, the previous
 # catalog is snapshotted into ~/.pi/agent/backups/, and an unreachable gateway
 # is a warning, never a failure — see sk-pi-gateway-sync.py for the knobs.
+#
+# That endpoint is a catalog, not a liveness list: most of what it advertises
+# cannot actually answer. `skpisync --probe` tries each model once and caches
+# the ids that responded, and every later sync keeps only those. Run it after
+# the gateway's backends change; the launch path never probes.
 # ---------------------------------------------------------------------------
 _SK_PICKER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
 
@@ -498,11 +503,15 @@ function skpisync {
                 printf "  ▷ Pi models: skgateway already current\n" >&2
         ;;
         PI_GATEWAY_SYNC\|changed*)
-            printf "  ▷ Pi models: skgateway refreshed (%s)\n" \
-                "${output##*models=}" >&2
+            local kept="${output##*models=}"; kept="${kept%%|*}"
+            local how="${output##*filter=}"; how="${how%%$'\n'*}"
+            printf "  ▷ Pi models: skgateway refreshed (%s models, filter=%s)\n" \
+                "$kept" "$how" >&2
+            [[ "$how" == "none" ]] &&
+                printf "      run 'skpisync --probe' to keep only models that answer\n" >&2
         ;;
         PI_GATEWAY_SYNC_UNAVAILABLE\|*)
-            printf "  ⚠ Pi models: %s unreachable (%s) — catalog left as-is\n" \
+            printf "  ⚠ Pi models: %s unusable (%s) — catalog left as-is\n" \
                 "${SK_GATEWAY_URL:-http://localhost:18780}" \
                 "${output##*|}" >&2
         ;;

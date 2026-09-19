@@ -193,3 +193,51 @@ def test_picker_wraps_pi_with_the_sync_and_honours_the_opt_out():
     assert "function skpisync" in source
     assert 'if [[ "${SK_PI_SYNC:-1}" == "1" ]]; then' in source
     assert "export -f skpisync" in source
+
+
+def test_probe_keeps_only_models_that_answer(monkeypatch):
+    module = _module()
+    answered = {"sk-default", "ornith-tiny"}
+    monkeypatch.setattr(module, "probe_model", lambda base, mid, timeout: mid in answered)
+    entries = [{"id": mid} for mid in ["sk-default", "nvidia/gone", "ornith-tiny", "z-ai/eol"]]
+    assert set(module.probe_all("http://gw", entries)) == answered
+
+
+def test_allowlist_round_trip_and_invalidation(tmp_path, monkeypatch):
+    module = _module()
+    catalog = _catalog(tmp_path)
+    module.write_allowlist(catalog, "http://gw", ["sk-default", "ornith-tiny"])
+
+    assert module.read_allowlist(catalog, "http://gw") == {"sk-default", "ornith-tiny"}
+    assert stat.S_IMODE(module.allowlist_path(catalog).stat().st_mode) == 0o600
+    # A cache written for a different gateway must not be trusted.
+    assert module.read_allowlist(catalog, "http://elsewhere") is None
+    # Nor one older than the TTL.
+    monkeypatch.setenv("SK_PI_SYNC_PROBE_TTL", "1")
+    stale = json.loads(module.allowlist_path(catalog).read_text())
+    stale["generated"] = 0
+    module.allowlist_path(catalog).write_text(json.dumps(stale))
+    assert module.read_allowlist(catalog, "http://gw") is None
+    # TTL 0 disables expiry.
+    monkeypatch.setenv("SK_PI_SYNC_PROBE_TTL", "0")
+    assert module.read_allowlist(catalog, "http://gw") == {"sk-default", "ornith-tiny"}
+
+
+def test_missing_allowlist_reads_as_none(tmp_path):
+    module = _module()
+    assert module.read_allowlist(_catalog(tmp_path), "http://gw") is None
+
+
+def test_probe_failure_for_every_model_leaves_catalog_alone(tmp_path, monkeypatch):
+    """If nothing answers, that is a gateway problem — do not empty Pi's picker."""
+    module = _module()
+    catalog = _catalog(tmp_path)
+    before = catalog.read_text()
+    monkeypatch.setattr(module, "fetch_models", lambda base, timeout: [{"id": "sk-default"}])
+    monkeypatch.setattr(module, "probe_model", lambda base, mid, timeout: False)
+    monkeypatch.setattr(
+        sys, "argv", ["sync", "--catalog", str(catalog), "--gateway", "http://gw", "--probe"]
+    )
+    assert module.main() == 0
+    assert catalog.read_text() == before
+    assert not module.allowlist_path(catalog).exists()

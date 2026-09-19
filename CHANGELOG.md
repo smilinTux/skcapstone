@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **The Pi gateway sync filled the picker with models that cannot answer.**
+  `/v1/models` is a catalog, not a liveness list. Probed against a live gateway
+  on 2026-09-18: of the 108 ids advertised, 19 answered a one-token completion —
+  the rest were unknown upstream (404), uncredentialed (401), or had no live
+  backend (502/503). Neither of the cheap filters works: the gateway's own
+  `stale` flag missed badly (10 of the 19 working models carry it, 25 non-stale
+  ones fail) and `/health` backend status does not predict it either (the
+  `nvidia` backend reported `up` while 28 of its 37 models 404'd). `skpisync
+  --probe` now tries each advertised model once, concurrently, keeps only those
+  that answer, and caches the verdicts in `~/.pi/agent/.skgateway-live.json`;
+  later launch-path syncs intersect the catalog with that allowlist while it is
+  fresh (`SK_PI_SYNC_PROBE_TTL`, default 24h, keyed to the gateway URL). The
+  launch path never probes — it costs one request per model — and a run where
+  nothing answers leaves the catalog alone rather than emptying the picker. The
+  sync line now reports `models=<kept>|advertised=<total>|filter=<how>`.
+
 - **HTTP 503 was not recognised as a gateway failure, so a nine-hour outage was
   charged to the cards as failed work.** The launcher's `_GATEWAY_ERROR_RE`
   spelled out 400/404/408/429/502/504 and the worker wrapper kept a separate
