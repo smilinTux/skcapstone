@@ -187,13 +187,16 @@ def test_main_loop_survives_a_card_that_cannot_be_claimed(paths, monkeypatch) ->
             raise TaskUnclaimable("59553966", "voided", "Task 59553966 was voided")
         raise RuntimeError("stop after the second cycle")
 
+    converges = []
     monkeypatch.setattr(sknoded, "run_once", _run_once)
-    monkeypatch.setattr("skcapstone.fleet.converge.converge_once", lambda *_a: None)
+    monkeypatch.setattr("skcapstone.fleet.converge.converge_once", lambda *_a: converges.append(1))
     monkeypatch.setattr(sknoded.time, "sleep", lambda _s: None)
 
     with pytest.raises(RuntimeError, match="stop after the second cycle"):
         sknoded.main_loop(paths, "node-ziowk01", interval=0, actuation_interval=0)
     assert len(passes) == 2
+    # The skip must not starve the stage behind it in the same pass.
+    assert converges == [1]
 
 
 def test_main_loop_still_dies_on_infrastructure_failure(paths, monkeypatch) -> None:

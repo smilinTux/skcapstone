@@ -255,16 +255,21 @@ def main_loop(
     last_report = 0.0
     while True:
         now = time.time()
-        try:
-            if now - last_report >= interval or last_report == 0.0:
+        # Two separate guards, not one. A card that refuses on every pass would
+        # otherwise starve whichever stage sits after it in a shared try, and
+        # the self-report is the node's liveness signal.
+        if now - last_report >= interval or last_report == 0.0:
+            try:
                 run_once(paths, node)
-                last_report = now
+            except skippable as exc:
+                logger.warning("sknoded self-report skipped one unusable card: %s", exc)
+            last_report = now
+        try:
             converge_once(paths, node)
         except skippable as exc:
-            # The only two per-card failures on this loop. ziowk01-wsl,
-            # 2026-09-18: a card voided out from under the dispatch queue
-            # raised ValueError through claim_task and killed the unit,
-            # discarding 18h of process state over one unusable card.
+            # ziowk01-wsl, 2026-09-18: a card voided out from under the
+            # dispatch queue raised ValueError through claim_task and killed
+            # the unit, discarding 18h of process state over one unusable card.
             #
             # This is deliberately NOT ``except Exception``. Everything else
             # still terminates the unit so systemd restarts it and the failure
@@ -272,7 +277,7 @@ def main_loop(
             # home that has gone missing, a permissions failure, an OSError on
             # the fleet tree. Those are not one-card problems, and swallowing
             # them would turn every card on this node into a silent skip.
-            logger.warning("sknoded skipping one unusable card: %s", exc)
+            logger.warning("sknoded converge skipped one unusable card: %s", exc)
         if once:
             return
         time.sleep(act_every)
