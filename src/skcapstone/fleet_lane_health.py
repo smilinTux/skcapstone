@@ -117,21 +117,18 @@ def active_gateway_revision(
 def _domain_state(health: Any, queue: Any, domain: str, observed_at: float) -> dict[str, Any]:
     """Classify one capacity domain from this cycle's health and queue rows.
 
-    OBSERVATION AGE IS NOT AN ADMISSION CONDITION, and the reason is a deadlock
-    measured on the live fleet on 2026-09-04.
+    Backend health and capacity are admission evidence, not a durable lease.
+    A backend observation outside MAX_AGE_SECONDS is stale and must not satisfy
+    a shared logical bucket. This prevents one old provider row from admitting
+    work after the provider or its capacity has disappeared.
 
-    SKGateway derives a backend health row purely from proxied request outcomes:
-    `Backend.recordOutcome()` is the only writer of `lastCheck`, and the gateway
-    runs no active backend health checker. So `lastCheck` is not "when the
-    gateway last looked at this backend", it is "when this backend last carried
-    real traffic". An idle healthy backend therefore has an arbitrarily old
-    `lastCheck` while remaining perfectly serviceable.
+    SKGateway derives a backend health row from proxied request outcomes, so
+    `lastCheck` is the time the backend last carried real traffic. That makes
+    the freshness bound deliberately strict: an idle backend must refresh its
+    evidence before it can claim new work.
 
-    The first version of this function required `lastCheck` to be within
-    MAX_AGE_SECONDS of the observation time. That reused the SNAPSHOT expiry
-    bound as a BACKEND OBSERVATION bound, which are different quantities, and it
-    was never part of the documented contract (docs/fleet/lane-admission-health.md
-    listed three conditions: observed up or degraded, not quarantined, positive
+    The same-cycle snapshot expiry bound is also enforced by `lane_health()` and
+    by the `/queue` timestamp check in `acquire_lane_snapshot()`.conditions: observed up or degraded, not quarantined, positive
     queue capacity). Its effect was that a lane was admissible only during the
     120 seconds after somebody else sent traffic to that exact capacity domain.
     Since fleet dispatch is the only realistic traffic source, the fleet could
@@ -184,7 +181,7 @@ def _domain_state(health: Any, queue: Any, domain: str, observed_at: float) -> d
         not isinstance(last_check, (int, float))
         or isinstance(last_check, bool)
         or last_check <= 0
-        or last_check / 1000 - observed_at > MAX_AGE_SECONDS
+        or abs(last_check / 1000 - observed_at) > MAX_AGE_SECONDS
     ):
         state = "unknown"
     elif health_row.get("observed") is not True or health_row.get("status") in {"down", "unknown"}:
