@@ -189,3 +189,63 @@ def test_source_preserves_admission_and_reports_selection_races() -> None:
     assert "if _logical_route_for(candidate[3],candidate[4]) is not None)" in source
     assert "launched>=MAX_LAUNCH" in source
     assert "RACED|%s|count=%d ids=%s omitted=%d" in source
+
+
+def test_a_card_that_never_reached_lane_selection_is_not_a_lane_verdict() -> None:
+    """``no-compatible-lane`` must not absorb the unroutable case.
+
+    A candidate with no logical route is filtered out of the candidate scan
+    before any lane is consulted, so reporting a lane verdict for it is a false
+    statement about where it died. On chi 2026-09-19 every host logged
+    ``reason=no-compatible-lane`` while its whole owned slice had been dropped
+    for a missing size, and three consecutive diagnoses chased lane health,
+    lane targets and claim ceilings on the strength of that string.
+    """
+    helpers = _load_helpers()
+    owned_ids = ["a728f287", "c33a1004", "cf460fde"]
+    pool = [_row(card_id) for card_id in owned_ids]
+    owned = list(pool)
+
+    detail = helpers["_selection_diagnostic"](
+        pool,
+        owned,
+        _lanes(target=9, free=9),
+        lambda _card_id: "chiap04",
+        None,
+        (),
+        (),
+        owned_ids,
+    )
+    assert "reason=unroutable-size" in detail
+    assert "ids=a728f287,c33a1004,cf460fde" in detail
+
+    # A lane verdict is still a lane verdict when the cards DID reach selection.
+    detail = helpers["_selection_diagnostic"](
+        pool,
+        owned,
+        _lanes(target=9, free=9),
+        lambda _card_id: "chiap04",
+    )
+    assert "reason=no-compatible-lane" in detail
+
+    # A partial drop is a lane verdict too: something did reach selection.
+    detail = helpers["_selection_diagnostic"](
+        pool,
+        owned,
+        _lanes(target=9, free=9),
+        lambda _card_id: "chiap04",
+        None,
+        (),
+        (),
+        owned_ids[:1],
+    )
+    assert "reason=no-compatible-lane" in detail
+
+
+def test_the_unrouted_drop_is_logged_before_the_scan_consumes_it() -> None:
+    source = ROTATE.read_text(encoding="utf-8")
+    assert "UNROUTED_CANDIDATES|%s|count=%d|reason=missing-or-ambiguous-size|" in source
+    drop = source.index("_unrouted_candidates=[candidate[2] for candidate in owned")
+    scan = source.index("_candidate_scan = _bounded_candidate_sequence(")
+    assert drop < scan
+    assert "_builder_returned_ids, _unrouted_candidates)" in source

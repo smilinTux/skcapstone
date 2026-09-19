@@ -74,3 +74,35 @@ def test_launch_never_replaces_logical_route_with_selected_member() -> None:
     # kimi-for-coding). It is the right thing to SEND and the wrong thing to
     # record as the identity, so it must never be assigned back to it.
     assert '"logical_route":model' not in source
+
+
+def test_corrupted_title_still_routes_from_the_canonical_size_label() -> None:
+    """A describe that ate the title must not un-route an already-sized card.
+
+    Measured on chi 2026-09-19: an ``mcp`` writer appended ``describe`` events
+    carrying literal argv fragments as the title (``x``, ``--description``) to
+    live cards, ~80 times since 2026-09-08. CardStore folds the latest describe,
+    so ``[SKLEGAL-R33-ACTIVITY][S] ...`` folded to ``x`` while the card still
+    carried its canonical ``sk-s`` label. The title lost the size marker, this
+    helper returned None, and the candidate scan silently dropped the card. Every
+    chi host went to ``owned_ready=0`` with free seats and a non-empty pool.
+
+    The size LABEL is the same canonical route id the title marker resolves to,
+    so a non-empty-but-unmarked title must fall through to it exactly as an
+    empty one already did. A title the card no longer has is not evidence that
+    the card has no size.
+    """
+    helper = _helpers()["_logical_route_for"]
+    assert helper({"title": "x"}, ["sklegal", "source-only", "sk-s"]) == "sk-s"
+    assert helper({"title": "--description"}, ["sk-s", "size-s"]) == "sk-s"
+    assert (
+        helper(
+            {"title": "Authority contradiction retention audit"},
+            ["sklegal", "sk-s", "kimi-cohort"],
+        )
+        == "sk-s"
+    )
+    # A title marker still wins outright, and still fails closed with no label.
+    assert helper({"title": "[C][M] Work"}, ["sk-s"]) == "sk-m"
+    assert helper({"title": "x"}, ["sklegal"]) is None
+    assert helper({"title": "x"}, ["sk-s", "sk-m"]) is None

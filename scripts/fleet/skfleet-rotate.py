@@ -305,7 +305,7 @@ def _partition_owner(card_id, hosts, pinned_host=None):
 
 
 def _selection_diagnostic(pool, owned, lanes, owner_for, host_capacity=None,
-                          builder_withheld=(), builder_returned=()):
+                          builder_withheld=(), builder_returned=(), unrouted=()):
     """Classify why an authoritative pool produced no local selection.
 
     This is diagnostic only. It never changes ownership or claimability, so the
@@ -323,10 +323,17 @@ def _selection_diagnostic(pool, owned, lanes, owner_for, host_capacity=None,
     this tick, which this host therefore kept. It is logged beside the withheld
     count so one grep shows whether an idle host is idle because the builder
     holds its slice or for some other reason entirely.
+
+    ``unrouted`` names the owned candidates that carry no logical route and so
+    never reached lane selection at all. Without it this function reported the
+    trailing ``no-compatible-lane``, which is a LANE verdict, for cards no lane
+    was ever offered. Chi sat at zero dispatch on 2026-09-19 reading that string
+    at face value through three wrong diagnoses.
     """
     pool_ids = [row[2] for row in pool]
     owned_ids = [row[2] for row in owned]
     builder_ids = [str(card_id) for card_id in builder_withheld]
+    unrouted_ids = [str(card_id) for card_id in unrouted]
     total_target = sum(int(lane.get("target", 0)) for lane in lanes)
     total_free = sum(int(lane.get("free", 0)) for lane in lanes)
     if not pool:
@@ -338,6 +345,8 @@ def _selection_diagnostic(pool, owned, lanes, owner_for, host_capacity=None,
             reason, ids = "builder-path-withheld", builder_ids
         else:
             reason, ids = "foreign-hash-partition", pool_ids
+    elif unrouted_ids and set(unrouted_ids) >= set(owned_ids):
+        reason, ids = "unroutable-size", unrouted_ids
     else:
         reason, ids = "no-compatible-lane", owned_ids
     bounded, omitted = _bounded_ids(ids)
@@ -1703,11 +1712,30 @@ _SIZE_MODELS={key:(os.environ.get("SKFLEET_MODEL_"+key)
                    or value).strip() or value
               for key,value in _SIZE_MODEL_DEFAULTS.items()}
 def _size_class_for(core, labels=()):
-    """Return one title size, or one canonical label when the title is empty."""
-    title=str((core or {}).get("title") or "")
-    matches=_GLM_SIZE_RE.findall(title)
-    if title:
-        return matches[0] if len(matches)==1 else None
+    """Return one title size, else the one canonical size label.
+
+    The title marker wins whenever the title carries exactly one. Otherwise the
+    size LABEL decides, because `sk-s`/`sk-m`/`sk-l`/`sk-xl` IS the same
+    canonical route id the marker resolves to, only written somewhere a title
+    edit cannot reach.
+
+    The label used to be consulted ONLY for an empty title, which made the
+    routing identity of every card hostage to the last describe event. Measured
+    on chi 2026-09-19: an `mcp` writer appended describe events carrying literal
+    argv fragments as the title (`x`, `--description`) to live cards, ~80 times
+    since 2026-09-08. CardStore folds the latest describe, so
+    `[SKLEGAL-R33-ACTIVITY][S] ...` folded to `x` while the card still carried
+    `sk-s`. Non-empty and unmarked took the fail-closed branch, this returned
+    None, and the candidate scan dropped the card with no log line at all. Every
+    chi host reported `owned_ready=0` and `no-compatible-lane` against a
+    non-empty pool with every seat free, and the fleet ran two workers against
+    ~30 configured seats.
+
+    Still fails closed with no marker and no label, and with two of either.
+    """
+    matches=_GLM_SIZE_RE.findall(str((core or {}).get("title") or ""))
+    if len(matches)==1:
+        return matches[0]
     label_sizes={size for size,route in _LOGICAL_ROUTES.items() if route in {
         str(label).strip().lower() for label in labels}}
     return next(iter(label_sizes)) if len(label_sizes)==1 else None
@@ -7164,6 +7192,19 @@ _lane_deferred_cards={}
 # card queued behind it.
 # Scan a bounded, deterministic sequence once per cycle.  Rejected candidates
 # are consumed by the scan and cannot be selected again during this rotation.
+# The scan below drops any candidate with no logical route. That drop used to
+# be invisible: an owned, ready, unblocked, uncontended card vanished between
+# `owned` and the selection loop with no record, and SELECTION_EMPTY then
+# reported the catch-all `no-compatible-lane`, which is a lane verdict for a
+# card that never reached lane selection. On chi 2026-09-19 that cost three
+# separate wrong diagnoses before anyone read this line. Account for it first.
+_unrouted_candidates=[candidate[2] for candidate in owned
+                      if _logical_route_for(candidate[3],candidate[4]) is None]
+if _unrouted_candidates:
+    _unrouted_shown,_unrouted_omitted=_bounded_ids(_unrouted_candidates)
+    log(d,"UNROUTED_CANDIDATES|%s|count=%d|reason=missing-or-ambiguous-size|"
+          "ids=%s|omitted=%d"%
+        (HOST,len(_unrouted_candidates),_unrouted_shown,_unrouted_omitted))
 _candidate_scan = _bounded_candidate_sequence(
     (candidate for candidate in owned
      if _logical_route_for(candidate[3],candidate[4]) is not None),
@@ -7342,7 +7383,7 @@ if not picks:
     _observe_assigned_reviews()
     detail = _selection_diagnostic(
         pool, owned, LANES, owner_host, _HOST_CAPACITY, _builder_withheld_ids,
-        _builder_returned_ids)
+        _builder_returned_ids, _unrouted_candidates)
     log(d,"SELECTION_EMPTY|%s|%s"%(HOST,detail))
     log(d,"NOOP|%s|selection empty: %s"%(HOST,detail))
     log(d,"NOOP_RECEIPT|%s|reason=%s|seat=%s"%
