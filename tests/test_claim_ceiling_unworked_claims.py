@@ -55,7 +55,6 @@ ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 
 FUNCTIONS = {
-    "_is_bookkeeping_link",
     "_claim_ceiling_hit",
     "_claim_amnesty_epoch",
     "_countable_claims",
@@ -418,17 +417,14 @@ def test_real_work_in_the_same_hold_still_charges_the_claim():
 
 def test_a_heartbeat_is_the_only_link_key_forgiven():
     """A worker's own links are work; only the dispatcher's tick is not."""
-    ns = _ns([], evidence=[])
-    assert ns["_is_bookkeeping_link"](
-        {"action": "link", "link_key": "worker_liveness"}
-    )
-    # Fold-normalised spellings reach the same answer.
-    assert ns["_is_bookkeeping_link"](
-        {"action": "link", "link_key": "worker-liveness"}
-    )
+    opened = _cycles(1, hold_s=660.0)
     for key in ("pr", "verdict", "evidence", "result", "claim_amnesty", "review_join"):
-        assert not ns["_is_bookkeeping_link"]({"action": "link", "link_key": key}), key
-    # A non-link event is never excused by key alone.
-    assert not ns["_is_bookkeeping_link"](
-        {"action": "verdict", "link_key": "worker_liveness"}
-    )
+        row = dict(_heartbeat(5.0), link_key=key)
+        assert _ns(opened, evidence=[row])["_work_epochs"](CID), key
+    # Fold-normalised spellings of the heartbeat reach the same answer.
+    for key in ("worker_liveness", "worker-liveness", "worker_liveness_20260919T1330Z"):
+        row = dict(_heartbeat(5.0), link_key=key)
+        assert _ns(opened, evidence=[row])["_work_epochs"](CID) == [], key
+    # A non-link event is never excused by its key alone.
+    row = dict(_heartbeat(5.0), action="verdict")
+    assert _ns(opened, evidence=[row])["_work_epochs"](CID)

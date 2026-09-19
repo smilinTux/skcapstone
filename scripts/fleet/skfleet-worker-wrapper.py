@@ -310,6 +310,92 @@ def record_review_completion_rejection(args: argparse.Namespace, reason: str) ->
         handle.write("\n")
 
 
+# The two stores a worker's terminal verdict can land in. The per-card shard
+# carries native ``verdict``/``blocked`` events; the coordination overlay carries
+# the outcome-bearing links (``verdict``, ``result``, ``disposition``,
+# ``review_decision``). A worker's PASS may be in either, so a reader of only one
+# would call a real finish unrecorded. Same vocabulary and same fold-normalised
+# key handling the dispatcher's selector uses, kept deliberately in step with it.
+_OUTCOME_LINK_KEYS = ("verdict", "result", "disposition", "review_decision")
+_OUTCOME_VALUE_RE = re.compile(
+    r"^\s*(BLOCKED|PASS(?:_FOR_[A-Z_]+)?|FAIL|DENY|HOLD|VOID|WORKER_DIED"
+    r"|APPROVE(?:D)?)(?:\b|_)",
+    re.I,
+)
+
+
+def _fold_link_key(key: object) -> str:
+    """Normalise a link key the way the dispatcher's selector folds it."""
+    folded = str(key or "").strip().lower().replace("-", "_")
+    folded = re.sub(r"_?20\d{6}t?\d{0,6}z?", "", folded)
+    folded = re.sub(r"_[0-9a-f]{8,64}$", "", folded)
+    return re.sub(r"__+", "_", folded).strip("_")
+
+
+def _claim_opened_at(events: list, claim_revision: str) -> str:
+    """Timestamp of the claim this process holds, or "" when it cannot be found."""
+    for event in events:
+        if (
+            event.get("action") == "claim"
+            and event.get("claim_revision") == claim_revision
+        ):
+            return str(event.get("ts") or "")
+    return ""
+
+
+def _overlay_rows(home: Path, card: str) -> list:
+    """Every coordination-overlay event for this card. Never raises."""
+    rows = []
+    for path in sorted((home / "coordination" / "card_events").glob("*.jsonl")):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(event, dict) and str(event.get("card_id") or "") == card:
+                rows.append(event)
+    return rows
+
+
+def durable_verdict_recorded(home: Path, card: str, events: list, revision: str) -> bool:
+    """True when this claim generation actually recorded a terminal verdict.
+
+    Fails closed in both directions that matter. A claim whose own opening
+    timestamp cannot be found cannot fence anything, so it reports False rather
+    than crediting every verdict the card ever carried; and any store that will
+    not read reports False rather than guessing. Saying "I do not know" is the
+    honest answer, and ``unspecified`` is the vocabulary member that means it.
+    """
+    opened = _claim_opened_at(events, revision)
+    if not opened:
+        return False
+    for event in events:
+        if event.get("action") in ("verdict", "blocked") and str(
+            event.get("ts") or ""
+        ) >= opened:
+            return True
+    try:
+        rows = _overlay_rows(home, card)
+    except OSError:
+        return False
+    for event in rows:
+        if event.get("action") != "link":
+            continue
+        if str(event.get("ts") or "") < opened:
+            continue
+        if not any(
+            key in _fold_link_key(event.get("link_key")) for key in _OUTCOME_LINK_KEYS
+        ):
+            continue
+        if _OUTCOME_VALUE_RE.match(str(event.get("link_value") or "")):
+            return True
+    return False
+
+
 def release_superseded_review_claim(args: argparse.Namespace) -> bool:
     """CAS-release this exact terminal generation through the locked Board.
 
@@ -351,6 +437,23 @@ def release_superseded_review_claim(args: argparse.Namespace) -> bool:
         raise RuntimeError(f"review completion rejected: {exc}") from exc
     released = False
     contention: TimeoutError | TypeError | None = None
+    # "not-abandoned" is the ONE member of the vocabulary that asserts success,
+    # and it exists so a durable finish is never filed next to the releases
+    # nobody can explain. Writing it on every exit destroys exactly that
+    # distinction: measured on chi 2026-09-19, the eight cards frozen at the
+    # claim ceiling carried 100+ releases all labelled "not-abandoned" and not
+    # one verdict, one PASS, one candidate commit or one piece of evidence
+    # between them, so the field read as "these all finished cleanly" while the
+    # ledger showed no finish at all. Claim it only when this claim generation
+    # actually recorded a terminal verdict; otherwise the cause genuinely is not
+    # known, and "unspecified" is the member that says so.
+    reason = (
+        "not-abandoned"
+        if durable_verdict_recorded(
+            home, args.card, list(store._read_events(args.card)), args.claim_revision
+        )
+        else "unspecified"
+    )
     for attempt in range(LOCK_RELEASE_ATTEMPTS):
         try:
             released = Board(home).release_claim(
@@ -358,7 +461,7 @@ def release_superseded_review_claim(args: argparse.Namespace) -> bool:
                 args.card,
                 actor=args.owner,
                 expected_claim_revision=args.claim_revision,
-                abandon_reason="not-abandoned",
+                abandon_reason=reason,
             )
             contention = None
             break

@@ -3883,11 +3883,6 @@ _REAP_WRITER="fleet-liveness-reaper"
 # 06a95c23, the 402-claim runaway, is untouched because its claims never close.
 _BOOKKEEPING_LINK_KEYS=frozenset({"worker_liveness"})
 
-def _is_bookkeeping_link(event):
-    """True when this event is a dispatcher heartbeat, not work on the card."""
-    return (event.get("action")=="link" and
-            _fold_key(event.get("link_key")) in _BOOKKEEPING_LINK_KEYS)
-
 def _work_epochs(cid):
     """When work was written ON this card, from the union of BOTH stores.
 
@@ -3899,7 +3894,8 @@ def _work_epochs(cid):
     for rows in (event_rows(cid),_load_evidence_events().get(cid,[])):
         for e in rows:
             if e.get("action") in _CLAIM_BOOKKEEPING: continue
-            if _is_bookkeeping_link(e): continue
+            if (e.get("action")=="link" and
+                    _fold_key(e.get("link_key")) in _BOOKKEEPING_LINK_KEYS): continue
             if str(e.get("writer") or "").startswith(_REAP_WRITER): continue
             epoch=_ts_epoch(e.get("ts"))
             if epoch>0: epochs.append(epoch)
