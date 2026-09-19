@@ -305,7 +305,7 @@ def _partition_owner(card_id, hosts, pinned_host=None):
 
 
 def _selection_diagnostic(pool, owned, lanes, owner_for, host_capacity=None,
-                          builder_withheld=(), builder_returned=()):
+                          builder_withheld=(), builder_returned=(), unsized=()):
     """Classify why an authoritative pool produced no local selection.
 
     This is diagnostic only. It never changes ownership or claimability, so the
@@ -323,6 +323,17 @@ def _selection_diagnostic(pool, owned, lanes, owner_for, host_capacity=None,
     this tick, which this host therefore kept. It is logged beside the withheld
     count so one grep shows whether an idle host is idle because the builder
     holds its slice or for some other reason entirely.
+
+    ``unsized`` names the owned cards the candidate scan dropped because
+    ``_logical_route_for`` could not resolve one unambiguous [S]/[M]/[L]/[XL]
+    size. That drop is deliberate fail-closed routing, but it used to be
+    SILENT: an unsized card never reached lane selection, so it recorded no
+    lane reason, and this function fell through to its catch-all
+    ``no-compatible-lane``. That reason is a lie about the mechanism. It sent
+    an operator hunting through lane_compatibility() for hours on 2026-09-19
+    while five cards sat unclaimed against 13 free seats, when the real and
+    entirely local fix was to put a size marker in five titles. Name the
+    mechanism so the next person reads it off one line.
     """
     pool_ids = [row[2] for row in pool]
     owned_ids = [row[2] for row in owned]
@@ -339,7 +350,11 @@ def _selection_diagnostic(pool, owned, lanes, owner_for, host_capacity=None,
         else:
             reason, ids = "foreign-hash-partition", pool_ids
     else:
-        reason, ids = "no-compatible-lane", owned_ids
+        unsized_ids = [str(card_id) for card_id in unsized]
+        if unsized_ids and len(unsized_ids) == len(owned_ids):
+            reason, ids = "unsized-cards", unsized_ids
+        else:
+            reason, ids = "no-compatible-lane", owned_ids
     bounded, omitted = _bounded_ids(ids)
     owners = collections.Counter(owner_for(card_id) for card_id in pool_ids)
     owner_counts = ",".join(
@@ -355,10 +370,11 @@ def _selection_diagnostic(pool, owned, lanes, owner_for, host_capacity=None,
     ) or "-"
     return (
         "reason=%s pool=%d owned=%d target=%d free=%d ids=%s omitted=%d "
-        "owners=%s owner_free=%s builder_withheld=%d builder_returned=%d"
+        "owners=%s owner_free=%s builder_withheld=%d builder_returned=%d "
+        "unsized=%d"
         % (reason, len(pool), len(owned), total_target, total_free, bounded,
            omitted, owner_counts, owner_free, len(builder_ids),
-           len(tuple(builder_returned)))
+           len(tuple(builder_returned)), len(tuple(unsized)))
     )
 
 
@@ -7066,6 +7082,18 @@ _lane_deferred_cards={}
 # card queued behind it.
 # Scan a bounded, deterministic sequence once per cycle.  Rejected candidates
 # are consumed by the scan and cannot be selected again during this rotation.
+# An unsized card is dropped by the filter below and fails closed on purpose:
+# a size names a capability bucket, and guessing one silently downgrades work.
+# Capture the drop FIRST so it is reportable. Without this the card vanished
+# between "owned" and the lane loop leaving no reason anywhere, and the only
+# surviving signal was the catch-all no-compatible-lane, which names the wrong
+# subsystem entirely.
+_unsized_ids=[candidate[2] for candidate in owned
+              if _logical_route_for(candidate[3],candidate[4]) is None]
+if _unsized_ids:
+    _unsized_bounded,_unsized_omitted=_bounded_ids(_unsized_ids)
+    log(d,"UNSIZED_SKIPPED|%s|count=%d ids=%s omitted=%d"%
+        (HOST,len(_unsized_ids),_unsized_bounded,_unsized_omitted))
 _candidate_scan = _bounded_candidate_sequence(
     (candidate for candidate in owned
      if _logical_route_for(candidate[3],candidate[4]) is not None),
@@ -7244,7 +7272,7 @@ if not picks:
     _observe_assigned_reviews()
     detail = _selection_diagnostic(
         pool, owned, LANES, owner_host, _HOST_CAPACITY, _builder_withheld_ids,
-        _builder_returned_ids)
+        _builder_returned_ids, _unsized_ids)
     log(d,"SELECTION_EMPTY|%s|%s"%(HOST,detail))
     log(d,"NOOP|%s|selection empty: %s"%(HOST,detail))
     log(d,"NOOP_RECEIPT|%s|reason=%s|seat=%s"%

@@ -189,3 +189,59 @@ def test_source_preserves_admission_and_reports_selection_races() -> None:
     assert "if _logical_route_for(candidate[3],candidate[4]) is not None)" in source
     assert "launched>=MAX_LAUNCH" in source
     assert "RACED|%s|count=%d ids=%s omitted=%d" in source
+
+
+def test_all_owned_cards_unsized_is_named_not_blamed_on_lanes() -> None:
+    """An unsized card must not be reported as a lane incompatibility.
+
+    ``no-compatible-lane`` is the catch-all else branch, so a card the
+    candidate scan dropped for having no [S]/[M]/[L]/[XL] size used to surface
+    under a reason naming a subsystem that had never seen it. On 2026-09-19
+    that cost hours of debugging lane_compatibility() while five unsized cards
+    sat unclaimed against thirteen free seats.
+    """
+    helpers = _load_helpers()
+    owned = [_row("986c3e49"), _row("e5a22770")]
+    detail = helpers["_selection_diagnostic"](
+        owned,
+        owned,
+        _lanes(target=16, free=13),
+        lambda _card_id: "chiap01",
+        None,
+        (),
+        (),
+        ["986c3e49", "e5a22770"],
+    )
+    assert "reason=unsized-cards" in detail
+    assert "reason=no-compatible-lane" not in detail
+    assert "ids=986c3e49,e5a22770" in detail
+    assert "unsized=2" in detail
+
+
+def test_partially_unsized_owned_slice_still_counts_the_unsized_cards() -> None:
+    helpers = _load_helpers()
+    owned = [_row("986c3e49"), _row("a13c7013")]
+    detail = helpers["_selection_diagnostic"](
+        owned,
+        owned,
+        _lanes(target=16, free=13),
+        lambda _card_id: "chiap01",
+        None,
+        (),
+        (),
+        ["986c3e49"],
+    )
+    # One sized card did reach lane selection, so the lane reason is honest here.
+    assert "reason=no-compatible-lane" in detail
+    assert "unsized=1" in detail
+
+
+def test_unsized_drop_is_logged_before_the_candidate_scan_consumes_it() -> None:
+    source = ROTATE.read_text(encoding="utf-8")
+    assert "UNSIZED_SKIPPED|%s|count=%d ids=%s omitted=%d" in source
+    # The capture must precede the filter that drops the same cards, or there is
+    # nothing left to report by the time the diagnostic runs.
+    capture = source.index("_unsized_ids=[candidate[2] for candidate in owned")
+    scan = source.index("_candidate_scan = _bounded_candidate_sequence(")
+    diagnostic = source.index("_builder_returned_ids, _unsized_ids)")
+    assert capture < scan < diagnostic
