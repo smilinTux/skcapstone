@@ -106,7 +106,11 @@ from pathlib import Path
 from typing import Callable
 
 from .actuation import Runner, default_runner
-from .deployment_manifest import DISPATCHER_RELATIVE_PATH
+from .deployment_manifest import (
+    DISPATCHER_RELATIVE_PATH,
+    PER_HOST_ARTIFACTS,
+    PER_HOST_BIN_RELATIVE_DIR,
+)
 from .paths import paths_for_home, self_node_name, valid_name
 from .rollout_drift import Drift, detect_drift
 from .rollout_history import previous_manifest, record_deployment
@@ -121,19 +125,43 @@ DEFAULT_REMOTE_REPO_ROOT = "~/work/skcapstone"
 
 DISPATCHER_SCRIPT_NAME = DISPATCHER_RELATIVE_PATH.name
 
-#: The four deploy steps, in the load-bearing order described in the module
-#: docstring: package before script. Formatted with ``repo=`` (the remote
+#: Human-readable list of the per-host artifacts, for dry-run descriptions.
+PER_HOST_ARTIFACT_NAMES = ", ".join(artifact.name for artifact in PER_HOST_ARTIFACTS)
+
+
+def _copy_steps() -> tuple[tuple[str, str], ...]:
+    """One ``cp`` step per declared per-host artifact.
+
+    Derived from ``deployment_manifest.PER_HOST_ARTIFACTS`` rather than
+    hardcoding a single script name, so a per-host artifact added there is
+    deployed by BOTH the forward and the rollback path automatically. The
+    previous hardcoded single step copied only the dispatcher; the worker
+    wrapper, which the dispatcher loads from its own directory, was never
+    deployed at all and stayed correct only by accident. See
+    ``PER_HOST_ARTIFACTS``'s own comment for the full account.
+
+    Deliberately NOT a single ``cp a b DEST`` with several sources: a
+    per-artifact step means the rollout's own step-level failure reporting
+    (``StepOutcome.step``) names which artifact failed to copy, rather than
+    reporting one opaque "copy" failure for the whole set.
+    """
+    bin_dir = PER_HOST_BIN_RELATIVE_DIR.as_posix()
+    return tuple(
+        (
+            "copy_" + artifact.stem.replace("-", "_"),
+            f"cp {{repo}}/{artifact.as_posix()} ~/{bin_dir}/{artifact.name}",
+        )
+        for artifact in PER_HOST_ARTIFACTS
+    )
+
+
+#: The deploy steps, in the load-bearing order described in the module
+#: docstring: package before scripts. Formatted with ``repo=`` (the remote
 #: checkout path) at call time.
 _DEPLOY_STEPS: tuple[tuple[str, str], ...] = (
     ("git_pull", "git -C {repo} pull"),
     ("pip_install", "cd {repo} && pip install -e ."),
-    (
-        "copy_dispatcher",
-        "cp {repo}/scripts/fleet/"
-        + DISPATCHER_SCRIPT_NAME
-        + " ~/.local/bin/"
-        + DISPATCHER_SCRIPT_NAME,
-    ),
+    *_copy_steps(),
     ("converge", "skcapstone fleet sknoded --once"),
 )
 
@@ -161,13 +189,7 @@ _ROLLBACK_STEPS: tuple[tuple[str, str], ...] = (
         "git -C {repo} reset --hard {git_sha}",
     ),
     ("pip_install", "cd {repo} && pip install -e ."),
-    (
-        "copy_dispatcher",
-        "cp {repo}/scripts/fleet/"
-        + DISPATCHER_SCRIPT_NAME
-        + " ~/.local/bin/"
-        + DISPATCHER_SCRIPT_NAME,
-    ),
+    *_copy_steps(),
     ("converge", "skcapstone fleet sknoded --once"),
 )
 
@@ -690,6 +712,11 @@ def _gate_local(
 ) -> GateOutcome:
     ready, reason = _readiness_verdict(node, home)
     repo_root = local_repo_root or _default_local_repo_root()
+    # The manifest here is the ROLLOUT's, pinned by the controller, not one
+    # this node built from its own checkout -- so the checkout surface is a
+    # real comparison and is unlocked. See rollout_drift's checkout:git_sha
+    # block for why detect_drift will not volunteer it otherwise.
+    manifest = {**manifest, "checkout_git_sha_pinned": True}
     try:
         drifts = detect_drift(manifest, home, repo_root)
     except (OSError, RuntimeError) as exc:
@@ -710,12 +737,26 @@ def _gate_local(
 
 
 def _remote_drift(
-    node: str, remote_repo_root: str, runner: Runner
+    node: str, remote_repo_root: str, runner: Runner, expect_git_sha: str | None = None
 ) -> tuple[list[Drift] | None, str]:
     """``skcapstone fleet node drift --json`` over ssh: the same command a
     human would run, reused rather than a second way to ask this.
+
+    ``expect_git_sha`` is the controller's pinned commit, passed through as
+    ``--expect-git-sha``. It matters because the remote builds its OWN
+    manifest from its OWN checkout: without a pin, every expected value the
+    remote compares against is read from the same checkout it is grading,
+    so a node that never pulled agrees with itself perfectly and reports no
+    drift. Pinning makes the remote answer "am I on the commit the
+    controller is rolling out", which is the only question that can catch a
+    uniformly stale node -- and, because every node in a rollout is gated
+    against the SAME pin, it is also what makes the nodes' agreement with
+    each other a consequence of the existing gate rather than a second
+    fleet-wide report.
     """
     remote_command = f"cd {remote_repo_root} && skcapstone fleet node drift --json"
+    if expect_git_sha:
+        remote_command += f" --expect-git-sha {shlex.quote(expect_git_sha)}"
     try:
         result = runner(_ssh(node, remote_command))
     except Exception as exc:  # pragma: no cover - defensive, mirrors actuation.py
@@ -746,9 +787,15 @@ def _remote_drift(
     return drifts, ""
 
 
-def _gate_remote(node: str, home: Path, remote_repo_root: str, runner: Runner) -> GateOutcome:
+def _gate_remote(
+    node: str,
+    home: Path,
+    remote_repo_root: str,
+    runner: Runner,
+    expect_git_sha: str | None = None,
+) -> GateOutcome:
     ready, reason = _readiness_verdict(node, home)
-    drifts, drift_reason = _remote_drift(node, remote_repo_root, runner)
+    drifts, drift_reason = _remote_drift(node, remote_repo_root, runner, expect_git_sha)
     if drifts is None:
         return GateOutcome(ready=False, drift=(), reason=drift_reason)
     unambiguous = _unambiguous_drift(drifts)
@@ -785,7 +832,7 @@ def default_gate_node(
     home_path = Path(home) if home is not None else Path.home()
     if _is_local(node):
         return _gate_local(node, manifest, home_path, local_repo_root)
-    return _gate_remote(node, home_path, remote_repo_root, runner)
+    return _gate_remote(node, home_path, remote_repo_root, runner, manifest.get("git_sha"))
 
 
 # --------------------------------------------------------------------------
@@ -875,7 +922,7 @@ def execute_rollout(
                     drift=(),
                     detail=(
                         f"dry run: would record deployment, then git pull, pip install, "
-                        f"copy {DISPATCHER_SCRIPT_NAME}, and converge on {node}; not executed"
+                        f"copy {PER_HOST_ARTIFACT_NAMES}, and converge on {node}; not executed"
                     ),
                 )
             )
@@ -1048,7 +1095,7 @@ def execute_rollback(
                     detail=(
                         f"dry run: would look up {node}'s recorded previous manifest and, "
                         "if one exists, record it, check out its git_sha, reinstall, copy "
-                        f"{DISPATCHER_SCRIPT_NAME}, converge, then gate the node; not executed"
+                        f"{PER_HOST_ARTIFACT_NAMES}, converge, then gate the node; not executed"
                     ),
                 )
             )

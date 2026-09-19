@@ -36,8 +36,46 @@ from pathlib import Path
 from typing import Any
 
 DISPATCHER_RELATIVE_PATH = Path("scripts") / "fleet" / "skfleet-rotate.py"
+WORKER_WRAPPER_RELATIVE_PATH = Path("scripts") / "fleet" / "skfleet-worker-wrapper.py"
 READINESS_GATE_RELATIVE_PATH = Path("scripts") / "fleet" / "skfleet_readiness.py"
 CANONICAL_SYSTEMD_RELATIVE_DIR = Path("systemd")
+
+#: Where a rollout copies per-host artifacts, relative to the node's home.
+#: This is NOT ``~/.skenv/bin`` (where pip installs every ``script-files``
+#: entry as a side effect of ``pip install -e .``): it is the separate,
+#: explicitly-copied location the live units actually execute from, measured
+#: on chiap01/02/03/04/08.
+PER_HOST_BIN_RELATIVE_DIR = Path(".local") / "bin"
+
+#: Every artifact a rollout must copy into ``PER_HOST_BIN_RELATIVE_DIR`` on
+#: each node, declared exactly ONCE so a rollout, a rollback, and the drift
+#: detector cannot disagree about what "deployed" means.
+#:
+#: Why the worker wrapper belongs here and why leaving it out was a latent
+#: outage: ``scripts/fleet/skfleet-rotate.py`` resolves its wrapper as
+#: ``os.path.join(os.path.dirname(__file__), "skfleet-worker-wrapper.py")``
+#: -- next to ITSELF, not by PATH lookup and not from the installed package.
+#: The dispatcher that actually runs is the deployed copy at
+#: ``~/.local/bin/skfleet-rotate.py`` (confirmed live: every chi host's
+#: ``skfleet-rotate.service`` ExecStart names that path), so the wrapper
+#: that actually runs is ``~/.local/bin/skfleet-worker-wrapper.py``.
+#:
+#: The rollout previously copied only the dispatcher. The wrapper at that
+#: path was current only because ``pip install -e .`` happens to also place
+#: it in ``~/.skenv/bin`` and someone had, at some point, copied a matching
+#: file to ``~/.local/bin`` by hand. Nothing kept them equal. The first
+#: wrapper change after a rollout would have shipped a NEW dispatcher
+#: calling an OLD wrapper, with no step in any code path to correct it and
+#: no check to report it -- the same shape as the one-hour fleet outage on
+#: 2026-09-19, where a deploy did ``git pull`` and copied the dispatcher but
+#: skipped ``pip install -e .``.
+#:
+#: Adding a per-host artifact later means adding one entry HERE. Everything
+#: that copies or grades these files derives from this tuple.
+PER_HOST_ARTIFACTS: tuple[Path, ...] = (
+    DISPATCHER_RELATIVE_PATH,
+    WORKER_WRAPPER_RELATIVE_PATH,
+)
 
 _MANIFEST_FIELDS = ("git_sha", "package_version", "required_env", "units")
 
