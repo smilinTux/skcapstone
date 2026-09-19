@@ -462,8 +462,63 @@ function cursor-agent {
     _sk_launch cursor-agent "$extra_flags" "$@"
 }
 
-# pi coding agent
+# ---------------------------------------------------------------------------
+# skpisync — force Pi's ~/.pi/agent/models.json to match the live SKGateway
+#
+# The `skgateway` provider block in Pi's catalog is hand-maintained and drifts
+# the moment the gateway gains or loses a model. This refreshes it from
+# GET $SK_GATEWAY_URL/v1/models. Other providers are untouched, the previous
+# catalog is snapshotted into ~/.pi/agent/backups/, and an unreachable gateway
+# is a warning, never a failure — see sk-pi-gateway-sync.py for the knobs.
+# ---------------------------------------------------------------------------
+_SK_PICKER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+
+function skpisync {
+    local helper="${_SK_PICKER_DIR}/sk-pi-gateway-sync.py"
+    if [[ ! -f "$helper" ]]; then
+        helper=$(command -v sk-pi-gateway-sync.py 2>/dev/null)
+    fi
+    if [[ -z "$helper" || ! -f "$helper" ]]; then
+        echo "  ⚠ sk-pi-gateway-sync.py not found — skipping Pi model sync" >&2
+        return 0
+    fi
+
+    local python_bin
+    python_bin=$(command -v python3 2>/dev/null) || {
+        echo "  ⚠ python3 not on PATH — skipping Pi model sync" >&2
+        return 0
+    }
+
+    local output status
+    output=$("$python_bin" "$helper" "$@" 2>&1)
+    status=$?
+    case "$output" in
+        PI_GATEWAY_SYNC\|current*)
+            [[ "${SK_PI_SYNC_QUIET:-0}" == "1" ]] ||
+                printf "  ▷ Pi models: skgateway already current\n" >&2
+        ;;
+        PI_GATEWAY_SYNC\|changed*)
+            printf "  ▷ Pi models: skgateway refreshed (%s)\n" \
+                "${output##*models=}" >&2
+        ;;
+        PI_GATEWAY_SYNC_UNAVAILABLE\|*)
+            printf "  ⚠ Pi models: %s unreachable (%s) — catalog left as-is\n" \
+                "${SK_GATEWAY_URL:-http://localhost:18780}" \
+                "${output##*|}" >&2
+        ;;
+        *)
+            printf "  ⚠ Pi model sync skipped: %s\n" "${output%%$'\n'*}" >&2
+        ;;
+    esac
+    return $status
+}
+
+# pi coding agent — always launched against a freshly synced gateway catalog.
+# Set SK_PI_SYNC=0 to launch without touching ~/.pi/agent/models.json.
 function pi {
+    if [[ "${SK_PI_SYNC:-1}" == "1" ]]; then
+        skpisync || true
+    fi
     _sk_launch pi "" "$@"
 }
 
@@ -474,6 +529,7 @@ export -f _sk_find_tool_path 2>/dev/null || true
 export -f _sk_offer_install 2>/dev/null || true
 export -f _sk_launch     2>/dev/null || true
 export -f skswitch       2>/dev/null || true
+export -f skpisync       2>/dev/null || true
 export -f claude         2>/dev/null || true
 export -f codex          2>/dev/null || true
 export -f opencode       2>/dev/null || true
