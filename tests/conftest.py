@@ -14,6 +14,7 @@ Coverage audit (task 945325c8, 2026-03-02):
 
 from __future__ import annotations
 
+import functools
 import json
 import shutil
 import subprocess
@@ -260,3 +261,95 @@ def initialized_agent_home(tmp_agent_home: Path) -> Path:
     )
 
     return tmp_agent_home
+
+
+# --------------------------------------------------------------------------
+# Skip ledger: a skipped test must be DECLARED, never silent.
+#
+# THE INVARIANT (CONTRIBUTING.md): a green that can be produced by absence is
+# not a green. A skip is exactly that -- it reads as coverage in every summary
+# a human or an agent looks at, while being structurally unable to fail the
+# build. On 2026-09-19 this suite held 72 tests that can only ever skip on a
+# runner, including one that has been RED for months on the single machine
+# capable of executing it, invisibly, because CI always skipped it.
+#
+# So: any skip whose nodeid is not declared in tests/skip_ledger.txt fails the
+# run. Enforcement is one-directional on purpose -- "observed skip must be
+# declared", never "declared skip must be observed" -- so that running a subset
+# of the suite is still correct, and so that FIXING a skip never reds the build.
+# --------------------------------------------------------------------------
+
+_LEDGER_PATH = Path(__file__).parent / "skip_ledger.txt"
+_UNDECLARED_SKIPS: dict[str, str] = {}
+
+
+@functools.lru_cache(maxsize=1)
+def _ledger_prefixes() -> tuple[str, ...]:
+    """Declared prefixes, read once. An ABSENT ledger yields none, so deleting
+    the file makes every skip undeclared rather than making every skip allowed.
+    The failure mode of the guard has to point the same way as the guard."""
+    if not _LEDGER_PATH.exists():
+        return ()
+    return tuple(
+        line.strip()
+        for line in _LEDGER_PATH.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+
+
+def _record_skip(nodeid: str, reason: str) -> None:
+    if any(nodeid.startswith(p) for p in _ledger_prefixes()):
+        return
+    _UNDECLARED_SKIPS[nodeid] = reason
+
+
+def _reason_of(report) -> str:
+    lr = getattr(report, "longrepr", None)
+    if isinstance(lr, tuple) and len(lr) == 3:
+        return str(lr[2])
+    return str(lr) if lr else "(no reason given)"
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_logreport(report):
+    if report.skipped and report.when == "setup":
+        _record_skip(report.nodeid, _reason_of(report))
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collectreport(report):
+    # Module-level skips (pytest.skip(..., allow_module_level=True)) never
+    # produce a test report at all. They are the most invisible kind and so the
+    # most important to catch: tests/test_cli_completions.py silences 35 tests
+    # this way.
+    if report.skipped:
+        _record_skip(report.nodeid, _reason_of(report))
+
+
+def pytest_sessionfinish(session, exitstatus):
+    if not _LEDGER_PATH.exists():
+        print(
+            f"\nSKIP LEDGER MISSING at {_LEDGER_PATH}. Every skip is undeclared "
+            "until it is restored; this run cannot certify anything about skips."
+        )
+        session.exitstatus = 1
+        return
+    if not _UNDECLARED_SKIPS:
+        return
+    lines = [
+        "",
+        "=" * 72,
+        f"UNDECLARED SKIP ({len(_UNDECLARED_SKIPS)}): a test skipped without being in the ledger.",
+        "",
+        "A skip reads as coverage while being unable to fail the build, so every",
+        "one must be declared with a disposition. If this skip is legitimate, add",
+        "the line(s) below to tests/skip_ledger.txt under the right heading. If it",
+        "is not, fix the gate so the test actually runs.",
+        "",
+    ]
+    for nodeid, reason in sorted(_UNDECLARED_SKIPS.items()):
+        lines.append(f"  # reason: {reason}")
+        lines.append(f"  {nodeid}")
+    lines.append("=" * 72)
+    print("\n".join(lines))
+    session.exitstatus = 1

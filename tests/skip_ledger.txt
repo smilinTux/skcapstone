@@ -1,0 +1,75 @@
+# SKIP LEDGER -- every test that is allowed to skip must be named here.
+#
+# THE INVARIANT (CONTRIBUTING.md): a green that can be produced by absence is
+# not a green. A skipped test reads as coverage in every summary that matters
+# while being structurally unable to fail the build. That is not a hypothetical:
+# on 2026-09-19 this suite contained 72 tests that can ONLY skip on a CI runner,
+# and one of them (the Pi allowlist probe) has been RED on the only machine that
+# can run it, invisibly, because CI never executes it.
+#
+# Enforcement lives in tests/conftest.py. Any skip whose nodeid does not start
+# with one of the prefixes below FAILS the run, and the failure message prints
+# the exact line to paste here. Declaring a skip is cheap; a silent one costs a
+# gate.
+#
+# Format: one nodeid PREFIX per line. `#` comments and blank lines ignored.
+# Each entry must carry a disposition on the preceding comment line:
+#   LOCAL-ONLY  legitimately cannot run on a runner; skip is correct and declared
+#   CI-GAP      should run in CI and does not; the dependency needs installing
+#   DEAD        cannot run anywhere; needs implementing or deleting
+#   MATRIX      skips only on some interpreter/OS in the matrix; correct
+
+# --- DEAD: cannot run on ANY machine ------------------------------------
+# 35 tests. src/skcapstone/completions.py does not define complete_memory_tags,
+# complete_agent_names or complete_task_ids, so this module-level guard has
+# silenced the entire file since it was written. It has never run. Either
+# implement the three callbacks or delete the file; do not leave it skipping.
+tests/test_cli_completions.py
+
+# --- CI-GAP: optional sibling repos absent on runners --------------------
+# `skos` is in no extra in pyproject.toml and is installed by nothing in
+# .github/. These 10 tests exist specifically to catch skos<->skcapstone drift,
+# so on a runner the drift guards catch nothing. Fix by installing skos from
+# git in pytest.yml exactly as skharness and skdashboard already are.
+tests/test_model_router.py::TestRegistryRoleFold
+tests/test_model_router.py::test_missing_registry_returns_none_never_crashes
+tests/operator_seat/test_skos_adapter.py
+tests/test_gtd_locked_sink.py::test_mcp_and_skos_sink_share_one_store_lock
+tests/operator_seat/test_manifest_adapter_conformance.py::test_manifest_operator_block_matches_adapter[skos]
+tests/operator_seat/test_manifest_adapter.py::test_operatorapp_from_shipped_manifest_matches_adapter[skos]
+
+# 16 tests. `skvoice` is likewise in no extra and installed by nothing. The
+# parametrize id advertises skvoice adapter coverage that does not exist in CI.
+tests/test_integration_backbone.py::TestStandaloneMode::test_adapter_contract[skvoice]
+tests/test_integration_backbone.py::TestIntegratedMode::test_adapter_contract[skvoice]
+
+# setuptools-scm is a PEP 517 build-system requirement only; it is never in the
+# runtime env of an editable install. One `pip install setuptools-scm` in
+# pytest.yml closes this.
+tests/test_version_single_source.py::test_resolve_version_fallback_uses_the_git_tag
+
+# --- LOCAL-ONLY: genuinely cannot run on a runner ------------------------
+# `skref` is not installed anywhere in the fleet, not even locally. Until it is
+# publishable these should be marked `integration` so they are DESELECTED
+# (honest) rather than skipped (reads as coverage).
+tests/test_uninstall_wizard.py::TestRegistryDeregister
+tests/test_uninstall_wizard.py::TestTailscaleLogout
+tests/test_uninstall_wizard.py::TestRemoveAuthKey
+
+# Needs a host PGP identity. NOTE a second, worse failure mode: even when the
+# outer skipif passes, an inner pytest.skip() fires AFTER the meaningful asserts
+# but BEFORE the artifact-existence asserts, so a partial pass reports as a skip.
+tests/operator_seat/test_fault_injection_drill.py::test_full_drill_runs_clean_against_an_isolated_root
+
+# secret-scan.yml already downloads gitleaks 8.28.0; this test could run there
+# with SKCAPSTONE_GITLEAKS_BIN set instead of skipping in the unit suite.
+tests/test_workflow_secret_scan_refscope.py::test_gitleaks_fails_only_on_finding_ancestry
+
+# Measures one workstation's MCP catalog (asserts direct_count == 162). It is a
+# measurement script, not a test, and it is currently FAILING on the only box
+# that can run it. Move it to scripts/fleet/ as a manual tool.
+tests/test_skfleet_pi_tool_allowlist.py::test_pi_denies_a_direct_mcp_tool_and_measures_schema_bytes
+
+# --- MATRIX: correct, interpreter-dependent ------------------------------
+# tomllib is stdlib from 3.11; skips only on the py3.10 matrix leg.
+tests/test_version_single_source.py::test_pyproject_is_parseable_without_tomli

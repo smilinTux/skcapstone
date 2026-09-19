@@ -188,7 +188,10 @@ select = ["E", "F", "I", "N", "W"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "-v --tb=short"
+# -rs: always print the reason for every skip. Several comments in tests/
+# claimed "pytest -rs lists them, so this cannot quietly stay skipped" while
+# no invocation anywhere passed -rs. The claim is now true.
+addopts = "-v --tb=short -rs"
 asyncio_mode = "strict"
 markers = [
     "integration: cross-component test requiring real services/network (excluded from default CI unit run)",
