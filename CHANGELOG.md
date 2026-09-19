@@ -1940,6 +1940,17 @@
   boot and process-generation evidence for crash recovery. Overlaps now record
   honest no-ops, while old timestamps and quiet output never imply abandonment.
 
+- **Three more sites named a per-host artifact's path by convention.**
+  `skfleet-niobe-live.service` passed `--dispatcher %h/.skenv/bin/skfleet-rotate.py`
+  and `seat_cycle_entrypoint.py` derived the dispatcher twice as
+  `Path(sys.executable).parent / "skfleet-rotate.py"`. Both resolve to the
+  copy pip leaves in `~/.skenv/bin`, not the copy the rollout deploys to
+  `~/.local/bin` that the units actually execute. The failure mode was worse
+  than a missing file: the wrong path exists, so the `is_file()` guard passed
+  and a stale dispatcher would have run silently instead of failing closed.
+  All three now resolve through `deployment_manifest.deployed_artifact_path()`,
+  and a regression guard fails the build on a fourth.
+
 All notable changes to **skcapstone** are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
