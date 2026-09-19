@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- **One hardcoded builder ceiling could not serve builders that differ by 4x.**
+  `BUILDER_CAPACITY = 4` was a module constant with no env override and no
+  per-node value, applied identically at all four of its call sites: the two
+  scheduler-side gates in `offer()` and `decline_reason()`, the
+  `builders-at-capacity` refusal line, and the node-side launch gate in
+  `_consume_available`. The ceiling is now a property of the node, read from
+  the node spec's `builder-capacity` label via `_node_capacity()`, and set
+  with the existing partial-update surface: `skfleet label node-ziowk01
+  builder-capacity=12`. Measured on ziowk01-wsl 2026-09-19, 4 live workers on
+  an 8-vCPU / 48 G WSL2 box: load 0.27, every `pi` process and its
+  `skcapstone-mcp` child asleep in `do_epoll_wait` with 1-2 seconds of
+  cumulative CPU across 10-45 minutes elapsed, 225 MB resident per worker
+  tree, 45 G RAM available, memory PSI lifetime total 0. Neither CPU nor RAM
+  was anywhere near binding at 4, and no single number could be right for both
+  that box and a 32-core chi host. `offer()` and `decline_reason()` now share
+  one `_under_capacity()` helper so a refusal cannot name a ceiling the offer
+  did not apply, and the refusal line reports the ceiling that actually
+  applied (`node-ziowk01=6/6`, not `6/4`). An absent, malformed, zero or
+  negative label falls back to 4 rather than raising: this runs once per
+  candidate card per rotation cycle for the whole estate, so one typo must not
+  take the cycle down, and the fallback stays observable because the refusal
+  line still reads `/4`. Default behaviour for an unlabelled node is
+  byte-identical to before.
+
 - **`docs/fleet/2026-09-19-learnings.md`**: the 2026-09-18/19 session written as
   three recurring failure shapes rather than thirty incidents, contracts 20-37
   continuing the numbering of the 2026-09-18 document (which is cited by number
