@@ -652,6 +652,85 @@ reporting the transition.
 
 ---
 
+## 30. Disabled by rename is not disabled
+
+On 2026-09-10 the dead glm lane was turned off with a systemd drop-in, and then
+the drop-in was renamed:
+
+```
+~/.config/systemd/user/skfleet-rotate.service.d/
+    99-disable-unhealthy-glm.conf.resolved-20260910T2143Z   # 193 B, Environment=SKFLEET_GLM_TARGET=0
+    50-glm-restore.conf                                     # Environment=SKFLEET_GLM_TARGET=2
+```
+
+systemd reads only `*.conf`. The rename did not archive the change, it
+**reverted** it, handing the lane back to the older `50-glm-restore.conf`. This
+happened on exactly three hosts — chiap01, chiap02, chiap03 — and the reason
+only three is the same mechanism again: those three also have
+`90-codex-only.conf.rollback-d9a1000f` renamed away, while chiap04 and chiap08
+keep an active `90-codex-only.conf`.
+
+It is verifiable in behaviour, not just in the file listing: the journal's
+`SLOTS|` line flips from `glm=0/0` to `glm=0/2` on those three hosts after
+Sep 10 and stays `glm=0/0` on chiap04 throughout. It was closed on 2026-09-18
+23:56 by `99-glm-dead-lane.conf` — a plain `.conf` this time — after which all
+three log `glm=0/0` again.
+
+**Three claims about the consequences did not survive measurement, and the
+third is the most instructive finding in this document.**
+
+Counting every `pi-glm-*` claim and release across the whole store, per day:
+
+| day | chiap01 | chiap02 | chiap03 | median worker life |
+|---|---|---|---|---|
+| 2026-09-03 | 139 | 48 | 90 | 21.1-21.4s |
+| 2026-09-04 | 49 | 32 | 53 | 21.8-25.6s |
+| **2026-09-09** | **229** | **231** | **238** | **20.5-20.7s** |
+| 2026-09-10 | 17 | 21 | 15 | 378s / 247s / 35s |
+| 2026-09-11 | 3 | 2 | 1 | ~20-45 min |
+| 2026-09-12 to 09-17 | 0 | 0 | 0 | — |
+| 2026-09-18 | 9 | 2 | 4 | minutes to hours |
+
+- The 20-second worker death with a 5-minute redispatch is **real** (median
+  `pi-glm-*` lifetime 21.9s on chiap01 over 566 claims; inter-claim gap median
+  288-303s). It is not from the post-rename window. It peaks on **2026-09-09**,
+  the day *before* the rename, with 1,167 claims across five hosts.
+- The nine-day window it was attributed to contains about **34 glm claims in
+  total**, six of those days at literally **zero**, and no day with a 20-second
+  median. The lane was re-enabled; it was not thrashing.
+- **The 503 cause is not evidenced at all.** `bucket_no_eligible_member`
+  appears zero times in the journals of chiap01 and chiap03. The 698
+  `worker_died` link rows carry only `owner=` and `claim_revision=`, no reason.
+  Worker logs are 0 bytes. The only assertion anywhere that these workers died
+  on a 503 is **the prose written into `99-glm-dead-lane.conf` itself** — the
+  comment block in the file that fixed it.
+
+That last one deserves its own sentence. A fix wrote its own rationale into a
+config file, the config file was later read as the record of what happened, and
+the rationale became a fact with no measurement behind it. It is the same shape
+as everything else here: an assertion that nothing independently verified,
+except this time the estate produced the assertion, stored it, and believed it
+back.
+
+**Contract.** A disable is observable in the effective configuration, and a
+change's rationale is evidence only where it cites a measurement.
+
+| | |
+|---|---|
+| Producer | whoever disables the lane |
+| Consumer | the unit's effective environment, and the next person reading the history |
+| Recovery owner | the host's owner |
+| Evidence | `systemctl --user show <unit>` for the variable, not `ls` for the file |
+| Detection | **audit drop-in directories for files that are not `*.conf`; a renamed drop-in is a silent revert, and the rename is the only record that it ever applied** — and diff the resulting env against the intent |
+| Fails closed | a disable that cannot be read back from the effective unit is not applied |
+
+Two smaller rules fall out. Archive by moving the file out of the drop-in
+directory, never by renaming it in place. And when writing a postmortem into
+the artifact that fixes something, mark which sentences are measured and which
+are inferred, because in six months nobody can tell them apart.
+
+---
+
 ## 31. An absent key is a working default until the day it is not
 
 The Forgejo runner template renders
@@ -800,6 +879,24 @@ only because a separate audit happened to look. Earlier: three different
 `skfleet-rotate.timer` active but **not enabled** on all three rotate hosts for
 at least seven weeks, so a reboot on any of them would have stopped fleet
 dispatch estate-wide with nothing reporting it.
+
+This session's instance is preserved in the pre-deploy backups, and the git
+blob hashes date it exactly:
+
+| host | wrapper sha256 (pre-deploy) | size | mtime | = commit |
+|---|---|---|---|---|
+| chiap01 | `a55a661e…def4` | 26,810 | 2026-09-10 21:54:23 | `3dff19e9` (09-10) |
+| chiap02 | `a55a661e…def4` | 26,810 | 2026-09-10 21:54:28 | `3dff19e9` |
+| chiap03 | `a55a661e…def4` | 26,810 | 2026-09-10 21:54:32 | `3dff19e9` |
+| chiap04 | `a55a661e…def4` | 26,810 | 2026-09-10 21:54:36 | `3dff19e9` |
+| **chiap08** | `19b740ce…1ead` | **29,582** | **2026-09-13 00:44:30** | **`e1ada0e7`** (09-12) |
+
+Four hosts sat on the 2026-09-10 build for 8 days 2 hours, through **seven**
+subsequent wrapper commits, and chiap08 ran a genuine third version because it
+uses a different backup naming scheme, and therefore a different deploy path.
+All five converged on 2026-09-18 23:57, staggered about four seconds apart, and
+are now byte-identical to each other and to the repo. A drift check run at any
+point in those eight days would have reported SPLIT FLEET; none was run.
 
 Every PR in this session that changed the dispatcher or the worker brief ends
 with the same line, and it is not boilerplate: **merging changes nothing until
