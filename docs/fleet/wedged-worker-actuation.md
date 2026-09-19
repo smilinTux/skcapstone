@@ -197,3 +197,124 @@ Suggested rollout, mirroring the claim TTL rollout that this one follows:
    known-live worker appearing there blocks enforcement rather than being
    stopped.
 3. Only then `SKFLEET_WEDGE_MODE=enforce`.
+
+---
+
+# Superseded: the oracle above could never fire (2026-09-19, later the same day)
+
+Everything above is kept because the incident and the actuation contract are
+real. The **progress signal** it was built on is not fit, and the threshold
+derived from it was measuring an artifact.
+
+## What was actually happening on the fleet
+
+`SKFLEET_WEDGE_MODE=report` was armed on all five chi hosts. It found nothing,
+on every host, every cycle:
+
+```
+WORKER_PROGRESS|chiap01|codex-auto-9968f114|9968f114|...|state=progress-fresh|
+  progress_age_s=26|...|scanned=12|wedge=wedge-progressing|wedge_timeout_s=14400
+WEDGE|chiap01|mode=report candidates=0 released=0
+```
+
+`9968f114` had been running six hours at that point, with a 157 MB session
+transcript, 6,882 tool calls, zero `edit`/`write` tool calls, zero commits and
+zero dirty files. It read as 26 seconds fresh.
+
+**`scanned=12` is the tell.** `_workspace_progress_at` timestamped every
+`os.scandir` entry including DIRECTORIES, and early-exited the moment it found
+one inside `_PROGRESS_FRESH_EXIT_S`. An ordinary `git status` writes no file
+but still bumps the `.git` directory's mtime, so the walk hit `.git` within a
+dozen entries and returned "fresh". Measured across all six live workers:
+
+| workspace | `.git` dir | `.git/index` | newest real file |
+|---|---|---|---|
+| pi-codex-chiap03-bb0a06ef | 34s | 9,460s | 9,473s |
+| pi-codex-chiap01-9968f114 | 60s | 21,600s | 21,611s |
+
+The same held for tool caches. `1960b107`, the worker that looked healthiest,
+had `.tools/uv-cache/...` then `.pytest_cache/v/cache/nodeids` then
+`.ruff_cache` as its three newest entries. It was re-running pytest and ruff,
+not producing.
+
+The reading was also nondeterministic: whether the walk early-exited depended
+on whether a git read had happened in the preceding 60 seconds, so the same
+workspace reported `6s (scan=14)` and `140s (scan=1454)` twenty minutes apart.
+
+## Why no threshold could have fixed it
+
+`progress_age_s` was 11-26s for every worker on the fleet, permanently. The
+14400 in the table above was never reached and never would be.
+
+The bimodality that justified it (`progress-fresh` max 225s,
+`progress-stale` min 53,545s, nothing between) was partly the artifact: the
+fresh population was measuring git reads, not writes.
+
+## And it must never actuate even when correct
+
+**37.7% of cards are required to write nothing.** 2,601 of 6,901 folded
+cards, and 20 of the 41 in `DOING`, carry the `source-only` label. Their
+acceptance criteria say it outright: *"Read-only audit. No edits, commit,
+push"*, *"Publish hash-linked card evidence and SKMail; repository remains
+clean"*. Their deliverable is card evidence and mail, not a diff.
+
+Under a workspace-mtime deadline every one of them is a kill candidate from
+the moment it starts. Arming that signal would have reaped about half of all
+active work for complying with its own card. The six workers examined on
+2026-09-19 were all `source-only` audits, all alive, all doing what they were
+asked.
+
+## The replacement: the agent's own transcript
+
+`pi` appends a record per assistant turn and per tool result to
+`~/.pi/agent/sessions/<slug>/<stamp>_<uuid>.jsonl` while it runs, so the
+file's mtime is the last moment the agent did anything at all. That separates
+"reading and reasoning" from "stopped", which workspace mtime cannot.
+
+`_session_progress_at` reads it and is preferred whenever present. Only it may
+actuate. A workspace-mtime reading is reported with `source=workspace-mtime`
+and classified `wedge-unmeasured`. Total absence (no workspace and no
+transcript) keeps the existing absent-reaper deadline.
+
+## The re-derived threshold
+
+`DEFAULT_WEDGE_TIMEOUT_S = 7200` (2 hours), down from 14400.
+
+Measured over **2,754 fleet sessions** with >=20 events, all four chi worker
+hosts. Longest silence *inside* a session whose worker went on to keep
+working:
+
+| p50 | p90 | p95 | p99 | p99.9 | max |
+|---|---|---|---|---|---|
+| 45s | 184s | 300s | 513s | 1,350s | **2,558s** |
+
+Sessions with a max gap above one hour: **0 of 2,754**.
+
+| bound | value | relation to 7200 |
+|---|---|---|
+| worst observed healthy silence | 2,558s | **2.8x below** |
+| largest bash tool timeout ever issued (a full `pytest` run, and the longest a single legal tool call can hold the transcript silent) | 3,600s | **2.0x below** |
+| the `139ec63d` incident | 22,680s | **3.2x above** |
+
+The empty band is 2,558s..22,680s and 7200 sits inside it. 3600 also kills
+zero working workers on replay, but it equals the maximum legal single tool
+call, so it is not left as the margin.
+
+**Genuinely-working workers this threshold would kill: zero**, by both
+measures. Replaying the 158-record fixture moves 25 records from
+`wedge-within-margin` to `wedge-absent-confirmed`; every one belongs to
+`pi-glm-chiap03-139ec63d`, the incident worker. The actuated owner *set* is
+unchanged, and the slow-starting `pi-glm-chiap03-ea911b09` is untouched.
+
+## Also checked, and not the problem
+
+`pi` **does** bound a lost gateway response. `dist/core/http-dispatcher.js`
+sets `DEFAULT_HTTP_IDLE_TIMEOUT_MS = 300_000` as both `bodyTimeout` and
+`headersTimeout` on the undici global dispatcher, and `dist/core/sdk.js`
+passes the same 300s as the per-request `timeoutMs`. Neither is overridden on
+the chi hosts (`~/.pi/agent/settings.json` does not set `httpIdleTimeoutMs`),
+and `retry.maxRetries` defaults to 3. A lost response therefore fails in about
+300s and stalls a worker for at most ~20 minutes across retries, well inside
+this deadline. The residual gap is that `bodyTimeout` is an *idle* timeout
+between chunks, not a cap on total request duration, so a backend that
+trickles bytes indefinitely would not trip it.
