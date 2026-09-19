@@ -226,6 +226,53 @@ the value is about something other than what the reader believes.
 
 ---
 
+## 24. A heartbeat emitted by the watcher is not a heartbeat
+
+The worker wrapper launches its own beat as a shell loop, before the agent
+process starts (`scripts/fleet/skfleet-rotate.py:7458-7476`):
+
+```
+beat() { while :; do
+    ... echo '{"owner":"...","emitter":"wrapper","disposition":"RUNNING",
+                "beat_at":'$(date +%s)',"elapsed_s":'$SECONDS'}' > beats/<worker>.json ...
+    sleep $_bi & wait $!; done; }
+beat </dev/null >/dev/null 2>&1 & BEAT=$!
+env SKAGENT=... pi --approve ...
+```
+
+`"disposition":"RUNNING"` is a **string literal inside the timer**. It is not
+read from the child, and the loop's only liveness requirement is that the
+enclosing shell has not exited. `classify_startup`
+(`src/skcapstone/fleet/worker_watchdog.py:187-197`) then treats a beat younger
+than `DEFAULT_HEARTBEAT_TIMEOUT_S` as evidence the worker lives, so the reaper
+that exists to free wedged claims cannot fire on a wedged worker whose shell is
+still up.
+
+Measurement on the two live chi long-runners made the same point from the other
+side (PR #777): beat ages of 10s and 26s on workers 4.9 and 4.2 hours in,
+against a worker stdout log that was 0 bytes for the entire run and last card
+events 2.2 and 4.0 hours stale. The beat separates *alive* from *dead*. It says
+nothing at all about *working*, which is the question every consumer was asking
+it.
+
+**Contract.** A liveness signal is derived from the work, or it is labelled as a
+process-alive signal and no consumer is allowed to read it as progress.
+
+| | |
+|---|---|
+| Producer | the worker wrapper's beat loop |
+| Consumer | the liveness reaper and the claim TTL |
+| Recovery owner | the dispatcher seat |
+| Evidence | newest write under the worker's own workspace (`_workspace_progress_at`, `skfleet-rotate.py:2989`), bounded and early-exiting |
+| Detection | **compare beat age against output age; a beat that is always fresh while output age grows without bound is a timer, not a heartbeat** |
+| Fails closed | absent workspace evidence AND absent events, never either alone (contract 18) |
+
+The generalisation: ask who computes the field. A status field computed by the
+supervisor describes the supervisor. Only a field the supervised process itself
+had to produce describes the supervised process.
+
+---
+
 ## 25. A check that is permanently red is a check that is gone
 
 Two chi hosts' `doctor` reported failures that told the operator to **downgrade**:
