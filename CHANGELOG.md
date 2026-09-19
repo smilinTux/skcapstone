@@ -35,6 +35,23 @@
   474 chi exit records carried a quarantine 503 and none were classified. Both
   spellings match now.
 
+- **Pi's `skgateway` model list drifted from the gateway the moment either
+  changed.** `~/.pi/agent/models.json` was hand-maintained, so on the dev node
+  Pi's picker offered 7 entries while the gateway advertised 108, and none of
+  the logical `sk-*` buckets or roles were selectable at all. The `pi` shell
+  wrapper in `sk-agent-picker.sh` now runs `skpisync` before launch, which
+  refreshes that one provider block from `GET $SK_GATEWAY_URL/v1/models` via
+  the new `sk-pi-gateway-sync.py`. The gateway is the source of truth for
+  everything it reports; where it is silent — the `sk-*` routes carry no model
+  card — the catalog's existing values are kept, so hand-tuned metadata such as
+  `sk-default`'s 32K `maxTokens` survives the refresh instead of collapsing to
+  a default. Writes are atomic and mode-preserving, the previous catalog is
+  snapshotted into `~/.pi/agent/backups/` (last 10 kept), and the same
+  symlink/owner/permission contract `skfleet-pi-model-catalog.py` enforces
+  applies here. Every other provider is untouched. An unreachable gateway warns
+  and launches Pi anyway rather than blocking it; `SK_PI_SYNC=0` skips the
+  refresh entirely.
+
 - **`source-only` meant two unrelated things at once, and a card could not say
   which.** To the dispatcher it was a routing flag: `_source_workspace_spec`
   returned `None` unless a card carried it, so the label was the only thing that
