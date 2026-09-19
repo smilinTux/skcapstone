@@ -2,6 +2,108 @@
 
 ## Unreleased
 
+- **The Pi gateway sync filled the picker with models that cannot answer.**
+  `/v1/models` is a catalog, not a liveness list. Probed against a live gateway
+  on 2026-09-18: of the 108 ids advertised, 19 answered a one-token completion —
+  the rest were unknown upstream (404), uncredentialed (401), or had no live
+  backend (502/503). Neither of the cheap filters works: the gateway's own
+  `stale` flag missed badly (10 of the 19 working models carry it, 25 non-stale
+  ones fail) and `/health` backend status does not predict it either (the
+  `nvidia` backend reported `up` while 28 of its 37 models 404'd). `skpisync
+  --probe` now tries each advertised model once, concurrently, keeps only those
+  that answer, and caches the verdicts in `~/.pi/agent/.skgateway-live.json`;
+  later launch-path syncs intersect the catalog with that allowlist while it is
+  fresh (`SK_PI_SYNC_PROBE_TTL`, default 24h, keyed to the gateway URL). The
+  launch path never probes — it costs one request per model — and a run where
+  nothing answers leaves the catalog alone rather than emptying the picker. The
+  sync line now reports `models=<kept>|advertised=<total>|filter=<how>`.
+
+- **HTTP 503 was not recognised as a gateway failure, so a nine-hour outage was
+  charged to the cards as failed work.** The launcher's `_GATEWAY_ERROR_RE`
+  spelled out 400/404/408/429/502/504 and the worker wrapper kept a separate
+  substring table; neither included 503, which is the most common status the
+  gateway emits. Measured 2026-09-18 over all 2,980 worker-exit records on the
+  chi fleet: 2,202 carried a gateway status+JSON body and only 133 (6.0%) were
+  classified, leaving 2,901 records stamped `transport_failure: null`. 1,793 of
+  them were a 503. Seat `pi-glm-chiap01-0aec5a64` produced 120 of those against
+  bucket `sk-glm-s` between 06:17 and 15:22 UTC on 2026-09-09, each hold about
+  21 seconds with nothing written under it, re-dispatched every five minutes.
+
+  Both call sites now classify through one table in
+  `skcapstone.fleet.gateway_failure`, so a status the gateway starts emitting
+  cannot be recognised by one and missed by the other. Every 503 is treated as
+  pre-agent: no eligible bucket member, a full or timed-out capacity queue, a
+  quarantined model claim, or a declaring backend that is down. Named 502
+  upstream codes (`empty_upstream_response`, `invalid_upstream_completion`,
+  `upstream_unreachable`) join them, and a worker-CLI advisory ahead of the body
+  no longer hides it (86 records). Recognition of gateway bodies goes 133 to
+  2,137 of 2,202 (6.0% to 97.0%) with no record that used to classify losing its
+  class.
+
+  The deliberate fences hold: a generic 400 can be the agent's own bad request
+  and still charges the card (61 records), an unnamed 502 code still charges,
+  and a gateway error arriving after agent output is still substantive.
+
+- **The quarantine pattern never matched anything.** The wrapper looked for
+  `backend-claims-quarantined`; skgateway emits
+  `"type":"model_claim_quarantined"` with the prose "all backend claims for
+  model X are quarantined" (`src/proxy/router.mjs`, `claimQuarantinedResponse`).
+  474 chi exit records carried a quarantine 503 and none were classified. Both
+  spellings match now.
+
+- **Pi's `skgateway` model list drifted from the gateway the moment either
+  changed.** `~/.pi/agent/models.json` was hand-maintained, so on the dev node
+  Pi's picker offered 7 entries while the gateway advertised 108, and none of
+  the logical `sk-*` buckets or roles were selectable at all. The `pi` shell
+  wrapper in `sk-agent-picker.sh` now runs `skpisync` before launch, which
+  refreshes that one provider block from `GET $SK_GATEWAY_URL/v1/models` via
+  the new `sk-pi-gateway-sync.py`. The gateway is the source of truth for
+  everything it reports; where it is silent — the `sk-*` routes carry no model
+  card — the catalog's existing values are kept, so hand-tuned metadata such as
+  `sk-default`'s 32K `maxTokens` survives the refresh instead of collapsing to
+  a default. Writes are atomic and mode-preserving, the previous catalog is
+  snapshotted into `~/.pi/agent/backups/` (last 10 kept), and the same
+  symlink/owner/permission contract `skfleet-pi-model-catalog.py` enforces
+  applies here. Every other provider is untouched. An unreachable gateway warns
+  and launches Pi anyway rather than blocking it; `SK_PI_SYNC=0` skips the
+  refresh entirely.
+
+- **`source-only` meant two unrelated things at once, and a card could not say
+  which.** To the dispatcher it was a routing flag: `_source_workspace_spec`
+  returned `None` unless a card carried it, so the label was the only thing that
+  made a repository/base_ref/base_revision binding get demanded, verified and
+  materialized, and a binding on any other card was inert and never checked. To
+  a worker it was a safety constraint, written verbatim into acceptance
+  criteria: "Source-only. No live database write, provider, Inbox, mailing,
+  deployment, push, or external action." Triage therefore could not fix a card's
+  routing without stripping its safety constraint. Five read-only chiap08
+  host-ops cards (`ed3ad3c7`, `9912e905`, `e26fc5ac`, `760240ca`, `7a4d9c11`)
+  hit exactly that and had to be bound to a repository they do not use. Measured
+  by folding all 7,212 chi cards in a fresh process: 2,612 carry the label, 631
+  of those are live, and 265 of the live ones rely on BOTH senses at once.
+  Separately, 79 live cards carry a complete binding and no label, so the
+  dispatcher never looked at it; all 79 validate cleanly through the existing
+  validator. Routing now fires on the legacy label OR a complete binding on its
+  own, so those 79 get their binding checked and their pinned workspace. The
+  511 live cards with a PARTIAL binding and no label stay inert rather than
+  raising, because jamming them would trade a checking win for a fleet-wide
+  liveness regression. The labelled path is untouched, including its hard
+  failure on an absent or partial binding, so all 2,612 existing cards behave
+  byte-for-byte as before and no relabelling pass is needed to land this. Safety
+  gets its own routing-inert label, `no-external-action`, and the first home the
+  constraint has ever had in code: a worker brief rail, which `source-only` also
+  triggers as the deprecated spelling. Nothing in the routing path reads a label
+  to decide whether to check a binding any more, so a card cannot lose its
+  workspace by losing a label nor its safety constraint by a routing fix. See
+  `docs/fleet/source-only-split.md` for the census, the relabelling pass, and
+  the unresolved push/no-push tension the rail deliberately leaves open.
+  A third usage, `fleet.builder_dispatch.eligible()`, still requires the
+  literal label on purpose: it is an admission gate, and widening one admits
+  more work than anyone marked eligible. A relabelling pass must therefore
+  check `logical_route` before removing the label from any card.
+  NOTE: `~/.local/bin/skfleet-rotate.py` is a separately deployed per-host
+  artifact; this is inert on the fleet until it is redeployed to each chi host.
+
 - **A worker can now record a provisional PASS that the review opener will
   actually admit.** `OPENED_REVIEW` was 0 across 14 days and 1,660 rotations on
   the chi fleet while 214 cards logged `OPEN_REVIEW_EVIDENCE_BLOCKED` every
