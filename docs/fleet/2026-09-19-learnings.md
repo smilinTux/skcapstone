@@ -52,9 +52,25 @@ processes nothing.
 ## 20. A producer that cannot express what its consumer requires
 
 The governed review lane opened **zero** reviews. `OPENED_REVIEW`
-(`scripts/fleet/skfleet-rotate.py:5462`) was 0 across 14 days and 1,660
-rotations on chi, while 214 cards logged `OPEN_REVIEW_EVIDENCE_BLOCKED`
-(`skfleet-rotate.py:5304`) every single cycle.
+(`scripts/fleet/skfleet-rotate.py:5462`) does not appear once in chiap01's
+entire retained `skfleet-rotate` journal, across 1,716 `REVIEW_BATCH_PLAN`
+cycles every one of which reported `eligible=0`, while
+`OPEN_REVIEW_EVIDENCE_BLOCKED` (`skfleet-rotate.py:5304`) fired 17,816 times
+over 256 distinct cards.
+
+**The canonical phrasing of that finding is itself wrong, and it is worth
+fixing here because it is now quoted in three places on main**
+(`src/skcapstone/provisional_verdict.py:11`,
+`docs/fleet/coord-write-boundary.md:33`, `CHANGELOG.md:145`). "0 across 14 days
+and 1,660 rotations" came from a `journalctl --since "-14d" | sort -rn | head
+-6` whose six capacity buckets happened to sum to 1,660. Re-measured: the true
+cycle count on that host is **1,716**, the journal only retains back to
+2026-09-09 so `--since "-14d"` silently returned 9.8 days, and the lane was not
+zero-*ever* — the rotation evidence logs hold 52 `OPENED_REVIEW` lines across
+five hosts, the newest five opened by chiap01 on **2026-09-05T21:25:18Z**. So
+the dead lane is about 13 days, not 14+, and the head-truncated sum is exactly
+the failure contract 9 already named: a number equal to your own limit is a
+reading of your query. It reached the source tree anyway.
 
 A governed review needs hash-bound candidate evidence. The only verdict command
 the fleet had was `coord link` (`src/skcapstone/cli/coord.py`), which writes a
@@ -70,8 +86,8 @@ all. Every worker did as instructed, and the instruction could not produce an
 admissible verdict.
 
 Card `0339dc47` is the proof that this was an API defect and not negligence. It
-recorded every fact the opener needs, as six separate `coord link` rows at six
-timestamps:
+recorded every fact the opener needs, one `coord link` process per key, each its
+own row at its own timestamp, inside a 3.4-second burst:
 
 ```
 20:12:09.359  commit           f78e2dbf647433bb0139b6b6e0a5b088f1a3e243
@@ -86,7 +102,17 @@ timestamps:
 only from events sharing the outcome's exact `ts` and writer
 (`skfleet-rotate.py:5215-5219`), or from a single native
 `review_candidate_evidence` row. The binding existed in full and could not be
-assembled. Measured across the 354 cards ever reported blocked this way, 305
+assembled.
+
+Re-measured through `fold()` on chiap01/03/08, that burst is not the whole card:
+`0339dc47` carries **22 link rows at 22 distinct timestamps across 13 keys**, in
+four such bursts (jarvis 20:12, codex-review 20:18, jarvis 20:21,
+codex-review-pr144 20:26, then a lone `merge_commit` at 21:34). Six keys were
+written twice and the fold keeps last-wins, which is why `links` shows 13 and
+not 22. The six-row figure that circulated during the session is the **first
+burst only**; the pattern it describes is exactly right and the count was 3.7x
+low. Which is contract 34 arriving early: a count taken from one burst of one
+writer is a count of the burst. Measured across the 354 cards ever reported blocked this way, 305
 carried their `PASS_FOR_REVIEW` **only** as an overlay `link` row and 346
 carried no hash-bound candidate evidence anywhere, in either store.
 
@@ -157,8 +183,22 @@ closed on either, before any work.
 Nothing produces either key. Searched across the skcapstone tree, the skrsi
 repo (tree and full history), `~/.skenv`, `~/.local/bin` and every fleet
 checkout, the only writes are two test fixtures
-(`tests/test_skrsi_handoffs.py:398,402`). The board agrees: across the local
-card-event store, 1,076 `link` events carry **zero** occurrences of either key.
+(`tests/test_skrsi_handoffs.py:398,402`).
+
+The board agrees, measured by folding every card on chi in a fresh process:
+
+```
+cards folded                      7,214
+live (not archived)               4,688
+carrying runtime_input_sha256         0
+carrying quality_gate (any value)     0
+distinct link keys in use         9,810   (53,670 occurrences)
+```
+
+Not one card in 7,214 carries `quality_gate` at any value, let alone `PASS`,
+against a vocabulary of 9,810 distinct keys that the fleet does use
+(`verdict` 4,586, `evidence` 4,170, `evidence_sha256` 2,679, `commit` 2,354,
+`pr` 1,632). The gate is unreachable for every card in the store.
 
 The gate's own documentation says why this was predictable:
 `docs/skrsi-runtime-handoffs.md:41-42` — *"The runtime does not generate these
