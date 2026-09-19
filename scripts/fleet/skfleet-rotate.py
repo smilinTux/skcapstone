@@ -18,6 +18,11 @@ from skcapstone.card_store import CardStore
 from skcapstone.coord_completion import GATED_EXIT_CODE
 from skcapstone.lifecycle_seats import LIFECYCLE_SEATS
 from skcapstone.coordination import Board
+from skcapstone.fleet.gateway_failure import (
+    GATEWAY_ERROR_RE,
+    TRANSPORT_FAILURE_CLASSES,
+    classify_gateway_failure,
+)
 from skcapstone.fleet.worker_watchdog import (
     DEFAULT_PROGRESS_TIMEOUT_S,
     ProgressObservation,
@@ -3699,47 +3704,21 @@ _COMPLETION_FAILURE_CLASSES = frozenset(
         "review_completion_rejected",
     }
 )
-_GATEWAY_ERROR_RE = re.compile(r"^\s*(400|404|408|429|502|504):\s*(\{.*\})\s*$", re.S)
+# The status set used to be spelled out here and omitted 503, which is the
+# single most common failure the gateway emits. It now comes from the shared
+# table the worker wrapper classifies with, so the two cannot diverge again.
+_GATEWAY_ERROR_RE = GATEWAY_ERROR_RE
 
 
 def _structured_transport_failure(text):
     """Return a known pre-agent gateway failure kind, or None.
 
-    The whole report must be one HTTP status plus one JSON object. This keeps
-    arbitrary prose, partial agent output, and mixed reports substantive.
+    Delegates to skcapstone.fleet.gateway_failure, which the worker wrapper
+    classifies with too. The whole report must still be one HTTP status plus
+    one JSON object, so arbitrary prose, partial agent output and mixed
+    reports stay substantive and keep charging the card.
     """
-    match = _GATEWAY_ERROR_RE.fullmatch(str(text or ""))
-    if not match:
-        return None
-    try:
-        payload = json.loads(match.group(2))
-    except (TypeError, ValueError):
-        return None
-    if not isinstance(payload, dict) or not isinstance(payload.get("message"), str):
-        return None
-    status = int(match.group(1))
-    code = payload.get("code")
-    if status == 404 and code in (404, "404", "not_found", "route_not_found"):
-        return "gateway_404"
-    if status == 429 and code in (429, "429", "rate_limit", "cooldown"):
-        return "gateway_429"
-    if status == 502 and code == "invalid_upstream_tool_calls":
-        return "invalid_upstream_tool_calls"
-    message = payload["message"].casefold()
-    if status == 400 and (
-        "unable to generate parser" in message
-        or "automatic parser generation failed" in message
-    ):
-        return "upstream_template_rejection"
-    timeout_codes = {
-        "first_token_timeout",
-        "gateway_timeout",
-        "timeout_before_first_token",
-        "upstream_timeout",
-    }
-    if status in (408, 502, 504) and code in timeout_codes:
-        return "first_token_timeout"
-    return None
+    return classify_gateway_failure(text)
 
 
 def _is_substantive_worker_report(text, card_mutated):
@@ -3926,14 +3905,7 @@ def _reporting_launches(cid):
 
 _ROTATION_EVID = os.path.join(HOME, ".skcapstone/evidence/fleet-rotation")
 _shared_launch_cache = None
-_TRANSPORT_FAILURE_CLASSES = frozenset({
-    "rate_limited",
-    "model_owner_backend_down",
-    "backend_claims_quarantined",
-    "invalid_upstream_tool_calls",
-    "connection_failure",
-    "upstream_template_rejection",
-})
+_TRANSPORT_FAILURE_CLASSES = TRANSPORT_FAILURE_CLASSES
 
 def _transport_failure_claims():
     """Return exact claim generations that failed before agent work began."""

@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from skcapstone.card_store import CardCore
+from skcapstone.fleet import gateway_failure
 
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
@@ -65,6 +66,7 @@ def _scheduler_namespace() -> dict[str, object]:
         "os": os,
         "time": time,
         "HOME": "/unused",
+        "TRANSPORT_FAILURE_CLASSES": gateway_failure.TRANSPORT_FAILURE_CLASSES,
         "_ts_epoch": lambda value: time.mktime(time.strptime(value[:19], "%Y-%m-%dT%H:%M:%S")),
     }
     exec(compile(ast.Module(nodes, type_ignores=[]), str(ROTATE), "exec"), namespace)
