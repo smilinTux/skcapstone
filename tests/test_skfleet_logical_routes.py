@@ -85,7 +85,11 @@ def test_corrupted_title_still_routes_from_the_canonical_size_label() -> None:
     so ``[SKLEGAL-R33-ACTIVITY][S] ...`` folded to ``x`` while the card still
     carried its canonical ``sk-s`` label. The title lost the size marker, this
     helper returned None, and the candidate scan silently dropped the card. Every
-    chi host went to ``owned_ready=0`` with free seats and a non-empty pool.
+    chi host reported ``SELECTION_EMPTY reason=no-compatible-lane`` with every
+    seat free and a non-empty pool. (``owned_ready`` was NOT the tell: it reads
+    0 in all 22,523 POOL lines chi has ever recorded, because
+    _legacy_selector_decision resolves a claimed card to the ``claimed``
+    lifecycle bucket before _claimability_reason can ever return ``owned-*``.)
 
     The size LABEL is the same canonical route id the title marker resolves to,
     so a non-empty-but-unmarked title must fall through to it exactly as an

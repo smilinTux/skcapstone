@@ -13,9 +13,8 @@ literal argv fragments as the title (`x`, `--description`) to live cards, ~80
 times since 2026-09-08. CardStore folds the latest describe, so
 `[SKLEGAL-R33-ACTIVITY][S] Project packet and receipt Matter Activity` folded to
 `x` while the card still carried `sk-s`. Every chi host then reported
-`owned_ready=0` and `SELECTION_EMPTY reason=no-compatible-lane` against a
-non-empty pool with every seat free, and the fleet ran two workers against ~30
-configured seats.
+`SELECTION_EMPTY reason=no-compatible-lane` against a non-empty pool with every
+seat free, and the fleet ran two workers against ~30 configured seats.
 
 The title marker still wins when there is exactly one, and routing still fails
 closed with neither a marker nor a single size label.
