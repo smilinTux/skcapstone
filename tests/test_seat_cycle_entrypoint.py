@@ -26,16 +26,21 @@ from skcapstone.seat_cycle_entrypoint import (
 
 
 @pytest.fixture(autouse=True)
-def installed_dispatcher(tmp_path, monkeypatch):
-    """Provide the wheel-owned launcher expected by Seraph unit tests."""
+def installed_dispatcher(tmp_path):
+    """Provide the DEPLOYED launcher these operations actually execute.
 
-    bindir = tmp_path / "skenv-bin"
-    bindir.mkdir()
-    interpreter = bindir / "python3"
-    interpreter.touch(mode=0o755)
-    dispatcher = bindir / "skfleet-rotate.py"
+    Placed under the estate home (tmp_path) at .local/bin, because that is
+    where the rollout copies it and what the live units run -- confirmed on
+    chiap01/02/03/04/08. It used to be placed next to a monkeypatched
+    sys.executable, which put it in the pip copy's directory: a guess that
+    happened to be right only while the two copies matched, and one that
+    fails in the most expensive way when they stop matching, because the
+    wrong file EXISTS and the is_file() guard passes.
+    """
+
+    dispatcher = tmp_path / ".local" / "bin" / "skfleet-rotate.py"
+    dispatcher.parent.mkdir(parents=True, exist_ok=True)
     dispatcher.touch(mode=0o755)
-    monkeypatch.setattr(seat_entrypoint.sys, "executable", str(interpreter))
     return dispatcher
 
 
@@ -296,19 +301,30 @@ def test_seraph_dispatch_is_bounded_claimed_live_and_seat_scoped(
     assert calls[1][-1] == "skfleet-worker-codex-review01.service"
 
 
-def test_seraph_rejects_missing_wheel_owned_dispatcher(tmp_path, installed_dispatcher) -> None:
+def test_seraph_rejects_missing_deployed_dispatcher(tmp_path, installed_dispatcher) -> None:
     installed_dispatcher.unlink()
 
     assert seraph_operation(tmp_path)["reason"] == "seraph_dispatcher_missing"
 
 
-def test_seraph_preserves_invoked_venv_when_python_is_a_symlink(tmp_path, monkeypatch) -> None:
-    bindir = tmp_path / "venv" / "bin"
+def test_seraph_runs_the_deployed_dispatcher_not_the_pip_copy(
+    tmp_path, monkeypatch, installed_dispatcher
+) -> None:
+    """The file that runs is the one the rollout deploys.
+
+    This replaces test_seraph_preserves_invoked_venv_when_python_is_a_symlink,
+    whose premise no longer exists: the dispatcher was resolved from
+    sys.executable's directory, so that test had to prove a symlinked
+    interpreter still resolved to the right neighbour. The dispatcher is no
+    longer resolved from the interpreter at all, so the property worth
+    pinning is the one that actually matters -- a pip copy sitting beside
+    the interpreter must NOT win over the deployed copy.
+    """
+    bindir = tmp_path / ".skenv" / "bin"
     bindir.mkdir(parents=True)
-    interpreter = bindir / "python3"
-    interpreter.symlink_to("/usr/bin/python3")
-    dispatcher = bindir / "skfleet-rotate.py"
-    dispatcher.touch(mode=0o755)
+    (bindir / "python3").symlink_to("/usr/bin/python3")
+    pip_copy = bindir / "skfleet-rotate.py"
+    pip_copy.touch(mode=0o755)
     captured = {}
 
     def run(command, **_kwargs):
@@ -319,11 +335,11 @@ def test_seraph_preserves_invoked_venv_when_python_is_a_symlink(tmp_path, monkey
             stderr="",
         )
 
-    monkeypatch.setattr(seat_entrypoint.sys, "executable", str(interpreter))
     monkeypatch.setattr(seat_entrypoint.subprocess, "run", run)
 
     assert seraph_operation(tmp_path)["reason"] == "seraph_no_eligible_work"
-    assert captured["command"][0] == str(dispatcher)
+    assert captured["command"][0] == str(installed_dispatcher)
+    assert captured["command"][0] != str(pip_copy), "the pip copy must never win"
 
 
 def test_seraph_zero_eligible_work_is_truthful_noop(tmp_path, monkeypatch) -> None:
@@ -347,7 +363,7 @@ def test_seraph_timeout_terminates_reaps_process_group_and_reports_cleanup(
     tmp_path, monkeypatch
 ) -> None:
     child_pid = tmp_path / "child.pid"
-    dispatcher = tmp_path / "skenv-bin/skfleet-rotate.py"
+    dispatcher = tmp_path / ".local" / "bin" / "skfleet-rotate.py"
     dispatcher.write_text(
         "#!/usr/bin/env python3\n"
         "import pathlib, subprocess, time\n"
@@ -780,6 +796,13 @@ def test_link_materialization_race_launches_once_and_replay_is_denied(
 ) -> None:
     home = tmp_path / "home"
     home.mkdir()
+    # This test runs the operation against its OWN estate home, so the
+    # dispatcher has to be deployed under THAT home, not under tmp_path.
+    # Anchoring on the home argument rather than the process's home is what
+    # makes this distinction visible at all.
+    deployed = home / ".local" / "bin" / "skfleet-rotate.py"
+    deployed.parent.mkdir(parents=True, exist_ok=True)
+    deployed.touch(mode=0o755)
     store = CardStore(home)
     store.create(
         CardCore(
@@ -993,7 +1016,9 @@ def test_atlas_presence_cycles_do_not_run_link_work(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("seat", ["atlas"])
-def test_role_dispatch_is_bounded_and_seat_scoped(tmp_path, monkeypatch, seat) -> None:
+def test_role_dispatch_is_bounded_and_seat_scoped(
+    tmp_path, monkeypatch, seat, installed_dispatcher
+) -> None:
     captured = {}
     card_id = "a8100007"
     owner = f"pi-{seat}-chiap08-{card_id}"
@@ -1025,9 +1050,7 @@ def test_role_dispatch_is_bounded_and_seat_scoped(tmp_path, monkeypatch, seat) -
     result = role_dispatch_operation(tmp_path, seat)
 
     assert result["reason"] == f"{seat}_dispatch_complete"
-    assert captured["command"][0] == str(
-        Path(seat_entrypoint.sys.executable).parent / "skfleet-rotate.py"
-    )
+    assert captured["command"][0] == str(installed_dispatcher)
     assert captured["SKFLEET_ONLY_SEAT"] == seat
     assert captured["SKFLEET_SEAT_TARGET"] == "2"
     assert captured["SKFLEET_MAX_LAUNCH"] == "2"
@@ -1076,10 +1099,16 @@ def test_role_dispatch_rejects_the_retired_tank_seat_name(tmp_path) -> None:
 
 
 @pytest.mark.parametrize("seat", ["atlas"])
-def test_role_dispatch_rejects_missing_wheel_owned_dispatcher(tmp_path, monkeypatch, seat) -> None:
-    bindir = tmp_path / "venv" / "bin"
-    bindir.mkdir(parents=True)
-    monkeypatch.setattr(seat_entrypoint.sys, "executable", str(bindir / "python3"))
+def test_role_dispatch_rejects_missing_deployed_dispatcher(
+    tmp_path, seat, installed_dispatcher
+) -> None:
+    """Absent from the deployed path means fail closed, as before.
+
+    The fail-closed behaviour is unchanged; only which path is consulted
+    moved. Removing the deployed copy is now the way to express "the
+    dispatcher is missing".
+    """
+    installed_dispatcher.unlink()
 
     result = role_dispatch_operation(tmp_path, seat)
 

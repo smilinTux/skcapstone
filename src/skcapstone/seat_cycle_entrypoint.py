@@ -582,7 +582,7 @@ def _run_seraph_dispatcher(
 def seraph_operation(home: Path) -> dict[str, int | str]:
     """Launch one configurable, bounded Seraph review batch."""
 
-    dispatcher = deployed_artifact_path(DISPATCHER_RELATIVE_PATH.name)
+    dispatcher = deployed_artifact_path(DISPATCHER_RELATIVE_PATH.name, home)
     if not dispatcher.is_file() or not os.access(dispatcher, os.X_OK):
         return {
             "cards_examined": 0,
@@ -810,7 +810,7 @@ def _failed_claim_is_retryable(
 def role_dispatch_operation(home: Path, seat: str) -> dict[str, int | str]:
     """Launch one configurable, bounded ATLAS batch."""
 
-    dispatcher = deployed_artifact_path(DISPATCHER_RELATIVE_PATH.name)
+    dispatcher = deployed_artifact_path(DISPATCHER_RELATIVE_PATH.name, home)
     if not dispatcher.is_file() or not os.access(dispatcher, os.X_OK):
         return {
             "cards_examined": 0,

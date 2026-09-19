@@ -118,6 +118,13 @@ def deployed_artifact_path(name: str, home: Path | str | None = None) -> Path:
     -- and it fails in the most expensive way available: the wrong file
     EXISTS, so an ``is_file()`` guard passes and a stale dispatcher runs
     silently, instead of failing closed the way a missing file would.
+
+    Pass ``home`` explicitly wherever the caller already has the estate
+    home in hand (``seat_cycle_entrypoint``'s operations take it as an
+    argument). Defaulting to the process's own ``Path.home()`` is a
+    convenience for callers that genuinely mean "this machine", not a
+    licence to ignore an estate home that was handed to you: those two can
+    differ, and when they do the argument is the correct one.
     """
     base = Path(home) if home is not None else Path.home()
     return base / PER_HOST_BIN_RELATIVE_DIR / name
