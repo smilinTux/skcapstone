@@ -53,6 +53,21 @@ def _load(path: Path) -> dict | None:
     return value
 
 
+def _json_record(value: dict) -> str:
+    """Serialize, then parse the complete record before it is published."""
+    encoded = json.dumps(value, indent=2, sort_keys=True) + "\n"
+    parsed = json.loads(encoded)
+    if parsed != value:
+        raise BuilderDispatchError("dispatch record did not round-trip")
+    return encoded
+
+
+def _frozen(paths: FleetPaths) -> bool:
+    """The fleet-wide freeze is checked before every actuation boundary."""
+    freeze = _load(paths.freeze_path())
+    return bool(freeze and (freeze.get("frozen") is True or freeze.get("actuation") == "freeze"))
+
+
 def request_path(paths: FleetPaths, node: str, card_id: str) -> Path:
     """Return the scheduler-owned request path."""
     return paths.root / "dispatch" / node / f"{card_id}.json"
@@ -132,6 +147,8 @@ def offer(
     if not valid_name(card_id):
         raise BuilderDispatchError("invalid card id")
     repository, base_ref, revision = _source(core)
+    if _frozen(paths):
+        raise BuilderDispatchError("global actuation freeze is active")
     ready = _ready_builders(paths)
     for view in ready:
         existing = _load(request_path(paths, view.name, card_id))
@@ -163,7 +180,7 @@ def offer(
     if existing and existing.get("request_id") == request["request_id"]:
         return existing
     path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(path, json.dumps(request, indent=2, sort_keys=True) + "\n")
+    atomic_write_text(path, _json_record(request))
     return request
 
 
@@ -180,7 +197,7 @@ def _write_status(paths: FleetPaths, node: str, request: dict, state: str, **ext
     }
     path = status_path(paths, node, request["card_id"])
     path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    atomic_write_text(path, _json_record(payload))
     return payload
 
 
@@ -267,6 +284,8 @@ def consume_one(
     spec = store.read_spec(paths, "node", node) or {}
     if spec.get("spec", {}).get("role") != ROLE or spec.get("spec", {}).get("actuate") is not True:
         return None
+    if _frozen(paths):
+        return None
     directory = paths.root / "dispatch" / node
     for path in sorted(directory.glob("*.json")) if directory.exists() else ():
         request = _load(path) or {}
@@ -274,7 +293,18 @@ def consume_one(
             continue
         prior = _load(status_path(paths, node, request["card_id"])) or {}
         if prior.get("request_id") == request.get("request_id"):
-            return None
+            # Completed and blocked generations are historical. A failed launch
+            # may be retried, but only after releasing its exact claim.
+            if prior.get("state") != "failed":
+                continue
+            old_owner = str(prior.get("owner") or "")
+            old_revision = str(prior.get("claim_revision") or "")
+            if old_owner and old_revision:
+                Board(coordination_home).release_claim(
+                    old_owner, request["card_id"], actor="niobe",
+                    expected_claim_revision=old_revision,
+                    abandon_reason="builder-launch-retry",
+                )
         owner = f"pi-builder-standby-{node}-{request['card_id']}"
         workspace = Path.home() / ".skcapstone/fleet/workspaces" / owner
         materializer(request, workspace)
@@ -289,6 +319,11 @@ def consume_one(
         try:
             process = run(command, workspace)
         except Exception:
+            Board(coordination_home).release_claim(
+                owner, request["card_id"], actor="niobe",
+                expected_claim_revision=revision,
+                abandon_reason="builder-launch-failed",
+            )
             _write_status(paths, node, request, "failed", owner=owner, claim_revision=revision)
             raise
         return _write_status(
@@ -325,6 +360,18 @@ def recover_stale(
     except (KeyError, TypeError, ValueError):
         return False
     if (now or _now()) <= heartbeat + timedelta(seconds=LEASE_SECONDS):
+        return False
+    # A quiet heartbeat is not proof of death. Never release a live process.
+    pid = status.get("pid")
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        pass
+    except OSError:
+        return False
+    else:
         return False
     owner = str(status.get("owner") or "")
     revision = str(status.get("claim_revision") or "")
