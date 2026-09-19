@@ -48,9 +48,17 @@ day. `classify_progress` in `skcapstone.fleet.worker_watchdog` existed, was
 tested, and had zero call sites until PR #777 wired it; `skcapstone.fleet.
 card_slicing` had zero call sites until PR #777 gave it
 `coord slice-preflight`. Both now ship with an explicit actuation label
-(`actuation=report-only`, `skfleet-rotate.py:3105`;
+(`actuation=...` on the `WORKER_PROGRESS` line in `skfleet-rotate.py`;
 `actuation=recommendation-only`) so that "wired" and "acting" are distinguishable
 from the log.
+
+(That label was the constant `report-only` when this was written, naming the
+deliberate measurement window opened by PR #777. The window closed on
+2026-09-19 and it now reports the live rollout mode, `off` / `report` /
+`enforce`, defaulting to `off`. The line number is dropped rather than
+corrected, because a line number is the part of a citation that rots first.
+See `docs/fleet/wedged-worker-actuation.md` for the measurement the window
+produced.)
 
 What follows are the harder variants, where the mechanism *is* called and still
 processes nothing.
