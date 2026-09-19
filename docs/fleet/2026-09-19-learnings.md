@@ -110,6 +110,13 @@ hash the producer path computes is a binding.**
 The admission gate was never relaxed, and should not have been. Handing a
 reviewer a binding that never existed is exactly what it exists to refuse.
 
+One detail makes the detection row above load-bearing rather than rhetorical.
+`OPENED_REVIEW` has **no machine consumer at all**. It is emitted into the
+cycle's `actions.log` and read by nothing; the only code that parses that file
+looks for `LAUNCHED|`. So does its failure twin, `OPEN_REVIEW_EVIDENCE_BLOCKED`.
+The 14-day zero was found by a human running grep, and would have stayed
+invisible for as long as nobody did.
+
 ---
 
 ## 21. A named check that is not dispatchable by its own name
