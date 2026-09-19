@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+- **HTTP 503 was not recognised as a gateway failure, so a nine-hour outage was
+  charged to the cards as failed work.** The launcher's `_GATEWAY_ERROR_RE`
+  spelled out 400/404/408/429/502/504 and the worker wrapper kept a separate
+  substring table; neither included 503, which is the most common status the
+  gateway emits. Measured 2026-09-18 over all 2,980 worker-exit records on the
+  chi fleet: 2,202 carried a gateway status+JSON body and only 133 (6.0%) were
+  classified, leaving 2,901 records stamped `transport_failure: null`. 1,793 of
+  them were a 503. Seat `pi-glm-chiap01-0aec5a64` produced 120 of those against
+  bucket `sk-glm-s` between 06:17 and 15:22 UTC on 2026-09-09, each hold about
+  21 seconds with nothing written under it, re-dispatched every five minutes.
+
+  Both call sites now classify through one table in
+  `skcapstone.fleet.gateway_failure`, so a status the gateway starts emitting
+  cannot be recognised by one and missed by the other. Every 503 is treated as
+  pre-agent: no eligible bucket member, a full or timed-out capacity queue, a
+  quarantined model claim, or a declaring backend that is down. Named 502
+  upstream codes (`empty_upstream_response`, `invalid_upstream_completion`,
+  `upstream_unreachable`) join them, and a worker-CLI advisory ahead of the body
+  no longer hides it (86 records). Recognition of gateway bodies goes 133 to
+  2,137 of 2,202 (6.0% to 97.0%) with no record that used to classify losing its
+  class.
+
+  The deliberate fences hold: a generic 400 can be the agent's own bad request
+  and still charges the card (61 records), an unnamed 502 code still charges,
+  and a gateway error arriving after agent output is still substantive.
+
+- **The quarantine pattern never matched anything.** The wrapper looked for
+  `backend-claims-quarantined`; skgateway emits
+  `"type":"model_claim_quarantined"` with the prose "all backend claims for
+  model X are quarantined" (`src/proxy/router.mjs`, `claimQuarantinedResponse`).
+  474 chi exit records carried a quarantine 503 and none were classified. Both
+  spellings match now.
+
 - **`source-only` meant two unrelated things at once, and a card could not say
   which.** To the dispatcher it was a routing flag: `_source_workspace_spec`
   returned `None` unless a card carried it, so the label was the only thing that

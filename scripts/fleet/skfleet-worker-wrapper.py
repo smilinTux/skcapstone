@@ -17,6 +17,11 @@ import time
 from pathlib import Path
 
 from skcapstone.card_store import CardStore
+from skcapstone.fleet.gateway_failure import (  # noqa: F401
+    TRANSPORT_FAILURE_CLASSES,
+    TRANSPORT_PATTERNS,
+    classify_transport_diagnostic,
+)
 from skcapstone.fleet.terminal_capacity import (
     is_abandon_reason_signature_mismatch,
     retire_worker_generation,
@@ -464,20 +469,6 @@ def monitor_startup(
 
 
 STDERR_LIMIT = 2048
-TRANSPORT_PATTERNS = {
-    "rate_limited": re.compile(r"(?:\b429\b|rate.?limit)", re.I),
-    "model_owner_backend_down": re.compile(r"model_owner_backend_down", re.I),
-    "backend_claims_quarantined": re.compile(r"backend-claims-quarantined", re.I),
-    "invalid_upstream_tool_calls": re.compile(r"invalid_upstream_tool_calls", re.I),
-    "connection_failure": re.compile(
-        r"connection (?:error|failed|failure|refused|reset|timed? ?out)|"
-        r"failed to connect|network is unreachable|temporary failure in name resolution",
-        re.I,
-    ),
-    "upstream_template_rejection": re.compile(
-        r"unable to generate parser\b|automatic parser generation failed", re.I
-    ),
-}
 SECRET_RE = re.compile(
     r"(?i)(authorization:\s*(?:bearer|basic)\s+|"
     r"(?:api[_-]?key|access[_-]?token|password|secret)\s*[=:]\s*)\S+"
@@ -486,11 +477,14 @@ TOKEN_RE = re.compile(r"\b(?:sk-[A-Za-z0-9_-]{12,}|[A-Za-z0-9_-]{32,})\b")
 
 
 def classify_transport_failure(text: str) -> str | None:
-    """Return the allow-listed pre-agent transport failure class."""
-    for kind, pattern in TRANSPORT_PATTERNS.items():
-        if pattern.search(text):
-            return kind
-    return None
+    """Return the allow-listed pre-agent transport failure class.
+
+    The table lives in skcapstone.fleet.gateway_failure so the launcher's
+    classifier cannot drift from this one. It did: until 2026-09-18 neither
+    recognised 503, and 1,793 of the chi fleet's 2,980 worker-exit records
+    were a 503 scored as ordinary failed work.
+    """
+    return classify_transport_diagnostic(text)
 
 
 def classify_pre_agent_failure(stdout: bytes, stderr: bytes, rc: int) -> str | None:
@@ -501,8 +495,8 @@ def classify_pre_agent_failure(stdout: bytes, stderr: bytes, rc: int) -> str | N
         return classify_transport_failure(redact_stderr(stderr))
     text = stdout.decode("utf-8", errors="replace").strip()
     if not re.match(
-        r"(?:HTTP\s+)?(?:429|5\d\d)\b|model_owner_backend_down\b|"
-        r"backend-claims-quarantined\b|invalid_upstream_tool_calls\b|"
+        r"(?:HTTP\s+)?(?:4(?:04|29)|5\d\d)\b|model_owner_backend_down\b|"
+        r"(?:backend|model)[-_ ]claims?[-_ ]quarantined\b|invalid_upstream_tool_calls\b|"
         r"connection (?:error|failed|failure|refused|reset|timed? ?out)\b|"
         r"failed to connect\b|unable to generate parser\b|"
         r"automatic parser generation failed\b",
