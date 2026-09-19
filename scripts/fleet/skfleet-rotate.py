@@ -3387,11 +3387,15 @@ def settled_blocker_reopens(limit=None):
     """
     returned=[]; held={}
     for cid,(ts,val) in sorted(_load_outcomes().items()):
-        if limit is not None and len(returned)>=limit: break
-        if not (ts and re.match(r"^\s*BLOCKED",str(val or ""),re.I)): continue
-        if not os.path.isdir(os.path.join(CARDS,cid)): continue
+        if limit is not None and len(returned)>=limit:
+            break
+        if not (ts and re.match(r"^\s*BLOCKED",str(val or ""),re.I)):
+            continue
+        if not os.path.isdir(os.path.join(CARDS,cid)):
+            continue
         # A done or voided card has nothing to return to the pool.
-        if lifecycle_state(cid) not in ("open","claimed"): continue
+        if lifecycle_state(cid) not in ("open","claimed"):
+            continue
         reason=_latest_blocked_reason(cid,ts,val)
         decision=settled_blocker_reopen(
             cid,reason[0] if reason else None,list(reason[1]) if reason else [],
@@ -3426,11 +3430,13 @@ def reopen_settled_blockers(apply_changes):
     for cid,decision in returned:
         log(d,"BLOCKER_SETTLED|%s|%s|referents=%s|generation=%s"%(
             HOST,cid,",".join(decision["referents"]),decision["transition_id"]))
-        if not apply_changes: continue
+        if not apply_changes:
+            continue
         argv=[SKC,"coord","reopen",cid,"--agent",REOPEN_WRITER,
               "--reason","%s referents=%s"%(REOPEN_REASON,",".join(decision["referents"])),
               "--transition-id",decision["transition_id"]]
-        for ref in decision["referents"]: argv+=["--referent",ref]
+        for ref in decision["referents"]:
+            argv+=["--referent",ref]
         result=subprocess.run(argv,capture_output=True,text=True)
         # coord prints an empty line on success and link can store an empty
         # value while reporting success, so exit code is not evidence. Read the
