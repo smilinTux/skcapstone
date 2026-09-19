@@ -69,7 +69,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-import yaml
+try:
+    import yaml
+except ImportError:  # pragma: no cover - exercised on minimal runners
+    yaml = None  # type: ignore[assignment]
 
 ABBREV_SHA = re.compile(r"^[0-9a-f]{7,39}$")
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -382,7 +385,23 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.self_test:
+        if yaml is None:
+            print("  ????  PyYAML not importable; the negative control could not run (exit 2).")
+            return 2
         return 0 if self_test() else 1
+
+    if yaml is None:
+        # The docs-check runner is deliberately minimal and has no PyYAML.
+        # Exiting 1 here would claim we found a violation; exiting 0 would
+        # claim we checked. Neither is true. This is exactly the distinction
+        # the whole script exists to preserve.
+        print(
+            "  ????  PyYAML is not importable, so no workflow file was parsed. "
+            "Nothing was checked.\nCOULD NOT DETERMINE (exit 2). Run this where "
+            "the package deps are installed: `unit tests` and `shim-imports` "
+            "both have them."
+        )
+        return 2
 
     repo = Path(args.repo).resolve()
     pins, findings = collect(repo)
