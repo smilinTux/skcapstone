@@ -66,7 +66,7 @@ and 1,660 rotations" came from a `journalctl --since "-14d" | sort -rn | head
 -6` whose six capacity buckets happened to sum to 1,660. Re-measured: the true
 cycle count on that host is **1,716**, the journal only retains back to
 2026-09-09 so `--since "-14d"` silently returned 9.8 days, and the lane was not
-zero-*ever* — the rotation evidence logs hold 52 `OPENED_REVIEW` lines across
+zero-*ever*. The rotation evidence logs hold 52 `OPENED_REVIEW` lines across
 five hosts, the newest five opened by chiap01 on **2026-09-05T21:25:18Z**. So
 the dead lane is about 13 days, not 14+, and the head-truncated sum is exactly
 the failure contract 9 already named: a number equal to your own limit is a
@@ -74,7 +74,7 @@ reading of your query. It reached the source tree anyway.
 
 A governed review needs hash-bound candidate evidence. The only verdict command
 the fleet had was `coord link` (`src/skcapstone/cli/coord.py`), which writes a
-`CardEvent` (`skcoord/src/skcoord/card.py:82-107`) — a pydantic model with a
+`CardEvent` (`skcoord/src/skcoord/card.py:82-107`), a pydantic model with a
 fixed 16-field set holding no `candidate_path`, no `candidate_sha256` and no
 `evidence_links`. A verdict written through it **structurally cannot** carry the
 binding the consumer requires.
@@ -148,8 +148,8 @@ invisible for as long as nobody did.
 ## 21. A named check that is not dispatchable by its own name
 
 In `sklegal`, `scripts/run_checks.sh design-hashes` exits 2 with
-`unknown check: design-hashes`. The check exists — `run_design_hashes` is
-defined at `run_checks.sh:189-191` — but the `case` dispatcher
+`unknown check: design-hashes`. The check exists (`run_design_hashes` is
+defined at `run_checks.sh:189-191`), but the `case` dispatcher
 (`run_checks.sh:238-253`) accepts 13 names and that is not one of them.
 `run_all` (`:221-236`) runs 14 checks. Three of them, `design-hashes`,
 `compose-check` and `lock-check`, are reachable only through `all`.
@@ -168,7 +168,7 @@ runs in `all`.
 | Producer | the check function |
 | Consumer | anyone diagnosing a red `all` |
 | Evidence | a test enumerating the functions `all` calls and asserting each has a dispatch arm |
-| Detection | **derive the dispatch table from the code, never maintain it by hand** — this is contract 12's "test the class, not the members you remembered" applied to a shell script |
+| Detection | **derive the dispatch table from the code, never maintain it by hand**. This is contract 12's "test the class, not the members you remembered" applied to a shell script |
 | Fails closed | an undispatchable check is a build failure, not a surprise at 2am |
 
 ---
@@ -201,7 +201,7 @@ against a vocabulary of 9,810 distinct keys that the fleet does use
 `pr` 1,632). The gate is unreachable for every card in the store.
 
 The gate's own documentation says why this was predictable:
-`docs/skrsi-runtime-handoffs.md:41-42` — *"The runtime does not generate these
+`docs/skrsi-runtime-handoffs.md:41-42`: *"The runtime does not generate these
 qualifications for itself."* It names the requirement and names nothing that
 satisfies it.
 
@@ -209,7 +209,7 @@ One correction worth keeping, because it changes the fix: this is **not**
 structurally impossible the way contract 20 was. `coord link` takes arbitrary
 keys, so a human who runs `sha256sum` on the request file by hand can satisfy
 the gate. Which inverts the stated intent: a requirement documented as *machine*
-evidence is currently satisfiable only by a person typing a digest — precisely
+evidence is currently satisfiable only by a person typing a digest, precisely
 the thing contract 20 says is a claim and not a binding.
 
 **Contract.** A gate that names a required qualification also names its
@@ -221,7 +221,7 @@ producer, in the same document.
 | Consumer | the gate |
 | Evidence | for each required link key: count of producers in code, and count of occurrences on the board |
 | Detection | **zero producers and zero board occurrences is a dead gate, and should be reported as loudly as a failing one** |
-| Fails closed | an unproduceable qualification blocks the runtime, which is correct and also useless — so the gap is a defect, not a design |
+| Fails closed | an unproduceable qualification blocks the runtime, which is correct and also useless, so the gap is a defect, not a design |
 
 ---
 
@@ -236,7 +236,7 @@ Three instances, one mechanism.
 - `doctor`'s store scan (`src/skcapstone/doctor.py:1111`, body `:1135-1143`)
   catches only `json.JSONDecodeError`. **An event that is valid JSON but fails
   `CardEvent` validation passes `store:cards` as "OK" and is dropped by the
-  reader with no trace — invisible to both.** The scan even computes a `lineno`
+  reader with no trace, invisible to both.** The scan even computes a `lineno`
   and never uses it, so its own problem strings cannot name the offending line.
 
   The live instance: `coordination/card_events/chiap08.jsonl` is 70,189 lines
@@ -246,7 +246,7 @@ Three instances, one mechanism.
   `card_id Field required` and `action Field required`; it is a hand-written
   `verdict` link for card `086ea05c` stamped `2026-09-01T08:45:00Z`, a round
   backdated second where its neighbours carry microsecond precision. Line
-  **19797** is not JSON at all — 355 bytes of bare prose about the same card.
+  **19797** is not JSON at all: 355 bytes of bare prose about the same card.
   A fold of all 7,214 chi cards reports zero errors.
 - `CardEvent` declares no `model_config`, so pydantic's default `extra="ignore"`
   applies. Passing `candidate_sha256=` to it succeeds, returns a valid model,
@@ -307,7 +307,7 @@ still up.
 
 The consumer makes it explicit. `worker_liveness_runtime.collect_observations`
 globs `fleet/beats/*.json` (`:104`) and then sets
-`child_activity_at=heartbeat_at` (`:197`) — **the field named "child activity"
+`child_activity_at=heartbeat_at` (`:197`). **The field named "child activity"
 is defined as the shell timer's own stamp.** No separate measurement of the
 child exists anywhere in the observation. A second timer does the same thing in
 the Python wrapper: `maintain_process_record`
@@ -322,7 +322,7 @@ seconds before release. The dispatcher wrote **77 consecutive
 `worker_liveness=active` link rows** over 6h15m at a median 301.5-second gap.
 And:
 
-- its workspace contains **0 files, ever** — the directory mtime is frozen at
+- its workspace contains **0 files, ever**; the directory mtime is frozen at
   22:02:50Z, 55 minutes *before* the claim began;
 - its log, `fleet/logs/139ec63d-20260918T225716Z.log`, is **0 bytes**, created
   at dispatch and never written.
@@ -385,7 +385,7 @@ comparison; `doctor` on chiap01 goes from 57 passed / 12 failed / 1 unknown to
 The cost of tolerating that is not hypothetical, and the concrete instance came
 from `sklegal`. Its `design-hashes` gate (contract 21) pins the sha256 of
 `docs/tasks/SUBAGENT-TASK-TTDS.md`, a 7,418-line living work queue with 84
-commits on main — against three commits apiece for the other four pinned
+commits on main, against three commits apiece for the other four pinned
 documents. On 2026-09-08 an agent ran the red check, went hunting for the hash,
 and rewrote it inside the block headed *"Original approved document hashes"*
 (`docs/approval/ARCHITECTURE-APPROVAL.md:43`), whose own text three lines later
@@ -404,7 +404,7 @@ Two corrections to how that incident gets retold, both of which matter:
   commits on main and recomputing every pinned hash gives two distinct red
   streaks (2026-08-22 to 08-29, 7 days; 2026-09-10 to now, 9 days) with a green
   stretch between them. The *reported* status was red for 21 continuous days
-  because no CI run happened on main between 2026-08-29 and 2026-09-19 — and
+  because no CI run happened on main between 2026-08-29 and 2026-09-19, and
   today's run never executed at all, annotated *"the job was not started because
   recent account payments have failed"*. A stale green and a stale red look
   identical from the badge.
@@ -418,7 +418,7 @@ check red beyond a threshold is an incident against its owner.
 | Consumer | whoever is expected to act on it |
 | Recovery owner | the check's owner, named at the check |
 | Evidence | per-check consecutive-red duration, and the **age of the last run**, reported separately |
-| Detection | **a check whose last run predates its last input change is unknown, never green and never red** — and a check red for longer than N days is escalated rather than displayed |
+| Detection | **a check whose last run predates its last input change is unknown, never green and never red**. A check red for longer than N days is escalated rather than displayed |
 | Fails closed | a red check that cannot be fixed is disabled with a reason, not left red |
 
 The second-order rule is the sharper one. A permanently red gate does not merely
@@ -439,7 +439,7 @@ with `DESIGN-HASHES.sha256`, and the corrupted value was a current value.
 107 cards on the chi fleet were frozen by `max_claims=5`, and almost none had
 failed. The measured cause was seat churn: card `0aec5a64` shows one seat
 (`pi-glm-chiap01-0aec5a64`) claiming and releasing its own card 120 times,
-median hold 21.4s, median gap 276.8s — the five-minute dispatch tick — with
+median hold 21.4s, median gap 276.8s (the five-minute dispatch tick), with
 **nothing written under any hold**. The seat's own wrapper released each time,
 and the deterministic ownership hash handed the card straight back.
 
@@ -480,7 +480,7 @@ counting rule; each names the event it charges and why.
 | Consumer | the claim ceiling (monotonic, operator-cleared) and the churn breaker (default-off, self-clearing) |
 | Recovery owner | the dispatcher seat |
 | Evidence | each rule scored against a known-pathological card and against a synthetic pure-churn loop, both recorded |
-| Detection | **a card excluded by a counter must log the counter's own inputs** — `CLAIM_CEILING_EXCLUDED` now reports total vs counted claims, the card's `WORKER_DIED` verdict count, and whether an amnesty is in effect |
+| Detection | **a card excluded by a counter must log the counter's own inputs**. `CLAIM_CEILING_EXCLUDED` now reports total vs counted claims, the card's `WORKER_DIED` verdict count, and whether an amnesty is in effect |
 | Fails closed | an open claim is always charged, an unparseable timestamp is charged, any write under a hold charges it, and each claim is forgiven at most once |
 
 Note that the 120-vs-0 figures are a live-store measurement recorded in PR #790,
@@ -532,7 +532,7 @@ line said `total_free=9`). It now carries the dispatcher's table forward with a
 `lanes_ts` provenance stamp, drops it after the readers' 30-minute freshness
 fence, and otherwise publishes the explicit marker `"lanes": "unknown"`, which
 readers skip instead of summing to zero. **"Could not measure" and "measured
-zero" are now distinguishable in every snapshot** — which is contract 9's rule,
+zero" are now distinguishable in every snapshot**, which is contract 9's rule,
 enforced in the data rather than in the reader's discipline.
 
 ---
@@ -567,7 +567,7 @@ are `do-not-claim` and `terminal`. Owned, dependency-blocked and over-capacity
 all read eligible. The inputs were gathered correctly and discarded.
 
 The workspace binding is the same gap seen from further out. It is checked in
-three places — at claim time in the dispatcher
+three places: at claim time in the dispatcher
 (`skfleet-rotate.py:7354-7367`, via `_source_workspace_spec` at `:642` and
 `_verify_source_workspace`), at offer time in `builder_dispatch`
 (`src/skcapstone/fleet/builder_dispatch.py:273-305`, builder-eligible cards
@@ -592,7 +592,7 @@ chiap01, chiap03 and chiap08 alike as `status=Column.DOING` with
 `archived=True` and `meta.voided=True` (voided 2026-09-16T07:25:31Z, two
 minutes after its last `move` to `doing`). The cause is in the fold itself:
 `skcoord/card_store.py:1495-1502`, the `void` branch sets `archived`, clears
-`owner` and `_claim_revision`, and writes the `voided*` meta — and **never
+`owner` and `_claim_revision`, and writes the `voided*` meta, and **never
 touches `card.status`**. `void_terminal_actions` suppresses only *subsequent*
 moves, so any card voided out of `doing` folds as DOING permanently. One field
 is a lifecycle projection, the other a flag, and nothing asserts they agree.
@@ -665,7 +665,7 @@ the drop-in was renamed:
 
 systemd reads only `*.conf`. The rename did not archive the change, it
 **reverted** it, handing the lane back to the older `50-glm-restore.conf`. This
-happened on exactly three hosts — chiap01, chiap02, chiap03 — and the reason
+happened on exactly three hosts (chiap01, chiap02, chiap03), and the reason
 only three is the same mechanism again: those three also have
 `90-codex-only.conf.rollback-d9a1000f` renamed away, while chiap04 and chiap08
 keep an active `90-codex-only.conf`.
@@ -673,7 +673,7 @@ keep an active `90-codex-only.conf`.
 It is verifiable in behaviour, not just in the file listing: the journal's
 `SLOTS|` line flips from `glm=0/0` to `glm=0/2` on those three hosts after
 Sep 10 and stays `glm=0/0` on chiap04 throughout. It was closed on 2026-09-18
-23:56 by `99-glm-dead-lane.conf` — a plain `.conf` this time — after which all
+23:56 by `99-glm-dead-lane.conf`, a plain `.conf` this time, after which all
 three log `glm=0/0` again.
 
 **Three claims about the consequences did not survive measurement, and the
@@ -688,7 +688,7 @@ Counting every `pi-glm-*` claim and release across the whole store, per day:
 | **2026-09-09** | **229** | **231** | **238** | **20.5-20.7s** |
 | 2026-09-10 | 17 | 21 | 15 | 378s / 247s / 35s |
 | 2026-09-11 | 3 | 2 | 1 | ~20-45 min |
-| 2026-09-12 to 09-17 | 0 | 0 | 0 | — |
+| 2026-09-12 to 09-17 | 0 | 0 | 0 | none |
 | 2026-09-18 | 9 | 2 | 4 | minutes to hours |
 
 - The 20-second worker death with a 5-minute redispatch is **real** (median
@@ -702,7 +702,7 @@ Counting every `pi-glm-*` claim and release across the whole store, per day:
   appears zero times in the journals of chiap01 and chiap03. The 698
   `worker_died` link rows carry only `owner=` and `claim_revision=`, no reason.
   Worker logs are 0 bytes. The only assertion anywhere that these workers died
-  on a 503 is **the prose written into `99-glm-dead-lane.conf` itself** — the
+  on a 503 is **the prose written into `99-glm-dead-lane.conf` itself**: the
   comment block in the file that fixed it.
 
 That last one deserves its own sentence. A fix wrote its own rationale into a
@@ -721,7 +721,7 @@ change's rationale is evidence only where it cites a measurement.
 | Consumer | the unit's effective environment, and the next person reading the history |
 | Recovery owner | the host's owner |
 | Evidence | `systemctl --user show <unit>` for the variable, not `ls` for the file |
-| Detection | **audit drop-in directories for files that are not `*.conf`; a renamed drop-in is a silent revert, and the rename is the only record that it ever applied** — and diff the resulting env against the intent |
+| Detection | **audit drop-in directories for files that are not `*.conf`; a renamed drop-in is a silent revert, and the rename is the only record that it ever applied**. Diff the resulting env against the intent |
 | Fails closed | a disable that cannot be read back from the effective unit is not applied |
 
 Two smaller rules fall out. Archive by moving the file out of the drop-in
@@ -912,7 +912,7 @@ content digests on the host against the merged ref.
 | Consumer | the path each unit actually executes |
 | Recovery owner | Operations |
 | Evidence | per host, per artifact: OK / DRIFT / UNKNOWN by content digest, never a version string |
-| Detection | **SPLIT FLEET is a distinct and worse finding than uniformly-behind** — hosts that disagree with each other disagree about semantics |
+| Detection | **SPLIT FLEET is a distinct and worse finding than uniformly-behind**. Hosts that disagree with each other disagree about semantics |
 | Fails closed | an unreachable or unmeasurable host is UNKNOWN, never OK |
 
 The tooling for this already exists and is read-only
@@ -956,7 +956,7 @@ rather than by a reviewer:
   `verb`/`kind`/`type` where the schema uses `action`, so it returned zero
   regardless of what the command did. A bug report against a working `coord
   label` was nearly filed.
-- **A claim census diverging on 75 of 143 cards.** Deleted — and then the same
+- **A claim census diverging on 75 of 143 cards.** Deleted, and then the same
   pattern was rebuilt in the fleet monitor, which reported "27 held, 11 stuck"
   where the authoritative answer was 19 and 2. Deleting a bad replay does not
   help if the shape is reintroduced downstream.
@@ -1022,8 +1022,8 @@ cards as runaways and listed four worst offenders to void. `0aec5a64`,
 `22244103` and `2587020f` each carry `verdict=PASS_FOR_REVIEW`, a hash-bound
 evidence bundle (`evidence_sha256=59265a3d…`, `a5d9cc0a…`,
 `artifact_sha256=57354d7a…`), commits, and open PRs on sklegal (#146, #147).
-`0aec5a64` even had a review card, `8c6ed8e4`. Only `06a95c23` — 402 claims,
-8 releases, zero artifacts — was a genuine runaway, and it was voided.
+`0aec5a64` even had a review card, `8c6ed8e4`. Only `06a95c23` (402 claims,
+8 releases, zero artifacts) was a genuine runaway, and it was voided.
 
 (Those PRs are **open**, not merged. The story was retold once with "merged
 PRs" in it, which is a small thing and exactly the kind of small thing this
@@ -1055,7 +1055,7 @@ exception.
 | Consumer | the agent executing it |
 | Recovery owner | the brief's author |
 | Evidence | per item: the stated reason, re-verified against a fresh fold, before the action |
-| Detection | **a destructive batch that reports 100% completion is a batch nobody checked** — a refusal rate of exactly zero over a large batch is suspicious, not reassuring |
+| Detection | **a destructive batch that reports 100% completion is a batch nobody checked**. A refusal rate of exactly zero over a large batch is suspicious, not reassuring |
 | Fails closed | an item whose stated reason does not hold is reported, never actioned |
 
 The instruction has to be in the brief. The batch that caught the sha typo was
@@ -1106,7 +1106,7 @@ twice.
 | Recovery owner | the test's owner |
 | Evidence | a full run, not a `-x` run, and each failure attributed against the base ref before the change is blamed or cleared |
 | Detection | **run a suspect test file three times on the same commit; a differing result means it reads ambient state, and it should be quarantined rather than re-run until green** |
-| Fails closed | a non-deterministic test is a failing test — a suite that is green only sometimes is not a gate |
+| Fails closed | a non-deterministic test is a failing test; a suite that is green only sometimes is not a gate |
 
 The `-x` detail generalises. **An early-exit run reports the position of the
 first failure, not the count of failures**, and the two get written down the
