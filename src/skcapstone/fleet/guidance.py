@@ -10,6 +10,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .paths import default_paths
+
 MAX_TEXT_BYTES = 4096
 MAX_PER_HOUR = 3
 
@@ -41,7 +43,11 @@ def enqueue_guidance(card_id: str, text: str, *, root: Path | None = None) -> di
         raise ValueError("invalid card id")
     if not isinstance(text, str) or len(text.encode("utf-8")) > MAX_TEXT_BYTES:
         raise ValueError("guidance text exceeds 4KB")
-    root = root or Path.home() / ".skcapstone" / "fleet" / "guidance"
+    # Route fleet state through FleetPaths rather than naming the tree here.
+    # The original hardcoded a home-relative fleet path, which also silently
+    # ignored SKFLEET_ROOT that default_paths() honours, so a relocated fleet
+    # would have written its guidance queue into the wrong tree.
+    root = root or (default_paths().root / "guidance")
     path = root / f"{card_id}.ndjson"
     now = time.time()
     recent = []
