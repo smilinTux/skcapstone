@@ -157,6 +157,7 @@ def _reaper_fixture(
         "_fleet_launch_provenance",
         "_ineffective_suppresses",
         "_record_reap_outcome",
+        "_append_reaper_evidence",
         "reap_dead_claims",
     )
     released: list[list[str]] = []
@@ -200,12 +201,15 @@ def _reaper_fixture(
                 "mismatched": 0,
                 "duplicates": 0,
             },
-            # The report-only progress pass (wired 2026-09-18) runs inside
-            # reap_dead_claims but is not under test here; it has its own
-            # coverage in test_worker_progress_report.py. Stubbed exactly
-            # like _worker_health_snapshot above, and the stub records
-            # nothing because the pass must actuate nothing.
+            # The progress pass runs inside reap_dead_claims but is not under
+            # test here; it has its own coverage in
+            # test_worker_progress_report.py and test_wedge_reaper.py. Stubbed
+            # exactly like _worker_health_snapshot above. The reporter stub
+            # records nothing because the reporter must still actuate nothing,
+            # and the wedge actuator is stubbed to return 0 so the absence
+            # path's own release accounting stays the only thing measured.
             "_report_worker_progress": lambda *_args, **_kwargs: None,
+            "_reap_wedged_workers": lambda *_args, **_kwargs: 0,
             "active_worker_units": lambda: [],
             "sh": lambda *_args: "",
             "seat_for": lambda card_id, _core: "link" if card_id == "deadbeef" else None,

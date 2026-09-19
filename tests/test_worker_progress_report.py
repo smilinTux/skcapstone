@@ -1,4 +1,11 @@
-"""Call-site and behaviour tests for the REPORT-ONLY worker progress pass.
+"""Call-site and behaviour tests for the worker progress measurement pass.
+
+The pass was report-only from 2026-09-18 until the measurement window closed
+on 2026-09-19. The REPORTER is still report-only and these tests still hold
+it to that: measurement and actuation are separate functions on purpose, so
+that the thing which decides cannot quietly grow the power to act. The
+actuator is ``_reap_wedged_workers`` and is covered in test_wedge_reaper.py.
+
 
 Contract 1 of docs/fleet/2026-09-18-learnings.md: a function can be correct
 and unreachable at the same time. ``classify_progress`` had a passing unit
@@ -21,8 +28,10 @@ from pathlib import Path
 
 from skcapstone.fleet.worker_watchdog import (
     DEFAULT_PROGRESS_TIMEOUT_S,
+    DEFAULT_WEDGE_TIMEOUT_S,
     ProgressObservation,
     classify_progress,
+    classify_wedge,
 )
 
 SRC = Path(__file__).resolve().parent.parent / "scripts" / "fleet" / "skfleet-rotate.py"
@@ -152,8 +161,11 @@ def _reporter_namespace(tmp_path, lines):
             "_worker_owner": lambda lane, cid, seat=None: f"pi-{seat or lane}-testhost-{cid}",
             "_current_claim_identity_fresh": lambda cid: ("pi-codex-test-cafe0001", 1.0, "rev-1"),
             "classify_progress": classify_progress,
+            "classify_wedge": classify_wedge,
             "ProgressObservation": ProgressObservation,
             "DEFAULT_PROGRESS_TIMEOUT_S": DEFAULT_PROGRESS_TIMEOUT_S,
+            "DEFAULT_WEDGE_TIMEOUT_S": DEFAULT_WEDGE_TIMEOUT_S,
+            "_wedge_mode": lambda *_a, **_k: "",
         },
     )
     return namespace, workspace
@@ -171,7 +183,18 @@ def test_stale_workspace_reports_progress_stale(tmp_path):
     progress = [line for line in lines if line.startswith("WORKER_PROGRESS|")]
     assert len(progress) == 1, lines
     assert "state=progress-stale" in progress[0]
-    assert "actuation=report-only" in progress[0]
+    # This assertion used to read `actuation=report-only`, which encoded the
+    # deliberate measurement window opened on 2026-09-18. That window has now
+    # closed; the measurement is recorded in
+    # docs/fleet/wedged-worker-actuation.md and the line reports the live
+    # rollout mode instead. `off` is still the default, so the shipped
+    # behaviour on an unconfigured host is unchanged: the pass observes and
+    # nothing acts.
+    assert "actuation=off" in progress[0]
+    # A two-hour-old write is progress-stale and is emphatically NOT wedged.
+    # 900s is where a worker stops looking fresh; 14400s is where it may be
+    # ended. The gap between them is the entire safety margin.
+    assert "wedge=wedge-within-margin" in progress[0]
     assert "|codex-auto-cafe0001|cafe0001|" in progress[0]
     assert "owner=pi-codex-test-cafe0001" in progress[0]
 

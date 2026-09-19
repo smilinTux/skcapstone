@@ -11,10 +11,12 @@ performing any live service action. The proof is static and deterministic:
    the worker's whole descendant subtree when that exact unit stops, while
    sibling units are untouched because they are separate cgroups under the
    user manager, not descendants of the rotation oneshot.
-3. The launcher never issues any stop command at all: the only systemctl
-   invocation in skfleet-rotate.py is list-units, and no kill-session,
-   kill-server, or systemctl stop path exists, so one worker's stop can never
-   reach a different generation or lane.
+3. The launcher has exactly ONE stop path, _stop_wedged_unit, and it refuses
+   any name that is not one lane plus one 8-hex generation before reaching a
+   subprocess, so one worker's stop can never reach a different generation or
+   lane. This clause used to read "the launcher never issues any stop command
+   at all"; that was true and sufficient until the wedged-worker reaper landed
+   on 2026-09-19, and the proof is now by constraint rather than by absence.
 4. The legacy per-card tmux session no longer exists, so the old cross-session
    kill blast radius is gone by construction.
 
@@ -111,19 +113,92 @@ def test_stopping_one_worker_stops_its_descendants_and_no_sibling() -> None:
     )
 
 
-def test_launcher_issues_no_stop_against_other_workers() -> None:
-    """The only systemctl call is a read-only list-units; no stop path exists."""
+def _owning_function(tree: ast.Module) -> dict[int, str]:
+    """Map each node id to the module-level function that contains it."""
+    owner: dict[int, str] = {}
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef):
+            for child in ast.walk(node):
+                owner.setdefault(id(child), node.name)
+    return owner
+
+
+def test_the_only_stop_path_is_fenced_to_one_exact_worker_unit() -> None:
+    """A stop may exist, but only against one validated lane and generation.
+
+    This assertion used to be "no systemctl line anywhere contains stop".
+    That was a proof by ABSENCE, and it was the right proof while nothing in
+    the launcher had any reason to stop a worker.
+
+    On 2026-09-19 one did: a worker held card 139ec63d for 6h18m having
+    written nothing, and ending it requires stopping its unit.  So the proof
+    changes from absence to CONSTRAINT.  The property being protected is
+    unchanged and is the one AC 2 of card 280e3c16 actually cares about: a
+    stop can never reach a different generation or a different lane.
+
+    It is now enforced three ways rather than by there being no stop at all:
+
+    1. every ``systemctl ... stop`` in the launcher lives in exactly one
+       function, ``_stop_wedged_unit``;
+    2. that function's FIRST statement is a guard that returns False unless
+       the name matches ``_WORKER_UNIT_RE``, which pins one lane and one
+       8-hex generation, so an unvalidated name cannot reach a subprocess;
+    3. the stop targets the bound ``unit`` name, never a pattern or a glob.
+    """
     source = _source()
+    tree = ast.parse(source)
+    owner = _owning_function(tree)
 
-    systemctl_calls = re.findall(r"systemctl[^\n]*", source)
-    assert systemctl_calls, "worker unit discovery must remain present"
-    for line in systemctl_calls:
-        assert "stop" not in line, f"launcher must never stop units: {line}"
+    stop_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.List)
+        and {element.value for element in node.elts if isinstance(element, ast.Constant)}
+        >= {"systemctl", "stop"}
+    ]
+    assert stop_calls, "the wedged-worker stop path has vanished"
+    for node in stop_calls:
+        assert owner.get(id(node)) == "_stop_wedged_unit", (
+            "a systemctl stop appeared outside the single fenced stop path, "
+            f"in {owner.get(id(node))}"
+        )
+        # The target is the validated unit NAME, never a pattern or a glob.
+        target = node.elts[-1]
+        assert isinstance(target, ast.Name) and target.id == "unit", ast.dump(target)
 
-    # The legacy tmux kill blast radius is gone by construction.
+    stopper = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_stop_wedged_unit"
+    )
+    body = [node for node in stopper.body if not _is_docstring(node)]
+    guard = body[0]
+    assert isinstance(guard, ast.If), "the fence is not the first thing that runs"
+    assert "fullmatch" in {
+        child.attr for child in ast.walk(guard.test) if isinstance(child, ast.Attribute)
+    }
+    assert "_WORKER_UNIT_RE" in {
+        child.id for child in ast.walk(guard.test) if isinstance(child, ast.Name)
+    }
+    assert any(
+        isinstance(node, ast.Return)
+        and isinstance(node.value, ast.Constant)
+        and node.value.value is False
+        for node in guard.body
+    ), "the fence does not fail closed"
+
+    # Unit DISCOVERY is still read-only, and still present.
+    systemctl_lines = re.findall(r"systemctl[^\n]*", source)
+    assert any("list-units" in line for line in systemctl_lines)
+
+    # The legacy tmux kill blast radius is still gone by construction.
     assert "kill-session" not in source
     assert "kill-server" not in source
     assert '["tmux","new-session"' not in source
+
+
+def _is_docstring(node: ast.stmt) -> bool:
+    return isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
 
 
 def test_worker_scope_is_lane_and_generation_only() -> None:

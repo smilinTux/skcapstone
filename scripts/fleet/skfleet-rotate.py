@@ -25,10 +25,14 @@ from skcapstone.fleet.gateway_failure import (
 )
 from skcapstone.fleet.worker_watchdog import (
     DEFAULT_PROGRESS_TIMEOUT_S,
+    DEFAULT_WEDGE_TIMEOUT_S,
+    WEDGE_ACTUATING_STATES,
     ProgressObservation,
     StartupObservation,
     classify_progress,
+    classify_wedge,
     startup_actuation_fenced,
+    wedge_actuation_fenced,
 )
 from skcapstone.fleet.worker_liveness_runtime import run_production_cycle
 from skcapstone.coord_eligibility import leaf_eligibility_counts
@@ -3055,17 +3059,20 @@ def _report_worker_progress(session_names, units=(), now=None):
             (item for item in LANES if session.startswith(item["prefix"])), None
         )
         if lane is not None:
-            workers.setdefault(session[len(lane["prefix"]):], (lane, session))
+            workers.setdefault(session[len(lane["prefix"]):],
+                               (lane, session, ""))
     for unit in units or ():
         lane = next(
             (item for item in LANES if item["name"] == unit.get("lane")), None
         )
         cid = str(unit.get("card") or "")
         if lane is not None and cid:
-            workers.setdefault(cid, (lane, lane["prefix"] + cid))
-    for cid, (lane, session) in sorted(workers.items()):
+            workers.setdefault(cid, (lane, lane["prefix"] + cid,
+                                     str(unit.get("unit") or "")))
+    records = []
+    for cid, (lane, session, unit_name) in sorted(workers.items()):
         try:
-            _fresh_owner, _fresh_ts, fresh_revision = _current_claim_identity_fresh(cid)
+            _fresh_owner, fresh_ts, fresh_revision = _current_claim_identity_fresh(cid)
             receipt = _read_admission_receipt(_admission_lock_path(HOME, cid)) or {}
             local = (receipt.get("host") == HOST
                      and receipt.get("session") == session)
@@ -3090,25 +3097,250 @@ def _report_worker_progress(session_names, units=(), now=None):
                 datetime.datetime.fromtimestamp(
                     progress_ts, datetime.timezone.utc).isoformat()
                 if progress_ts is not None else None)
-            state = classify_progress(
-                ProgressObservation(
-                    owner=owner, card_id=cid, session_id=session,
-                    claim_revision=claim_revision,
-                    expected_claim_revision=fresh_revision or "",
-                    progress_at=progress_at, session_alive=True),
-                now=now_dt)
+            observation = ProgressObservation(
+                owner=owner, card_id=cid, session_id=session,
+                claim_revision=claim_revision,
+                expected_claim_revision=fresh_revision or "",
+                progress_at=progress_at, session_alive=True)
+            state = classify_progress(observation, now=now_dt)
             age = ("none" if progress_ts is None
                    else str(int(max(0, now - progress_ts))))
+            claim_age = (now - fresh_ts) if fresh_ts else None
+            # A truncated scan did not find the newest write, it found the
+            # newest of a bounded prefix, so it can UNDER-report freshness.
+            # Harmless in a report, fatal in a kill, so a truncated scan is
+            # refused for actuation outright rather than trusted.
+            wedge = ("wedge-unmeasured" if truncated else classify_wedge(
+                observation, now=now_dt, claim_age_s=claim_age,
+                receipt_local=local))
             log(d, "WORKER_PROGRESS|%s|%s|%s|owner=%s|claim_revision=%s|"
                    "state=%s|progress_age_s=%s|timeout_s=%d|"
                    "source=workspace-mtime|scanned=%d|truncated=%s|receipt=%s|"
-                   "actuation=report-only" %
+                   "wedge=%s|wedge_timeout_s=%d|actuation=%s" %
                 (HOST, session, cid, owner, claim_revision, state, age,
                  int(DEFAULT_PROGRESS_TIMEOUT_S), scanned,
-                 str(truncated).lower(), "local" if local else "absent"))
+                 str(truncated).lower(), "local" if local else "absent",
+                 wedge, int(DEFAULT_WEDGE_TIMEOUT_S), _wedge_mode() or "off"))
+            records.append({
+                "card": cid, "session": session, "unit": unit_name,
+                "owner": owner, "claim_revision": claim_revision,
+                "expected_claim_revision": fresh_revision or "",
+                "state": state, "wedge": wedge, "observation": observation,
+                "progress_at": progress_ts, "progress_age_s": age,
+                "claim_age_s": claim_age, "claim_ts": fresh_ts,
+                "receipt_local": local, "truncated": truncated,
+            })
         except (OSError, ValueError, TypeError, KeyError) as exc:
             log(d, "WORKER_PROGRESS_UNAVAILABLE|%s|%s|%s|%s" %
                 (HOST, session, cid, type(exc).__name__))
+    return records
+
+
+
+# ---- the third release path: a worker that is up and producing nothing -----
+# reap_dead_claims() returns a claim only when every authoritative host reports
+# the worker ABSENT, and _expire_idle_claims() acts on an absolute idle
+# deadline. Neither can see the failure measured on 2026-09-19: card 139ec63d
+# held for 6h18m by a worker that was entirely present and doing nothing.
+#
+#   workspace writes in the last 4h   0
+#   pi process                        alive, 0.0% CPU, state Sl
+#   worker stdout log                 0 bytes
+#   wrapper beat                      disposition=RUNNING, age 39s, for 6h18m
+#   systemd unit                      active
+#
+# The unit being active is why the absence path correctly skipped it: publish_live
+# lists the card as running, and `if cid in running: continue` is a deliberate
+# gate against reaping a working seat. The beat being fresh is why every
+# dashboard called it healthy: the beat is `while :; do ...; sleep N; done` in
+# the worker's bash shell, a sibling of `pi` rather than a signal from it, so it
+# stays fresh on a wedged worker by construction and cannot ever mean otherwise.
+#
+# This path is therefore the inverse of the absence path: it acts ONLY on
+# workers that are present, and it reads the one signal that separated working
+# from wedged in every case measured (2026-09-18 learnings, section 18) -- what
+# the worker WRITES. It keeps the same two non-negotiables as both other paths:
+# a CAS on the exact claim revision, and a fold re-read afterwards, because a
+# zero exit code is not proof the claim moved.
+_WEDGE_WRITER = "fleet-wedge-reaper"
+
+
+def _wedge_mode(env=None):
+    """Rollout gate. Default off: no scan is acted on until asked."""
+    env = os.environ if env is None else env
+    mode = str(env.get("SKFLEET_WEDGE_MODE", "")).strip().lower()
+    return mode if mode in ("report", "enforce") else ""
+
+
+def _stop_wedged_unit(unit, runner=None):
+    """Stop one transient worker unit and prove it is no longer active.
+
+    The unit name is validated against the worker pattern before it reaches a
+    subprocess: a record is assembled from systemd output and card ids, and an
+    unvalidated name here would be an arbitrary-unit stop.
+    """
+    if not unit or not _WORKER_UNIT_RE.fullmatch(unit):
+        return False
+    runner = runner or (lambda cmd: subprocess.run(
+        cmd, capture_output=True, text=True, timeout=120))
+    runner(["systemctl", "--user", "stop", unit])
+    check = runner(["systemctl", "--user", "is-active", "--quiet", unit])
+    return getattr(check, "returncode", 0) != 0
+
+
+def _record_wedge_outcome(record):
+    """Record WHY this claim was returned, with the evidence that proved it.
+
+    Written before the release and through the same canonical, idempotent
+    append the absence reaper uses.
+
+    The WHY lives in the LINK row, not in the verdict row, and that is not a
+    stylistic choice. Verified against a fresh-process CardStore fold on
+    2026-09-19: ``_OVERLAY_TO_STORE_ACTION`` in skcoord maps move, priority,
+    swimlane, labels, link, assign, unassign and describe, and **nothing
+    else**, so an ``action: "verdict"`` row appended to the card_events
+    overlay is silently DROPPED by the fold. The absence reaper's WORKER_DIED
+    row has the same property and always has. The verdict row is still
+    written, because direct readers of the evidence store (review_verdict.py
+    and friends) glob every ``*.jsonl`` and do read it, and because diverging
+    from the sibling path would be worse than matching it. But the audit trail
+    that survives the fold is the link, so the link carries everything a human
+    needs to check the decision without re-deriving it: the verdict, how long
+    the workspace had been silent, when it was last written, and how long the
+    claim had been held.
+    """
+    cid = str(record["card"])
+    owner = str(record["owner"])
+    revision = str(record["claim_revision"])
+    identity = "%s\0%s\0%s" % (cid, owner, revision)
+    verdict_id = hashlib.sha256(
+        ("fleet-wedge-verdict-v1\0" + identity).encode()).hexdigest()
+    evidence_id = hashlib.sha256(
+        ("fleet-wedge-evidence-v1\0" + identity).encode()).hexdigest()
+    # Stamped from the immutable claim time, not from now, so two hosts that
+    # reach this point independently write byte-identical rows.
+    stamp = datetime.datetime.fromtimestamp(
+        record["claim_ts"], tz=datetime.timezone.utc).isoformat()
+    last_write = ("none" if not record.get("progress_at") else
+                  datetime.datetime.fromtimestamp(
+                      record["progress_at"],
+                      tz=datetime.timezone.utc).isoformat())
+    detail = ("verdict=%s progress_age_s=%s last_write_at=%s "
+              "claim_age_s=%d wedge_timeout_s=%d source=workspace-mtime "
+              "owner=%s claim_revision=%s" %
+              (record["wedge"], record["progress_age_s"], last_write,
+               int(record["claim_age_s"] or 0), int(DEFAULT_WEDGE_TIMEOUT_S),
+               owner, revision))
+    rows = [
+        {"event_id": verdict_id, "card_id": cid, "action": "verdict",
+         "verdict": "WORKER_WEDGED", "writer": _WEDGE_WRITER, "ts": stamp},
+        {"event_id": evidence_id, "card_id": cid, "action": "link",
+         "link_key": "worker_wedged", "link_value": detail,
+         "writer": _WEDGE_WRITER, "ts": stamp},
+    ]
+    return _append_reaper_evidence(rows, _WEDGE_WRITER, cid, owner)
+
+
+def _reap_wedged_workers(records, runner=None, state=None, now=None,
+                         stopper=None, env=None, dry=None):
+    """Stop and release workers proven to be producing nothing.
+
+    Everything after ``records`` exists so the decision can be driven from a
+    test without executing this script's module scope or touching a live seat.
+    Returns the number of releases confirmed against the fold.
+    """
+    mode = _wedge_mode(env)
+    if not mode:
+        return 0                      # the default: observe, never act
+    candidates = [item for item in (records or ())
+                  if item.get("wedge") in WEDGE_ACTUATING_STATES]
+    if mode == "report":
+        # Phase 2, identical in shape to the claim TTL rollout. This list is
+        # the gate: a known-live worker appearing in it blocks enforcement
+        # rather than being stopped.
+        for item in candidates:
+            log(d, "WEDGE_WOULD_STOP|%s|%s|%s|verdict=%s progress_age_s=%s "
+                   "claim_age_s=%d unit=%s" %
+                (HOST, item["card"], item["owner"], item["wedge"],
+                 item["progress_age_s"], int(item["claim_age_s"] or 0),
+                 item["unit"] or "none"))
+        log(d, "WEDGE|%s|mode=report candidates=%d released=0"
+            % (HOST, len(candidates)))
+        return 0
+    dry = DRY if dry is None else dry
+    if dry:
+        log(d, "WEDGE|%s|mode=enforce dry_run candidates=%d released=0; "
+               "pass --go to mutate the board" % (HOST, len(candidates)))
+        return 0
+    runner = runner or (lambda cmd: subprocess.run(cmd, capture_output=True,
+                                                   text=True))
+    state = state or _claim_ttl_fresh_state
+    now = time.time() if now is None else now
+    now_dt = datetime.datetime.fromtimestamp(now, datetime.timezone.utc)
+    released = 0
+    for item in candidates:
+        cid = item["card"]
+        # The scan that produced this record ran earlier in the same tick and
+        # the worker may have finished and the card been re-claimed since. The
+        # generation is re-read from disk immediately before anything is done
+        # to it, exactly as the absence path does.
+        fresh_owner, fresh_ts, fresh_revision = _current_claim_identity_fresh(cid)
+        if (not fresh_owner or fresh_owner != item["owner"]
+                or fresh_revision != item["claim_revision"]):
+            log(d, "WEDGE_RECLAIMED|%s|%s|was %s revision %s now %s revision %s; "
+                   "leaving it alone this tick"
+                % (HOST, cid, item["owner"], item["claim_revision"],
+                   fresh_owner or "released", fresh_revision or "missing"))
+            continue
+        if not wedge_actuation_fenced(
+                item["observation"], owner=fresh_owner,
+                claim_revision=fresh_revision, now=now_dt,
+                claim_age_s=(now - fresh_ts) if fresh_ts else None,
+                receipt_local=item["receipt_local"]):
+            log(d, "WEDGE_FENCE_REFUSED|%s|%s|%s|the fence re-evaluated to a "
+                   "refusal against the fresh generation" %
+                (HOST, cid, fresh_owner))
+            continue
+        # Stop before recording: a stop that fails must not leave a
+        # WORKER_WEDGED verdict on a card whose worker is still running.
+        if not _stop_wedged_unit(item["unit"], stopper or runner):
+            log(d, "WEDGE_STOP_FAILED|%s|%s|%s|unit=%s still active or not a "
+                   "worker unit; claim left held" %
+                (HOST, cid, fresh_owner, item["unit"] or "none"))
+            continue
+        if not _record_wedge_outcome(item):
+            continue                  # never release without a durable reason
+        if state(cid) != "claimed":
+            # Stopping the unit ran the wrapper's own exact-generation release.
+            # The sanctioned owner returned its own claim, which is the best
+            # possible outcome, not a failure of this path.
+            released += 1
+            log(d, "WEDGE_RELEASED_BY_WRAPPER|%s|%s|%s|revision=%s "
+                   "progress_age_s=%s; unit stop ran the worker's own release"
+                % (HOST, cid, fresh_owner, fresh_revision,
+                   item["progress_age_s"]))
+            continue
+        result = runner(_claim_ttl_release_cmd(cid, fresh_owner, fresh_revision))
+        if getattr(result, "returncode", 0) != 0:
+            log(d, "WEDGE_RELEASE_FAILED|%s|%s|%s|%s"
+                % (HOST, cid, fresh_owner,
+                   (getattr(result, "stderr", "") or "").strip()[:120]))
+            continue
+        # A zero exit is not proof the claim moved. When the two stores
+        # disagree the CLI answers "Already released" and writes nothing.
+        if state(cid) == "claimed":
+            log(d, "WEDGE_INEFFECTIVE|%s|%s|%s|release reported success but the "
+                   "card is still claimed; CardStore and the legacy task store "
+                   "disagree, needs repair" % (HOST, cid, fresh_owner))
+            continue
+        released += 1
+        log(d, "WEDGE_RECLAIMED_STALE|%s|%s|%s|revision=%s verdict=%s "
+               "progress_age_s=%s claim_age_s=%d; workspace produced nothing"
+            % (HOST, cid, fresh_owner, fresh_revision, item["wedge"],
+               item["progress_age_s"], int(item["claim_age_s"] or 0)))
+    log(d, "WEDGE|%s|mode=enforce candidates=%d released=%d"
+        % (HOST, len(candidates), released))
+    return released
 
 
 _NON_IMPLEMENTATION_LABELS = {
@@ -4498,9 +4730,20 @@ def _record_reap_outcome(cid, owner, claim_revision, claim_ts):
             "ts": stamp,
         },
     ]
+    return _append_reaper_evidence(rows, _REAP_WRITER, cid, owner)
+
+
+def _append_reaper_evidence(rows, writer, cid, owner):
+    """Append canonical, idempotent card-event rows for one reaper writer.
+
+    Shared by the absence reaper and the wedge reaper so both record WHY a
+    claim was returned through one audited path. Byte-identical rows on every
+    host, a repeated attempt appends nothing, and a non-canonical or
+    duplicated existing line aborts rather than being papered over.
+    """
     try:
         os.makedirs(_EVID_DIR, exist_ok=True)
-        path = os.path.join(_EVID_DIR, _REAP_WRITER + ".jsonl")
+        path = os.path.join(_EVID_DIR, writer + ".jsonl")
         with open(path, "a+b") as fh:
             fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
             try:
@@ -4544,8 +4787,8 @@ def _record_reap_outcome(cid, owner, claim_revision, claim_ts):
                 fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
         return True
     except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
-        log(d, "REAP_OUTCOME_FAILED|%s|%s|%s|%s" %
-            (HOST, cid, owner, str(exc)[:120]))
+        log(d, "REAP_OUTCOME_FAILED|%s|%s|%s|%s|writer=%s" %
+            (HOST, cid, owner, str(exc)[:120], writer))
         return False
 
 
@@ -4575,7 +4818,18 @@ def reap_dead_claims():
         "duplicates=%d" %
         (HOST, health["sessions"], health["claims_exact"], health["mismatched"],
          health["duplicates"]))
-    _report_worker_progress(worker_sessions, active_worker_units())
+    # Neither the measurement nor the actuation may abort the cycle. Both run
+    # unguarded between the quorum gate above and _expire_idle_claims plus the
+    # review-and-close phases below, so an exception here would reap nothing
+    # AND silently drop the rest of the rotation. The same class of trap has
+    # already bitten this script twice (the eager GATED_EXIT_CODE import, and
+    # the claim TTL store read). A watchdog has no business breaking dispatch.
+    try:
+        _reap_wedged_workers(
+            _report_worker_progress(worker_sessions, active_worker_units()))
+    except Exception as exc:                          # noqa: BLE001
+        log(d, "WEDGE_PASS_FAILED|%s|%s|%s"
+            % (HOST, type(exc).__name__, str(exc)[:160]))
     if not oldest or nhosts < REAP_QUORUM:
         log(d, "REAP|%s|quorum_shortage reporting=%d known=%d need>=%d; reaped nothing"
             % (HOST, nhosts, known, REAP_QUORUM))
@@ -7457,6 +7711,16 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
     # one CardStore fence. The child must never release independently.
     _bi = _beat_interval()
     _bf_path = "~/.skcapstone/fleet/beats/" + name + ".json"
+    # The beat carries "proves" because "disposition":"RUNNING" is a hardcoded
+    # literal, not an observation. This loop is a SIBLING of pi, not a signal
+    # from it, so it keeps beating at full cadence on a worker that is doing
+    # nothing: measured 2026-09-19, card 139ec63d held 6h18m with zero
+    # workspace writes, pi alive at 0.0% CPU, and a beat age that never went
+    # above 39 seconds. Coupling the beat to pi's liveness would not have
+    # helped, because pi was alive the whole time. A timer can only ever prove
+    # that the shell has not exited, so the record now says exactly that and
+    # consumers are expected to read progress from what the worker WRITES
+    # (skcapstone.fleet.worker_watchdog.classify_progress) instead.
     child=(
         "beat() { while :; do "
         "trap 'trap - HUP INT TERM; "
@@ -7466,6 +7730,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         "echo '{\"owner\":\"%s\",\"card_id\":\"%s\",\"claim_revision\":\"%s\","
         "\"session_id\":\"%s\","
         "\"emitter\":\"wrapper\",\"disposition\":\"RUNNING\","
+        "\"proves\":\"shell-liveness\","
         "\"beat_at\":'$(date +%%s)',\"elapsed_s\":'$SECONDS'}' "
         "> %s.tmp 2>/dev/null && mv %s.tmp %s 2>/dev/null || true; "
         "sleep %s & wait $!; done; }; "

@@ -2,6 +2,112 @@
 
 ## Unreleased
 
+- **`docs/fleet/2026-09-19-learnings.md`**: the 2026-09-18/19 session written as
+  three recurring failure shapes rather than thirty incidents, contracts 20-37
+  continuing the numbering of the 2026-09-18 document (which is cited by number
+  from `tests/test_worker_progress_report.py`, `scripts/fleet/skfleet-rotate.py`
+  and `src/skcapstone/coord_slice_preflight.py`, so renumbering was not an
+  option). Shape 1, the mechanism that runs and processes nothing: a producer
+  that structurally cannot emit what its consumer requires, a named check with
+  no dispatch arm, a gate whose qualification has zero producers across 7,214
+  folded cards, and three silent-discard paths where a reader and its own health
+  check disagree about what "valid" means. Shape 2, the signal that lies: a
+  worker heartbeat that is a shell `while` loop with `disposition":"RUNNING"` as
+  a string literal (card `139ec63d` beat RUNNING for 6h19m43s against 0
+  workspace files ever and a 0-byte log), a version check comparing PEP 440
+  strings for equality, a claim counter charging worker deaths to the card, a
+  twelve-line log that is an alphabetical prefix rather than a sample, and
+  `coord gates` reporting a claimed card eligible because
+  `governed_review_gate_reasons` returns `()` above its own arguments. Shape 3,
+  the change that silently reverts: a systemd drop-in disabled by rename on
+  three hosts, a `default('6.2.2')` over a vault key nothing defines while
+  production hand-patches 11.1.2 into the render, an `app.ini.j2` rendering 30
+  keys against a live 52 (including two generated secrets), and five hosts
+  running three different wrapper builds for eight days. Four session claims are
+  corrected in place rather than repeated: the canonical "0 across 14 days and
+  1,660 rotations" is a `head -6` artifact of a journal retaining 9.8 days and
+  the lane last opened reviews on 2026-09-05; card `0339dc47` carries 22 link
+  rows at 22 timestamps, not six; the glm lane's 20-second death storm dates to
+  2026-09-03/04 and 09-09, before the rename, and its 503 cause is asserted
+  only by the prose in the drop-in that fixed it; and the sklegal hash gate's
+  "three weeks red" was the badge, not the check. Documentation only; no code,
+  no card, and no fleet configuration is touched.
+- **A wedged worker held a card for 6h18m and every liveness signal said it was
+  healthy.**
+  Measured on chi 2026-09-19, card `139ec63d`: zero workspace files written in
+  four hours, `pi` alive at 0.0% CPU in state `Sl`, a 0-byte worker stdout log,
+  and a wrapper beat reporting `disposition=RUNNING` at an age of 39 seconds
+  continuously for the entire 6h18m. All three existing release paths behaved
+  exactly as designed and none could see it: `reap_dead_claims` acts only when
+  every host reports the worker ABSENT and the unit was active, `_expire_idle_claims`
+  reads card events which a long task legitimately does not emit, and the liveness
+  reaper trusts beat freshness.
+
+  `classify_progress` has measured the one signal that separates working from
+  wedged (the newest write under the worker's own workspace) since 2026-09-18 and
+  was deliberately report-only pending a measurement day. That window is now
+  closed. 158 `WORKER_PROGRESS` records across 12 owners and 5 hosts show the two
+  populations are **bimodal**: `progress-fresh` tops out at 225s and the lowest
+  `progress-stale` observation ever seen is 53,545s, with nothing at all in
+  between. `DEFAULT_WEDGE_TIMEOUT_S` is 14400s, chosen from that gap: 23x above
+  the worst gap measured on a worker known to be working (628s) and 3.7x below the
+  lowest stale observation. Replaying all 158 records, exactly two of twelve owners
+  actuate and both were independently proven to be producing nothing; **zero
+  genuinely-working workers would have been killed**.
+
+  `_reap_wedged_workers` is a third release path, the inverse of the absence path
+  because it acts only on workers that are PRESENT. It stops the unit, records
+  `WORKER_WEDGED` on the card with the progress age, last write time and elapsed
+  hold, releases under a CAS on the exact claim revision, and confirms against a
+  fold re-read. `SKFLEET_WEDGE_MODE` gates it off by default, then `report`, then
+  `enforce`, exactly like the claim TTL rollout; `DRY` still gates the mutation.
+
+  A stale workspace and an absent workspace are NOT treated as the same evidence.
+  A stale mtime is a fact wherever the path came from. An absent workspace is a
+  fact only when the path came from the exact generation's admission receipt,
+  because otherwise the reporter inferred it from the owner name and a miss is a
+  measurement failure. This matters: the measurement caught a real worker
+  (`pi-glm-chiap03-ea911b09`) that reported `progress-missing` three times and then
+  `progress-fresh` nine times under the same claim revision, having taken about
+  fifteen minutes to populate its workspace. An empty workspace is a normal startup
+  state, so the absent case is deadlined rather than acted on when first seen.
+
+  What it will not catch is stated explicitly in
+  `docs/fleet/wedged-worker-actuation.md`, most importantly a **crashlooping**
+  worker: each relaunch touches the workspace, so it reads fresh forever.
+  `progress-fresh` is not proof of progress.
+- **The field named "child activity" was the supervisor's own timer.**
+  `worker_liveness_runtime.collect_observations` set
+  `child_activity_at=heartbeat_at`, so the CHILD's activity was defined as the
+  wrapper beat's stamp, and no independent measurement of the child existed
+  anywhere in the observation. It also made one signal look like two:
+  `_latest_activity` takes `max(heartbeat_at, child_activity_at)`, which reads
+  as corroboration and was a single source counted twice. Card `139ec63d` is
+  the cost: 6h19m43s held, 77 consecutive `worker_liveness=active` rows, and
+  zero files ever written to its workspace. The value is now `None`, which is
+  the fail-closed answer until a real measurement of the child exists.
+  `_latest_activity` still reads exactly the beat it always did, so nothing
+  downstream changes; what changes is that the field stops claiming to be
+  something it is not. Contract 24 of `docs/fleet/2026-09-19-learnings.md`: a
+  status field computed by the supervisor describes the supervisor.
+- **A wrapper beat is now `SHELL_ALIVE`, never `LIVE`.**
+  The deeper defect behind the hold above is a liveness signal that reports
+  RUNNING for a process doing nothing. The wrapper beat is a
+  `while :; do ...; sleep N; done` loop that is a SIBLING of `pi` rather than a
+  signal from it, and `"disposition":"RUNNING"` is a hardcoded literal, so it stays
+  fresh on a wedged worker by construction.
+
+  The beat was not made "honest" because it cannot be. Coupling it to `pi`'s
+  liveness would NOT have caught this incident, since `pi` was alive at 0.0% CPU
+  throughout, and having a 60-second shell loop scan the workspace is the expensive
+  thing `_workspace_progress_at` is bounded and early-exiting to avoid. A timer's
+  ceiling is that the shell has not exited. So the consumer stops lying instead:
+  `fleet_beat.classify()` returned `state=LIVE` for a fresh wrapper beat, which is
+  the incident in code form, and now returns `SHELL_ALIVE` with a note saying what
+  it proves. `LIVE` is reserved for agent beats, which carry a `progress_token`.
+  The beat record also gains a `proves` field so anything reading the files
+  directly is not misled either. Progress is read from what a worker WRITES.
+
 - **The Pi gateway sync filled the picker with models that cannot answer.**
   `/v1/models` is a catalog, not a liveness list. Probed against a live gateway
   on 2026-09-18: of the 108 ids advertised, 19 answered a one-token completion —
