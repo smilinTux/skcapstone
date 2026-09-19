@@ -429,3 +429,47 @@ def test_the_pass_cannot_abort_the_rotation_cycle():
     handlers = guarded[0].handlers
     assert len(handlers) == 1
     assert isinstance(handlers[0].type, ast.Name) and handlers[0].type.id == "Exception"
+
+
+# --- the fold is the only authority ------------------------------------------
+
+
+def test_the_reason_survives_a_card_store_fold(harness, tmp_path):
+    """Re-fold what was written, through CardStore, not through our own replay.
+
+    This is the check that catches the recurring failure in this codebase: a
+    writer that appends happily to a store nothing reads back.  Measured here
+    on 2026-09-19 and worth stating plainly, because it also applies to the
+    absence reaper's WORKER_DIED row: ``_OVERLAY_TO_STORE_ACTION`` maps move,
+    priority, swimlane, labels, link, assign, unassign and describe and
+    NOTHING else, so an ``action: "verdict"`` row in the card_events overlay
+    is silently dropped by the fold.  The link row is what survives, which is
+    why the link row is where the evidence lives.
+    """
+    from skcapstone.card_store import CardStore
+
+    home = tmp_path / ".skcapstone"
+    harness.ns["_EVID_DIR"] = str(home / "coordination" / "card_events")
+    harness.evidence_dir = home / "coordination" / "card_events"
+    harness.run()
+
+    card = home / "cards" / CARD
+    (card / "events").mkdir(parents=True, exist_ok=True)
+    (card / "core.json").write_text(json.dumps({"id": CARD, "title": "wedge", "status": "DOING"}))
+    store = CardStore(home)
+    folded = [*store._read_events(CARD), *store._legacy_events(CARD)]
+
+    links = [e for e in folded if e.get("action") == "link"]
+    assert len(links) == 1, folded
+    assert links[0]["link_key"] == "worker_wedged"
+    for expected in ("verdict=wedge-stale-confirmed", "progress_age_s=", "claim_age_s="):
+        assert expected in links[0]["link_value"]
+
+    # Pinned deliberately: if a later skcoord release starts folding verdict
+    # rows this fails, and that is a change worth noticing rather than a
+    # silent improvement.
+    assert not [e for e in folded if e.get("action") == "verdict"], (
+        "the fold now surfaces overlay verdict rows; the comment in "
+        "_record_wedge_outcome and the absence reaper's WORKER_DIED row "
+        "both need revisiting"
+    )

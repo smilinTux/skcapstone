@@ -3192,9 +3192,21 @@ def _record_wedge_outcome(record):
     """Record WHY this claim was returned, with the evidence that proved it.
 
     Written before the release and through the same canonical, idempotent
-    append the absence reaper uses. The link value carries the three numbers a
-    human needs to audit the decision without re-deriving it: how long the
-    workspace had been silent, when it was last written, and how long the
+    append the absence reaper uses.
+
+    The WHY lives in the LINK row, not in the verdict row, and that is not a
+    stylistic choice. Verified against a fresh-process CardStore fold on
+    2026-09-19: ``_OVERLAY_TO_STORE_ACTION`` in skcoord maps move, priority,
+    swimlane, labels, link, assign, unassign and describe, and **nothing
+    else**, so an ``action: "verdict"`` row appended to the card_events
+    overlay is silently DROPPED by the fold. The absence reaper's WORKER_DIED
+    row has the same property and always has. The verdict row is still
+    written, because direct readers of the evidence store (review_verdict.py
+    and friends) glob every ``*.jsonl`` and do read it, and because diverging
+    from the sibling path would be worse than matching it. But the audit trail
+    that survives the fold is the link, so the link carries everything a human
+    needs to check the decision without re-deriving it: the verdict, how long
+    the workspace had been silent, when it was last written, and how long the
     claim had been held.
     """
     cid = str(record["card"])
