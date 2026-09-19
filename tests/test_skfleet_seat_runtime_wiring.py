@@ -97,14 +97,28 @@ def test_mero_blocked_and_stale_states_fail_closed() -> None:
     assert complete < blocked < active < stale < waiting
 
 
-def test_rotation_uses_the_packaged_runtime_interpreter() -> None:
-    """The drop-in uses the wheel-owned interpreter and launcher."""
+def test_rotation_uses_the_deployed_runtime_interpreter() -> None:
+    """The drop-in uses the venv interpreter and the DEPLOYED launcher.
+
+    PR #591 (2026-09-09) set this to %h/.skenv/bin/skfleet-rotate.py, on the
+    rationale that a package upgrade must not leave the active dispatcher
+    outside the wheel. That migration never reached the hosts: measured on
+    chiap01/02/03/04/08 on 2026-09-19 via `systemctl --user show
+    skfleet-rotate.service -p ExecStart`, every host executes
+    %h/.local/bin/skfleet-rotate.py. The deployed drop-in on each host had
+    been hand-patched back and this tracked template was the copy that had
+    drifted, so the repo asserted one path while the fleet ran another.
+
+    The interpreter stays wheel-owned (%h/.skenv/bin/python3); only the
+    script path follows deployment. Those are separate questions and #591
+    was right about the first one.
+    """
 
     dropin = ROOT / "scripts/fleet/systemd/skfleet-rotate.service.d/seat-runtime-python.conf"
     assert dropin.read_bytes() == (
         b"[Service]\n"
         b"ExecStart=\n"
-        b"ExecStart=%h/.skenv/bin/python3 %h/.skenv/bin/skfleet-rotate.py --go\n"
+        b"ExecStart=%h/.skenv/bin/python3 %h/.local/bin/skfleet-rotate.py --go\n"
     )
 
 
