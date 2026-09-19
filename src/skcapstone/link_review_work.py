@@ -295,6 +295,13 @@ def reconcile_review_work(
                 link_key="candidate_evidence_sha256",
                 link_value=evidence_sha256,
             )
+            store.append_event(
+                card_id,
+                "move",
+                "link",
+                transition_id=f"link-review-column-{card_id}",
+                column="review",
+            )
         try:
             _persist_workspace_binding(store, card_id, repository, base_ref, base_revision)
         except ValueError as exc:

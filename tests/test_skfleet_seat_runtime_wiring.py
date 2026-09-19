@@ -5,6 +5,17 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 
 
+def test_link_prompt_requires_protected_merge_policy_and_exact_head() -> None:
+    """Link receives the same fail-closed contract as the pure resolver."""
+    source = (ROOT / "scripts/fleet/skfleet-rotate.py").read_text()
+
+    assert "LINK INTEGRATION PREFLIGHT:" in source
+    assert "resolve_protected_merge_method" in source
+    assert "squash, then rebase, then merge" in source
+    assert "--match-head-commit" in source
+    assert "If protected policy is unreadable" in source
+
+
 def test_rotation_wires_link_reviewer_and_mero_in_order() -> None:
     """Review launches use all three governed runtime stages."""
 
@@ -29,7 +40,7 @@ def test_dry_run_exits_before_link_writes() -> None:
     """A selector dry run never appends a recommendation or observation."""
 
     source = (ROOT / "scripts/fleet/skfleet-rotate.py").read_text()
-    loop = source.index("for _LANE,")
+    loop = source.index("for _pick_index,")
     dry = source.index("if DRY:", loop)
     assignment = source.index("_pool_v2_preclaim_handoff(", dry)
     assert dry < assignment

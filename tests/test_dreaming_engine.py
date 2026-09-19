@@ -146,3 +146,119 @@ class TestCallOllama:
 
         monkeypatch.setattr(d.http.client, "HTTPConnection", Bad)
         assert _bare_engine(DreamingConfig())._call_ollama("x") is None
+
+
+# --------------------------------------------------------------------------- #
+# Provider outage accounting - 2026-09-13
+#
+# An unreachable provider used to call _save_state(), which bumped dream_count
+# and stamped last_dream_at. That armed the 2h cooldown off a dream that never
+# happened and wrote no dream-log entry, so a 19-day outage looked like an idle
+# stretch instead of a failure.
+# --------------------------------------------------------------------------- #
+class TestProviderOutageIsNotADream:
+    @staticmethod
+    def _engine(tmp_path, monkeypatch):
+        monkeypatch.setenv("SKCAPSTONE_AGENT", "testagent")
+        memory = tmp_path / "agents" / "testagent" / "memory"
+        memory.mkdir(parents=True)
+        config = DreamingConfig()
+        config.enabled = True
+        engine = DreamingEngine(home=tmp_path, config=config, consciousness_loop=None)
+        monkeypatch.setattr(engine, "is_idle", lambda: True)
+        monkeypatch.setattr(engine, "cooldown_remaining", lambda: 0.0)
+        monkeypatch.setattr(engine, "_should_force_diversity", lambda: False)
+        monkeypatch.setattr(engine, "_gather_memories", lambda: ([{"content": "a"}], []))
+        monkeypatch.setattr(engine, "_call_llm", lambda prompt: None)
+        monkeypatch.setattr(engine, "_build_prompt", lambda *a, **k: "prompt")
+        return engine
+
+    def test_outage_reports_skipped_reason(self, tmp_path, monkeypatch):
+        engine = self._engine(tmp_path, monkeypatch)
+
+        result = engine.dream()
+
+        assert result.skipped_reason == "all LLM providers unreachable"
+
+    def test_outage_does_not_advance_dream_state(self, tmp_path, monkeypatch):
+        engine = self._engine(tmp_path, monkeypatch)
+        engine._state_path.write_text(
+            json.dumps({"dream_count": 568, "last_dream_at": "2026-08-25T07:11:51+00:00"})
+        )
+
+        engine.dream()
+
+        state = json.loads(engine._state_path.read_text())
+        assert state["dream_count"] == 568
+        assert state["last_dream_at"] == "2026-08-25T07:11:51+00:00"
+
+    def test_outage_does_not_arm_the_cooldown(self, tmp_path, monkeypatch):
+        engine = self._engine(tmp_path, monkeypatch)
+
+        engine.dream()
+
+        assert not engine._state_path.exists()
+
+    def test_outage_is_recorded_in_the_dream_log(self, tmp_path, monkeypatch):
+        engine = self._engine(tmp_path, monkeypatch)
+
+        engine.dream()
+
+        log = json.loads(engine._log_path.read_text())
+        assert log[-1]["skipped_reason"] == "all LLM providers unreachable"
+        assert log[-1]["insights"] == []
+
+
+# --------------------------------------------------------------------------- #
+# Anchor-seed enrichment must never stall the dream cycle
+#
+# Regression: dreams stopped for ~19 days (2026-08-25 -> 2026-09-13). The
+# daemon resolved an empty agent name, and `_build_anchor_seeds_context`
+# forwarded that "" straight into skmemory's `get_agent_paths`, which rejects
+# an empty profile id with "No valid registered memory profile is available".
+# The exception escaped _build_prompt() and killed every single dream run.
+# Anchor seeds are optional inspiration - they must degrade to "".
+# --------------------------------------------------------------------------- #
+class TestAnchorSeedsNeverStallDreaming:
+    def _engine(self, tmp_path, monkeypatch, agent_env):
+        monkeypatch.setenv("SKCAPSTONE_AGENT", agent_env)
+        return DreamingEngine(home=tmp_path, config=DreamingConfig())
+
+    def test_blank_agent_env_does_not_forward_empty_agent_id(self, tmp_path, monkeypatch):
+        """An unresolved agent name must become None, never ""."""
+        seen = {}
+
+        def fake_match_blooms(feb, agent=None, top_k=3):
+            seen["agent"] = agent
+            return []
+
+        def fake_match_entanglements(feb, agent=None, top_k=2):
+            return []
+
+        import skmemory.entanglements as ent
+        import skmemory.peaks as peaks
+
+        monkeypatch.setattr(peaks, "match_blooms_for_feb", fake_match_blooms)
+        monkeypatch.setattr(ent, "match_entanglements_for_feb", fake_match_entanglements)
+
+        engine = self._engine(tmp_path, monkeypatch, "")
+        engine._agent_name = ""  # the exact daemon state that caused the outage
+
+        assert engine._build_anchor_seeds_context(tmp_path) == ""
+        # "" is not a valid profile id; None means "resolve the active agent".
+        assert seen["agent"] is None
+
+    def test_anchor_seed_failure_degrades_instead_of_raising(self, tmp_path, monkeypatch):
+        """Any skmemory failure is optional-enrichment loss, not a dead dream."""
+
+        def boom(*args, **kwargs):
+            raise ValueError("No valid registered memory profile is available")
+
+        import skmemory.entanglements as ent
+        import skmemory.peaks as peaks
+
+        monkeypatch.setattr(peaks, "match_blooms_for_feb", boom)
+        monkeypatch.setattr(ent, "match_entanglements_for_feb", boom)
+
+        engine = self._engine(tmp_path, monkeypatch, "lumina")
+        assert engine._build_anchor_seeds_context(tmp_path) == ""

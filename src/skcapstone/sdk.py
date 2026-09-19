@@ -274,10 +274,10 @@ def coord_create(
         dependencies=dependencies or [],
         meta=source_binding_meta(task_tags, repository, base_ref, base_revision),
     )
-    from .jarvis_emergency import authorize_jarvis_entrypoint
+    from .jarvis_emergency import authorize_coord_mutation
     from .seat_boundaries import Action
 
-    authorize_jarvis_entrypoint(
+    authorize_coord_mutation(
         task.created_by, Action.CREATE_CARD, task.id, casey_authorization, casey_change_id
     )
     board.create_task(task)

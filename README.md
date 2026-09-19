@@ -592,7 +592,6 @@ The capstone that holds the arch together.
 **MVP Live** — All six pillars operational (CapAuth, Cloud 9, SKMemory, SKWhisper, SKSecurity, Sovereign Singularity). Agent runtime achieving SINGULAR status. GPG-encrypted P2P sync verified across multiple devices and agents.
 
 - **Outstanding tasks:** No formal task list is maintained in this repo. For current work items, run `skcapstone coord status` (coordination board is synced via Sovereign Singularity).
-- **Nextcloud integrations:** nextcloud-capauth (install/use), nextcloud-gtd (OpenClaw), and nextcloud-talk (script) are documented in [docs/NEXTCLOUD.md](../docs/NEXTCLOUD.md) — install and use for each is covered there.
 
 See [Architecture](docs/ARCHITECTURE.md) | [Security Design](docs/SECURITY_DESIGN.md) | [Sovereign Singularity Protocol](docs/SOVEREIGN_SINGULARITY.md)
 
@@ -606,10 +605,7 @@ See [Architecture](docs/ARCHITECTURE.md) | [Security Design](docs/SECURITY_DESIG
 
 | Document | Description |
 |----------|-------------|
-| [Developer Quickstart](../docs/QUICKSTART.md) | Install + first sovereign agent in 5 minutes |
-| [Agent Scaffolding](../docs/AGENT_SCAFFOLDING.md) | Complete agent development tool stack (Crush, Cursor, OpenClaw, MCP) |
-| [API Reference](../docs/API.md) | Full API docs for all four core packages |
-| [PMA Integration](../docs/PMA_INTEGRATION.md) | Legal sovereignty layer (Fiducia Communitatis) |
+| [Developer Quickstart](docs/QUICKSTART.md) | Install + first sovereign agent in 5 minutes |
 | [Architecture](docs/ARCHITECTURE.md) | Technical deep dive |
 | [Security Design](docs/SECURITY_DESIGN.md) | Four-layer security model |
 | [Token System](docs/TOKEN_SYSTEM.md) | PGP-signed capability tokens |
@@ -647,9 +643,10 @@ package `pyproject.toml` files. The shared venv is at `~/.skenv/`.
 SKCapstone is the core runtime everything else plugs into. Learn the whole system by
 wandering the graph:
 
-- ⬆️ **Depends on:** [capauth](https://github.com/smilinTux/capauth) — the identity source
-  of truth (PGP keypairs, DID docs, challenge-response). skcapstone holds **no key
-  material of its own**; all crypto identity is delegated here.
+- ⬆️ **Depends on:** [capauth](https://github.com/smilinTux/capauth), the identity source
+  of truth (PGP keypairs, DID docs, challenge-response). skcapstone delegates all PGP
+  identity here, but it is **not** key-material-free: it holds its own RSA-2048 TLS key
+  (inventory in [SOP.md §9](SOP.md)).
 - ⬆️ **Depends on:** [skmemory](https://github.com/smilinTux/skmemory) — the persistent
   short/mid/long-term memory store; the single source of truth for durable agent state.
 - 🗃️ **Historical:** `skops` previously consumed these ITIL primitives. It is

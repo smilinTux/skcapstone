@@ -114,6 +114,21 @@ def test_only_defaults_to_none_when_omitted(paths, monkeypatch) -> None:
     assert captured["only"] is None
 
 
+def test_installer_value_error_is_rendered_without_traceback(paths, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "skcapstone.fleet.cli.installer.run_install",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("unknown --only name")),
+    )
+    result = CliRunner().invoke(
+        fleet,
+        ["install", "--role", "control", "--apply", "--only", "bogus"],
+        env=_env(paths),
+    )
+    assert result.exit_code != 0
+    assert "Error: unknown --only name" in result.output
+    assert "Traceback" not in result.output
+
+
 # ------------------------------------------------------------- exit code ---
 
 

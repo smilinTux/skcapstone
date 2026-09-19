@@ -51,7 +51,7 @@ VALID_PRIORITIES = ("urgent", "normal", "fyi")
 COORD_SUBDIRS = ("skmail.d", "card_events", "locks", "tasks", "agents", "reviews")
 
 #: The bounded per-cycle unit ``bootstrap`` installs for the Niobe seat.
-#: Five of the six lifecycle seats ship one. Niobe shipped only ``-live``,
+#: Four of the five lifecycle seats ship one. Niobe shipped only ``-live``,
 #: which launches real agent runs, so an estate had no way to stage Niobe
 #: without turning dispatch on. ``seat_cycle_entrypoint --seat niobe`` runs
 #: the same bounded presence beat the other seats run, which is the safe
@@ -218,19 +218,19 @@ def _canonical(value: object) -> str:
 
 
 def seat_control_plane_document(host: str, estate: str) -> dict:
-    """Build the estate's six-seat control record for one elected host.
+    """Build the estate's five-seat control record for one elected host.
 
     Args:
-        host: The host this estate elects to run the six lifecycle seats.
+        host: The host this estate elects to run the five lifecycle seats.
         estate: The estate identifier, used only to label the revision so a
             record read out of context says which estate it came from.
 
     Returns:
-        A schema 1 control record pinning all six seats to ``host``.
+        A schema 1 control record pinning all five seats to ``host``.
     """
     return {
         "schema_version": 1,
-        "revision": f"{estate}-lifecycle-six-seat-v1",
+        "revision": f"{estate}-lifecycle-five-seat-v1",
         "active_host": host,
         "seats": {seat: [host] for seat in sorted(LIFECYCLE_SEATS)},
     }

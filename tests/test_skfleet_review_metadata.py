@@ -283,6 +283,7 @@ def test_changed_review_generation_gets_a_distinct_recommendation(tmp_path: Path
             initial_labels=["review", "parent-deadbeef"],
         )
     )
+    store.append_event("feedface", "move", "producer", column="review")
     core = {
         "links": {
             "producer_identity": "producer",

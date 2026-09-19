@@ -79,6 +79,39 @@ def test_backend_rejection_is_concise_and_non_secret():
     assert "Reply OK" not in str(error.value)
 
 
+def test_preflight_shares_remaining_deadline_across_both_requests():
+    calls, open_ = opener([{"id": "sk-qwen"}])
+    ticks = iter([100.0, 103.0])
+
+    resolve_and_preflight(
+        "http://gateway",
+        "sk-qwen",
+        timeout=12.0,
+        deadline=110.0,
+        clock=lambda: next(ticks),
+        opener=open_,
+    )
+
+    assert [timeout for _request, timeout in calls] == [10.0, 7.0]
+
+
+def test_preflight_exhausted_deadline_fails_closed_before_dispatch():
+    calls, open_ = opener([{"id": "sk-qwen"}])
+    ticks = iter([100.0, 110.0])
+
+    with pytest.raises(ValueError, match="gateway preflight unavailable: TimeoutError"):
+        resolve_and_preflight(
+            "http://gateway",
+            "sk-qwen",
+            timeout=12.0,
+            deadline=110.0,
+            clock=lambda: next(ticks),
+            opener=open_,
+        )
+
+    assert len(calls) == 1
+
+
 def test_automatic_preflight_precedes_workspace_and_claim():
     source = ROTATE.read_text(encoding="utf-8")
     probe = source.index("_route_preflight=resolve_and_preflight")

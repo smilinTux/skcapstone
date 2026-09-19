@@ -487,3 +487,80 @@ def test_render_disabled_section_is_separate_from_blind_even_if_unfrozen(tmp_pat
     disabled_section = text[disabled_idx:]
     assert "skbrain" not in blind_section
     assert "skbrain" in disabled_section
+
+
+# ── tri-state freeze display (ACTUATION_READINESS_AND_FREEZE_STANDARD R4) ───
+
+
+def _assess_kwargs(tmp_path):
+    return dict(
+        run=lambda argv, t: (0, "{}", ""),
+        adapters={},
+        problem_when_true=PWT,
+        skcapstone_home=tmp_path / "nohome",
+        itil_home=tmp_path / "nohome",
+    )
+
+
+def test_assess_absent_store_is_unprovisioned_not_active(tmp_path):
+    paths = _tmp_fleet(tmp_path)
+    assert not paths.freeze_path().exists()
+    res = eyes.assess(paths, **_assess_kwargs(tmp_path))
+    # is_frozen keeps its deliberate absent-as-not-frozen semantics ...
+    assert res["frozen"] is False
+    # ... but the DISPLAY status must be the distinct third state.
+    assert res["freeze_state"] == "unprovisioned"
+
+
+def test_render_absent_store_never_reads_as_healthy(tmp_path):
+    """An absent freeze store must never render a string a human reads as
+    "not frozen" / armed-and-ready. This is the exact collapse the standard
+    names, in the dangerous direction."""
+    paths = _tmp_fleet(tmp_path)
+    res = eyes.assess(paths, **_assess_kwargs(tmp_path))
+    text = eyes.render(res)
+    lowered = text.lower()
+    assert "not frozen" not in lowered
+    assert "freeze off" not in lowered
+    assert "UNPROVISIONED" in text
+    # And it says what that means: refusing, needs a human to provision.
+    assert "refuse" in lowered
+    assert "provision" in lowered
+
+
+def test_assess_corrupt_store_displays_frozen(tmp_path):
+    paths = _tmp_fleet(tmp_path)
+    paths.freeze_path().parent.mkdir(parents=True, exist_ok=True)
+    paths.freeze_path().write_text("{this is not json")
+    res = eyes.assess(paths, **_assess_kwargs(tmp_path))
+    # Corrupt fails closed: is_frozen True, and the display agrees.
+    assert res["frozen"] is True
+    assert res["freeze_state"] == "frozen"
+    assert "FROZEN" in eyes.render(res)
+
+
+def test_render_three_freeze_states_are_distinct(tmp_path):
+    human = store.Writer(role="operator", node="cli", identity="chef")
+
+    def headline(name, provision):
+        paths = FleetPaths(root=tmp_path / name / "fleet")
+        provision(paths)
+        res = eyes.assess(paths, **_assess_kwargs(tmp_path))
+        return eyes.render(res).splitlines()[0], res["freeze_state"]
+
+    absent_line, absent_state = headline("absent", lambda p: None)
+    frozen_line, frozen_state = headline(
+        "frozen", lambda p: store.set_frozen(p, True, writer=human, reason="drill")
+    )
+    active_line, active_state = headline(
+        "active", lambda p: store.set_frozen(p, False, writer=human)
+    )
+
+    assert absent_state == "unprovisioned"
+    assert frozen_state == "frozen"
+    assert active_state == "active"
+    # Three states, three visibly different headlines.
+    assert len({absent_line, frozen_line, active_line}) == 3
+    assert "UNPROVISIONED" in absent_line
+    assert "FROZEN" in frozen_line
+    assert "active" in active_line

@@ -27,6 +27,27 @@ registry artifact selected by a fresh install contains the required API. A
 local source overlay has the same limitation. Do not publish skcapstone while
 the minimum required skcoord artifact is unavailable or unverified.
 
+## Changelog fragments, and why there is no "changelog build" step
+
+Entries land as `changelog.d/<slug>.md` fragments, one per PR, so concurrent PRs
+never conflict on a shared `CHANGELOG.md`. `python scripts/changelog_fragments.py`
+folds pending fragments into the `## Unreleased` section and deletes them.
+
+**There is no required cadence for running it, and it is not wired into CI.** That
+is deliberate and it is why this repo uses a local script instead of towncrier or
+scriv: both are built around a discrete release moment at which `build` runs, and
+this repo has none. As the next section describes, `publish.yml` cuts the next
+patch tag on *every* merge to `main`, so "assemble at release time" would mean
+"assemble on every merge", which is just the shared-file conflict again wearing a
+build step. Fold the fragments when the directory gets noisy, or when you are
+hand-cutting a minor or major version and want the notes collected under it.
+
+The script refuses to run if `CHANGELOG.md` contains more than one
+`## Unreleased` heading. It carried two identical ones for months, which made a
+naive "insert after the heading" ambiguous and broke at least one insert.
+
+---
+
 ## skcapstone: the tag is cut FOR you
 
 `.github/workflows/publish.yml` has a `tag` job gated on
@@ -97,3 +118,18 @@ Pushing a `v*` tag publishes to PyPI, and PyPI has no delete API (the manage UI
 is the only recourse, and it will not free the version number). Everything else
 here is recoverable. Treat the tag push as the point of no return, not the
 merge.
+
+## A cut release is not a deployed one
+
+Everything above ends at PyPI. It says nothing about which fleet host is
+actually running the tag once it is up: three different `skmail` binaries
+sat across five hosts, and `pip show skcapstone` agreed with `__version__`
+on every one of them throughout. Once a host has installed a release,
+`skcapstone fleet node drift` compares its actual content and live state
+against a fresh manifest built from a checkout, rather than trusting a
+version string. `skcapstone fleet rollout` and `skcapstone fleet rollback`
+then get a release onto (or back off of) the fleet's hosts, one node at a
+time, gated by that same check, dry run by default. See
+[`docs/fleet/rollout-drift.md`](fleet/rollout-drift.md). All three are
+human-invoked: nothing here is scheduled, and cutting a release still does
+not put it on any host by itself.

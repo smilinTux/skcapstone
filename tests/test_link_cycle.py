@@ -15,12 +15,14 @@ from skcapstone.link_cycle import (
     recommend_one_reviewer,
     validate_handoff,
 )
+from skcapstone.link_merge_authority import ProtectedMergePolicy
 from skcapstone.seat_boundaries import BoundaryError
 
 HEAD = "a" * 40
 BASE = "b" * 40
 HASH = "c" * 64
 GENERATION = "generation-7"
+POLICY = ProtectedMergePolicy(repository_allowed=("merge", "squash"), branch_allowed=("squash",))
 
 
 def pr(number: int = 1, **changes) -> PullRequestObservation:
@@ -259,11 +261,20 @@ def test_handoff_rejects_retargeted_reviewer_identity() -> None:
 
 
 def test_terminal_pass_joins_to_exact_head_and_generation() -> None:
-    result = join_review_evidence(pr(), evidence())
+    result = join_review_evidence(pr(), evidence(), POLICY)
     assert result.classification == "merge-eligible"
     assert result.eligible
+    assert result.merge_method == "squash"
     assert result.authority == "recommendation-only"
     assert len(result.evidence_sha256) == 64
+
+
+def test_terminal_pass_without_protected_policy_fails_closed() -> None:
+    result = join_review_evidence(pr(), evidence())
+
+    assert not result.eligible
+    assert result.merge_method is None
+    assert "merge-policy-unavailable" in result.failures
 
 
 @pytest.mark.parametrize(
