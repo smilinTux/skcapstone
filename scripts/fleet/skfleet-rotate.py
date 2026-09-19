@@ -6388,6 +6388,15 @@ owned=[x for x in pool if owns(x[2])]
 # Source-only logical-route cards belong to the Niobe builder path. Remove them
 # from every regular host before any lane can claim them, then let only the host
 # carrying Niobe's public placement publish the remote request.
+#
+# Withhold only what the builder can actually take. Withholding a candidate the
+# builder will NEVER take hands it to nobody: measured on chi 2026-09-19, all
+# five hosts logged owned=0 under reason=builder-path-withheld with 65 free
+# seats between them. builder_dispatch.durable_decline() names the refusals
+# rooted in the card rather than in fleet capacity, and only those are released
+# back to this host's lanes. A capacity refusal stays withheld, because it flips
+# without this host seeing it and the release would race a lane against a
+# builder for one claim. See partition_withheld() for the full split.
 _builder_candidates = [
     candidate
     for candidate in pool
@@ -6396,10 +6405,31 @@ _builder_candidates = [
     )
 ]
 _builder_candidate_ids = {candidate[2] for candidate in _builder_candidates}
-_builder_withheld_ids = [
-    candidate[2] for candidate in owned if candidate[2] in _builder_candidate_ids
+_builder_candidate_rows = {candidate[2]: candidate for candidate in _builder_candidates}
+
+
+def _builder_decline_reason(card_id):
+    """Return why the Niobe path would refuse one owned candidate, or None."""
+    candidate = _builder_candidate_rows[card_id]
+    return builder_dispatch.decline_reason(
+        default_fleet_paths(), dict(candidate[3], id=candidate[2]), candidate[4]
+    )
+
+
+_builder_withheld_ids, _builder_released = builder_dispatch.partition_withheld(
+    [candidate[2] for candidate in owned if candidate[2] in _builder_candidate_ids],
+    _builder_decline_reason,
+)
+_builder_withheld_set = set(_builder_withheld_ids)
+for _released_id, _released_reason in _builder_released:
+    log(d, "BUILDER_RELEASED_TO_LANE|%s|%s|reason=%s"
+        % (HOST, _released_id, _released_reason))
+owned = [
+    candidate
+    for candidate in owned
+    if candidate[2] not in _builder_candidate_ids
+    or candidate[2] in _builder_withheld_set
 ]
-owned = [candidate for candidate in owned if candidate[2] not in _builder_candidate_ids]
 
 # Niobe may place one generic medium source card on a Ready builder standby.
 # The remote node claims the card itself, so the CardStore fence remains the
