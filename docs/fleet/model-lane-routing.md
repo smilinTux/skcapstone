@@ -11,7 +11,7 @@ The rotation dispatches each claimable card to one lane, cheapest first:
 |------|---------------|---------------|-------|
 | qwen | `SKFLEET_QWEN_MODEL` (default `qwen3.8-27b-huihui-abliterated-q4_k_m`) | `SKFLEET_QWEN_TARGET` | Local free tier. Heavy titles (production, release, migration, schema, architecture, `[HUMAN]`, `[XL]`) are excluded by `qwen_suitable`. |
 | glm | `SKFLEET_GLM_MODEL` (default `sk-glm-s`), overridden per card by level routing below | `SKFLEET_GLM_TARGET` | One shared Z.ai connection serves the whole estate. Logical routes prevent provider fallback. |
-| codex | `sk-codex` | `SKFLEET_TARGET` | Flat plan quota. |
+| codex | `SKFLEET_CODEX_LANE_MODEL` (default `sk-codex-mid`) | `SKFLEET_TARGET` | Flat plan quota. |
 | escalate | `SKFLEET_ESC_MODEL` (default `gpt-5.6-sol`) | `SKFLEET_ESC_TARGET` | Only capability-escalated cards. |
 
 ## GLM level routing
@@ -193,8 +193,14 @@ ramp (exactly N requests succeed then the rest 429, five independent bursts):
 
 | Family | Models | Account limit | Gateway cap |
 |--------|--------|---------------|-------------|
-| coding | kimi-for-coding, kimi-for-coding-highspeed | 30 | 28 |
-| k3 | k3, k3-256k | 16 | 14 |
+| coding | kimi-for-coding, kimi-for-coding-highspeed | 30 | see registry |
+| k3 | k3, k3-256k | 16 | see registry |
+
+The **account limit** column is a property of the Kimi subscription. The **gateway cap**
+is an estate setting on chiap01 and is declared once, in
+[`SETTINGS-REGISTRY.md`](./SETTINGS-REGISTRY.md) §2 — the caps this file used to name
+inline were an intended design that was never deployed, and they sat here reading as
+current for weeks. Read the registry.
 
 Because the limits are per family, the subscription is declared as TWO
 backend stanzas over the same endpoint and credential file, each with its own
@@ -207,14 +213,14 @@ capacity domain:
     credentials_path: ~/.kimi-code/credentials/<env>.json
     models: [kimi-for-coding, kimi-for-coding-highspeed]
     concurrency:
-      kimi-coding: { max: 28, maxQueue: 400 }
+      kimi-for-coding: { max: <see registry>, maxQueue: <see registry> }
   kimi-k3:
     url: https://api.kimi.ai/coding/v1
     auth_type: kimi_oauth
     credentials_path: ~/.kimi-code/credentials/<env>.json
     models: [k3, k3-256k]
     concurrency:
-      kimi-k3: { max: 14, maxQueue: 400 }
+      kimi-k3: { max: <see registry>, maxQueue: <see registry> }
 ```
 
 pi and opencode declare all four model ids under the skgateway provider

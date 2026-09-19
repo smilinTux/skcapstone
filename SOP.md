@@ -779,7 +779,7 @@ checks:
   - name: glm size levels and kimi models are still what section 6 documents
     run: grep -qF '_GLM_LEVEL_DEFAULTS={"S":"sk-glm-s","M":"sk-glm-m","L":"sk-glm-l","XL":"sk-glm-l"}' scripts/fleet/skfleet-rotate.py && grep -qF '"k3" if match and match.group(1)=="XL" else "kimi-for-coding"' scripts/fleet/skfleet-rotate.py
   - name: settings registry exists and is the one place fleet/gateway settings are declared
-    run: test -f docs/fleet/SETTINGS-REGISTRY.md && grep -qF 'Where a new setting goes' docs/fleet/SETTINGS-REGISTRY.md
+    run: R=docs/fleet/SETTINGS-REGISTRY.md; test -f $R && grep -qxF '## Where a new setting goes' $R && grep -qxF '## 1. Repo facts — CI-asserted, never hand-drifted' $R && grep -qxF '## 2. Estate facts — measured, not in this repo, not CI-reachable' $R && grep -qxF '## 3. Derived artifacts — never hand-edit' $R && grep -qF 'A number in prose with no assertion behind it is a defect.' $R
   - name: builder ceiling - the code constant and the settings registry state the same number
     run: C=$(grep -oP '^BUILDER_CAPACITY = \K[0-9]+' src/skcapstone/fleet/builder_dispatch.py); D=$(grep -F 'BUILDER_CAPACITY' docs/fleet/SETTINGS-REGISTRY.md | grep -oP '\*\*\K[0-9]+(?=\*\*)'); test -n "$C" && test "$C" = "$D"
   - name: codex lane model - the dispatcher default and the settings registry agree
@@ -798,4 +798,10 @@ checks:
     run: test $(grep -cE '^Re-measure: ' docs/fleet/SETTINGS-REGISTRY.md) -ge 3
   - name: the three no-default fleet env vars still have no default in the dispatcher
     run: grep -qxF 'TARGET=_required_lane_target("SKFLEET_TARGET")' scripts/fleet/skfleet-rotate.py && grep -qxF 'GLM_TARGET=_required_lane_target("SKFLEET_GLM_TARGET")' scripts/fleet/skfleet-rotate.py && grep -qF '"SKFLEET_GATEWAY_URL is required"' scripts/fleet/skfleet-rotate.py
+  - name: no document contradicts ITSELF on a registered fact (the table-versus-prose bug)
+    run: python3 scripts/docs/check_self_consistency.py
+  - name: the codex lane model is never written as the bare sk-codex that disagreed with its own file
+    run: ! ./scripts/docs/prose_grep.sh '`sk-codex`' docs/ SOP.md README.md
+  - name: kimi gateway ceilings are declared in the settings registry and nowhere else
+    run: ! ./scripts/docs/prose_grep.sh 'kimi[^.]{0,40}max: *(28|14)([^0-9]|$)|max: *(28|14)[^.]{0,40}kimi' docs/ SOP.md README.md
 -->

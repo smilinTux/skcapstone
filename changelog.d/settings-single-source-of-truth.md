@@ -24,3 +24,20 @@
   rather than corrected in place — an estate number in a repo doc is a copy that rots by
   construction. The rule is one paragraph in `CONTRIBUTING.md`: a number in prose with
   no assertion behind it is a defect.
+
+- **A document can no longer contradict itself on a registered fact.** The original
+  defect was not a doc disagreeing with the code — it was a doc disagreeing with
+  *itself*, table versus prose, three paragraphs apart. `scripts/docs/check_self_consistency.py`
+  registers a fact name and a narrow regex, extracts every value that fact is given
+  within a single file, and fails when they disagree. Generic prose contradiction
+  detection is not tractable and this deliberately does not attempt it; a registered set
+  is. Proven against a faithful reconstruction of the original note (table `codex max
+  32`, prose `codex slots 4`): red, with both line numbers, and green once corrected.
+  Six facts registered to start. `docs/fleet/model-lane-routing.md` was in exactly this
+  state and is fixed: its lane table gave the codex default model as `sk-codex` while
+  the same file said `sk-codex-mid` twice further down, matching the code. Its kimi
+  gateway caps (`max: 28` / `max: 14`, `maxQueue: 400`) were an intended design that was
+  never deployed and had been reading as current for weeks — live on chiap01 is 5 and 4
+  at `maxQueue: 8` — so they now point at the registry, and an assertion forbids the
+  superseded pair from reappearing. The account-family limits (30 / 16), a genuinely
+  different fact, stay where they were measured.

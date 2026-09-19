@@ -19,7 +19,7 @@ either one alone fails `docs / docs-check`.
 | Fact | Authoritative declaration | Value |
 |---|---|---|
 | Builder dispatch ceiling for an untuned node | `BUILDER_CAPACITY` in `src/skcapstone/fleet/builder_dispatch.py` | **4** |
-| Per-node override for that ceiling | node spec label, set with `skfleet label <node> builder-capacity=N` | *(per node; see §2)* |
+| Per-node override for that ceiling | **does not exist on `main`.** Lands as the node spec label `builder-capacity` in PR #805 | *(none today: every node takes the default above)* |
 | Codex lane model default | `SKFLEET_CODEX_LANE_MODEL` fallback in `scripts/fleet/skfleet-rotate.py` | **sk-codex-mid** |
 | Qwen lane session target default | `SKFLEET_QWEN_TARGET` fallback, same file | **6** |
 | Kimi lane session target default | `SKFLEET_KIMI_TARGET` fallback, same file | **0** |
@@ -70,15 +70,18 @@ Re-measure: `curl -s http://chiap01:18790/queue` (authoritative at runtime), or
 | kimi-k3 | 4 | 8 |
 | chiap08-qwen38 | 2 | 8 |
 
+These are the **gateway** caps. Kimi's *account-family* limits (a different fact,
+measured by burst ramp) live in `docs/fleet/model-lane-routing.md`; do not read one for
+the other.
+
 Measured 2026-09-19. Total 53. `chiap01-qwen38` was removed 2026-09-19 (commented in
 place for restore). A pool change needs a **full restart**, not SIGHUP: `getPool` is a
 memoized singleton, so SIGHUP updates the config object and never rebuilds the ceilings.
 
-⚠️ **The codex block's own leading comment is stale.** It reads
-`Raised 4 -> 16 on 2026-08-25` above a value of `32`; the trailing line
-`step to 24 then 32 while clean` is what actually happened. The *value* is correct and
-authoritative. Do not reason from the comment. Fixing that comment is a live-config edit
-and is deliberately out of scope here.
+⚠️ **The codex block's own leading rationale comment names a superseded ceiling**, left
+behind from an intermediate step; its own trailing line records the step that actually
+landed. The `max:` **value** is correct and authoritative. Do not reason from the
+comment. Fixing it is a live-config edit and is deliberately out of scope here.
 
 ### chi per-host lane session targets
 
@@ -91,15 +94,19 @@ Re-measure: `ssh <host> 'systemctl --user show skfleet-rotate -p Environment'`.
 | chiap08 | 3 | 0 | 0 | 0 |
 | **estate total** | **18** | **0** | **6** | **1** |
 
-Measured 2026-09-19. These are estate configuration, not repo defaults.
+Measured 2026-09-19. These are estate configuration, not repo defaults. Only these three
+hosts carry a `skfleet-rotate` unit; the **five**-host tuple in the code
+(`_DEFAULT_ROTATION_HOSTS`) is the roster the dispatcher may scan, not the set that runs
+a lane. The two numbers are different facts and neither is wrong.
 
 ### per-node builder capacity labels
 
 Re-measure: `skfleet get node -o json | grep builder-capacity`, or
 `grep -l builder-capacity ~/.skcapstone/fleet/objects/node/*.json`.
 
-**No node carries a `builder-capacity` label as of 2026-09-19.** Every node therefore
-takes the repo default of 4 from §1.
+**No node carries a `builder-capacity` label as of 2026-09-19, and no code reads one:**
+`grep -rn builder-capacity src/ scripts/` returns nothing on `main`. The label is the
+mechanism PR #805 introduces. Every node takes the §1 default until it merges.
 
 ## 3. Derived artifacts — never hand-edit
 
