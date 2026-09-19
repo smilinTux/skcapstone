@@ -32,6 +32,67 @@
   only by the prose in the drop-in that fixed it; and the sklegal hash gate's
   "three weeks red" was the badge, not the check. Documentation only; no code,
   no card, and no fleet configuration is touched.
+- **A wedged worker held a card for 6h18m and every liveness signal said it was
+  healthy.**
+  Measured on chi 2026-09-19, card `139ec63d`: zero workspace files written in
+  four hours, `pi` alive at 0.0% CPU in state `Sl`, a 0-byte worker stdout log,
+  and a wrapper beat reporting `disposition=RUNNING` at an age of 39 seconds
+  continuously for the entire 6h18m. All three existing release paths behaved
+  exactly as designed and none could see it: `reap_dead_claims` acts only when
+  every host reports the worker ABSENT and the unit was active, `_expire_idle_claims`
+  reads card events which a long task legitimately does not emit, and the liveness
+  reaper trusts beat freshness.
+
+  `classify_progress` has measured the one signal that separates working from
+  wedged (the newest write under the worker's own workspace) since 2026-09-18 and
+  was deliberately report-only pending a measurement day. That window is now
+  closed. 158 `WORKER_PROGRESS` records across 12 owners and 5 hosts show the two
+  populations are **bimodal**: `progress-fresh` tops out at 225s and the lowest
+  `progress-stale` observation ever seen is 53,545s, with nothing at all in
+  between. `DEFAULT_WEDGE_TIMEOUT_S` is 14400s, chosen from that gap: 23x above
+  the worst gap measured on a worker known to be working (628s) and 3.7x below the
+  lowest stale observation. Replaying all 158 records, exactly two of twelve owners
+  actuate and both were independently proven to be producing nothing; **zero
+  genuinely-working workers would have been killed**.
+
+  `_reap_wedged_workers` is a third release path, the inverse of the absence path
+  because it acts only on workers that are PRESENT. It stops the unit, records
+  `WORKER_WEDGED` on the card with the progress age, last write time and elapsed
+  hold, releases under a CAS on the exact claim revision, and confirms against a
+  fold re-read. `SKFLEET_WEDGE_MODE` gates it off by default, then `report`, then
+  `enforce`, exactly like the claim TTL rollout; `DRY` still gates the mutation.
+
+  A stale workspace and an absent workspace are NOT treated as the same evidence.
+  A stale mtime is a fact wherever the path came from. An absent workspace is a
+  fact only when the path came from the exact generation's admission receipt,
+  because otherwise the reporter inferred it from the owner name and a miss is a
+  measurement failure. This matters: the measurement caught a real worker
+  (`pi-glm-chiap03-ea911b09`) that reported `progress-missing` three times and then
+  `progress-fresh` nine times under the same claim revision, having taken about
+  fifteen minutes to populate its workspace. An empty workspace is a normal startup
+  state, so the absent case is deadlined rather than acted on when first seen.
+
+  What it will not catch is stated explicitly in
+  `docs/fleet/wedged-worker-actuation.md`, most importantly a **crashlooping**
+  worker: each relaunch touches the workspace, so it reads fresh forever.
+  `progress-fresh` is not proof of progress.
+- **A wrapper beat is now `SHELL_ALIVE`, never `LIVE`.**
+  The deeper defect behind the hold above is a liveness signal that reports
+  RUNNING for a process doing nothing. The wrapper beat is a
+  `while :; do ...; sleep N; done` loop that is a SIBLING of `pi` rather than a
+  signal from it, and `"disposition":"RUNNING"` is a hardcoded literal, so it stays
+  fresh on a wedged worker by construction.
+
+  The beat was not made "honest" because it cannot be. Coupling it to `pi`'s
+  liveness would NOT have caught this incident, since `pi` was alive at 0.0% CPU
+  throughout, and having a 60-second shell loop scan the workspace is the expensive
+  thing `_workspace_progress_at` is bounded and early-exiting to avoid. A timer's
+  ceiling is that the shell has not exited. So the consumer stops lying instead:
+  `fleet_beat.classify()` returned `state=LIVE` for a fresh wrapper beat, which is
+  the incident in code form, and now returns `SHELL_ALIVE` with a note saying what
+  it proves. `LIVE` is reserved for agent beats, which carry a `progress_token`.
+  The beat record also gains a `proves` field so anything reading the files
+  directly is not misled either. Progress is read from what a worker WRITES.
 
 - **The Pi gateway sync filled the picker with models that cannot answer.**
   `/v1/models` is a catalog, not a liveness list. Probed against a live gateway
