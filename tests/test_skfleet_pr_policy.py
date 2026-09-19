@@ -251,9 +251,20 @@ def test_call_site_wires_pr_required_into_done_instructions() -> None:
     must be an already-folded label list (see
     test_pr_required_reads_the_labels_argument_not_raw_initial_labels), never
     a raw core.get("initial_labels") read reintroduced at the call site.
+
+    Fence moved deliberately 2026-09-18, not relaxed. The call now also
+    passes card_forbids_push(core), so the exact old one-argument literal can
+    no longer appear in the source. The thing this fence actually guards,
+    that pr_required is wired in with an already-folded label list, is
+    unchanged and still asserted below; the second argument is asserted with
+    it so the new handoff gate cannot be silently unwired either. Evidence
+    for the second argument's existence: 216 live chi cards whose own
+    criteria forbid push were being handed the push mandate anyway (see the
+    section at the end of this file).
     """
     source = ROTATE.read_text(encoding="utf-8")
-    assert "_worker_done_instructions(pr_required(core, _labels))" in source
+    assert "_worker_done_instructions(pr_required(core, _labels)," in source
+    assert "card_forbids_push(core))" in source
 
 
 def test_old_pr_mandate_string_removed_from_whole_file() -> None:
@@ -494,3 +505,210 @@ def test_branch_link_instruction_is_repo_qualified():
     assert "<repo>:<branch-name>" in text
     assert "skcapstone:fix/abc123" in text
     assert "coord link <card> commit_sha" in text
+
+
+# ---- The card's own criteria beat the generic push rail ----
+#
+# Measured 2026-09-18 on the chi CardStore via CardStore.fold in a fresh
+# process: 216 live (non-archived, backlog/ready/doing/review) cards carry
+# acceptance criteria or a description forbidding push in the card's own
+# words. Every one of them was also handed the standing DEFINITION OF DONE,
+# which made pushing mandatory. Both texts land in ONE file: verified in
+# ~/.skcapstone/fleet/logs/brief-009ed46e.txt on chiap08, where line 31 says
+# "Commit to a feature branch, push it, and open a PR. This is required, not
+# optional", line 94 says "Push the branch and open a PR with gh pr create",
+# and line 109 says "No deployment, migration, activation, probe, merge, or
+# push." That is a worker being given two mutually exclusive orders in one
+# prompt.
+#
+# The ruling: the card wins. Its criteria encode a deliberate per-card safety
+# decision (several of these cards audit live hosts, protected content, or
+# credentials) and the rail is a generic default. The resolution is NOT to
+# drop the push requirement everywhere, and NOT to let a no-push card push.
+# It is to give such a card a DIFFERENT, reachable definition of done: commit
+# locally, publish the candidate bytes to the replicating evidence store, and
+# record the SHA as an evidence link.
+
+
+def _load_push_detector() -> dict[str, object]:
+    """Extract card_forbids_push and its helpers, unmodified, from the source."""
+    tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
+    wanted_defs = {"card_forbids_push", "_clause_forbids_push"}
+    wanted_names = {
+        "_PUSH_NEGATION",
+        "_UNQUALIFIED_PUSH",
+        "_PUSH_TO_TRUNK",
+        "_CLAUSE_SPLIT",
+    }
+    nodes = [
+        item
+        for item in tree.body
+        if (isinstance(item, ast.FunctionDef) and item.name in wanted_defs)
+        or (
+            isinstance(item, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id in wanted_names
+                for target in item.targets
+            )
+        )
+    ]
+    namespace: dict[str, object] = {"re": re}
+    exec(compile(ast.Module(nodes, []), str(ROTATE), "exec"), namespace)
+    return namespace
+
+
+def test_card_forbids_push_detects_real_live_card_text() -> None:
+    """Every string here is copied verbatim from a live chi card, via fold."""
+    forbids = _load_push_detector()["card_forbids_push"]
+    for description in (
+        # brief-009ed46e.txt line 109, the card in the proof above.
+        "Independent review of exact source candidate fa0a050f from base"
+        " 4a471b1d. Evidence only. No deployment, migration, activation,"
+        " probe, merge, or push.",
+        "Source-only. No live database write, provider, Inbox, mailing,"
+        " deployment, push, or external action.",
+        "No edits, commits, pushes, protected paths, HammerTime Inbox"
+        " access, or external actions.",
+        "Do not deploy, push, invoke a provider on Matter content, access"
+        " Inbox, dispatch mail, or perform external action.",
+        "No runtime installation, live board migration, merge, or push" " occurs.",
+        "Review without repair, merge, push, runtime mutation, provider"
+        " traffic, or credential access.",
+    ):
+        assert forbids({"description": description}) is True, description
+
+
+def test_card_forbids_push_reads_acceptance_criteria_not_only_description() -> None:
+    """The prohibition lives in acceptance_criteria at least as often as in prose."""
+    forbids = _load_push_detector()["card_forbids_push"]
+    card = {
+        "description": "Audit the named boundary against current contracts.",
+        "acceptance_criteria": [
+            "Record PASS or FAIL with limitations.",
+            "No deploy, push, Inbox, protected-data access, or external action.",
+        ],
+    }
+    assert forbids(card) is True
+
+
+def test_card_forbids_push_ignores_a_force_push_only_prohibition() -> None:
+    """4 live cards forbid a force push while requiring one normal push.
+
+    Flipping those to the no-push handoff would take away the push their own
+    criteria demand, so the qualifier has to be honoured.
+    """
+    forbids = _load_push_detector()["card_forbids_push"]
+    card = {
+        "description": "No force push, rebase, other tag, manual upload.",
+        "acceptance_criteria": [
+            "Perform one normal non-force fast-forward push only.",
+        ],
+    }
+    assert forbids(card) is False
+
+
+def test_card_forbids_push_ignores_a_trunk_only_prohibition() -> None:
+    """ "No push to main" is the standing branch policy, not a no-push card."""
+    forbids = _load_push_detector()["card_forbids_push"]
+    assert (
+        forbids({"description": "No board mutation, deployment, release, merge, or push to main."})
+        is False
+    )
+
+
+def test_card_forbids_push_needs_the_negation_before_the_push_token() -> None:
+    """Verbatim live text where push precedes an unrelated negation."""
+    forbids = _load_push_detector()["card_forbids_push"]
+    assert (
+        forbids(
+            {
+                "description": "Tags are only cut from commits that are ancestors"
+                " of main; a push to a feature branch produces no tag and no PyPI"
+                " release"
+            }
+        )
+        is False
+    )
+
+
+def test_card_forbids_push_leaves_ordinary_cards_alone() -> None:
+    forbids = _load_push_detector()["card_forbids_push"]
+    assert forbids({"description": "Push the refreshed branch."}) is False
+    assert forbids({"description": "Fix the flaky test."}) is False
+    assert forbids({}) is False
+    assert forbids(None) is False
+    assert forbids({"description": None, "acceptance_criteria": None}) is False
+
+
+def test_no_push_card_never_receives_the_push_mandate() -> None:
+    """The whole point: the two orders must never arrive in one prompt."""
+    done_instructions = _load_done_instructions()["_worker_done_instructions"]
+    for pr_flag in (False, True):
+        text = done_instructions(pr_flag, True)
+        assert "Push the branch" not in text
+        assert "pushing is mandatory" not in text
+        assert "gh pr create" not in text
+        assert "the pushed branch plus" not in text
+
+
+def test_no_push_definition_of_done_is_actually_reachable() -> None:
+    """Removing the push mandate is not enough; DONE must still be attainable.
+
+    Everything the push rail protected has to survive the substitution: the
+    work outlives the worktree, another host can verify it, and the evidence
+    store can be queried for it. Only the transport changes.
+    """
+    done_instructions = _load_done_instructions()["_worker_done_instructions"]
+    text = done_instructions(False, True)
+    assert "DEFINITION OF DONE" in text
+    assert "Branch first" in text
+    assert "Commit as soon as the code is written" in text
+    assert "~/.skcapstone/evidence/work/<card_id>/" in text
+    assert "sha256" in text
+    assert "coord link <card> commit_sha" in text
+    assert "none" in text
+
+
+def test_no_push_definition_of_done_says_the_card_outranks_the_rail() -> None:
+    """A worker has to be told WHY, or it reads as an arbitrary exception."""
+    done_instructions = _load_done_instructions()["_worker_done_instructions"]
+    text = done_instructions(False, True)
+    assert "Do not push" in text
+    assert "blocked_on=card" in text
+
+
+def test_no_push_definition_of_done_protects_the_only_copy() -> None:
+    """With no push, the worktree holds the sole copy of the commit."""
+    done_instructions = _load_done_instructions()["_worker_done_instructions"]
+    text = done_instructions(False, True)
+    assert "do NOT delete your own workspace" in text
+
+
+def test_no_push_definition_of_done_has_no_em_dash_or_en_dash() -> None:
+    done_instructions = _load_done_instructions()["_worker_done_instructions"]
+    for pr_flag in (False, True):
+        text = done_instructions(pr_flag, True)
+        assert "—" not in text
+        assert "–" not in text
+
+
+def test_default_path_still_mandates_the_push() -> None:
+    """The fix must not weaken the default. Only a no-push card is exempted."""
+    done_instructions = _load_done_instructions()["_worker_done_instructions"]
+    text = done_instructions(False, False)
+    assert "Push the branch" in text
+    assert "pushing is mandatory" in text
+
+
+def test_invariant_rails_do_not_assert_the_push_mandate_themselves() -> None:
+    """The standing rails sit ABOVE the card-aware DEFINITION OF DONE.
+
+    They are also the vLLM prefix-cache prefix, so they cannot be made
+    card-dependent. The old bullet asserted "Commit to a feature branch and
+    push it. This is required, not optional" up there, which re-delivered the
+    contradiction to every no-push card no matter what the DONE section said.
+    It must defer to DEFINITION OF DONE instead of pre-empting it.
+    """
+    source = ROTATE.read_text(encoding="utf-8")
+    assert "Commit to a feature branch and push it. This is required" not in source
+    assert "Clean up a worktree or branch ONLY after its work is pushed" not in source

@@ -988,8 +988,16 @@ def _worker_search_instructions():
     )
 
 
-def _worker_done_instructions(pr_required_now):
+def _worker_done_instructions(pr_required_now, push_forbidden=False):
     """Build the DEFINITION OF DONE fragment for the worker launch brief.
+
+    ``push_forbidden`` (the caller passes ``card_forbids_push(core)``) swaps
+    the whole fragment for a no-push definition of done. It is not a softener
+    layered on top of the push rail: a worker must never receive both a
+    mandate to push and a prohibition on pushing in one prompt, which is
+    exactly the state 216 live cards were dispatched in before this existed.
+    When it is set, the immediate-PR clause is suppressed too, because opening
+    a PR requires a push.
 
     A pushed branch plus a recorded commit SHA is the default handoff, not an
     open pull request: a routine card no longer pays a 20 to 30 minute PR
@@ -1002,6 +1010,61 @@ def _worker_done_instructions(pr_required_now):
     card approved for dispatch still touches credentials or deploys, so it
     still earns a PR, not a waiver.
     """
+    if push_forbidden:
+        # The card's own criteria forbid push, so the generic handoff is
+        # unreachable and is replaced rather than qualified. Everything the
+        # push rail was protecting (the work survives your worktree, another
+        # host can verify it, the evidence store can be queried for it) is
+        # still required here; only the transport changes, from a branch on a
+        # remote to durable bytes plus a local commit SHA. That substitution
+        # is not an invention: the standing PUBLISH THE BYTES rail already
+        # names a patch, a tarball or the diff text as acceptable.
+        return (
+            "DEFINITION OF DONE for THIS card, which forbids pushing:\n"
+            "This card's own acceptance criteria or description prohibit a push.\n"
+            "That prohibition WINS over the fleet's generic push-and-record\n"
+            "default, because it is a deliberate per-card safety decision and the\n"
+            "default is only a default. Do not push. Do not open a pull request,\n"
+            "which requires a push. Do not merge. If you believe the card cannot\n"
+            "be finished without pushing, that is a BLOCKED verdict with\n"
+            "blocked_on=card and the criterion quoted, never a push you decided\n"
+            "to take anyway. So, in this exact order:\n"
+            "1. Branch first, inside SKFLEET_WORKSPACE. NEVER commit to main or\n"
+            "   master, and never work in a shared or live checkout. A local\n"
+            "   commit is not an external action and is not what the card forbids.\n"
+            "2. Commit as soon as the code is written and a fast check passes. Do\n"
+            "   NOT wait for a long test run: commit, then run it, then amend or\n"
+            "   add a follow-up commit. Never gate a commit on a job you wait on.\n"
+            "3. PUBLISH THE BYTES, because you cannot push them. An unpushed\n"
+            "   commit lives in exactly one worktree on one host, and a reviewer\n"
+            "   on another host cannot read it. Write the candidate itself, a\n"
+            "   patch, a bundle or the diff text, to\n"
+            "   ~/.skcapstone/evidence/work/<card_id>/ , which replicates, and\n"
+            "   record its sha256 next to it. If the card produced no repository\n"
+            "   change at all, there are no bytes to publish and this step is\n"
+            "   satisfied by saying so in your verdict.\n"
+            "4. Record the result as evidence links, not only as prose:\n"
+            "   skcapstone coord link <card> commit_sha <the 40-character SHA>\n"
+            "   and skcapstone coord link <card> candidate_sha256 <the digest of\n"
+            "   the bytes you published in step 3>. A link is what another host\n"
+            "   and the Integrator actually query; a SHA mentioned only in\n"
+            "   verdict prose or in skmail is not a queryable field. Do NOT link\n"
+            "   a branch: nothing can fetch a branch that was never pushed, and\n"
+            "   recording one claims a reachability you do not have. If the card\n"
+            "   needed no repository change, link commit_sha to the literal value\n"
+            "   none, so that is a recorded decision rather than a gap\n"
+            "   indistinguishable from a worker who simply forgot.\n"
+            "5. Attribute the commit to yourself, the agent that did the work.\n"
+            "   Never claim co-authorship you cannot evidence.\n"
+            "6. Clean up scratch files only. Do NOT delete the worktree holding\n"
+            "   this commit, and do NOT delete your own workspace. With no push,\n"
+            "   that worktree is the only place the commit exists; removing it\n"
+            "   destroys the work with nothing to recover. The standing rail that\n"
+            "   lets you clean up a worktree once its work is pushed does not\n"
+            "   apply to this card, because nothing here ever gets pushed. A\n"
+            "   later, separate pass decides when removal is safe, not you.\n"
+            "- Never use an em dash or en dash.\n"
+        )
     done = (
         "DEFINITION OF DONE, applies to every card that touches a repository:\n"
         "Work is NOT done until the branch is pushed and the exact commit SHA is\n"
@@ -1959,6 +2022,98 @@ _SENSITIVE_CATEGORY = re.compile(
     r"(capauth|credential|custody|issuer|secret|\bkey\b|rollback|"
     r"deploy|production|release|migrat)", re.I)
 _CATEGORY_OPT_IN = "dispatch-approved"
+
+# Answers a THIRD, separate question from the two patterns above: does this
+# card's own text forbid the worker from pushing. _SENSITIVE_CATEGORY is an
+# admission gate and _QWEN_UNSUITABLE is a routing gate; this one is a
+# HANDOFF gate. It is read only to decide which DEFINITION OF DONE the brief
+# carries, never to decide whether the card may be dispatched or by whom.
+#
+# Why this exists. Measured 2026-09-18 against the chi CardStore via
+# CardStore.fold: 216 live (non-archived, backlog/ready/doing/review) cards
+# carry acceptance criteria or a description that forbid push in the card's
+# own words, for example "Evidence only. No deployment, migration,
+# activation, probe, merge, or push." Every one of those cards was also
+# handed the standing DEFINITION OF DONE rail, which said pushing was
+# mandatory. Verified end to end in a real brief on disk,
+# ~/.skcapstone/fleet/logs/brief-009ed46e.txt on chiap08: line 31 told the
+# worker to push and open a PR, line 109 told it "No deployment, migration,
+# activation, probe, merge, or push." One file, one prompt, two mutually
+# exclusive orders. The card's criteria win: they encode a deliberate
+# per-card safety decision (several of these cards audit live hosts,
+# protected Matter content, or credentials), while the rail is a generic
+# default.
+#
+# Deliberately conservative. A miss leaves the existing push rail in place,
+# which is the status quo, so a false negative is not a regression. A false
+# positive routes the candidate to the durable-evidence handoff instead of a
+# branch, which the rails already describe as an equivalent way to publish
+# bytes ("A patch, a tarball or the diff text are all fine"), so it is a
+# safe-side failure. Three specific exclusions, each measured against the
+# live corpus:
+#   - "force push" and "non-force push" do not count. 4 live cards forbid a
+#     force push while explicitly authorizing one normal push.
+#   - "push to main" / "push to master" does not count. 2 live cards forbid
+#     only that, and pushing a feature branch remains their intended handoff.
+#   - the negation must precede the push token inside the same clause, so
+#     "a push to a feature branch produces no tag" does not match.
+_PUSH_NEGATION = re.compile(
+    r"\b(?:no|not|never|without|forbidden|prohibited)\b", re.I)
+_UNQUALIFIED_PUSH = re.compile(
+    r"(?<!force )(?<!force-)(?<!non-force )\bpush(?:es|ed|ing)?\b", re.I)
+_PUSH_TO_TRUNK = re.compile(
+    r"\bpush(?:es|ed|ing)?\s+(?:directly\s+)?to\s+(?:origin/)?(?:main|master)\b",
+    re.I)
+_CLAUSE_SPLIT = re.compile(r"(?<=[.;])\s+|\n")
+
+
+def _clause_forbids_push(clause) -> bool:
+    """Return whether one clause prohibits pushing, in the card's own words."""
+    if _PUSH_TO_TRUNK.search(clause):
+        return False
+    return any(_PUSH_NEGATION.search(clause[:hit.start()])
+               for hit in _UNQUALIFIED_PUSH.finditer(clause))
+
+
+def card_forbids_push(core) -> bool:
+    """Return True when the card's own criteria forbid the worker from pushing.
+
+    Read the SAME dict the brief interpolates its ACCEPTANCE CRITERIA and
+    DESCRIPTION from, never a second independent read. At the call site that
+    is decision["core"] out of authoritative_claimability, whose title,
+    description and acceptance_criteria are folded state, so this sees
+    exactly the sentences the worker will see. That identity is the whole
+    guarantee: a detector reading a different snapshot than the brief could
+    strip the push mandate off a card whose displayed criteria still demand
+    one, or leave it on a card whose displayed criteria forbid it, which is
+    the bug this closes. Measured 2026-09-18 on chi: folded criteria forbid
+    push on 216 live cards, raw core.json on only 212, so the four cards
+    amended after creation are exactly the ones a raw read would get wrong.
+
+    This is the opposite of pr_required's deliberate raw-title read, and for
+    a compatible reason: pr_required answers a governance question about the
+    card, so it wants the field no fold can drop, while this answers a
+    question about the prompt, so it wants the text the prompt carries.
+
+    Labels are NOT consulted. The source-only label looks like the obvious
+    signal and is not: of the 216 affected live cards only about half carry
+    source-only, and several source-only cards require a push ("Source
+    branch is pushed, a pull request is opened"). The card's sentences are
+    the authority, not its label.
+    """
+    if not isinstance(core, dict):
+        return False
+    texts = [core.get("description")]
+    criteria = core.get("acceptance_criteria")
+    if isinstance(criteria, (list, tuple)):
+        texts.extend(criteria)
+    for text in texts:
+        if not isinstance(text, str):
+            continue
+        for clause in _CLAUSE_SPLIT.split(text):
+            if _clause_forbids_push(clause):
+                return True
+    return False
 
 
 def pr_required(core, labels=()) -> bool:
@@ -6900,16 +7055,18 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
       "directly. Read your inbox before you start and before you finish: someone may have\n"
       "answered the question you are about to spend an hour on, or told you the card is\n"
       "void. Coordination beats duplicated effort.\n"
-      "- PUBLISH YOUR WORK. Commit to a feature branch and push it. This is required,\n"
-      "  not optional: an unpushed commit is destroyed by any other session's checkout\n"
-      "  of that tree and does not count as done. Open a PR only when the card is\n"
-      "  sensitive or you are asked to; see DEFINITION OF DONE below.\n"
+      "- PUBLISH YOUR WORK. Commit to a feature branch. A candidate that exists only\n"
+      "  in your worktree cannot be reviewed, is one checkout away from being erased,\n"
+      "  and does not count as done. HOW you publish it, a pushed branch or durable\n"
+      "  evidence bytes, is decided by DEFINITION OF DONE below, which reads THIS\n"
+      "  card's own criteria. Do exactly what that section says and nothing else.\n"
       "- Do NOT commit or push to main, and do NOT merge. Landing is a separate decision\n"
       "  a human makes on a reviewed PR.\n"
       "- No deploy, restart, live gateway or config mutation, credential disclosure,\n"
       "  WAKE-02 enablement, live_execution, or automerge.\n"
       "- You may not write a human_signoff or flip repository visibility.\n"
-      "- Clean up a worktree or branch ONLY after its work is pushed to a remote.\n"
+      "- Clean up a worktree or branch ONLY after DEFINITION OF DONE below is fully\n"
+      "  satisfied for this card. Never while the commit exists in one place only.\n"
       "- Start repository work by creating a card-specific branch and git worktree "
       "inside SKFLEET_WORKSPACE. Never modify a shared or live checkout.\n"
       "\n"
@@ -6963,7 +7120,8 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
       "- If you push a branch, say so and name it, because a pushed branch IS durable\n"
       "  and reachable from any host. That is the cheapest way to satisfy this.\n"
       "A SHA with no reachable bytes is not evidence. It is a promise that expired.\n"
-      + _worker_done_instructions(pr_required(core, _labels)))
+      + _worker_done_instructions(pr_required(core, _labels),
+                                   card_forbids_push(core)))
     brief=_RAILS + ("Work only SKCapstone card %s. The fleet selector has already claimed it "
       "for your exact agent identity. Verify that ownership before working and never "
       "claim or substitute another card. If ownership is absent, or a dependency is "
@@ -6991,6 +7149,11 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
       "- A terminal outcome, plain PASS or BLOCKED, has no candidate to bind and still\n"
       "  uses skcapstone coord link <card> verdict <outcome> --agent \"$SKAGENT\".\n\n"
       "CARD %s (%s)\nTITLE: %s\nDESCRIPTION: %s\n\nACCEPTANCE CRITERIA:\n%s\n\n" % (cid,cid,core.get("kind"),core.get("title"),core.get("description"),ac))
+    if card_forbids_push(core):
+        # Observability for the handoff swap: without this line the only way
+        # to tell which definition of done a worker got is to read the brief
+        # file, which is overwritten on the next dispatch of the same card.
+        log(d, "NO_PUSH_DONE|%s|%s|reason=card-criteria-forbid-push" % (HOST, cid))
     _seat = None if _elastic_review else seat_for(cid, core)
     # A seat-owned card runs under the seat's identity, not the lane's. The
     # Worker identity stays lane-based so slot accounting, liveness, and reaping

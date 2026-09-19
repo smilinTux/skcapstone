@@ -2,6 +2,62 @@
 
 ## Unreleased
 
+- **A card whose own criteria forbid pushing no longer also receives an order
+  to push.** Measured 2026-09-18 on the chi CardStore via `CardStore.fold` in a
+  fresh process: 216 of 1,211 live (non-archived, backlog/ready/doing/review)
+  cards forbid push in their own words, and every one of them was handed the
+  standing `DEFINITION OF DONE` rail that made pushing mandatory. The two texts
+  are not two documents that never meet: they are assembled into a single
+  string and written to one file. Verified end to end in
+  `~/.skcapstone/fleet/logs/brief-009ed46e.txt` on chiap08, where line 31 says
+  "Commit to a feature branch, push it, and open a PR. This is required, not
+  optional", line 94 says "Push the branch and open a PR with `gh pr create`",
+  and line 109 says "No deployment, migration, activation, probe, merge, or
+  push." One prompt, two mutually exclusive orders.
+  The card wins. Its criteria encode a deliberate per-card safety decision, and
+  several of the affected cards audit live hosts, protected Matter content or
+  credentials; the rail is a generic default. The resolution is NOT to drop the
+  push requirement (the default path still mandates it, pinned by a test) and
+  NOT to let such a card push. `card_forbids_push(core)` reads the card's own
+  acceptance criteria and description, and when it fires
+  `_worker_done_instructions` returns a DIFFERENT, reachable definition of
+  done: branch, commit locally, publish the candidate bytes under
+  `~/.skcapstone/evidence/work/<card_id>/` with a sha256, and record
+  `commit_sha` and `candidate_sha256` as evidence links. Nothing the push rail
+  protected is given up; only the transport changes, from a branch on a remote
+  to durable replicated bytes. The immediate-PR clause is suppressed on those
+  cards too, because opening a PR requires a push.
+  The detector reads the same folded `core` dict the brief interpolates its
+  `ACCEPTANCE CRITERIA` from, never a second independent read, so it sees
+  exactly the sentences the worker sees. That identity matters: folded criteria
+  forbid push on 216 cards but the raw `core.json` on only 212, so the four
+  cards amended after creation are precisely the ones a raw read would get
+  wrong. It deliberately does NOT read the `source-only` label, which looks
+  like the obvious signal and is not: only about half the affected cards carry
+  it, and several `source-only` cards require a push ("Source branch is pushed,
+  a pull request is opened"). Three exclusions, each measured against the live
+  corpus: force-push-only prohibitions (4 cards that forbid a force push while
+  demanding one normal push), push-to-main-only prohibitions (2 cards), and a
+  negation that follows rather than precedes the push token.
+  The invariant rails above the card-aware section no longer assert the mandate
+  themselves; they defer to `DEFINITION OF DONE`. That keeps them invariant, so
+  the vLLM prefix cache the rails ordering exists to protect is unaffected.
+  A `NO_PUSH_DONE` dispatcher log line makes the swap observable, because a
+  brief file is overwritten on the next dispatch of the same card.
+  **This is NOT the cause of the fleet's fast-exit worker churn**, which was
+  tested and refuted rather than assumed. Of the 11 most-churned cards, zero
+  carry the contradiction, and across a 50-card churn cohort versus a 103-card
+  completed cohort the contradiction appears in 24% of the churned briefs
+  against 69% of the completed ones, so it anti-discriminates. The churn cause
+  is a separate, unrecognised gateway failure class: the seat that claimed and
+  released one card 120 times has 120 worker-exit records under
+  `~/.skcapstone/evidence/fleet-worker-exits/`, all of them a 503
+  `bucket_no_eligible_member` that neither `skfleet-rotate.py`'s
+  `_GATEWAY_ERROR_RE` nor the wrapper's `TRANSPORT_PATTERNS` matches, so the
+  card was re-dispatched for nine hours. That is filed separately.
+  **Deployment required:** `~/.local/bin/skfleet-rotate.py` is a separate
+  per-host artifact that a `git pull` does not update.
+
 - **A worker can now record a provisional PASS that the review opener will
   actually admit.** `OPENED_REVIEW` was 0 across 14 days and 1,660 rotations on
   the chi fleet while 214 cards logged `OPEN_REVIEW_EVIDENCE_BLOCKED` every
