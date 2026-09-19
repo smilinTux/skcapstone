@@ -53,8 +53,15 @@ def _run(cmd, timeout=12):
 
 def _ssh(host, script, timeout=14):
     return _run(
-        ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={max(4, timeout // 3)}",
-         f"skuser01@{host}", script],
+        [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            f"ConnectTimeout={max(4, timeout // 3)}",
+            f"skuser01@{host}",
+            script,
+        ],
         timeout=timeout,
     )
 
@@ -72,9 +79,20 @@ def _ssh_python(host, program, timeout=18):
     """
     try:
         r = subprocess.run(
-            ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={max(4, timeout // 3)}",
-             f"skuser01@{host}", "python3", "-"],
-            input=program, capture_output=True, text=True, timeout=timeout,
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                f"ConnectTimeout={max(4, timeout // 3)}",
+                f"skuser01@{host}",
+                "python3",
+                "-",
+            ],
+            input=program,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
         return r.stdout.strip() if r.returncode == 0 else ""
     except Exception:
@@ -84,6 +102,7 @@ def _ssh_python(host, program, timeout=18):
 # --------------------------------------------------------------------------- #
 # collection
 # --------------------------------------------------------------------------- #
+
 
 def collect_gateway_queue():
     """Live pool occupancy straight from the gateway, no reporting layer between."""
@@ -99,16 +118,18 @@ def collect_gateway_queue():
     for name, b in (d.get("backends", {}) or {}).items():
         if not b.get("totalProcessed") and not b.get("active"):
             continue
-        backends.append({
-            "name": name,
-            "active": b.get("active", 0),
-            "queued": b.get("queued", 0),
-            "max": b.get("max", 0),
-            "processed": b.get("totalProcessed", 0),
-            "dropped": b.get("totalDropped", 0),
-            "timedout": b.get("totalTimedOut", 0),
-            "peak": b.get("peakActive", 0),
-        })
+        backends.append(
+            {
+                "name": name,
+                "active": b.get("active", 0),
+                "queued": b.get("queued", 0),
+                "max": b.get("max", 0),
+                "processed": b.get("totalProcessed", 0),
+                "dropped": b.get("totalDropped", 0),
+                "timedout": b.get("totalTimedOut", 0),
+                "peak": b.get("peakActive", 0),
+            }
+        )
     backends.sort(key=lambda x: -x["processed"])
     return {
         "available": True,
@@ -162,9 +183,11 @@ except Exception as exc:
     for label, rows in res["data"].items():
         lanes = {}
         for backend, model, n, errs, ms in rows:
-            key = ("codex" if backend == "codex" or model.startswith("sk-codex")
-                   else "glm/zai" if backend == "zai" or "glm" in model
-                   else backend or "other")
+            key = (
+                "codex"
+                if backend == "codex" or model.startswith("sk-codex")
+                else "glm/zai" if backend == "zai" or "glm" in model else backend or "other"
+            )
             cur = lanes.setdefault(key, {"n": 0, "errors": 0, "ms": 0.0, "w": 0})
             cur["n"] += n
             cur["errors"] += errs
@@ -204,23 +227,35 @@ def collect_host(host):
             return None
 
     return {
-        "host": host, "up": True,
-        "codex": num(f[0]) or 0, "glm": num(f[1]) or 0,
+        "host": host,
+        "up": True,
+        "codex": num(f[0]) or 0,
+        "glm": num(f[1]) or 0,
         "timer": f[2] or "unknown",
-        "ready": num(f[3]), "backoff": num(f[4]),
-        "launched20m": num(f[5]) or 0, "aborts": num(f[6]) or 0,
+        "ready": num(f[3]),
+        "backoff": num(f[4]),
+        "launched20m": num(f[5]) or 0,
+        "aborts": num(f[6]) or 0,
     }
 
 
 def collect_board():
     """Card throughput and composition, read straight from the CardStore."""
     now = datetime.datetime.now(datetime.timezone.utc)
-    cuts = {"m10": now - datetime.timedelta(minutes=10),
-            "m60": now - datetime.timedelta(minutes=60)}
+    cuts = {
+        "m10": now - datetime.timedelta(minutes=10),
+        "m60": now - datetime.timedelta(minutes=60),
+    }
     thr = {k: Counter() for k in cuts}
     states = Counter()
-    lc = {"claim": "claimed", "release_claim": "open", "unassign": "open",
-          "archive": "void", "complete": "complete", "void": "void"}
+    lc = {
+        "claim": "claimed",
+        "release_claim": "open",
+        "unassign": "open",
+        "archive": "void",
+        "complete": "complete",
+        "void": "void",
+    }
     try:
         card_ids = os.listdir(CARDS)
     except OSError:
@@ -263,48 +298,92 @@ def collect_board():
         if st not in ("complete", "void") and col == "done":
             st = "complete"
         states[st] += 1
-    return {"available": True, "throughput": {k: dict(v) for k, v in thr.items()},
-            "states": dict(states)}
+    return {
+        "available": True,
+        "throughput": {k: dict(v) for k, v in thr.items()},
+        "states": dict(states),
+    }
 
 
 # --------------------------------------------------------------------------- #
 # assessment
 # --------------------------------------------------------------------------- #
 
+
 def assess(gw, lanes, hosts, board):
     """Turn the numbers into things a person should act on."""
     alerts = []
     if not gw.get("available"):
-        alerts.append(("critical", "Gateway /queue did not answer",
-                       "No model traffic can be served. Check skgateway-codex on chiap01."))
+        alerts.append(
+            (
+                "critical",
+                "Gateway /queue did not answer",
+                "No model traffic can be served. Check skgateway-codex on chiap01.",
+            )
+        )
     down = [h["host"] for h in hosts if not h.get("up")]
     if down:
-        alerts.append(("warn", f"{len(down)} host(s) unreachable: {', '.join(down)}",
-                       "A scheduled reboot looks identical to a failure here. Confirm which."))
+        alerts.append(
+            (
+                "warn",
+                f"{len(down)} host(s) unreachable: {', '.join(down)}",
+                "A scheduled reboot looks identical to a failure here. Confirm which.",
+            )
+        )
     for h in hosts:
         if h.get("up") and h.get("timer") not in ("active", None, "unknown"):
-            alerts.append(("critical", f"{h['host']} rotation timer is {h['timer']}",
-                           "That host launches no workers until the timer is active."))
+            alerts.append(
+                (
+                    "critical",
+                    f"{h['host']} rotation timer is {h['timer']}",
+                    "That host launches no workers until the timer is active.",
+                )
+            )
         if h.get("up") and (h.get("aborts") or 0) > 0:
-            alerts.append(("warn", f"{h['host']} logged {h['aborts']} lifecycle abort(s) in 20 min",
-                           "The rotation exits before launching when the assessment fails."))
+            alerts.append(
+                (
+                    "warn",
+                    f"{h['host']} logged {h['aborts']} lifecycle abort(s) in 20 min",
+                    "The rotation exits before launching when the assessment fails.",
+                )
+            )
     errs = sum(v.get("errors", 0) for v in (lanes.get("m60") or {}).values())
     tot = sum(v.get("n", 0) for v in (lanes.get("m60") or {}).values())
     if not lanes.get("available"):
-        alerts.append(("critical", "Gateway metrics could not be read",
-                       "This panel shows zero, which is NOT a measurement of zero traffic. "
-                       + str(lanes.get("error", ""))))
+        alerts.append(
+            (
+                "critical",
+                "Gateway metrics could not be read",
+                "This panel shows zero, which is NOT a measurement of zero traffic. "
+                + str(lanes.get("error", "")),
+            )
+        )
     elif tot == 0 and gw.get("available") and gw.get("active", 0) > 0:
-        alerts.append(("warn", "Gateway is serving requests but the metrics store reports none",
-                       "The pool shows active work. Suspect the metrics collector, not the gateway."))
+        alerts.append(
+            (
+                "warn",
+                "Gateway is serving requests but the metrics store reports none",
+                "The pool shows active work. Suspect the metrics collector, not the gateway.",
+            )
+        )
     if tot and errs / tot > 0.05:
-        alerts.append(("warn", f"{errs} gateway errors in the last hour ({100.0*errs/tot:.0f}%)",
-                       "Check credentials and upstream provider health."))
+        alerts.append(
+            (
+                "warn",
+                f"{errs} gateway errors in the last hour ({100.0*errs/tot:.0f}%)",
+                "Check credentials and upstream provider health.",
+            )
+        )
     workers = sum((h.get("codex", 0) + h.get("glm", 0)) for h in hosts if h.get("up"))
     ready = sum(h.get("ready") or 0 for h in hosts if h.get("up"))
     if workers == 0 and ready > 0:
-        alerts.append(("warn", f"No workers running while {ready} card(s) read as ready",
-                       "Cards may be owned by a host that is down, or excluded after the pool count."))
+        alerts.append(
+            (
+                "warn",
+                f"No workers running while {ready} card(s) read as ready",
+                "Cards may be owned by a host that is down, or excluded after the pool count.",
+            )
+        )
     if not alerts:
         alerts.append(("ok", "Nothing needs attention", "All checks passed on this pass."))
     return alerts
@@ -408,26 +487,37 @@ def render(gw, lanes, hosts, board, alerts, generated):
         ("bad" if err60 else "good", err60, "gateway errors, 60 min"),
         ("good" if len(up) == len(hosts) else "warn", f"{len(up)}/{len(hosts)}", "hosts up"),
     ):
-        p.append(f"<div class='stat {cls}'><div class='n mono'>{esc(n)}</div><div class='l'>{esc(l)}</div></div>")
+        p.append(
+            f"<div class='stat {cls}'><div class='n mono'>{esc(n)}</div><div class='l'>{esc(l)}</div></div>"
+        )
     p.append("</div>")
 
     # alerts
     p.append("<h2>Needs attention</h2><div class='panel'>")
     for level, title, detail in alerts:
-        p.append(f"<div class='alert'><span class='dot {level}' style='margin-top:6px'></span>"
-                 f"<div><div class='t'>{esc(title)}</div><div class='d'>{esc(detail)}</div></div></div>")
+        p.append(
+            f"<div class='alert'><span class='dot {level}' style='margin-top:6px'></span>"
+            f"<div><div class='t'>{esc(title)}</div><div class='d'>{esc(detail)}</div></div></div>"
+        )
     p.append("</div>")
 
     # gateway
     p.append("<h2>Gateway</h2><div class='panel scroll'><table>")
-    p.append("<tr><th>lane</th><th class='right'>10 min</th><th class='right'>60 min</th>"
-             "<th class='right'>errors</th><th class='right'>avg</th><th style='width:200px'>share, 60 min</th></tr>")
+    p.append(
+        "<tr><th>lane</th><th class='right'>10 min</th><th class='right'>60 min</th>"
+        "<th class='right'>errors</th><th class='right'>avg</th><th style='width:200px'>share, 60 min</th></tr>"
+    )
     if not lanes.get("available"):
-        p.append("<tr><td colspan='6' style='color:#F87171'>Metrics unreadable: "
-                 + esc(lanes.get("error", "unknown")) + ". This is NOT zero traffic.</td></tr>")
+        p.append(
+            "<tr><td colspan='6' style='color:#F87171'>Metrics unreadable: "
+            + esc(lanes.get("error", "unknown"))
+            + ". This is NOT zero traffic.</td></tr>"
+        )
     elif req60 or lanes.get("m10"):
-        for name in sorted(set(list(l60) + list(lanes.get("m10") or {})),
-                           key=lambda k: -l60.get(k, {}).get("n", 0)):
+        for name in sorted(
+            set(list(l60) + list(lanes.get("m10") or {})),
+            key=lambda k: -l60.get(k, {}).get("n", 0),
+        ):
             a = (lanes.get("m10") or {}).get(name, {})
             b = l60.get(name, {})
             n60 = b.get("n", 0)
@@ -435,56 +525,72 @@ def render(gw, lanes, hosts, board, alerts, generated):
             e = b.get("errors", 0)
             avg = b.get("avg_ms")
             colour = "#F87171" if e else "#38BDF8"
-            p.append(f"<tr><td class='mono'>{esc(name)}</td>"
-                     f"<td class='right mono'>{a.get('n',0):,}</td>"
-                     f"<td class='right mono'>{n60:,}</td>"
-                     f"<td class='right mono' style='color:{'#F87171' if e else '#5C6672'}'>{e}</td>"
-                     f"<td class='right mono muted'>{(str(avg)+'ms') if avg else '-'}</td>"
-                     f"<td>{bar(share, colour)}</td></tr>")
+            p.append(
+                f"<tr><td class='mono'>{esc(name)}</td>"
+                f"<td class='right mono'>{a.get('n',0):,}</td>"
+                f"<td class='right mono'>{n60:,}</td>"
+                f"<td class='right mono' style='color:{'#F87171' if e else '#5C6672'}'>{e}</td>"
+                f"<td class='right mono muted'>{(str(avg)+'ms') if avg else '-'}</td>"
+                f"<td>{bar(share, colour)}</td></tr>"
+            )
     else:
-        p.append("<tr><td colspan='6' class='muted'>No gateway metrics in this window. "
-                 "A lane absent here sent nothing; it is not evidence of a fault.</td></tr>")
+        p.append(
+            "<tr><td colspan='6' class='muted'>No gateway metrics in this window. "
+            "A lane absent here sent nothing; it is not evidence of a fault.</td></tr>"
+        )
     p.append("</table></div>")
 
     if gw.get("available"):
         p.append("<div class='panel scroll' style='margin-top:11px'><table>")
-        p.append("<tr><th>backend</th><th class='right'>active</th><th class='right'>queued</th>"
-                 "<th class='right'>max</th><th class='right'>peak</th><th class='right'>processed</th>"
-                 "<th class='right'>dropped</th><th class='right'>timed out</th></tr>")
+        p.append(
+            "<tr><th>backend</th><th class='right'>active</th><th class='right'>queued</th>"
+            "<th class='right'>max</th><th class='right'>peak</th><th class='right'>processed</th>"
+            "<th class='right'>dropped</th><th class='right'>timed out</th></tr>"
+        )
         for b in gw["backends"]:
             bad = b["dropped"] or b["timedout"]
-            p.append(f"<tr><td class='mono'>{esc(b['name'])}</td>"
-                     f"<td class='right mono'>{b['active']}</td><td class='right mono'>{b['queued']}</td>"
-                     f"<td class='right mono muted'>{b['max']}</td><td class='right mono muted'>{b['peak']}</td>"
-                     f"<td class='right mono'>{b['processed']:,}</td>"
-                     f"<td class='right mono' style='color:{'#F87171' if b['dropped'] else '#5C6672'}'>{b['dropped']}</td>"
-                     f"<td class='right mono' style='color:{'#F87171' if b['timedout'] else '#5C6672'}'>{b['timedout']}</td></tr>")
+            p.append(
+                f"<tr><td class='mono'>{esc(b['name'])}</td>"
+                f"<td class='right mono'>{b['active']}</td><td class='right mono'>{b['queued']}</td>"
+                f"<td class='right mono muted'>{b['max']}</td><td class='right mono muted'>{b['peak']}</td>"
+                f"<td class='right mono'>{b['processed']:,}</td>"
+                f"<td class='right mono' style='color:{'#F87171' if b['dropped'] else '#5C6672'}'>{b['dropped']}</td>"
+                f"<td class='right mono' style='color:{'#F87171' if b['timedout'] else '#5C6672'}'>{b['timedout']}</td></tr>"
+            )
         p.append("</table></div>")
     else:
-        p.append("<div class='panel' style='margin-top:11px;padding:13px 15px' class='muted'>"
-                 "Gateway /queue unavailable.</div>")
+        p.append(
+            "<div class='panel' style='margin-top:11px;padding:13px 15px' class='muted'>"
+            "Gateway /queue unavailable.</div>"
+        )
 
     # fleet
     p.append("<h2>Fleet</h2><div class='panel scroll'><table>")
-    p.append("<tr><th>host</th><th>timer</th><th class='right'>codex</th><th class='right'>glm</th>"
-             "<th class='right'>ready</th><th class='right'>backoff</th>"
-             "<th class='right'>launched 20m</th><th class='right'>aborts</th></tr>")
+    p.append(
+        "<tr><th>host</th><th>timer</th><th class='right'>codex</th><th class='right'>glm</th>"
+        "<th class='right'>ready</th><th class='right'>backoff</th>"
+        "<th class='right'>launched 20m</th><th class='right'>aborts</th></tr>"
+    )
     for h in hosts:
         if not h.get("up"):
-            p.append(f"<tr><td class='mono'>{esc(h['host'])}</td>"
-                     f"<td colspan='7' class='muted'>unreachable on this pass</td></tr>")
+            p.append(
+                f"<tr><td class='mono'>{esc(h['host'])}</td>"
+                f"<td colspan='7' class='muted'>unreachable on this pass</td></tr>"
+            )
             continue
         t = h.get("timer", "?")
         tcol = "#4ADE80" if t == "active" else "#F87171"
         ab = h.get("aborts", 0)
-        p.append(f"<tr><td class='mono'>{esc(h['host'])}</td>"
-                 f"<td class='mono' style='color:{tcol}'>{esc(t)}</td>"
-                 f"<td class='right mono'>{h.get('codex',0)}</td>"
-                 f"<td class='right mono'>{h.get('glm',0)}</td>"
-                 f"<td class='right mono'>{h.get('ready') if h.get('ready') is not None else '-'}</td>"
-                 f"<td class='right mono muted'>{h.get('backoff') if h.get('backoff') is not None else '-'}</td>"
-                 f"<td class='right mono'>{h.get('launched20m',0)}</td>"
-                 f"<td class='right mono' style='color:{'#F87171' if ab else '#5C6672'}'>{ab}</td></tr>")
+        p.append(
+            f"<tr><td class='mono'>{esc(h['host'])}</td>"
+            f"<td class='mono' style='color:{tcol}'>{esc(t)}</td>"
+            f"<td class='right mono'>{h.get('codex',0)}</td>"
+            f"<td class='right mono'>{h.get('glm',0)}</td>"
+            f"<td class='right mono'>{h.get('ready') if h.get('ready') is not None else '-'}</td>"
+            f"<td class='right mono muted'>{h.get('backoff') if h.get('backoff') is not None else '-'}</td>"
+            f"<td class='right mono'>{h.get('launched20m',0)}</td>"
+            f"<td class='right mono' style='color:{'#F87171' if ab else '#5C6672'}'>{ab}</td></tr>"
+        )
     p.append("</table></div>")
 
     # board
@@ -493,27 +599,45 @@ def render(gw, lanes, hosts, board, alerts, generated):
         st = board["states"]
         total = sum(st.values()) or 1
         p.append("<div class='panel scroll'><table>")
-        p.append("<tr><th>state</th><th class='right'>cards</th><th style='width:280px'>share</th></tr>")
-        colours = {"complete": "#4ADE80", "open": "#38BDF8",
-                   "claimed": "#FBBF24", "void": "#5C6672"}
+        p.append(
+            "<tr><th>state</th><th class='right'>cards</th><th style='width:280px'>share</th></tr>"
+        )
+        colours = {
+            "complete": "#4ADE80",
+            "open": "#38BDF8",
+            "claimed": "#FBBF24",
+            "void": "#5C6672",
+        }
         for k, v in sorted(st.items(), key=lambda x: -x[1]):
-            p.append(f"<tr><td class='mono'>{esc(k)}</td><td class='right mono'>{v:,}</td>"
-                     f"<td>{bar(100.0*v/total, colours.get(k,'#7D8896'))}</td></tr>")
+            p.append(
+                f"<tr><td class='mono'>{esc(k)}</td><td class='right mono'>{v:,}</td>"
+                f"<td>{bar(100.0*v/total, colours.get(k,'#7D8896'))}</td></tr>"
+            )
         p.append("</table></div>")
         t10 = thr.get("m10", {})
         p.append("<div class='strip' style='margin-top:11px'>")
-        for lab, key in (("claimed", "claim"), ("completed", "complete"), ("released", "release_claim")):
-            p.append(f"<div class='stat'><div class='n mono'>{t10.get(key,0)}</div>"
-                     f"<div class='l'>{lab}, last 10 min</div></div>")
+        for lab, key in (
+            ("claimed", "claim"),
+            ("completed", "complete"),
+            ("released", "release_claim"),
+        ):
+            p.append(
+                f"<div class='stat'><div class='n mono'>{t10.get(key,0)}</div>"
+                f"<div class='l'>{lab}, last 10 min</div></div>"
+            )
         p.append("</div>")
     else:
-        p.append("<div class='panel' style='padding:13px 15px'><span class='muted'>"
-                 "CardStore unreadable on this pass.</span></div>")
+        p.append(
+            "<div class='panel' style='padding:13px 15px'><span class='muted'>"
+            "CardStore unreadable on this pass.</span></div>"
+        )
 
-    p.append("<footer>Read-only snapshot. Collected per pass; a panel marked unavailable "
-             "failed on this pass only and does not imply a fault. "
-             f"Sources: {esc(GATEWAY)}/queue, request_log on {esc(METRICS_HOST)}, "
-             "per-host systemd and tmux, and the CardStore.</footer>")
+    p.append(
+        "<footer>Read-only snapshot. Collected per pass; a panel marked unavailable "
+        "failed on this pass only and does not imply a fault. "
+        f"Sources: {esc(GATEWAY)}/queue, request_log on {esc(METRICS_HOST)}, "
+        "per-host systemd and tmux, and the CardStore.</footer>"
+    )
     p.append("</div></body></html>")
     return "".join(p)
 
@@ -535,7 +659,7 @@ def main():
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(target) or ".", suffix=".tmp")
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         fh.write(page)
-    os.replace(tmp, target)   # atomic: a reader never sees a half-written page
+    os.replace(tmp, target)  # atomic: a reader never sees a half-written page
     print("%s  %d bytes  %d alert(s)" % (target, len(page), len(alerts)))
 
 

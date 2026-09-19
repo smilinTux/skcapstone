@@ -18,6 +18,7 @@ def runner_factory(active: str, failed: str, started: dict[str, str]):
             if "ActiveEnterTimestamp" in args and "Monotonic" not in args:
                 return started.get(unit, "")
         return ""
+
     return run
 
 

@@ -13,6 +13,7 @@ Output:
   probe-out/file-index.json      inline-script link probe
   probe-out/page-meta.json       URL/title/page render check
 """
+
 from __future__ import annotations
 
 import json
@@ -134,11 +135,15 @@ def main() -> int:
             "  return {status: r.status, len: (await r.clone().text()).length, text: await r.text()};"
             "})()"
         )
-        csv_res = cdp.call("Runtime.evaluate", {
-            "expression": csv_js,
-            "awaitPromise": True,
-            "returnByValue": True,
-        }, timeout=60)
+        csv_res = cdp.call(
+            "Runtime.evaluate",
+            {
+                "expression": csv_js,
+                "awaitPromise": True,
+                "returnByValue": True,
+            },
+            timeout=60,
+        )
         csv_val = csv_res.get("result", {}).get("value", {})
         if isinstance(csv_val, dict) and csv_val.get("status") == 200:
             (OUT_DIR / "uap-csv.csv").write_text(csv_val["text"])
@@ -158,10 +163,15 @@ def main() -> int:
             "  return out;"
             "})()"
         )
-        scripts_res = cdp.call("Runtime.evaluate", {"expression": scripts_js, "returnByValue": True})
+        scripts_res = cdp.call(
+            "Runtime.evaluate", {"expression": scripts_js, "returnByValue": True}
+        )
         scripts_val = scripts_res.get("result", {}).get("value", [])
         (OUT_DIR / "inline-scripts.json").write_text(json.dumps(scripts_val, indent=2))
-        print(f"[probe] inline scripts: {len(scripts_val)} ({sum(1 for s in scripts_val if s.get('hasRelease2'))} mention release_2)", flush=True)
+        print(
+            f"[probe] inline scripts: {len(scripts_val)} ({sum(1 for s in scripts_val if s.get('hasRelease2'))} mention release_2)",
+            flush=True,
+        )
 
         # Probe for press release link
         pr_js = (
@@ -175,7 +185,10 @@ def main() -> int:
         pr_res = cdp.call("Runtime.evaluate", {"expression": pr_js, "returnByValue": True})
         pr_val = pr_res.get("result", {}).get("value", {})
         (OUT_DIR / "link-probe.json").write_text(json.dumps(pr_val, indent=2))
-        print(f"[probe] link probe: press={pr_val.get('pressCount')} medialink={pr_val.get('medialinkCount')}", flush=True)
+        print(
+            f"[probe] link probe: press={pr_val.get('pressCount')} medialink={pr_val.get('medialinkCount')}",
+            flush=True,
+        )
 
         print("[probe] DONE", flush=True)
         return 0

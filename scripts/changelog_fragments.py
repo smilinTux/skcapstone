@@ -24,6 +24,7 @@ Deliberately a ~40-line local script and not towncrier or scriv:
 
 Exit 0 on success, 1 on a refusal.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -40,15 +41,15 @@ NOT_ENTRIES = {"README.md", ".gitkeep", ".gitignore"}
 def fragments() -> list[Path]:
     """Every real fragment, oldest first. Mirrors the gate's definition exactly."""
     return sorted(
-        p for p in FRAGMENT_DIR.glob("*.md")
-        if p.is_file() and p.name not in NOT_ENTRIES
+        p for p in FRAGMENT_DIR.glob("*.md") if p.is_file() and p.name not in NOT_ENTRIES
     )
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--check", action="store_true",
-                    help="list pending fragments and exit; change nothing")
+    ap.add_argument(
+        "--check", action="store_true", help="list pending fragments and exit; change nothing"
+    )
     args = ap.parse_args()
 
     pending = fragments()
@@ -69,16 +70,16 @@ def main() -> int:
         # Not hypothetical: this file carried TWO identical `## Unreleased`
         # headings, which made "insert after the heading" ambiguous and broke a
         # naive insert. Refuse rather than guess which one was meant.
-        print(f"refusing: CHANGELOG.md has {len(anchors)} '{ANCHOR}' headings "
-              f"(lines {[i + 1 for i in anchors]}); expected exactly 1.",
-              file=sys.stderr)
+        print(
+            f"refusing: CHANGELOG.md has {len(anchors)} '{ANCHOR}' headings "
+            f"(lines {[i + 1 for i in anchors]}); expected exactly 1.",
+            file=sys.stderr,
+        )
         return 1
 
     body = "\n\n".join(p.read_text().strip() for p in pending)
     at = anchors[0] + 1
-    CHANGELOG.write_text(
-        "\n".join(lines[:at] + ["", body] + lines[at:]).rstrip("\n") + "\n"
-    )
+    CHANGELOG.write_text("\n".join(lines[:at] + ["", body] + lines[at:]).rstrip("\n") + "\n")
     for p in pending:
         p.unlink()
     print(f"folded {len(pending)} fragment(s) into CHANGELOG.md:")

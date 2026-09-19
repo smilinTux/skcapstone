@@ -191,10 +191,7 @@ def main(argv: list[str] | None = None) -> int:
     for card_dir, _core, kept, gates in candidates:
         print(f"  {card_dir.name}: {len(kept)} kept, {len(gates)} moved to exit_gates")
 
-    print(
-        "skipped, split would leave zero acceptance criteria: "
-        f"{len(skipped_zero_kept)}"
-    )
+    print("skipped, split would leave zero acceptance criteria: " f"{len(skipped_zero_kept)}")
     for card_id in skipped_zero_kept:
         print(f"  {card_id}")
 
@@ -206,9 +203,7 @@ def main(argv: list[str] | None = None) -> int:
         print("dry run. pass --apply to write")
         return 0
 
-    backup_path = (
-        Path(args.backup_path) if args.backup_path else default_backup_path(home)
-    )
+    backup_path = Path(args.backup_path) if args.backup_path else default_backup_path(home)
     try:
         write_backup(backup_path, candidates)
     except OSError as exc:

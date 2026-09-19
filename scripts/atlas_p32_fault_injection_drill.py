@@ -127,9 +127,7 @@ def main() -> int:
     prod_root = (fleet_drill.sovereign_home() / "fleet").resolve()
     prod_paths = FleetPaths(root=prod_root)
     prod_frozen = store.is_frozen(prod_paths)
-    drill_outside_prod = not (
-        report.root == prod_root or prod_root in report.root.parents
-    )
+    drill_outside_prod = not (report.root == prod_root or prod_root in report.root.parents)
     print(f"production fleet root       : {prod_root}")
     print(f"production frozen           : {prod_frozen}")
     print(f"drill root                  : {report.root}")

@@ -128,17 +128,13 @@ def main():
     parser.add_argument(
         "--source",
         type=Path,
-        default=Path(__file__).resolve().parent.parent.parent
-        / "souls-blueprints"
-        / "blueprints",
+        default=Path(__file__).resolve().parent.parent.parent / "souls-blueprints" / "blueprints",
         help="Source directory with MD blueprints",
     )
     parser.add_argument(
         "--dest",
         type=Path,
-        default=Path(__file__).resolve().parent.parent.parent
-        / "souls-blueprints"
-        / "yaml",
+        default=Path(__file__).resolve().parent.parent.parent / "souls-blueprints" / "yaml",
         help="Destination directory for YAML output",
     )
     args = parser.parse_args()

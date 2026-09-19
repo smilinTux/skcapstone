@@ -52,9 +52,7 @@ def is_tailnet_address(value: str) -> bool:
 def resolve_tailnet(host: str, port: int) -> list[tuple[int, tuple[object, ...]]]:
     """Resolve a host and return only exact Tailscale overlay destinations."""
     results: list[tuple[int, tuple[object, ...]]] = []
-    for family, _, _, _, sockaddr in socket.getaddrinfo(
-        host, port, type=socket.SOCK_STREAM
-    ):
+    for family, _, _, _, sockaddr in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM):
         if is_tailnet_address(str(sockaddr[0])):
             results.append((family, sockaddr))
     return results

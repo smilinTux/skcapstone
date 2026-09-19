@@ -6,6 +6,7 @@ Three sub-tasks:
   B. Page-context-fetch the 6 thumbnail JPGs for Release 02.
   C. Navigate to FBI Vault and pull Part 15 of 16 from the 62-HQ-83894 series.
 """
+
 from __future__ import annotations
 
 import base64
@@ -110,11 +111,15 @@ def fetch_binary_in_page(cdp: CDP, url: str) -> tuple[int, bytes | None]:
         f"  return {{status: r.status, b64: btoa(bin), bytes: bytes.length}};"
         f"}})()"
     )
-    res = cdp.call("Runtime.evaluate", {
-        "expression": expr,
-        "awaitPromise": True,
-        "returnByValue": True,
-    }, timeout=300)
+    res = cdp.call(
+        "Runtime.evaluate",
+        {
+            "expression": expr,
+            "awaitPromise": True,
+            "returnByValue": True,
+        },
+        timeout=300,
+    )
     val = res.get("result", {}).get("value", {}) or {}
     status = val.get("status", 0)
     b64 = val.get("b64")
@@ -130,11 +135,15 @@ def fetch_text_in_page(cdp: CDP, url: str) -> tuple[int, str]:
         f"  return {{status: r.status, text: await r.text()}};"
         f"}})()"
     )
-    res = cdp.call("Runtime.evaluate", {
-        "expression": expr,
-        "awaitPromise": True,
-        "returnByValue": True,
-    }, timeout=120)
+    res = cdp.call(
+        "Runtime.evaluate",
+        {
+            "expression": expr,
+            "awaitPromise": True,
+            "returnByValue": True,
+        },
+        timeout=120,
+    )
     val = res.get("result", {}).get("value", {}) or {}
     return val.get("status", 0), val.get("text", "")
 

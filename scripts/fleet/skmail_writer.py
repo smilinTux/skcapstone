@@ -143,24 +143,16 @@ def quarantine_foreign(boxdir: Path, sender: str, host: str) -> int:
                 dest_lock = boxdir / f".{dest.name}.lock"
                 with dest_lock.open("a") as dl:
                     fcntl.flock(dl, fcntl.LOCK_EX)
-                    dexisting = (
-                        dest.read_text(encoding="utf-8") if dest.exists() else ""
-                    )
+                    dexisting = dest.read_text(encoding="utf-8") if dest.exists() else ""
                     if dexisting and not dexisting.endswith("\n"):
                         raise ValueError("destination ends with a partial record")
                     for raw in dexisting.splitlines():
                         p = json.loads(raw)
-                        if (
-                            str(p.get("from", "")).lower() != f
-                            or str(p.get("host", "")) != h
-                        ):
+                        if str(p.get("from", "")).lower() != f or str(p.get("host", "")) != h:
                             raise ValueError(
-                                "destination writer identity does not match "
-                                "its filename"
+                                "destination writer identity does not match " "its filename"
                             )
-                    _replace_atomically(
-                        dest, (dexisting + "".join(lines)).encode(), 0o600
-                    )
+                    _replace_atomically(dest, (dexisting + "".join(lines)).encode(), 0o600)
             _replace_atomically(path, "".join(keep).encode(), 0o600)
     return moved
 

@@ -14,6 +14,7 @@ Goal (per finding 2026-06-04_splc-doj-superseding-indictment-oneill-thread.md):
 
 Output -> ~/clawd/skills/substance-lens/captures/splc-doj-2026-06-03/
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -96,11 +97,15 @@ def fetch_text_in_page(cdp: CDP, url: str) -> tuple[int, str]:
         f"  }} catch (e) {{ return {{status: -1, text: String(e)}}; }}"
         f"}})()"
     )
-    res = cdp.call("Runtime.evaluate", {
-        "expression": expr,
-        "awaitPromise": True,
-        "returnByValue": True,
-    }, timeout=180)
+    res = cdp.call(
+        "Runtime.evaluate",
+        {
+            "expression": expr,
+            "awaitPromise": True,
+            "returnByValue": True,
+        },
+        timeout=180,
+    )
     val = res.get("result", {}).get("value", {}) or {}
     return val.get("status", 0), val.get("text", "")
 
@@ -122,11 +127,15 @@ def fetch_pdf_b64_in_page(cdp: CDP, url: str) -> tuple[int, str, int]:
         f"  }} catch (e) {{ return {{status: -1, b64: '', len: 0, err: String(e)}}; }}"
         f"}})()"
     )
-    res = cdp.call("Runtime.evaluate", {
-        "expression": expr,
-        "awaitPromise": True,
-        "returnByValue": True,
-    }, timeout=240)
+    res = cdp.call(
+        "Runtime.evaluate",
+        {
+            "expression": expr,
+            "awaitPromise": True,
+            "returnByValue": True,
+        },
+        timeout=240,
+    )
     val = res.get("result", {}).get("value", {}) or {}
     return val.get("status", 0), val.get("b64", ""), val.get("len", 0)
 
@@ -170,13 +179,23 @@ def main() -> int:
             pdf_path = OUT / "splc-superseding-indictment-1437146.pdf"
             pdf_path.write_bytes(data)
             sha = sha256_bytes(data)
-            print(f"[capture] PDF written {len(data)} bytes is_pdf={is_pdf} sha256={sha}", flush=True)
+            print(
+                f"[capture] PDF written {len(data)} bytes is_pdf={is_pdf} sha256={sha}", flush=True
+            )
             manifest["targets"]["indictment_pdf"] = {
-                "url": PDF_URL, "status": status, "path": str(pdf_path),
-                "bytes": len(data), "is_pdf_magic": is_pdf, "sha256": sha,
+                "url": PDF_URL,
+                "status": status,
+                "path": str(pdf_path),
+                "bytes": len(data),
+                "is_pdf_magic": is_pdf,
+                "sha256": sha,
             }
         else:
-            manifest["targets"]["indictment_pdf"] = {"url": PDF_URL, "status": status, "error": True}
+            manifest["targets"]["indictment_pdf"] = {
+                "url": PDF_URL,
+                "status": status,
+                "error": True,
+            }
             print("[capture] PDF FAILED - page-context fetch did not return 200", flush=True)
 
         # ---- 2. Discover + fetch DOJ press release ----
@@ -193,9 +212,13 @@ def main() -> int:
                 if c not in uniq:
                     uniq.append(c)
             print(f"[capture] press-release candidates: {uniq[:10]}", flush=True)
-            scored = [c for c in uniq if "southern-poverty" in c.lower()
-                      or "splc" in c.lower()
-                      or ("wire-fraud" in c.lower() and "law-center" in c.lower())]
+            scored = [
+                c
+                for c in uniq
+                if "southern-poverty" in c.lower()
+                or "splc" in c.lower()
+                or ("wire-fraud" in c.lower() and "law-center" in c.lower())
+            ]
             if scored:
                 pr_url = "https://www.justice.gov" + scored[0]
             elif uniq:
@@ -218,17 +241,32 @@ def main() -> int:
                     f"  return a ? a.innerText : '';"
                     f"}})()"
                 )
-                res = cdp.call("Runtime.evaluate", {
-                    "expression": txt_expr, "awaitPromise": True, "returnByValue": True,
-                }, timeout=60)
+                res = cdp.call(
+                    "Runtime.evaluate",
+                    {
+                        "expression": txt_expr,
+                        "awaitPromise": True,
+                        "returnByValue": True,
+                    },
+                    timeout=60,
+                )
                 txt = res.get("result", {}).get("value", "") or ""
                 if txt:
                     (OUT / "doj-press-release.txt").write_text(txt)
-                    print(f"[capture] extracted {len(txt)} chars of press-release text", flush=True)
-                manifest["targets"]["press_release"] = {"url": pr_url, "status": status,
-                                                         "txt_chars": len(txt)}
+                    print(
+                        f"[capture] extracted {len(txt)} chars of press-release text", flush=True
+                    )
+                manifest["targets"]["press_release"] = {
+                    "url": pr_url,
+                    "status": status,
+                    "txt_chars": len(txt),
+                }
             else:
-                manifest["targets"]["press_release"] = {"url": pr_url, "status": status, "error": True}
+                manifest["targets"]["press_release"] = {
+                    "url": pr_url,
+                    "status": status,
+                    "error": True,
+                }
         else:
             print("[capture] no press-release URL discovered from search", flush=True)
             manifest["targets"]["press_release"] = {"discovered": False}

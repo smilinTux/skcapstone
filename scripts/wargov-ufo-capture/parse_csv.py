@@ -4,6 +4,7 @@
 The CSV has multi-line quoted fields (newlines inside Title and Description Blurb),
 so we use Python's csv module rather than naive line counting.
 """
+
 from __future__ import annotations
 
 import csv
@@ -11,7 +12,9 @@ import json
 from collections import Counter, defaultdict
 from pathlib import Path
 
-CSV_PATH = Path("/home/cbrd21/nextcloud/cbrd21-share/reference/war-gov-UFO-PURSUE-2026/docs/release-02/uap-data.csv")
+CSV_PATH = Path(
+    "/home/cbrd21/nextcloud/cbrd21-share/reference/war-gov-UFO-PURSUE-2026/docs/release-02/uap-data.csv"
+)
 OUT_DIR = Path("/home/cbrd21/clawd/tmp/wargov-capture/probe-out")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -56,16 +59,18 @@ for r in release2:
     agency = (r.get("Agency") or "").strip()
     incident_date = (r.get("Incident Date") or "").strip()
     incident_loc = (r.get("Incident Location") or "").strip()
-    links.append({
-        "title": title,
-        "type": rtype,
-        "agency": agency,
-        "incident_date": incident_date,
-        "incident_location": incident_loc,
-        "pdf_link": pdf_link,
-        "modal_image": modal,
-        "dvids_id": dvids,
-    })
+    links.append(
+        {
+            "title": title,
+            "type": rtype,
+            "agency": agency,
+            "incident_date": incident_date,
+            "incident_location": incident_loc,
+            "pdf_link": pdf_link,
+            "modal_image": modal,
+            "dvids_id": dvids,
+        }
+    )
 
 # Save full inventory
 (OUT_DIR / "release-02-records.json").write_text(json.dumps(links, indent=2))

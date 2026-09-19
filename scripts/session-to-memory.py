@@ -101,10 +101,13 @@ Be specific. Use past tense. No preamble."""
     try:
         result = subprocess.run(
             [
-                "claude", "--print",
+                "claude",
+                "--print",
                 "--dangerously-skip-permissions",
-                "--model", CLAUDE_MODEL,
-                "--output-format", "json",
+                "--model",
+                CLAUDE_MODEL,
+                "--output-format",
+                "json",
                 "--no-session-persistence",
             ],
             input=prompt.encode(),
@@ -125,10 +128,14 @@ def save_to_skmemory(title: str, content: str, agent: str, tags: list[str]) -> b
     try:
         result = subprocess.run(
             [
-                "skmemory", "snapshot",
-                title, content,
-                "--layer", "mid-term",
-                "--tags", tag_str,
+                "skmemory",
+                "snapshot",
+                title,
+                content,
+                "--layer",
+                "mid-term",
+                "--tags",
+                tag_str,
             ],
             capture_output=True,
             timeout=30,

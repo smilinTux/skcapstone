@@ -23,6 +23,7 @@ dropping a line that exists nowhere else is data loss.
 
 Dry run by default. Pass --apply to remove.
 """
+
 import hashlib
 import os
 import re

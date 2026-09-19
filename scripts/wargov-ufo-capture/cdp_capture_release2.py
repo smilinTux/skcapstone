@@ -11,6 +11,7 @@ Strategy (Release 02 is bundled into one ZIP, plus a fresh CSV + press release):
 
 Output → ~/nextcloud/cbrd21-share/reference/war-gov-UFO-PURSUE-2026/{docs/release-02, release-02-zip}/
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -100,11 +101,15 @@ def fetch_text_in_page(cdp: CDP, url: str) -> tuple[int, str]:
         f"  return {{status: r.status, text: await r.text()}};"
         f"}})()"
     )
-    res = cdp.call("Runtime.evaluate", {
-        "expression": expr,
-        "awaitPromise": True,
-        "returnByValue": True,
-    }, timeout=180)
+    res = cdp.call(
+        "Runtime.evaluate",
+        {
+            "expression": expr,
+            "awaitPromise": True,
+            "returnByValue": True,
+        },
+        timeout=180,
+    )
     val = res.get("result", {}).get("value", {}) or {}
     return val.get("status", 0), val.get("text", "")
 
@@ -124,7 +129,9 @@ def trigger_download(cdp: CDP, url: str) -> None:
     cdp.call("Runtime.evaluate", {"expression": expr, "returnByValue": True})
 
 
-def wait_for_file(path: Path, partial_glob: str, timeout: float = 1800.0, idle_threshold: float = 5.0) -> Path | None:
+def wait_for_file(
+    path: Path, partial_glob: str, timeout: float = 1800.0, idle_threshold: float = 5.0
+) -> Path | None:
     """Wait until a file matching the final name shows up + a quiet period after .crdownload drains."""
     deadline = time.time() + timeout
     last_size = -1
@@ -187,7 +194,9 @@ def main() -> int:
         if status == 200 and text:
             (DOC_DIR / "uap-data.csv").write_text(text)
         else:
-            (DOC_DIR / "uap-data-error.json").write_text(json.dumps({"status": status, "preview": text[:1000]}, indent=2))
+            (DOC_DIR / "uap-data-error.json").write_text(
+                json.dumps({"status": status, "preview": text[:1000]}, indent=2)
+            )
 
         # ---- 2. Fetch press release HTML
         print(f"[capture] fetching press release → {PRESS_URL}", flush=True)
@@ -205,11 +214,15 @@ def main() -> int:
                 f"  return article ? article.innerText : '';"
                 f"}})()"
             )
-            res = cdp.call("Runtime.evaluate", {
-                "expression": txt_expr,
-                "awaitPromise": True,
-                "returnByValue": True,
-            }, timeout=60)
+            res = cdp.call(
+                "Runtime.evaluate",
+                {
+                    "expression": txt_expr,
+                    "awaitPromise": True,
+                    "returnByValue": True,
+                },
+                timeout=60,
+            )
             article_text = res.get("result", {}).get("value", "") or ""
             if article_text:
                 (DOC_DIR / "press-release-2026-05-22.txt").write_text(article_text)
@@ -217,17 +230,23 @@ def main() -> int:
 
         # ---- 3. Download the ZIP bundle via download behavior + <a download> click
         print(f"[capture] setting download dir → {ZIP_DIR}", flush=True)
-        cdp.call("Page.setDownloadBehavior", {
-            "behavior": "allow",
-            "downloadPath": str(ZIP_DIR),
-        })
-        # Also try Browser.setDownloadBehavior which is the newer API
-        try:
-            cdp.call("Browser.setDownloadBehavior", {
+        cdp.call(
+            "Page.setDownloadBehavior",
+            {
                 "behavior": "allow",
                 "downloadPath": str(ZIP_DIR),
-                "eventsEnabled": True,
-            })
+            },
+        )
+        # Also try Browser.setDownloadBehavior which is the newer API
+        try:
+            cdp.call(
+                "Browser.setDownloadBehavior",
+                {
+                    "behavior": "allow",
+                    "downloadPath": str(ZIP_DIR),
+                    "eventsEnabled": True,
+                },
+            )
         except Exception as e:
             print(f"[capture] Browser.setDownloadBehavior not supported: {e}", flush=True)
 
@@ -235,9 +254,14 @@ def main() -> int:
         trigger_download(cdp, ZIP_URL)
 
         # Poll for completion
-        zip_file = wait_for_file(ZIP_DIR, "release_02_document_bundle*.zip", timeout=1800.0, idle_threshold=5.0)
+        zip_file = wait_for_file(
+            ZIP_DIR, "release_02_document_bundle*.zip", timeout=1800.0, idle_threshold=5.0
+        )
         if not zip_file:
-            print("[capture] ZIP download did NOT complete in 30 min - check ZIP_DIR manually", flush=True)
+            print(
+                "[capture] ZIP download did NOT complete in 30 min - check ZIP_DIR manually",
+                flush=True,
+            )
             # Diagnostic: list what's in there
             for f in ZIP_DIR.iterdir():
                 print(f"  {f.name} {f.stat().st_size}", flush=True)

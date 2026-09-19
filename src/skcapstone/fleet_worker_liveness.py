@@ -4,6 +4,7 @@ Systemd identifies the worker population.  The only activity signal is the
 mtime of the current run's pi session file.  In particular, workspace mtimes,
 process CPU, logs, and lifecycle state are not liveness signals.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -47,7 +48,17 @@ def _command(argv: Sequence[str]) -> str:
 def _unit_rows(runner: Callable[[Sequence[str]], str], state: str) -> list[str]:
     # State is applied to list-units itself, so failed units can never become
     # active workers merely because their name matches the worker glob.
-    output = runner(("systemctl", "--user", "--state=" + state, "list-units", "skfleet-worker-*", "--no-legend", "--plain"))
+    output = runner(
+        (
+            "systemctl",
+            "--user",
+            "--state=" + state,
+            "list-units",
+            "skfleet-worker-*",
+            "--no-legend",
+            "--plain",
+        )
+    )
     return [line.split()[0] for line in output.splitlines() if line.split()]
 
 
@@ -64,14 +75,20 @@ def failed_units(runner: Callable[[Sequence[str]], str] = _command) -> list[Fail
     return [FailedWorker(u, _card_id(u)) for u in _unit_rows(runner, "failed")]
 
 
-def active_enter_timestamp(unit: str, runner: Callable[[Sequence[str]], str] = _command) -> float | None:
-    raw = runner(("systemctl", "--user", "show", unit, "-p", "ActiveEnterTimestamp", "--value")).strip()
+def active_enter_timestamp(
+    unit: str, runner: Callable[[Sequence[str]], str] = _command
+) -> float | None:
+    raw = runner(
+        ("systemctl", "--user", "show", unit, "-p", "ActiveEnterTimestamp", "--value")
+    ).strip()
     try:
         # systemd's timestamp is not portable to parse. Tests and production
         # adapters may provide epoch seconds through the monotonic property.
         return float(raw)
     except ValueError:
-        raw = runner(("systemctl", "--user", "show", unit, "-p", "ActiveEnterTimestampMonotonic", "--value")).strip()
+        raw = runner(
+            ("systemctl", "--user", "show", unit, "-p", "ActiveEnterTimestampMonotonic", "--value")
+        ).strip()
         try:
             mono = float(raw) / 1_000_000
             uptime = float(Path("/proc/uptime").read_text().split()[0])
@@ -80,7 +97,9 @@ def active_enter_timestamp(unit: str, runner: Callable[[Sequence[str]], str] = _
             return None
 
 
-def current_session_file(card_id: str, active_enter: float | None, session_root: Path | str | None = None) -> Path | None:
+def current_session_file(
+    card_id: str, active_enter: float | None, session_root: Path | str | None = None
+) -> Path | None:
     root = Path(session_root or os.path.expanduser("~/.pi/agent/sessions"))
     candidates: list[Path] = []
     for path in glob.glob(str(root / f"*{card_id}*" / "*.jsonl")):
@@ -94,7 +113,9 @@ def current_session_file(card_id: str, active_enter: float | None, session_root:
     return max(candidates, key=lambda p: p.stat().st_mtime, default=None)
 
 
-def observe(session_root: Path | str | None = None, runner: Callable[[Sequence[str]], str] = _command) -> tuple[list[WorkerLiveness], list[FailedWorker]]:
+def observe(
+    session_root: Path | str | None = None, runner: Callable[[Sequence[str]], str] = _command
+) -> tuple[list[WorkerLiveness], list[FailedWorker]]:
     failed = failed_units(runner)
     observations = []
     for unit in active_units(runner):
@@ -103,7 +124,11 @@ def observe(session_root: Path | str | None = None, runner: Callable[[Sequence[s
         started = active_enter_timestamp(unit, runner)
         session = current_session_file(card, started, session_root)
         mtime = session.stat().st_mtime if session else None
-        observations.append(WorkerLiveness(card, unit, str(session) if session else None, mtime, started, session is not None))
+        observations.append(
+            WorkerLiveness(
+                card, unit, str(session) if session else None, mtime, started, session is not None
+            )
+        )
     return observations, failed
 
 
@@ -112,7 +137,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--session-root", type=Path)
     args = parser.parse_args(argv)
     workers, failed = observe(args.session_root)
-    print(json.dumps({"workers": [asdict(w) for w in workers], "cruft": [asdict(f) for f in failed]}, sort_keys=True))
+    print(
+        json.dumps(
+            {"workers": [asdict(w) for w in workers], "cruft": [asdict(f) for f in failed]},
+            sort_keys=True,
+        )
+    )
     return 0
 
 

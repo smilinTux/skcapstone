@@ -75,49 +75,63 @@ def _md_to_blocks(markdown: str) -> list[dict]:
             continue
 
         if stripped.startswith("### "):
-            blocks.append({
-                "object": "block",
-                "type": "heading_3",
-                "heading_3": {"rich_text": _rich_text(stripped[4:])}
-            })
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "heading_3",
+                    "heading_3": {"rich_text": _rich_text(stripped[4:])},
+                }
+            )
         elif stripped.startswith("## "):
-            blocks.append({
-                "object": "block",
-                "type": "heading_2",
-                "heading_2": {"rich_text": _rich_text(stripped[3:])}
-            })
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "heading_2",
+                    "heading_2": {"rich_text": _rich_text(stripped[3:])},
+                }
+            )
         elif stripped.startswith("# "):
-            blocks.append({
-                "object": "block",
-                "type": "heading_1",
-                "heading_1": {"rich_text": _rich_text(stripped[2:])}
-            })
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "heading_1",
+                    "heading_1": {"rich_text": _rich_text(stripped[2:])},
+                }
+            )
         elif stripped.startswith("- [x] ") or stripped.startswith("- [X] "):
-            blocks.append({
-                "object": "block",
-                "type": "to_do",
-                "to_do": {"rich_text": _rich_text(stripped[6:]), "checked": True}
-            })
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "to_do",
+                    "to_do": {"rich_text": _rich_text(stripped[6:]), "checked": True},
+                }
+            )
         elif stripped.startswith("- [ ] "):
-            blocks.append({
-                "object": "block",
-                "type": "to_do",
-                "to_do": {"rich_text": _rich_text(stripped[6:]), "checked": False}
-            })
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "to_do",
+                    "to_do": {"rich_text": _rich_text(stripped[6:]), "checked": False},
+                }
+            )
         elif stripped.startswith("- ") or stripped.startswith("* "):
-            blocks.append({
-                "object": "block",
-                "type": "bulleted_list_item",
-                "bulleted_list_item": {"rich_text": _rich_text(stripped[2:])}
-            })
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "bulleted_list_item",
+                    "bulleted_list_item": {"rich_text": _rich_text(stripped[2:])},
+                }
+            )
         elif stripped.startswith("---"):
             blocks.append({"object": "block", "type": "divider", "divider": {}})
         else:
-            blocks.append({
-                "object": "block",
-                "type": "paragraph",
-                "paragraph": {"rich_text": _rich_text(stripped)}
-            })
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {"rich_text": _rich_text(stripped)},
+                }
+            )
 
     return blocks
 
@@ -207,11 +221,13 @@ def cmd_replace(page_id: str, markdown: str) -> None:
 
 def cmd_add_todo(page_id: str, text: str, checked: bool = False) -> None:
     """Add a single todo item to a page."""
-    blocks = [{
-        "object": "block",
-        "type": "to_do",
-        "to_do": {"rich_text": _rich_text(text), "checked": checked}
-    }]
+    blocks = [
+        {
+            "object": "block",
+            "type": "to_do",
+            "to_do": {"rich_text": _rich_text(text), "checked": checked},
+        }
+    ]
     result = _request("PATCH", f"/blocks/{page_id}/children", {"children": blocks})
     status = "checked" if checked else "unchecked"
     print(f"Added todo ({status}): {text}")
