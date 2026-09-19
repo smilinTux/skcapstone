@@ -31,6 +31,10 @@
   workspace by losing a label nor its safety constraint by a routing fix. See
   `docs/fleet/source-only-split.md` for the census, the relabelling pass, and
   the unresolved push/no-push tension the rail deliberately leaves open.
+  A third usage, `fleet.builder_dispatch.eligible()`, still requires the
+  literal label on purpose: it is an admission gate, and widening one admits
+  more work than anyone marked eligible. A relabelling pass must therefore
+  check `logical_route` before removing the label from any card.
   NOTE: `~/.local/bin/skfleet-rotate.py` is a separately deployed per-host
   artifact; this is inert on the fleet until it is redeployed to each chi host.
 

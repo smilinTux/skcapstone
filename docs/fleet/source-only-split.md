@@ -132,6 +132,20 @@ silently change what those cards mean. The rail defers to the card's own
 criteria and leaves the question open. **It should be settled deliberately, as
 its own piece of work.**
 
+## A third usage, deliberately left alone
+
+`skcapstone.fleet.builder_dispatch.eligible()` also tests for `source-only`, in
+a third sense again: admission to the builder fanout lane, as "a bounded
+provider-neutral source workload". It is left requiring the literal label, on
+purpose. It is an **admission** gate, and widening an admission gate admits more
+work than anyone marked eligible, which is the unsafe direction. It is also a
+conjunction with `logical_route`, so it is already narrow.
+
+The consequence is a real constraint on any relabelling pass: a card that has
+`source-only` removed silently drops **out** of builder eligibility. That is a
+liveness change rather than a safety one, but it is invisible, so the pass must
+check `logical_route` before removing the label from any card.
+
 ## Migration
 
 Nothing has to be relabelled for this change to land, which is the point. The
