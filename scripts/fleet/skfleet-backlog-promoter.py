@@ -3,33 +3,36 @@
 
 WHY THIS EXISTS.
 
-The fleet can run dozens of workers concurrently and routinely runs two.
-Measured on the chi estate 2026-09-19, with 15 seats free and every lane
-target raised:
+The fleet can run dozens of workers concurrently and was running two. Measured
+on the chi estate 2026-09-19, with 15 seats free and every lane target raised:
 
     SLOTS|chiap01|codex=0/8 glm=1/2 qwen=0/1 kimi=0/3|total_free=15
     POOL_V2|population=1533 ready=15 ineligible=1518
     CYCLE_RECEIPT|chiap01|launched=2|attempted=3
 
 Lane capacity was never the constraint, and neither was the gateway: codex
-holds 32 slots and has never exceeded a peak of 2. The constraint is that
-the dispatcher draws candidates from `ready`, and the estate had **20 cards
-in `ready` against 1134 live cards sitting in `backlog`**. Nothing moved a
-card between those two columns, so the ready pool drained and stayed drained.
-Raising a lane target cannot fix an empty pool, which is why several rounds
-of lane tuning changed nothing.
+holds 32 slots and has never peaked above 2. The dispatcher draws candidates
+from `ready`, and the estate held 20 ready cards against 1134 live backlog
+cards. Nothing moved a card between those columns, so the pool drained and
+stayed drained. That is why several rounds of lane tuning changed nothing.
 
-WHAT IT PROMOTES.
+MIRRORING THE GATE, NOT GUESSING AT IT.
 
-Only cards that would actually dispatch if promoted. Promoting a card the
-selector will silently withhold is worse than leaving it alone: it inflates
-`ready`, hides the real shortfall, and the card churns the claim ceiling. So
-every gate the selector applies downstream is applied here first, and a card
-is skipped with a named reason rather than promoted hopefully.
+A first version of this script invented its own eligibility rules. It promoted
+25 cards and the selector accepted 3: the rest carried `no-action`,
+`human-gate` or an unsatisfied dependency and were refused downstream. That is
+the worst possible outcome, because `ready` now reports depth the fleet cannot
+use and the real shortfall is hidden.
 
-The bound is deliberate. This tops the pool up toward a target depth and
-promotes at most `--max-promote` per run, so a wrong rule costs a handful of
-reversible `coord move` calls rather than a thousand.
+So every rule below mirrors `_claimability_reason()` in `skfleet-rotate.py`,
+named line by line, and the promoter refuses anything it cannot evaluate. When
+that function changes, this one is wrong until it is updated to match: the
+`REASON_SOURCE` map exists to make that coupling searchable rather than
+discovering it again through another silent stall.
+
+The bound is deliberate. This tops the pool up toward a target depth and moves
+at most `--max-promote` per run, so a wrong rule costs a handful of reversible
+`coord move` calls rather than a thousand.
 """
 
 from __future__ import annotations
@@ -42,180 +45,326 @@ import subprocess
 import sys
 from pathlib import Path
 
-#: A card whose title carries no size marker, or more than one, fails
-#: `_size_class_for` in the dispatcher, resolves to no logical route, and is
-#: dropped from the candidate scan before any lane is consulted, emitting no
-#: log line at all. Promoting one produces a card that silently never runs.
+#: Mirrors `_NON_IMPLEMENTATION_LABELS` + `non_implementation()`.
+#: Labels are normalized with `_` to `-` exactly as the dispatcher does.
+NON_IMPLEMENTATION_LABELS = frozenset({
+    "planning-only-container",
+    "do-not-claim-as-implementation",
+    "human-gate",
+    "human-decision-recorded-no-action",
+    "no-action-authorized",
+})
+
+#: Mirrors `_NOT_CLAIMABLE`. Checked against labels AND tags, not labels alone.
+NOT_CLAIMABLE = frozenset({"not-claimable", "sprint-container", "do-not-claim"})
+
+#: Mirrors `_SENSITIVE_CATEGORY` and `_CATEGORY_OPT_IN`.
+SENSITIVE_CATEGORY = re.compile(
+    r"(capauth|credential|custody|issuer|secret|\bkey\b|rollback|"
+    r"deploy|production|release|migrat)", re.I)
+CATEGORY_OPT_IN = "dispatch-approved"
+
+#: Mirrors `_GATE_LANGUAGE_RE`, applied to acceptance criteria when
+#: `spec_version >= 2`. Criteria that can only be met by someone else reviewing
+#: are not satisfiable by the worker that would be dispatched.
+GATE_LANGUAGE = re.compile(
+    r"independent review|review pass|before merge|approved by|sign-?off"
+    r"|reviewed by|merged to main|awaiting review", re.I)
+
+#: Title markers that make a card review work regardless of its labels.
+REVIEW_TITLE_MARKER = re.compile(r"\[(RE-?REVIEW|REVIEW)\]", re.I)
+
+#: A card with no size marker, or more than one, fails `_size_class_for`,
+#: resolves to no logical route, and is dropped from the candidate scan with
+#: no log line at all. This is not in `_claimability_reason`; it bites later.
 SIZE_MARKER = re.compile(r"\[(S|M|L|XL)\]")
-
-#: Labels that mean "never dispatch this", mirroring the selector.
-BLOCKING_LABELS = frozenset({"not-claimable", "sprint-container", "do-not-claim"})
-
-#: The selector refuses a card whose title matches this unless it carries the
-#: explicit `dispatch-approved` opt-in. Kept identical on purpose: a promoter
-#: that admits what the selector refuses just moves the stall one step later.
-SENSITIVE_TITLE = re.compile(
-    r"capauth|credential|custody|issuer|secret|\bkey\b|rollback|deploy|production"
-    r"|release|migrat",
-    re.IGNORECASE,
-)
 
 PRIORITY_RANK = {"critical": 0, "high": 1, "medium": 2, "normal": 2, "low": 3}
 
+#: Which upstream rule each refusal mirrors, so the coupling is greppable.
+REASON_SOURCE = {
+    "non-task": "_coord_task_claimable: kind must be task",
+    "terminal": "_claimability_reason: void/archive/done",
+    "owned": "_claimability_reason: owner set",
+    "human-gate": "non_implementation: label set or [HUMAN] in title",
+    "foreign-project": "_claimability_reason: foreign-project label",
+    "not-claimable": "_NOT_CLAIMABLE against labels and tags",
+    "sensitive-category": "_SENSITIVE_CATEGORY without dispatch-approved",
+    "criteria-not-satisfiable": "_GATE_LANGUAGE_RE on spec_version>=2 criteria",
+    "dependency-open": "_dep_satisfied: dependency not complete",
+    "dependency-blocked": "_dep_satisfied: dependency completed BLOCKED",
+    "review-lane": "_claimability_reason: review markers route elsewhere",
+    "seat-unprovisioned": "_seat_owner: seat absent from seat-placement.json",
+    "size-marker": "_size_class_for: exactly one [S]/[M]/[L]/[XL] required",
+}
+
+
+def _norm(values) -> set[str]:
+    return {str(v).strip().lower().replace("_", "-") for v in (values or [])}
+
+
+def _status(card) -> str:
+    return str(getattr(card, "status", "")).lower().replace("column.", "")
+
 
 def _terminal(card) -> bool:
-    status = str(getattr(card, "status", "")).lower()
     meta = getattr(card, "meta", None) or {}
     return (
-        "done" in status
+        _status(card) == "done"
         or bool(getattr(card, "archived", False))
         or bool(meta.get("voided"))
     )
 
 
-def _seat_of(labels: list[str]) -> str | None:
-    for label in labels:
-        text = str(label).strip().lower()
-        if text.startswith("seat-"):
-            return text[len("seat-"):]
-    return None
+def _verdict_is_blocked(home: Path, cid: str) -> bool:
+    """True when this card's recorded verdict says BLOCKED.
+
+    Mirrors the second half of `_dep_satisfied`. A dependency that completed
+    BLOCKED is not satisfied: the lifecycle says complete while the evidence
+    says the foundation does not exist. Checking lifecycle alone is the
+    joined-truth error this estate keeps repeating.
+    """
+    events_dir = home / "cards" / cid / "events"
+    latest = None
+    if events_dir.is_dir():
+        for name in os.listdir(events_dir):
+            try:
+                with open(events_dir / name, encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        try:
+                            row = json.loads(line)
+                        except Exception:
+                            continue
+                        if not isinstance(row, dict):
+                            continue
+                        if row.get("link_key") == "verdict":
+                            key = (str(row.get("ts") or ""), int(row.get("seq") or 0))
+                            if latest is None or key > latest[0]:
+                                latest = (key, str(row.get("link_value") or ""))
+            except OSError:
+                continue
+    return bool(latest and re.match(r"^\s*BLOCKED", latest[1], re.I))
 
 
-def _skip_reason(card, folded: dict, seats: set[str]) -> str | None:
+def refusal(home: Path, card, folded: dict, seats: set[str]) -> str | None:
     """Return why this card must not be promoted, or None when it may be."""
     title = str(getattr(card, "title", "") or "")
-    labels = [str(x).lower() for x in (getattr(card, "labels", None) or [])]
+    labels = _norm(getattr(card, "labels", None) or [])
+    meta = getattr(card, "meta", None) or {}
+    tags = _norm(meta.get("tags") or [])
 
-    if len(SIZE_MARKER.findall(title)) != 1:
-        return "size-marker-not-exactly-one"
-    if BLOCKING_LABELS.intersection(labels):
-        return "blocking-label"
+    if str(getattr(card, "kind", "")).lower().replace("kind.", "") != "task":
+        return "non-task"
+    if _terminal(card):
+        return "terminal"
     if getattr(card, "owner", None):
-        return "already-owned"
-    if SENSITIVE_TITLE.search(title) and "dispatch-approved" not in labels:
+        return "owned"
+    # non_implementation() checks labels AND a [HUMAN] marker in the title.
+    if labels & NON_IMPLEMENTATION_LABELS or "[HUMAN]" in title.upper():
+        return "human-gate"
+    if "foreign-project" in labels:
+        return "foreign-project"
+    if NOT_CLAIMABLE & (labels | tags):
+        return "not-claimable"
+    if SENSITIVE_CATEGORY.search(title) and CATEGORY_OPT_IN not in labels:
         return "sensitive-category"
-    # A review card additionally needs a typed source binding and a reviewer
-    # seat. Those are absent on the overwhelming majority of them, so a review
-    # card promoted today is withheld the moment it is examined.
-    if "review" in labels:
-        return "review-card-needs-source-binding"
-    seat = _seat_of(labels)
-    if seat is not None and seat not in seats:
-        return "seat-unprovisioned:%s" % seat
+    try:
+        spec_version = int(meta.get("spec_version") or 1)
+    except (TypeError, ValueError):
+        spec_version = 1
+    if spec_version >= 2:
+        criteria = " ".join(
+            str(c) for c in (getattr(card, "acceptance_criteria", None) or []))
+        if GATE_LANGUAGE.search(criteria):
+            return "criteria-not-satisfiable"
+    # Review work has its own lane with its own admission gate, and that gate
+    # additionally demands a typed source binding that most review cards lack.
+    # The marker is NOT only the label: `_claimability_reason` sets
+    # `review_marked` from `state["review_markers"]`, which reads the title
+    # too. A first version checked the label alone, promoted a batch whose
+    # titles carried [REVIEW], and the selector routed every one of them to the
+    # review lane where they were withheld. `ready` gained depth the fleet
+    # could not use, which is the specific outcome this script must never
+    # produce.
+    if "review" in labels or _status(card) == "review":
+        return "review-lane"
+    if REVIEW_TITLE_MARKER.search(title):
+        return "review-lane"
     for dep in getattr(card, "dependencies", None) or []:
         target = folded.get(str(dep))
-        if target is None:
-            return "dependency-unreadable"
-        if not _terminal(target):
+        if target is None or not _terminal(target):
             return "dependency-open"
+        if _verdict_is_blocked(home, str(dep)):
+            return "dependency-blocked"
+    for label in labels:
+        if label.startswith("seat-") and label[len("seat-"):] not in seats:
+            return "seat-unprovisioned"
+    if len(SIZE_MARKER.findall(title)) != 1:
+        return "size-marker"
     return None
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--home", default=os.path.expanduser("~/.skcapstone"))
-    ap.add_argument("--target-ready", type=int, default=60,
-                    help="desired depth of the ready column")
-    ap.add_argument("--max-promote", type=int, default=25,
-                    help="hard ceiling on promotions in a single run")
-    ap.add_argument("--agent", default="backlog-promoter")
-    ap.add_argument("--apply", action="store_true",
-                    help="perform the moves; without it, print the plan only")
-    args = ap.parse_args()
-
-    sys.path.insert(0, str(Path(args.home).parent))
+def _load(home: Path) -> dict:
+    sys.path.insert(0, str(home.parent))
     from skcoord.card_store import CardStore  # noqa: E402
 
-    store = CardStore(args.home)
-    cards_dir = Path(args.home) / "cards"
-
-    folded: dict = {}
-    for entry in os.listdir(cards_dir):
+    store = CardStore(str(home))
+    folded = {}
+    for entry in os.listdir(home / "cards"):
         try:
             card = store.fold(entry)
         except Exception:
             continue
         if card is not None:
             folded[entry] = card
+    return folded
+
+
+def _move(cid: str, column: str, home: Path, agent: str) -> tuple[bool, str]:
+    result = subprocess.run(
+        ["skcapstone", "coord", "move", cid, column, "--home", str(home),
+         "--agent", agent],
+        capture_output=True, text=True,
+    )
+    return result.returncode == 0, result.stderr.strip()[:140]
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--home", default=os.path.expanduser("~/.skcapstone"))
+    ap.add_argument("--target-ready", type=int, default=60)
+    ap.add_argument("--max-promote", type=int, default=25)
+    ap.add_argument("--agent", default="backlog-promoter")
+    ap.add_argument("--apply", action="store_true",
+                    help="perform the moves; without it, print the plan only")
+    ap.add_argument("--reconcile", action="store_true",
+                    help="also return ready cards THIS promoter placed that no "
+                         "longer pass the gate, so ready never reports depth "
+                         "the dispatcher cannot use")
+    args = ap.parse_args()
+
+    home = Path(args.home)
+    folded = _load(home)
+
+    try:
+        seats = set(json.loads(
+            (home / "coordination" / "seat-placement.json").read_text()
+        ).get("seats", {}))
+    except Exception as exc:
+        print(f"seat placement unreadable ({exc}); refusing to act", file=sys.stderr)
+        return 2
 
     ready, backlog = [], []
     for cid, card in folded.items():
-        status = str(getattr(card, "status", "")).lower()
         if _terminal(card):
             continue
-        if "ready" in status:
-            ready.append(cid)
-        elif "backlog" in status:
+        status = _status(card)
+        if status == "ready":
+            ready.append((cid, card))
+        elif status == "backlog":
             backlog.append((cid, card))
 
-    placement_path = Path(args.home) / "coordination" / "seat-placement.json"
-    try:
-        seats = set(json.loads(placement_path.read_text()).get("seats", {}))
-    except Exception as exc:
-        print(f"seat placement unreadable ({exc}); refusing to promote", file=sys.stderr)
-        return 2
+    demoted = 0
+    if args.reconcile:
+        # Only ever reconsider cards this promoter placed. A card somebody else
+        # readied is not ours to demote, even if our mirror of the gate refuses
+        # it: our mirror can be wrong, and silently emptying another writer's
+        # column would be a far worse failure than leaving one stale card.
+        ours = []
+        for cid, card in ready:
+            reason = refusal(home, card, folded, seats)
+            if reason is None:
+                continue
+            placed_by = str((getattr(card, "meta", None) or {}).get("last_move_agent") or "")
+            events = home / "cards" / cid / "events"
+            if not placed_by and events.is_dir():
+                for name in os.listdir(events):
+                    try:
+                        with open(events / name, encoding="utf-8", errors="replace") as fh:
+                            for line in fh:
+                                try:
+                                    row = json.loads(line)
+                                except Exception:
+                                    continue
+                                if (isinstance(row, dict) and row.get("action") == "move"
+                                        and str(row.get("agent") or "") == args.agent):
+                                    placed_by = args.agent
+                    except OSError:
+                        continue
+            if placed_by == args.agent:
+                ours.append((cid, reason))
+        for cid, reason in ours:
+            if not args.apply:
+                print(f"  WOULD RETURN {cid} to backlog ({reason})")
+                continue
+            ok, err = _move(cid, "backlog", home, args.agent)
+            if ok:
+                demoted += 1
+                print(f"  RETURNED {cid} to backlog ({reason})")
+            else:
+                print(f"  RETURN FAILED {cid}: {err}")
+        ready = [row for row in ready if row[0] not in {c for c, _ in ours}]
 
     shortfall = max(0, args.target_ready - len(ready))
     budget = min(shortfall, args.max_promote)
-    print(f"ready={len(ready)} target={args.target_ready} "
-          f"backlog={len(backlog)} shortfall={shortfall} budget={budget}")
-    if budget == 0:
-        print("ready column is at target; nothing to do")
-        return 0
+    print(f"ready={len(ready)} target={args.target_ready} backlog={len(backlog)} "
+          f"shortfall={shortfall} budget={budget} demoted={demoted}")
 
-    eligible, skipped = [], {}
+    eligible, refused = [], {}
     for cid, card in backlog:
-        reason = _skip_reason(card, folded, seats)
+        reason = refusal(home, card, folded, seats)
         if reason is None:
             eligible.append((cid, card))
         else:
-            skipped[reason] = skipped.get(reason, 0) + 1
+            refused[reason] = refused.get(reason, 0) + 1
+
+    print("eligible=%d  refused=%s" % (
+        len(eligible),
+        ",".join(f"{k}={v}" for k, v in sorted(refused.items(), key=lambda x: -x[1]))
+        or "none",
+    ))
+    if budget == 0:
+        print("ready column is at target; nothing to promote")
+        return 0
 
     eligible.sort(key=lambda row: (
         PRIORITY_RANK.get(str(getattr(row[1], "priority", "")).lower(), 9),
         str(getattr(row[1], "created_at", "")),
         row[0],
     ))
-
-    print("eligible=%d  skipped=%s" % (
-        len(eligible),
-        ",".join(f"{k}={v}" for k, v in sorted(skipped.items(), key=lambda x: -x[1])),
-    ))
-
     selected = eligible[:budget]
+
     promoted = 0
     for cid, card in selected:
-        title = str(getattr(card, "title", ""))[:70]
+        title = str(getattr(card, "title", ""))[:66]
         if not args.apply:
             print(f"  WOULD PROMOTE {cid} | {title}")
             continue
-        result = subprocess.run(
-            ["skcapstone", "coord", "move", cid, "ready",
-             "--home", args.home, "--agent", args.agent],
-            capture_output=True, text=True,
-        )
-        if result.returncode == 0:
+        ok, err = _move(cid, "ready", home, args.agent)
+        if ok:
             promoted += 1
             print(f"  PROMOTED {cid} | {title}")
         else:
-            print(f"  FAILED   {cid} | {result.stderr.strip()[:140]}")
+            print(f"  FAILED   {cid} | {err}")
 
-    if args.apply:
-        # Read the column back through a fresh fold rather than trusting the
-        # exit codes above. A CLI that prints success and persists nothing is a
-        # documented failure mode in this stack, so the count that matters is
-        # the one observed after the writes, by a different path than wrote it.
-        verify = CardStore(args.home)
-        confirmed = sum(
-            1 for cid, _ in selected
-            if (lambda c: c is not None and "ready" in str(getattr(c, "status", "")).lower())(
-                verify.fold(cid))
-        )
-        print(f"promoted={promoted} confirmed_ready_on_reread={confirmed}")
-        return 0 if confirmed == promoted else 1
+    if not args.apply:
+        print(f"dry run: {len(selected)} would be promoted (pass --apply)")
+        return 0
 
-    print(f"dry run: {len(selected)} would be promoted (pass --apply to execute)")
-    return 0
+    # Read the column back through a FRESH fold rather than trusting exit
+    # codes. A CLI that reports success and persists nothing is a documented
+    # failure mode in this stack, so the count that matters is the one observed
+    # afterwards, by a different path than the one that wrote it.
+    sys.path.insert(0, str(home.parent))
+    from skcoord.card_store import CardStore  # noqa: E402
+    verify = CardStore(str(home))
+    confirmed = 0
+    for cid, _ in selected:
+        card = verify.fold(cid)
+        if card is not None and _status(card) == "ready":
+            confirmed += 1
+    print(f"promoted={promoted} confirmed_ready_on_reread={confirmed}")
+    return 0 if confirmed == promoted else 1
 
 
 if __name__ == "__main__":
