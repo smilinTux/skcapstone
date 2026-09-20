@@ -30,6 +30,7 @@ def _load(home, placement=None, placement_error=None):
         "_seat_is_provisioned",
         "_seat_owner",
         "_pool_v2_owner_map",
+        "_active_dispatcher_snapshot",
         "_worker_owner",
     }
     fns = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
@@ -59,6 +60,22 @@ def _load(home, placement=None, placement_error=None):
     }
     exec(compile(ast.Module(body=assigns + fns, type_ignores=[]), SRC, "exec"), ns)
     return ns, labels
+
+
+def test_capacity_requires_an_active_local_dispatcher() -> None:
+    ns, _ = _load("/tmp")
+    valid = {
+        "dispatcher": {
+            "schema_version": 1,
+            "active": True,
+            "host": "chiap03",
+            "mode": "skfleet-rotate",
+        }
+    }
+    assert ns["_active_dispatcher_snapshot"](valid, "chiap03") is True
+    for key, value in (("active", False), ("host", "chiap08"), ("mode", "publisher")):
+        candidate = {"dispatcher": dict(valid["dispatcher"], **{key: value})}
+        assert ns["_active_dispatcher_snapshot"](candidate, "chiap03") is False
 
 
 def test_worker_owner_keeps_the_standard_pi_prefix() -> None:

@@ -1648,6 +1648,14 @@ def publish_live(sessions, units=()):
             json.dump({
                 "host": HOST,
                 "ts": time.time(),
+                # Capacity is an ownership signal only when this process proves
+                # it is the host's governed dispatcher, not merely a publisher.
+                "dispatcher": {
+                    "schema_version": 1,
+                    "active": True,
+                    "host": HOST,
+                    "mode": "skfleet-rotate",
+                },
                 "cards": cards,
                 "workers": workers,
                 "lanes": {
@@ -1664,8 +1672,26 @@ def publish_live(sessions, units=()):
         log(d, "WARN|%s|could not publish liveness: %s" % (HOST, exc))
     return cards
 
+def _active_dispatcher_snapshot(snap, expected_host):
+    """Accept capacity only from a host that proves its dispatcher is active.
+
+    A live worker report is not an ownership grant.  In particular, a stale
+    report from a host whose rotation timer is disabled must never make the
+    hash partition select that host.  Keep this check deliberately narrow so
+    an ordinary capacity publisher cannot impersonate a dispatcher.
+    """
+    dispatcher = snap.get("dispatcher")
+    return (
+        isinstance(dispatcher, dict)
+        and dispatcher.get("schema_version") == 1
+        and dispatcher.get("active") is True
+        and str(dispatcher.get("host") or "") == expected_host
+        and dispatcher.get("mode") == "skfleet-rotate"
+    )
+
+
 def reporting_capacity():
-    """Return total free lanes advertised by each currently reporting host."""
+    """Return free lanes advertised by verified active dispatchers only."""
     capacity = {}
     now = time.time()
     for path in glob.glob(os.path.join(LIVE, "*.json")):
@@ -1674,9 +1700,15 @@ def reporting_capacity():
                 snap = json.load(fh)
             ts = float(snap.get("ts") or 0)
             lanes = snap.get("lanes") or {}
-            if not 0 < ts <= now or now - ts > LIVE_FRESH or not isinstance(lanes, dict):
+            host = str(snap.get("host") or Path(path).stem)
+            if (
+                not 0 < ts <= now
+                or now - ts > LIVE_FRESH
+                or not isinstance(lanes, dict)
+                or not _active_dispatcher_snapshot(snap, host)
+            ):
                 continue
-            capacity[str(snap.get("host") or Path(path).stem)] = sum(
+            capacity[host] = sum(
                 max(0, int(lane.get("free", 0)))
                 for lane in lanes.values() if isinstance(lane, dict)
             )
