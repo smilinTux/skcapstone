@@ -7793,16 +7793,34 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         fresh_claimability["labels"],
         qualified_reviewer_seats(fresh_claimability["core"]),
     )
-    # A governed review card keeps the BARE BUCKET as its model. The review
-    # path has already chosen a concrete route through eligible_review_routes
-    # and choose_review_route against the advertised snapshot, so substituting
-    # the lane's generic model here would override a selection that was made
-    # with more information (the reviewer seat, the producer identity and the
-    # per-route occupancy). Producer dispatch has no such selection, which is
-    # where sending the bare bucket silently routed every lane to the local
-    # qwen fallback, and that is the only path this change alters.
-    if _review_seat is not None:
-        model=_bucket
+    # A governed review card used to be forced back onto the BARE BUCKET
+    # here, on the theory that eligible_review_routes/choose_review_route
+    # below had already made a better-informed selection than the lane's
+    # generic model resolution. That theory does not hold: those two
+    # functions choose a capacity_domain for admission and occupancy
+    # bookkeeping, never the model string sent to the gateway. Overriding
+    # model back to _bucket just discarded the operator's configured
+    # reviewer model (SKFLEET_MODEL_S / SKFLEET_CODEX_MODEL_S) and replaced
+    # it with the shared "sk-s" pool alias for every governed review card.
+    #
+    # Measured 2026-08-31: a drop-in setting SKFLEET_MODEL_S=sk-codex-mid for
+    # the Seraph seat was confirmed loaded into the running service
+    # (systemctl --user show at the 14:25:10 CDT restart), and governed
+    # review workers launched afterward still sent "model":"sk-s" on every
+    # turn because of this override. sk-s round-robins across backends
+    # including chiap08-qwen38, the only erroring backend on the gateway (80
+    # errors of 3,943 requests while every other backend reported zero). A
+    # review turn landing there returned an empty completion, the reviewer
+    # recorded no verdict, and the wrapper exited 75 no_card_mutation; cards
+    # accumulated 17 claims and 18 releases this way. In three sessions that
+    # did succeed, the turn that produced the correct verdict command was
+    # served by gpt-5.6-luna, not the pool alias, so success was pool luck
+    # rather than reviewer competence.
+    #
+    # model already carries the resolved value from _lane_model(...) above,
+    # same as the non-governed path below; the capacity_domain chosen by
+    # choose_review_route is applied separately into _route_identity a few
+    # lines down and is untouched by this change.
     if _review_seat is not None:
         _metadata=_governed_review_metadata(
             fresh_claimability["core"],fresh_claimability["labels"])
