@@ -994,7 +994,12 @@ def main(argv: list[str] | None = None) -> int:
         operation=operation,
     )
     print(json.dumps(asdict(summary), sort_keys=True))
-    return 0 if summary.result not in {"inactive_host_refused"} else 75
+    # A dispatcher timeout (or any verified dispatch failure) is a terminal
+    # cycle failure.  Keep the durable health receipt as the orchestrator's
+    # record, but do not let systemd report successful completion for it.
+    if summary.dispatch_failed:
+        return 1
+    return 75 if summary.result == "inactive_host_refused" else 0
 
 
 if __name__ == "__main__":

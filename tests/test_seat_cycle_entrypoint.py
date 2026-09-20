@@ -395,6 +395,26 @@ def test_seraph_timeout_terminates_reaps_process_group_and_reports_cleanup(
     assert summary.exception_type == receipt["exception_type"] == "TimeoutExpired"
 
 
+def test_main_returns_failure_for_seraph_timeout(tmp_path, monkeypatch, capsys):
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    monkeypatch.setattr(seat_entrypoint.socket, "gethostname", lambda: "chiap08")
+    monkeypatch.setattr(seat_entrypoint, "seraph_operation", lambda _home: {
+        "cards_examined": 0,
+        "recommendations": 0,
+        "suppressed": 1,
+        "dispatch_failed": 1,
+        "reason": "seraph_dispatch_timeout",
+        "exception_type": "TimeoutExpired",
+        "cleanup": "process_group_reaped",
+    })
+    assert seat_entrypoint.main([
+        "--seat", "seraph", "--home", str(tmp_path),
+        "--control-plane", str(control_path),
+    ]) == 1
+    assert json.loads(capsys.readouterr().out)["result"] == "seraph_dispatch_timeout"
+
+
 def test_seraph_zero_available_capacity_is_truthful_noop(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
         "skcapstone.seat_cycle_entrypoint.subprocess.run",
