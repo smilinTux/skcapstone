@@ -119,12 +119,25 @@ def deployed_artifact_path(name: str, home: Path | str | None = None) -> Path:
     EXISTS, so an ``is_file()`` guard passes and a stale dispatcher runs
     silently, instead of failing closed the way a missing file would.
 
-    Pass ``home`` explicitly wherever the caller already has the estate
-    home in hand (``seat_cycle_entrypoint``'s operations take it as an
-    argument). Defaulting to the process's own ``Path.home()`` is a
-    convenience for callers that genuinely mean "this machine", not a
-    licence to ignore an estate home that was handed to you: those two can
-    differ, and when they do the argument is the correct one.
+    ``home`` is a USER home and nothing else. This function joins
+    ``PER_HOST_BIN_RELATIVE_DIR`` to whatever it is given, and that
+    directory is defined relative to a user's home; it is not a component
+    of any other tree. An ESTATE home is a subdirectory of a user home, so
+    passing one produces a path with the estate directory wedged in the
+    middle -- a location no rollout has ever written.
+
+    An earlier revision of this docstring advised passing the estate home
+    "wherever the caller already has it in hand", naming
+    ``seat_cycle_entrypoint``'s Seraph and role-dispatch operations
+    specifically. That advice was wrong, both of those call sites followed
+    it, and the resulting path could not exist. Because those callers guard
+    with ``is_file()``, the dispatch reported itself missing and suppressed
+    every batch it was supposed to launch, for 19 hours, with no error
+    anywhere. See ``seraph_operation`` for the incident detail.
+
+    Callers that mean "the artifact deployed on this machine" must pass
+    NOTHING and take the default. Pass ``home`` only to name a different
+    user's tree, which is what the tests do.
     """
     base = Path(home) if home is not None else Path.home()
     return base / PER_HOST_BIN_RELATIVE_DIR / name

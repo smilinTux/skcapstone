@@ -26,11 +26,40 @@ from skcapstone.seat_cycle_entrypoint import (
 
 
 @pytest.fixture(autouse=True)
-def installed_dispatcher(tmp_path):
+def user_home(tmp_path, monkeypatch):
+    """A USER home that is NOT the estate home these operations are passed.
+
+    This separation is the whole point. On every live host the two are
+    different directories -- the estate home is a subdirectory of the user
+    home -- and ``.local/bin`` hangs off the USER home. This module used to
+    pass ``tmp_path`` as the estate home AND deploy the dispatcher to
+    ``tmp_path/.local/bin``, collapsing the two into one directory. Under
+    that collapse both the correct and the incorrect base resolved to the
+    same file, so 30 tests here passed while production had been resolving
+    the dispatcher to a path under the estate home that has never existed,
+    reporting ``seraph_dispatcher_missing`` and suppressing every
+    independent-review batch for 19 hours.
+
+    Keeping them distinct is what gives these tests the ability to fail if
+    the estate home is ever passed as the artifact base again: that base
+    resolves under ``tmp_path``, where no dispatcher is deployed.
+
+    ``HOME`` is set rather than ``Path.home`` patched so the child
+    processes these operations spawn see the same home the parent resolved.
+    """
+
+    home = tmp_path / "user"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    return home
+
+
+@pytest.fixture(autouse=True)
+def installed_dispatcher(user_home):
     """Provide the DEPLOYED launcher these operations actually execute.
 
-    Placed under the estate home (tmp_path) at .local/bin, because that is
-    where the rollout copies it and what the live units run -- confirmed on
+    Placed under the USER home at .local/bin, because that is where the
+    rollout copies it and what the live units run -- confirmed on
     chiap01/02/03/04/08. It used to be placed next to a monkeypatched
     sys.executable, which put it in the pip copy's directory: a guess that
     happened to be right only while the two copies matched, and one that
@@ -38,7 +67,7 @@ def installed_dispatcher(tmp_path):
     wrong file EXISTS and the is_file() guard passes.
     """
 
-    dispatcher = tmp_path / ".local" / "bin" / "skfleet-rotate.py"
+    dispatcher = user_home / ".local" / "bin" / "skfleet-rotate.py"
     dispatcher.parent.mkdir(parents=True, exist_ok=True)
     dispatcher.touch(mode=0o755)
     return dispatcher
@@ -308,7 +337,7 @@ def test_seraph_rejects_missing_deployed_dispatcher(tmp_path, installed_dispatch
 
 
 def test_seraph_runs_the_deployed_dispatcher_not_the_pip_copy(
-    tmp_path, monkeypatch, installed_dispatcher
+    tmp_path, user_home, monkeypatch, installed_dispatcher
 ) -> None:
     """The file that runs is the one the rollout deploys.
 
@@ -320,7 +349,7 @@ def test_seraph_runs_the_deployed_dispatcher_not_the_pip_copy(
     pinning is the one that actually matters -- a pip copy sitting beside
     the interpreter must NOT win over the deployed copy.
     """
-    bindir = tmp_path / ".skenv" / "bin"
+    bindir = user_home / ".skenv" / "bin"
     bindir.mkdir(parents=True)
     (bindir / "python3").symlink_to("/usr/bin/python3")
     pip_copy = bindir / "skfleet-rotate.py"
@@ -360,10 +389,10 @@ def test_seraph_zero_eligible_work_is_truthful_noop(tmp_path, monkeypatch) -> No
 
 
 def test_seraph_timeout_terminates_reaps_process_group_and_reports_cleanup(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, installed_dispatcher
 ) -> None:
     child_pid = tmp_path / "child.pid"
-    dispatcher = tmp_path / ".local" / "bin" / "skfleet-rotate.py"
+    dispatcher = installed_dispatcher
     dispatcher.write_text(
         "#!/usr/bin/env python3\n"
         "import pathlib, subprocess, time\n"
@@ -796,13 +825,12 @@ def test_link_materialization_race_launches_once_and_replay_is_denied(
 ) -> None:
     home = tmp_path / "home"
     home.mkdir()
-    # This test runs the operation against its OWN estate home, so the
-    # dispatcher has to be deployed under THAT home, not under tmp_path.
-    # Anchoring on the home argument rather than the process's home is what
-    # makes this distinction visible at all.
-    deployed = home / ".local" / "bin" / "skfleet-rotate.py"
-    deployed.parent.mkdir(parents=True, exist_ok=True)
-    deployed.touch(mode=0o755)
+    # This test runs the operation against a THIRD directory as its estate
+    # home, distinct from both tmp_path and the user home. The dispatcher
+    # stays where the `installed_dispatcher` fixture deployed it, under the
+    # USER home, because that is the only thing `.local/bin` hangs off. It
+    # used to be re-deployed under this estate home instead, which is the
+    # collapse that hid the production defect.
     store = CardStore(home)
     store.create(
         CardCore(

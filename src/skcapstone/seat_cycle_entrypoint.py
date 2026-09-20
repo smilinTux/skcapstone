@@ -580,9 +580,25 @@ def _run_seraph_dispatcher(
 
 
 def seraph_operation(home: Path) -> dict[str, int | str]:
-    """Launch one configurable, bounded Seraph review batch."""
+    """Launch one configurable, bounded Seraph review batch.
 
-    dispatcher = deployed_artifact_path(DISPATCHER_RELATIVE_PATH.name, home)
+    ``home`` is the ESTATE home, and it is used for exactly one thing here:
+    locating the card store that ``verify_seraph_dispatch`` reads. It is
+    deliberately NOT passed to ``deployed_artifact_path``, whose base is a
+    USER home.
+
+    That distinction was lost once and cost a 19-hour silent outage. This
+    call read ``deployed_artifact_path(name, home)``, so on chi it resolved
+    the dispatcher to ``~/.skcapstone/.local/bin/skfleet-rotate.py`` while
+    the rollout deploys to ``~/.local/bin/skfleet-rotate.py``. The guard
+    below found no file, returned ``seraph_dispatcher_missing`` with
+    ``suppressed: 1``, and the independent-review lane dispatched nothing
+    while ``awaiting_review`` climbed past 400. Every batch was skipped and
+    the only record was a reason string inside a receipt nobody was
+    reading.
+    """
+
+    dispatcher = deployed_artifact_path(DISPATCHER_RELATIVE_PATH.name)
     if not dispatcher.is_file() or not os.access(dispatcher, os.X_OK):
         return {
             "cards_examined": 0,
@@ -808,9 +824,14 @@ def _failed_claim_is_retryable(
 
 
 def role_dispatch_operation(home: Path, seat: str) -> dict[str, int | str]:
-    """Launch one configurable, bounded ATLAS batch."""
+    """Launch one configurable, bounded ATLAS batch.
 
-    dispatcher = deployed_artifact_path(DISPATCHER_RELATIVE_PATH.name, home)
+    ``home`` is the ESTATE home and is passed on to ``verify_role_dispatch``
+    for the card store only. As in ``seraph_operation``, it must not reach
+    ``deployed_artifact_path``: this call site carried the identical defect.
+    """
+
+    dispatcher = deployed_artifact_path(DISPATCHER_RELATIVE_PATH.name)
     if not dispatcher.is_file() or not os.access(dispatcher, os.X_OK):
         return {
             "cards_examined": 0,
