@@ -1568,6 +1568,54 @@ def _never_started(cid):
     return (newest, age) if age > STALL_GRACE else None
 
 
+def _exact_pi_progress(cid, worker):
+    """Return true only for evidence attributed to this worker generation.
+
+    A zero-byte wrapper log is not a startup verdict: Pi print mode buffers its
+    output until completion.  Require the exact session or unit to carry an
+    attributable beat and, for tmux workers, an executable Pi descendant.
+    Missing or mismatched evidence is deliberately false.
+    """
+    if not worker or worker == "unknown":
+        return False
+    session = worker if worker.startswith(("codex-auto-", "pi-")) else ""
+    beats = glob.glob(os.path.join(HOME, ".skcapstone/fleet/beats", "*.json"))
+    matching = []
+    for beat_path in beats[:256]:
+        try:
+            beat = json.loads(open(beat_path, encoding="utf-8").read())
+        except (OSError, ValueError, TypeError):
+            continue
+        if str(beat.get("card_id") or beat.get("card") or "") != str(cid):
+            continue
+        beat_session = str(beat.get("session_id") or beat.get("session") or "")
+        if session and beat_session != session:
+            continue
+        try:
+            if float(beat.get("beat_at", 0)) <= time.time() - LIVE_FRESH:
+                continue
+        except (TypeError, ValueError):
+            continue
+        matching.append(beat)
+    if not matching:
+        return False
+    if not session:
+        return True
+    try:
+        panes = sh("tmux", "list-panes", "-t", session, "-F", "#{pane_pid}").split()
+    except Exception:
+        return False
+    for raw_pid in panes[:32]:
+        try:
+            pid = int(raw_pid)
+            cmd = open("/proc/%d/cmdline" % pid, "rb").read().decode(errors="replace")
+        except (OSError, ValueError):
+            continue
+        if any(token in cmd.lower() for token in ("pi", "codex")):
+            return True
+    return False
+
+
 def _record_live_no_progress(cid, worker, path, age):
     """Record one bounded escalation without converting quietness into death."""
     try:
@@ -1621,6 +1669,10 @@ def publish_live(sessions, units=()):
                  if s.startswith(L["prefix"]) and s[len(L["prefix"]):] == _cid),
                 next((u["unit"] for u in units if u["card"] == _cid), "unknown"),
             )
+            # A buffered Pi process with exact claim/session activity is live,
+            # even though its wrapper log remains empty past STALL_GRACE.
+            if _exact_pi_progress(_cid, worker):
+                continue
             if _record_live_no_progress(_cid, worker, path, age):
                 log(d, "LIVE_NO_PROGRESS|%s|%s|worker=%s|log=%s|age_seconds=%d|"
                        "worker remains live; bounded escalation recorded"
