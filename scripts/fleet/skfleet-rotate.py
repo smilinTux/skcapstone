@@ -1427,14 +1427,17 @@ _SIZE_MODELS={key:(os.environ.get("SKFLEET_MODEL_"+key)
                    or value).strip() or value
               for key,value in _SIZE_MODEL_DEFAULTS.items()}
 def _size_class_for(core, labels=()):
-    """Return one title size, or one canonical label when the title is empty."""
+    """Resolve one logical size from title and route labels, fail closed on conflict."""
     title=str((core or {}).get("title") or "")
-    matches=_GLM_SIZE_RE.findall(title)
-    if title:
-        return matches[0] if len(matches)==1 else None
+    title_sizes={value.upper() for value in _GLM_SIZE_RE.findall(title)}
     label_sizes={size for size,route in _LOGICAL_ROUTES.items() if route in {
         str(label).strip().lower() for label in labels}}
-    return next(iter(label_sizes)) if len(label_sizes)==1 else None
+    if len(title_sizes)>1 or len(label_sizes)>1:
+        return None
+    if title_sizes and label_sizes and title_sizes != label_sizes:
+        return None
+    sizes=title_sizes or label_sizes
+    return next(iter(sizes)) if len(sizes)==1 else None
 def _logical_route_for(core, labels=()):
     """Return the one job-sized gateway bucket without selecting a backend."""
     return _LOGICAL_ROUTES.get(_size_class_for(core,labels))

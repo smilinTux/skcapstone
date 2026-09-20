@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from skcapstone.review_admission import review_size_class
 from skcapstone.fleet.review_capacity import (
     acquire_review_route_snapshot,
     aggregate_review_capacity,
@@ -14,6 +15,16 @@ from skcapstone.fleet.review_capacity import (
     eligible_review_routes,
     load_route_occupancy,
 )
+
+
+def test_review_size_class_uses_unambiguous_label_with_titled_review():
+    assert review_size_class({"title": "Governed review"}, ["review", "sk-m"]) == "M"
+
+
+def test_review_size_class_rejects_conflicting_or_multiple_sources():
+    assert review_size_class({"title": "Review [S]"}, ["sk-m"]) is None
+    assert review_size_class({"title": "Review [S] [M]"}, []) is None
+    assert review_size_class({"title": "Review"}, ["sk-s", "sk-m"]) is None
 
 
 class _Response(io.BytesIO):

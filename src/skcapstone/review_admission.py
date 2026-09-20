@@ -140,6 +140,30 @@ def governed_review_seat(
     return next(iter(admitted)) if len(seats) == len(admitted) == 1 else None
 
 
+def review_size_class(core: Mapping[str, object], labels: Sequence[str]) -> str | None:
+    """Resolve one logical review size, failing closed on ambiguity or conflict.
+
+    A title may contain prose in addition to its optional ``[M]`` marker.  A
+    single title marker and a single logical route label must agree when both
+    are present.  This keeps capacity admission and dispatch on the same
+    source of truth without allowing a title to hide an explicit label.
+    """
+    title = str(core.get("title") or "")
+    title_sizes = re.findall(r"\[(S|M|L|XL)\]", title, flags=re.IGNORECASE)
+    title_sizes = {value.upper() for value in title_sizes}
+    route_sizes = {"sk-s": "S", "sk-m": "M", "sk-l": "L", "sk-xl": "XL"}
+    label_sizes = {
+        size for route, size in route_sizes.items()
+        if route in {str(label).strip().lower() for label in labels}
+    }
+    if len(title_sizes) > 1 or len(label_sizes) > 1:
+        return None
+    if title_sizes and label_sizes and title_sizes != label_sizes:
+        return None
+    sizes = title_sizes or label_sizes
+    return next(iter(sizes)) if len(sizes) == 1 else None
+
+
 def reviewer_capacity(
     home: Path,
     core: Mapping[str, object],
@@ -154,18 +178,7 @@ def reviewer_capacity(
         load_route_occupancy,
     )
 
-    title = str(core.get("title") or "")
-    title_sizes = re.findall(r"\[(S|M|L|XL)\]", title)
-    label_sizes = {
-        value
-        for value, route in {"S": "sk-s", "M": "sk-m", "L": "sk-l", "XL": "sk-xl"}.items()
-        if route in {str(label).strip().lower() for label in labels}
-    }
-    size = (
-        title_sizes[0]
-        if title and len(title_sizes) == 1
-        else next(iter(label_sizes)) if not title and len(label_sizes) == 1 else None
-    )
+    size = review_size_class(core, labels)
     path = home / "evidence" / "fleet-review-routes.json"
     try:
         snapshot = json.loads(path.read_text(encoding="utf-8"))
