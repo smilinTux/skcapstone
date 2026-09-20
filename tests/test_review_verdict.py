@@ -59,6 +59,36 @@ def test_review_cards_are_recognised(title):
     assert is_review_card(title)
 
 
+def test_source_only_applicability_receipt_replaces_hosted_ci(tmp_path):
+    head = "2" * 40
+    receipt = json.dumps({
+        "type": "source-only-applicability", "card_id": "239b24bf",
+        "source_head": head, "reviewer": "reviewer@example",
+        "evidence_digest": "a" * 64, "governed_pr_ci": False,
+    }, sort_keys=True)
+    home = _home(tmp_path, "239b24bf", "[REVIEW] source-only", [
+        ("verdict", "PASS", "2026-08-28T03:00:00"),
+        ("applicability_receipt", receipt, "2026-08-28T03:01:00"),
+    ], meta={"labels": ["source-only"], "link_head_revision": head})
+    validate_review_completion("239b24bf", "[REVIEW] source-only", home)
+
+
+def test_source_only_receipt_is_rejected_when_pr_bound(tmp_path):
+    head = "3" * 40
+    receipt = json.dumps({
+        "type": "source-only-applicability", "card_id": "7c1f0a2e",
+        "source_head": head, "reviewer": "reviewer@example",
+        "evidence_digest": "b" * 64, "governed_pr_ci": False,
+    }, sort_keys=True)
+    home = _home(tmp_path, "7c1f0a2e", "[REVIEW] source-only", [
+        ("verdict", "PASS", "2026-08-28T03:00:00"),
+        ("applicability_receipt", receipt, "2026-08-28T03:01:00"),
+        ("pr", "https://example.invalid/p/1", "2026-08-28T03:02:00"),
+    ], meta={"labels": ["source-only"], "link_head_revision": head})
+    with pytest.raises(ValueError, match="required checks"):
+        validate_review_completion("7c1f0a2e", "[REVIEW] source-only", home)
+
+
 @pytest.mark.parametrize(
     "title",
     ["[SKGW-STRAT-06A][HUMAN] Approve cutover", "[FLEET-MON-01][P1] Restart monitors"],

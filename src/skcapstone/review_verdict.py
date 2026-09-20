@@ -64,6 +64,9 @@ _REQUIRED_CI_LINK_KEYS = frozenset(
         "ci_check_python312",
     }
 )
+_RECEIPT_KEY = "applicability_receipt"
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
+_HEAD_RE = re.compile(r"[0-9a-f]{40}")
 
 
 def _is_terminal_verdict(value: str) -> bool:
@@ -155,6 +158,67 @@ def unsuccessful_checks(card_id: str, home: Path) -> list[str]:
     )
 
 
+def _card_events(card_id: str, home: Path):
+    """Yield parsed evidence events, ignoring malformed historical lines."""
+    for path in sorted(glob.glob(str(Path(home) / "coordination" / "card_events" / "*.jsonl"))):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    try:
+                        row = json.loads(line)
+                    except ValueError:
+                        continue
+                    if row.get("card_id") == card_id:
+                        yield row
+        except OSError:
+            continue
+
+
+def _source_only_applicability(card_id: str, home: Path) -> bool:
+    """Return true only for one valid, exact-card source-only receipt."""
+    try:
+        core = json.loads((Path(home) / "cards" / card_id / "core.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    labels = core.get("labels", [])
+    meta = core.get("meta") if isinstance(core.get("meta"), dict) else {}
+    if not ("source-only" in labels or "source-only" in meta.get("labels", [])):
+        return False
+    receipts = []
+    for row in _card_events(card_id, home):
+        key = row.get("link_key") or row.get("key")
+        if key == _RECEIPT_KEY:
+            try:
+                value = json.loads(row.get("link_value") or row.get("value") or "")
+            except (TypeError, ValueError):
+                return False
+            receipts.append(value)
+    if len(receipts) != 1 or not isinstance(receipts[0], dict):
+        return False
+    receipt = receipts[0]
+    required = {"type", "card_id", "source_head", "reviewer", "evidence_digest", "governed_pr_ci"}
+    if set(receipt) != required or receipt["type"] != "source-only-applicability":
+        return False
+    if receipt["card_id"] != card_id or not isinstance(receipt["reviewer"], str) or not receipt["reviewer"].strip():
+        return False
+    if not isinstance(receipt["source_head"], str) or not _HEAD_RE.fullmatch(receipt["source_head"].lower()):
+        return False
+    expected_head = str(meta.get("link_head_revision") or meta.get("head_revision") or "").lower()
+    if expected_head and receipt["source_head"].lower() != expected_head:
+        return False
+    if not isinstance(receipt["evidence_digest"], str) or not _SHA256_RE.fullmatch(receipt["evidence_digest"].lower()):
+        return False
+    if receipt["governed_pr_ci"] is not False:
+        return False
+    for row in _card_events(card_id, home):
+        key = str(row.get("link_key") or row.get("key") or "").lower()
+        if key == _RECEIPT_KEY:
+            continue
+        if key == "hosted_checks" or key == "pr" or key.startswith("pr_") or "pull_request" in key:
+            return False
+    return True
+
+
 def _uses_repository_hosted_checks(card_id: str, home: Path) -> bool:
     """Validate exact hosted check evidence for non-SKCapstone repositories."""
     try:
@@ -215,6 +279,8 @@ def validate_review_completion(card_id: str, title: str, home: Path) -> None:
         return
     verdict = recorded_verdict(card_id, home)
     if verdict == "PASS":
+        if _source_only_applicability(card_id, home):
+            return
         if _uses_repository_hosted_checks(card_id, home):
             return
         checks = unsuccessful_checks(card_id, home)
