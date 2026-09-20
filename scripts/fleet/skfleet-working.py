@@ -24,7 +24,16 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
-HOSTS = tuple(os.environ.get("SKFLEET_HOSTS", "chiap01 chiap02 chiap03 chiap04 chiap08").split())
+HOSTS = tuple(
+    os.environ.get(
+        "SKFLEET_HOSTS",
+        "chiap01 chiap02 chiap03 chiap04 chiap08 ziowk01",
+    ).split()
+)
+# The system interpreter on builder nodes is intentionally minimal.  Prefer the
+# fleet runtime, which carries skcoord, and only fall back to PATH python3 for
+# older nodes where that is the configured runtime.
+REMOTE_PYTHON = os.environ.get("SKFLEET_REMOTE_PYTHON", "$HOME/.skenv/bin/python3")
 UNIT_GRACE = int(os.environ.get("SKFLEET_UNIT_GRACE", "15"))
 UNIT_SAMPLE_FRESHNESS = int(os.environ.get("SKFLEET_UNIT_SAMPLE_FRESHNESS", "60"))
 STATE_PATH = Path(
@@ -416,9 +425,15 @@ def collect(host: str) -> list[Worker]:
             "-o",
             "ConnectTimeout=6",
             f"{os.environ.get('SKFLEET_SSH_USER', os.environ.get('USER', 'skuser01'))}@{host}",
-            "python3",
-            "-c",
-            shlex.quote(remote_command),
+            "sh",
+            "-lc",
+            # Do not assume /usr/bin/python3 has the coordination package. The
+            # probe is remote and bounded, and exec preserves collector status.
+            "for py in "
+            + ('\"$HOME/.skenv/bin/python3\"' if REMOTE_PYTHON == '$HOME/.skenv/bin/python3' else shlex.quote(REMOTE_PYTHON))
+            + " python3; do "
+            "[ -x \"$py\" ] || continue; \"$py\" -c 'import skcoord' >/dev/null 2>&1 "
+            "|| continue; exec \"$py\" -c " + shlex.quote(remote_command) + "; done; exit 127",
         ],
         capture_output=True,
         text=True,
