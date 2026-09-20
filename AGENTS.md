@@ -3,6 +3,28 @@
 This file provides instructions for ANY AI agent working on SKCapstone,
 regardless of tool, IDE, or platform.
 
+## Which section is for you
+
+Your card's title tells you which role you are claimed as. Read that first,
+not the seat label alone, because the label can be absent on older cards.
+
+- Title has no `[REVIEW` tag: you are the **producer/implementer**. Steps 1
+  through 6 below are for you.
+- Title starts with `[REVIEW` (for example `[REVIEW][S] Review provisional
+  outcome for <parent_id>`): you are the **reviewer**. Jump to
+  "Reviewer (seat-seraph, `[REVIEW]` cards)" below. Steps 1 through 6 do not
+  apply to you; a review card is completed by a verdict link, not by doing
+  the work Step 4 describes.
+- Anything else (a card whose writer identity in the event trail is `link`,
+  `mero`, `niobe`, or `atlas` rather than a worker you claimed): see
+  "Other lifecycle seats" below. These run as automated fleet-rotation
+  processes on the estate's elected authority host, not as a card a worker
+  agent claims and works through Steps 1-6.
+
+Before either role, read "Reading the board without blowing your context"
+near the end of this file. It is the difference between a targeted read and
+one that burns your whole context window on a single `coord status`.
+
 ## Step 1: Learn the Coordination Protocol
 
 ```bash
@@ -45,7 +67,14 @@ skcapstone coord verdict <card_id> PASS_FOR_REVIEW \
   --candidate ~/.skcapstone/evidence/work/<card_id>/<file> \
   --commit $(git rev-parse HEAD) --tree $(git rev-parse HEAD^{tree}) \
   --ref refs/heads/<branch> --agent <your_name>
-# Record it LAST: anything written after a verdict supersedes it.
+# Record it LAST when you can, but the rule is narrower than it used to
+# sound. As of PR #837, a generation is only invalidated by a link that
+# comes after it AND is one of: a new outcome-shaped link (another
+# verdict/outcome/result/disposition/review_decision key), a blocked_on
+# chain, or an evidence_sha256 link. Any other link after the verdict,
+# including your own evidence path or a commit reference, is fine and does
+# not disturb it. `skcapstone coord verdict --help` carries this as the
+# live contract; trust that over any older note that says "anything."
 
 # A terminal outcome (plain PASS, BLOCKED) has no candidate to bind:
 skcapstone coord link <card_id> verdict PASS --agent <your_name>
@@ -165,3 +194,286 @@ skcapstone coord create --title "What needs doing" --by <your_name>
 The `~/.skcapstone/` directory is synchronized via Syncthing across all
 devices in the mesh. No SSH, no APIs, no cloud services — just encrypted
 peer-to-peer file sync. Create a task here, it appears everywhere.
+
+## Reviewer (seat-seraph, `[REVIEW]` cards)
+
+This section did not exist before 2026-09-20. A reviewer worker on card
+`b34ca6f9` spent its entire run guessing CLI syntax that does not exist
+(`fleet get workers`, `coord kanban <id>`, `coord --help`, `coord status |
+head -60`), produced an empty final message, and never recorded a verdict.
+That card had accumulated 17 claims and 18 releases by the time this was
+written, all from repeated relaunches hitting the same wall. Everything
+below is derived from reading real review cards that actually closed, not
+from guessing at the shape the code should have.
+
+### How to tell you are the reviewer
+
+Your card title starts with `[REVIEW` (for example `[REVIEW][S] Review
+provisional outcome for 1960b107`), and it carries the label `seat-seraph`.
+You did not choose this work; the fleet dispatcher opened this card for you
+against a specific producer's outcome.
+
+### Find your parent and candidate
+
+Your card's **description**, not its title, is the source of truth. It is
+written in one fixed template by the card opener
+(`skfleet-rotate.py:open_provisional_reviews`). A real example, verbatim
+from card `b34ca6f9`:
+
+```
+Independently review parent 1960b107 at outcome 2026-09-19T23:52:57.664797+00:00
+(PASS_FOR_REVIEW). Producer identity: pi-glm-chiap03-1960b107. Candidate
+evidence: /home/skuser01/.skcapstone/evidence/work/1960b107/card-1960b107-
+qualification-receipt.md sha256=65a2fcc7c9ab656501c081d6661da95ea43d223209e
+ee5cc9239724f66643f22. Outcome generation: c68db1d290b40f8b70c6c048ac6e59d3
+19746788ecdedaefdbbbdd44ca02200b. Reviewer identity must differ. Candidate
+commit: a38c1d67a6892ce9cba94ec2386d846047663cdd. Candidate tree:
+02e44d8d3858401b8ee27191584e622200f2e238. Candidate ref:
+refs/heads/feat/1960b107-maintenance-governance-qualification.
+```
+
+Pull out of that text: the parent card id (`1960b107`), the producer
+identity you must differ from, the candidate evidence path and its
+sha256, the commit/tree/ref you are reviewing, and the outcome generation
+this review is bound to. The same facts are duplicated into `meta` on the
+card (`producer_identity`, `candidate_evidence_sha256`,
+`link_source_card`, `link_head_revision`, and often `repository`), but
+there is no CLI command that reads `meta` back to you; the description is
+what you can actually retrieve without operator help (see "does not work"
+list below for why `coord describe <id>` alone will not do this).
+
+### Verify the candidate before you judge it
+
+```bash
+sha256sum /home/skuser01/.skcapstone/evidence/work/1960b107/card-1960b107-qualification-receipt.md
+# must equal the sha256= value from the description above
+```
+
+If the description also names a commit/tree/ref, verify those against the
+actual repository state (`git cat-file -e <commit>`, `git rev-parse
+<ref>`) before writing a PASS. A PASS that never checked the bytes it names
+is exactly the silence PR #241 was written to stop (see below).
+
+### The verdict sequence that actually closes a review
+
+This is not inferred from the code, it is read off real review cards that
+closed cleanly under the CURRENT completion gate
+(`src/skcapstone/review_verdict.py`, tightened by PR #567 and #690,
+confirmed against cards closed after 2026-09-13). Two examples, one PASS
+on the skcapstone repo and one FAIL, both closed on the first attempt:
+
+```bash
+# Evidence links first. Use key names that do NOT contain "verdict",
+# "outcome", "result", "disposition", or "review_decision" for anything
+# that is not your final canonical line (see the trap below).
+skcapstone coord link <review_id> pr <pr_url> --agent <your_name>
+skcapstone coord link <review_id> head <candidate_commit_sha> --agent <your_name>
+skcapstone coord link <review_id> base <base_sha> --agent <your_name>
+skcapstone coord link <review_id> candidate_evidence_sha256 <sha256> --agent <your_name>
+skcapstone coord link <review_id> evidence <path_or_test_files> --agent <your_name>
+skcapstone coord link <review_id> finding "PASS exact head ... / base ..." --agent <your_name>
+
+# The verdict itself: byte-exact "PASS" or "FAIL", nothing else in this value.
+skcapstone coord link <review_id> verdict PASS --agent <your_name>
+
+# PASS on a skcapstone-repo card additionally needs all six of these,
+# each byte-exact "SUCCESS" (src/skcapstone/review_verdict.py:_REQUIRED_CI_LINK_KEYS):
+skcapstone coord link <review_id> ci_check_docs SUCCESS --agent <your_name>
+skcapstone coord link <review_id> ci_check_gitleaks SUCCESS --agent <your_name>
+skcapstone coord link <review_id> ci_check_lint SUCCESS --agent <your_name>
+skcapstone coord link <review_id> ci_check_shim_imports SUCCESS --agent <your_name>
+skcapstone coord link <review_id> ci_check_python311 SUCCESS --agent <your_name>
+skcapstone coord link <review_id> ci_check_python312 SUCCESS --agent <your_name>
+
+skcapstone coord complete <review_id> --agent <your_name>
+```
+
+For a PASS on a card whose `meta.repository` is a DIFFERENT repo
+(skdashboard, skgateway, sklegal, skharness, skcoord, and so on), skip the
+six `ci_check_*` links and record one `hosted_checks` link instead, with
+the value matching this exact shape (verified on real closed cards
+`c6298ac5` and `aa0202b8`):
+
+```bash
+skcapstone coord link <review_id> hosted_checks "4/4 SUCCESS at exact head 4d66082fa08ea71cfec106c5e2badcff9ad90449" --agent <your_name>
+# <passed>/<total> SUCCESS at exact head <the 40-hex commit your meta.link_head_revision names>
+skcapstone coord complete <review_id> --agent <your_name>
+```
+
+FAIL needs no CI checks at all; only the exact word `FAIL` and then
+complete (verified on real closed card `c30a0709`, 8 events total, verdict
+recorded first, evidence links after it, complete last).
+
+A BLOCKED verdict is also accepted, but only in this shape
+(`src/skcapstone/review_verdict.py:_is_terminal_verdict`):
+
+```bash
+skcapstone coord link <review_id> verdict "BLOCKED blocked_on=capability referent=ac:1" --agent <your_name>
+skcapstone coord complete <review_id> --agent <your_name>
+```
+
+Both `blocked_on=` and `referent=` must be present and non-empty; the
+category is one of `dependency`, `card`, `human`, `capability`
+(`src/skcapstone/review_admission.py:parse_blocked_on_link`).
+
+### Mistakes to avoid, each one measured against real cards
+
+1. **Never record a verdict any way other than `coord link <id> verdict
+   <value>`.** Card `b34ca6f9` itself carries 16 raw `action=verdict`
+   events with an empty key and empty value, spread across 17 claim/18
+   release cycles, and zero completions. Those events come from a
+   different, older write path (a legacy "overlay" verdict action) that
+   `skcoord`'s CardStore fold never maps (`_OVERLAY_TO_STORE_ACTION` in
+   `card_store.py` maps `move`, `set_priority`, `set_swimlane`,
+   `add_label`, `remove_label`, `link`, `assign`, `unassign`, `describe`;
+   there is no `verdict` entry), so they are silently invisible to
+   `coord complete`'s check and every one of those 16 writes accomplished
+   nothing. Review card `61f972ed` hit the identical trap on
+   2026-08-28 and sat unfixed until 2026-09-19, when it had to be
+   hand-repaired with a fresh `coord link ... verdict PASS`.
+2. **Never write a second link whose KEY merely contains the substring
+   "verdict" after your real one.** `recorded_verdict()` matches any link
+   key containing `verdict|outcome|result|disposition|review_decision`
+   and takes whichever has the LATEST timestamp, not the one literally
+   named `verdict`. Keys like `verdict_sha256`, `verdict_artifact`, or an
+   explanatory `verdict_recovered` written after your canonical line will
+   silently become the one `coord complete` reads, and it will not be the
+   exact `PASS`/`FAIL` string, so completion fails with "nonterminal
+   verdict". The `61f972ed` repair walked straight into this on its own
+   recovery note and had to re-record `verdict` a second time with a
+   fresher timestamp to win the race back.
+3. **`skcapstone fleet` is a different subsystem from `skcapstone coord`.**
+   `fleet` is the SKWorld node/service control plane (`fleet get
+   {cronjobs,modelservers,agents,configs,profiles}`); `workers` is not a
+   valid resource there (`Error: unknown resource: 'workers'`), and even
+   the valid resources have nothing to do with review work. Stay in
+   `coord` for everything in this section.
+4. **Do not self-review.** If your claiming agent identity equals (or
+   seat-normalizes to) the `Producer identity:` named in the card
+   description, `coord claim` is refused outright:
+   `governed review claim denied: producer-self-review, ...`
+   (`src/skcapstone/review_admission.py:reviewer_candidate_reasons`). Use
+   an agent name that is not the producer's.
+5. **`coord describe <id>` with no flags does not read a card**, despite
+   `skcapstone coord --help`'s own epilogue claiming `coord describe <id>
+   read one card`. Verified today: it errors with `Pass --title and/or
+   --description.` There is no CLI single-card read; use the targeted
+   `coord status` filters in "Reading the board" below.
+6. `seat-seraph` is the reviewer seat you will actually see. `link` and
+   `mero` remain logically qualified reviewer seats in the code
+   (`LOGICAL_REVIEWER_SEATS = {"link", "mero", "seraph"}` in
+   `review_admission.py`), and 119 and 5 older review cards respectively
+   carry those labels and closed successfully, but every one of them
+   closed before the 2026-09-13 verdict-strictness tightening. Of the 56
+   review cards that closed after that date, all 56 carried `seat-seraph`
+   and none carried `seat-link` or `seat-mero`. If you land on a
+   `seat-link` or `seat-mero` card, the same recipe above should apply
+   (the completion gate does not branch on which qualified seat you are),
+   but that combination is not verified end-to-end under today's rules.
+
+### One contradiction in the code that is left unresolved on purpose
+
+`skfleet-rotate.py`'s automatic claim-release reaper
+(`release_finished_review_claims`, which fires only when your session dies
+mid-review without calling `coord complete`) decides whether your claim is
+safe to release using `_durable_review_outcome`. That function will accept
+a same-writer `evidence_sha256` link written AFTER your verdict as proof
+your outcome is durable. But the SEPARATE function that decides whether a
+PARENT's review generation is still current, `_generation_invalidated`
+(used by `_review_names_generation`, which gates `close_reviewed_parents`),
+treats that exact same later `evidence_sha256` link as INVALIDATING. These
+two functions read the same event and disagree about what it means. No
+review card in the live store demonstrates this exact sequence closing
+cleanly either way, so this is not resolved here; it is flagged so nobody
+spends a cycle trusting either behavior. The safe path, and the one every
+closed card in this section's examples actually took, is to always call
+`coord complete` yourself before your session ends rather than relying on
+the automatic reaper to clean up after you.
+
+## Other lifecycle seats
+
+`LIFECYCLE_SEATS` in `src/skcapstone/lifecycle_seats.py` names five seats:
+`link`, `mero`, `seraph`, `niobe`, `atlas`. `seraph` is covered above,
+because that is the seat a fleet worker actually claims and completes a
+card as. The other four run as automated processes inside the
+fleet-rotation cycle on the estate's elected authority host
+(`skfleet-rotate.py`, gated on `HOST == AUTHORITY_HOST`); they show up in
+event trails as writer identities (`link`, `mero`, `niobe`, `atlas`), not
+as cards a worker agent claims and works through Steps 1-6. Their profile
+data comes from `src/skcapstone/data/lifecycle-seat-profiles.json`
+(`load_lifecycle_seat_profiles`):
+
+- **link** (`role: integrator`): owns `pr_triage`, `reviewer_assignment`,
+  `merge_eligibility`, `eligible_merge`; denied `fleet_dispatch`,
+  `deployment`, `release`, `application_actuation`. Observed writing
+  `review_assignment_recommendation` events ahead of a review card's
+  claim. How it is operated beyond the automated cycle is not established
+  from the code read for this task.
+- **mero** (`role: overseer`): owns `read_only_observation`,
+  `drift_measurement`, `typed_recommendation`; denied `card_claim`,
+  `fleet_dispatch`, `merge`, `deployment`, `application_actuation`. Purely
+  observational in practice: one review card carried 82
+  `mero_observation` events and mero never claimed anything. Not
+  something a worker agent operates directly.
+- **niobe** (`role: fleet_dispatcher`): owns `card_claim`, `card_release`,
+  `worker_launch`, `worker_stop`, `reassignment`, `rotation`; denied
+  `review_verdict`, `merge`, `deployment`, `release`,
+  `application_actuation`. This is effectively the dispatcher identity
+  behind `skfleet-rotate.py` itself. Not something a worker agent operates
+  directly.
+- **atlas** (`role: operations_plane`): owns `operational_observation`,
+  `authorized_action_execution`, `postcondition_verification`,
+  `approved_artifact_release`, `approved_artifact_install`,
+  `behavioral_verification`, `rollback`; denied
+  `coordination_board_ownership`, `card_claim`, `reviewer_assignment`,
+  `merge`, `policy_change`, `unratified_action`, `source_authoring`,
+  `self_approval`, `independent_review_of_own_release`, `fleet_dispatch`.
+  Observed only writing `worker_liveness` links in review event trails.
+  Its own operational flow beyond that is not established from the code
+  read for this task.
+
+## Reading the board without blowing your context
+
+Measured today against the live board: bare `skcapstone coord status`
+produced 729,823 bytes across 8,861 lines (a separate measurement on
+2026-09-20 recorded 730,889 bytes / 8,864 lines; the board grows, the order
+of magnitude is the point). That is the entire board, every card, and it
+will exhaust a small model's context on its own.
+
+A targeted read of one card's family is small. Both of these are
+equivalent and both are verified (2,295 bytes for one real open review's
+parent-tag slice, measured today):
+
+```bash
+skcapstone coord status --tag parent-<parent_id>
+skcapstone coord status --parent <parent_id>
+```
+
+If you only have your own review card's id and need its parent, the parent
+id is in your card's description (see "Find your parent and candidate"
+above); you do not need a board-wide read to get it.
+
+`skcapstone coord gates <card_id>` is also small and directly answers "why
+can I not claim or dispatch this": it returns the seat, your capacity
+slot, and the exact refusal reasons as JSON, for example
+`{"eligible": false, "reasons": ["ownership"], "seat": "seraph"}`.
+
+**Commands that do NOT do what they look like they do, verified today:**
+
+- `skcapstone coord kanban <card_id>`: takes no positional argument at
+  all. `Error: Got unexpected extra argument (<card_id>)`.
+- `skcapstone coord kanban --json`: runs, but dumps the entire board,
+  11,689,722 bytes measured today. Worse than bare `coord status`, not
+  better.
+- `skcapstone coord describe <card_id>` with no `--title`/`--description`:
+  does not read the card. `Error: Pass --title and/or --description.`
+  This is despite `skcapstone coord --help`'s own "WHERE TO LOOK" epilogue
+  claiming `coord describe <id> read one card`; that line is stale.
+- `skcapstone fleet get workers`: `fleet` is a different subsystem
+  entirely (SKWorld node/service control plane, not the task board).
+  `workers` is not even a valid resource there: `Error: unknown resource:
+  'workers' (known: cronjobs, modelservers, agents, configs, profiles)`.
+- `skcapstone coord --help` alone, or `skcapstone coord status | head -60`:
+  both return, but neither is a targeted read; the second one still
+  pays the full generation cost of `coord status` before you throw most of
+  it away. Use `--tag`/`--parent` instead.
