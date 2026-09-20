@@ -5895,7 +5895,7 @@ def open_provisional_reviews(capacity, dry_run=False):
         # 40-hex link_head_revision being reviewed.
         r = subprocess.run(
             [SKC, "coord", "create", "--id", review_id,
-             "--title", "[REVIEW] Review provisional outcome for %s" % parent,
+             "--title", "[REVIEW][S] Review provisional outcome for %s" % parent,
              "--desc", description,
              "--priority", "high", "--tag", "parent-%s" % parent,
              "--tag", "review", "--tag", "seat-seraph", "--tag", "qwen-suitable",
@@ -5933,16 +5933,25 @@ def open_provisional_reviews(capacity, dry_run=False):
             # `_pool_v2_admission` requires review_status (column == "review")
             # for both seraph_review_admitted and elastic_review_admitted, so a
             # card left in `backlog` can never be admitted no matter how well
-            # it is bound. A card also needs a size class: `_size_class_for`
-            # only resolves one from a single `[S]/[M]/[L]/[XL]` title marker
-            # or a single canonical size label, and the generated title above
-            # carries neither. Without a size class `_logical_route_for`
-            # returns None and the card is dropped from the candidate scan
-            # with NO log line at all, which is exactly what let eight
-            # correctly bound review cards sit unroutable while Seraph kept
-            # reporting seraph_no_eligible_work. The sk-s tag above fixes the
-            # size gap; moving the card into review here fixes the column
-            # gap. Both are required, and together they are sufficient.
+            # it is bound. Column alone is not enough either: there are TWO
+            # size resolvers with different rules. `_size_class_for` accepts a
+            # single `[S]/[M]/[L]/[XL]` title marker OR, failing that, a single
+            # canonical size label (the sk-s tag above). But `reviewer_capacity`
+            # in review_admission.py only falls back to the label when the
+            # title is EMPTY: `next(iter(label_sizes)) if not title and
+            # len(label_sizes) == 1 else None`. Our title is never empty, so a
+            # label with no title marker leaves size None, reviewer_capacity
+            # returns (0, 0), and every claim is refused with "governed review
+            # claim denied: capacity". Measured live on card d7d1b736: with the
+            # marker-less title busy=0 target=0, with `[S]` in the title
+            # busy=4 target=48. This is what actually blocked dispatch: all 8
+            # cards reached ROUTE_PREFLIGHT_OK and then CLAIM_REFUSED_TOTAL.
+            # The `[S]` marker in the title above fixes reviewer_capacity; the
+            # sk-s tag fixes `_size_class_for` directly and is belt-and-braces
+            # against a describe event blanking the title later, which has
+            # happened before (an mcp writer overwrote live card titles with
+            # argv fragments). Moving the card into review here fixes the
+            # column gap. All three are required, and together sufficient.
             move = subprocess.run(
                 [SKC, "coord", "move", review_id, "review"],
                 capture_output=True, text=True,

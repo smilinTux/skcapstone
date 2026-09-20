@@ -538,14 +538,39 @@ def test_stale_readback_blocks_launch_eligibility_and_stops(tmp_path: Path) -> N
 def test_created_review_carries_sk_s_size_label(tmp_path: Path) -> None:
     """A card without a size class is dropped from the candidate scan with no
     log line at all (`_size_class_for` fails closed on a title or label set
-    that carries no size marker). The generated title has none, so the tag
-    is the only thing that makes the card resolve to a size bucket."""
+    that carries no size marker). The sk-s tag makes `_size_class_for`
+    resolve a bucket directly, and is belt-and-braces if a later describe
+    event ever blanks the title (a documented incident: an mcp writer
+    overwrote live card titles with argv fragments)."""
     board = OpenerHarness(tmp_path)
     board.outcome("a1b2c3d4")
 
     assert board.open(1) == 1
     labels = [board.calls[0][i + 1] for i, value in enumerate(board.calls[0]) if value == "--tag"]
     assert "sk-s" in labels
+
+
+def test_created_review_title_carries_exactly_one_size_marker(tmp_path: Path) -> None:
+    """The title marker is what `reviewer_capacity` actually reads.
+
+    `reviewer_capacity` in review_admission.py only falls back to the sk-s
+    label when the title is EMPTY (`next(iter(label_sizes)) if not title and
+    len(label_sizes) == 1 else None`). This generated title is never empty,
+    so a label alone with no title marker leaves size None, capacity folds
+    to (0, 0), and every claim is refused with "governed review claim
+    denied: capacity". Measured live on card d7d1b736: marker-less title
+    busy=0 target=0, with `[S]` in the title busy=4 target=48. The sk-s tag
+    alone (previous test) is necessary but not sufficient; the title marker
+    is what actually unblocks dispatch.
+    """
+    board = OpenerHarness(tmp_path)
+    board.outcome("a1b2c3d4")
+
+    assert board.open(1) == 1
+    title = board.calls[0][board.calls[0].index("--title") + 1]
+    assert title
+    assert len(re.findall(r"\[(S|M|L|XL)\]", title)) == 1
+    assert title == "[REVIEW][S] Review provisional outcome for a1b2c3d4"
 
 
 def test_opened_review_is_moved_into_review_column(tmp_path: Path) -> None:
