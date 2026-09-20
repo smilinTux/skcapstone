@@ -1442,13 +1442,86 @@ def register_coord_commands(main: click.Group) -> None:
         verb = "Removed" if remove else "Added"
         console.print(f"\n  [green]{verb} label '{label}' on {task_id}.[/]\n")
 
-    @coord.command("describe")
+    @coord.command("show")
+    @click.argument("task_id")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--json", "as_json", is_flag=True, default=False, help="Emit the card as JSON.")
+    def coord_show(task_id, home, as_json):
+        """Print one folded card: status, column, labels, links, assignment.
+
+        Read-only. This is the single-card counterpart to ``kanban``: without it
+        the only way to read one card was to render the entire board and filter
+        it, which on a 7k-card store means megabytes of JSON to answer a question
+        about one id.
+        """
+        home_path = Path(home).expanduser()
+
+        card = None
+        try:
+            from skcoord.card_store import CardStore, card_store_read_enabled
+
+            if card_store_read_enabled():
+                card = CardStore(home_path).fold(task_id)
+        except Exception:
+            card = None
+
+        if card is None:
+            # Mirror kanban's own fallback so show and kanban never disagree.
+            from ..card import KanbanBoard
+
+            card = next(
+                (
+                    c
+                    for c in KanbanBoard(home_path).cards(include_archived=True)
+                    if c.id == task_id
+                ),
+                None,
+            )
+
+        if card is None:
+            raise click.ClickException(f"No card {task_id} in {home_path}.")
+
+        payload = card.model_dump(mode="json")
+        if as_json:
+            click.echo(json.dumps(payload, indent=2, default=str))
+            return
+
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Field", style="bold")
+        table.add_column("Value", overflow="fold")
+        for key in (
+            "id",
+            "title",
+            "kind",
+            "column",
+            "status",
+            "swimlane",
+            "assignee",
+            "priority",
+            "labels",
+            "links",
+            "archived",
+            "description",
+        ):
+            if key not in payload:
+                continue
+            value = payload[key]
+            if value in (None, "", [], {}):
+                continue
+            if isinstance(value, (list, dict)):
+                value = json.dumps(value, default=str)
+            table.add_row(key, str(value))
+        console.print()
+        console.print(Panel(table, title=f"Card {task_id}", border_style="bright_blue"))
+        console.print()
+
+    @coord.command("edit")
     @click.argument("task_id")
     @click.option("--title", default=None, help="New card title.")
     @click.option("--description", default=None, help="New card description.")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", default=None, help="Writer name (defaults to host).")
-    def coord_describe(task_id, title, description, home, agent):
+    def coord_edit(task_id, title, description, home, agent):
         """Edit a card's title/description (folded, never rewrites core.json).
 
         Birth facts stay write-once: the edit is one appended event, so it is
@@ -1493,6 +1566,36 @@ def register_coord_commands(main: click.Group) -> None:
             k for k, v in (("title", title), ("description", description)) if v is not None
         )
         console.print(f"\n  [green]Described {task_id} ({changed}).[/]\n")
+
+    @coord.command("describe")
+    @click.argument("task_id")
+    @click.option("--title", default=None, help="New card title.")
+    @click.option("--description", default=None, help="New card description.")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--agent", default=None, help="Writer name (defaults to host).")
+    @click.pass_context
+    def coord_describe(ctx, task_id, title, description, home, agent):
+        """Deprecated alias for ``edit``. Use ``coord edit`` instead.
+
+        Everywhere else a CLI says "describe" it reads (kubectl, aws, docker),
+        so this name reliably reads as the way to look at a card. It is a write:
+        it appends a describe event that changes the title or description. The
+        read command is ``coord show``. Kept as an alias so existing scripts and
+        agent instructions keep working, but it warns.
+        """
+        click.echo(
+            "warning: 'coord describe' is deprecated and will be removed; "
+            "use 'coord edit' to change a card, or 'coord show' to read one.",
+            err=True,
+        )
+        ctx.invoke(
+            coord_edit,
+            task_id=task_id,
+            title=title,
+            description=description,
+            home=home,
+            agent=agent,
+        )
 
     @coord.command("rehome")
     @click.argument("old_prefix")
