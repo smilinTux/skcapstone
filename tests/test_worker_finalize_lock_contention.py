@@ -222,6 +222,34 @@ def test_release_without_a_recorded_verdict_is_unspecified(claimed_board, monkey
     assert recorded == ["unspecified"]
 
 
+def test_complete_clears_exact_claim_before_wrapper_finalize(monkeypatch) -> None:
+    module = load_module()
+    values = args()
+    values.review_supersession = {"current_head": "2" * 40}
+    events = [
+        {
+            "action": "claim",
+            "owner": values.owner,
+            "claim_revision": values.claim_revision,
+        },
+        {"action": "complete"},
+    ]
+
+    class Store:
+        def __init__(self, _home):
+            pass
+
+        def fold(self, _card):
+            return SimpleNamespace(owner=None, status=SimpleNamespace(value="done"), meta={})
+
+        def _read_events(self, _card):
+            return events
+
+    monkeypatch.setattr(module, "CardStore", Store)
+    monkeypatch.setattr(module, "validate_review_completion", lambda *_args: None)
+    assert module.release_superseded_review_claim(values) is True
+
+
 def test_release_does_not_retry_non_timeout_failures(monkeypatch) -> None:
     module = load_module()
 
