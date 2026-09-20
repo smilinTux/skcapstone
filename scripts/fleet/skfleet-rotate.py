@@ -1087,6 +1087,12 @@ _SENSITIVE_CATEGORY = re.compile(
     r"(capauth|credential|custody|issuer|secret|\bkey\b|rollback|"
     r"deploy|production|release|migrat)", re.I)
 _CATEGORY_OPT_IN = "dispatch-approved"
+# Verdicts are deliberately absent: lifecycle_state() resolves scheduler
+# lifecycle only from structural status, ownership, archive, and void state.
+# Verdicts are evidence consumed by the independent outcome/backoff logic below,
+# and must not turn a PASS or BLOCKED observation into a lifecycle transition.
+# Keep this asymmetry explicit so the overlay fold does not accidentally make a
+# verdict visible to lifecycle resolution just because it is a CardStore action.
 _OVERLAY_ACTIONS = {
     "move": "move", "assign": "assign", "unassign": "unassign",
     "add_label": "add_label", "remove_label": "remove_label",
