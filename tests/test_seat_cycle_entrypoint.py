@@ -442,18 +442,48 @@ def test_seraph_timeout_terminates_reaps_process_group_and_reports_cleanup(
 
 def test_seraph_dispatch_timeout_default_used_when_env_unset(monkeypatch) -> None:
     monkeypatch.delenv("SKFLEET_SERAPH_DISPATCH_TIMEOUT_SECONDS", raising=False)
-    assert seat_entrypoint._resolve_seraph_dispatch_timeout_seconds() == 600
+    assert seat_entrypoint._resolve_seraph_dispatch_timeout_seconds() == 190
 
 
 def test_seraph_dispatch_timeout_env_override_honoured(monkeypatch) -> None:
-    monkeypatch.setenv("SKFLEET_SERAPH_DISPATCH_TIMEOUT_SECONDS", "900")
-    assert seat_entrypoint._resolve_seraph_dispatch_timeout_seconds() == 900
+    monkeypatch.setenv("SKFLEET_SERAPH_DISPATCH_TIMEOUT_SECONDS", "150")
+    assert seat_entrypoint._resolve_seraph_dispatch_timeout_seconds() == 150
 
 
 @pytest.mark.parametrize("raw", ["not-a-number", "0", "-1", "", "600.5"])
 def test_seraph_dispatch_timeout_invalid_env_falls_back_to_default(monkeypatch, raw) -> None:
     monkeypatch.setenv("SKFLEET_SERAPH_DISPATCH_TIMEOUT_SECONDS", raw)
-    assert seat_entrypoint._resolve_seraph_dispatch_timeout_seconds() == 600
+    assert seat_entrypoint._resolve_seraph_dispatch_timeout_seconds() == 190
+
+
+def test_seraph_dispatch_timeout_env_override_at_budget_ceiling_is_accepted(monkeypatch) -> None:
+    """The largest value the load-bearing 300s budget can still hold is honoured.
+
+    SERAPH_LOCK_WAIT_SECONDS(75) + timeout + a 30s cleanup margin must stay
+    under the 300s systemd TimeoutStartSec / timer cadence on
+    skfleet-seraph.service/.timer, so 194 is the last value that still fits
+    (75 + 194 + 30 == 299 < 300).
+    """
+    monkeypatch.setenv("SKFLEET_SERAPH_DISPATCH_TIMEOUT_SECONDS", "194")
+    assert seat_entrypoint._resolve_seraph_dispatch_timeout_seconds() == 194
+
+
+@pytest.mark.parametrize("raw", ["195", "900"])
+def test_seraph_dispatch_timeout_env_override_exceeding_budget_is_rejected(
+    monkeypatch, raw
+) -> None:
+    """An override that would blow the load-bearing 300s budget is rejected.
+
+    test_dispatcher_routes_niobe_and_seraph_through_safe_bounded_waits (in
+    tests/test_rotation_lock_fairness.py) asserts SERAPH_LOCK_WAIT_SECONDS +
+    this timeout + a 30s cleanup margin stays under the 300s systemd
+    TimeoutStartSec and timer cadence on skfleet-seraph.service/.timer. An
+    operator env override must not be able to silently break that invariant
+    -- it falls back to the default instead of being honoured, rather than
+    crashing or disabling the timeout.
+    """
+    monkeypatch.setenv("SKFLEET_SERAPH_DISPATCH_TIMEOUT_SECONDS", raw)
+    assert seat_entrypoint._resolve_seraph_dispatch_timeout_seconds() == 190
 
 
 def test_seraph_dispatch_timeout_reaches_subprocess_run_seam(tmp_path, monkeypatch) -> None:
@@ -463,7 +493,7 @@ def test_seraph_dispatch_timeout_reaches_subprocess_run_seam(tmp_path, monkeypat
     capture what reached subprocess.run -- a future refactor of
     _run_seraph_dispatcher must not silently drop the timeout kwarg.
     """
-    monkeypatch.setenv("SKFLEET_SERAPH_DISPATCH_TIMEOUT_SECONDS", "900")
+    monkeypatch.setenv("SKFLEET_SERAPH_DISPATCH_TIMEOUT_SECONDS", "150")
     captured = {}
 
     def run(*_args, **kwargs):
@@ -477,7 +507,7 @@ def test_seraph_dispatch_timeout_reaches_subprocess_run_seam(tmp_path, monkeypat
     monkeypatch.setattr(seat_entrypoint.subprocess, "run", run)
 
     assert seraph_operation(tmp_path)["reason"] == "seraph_no_eligible_work"
-    assert captured["timeout"] == 900
+    assert captured["timeout"] == 150
 
 
 def test_seraph_zero_available_capacity_is_truthful_noop(tmp_path, monkeypatch) -> None:
