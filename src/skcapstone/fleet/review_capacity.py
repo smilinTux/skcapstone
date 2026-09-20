@@ -18,9 +18,36 @@ from ..fleet_lane_health import MAX_AGE_SECONDS, _domain_state, gateway_root
 _SIZE = {"S": 0, "M": 1, "L": 2, "XL": 3}
 _LOCAL_POLICY = {"local-only", "no-egress", "sovereign-only"}
 
+# Three probes at this bound stay well inside the 190s Seraph dispatch budget.
+_DEFAULT_PROBE_TIMEOUT = 20
+
+
+def _probe_timeout_seconds() -> int:
+    """Return the per-probe gateway timeout, overridable for slow gateways.
+
+    The old hardcoded 8s sat below the gateway own worst case. On 2026-09-20
+    /v1/models on chiap01:18790 measured 6.36s while codex carried 5 active
+    requests (peak 15), so any load spike pushed the probe past 8s.
+
+    A probe failure is NOT recorded as "unknown": it writes routes=[], and
+    aggregate_review_capacity turns an empty route list into zero capacity, so
+    every Seraph cycle then reports seraph_no_available_capacity and the review
+    pipeline stops dispatching altogether. A timed-out health probe must never
+    be able to masquerade as a fully occupied fleet.
+    """
+    raw = os.environ.get("SKFLEET_ROUTE_PROBE_TIMEOUT", "").strip()
+    if raw:
+        try:
+            parsed = int(raw)
+        except ValueError:
+            return _DEFAULT_PROBE_TIMEOUT
+        if parsed > 0:
+            return parsed
+    return _DEFAULT_PROBE_TIMEOUT
+
 
 def _fetch(url: str, opener: Callable[..., Any]) -> dict[str, Any]:
-    with opener(url, timeout=8) as response:
+    with opener(url, timeout=_probe_timeout_seconds()) as response:
         payload = response.read(1_048_577)
     if len(payload) > 1_048_576:
         raise ValueError("gateway route document exceeds bound")

@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from skcapstone.fleet import review_capacity
 from skcapstone.fleet.review_capacity import (
     acquire_review_route_snapshot,
     aggregate_review_capacity,
@@ -117,7 +118,7 @@ def test_provider_neutral_routes_tier_policy_and_shared_capacity(tmp_path):
     documents = dict(zip(("/v1/models", "/health", "/queue"), _documents(now)))
 
     def opener(url, timeout):
-        assert timeout == 8
+        assert timeout == 20
         suffix = next(key for key in documents if url.endswith(key))
         return _Response(json.dumps(documents[suffix]).encode())
 
@@ -170,7 +171,7 @@ def test_only_current_unavailable_capacity_excludes_route(
     documents = dict(zip(("/v1/models", "/health", "/queue"), (models, health, queue)))
 
     def opener(url, timeout):
-        assert timeout == 8
+        assert timeout == 20
         suffix = next(key for key in documents if url.endswith(key))
         return _Response(json.dumps(documents[suffix]).encode())
 
@@ -195,7 +196,7 @@ def test_producer_capacity_uses_gateway_truth_not_unrelated_pi_sessions(tmp_path
     documents = dict(zip(("/v1/models", "/health", "/queue"), (models, health, queue)))
 
     def opener(url, timeout):
-        assert timeout == 8
+        assert timeout == 20
         suffix = next(key for key in documents if url.endswith(key))
         return _Response(json.dumps(documents[suffix]).encode())
 
@@ -262,7 +263,7 @@ def _strict_opener(documents):
     import urllib.error
     import urllib.parse
 
-    def opener(url, timeout=8):
+    def opener(url, timeout=20):
         path = urllib.parse.urlsplit(url).path.rstrip("/") or "/"
         if path not in documents:
             raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
@@ -326,3 +327,42 @@ def test_the_strict_opener_really_does_404_a_doubled_prefix():
         opener("https://gateway/v1/v1/models")
     with _pytest.raises(urllib.error.HTTPError):
         opener("https://gateway/v1/health")
+
+
+def test_probe_timeout_defaults_to_twenty(monkeypatch) -> None:
+    monkeypatch.delenv("SKFLEET_ROUTE_PROBE_TIMEOUT", raising=False)
+    assert review_capacity._probe_timeout_seconds() == 20
+
+
+def test_probe_timeout_env_override_honoured(monkeypatch) -> None:
+    monkeypatch.setenv("SKFLEET_ROUTE_PROBE_TIMEOUT", "45")
+    assert review_capacity._probe_timeout_seconds() == 45
+
+
+def test_probe_timeout_rejects_garbage_and_non_positive(monkeypatch) -> None:
+    for bad in ("", "   ", "abc", "0", "-5"):
+        monkeypatch.setenv("SKFLEET_ROUTE_PROBE_TIMEOUT", bad)
+        assert review_capacity._probe_timeout_seconds() == 20
+
+
+def test_fetch_uses_the_resolved_timeout(monkeypatch) -> None:
+    """A slow gateway must not be cut off at the old hardcoded 8s."""
+    monkeypatch.setenv("SKFLEET_ROUTE_PROBE_TIMEOUT", "30")
+    seen = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, _n):
+            return b'{"ok": true}'
+
+    def _opener(url, timeout):
+        seen["timeout"] = timeout
+        return _Resp()
+
+    assert review_capacity._fetch("http://gw/v1/models", _opener) == {"ok": True}
+    assert seen["timeout"] == 30
