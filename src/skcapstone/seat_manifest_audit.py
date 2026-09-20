@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
+from importlib.resources import files
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -22,9 +23,28 @@ from .lifecycle_seats import LIFECYCLE_SEATS
 SEATS = tuple(sorted(LIFECYCLE_SEATS))
 PRODUCT_SCOPE = ["skcapstone", "skdashboard", "skworld"]
 SEAT_SCHEMA = "sk.lifecycle-seat/v1"
-DEFAULT_MODEL_ROUTE = "sk-codex-mid"
-DEFAULT_MODEL_PROFILE = "gpt-5.6-luna"
-MODEL_ESCALATION_POLICY = {"scope": "card", "mode": "opt_in", "automatic": False}
+
+
+def _profile_defaults() -> Mapping[str, Any]:
+    """Read model requirements from the packaged seat profile contract.
+
+    Keeping this contract in one data file prevents the audit from silently
+    accepting a stale model pair after a gateway route change.
+    """
+    try:
+        value = json.loads(
+            files("skcapstone").joinpath("data/lifecycle-seat-profiles.json")
+            .read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+_PROFILE = _profile_defaults()
+DEFAULT_MODEL_ROUTE = _PROFILE.get("default_model_route")
+DEFAULT_MODEL_PROFILE = _PROFILE.get("default_model_profile")
+MODEL_ESCALATION_POLICY = _PROFILE.get("model_escalation_policy")
 SAFE_RETIREMENT = {
     "abandon_only_after_exact_process_generation_is_dead": True,
     "oneshot": True,
@@ -88,7 +108,7 @@ def _check_logical_route(seat: str, role: Mapping[str, Any], findings: list[Find
         or role.get("model_profile") != DEFAULT_MODEL_PROFILE
     ):
         findings.append(
-            Finding(seat, "model_route", "default must be Luna medium through sk-codex-mid")
+            Finding(seat, "model_route", "must match the packaged lifecycle seat profile")
         )
     if role.get("model_escalation_policy") != MODEL_ESCALATION_POLICY:
         findings.append(Finding(seat, "model_escalation_policy", "must be card-scoped and opt-in"))

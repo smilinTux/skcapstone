@@ -11,7 +11,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from skcapstone.seat_manifest_audit import SEATS, audit
+from skcapstone.seat_manifest_audit import (
+    DEFAULT_MODEL_PROFILE,
+    DEFAULT_MODEL_ROUTE,
+    MODEL_ESCALATION_POLICY,
+    SEATS,
+    audit,
+)
 
 
 def _write(path: Path, value: object) -> None:
@@ -23,9 +29,9 @@ def _canonical_role(seat: str) -> dict[str, object]:
     return {
         "schema": "sk.lifecycle-seat/v1",
         "seat": seat,
-        "model_route": "sk-codex-mid",
-        "model_profile": "gpt-5.6-luna",
-        "model_escalation_policy": {"scope": "card", "mode": "opt_in", "automatic": False},
+        "model_route": DEFAULT_MODEL_ROUTE,
+        "model_profile": DEFAULT_MODEL_PROFILE,
+        "model_escalation_policy": MODEL_ESCALATION_POLICY,
         "product_scope": ["skcapstone", "skdashboard", "skworld"],
         "role": "integrator",
         "activation_state": "active_bounded",
