@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh the CapAuth copy of the Tailscale-managed TLS cert
+Documentation=card:870ae7f3
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/capauth-cert-refresh.sh
