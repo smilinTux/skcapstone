@@ -3893,9 +3893,9 @@ def _work_epochs(cid):
     epochs=[]
     for rows in (event_rows(cid),_load_evidence_events().get(cid,[])):
         for e in rows:
-            if e.get("action") in _CLAIM_BOOKKEEPING: continue
-            if (e.get("action")=="link" and
-                    _fold_key(e.get("link_key")) in _BOOKKEEPING_LINK_KEYS): continue
+            if (e.get("action") in _CLAIM_BOOKKEEPING or
+                    (e.get("action")=="link" and
+                     _fold_key(e.get("link_key")) in _BOOKKEEPING_LINK_KEYS)): continue
             if str(e.get("writer") or "").startswith(_REAP_WRITER): continue
             epoch=_ts_epoch(e.get("ts"))
             if epoch>0: epochs.append(epoch)

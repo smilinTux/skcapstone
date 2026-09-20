@@ -121,13 +121,42 @@ def test_release_retries_transient_board_lock_timeout(claimed_board, monkeypatch
     assert all(wait == module.LOCK_RELEASE_RETRY_BACKOFF_SECONDS for wait in sleeps)
 
 
+def _record_verdict(home, values, verdict: str = "PASS_FOR_REVIEW") -> None:
+    """Write one terminal verdict into the coordination overlay for this claim.
+
+    The release site now derives its reason from whether the claim generation
+    actually recorded a verdict, so a test that means "this worker finished"
+    has to say so in the ledger rather than assume it.
+    """
+    events = home / "coordination" / "card_events"
+    events.mkdir(parents=True, exist_ok=True)
+    (events / "test.jsonl").write_text(
+        json.dumps(
+            {
+                "card_id": values.card,
+                "action": "link",
+                "writer": values.owner,
+                "link_key": "verdict",
+                "link_value": verdict,
+                "ts": "2099-01-01T00:00:00+00:00",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_release_records_not_abandoned_after_review_completion(claimed_board, monkeypatch) -> None:
-    """release_superseded_review_claim only runs after validate_review_completion
-    passes, so the release it performs is a durable finish, not an abandonment.
-    It must pass not-abandoned rather than leaving the CardStore event with no
-    reason at all.
+    """A release that follows a RECORDED verdict is a durable finish.
+
+    release_superseded_review_claim runs for ordinary cards too, where
+    validate_review_completion returns immediately (it only checks cards whose
+    title identifies them as reviews). So "this code ran" is not by itself
+    evidence that anything finished, and the reason is derived from the ledger.
+    Here the verdict is present, so not-abandoned is the correct answer.
     """
     module, values, _home = claimed_board
+    _record_verdict(_home, values)
     recorded: list[dict[str, object]] = []
 
     class RecordingBoard:
@@ -162,6 +191,35 @@ def test_release_records_not_abandoned_after_review_completion(claimed_board, mo
             "abandon_reason": "not-abandoned",
         }
     ]
+
+
+def test_release_without_a_recorded_verdict_is_unspecified(claimed_board, monkeypatch) -> None:
+    """The same release, with nothing recorded, must not claim a finish.
+
+    MEASURED ON CHI, 2026-09-19: card 63d0474d carried 14 claims, 14 releases
+    all labelled not-abandoned, and zero outcome events. This path is how that
+    happened, because the card is not a review card, so validate_review_completion
+    returns without checking anything and the hardcoded reason asserted success
+    regardless. unspecified is the vocabulary member that means "not known".
+    """
+    module, values, _home = claimed_board
+    recorded: list[dict[str, object]] = []
+
+    class RecordingBoard:
+        def __init__(self, _home):
+            pass
+
+        def release_claim(
+            self, owner, task_id, *, actor, expected_claim_revision, abandon_reason=None
+        ):
+            recorded.append(abandon_reason)
+            return True
+
+    monkeypatch.setattr("skcoord.coordination.Board", RecordingBoard)
+    values.review_supersession = {"current_head": "2" * 40}
+
+    assert module.release_superseded_review_claim(values) is True
+    assert recorded == ["unspecified"]
 
 
 def test_release_does_not_retry_non_timeout_failures(monkeypatch) -> None:

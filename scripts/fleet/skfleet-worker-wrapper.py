@@ -332,12 +332,19 @@ def _fold_link_key(key: object) -> str:
     return re.sub(r"__+", "_", folded).strip("_")
 
 
-def _claim_opened_at(events: list, claim_revision: str) -> str:
-    """Timestamp of the claim this process holds, or "" when it cannot be found."""
+def _claim_opened_at(events: list, claim_revision: str, fallback: str = "") -> str:
+    """When the claim this process holds opened, or "" if that cannot be fixed.
+
+    A card can be owned from birth: ``CardCore.initial_owner`` with
+    ``initial_claim_revision`` folds to a held claim with no ``claim`` event at
+    all. For those the card's own creation time is the correct floor, because
+    nothing on the card can predate it. ``fallback`` carries that, and stays
+    empty when the caller has no such fact, which keeps the closed failure.
+    """
     for event in events:
         if event.get("action") == "claim" and event.get("claim_revision") == claim_revision:
             return str(event.get("ts") or "")
-    return ""
+    return str(fallback or "")
 
 
 def _overlay_rows(home: Path, card: str) -> list:
@@ -358,7 +365,9 @@ def _overlay_rows(home: Path, card: str) -> list:
     return rows
 
 
-def durable_verdict_recorded(home: Path, card: str, events: list, revision: str) -> bool:
+def durable_verdict_recorded(
+    home: Path, card: str, events: list, revision: str, opened_fallback: str = ""
+) -> bool:
     """True when this claim generation actually recorded a terminal verdict.
 
     Fails closed in both directions that matter. A claim whose own opening
@@ -367,7 +376,7 @@ def durable_verdict_recorded(home: Path, card: str, events: list, revision: str)
     not read reports False rather than guessing. Saying "I do not know" is the
     honest answer, and ``unspecified`` is the vocabulary member that means it.
     """
-    opened = _claim_opened_at(events, revision)
+    opened = _claim_opened_at(events, revision, opened_fallback)
     if not opened:
         return False
     for event in events:
@@ -440,10 +449,20 @@ def release_superseded_review_claim(args: argparse.Namespace) -> bool:
     # ledger showed no finish at all. Claim it only when this claim generation
     # actually recorded a terminal verdict; otherwise the cause genuinely is not
     # known, and "unspecified" is the member that says so.
+    try:
+        held_events = list(store._read_events(args.card))
+    except (AttributeError, OSError):
+        # A store that will not enumerate events cannot testify that this
+        # generation finished. Fail closed to "not known", never to success.
+        held_events = []
     reason = (
         "not-abandoned"
         if durable_verdict_recorded(
-            home, args.card, list(store._read_events(args.card)), args.claim_revision
+            home,
+            args.card,
+            held_events,
+            args.claim_revision,
+            opened_fallback=str(getattr(card, "created_at", "") or ""),
         )
         else "unspecified"
     )

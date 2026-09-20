@@ -52,7 +52,15 @@ def source(head: str):
     return SimpleNamespace(links={"candidate": head})
 
 
-def install_store(module, cards):
+def install_store(module, cards, events=None):
+    """Install a fake CardStore.
+
+    ``events`` is the per-card shard the release path reads to decide whether
+    this claim generation actually recorded a verdict. A test that means "this
+    worker finished" has to say so here; a store with no events testifies to
+    nothing, and the release reason falls back to "unspecified".
+    """
+
     class Store:
         def __init__(self, _home):
             pass
@@ -60,7 +68,28 @@ def install_store(module, cards):
         def fold(self, card_id):
             return cards.get(card_id)
 
+        def _read_events(self, card_id):
+            return list((events or {}).get(card_id, []))
+
     module.CardStore = Store
+
+
+def finished_generation(values, verdict: str = "PASS_FOR_REVIEW"):
+    """One claim plus the terminal verdict recorded under it."""
+    return [
+        {
+            "action": "claim",
+            "owner": values.owner,
+            "claim_revision": values.claim_revision,
+            "ts": "2026-09-19T12:00:00+00:00",
+        },
+        {
+            "action": "verdict",
+            "writer": values.owner,
+            "verdict": verdict,
+            "ts": "2026-09-19T12:30:00+00:00",
+        },
+    ]
 
 
 class OneCheckStop:
@@ -169,6 +198,7 @@ def test_superseded_review_releases_only_exact_claim(monkeypatch) -> None:
                 meta={"_claim_revision": values.claim_revision},
             )
         },
+        {values.card: finished_generation(values)},
     )
     monkeypatch.setattr(module, "validate_review_completion", lambda *_args: None)
 
