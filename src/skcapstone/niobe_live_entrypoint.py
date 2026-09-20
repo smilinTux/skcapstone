@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .niobe_activation import LIVE_UNIT, parse_activation
+from .receipt_output import condense_dispatcher_output
 from .seat_mail import poll_mail, startup_hello
 
 _DISPATCH_TIMEOUT_SECONDS = 270
@@ -88,8 +89,8 @@ def _append_health(
         "reason": None if returncode == 0 else f"dispatcher_exit_{returncode}",
         "dispatcher_returncode": returncode,
         "exception_type": exception_type,
-        "dispatcher_stdout": dispatcher_stdout,
-        "dispatcher_stderr": dispatcher_stderr,
+        "dispatcher_stdout": condense_dispatcher_output(dispatcher_stdout),
+        "dispatcher_stderr": condense_dispatcher_output(dispatcher_stderr),
         "activation_decision": activation.decision_id,
         "activation_card_revision": activation.card_revision,
         "unit": LIVE_UNIT,

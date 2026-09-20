@@ -31,6 +31,7 @@ from .link_cycle import recommend_one_reviewer
 from .link_observation_feed import ObservationFeedError, load_observation_feed
 from .link_review_work import load_review_work, reconcile_review_work_batch
 from .mero_census import run_blocker_census
+from .receipt_output import condense_dispatcher_output
 from .seat_boundaries import BoundaryError, canonical_principal
 from .seat_cycle_guard import CycleResult, SeatCycleGuard
 from .seat_mail import poll_mail, startup_hello
@@ -190,10 +191,26 @@ def _health_path(home: Path, seat: str) -> Path:
     return home / "coordination" / "seat-cycles" / f"{seat}.health.jsonl"
 
 
+def _condensed_receipt_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return payload with dispatcher stdout/stderr bounded for embedding.
+
+    This is the single place both receipt outputs (the health JSONL file
+    and the CLI's own stdout summary, see main() below) go through, so
+    every current and future producer of dispatcher_stdout/stderr on
+    CycleSummary is bounded, not just the seraph timeout path that
+    happens to set them today.
+    """
+
+    payload = dict(payload)
+    payload["dispatcher_stdout"] = condense_dispatcher_output(payload.get("dispatcher_stdout"))
+    payload["dispatcher_stderr"] = condense_dispatcher_output(payload.get("dispatcher_stderr"))
+    return payload
+
+
 def _append_health(home: Path, summary: CycleSummary) -> None:
     path = _health_path(home, summary.seat)
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"at": _now(), **asdict(summary)}
+    payload = _condensed_receipt_payload({"at": _now(), **asdict(summary)})
     with path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
 
@@ -1014,7 +1031,7 @@ def main(argv: list[str] | None = None) -> int:
         dry_run=args.dry_run,
         operation=operation,
     )
-    print(json.dumps(asdict(summary), sort_keys=True))
+    print(json.dumps(_condensed_receipt_payload(asdict(summary)), sort_keys=True))
     return 0 if summary.result not in {"inactive_host_refused"} else 75
 
 
