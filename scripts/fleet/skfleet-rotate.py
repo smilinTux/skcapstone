@@ -634,7 +634,10 @@ def _seraph_terminal_noop(
         only_seat == "seraph"
         and not dry
         and pick_count
-        and processed_picks == pick_count
+        # The bounded loop may stop after processing the selected batch when a
+        # lane is exhausted.  Treat that as complete, but never manufacture a
+        # NOOP while any launch outcome was already emitted.
+        and processed_picks >= pick_count
         and launch_receipts == 0
     ):
         return "NOOP_RECEIPT|%s|reason=all_candidates_suppressed|seat=seraph" % host
