@@ -5899,6 +5899,7 @@ def open_provisional_reviews(capacity, dry_run=False):
              "--desc", description,
              "--priority", "high", "--tag", "parent-%s" % parent,
              "--tag", "review", "--tag", "seat-seraph", "--tag", "qwen-suitable",
+             "--tag", "sk-s",
              "--tag", "source-implementer-%s" % producer,
              "--producer-identity", producer,
              "--candidate-evidence-sha256", digest,
@@ -5926,6 +5927,44 @@ def open_provisional_reviews(capacity, dry_run=False):
                 _REVIEW_READBACK_BLOCKED.add(review_id)
                 log(d, "OPEN_REVIEW_LINEAGE_READBACK_FAILED|%s|%s|review=%s" %
                     (HOST, parent, review_id))
+                break
+            # `coord create` alone is not enough to make this card routable.
+            # It lands in the `backlog` column, and seat admission in
+            # `_pool_v2_admission` requires review_status (column == "review")
+            # for both seraph_review_admitted and elastic_review_admitted, so a
+            # card left in `backlog` can never be admitted no matter how well
+            # it is bound. A card also needs a size class: `_size_class_for`
+            # only resolves one from a single `[S]/[M]/[L]/[XL]` title marker
+            # or a single canonical size label, and the generated title above
+            # carries neither. Without a size class `_logical_route_for`
+            # returns None and the card is dropped from the candidate scan
+            # with NO log line at all, which is exactly what let eight
+            # correctly bound review cards sit unroutable while Seraph kept
+            # reporting seraph_no_eligible_work. The sk-s tag above fixes the
+            # size gap; moving the card into review here fixes the column
+            # gap. Both are required, and together they are sufficient.
+            move = subprocess.run(
+                [SKC, "coord", "move", review_id, "review"],
+                capture_output=True, text=True,
+                env=dict(os.environ, SKCOORD_CARD_STORE="1"))
+            if move.returncode != 0:
+                move_failure = ((move.stderr or "") + " " + (move.stdout or "")).strip()
+            else:
+                # A CLI that reports success and persists nothing is a
+                # documented failure mode in this stack, so the move is
+                # verified by reading it back through authoritative
+                # claimability, a path different from the one that wrote it,
+                # never by trusting the exit code alone.
+                readback_status = authoritative_claimability(
+                    review_id, fresh=True).get("status")
+                move_failure = (
+                    "" if readback_status == "review"
+                    else "readback status=%s" % readback_status
+                )
+            if move_failure:
+                _REVIEW_READBACK_BLOCKED.add(review_id)
+                log(d, "OPEN_REVIEW_COLUMN_FAILED|%s|%s|review=%s|%s" %
+                    (HOST, parent, review_id, move_failure[:110]))
                 break
             log(d, "OPENED_REVIEW|%s|%s|review=%s|%s|producer=%s|sha256=%s" %
                 (HOST, parent, review_id, token, producer, digest))

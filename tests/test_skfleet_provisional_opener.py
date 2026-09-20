@@ -118,6 +118,17 @@ class OpenerHarness:
         self.results: list[_Result] = []
         self.suppress_create: set[int] = set()
         self.suppress_meta: set[int] = set()
+        # `coord move` is a second, independent subprocess seam exercised by
+        # the opener once a create lands: `self.columns` models the CardStore
+        # column a card actually persisted to (a create defaults a card to
+        # "backlog", matching production), `self.move_results` lets a test
+        # override one move call's exit code by call index, and
+        # `self.move_suppress_persist` models a move that reports success but
+        # persists nothing, the reports-success-does-nothing failure mode.
+        self.columns: dict[str, str] = {}
+        self.move_calls: list[list[str]] = []
+        self.move_results: dict[int, _Result] = {}
+        self.move_suppress_persist: set[int] = set()
         self.ns.update(
             {
                 "_load_outcomes": lambda: self.outcomes,
@@ -128,6 +139,15 @@ class OpenerHarness:
                 "folded_labels": lambda cid, core: core.get("initial_labels", []),
                 "log": lambda _dest, value: self.logs.append(value),
                 "subprocess": type("Subprocess", (), {"run": self._run}),
+                # Not AST-extracted: it folds structure-store events, legacy
+                # overlay events and legacy owners through several helpers not
+                # covered by this seam. The opener only ever needs its column,
+                # so the stub answers exactly that from the same board state
+                # `coord move` above writes to, one level removed from the
+                # exit code, matching what the real readback is for.
+                "authoritative_claimability": lambda cid, fresh=True: {
+                    "status": self.columns.get(cid, "backlog")
+                },
                 "_rows": {},
             }
         )
@@ -192,6 +212,14 @@ class OpenerHarness:
         return command[command.index(name) + 1] if name in command else None
 
     def _run(self, command: list[str], **_kwargs: object) -> _Result:
+        if command[1:3] == ["coord", "move"]:
+            move_index = len(self.move_calls)
+            self.move_calls.append(command)
+            move_result = self.move_results.get(move_index, _Result())
+            card_id, column = command[3], command[4]
+            if not move_result.returncode and move_index not in self.move_suppress_persist:
+                self.columns[card_id] = column
+            return move_result
         index = len(self.calls)
         self.calls.append(command)
         result = self.results[index] if index < len(self.results) else _Result()
@@ -239,6 +267,11 @@ class OpenerHarness:
         if index in self.suppress_meta:
             meta = {}
         self.card(review_id, title, *labels, description=description, meta=meta)
+        if governed:
+            # Production `coord create` lands every card in `backlog`
+            # regardless of its labels; only an explicit `coord move` changes
+            # its column.
+            self.columns[review_id] = "backlog"
         return result
 
     def open(self, capacity: int, *, dry_run: bool = False) -> int:
@@ -500,6 +533,86 @@ def test_stale_readback_blocks_launch_eligibility_and_stops(tmp_path: Path) -> N
     review_id = board.calls[0][board.calls[0].index("--id") + 1]
     assert review_id in board.ns["_REVIEW_READBACK_BLOCKED"]
     assert any("OPEN_REVIEW_STALE_READBACK" in row for row in board.logs)
+
+
+def test_created_review_carries_sk_s_size_label(tmp_path: Path) -> None:
+    """A card without a size class is dropped from the candidate scan with no
+    log line at all (`_size_class_for` fails closed on a title or label set
+    that carries no size marker). The generated title has none, so the tag
+    is the only thing that makes the card resolve to a size bucket."""
+    board = OpenerHarness(tmp_path)
+    board.outcome("a1b2c3d4")
+
+    assert board.open(1) == 1
+    labels = [
+        board.calls[0][i + 1]
+        for i, value in enumerate(board.calls[0])
+        if value == "--tag"
+    ]
+    assert "sk-s" in labels
+
+
+def test_opened_review_is_moved_into_review_column(tmp_path: Path) -> None:
+    """`coord create` lands a card in `backlog`; the opener must move it to
+    `review` itself, or seat admission can never see it as review_status."""
+    board = OpenerHarness(tmp_path)
+    board.outcome("a1b2c3d4")
+
+    assert board.open(1) == 1
+    review_id = board.calls[0][board.calls[0].index("--id") + 1]
+    assert len(board.move_calls) == 1
+    assert board.move_calls[0][1:] == ["coord", "move", review_id, "review"]
+    assert board.columns[review_id] == "review"
+
+
+def test_move_command_failure_blocks_and_skips_opened_log(tmp_path: Path) -> None:
+    board = OpenerHarness(tmp_path)
+    board.outcome("a1b2c3d4")
+    board.move_results[0] = _Result(returncode=1, stderr="cardstore locked")
+
+    # `opened` is bumped right after the earlier structural readback, ahead
+    # of the lineage check and this column move, exactly like the existing
+    # neighbouring OPEN_REVIEW_LINEAGE_READBACK_FAILED path: the count is not
+    # the thing this failure mode is about, OPENED_REVIEW not being logged
+    # (and the id landing in _REVIEW_READBACK_BLOCKED) is.
+    board.open(1)
+    review_id = board.calls[0][board.calls[0].index("--id") + 1]
+    assert review_id in board.ns["_REVIEW_READBACK_BLOCKED"]
+    assert any("OPEN_REVIEW_COLUMN_FAILED" in row for row in board.logs)
+    assert not any("OPENED_REVIEW" in row for row in board.logs)
+
+
+def test_move_reports_success_but_column_readback_fails_is_blocked(
+    tmp_path: Path,
+) -> None:
+    """The reports-success-does-nothing case: `coord move` exits 0 but the
+    authoritative readback still shows the card outside `review`. Trusting
+    the exit code alone would silently ship the exact bug being fixed here,
+    so this must fail closed exactly like a nonzero exit does."""
+    board = OpenerHarness(tmp_path)
+    board.outcome("a1b2c3d4")
+    board.move_suppress_persist.add(0)
+
+    board.open(1)
+    review_id = board.calls[0][board.calls[0].index("--id") + 1]
+    assert len(board.move_calls) == 1
+    assert board.columns[review_id] == "backlog"
+    assert review_id in board.ns["_REVIEW_READBACK_BLOCKED"]
+    assert any("OPEN_REVIEW_COLUMN_FAILED" in row for row in board.logs)
+    assert not any("OPENED_REVIEW" in row for row in board.logs)
+
+
+def test_success_path_still_logs_opened_review_and_counts_it(tmp_path: Path) -> None:
+    board = OpenerHarness(tmp_path)
+    board.outcome("a1b2c3d4", writer="pi-codex-source")
+
+    assert board.open(1) == 1
+    review_id = board.calls[0][board.calls[0].index("--id") + 1]
+    assert board.columns[review_id] == "review"
+    assert any(
+        row.startswith("OPENED_REVIEW|test-host|a1b2c3d4|review=%s" % review_id)
+        for row in board.logs
+    )
 
 
 def test_capacity_bound_counts_attempts_not_only_successes(tmp_path: Path) -> None:
