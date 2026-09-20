@@ -350,6 +350,8 @@ def register_coord_commands(main: click.Group) -> None:
     )
     @click.option("--by", default="human", help="Creator name.")
     @click.option("--criteria", multiple=True, help="Acceptance criteria (repeatable).")
+    @click.option("--exit-gate", multiple=True, help="Exit gate (repeatable).")
+    @click.option("--non-goal", multiple=True, help="Non-goal (repeatable).")
     @click.option("--dep", multiple=True, help="Dependency task IDs (repeatable).")
     @click.option("--casey-authorization", type=click.Path(path_type=Path))
     @click.option("--casey-change-id")
@@ -382,6 +384,8 @@ def register_coord_commands(main: click.Group) -> None:
         tag,
         by,
         criteria,
+        exit_gate,
+        non_goal,
         dep,
         casey_authorization,
         casey_change_id,
@@ -454,6 +458,9 @@ def register_coord_commands(main: click.Group) -> None:
             created_by=by,
             acceptance_criteria=list(criteria),
             dependencies=list(dep),
+            exit_gates=list(exit_gate),
+            non_goals=list(non_goal),
+            spec_version=2 if exit_gate or non_goal else None,
             meta=meta,
         )
         from ..jarvis_emergency import authorize_jarvis_entrypoint
