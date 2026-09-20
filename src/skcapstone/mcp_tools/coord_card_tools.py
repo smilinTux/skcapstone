@@ -138,18 +138,9 @@ async def _handle_coord_describe(args: dict) -> list[TextContent]:
     from ..card import CardEvent, CardEventLog
     from ..describe_guard import DegenerateTitleError, check_title
 
-    try:
-        check_title(args.get("title"))
-    except DegenerateTitleError as exc:
-        return _error_response(str(exc))
-
     task_id = args.get("task_id", "")
     if not task_id:
         return _error_response("task_id is required")
-    title = args.get("title")
-    description = args.get("description")
-    if title is None and description is None:
-        return _error_response("title and/or description are required")
 
     from ..jarvis_emergency import authorize_coord_mutation
     from ..seat_boundaries import Action, BoundaryError
@@ -160,6 +151,16 @@ async def _handle_coord_describe(args: dict) -> list[TextContent]:
         )
     except BoundaryError as exc:
         return _error_response(str(exc))
+
+    try:
+        check_title(args.get("title"))
+    except DegenerateTitleError as exc:
+        return _error_response(str(exc))
+
+    title = args.get("title")
+    description = args.get("description")
+    if title is None and description is None:
+        return _error_response("title and/or description are required")
     home = _shared_root()
     agent = args.get("agent", "") or ""
     try:
