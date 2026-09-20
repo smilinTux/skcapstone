@@ -13,8 +13,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from skcapstone.receipt_output import (
     MAX_DISPATCHER_TEXT_BYTES,
     condense_dispatcher_output,
