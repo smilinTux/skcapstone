@@ -5,6 +5,14 @@
 > (inside the skcapstone daemon) and fires only the jobs whose affinity includes it.
 > Design spec: [`docs/superpowers/specs/2026-06-08-skscheduler-design.md`](superpowers/specs/2026-06-08-skscheduler-design.md).
 
+## Completed-card ghost-worker unblock
+
+A completed card is terminal and must not be re-claimed. If a stale worker
+claims or releases it after completion, append a terminal `move` to `done` as
+the last lifecycle event. This operator unblock stops the card returning to
+backlog while the selector and event streams converge. Do not mutate launcher,
+service, timer, or deployment state to work around the card.
+
 ## Why it exists
 Scheduling was fragmented across **four** mechanisms (skcapstone `TaskScheduler` interval
 callbacks, legacy crontab, systemd user timers, Claude-Code crons) with no single place to
