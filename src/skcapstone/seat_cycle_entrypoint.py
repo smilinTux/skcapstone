@@ -44,7 +44,30 @@ _LAUNCH = re.compile(
 )
 _MAX_SERAPH_BATCH = 8
 _MAX_ROLE_BATCH = 8
-_SERAPH_DISPATCH_TIMEOUT_SECONDS = 180
+# Default Seraph dispatcher wall-clock timeout, in seconds. Overridable via
+# SKFLEET_SERAPH_DISPATCH_TIMEOUT_SECONDS; see
+# _resolve_seraph_dispatch_timeout_seconds for how the override is read.
+#
+# WHY 600, not 180: measured on the chi estate 2026-09-20, folding a card
+# store of roughly 7,000 cards, a normal Seraph dispatcher run already takes
+# close to 180s on its own (00:36:33 to 00:39:10, 2m37s), and the next run
+# hit the old 180s timeout exactly and was killed (01:15:00 to 01:18:00,
+# reason=seraph_dispatch_timeout). At 180s the timeout sits right on the
+# boundary of a normal run and fires on most cycles, even when the
+# dispatcher already launched reviewers successfully - two reviewer units
+# were confirmed running after one of these "timed out" cycles.
+#
+# This is not only bad bookkeeping. _run_seraph_dispatcher reaps a timeout
+# with os.killpg(process.pid, signal.SIGTERM) across the whole process
+# group. A dispatcher killed mid-run can be interrupted between claiming a
+# card and launching its worker, leaving a claimed card with no worker
+# behind it. That orphaned claim then occupies the card until a reaper
+# clears it. Do not tidy this value back down toward 180 without
+# re-measuring the fold cost against the current card store size - a
+# timeout with no headroom is worse than one that fires occasionally,
+# because every unnecessary kill is another chance to orphan a claim.
+_SERAPH_DISPATCH_TIMEOUT_SECONDS = 600
+_SERAPH_DISPATCH_TIMEOUT_ENV = "SKFLEET_SERAPH_DISPATCH_TIMEOUT_SECONDS"
 _DISPATCH_TERMINATE_GRACE_SECONDS = 5
 _SUBPROCESS_RUN = subprocess.run
 _NOOP = re.compile(
@@ -551,18 +574,44 @@ def _failed_launch_is_retryable(
     )
 
 
+def _resolve_seraph_dispatch_timeout_seconds() -> int:
+    """Resolve the Seraph dispatcher wall-clock timeout, in seconds.
+
+    Reads SKFLEET_SERAPH_DISPATCH_TIMEOUT_SECONDS, following the same
+    env-reading shape as the SKFLEET_SERAPH_BATCH_SIZE read in
+    seraph_operation. Unlike the batch size, an invalid override here does
+    NOT suppress the dispatch: a non-integer, zero, or negative value falls
+    back to the default rather than crashing or disabling the timeout
+    outright. Disabling the timeout is not an acceptable failure mode - see
+    the comment on _SERAPH_DISPATCH_TIMEOUT_SECONDS for why an unbounded
+    dispatcher is worse than one that occasionally gets killed.
+    """
+
+    raw = os.environ.get(_SERAPH_DISPATCH_TIMEOUT_ENV)
+    if raw is None:
+        return _SERAPH_DISPATCH_TIMEOUT_SECONDS
+    try:
+        timeout = int(raw)
+    except ValueError:
+        return _SERAPH_DISPATCH_TIMEOUT_SECONDS
+    if timeout <= 0:
+        return _SERAPH_DISPATCH_TIMEOUT_SECONDS
+    return timeout
+
+
 def _run_seraph_dispatcher(
     command: list[str], *, environment: dict[str, str]
 ) -> subprocess.CompletedProcess[str]:
     """Run Seraph in an isolated process group and reap it on timeout."""
 
+    timeout = _resolve_seraph_dispatch_timeout_seconds()
     if subprocess.run is not _SUBPROCESS_RUN:
         return subprocess.run(
             command,
             env=environment,
             capture_output=True,
             text=True,
-            timeout=_SERAPH_DISPATCH_TIMEOUT_SECONDS,
+            timeout=timeout,
         )
     process = subprocess.Popen(
         command,
@@ -573,7 +622,7 @@ def _run_seraph_dispatcher(
         start_new_session=True,
     )
     try:
-        stdout, stderr = process.communicate(timeout=_SERAPH_DISPATCH_TIMEOUT_SECONDS)
+        stdout, stderr = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         try:
             os.killpg(process.pid, signal.SIGTERM)
@@ -589,7 +638,7 @@ def _run_seraph_dispatcher(
             stdout, stderr = process.communicate()
         raise subprocess.TimeoutExpired(
             command,
-            _SERAPH_DISPATCH_TIMEOUT_SECONDS,
+            timeout,
             output=stdout if stdout is not None else exc.stdout,
             stderr=stderr if stderr is not None else exc.stderr,
         ) from exc

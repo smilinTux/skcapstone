@@ -440,6 +440,46 @@ def test_seraph_timeout_terminates_reaps_process_group_and_reports_cleanup(
     assert summary.exception_type == receipt["exception_type"] == "TimeoutExpired"
 
 
+def test_seraph_dispatch_timeout_default_used_when_env_unset(monkeypatch) -> None:
+    monkeypatch.delenv("SKFLEET_SERAPH_DISPATCH_TIMEOUT_SECONDS", raising=False)
+    assert seat_entrypoint._resolve_seraph_dispatch_timeout_seconds() == 600
+
+
+def test_seraph_dispatch_timeout_env_override_honoured(monkeypatch) -> None:
+    monkeypatch.setenv("SKFLEET_SERAPH_DISPATCH_TIMEOUT_SECONDS", "900")
+    assert seat_entrypoint._resolve_seraph_dispatch_timeout_seconds() == 900
+
+
+@pytest.mark.parametrize("raw", ["not-a-number", "0", "-1", "", "600.5"])
+def test_seraph_dispatch_timeout_invalid_env_falls_back_to_default(monkeypatch, raw) -> None:
+    monkeypatch.setenv("SKFLEET_SERAPH_DISPATCH_TIMEOUT_SECONDS", raw)
+    assert seat_entrypoint._resolve_seraph_dispatch_timeout_seconds() == 600
+
+
+def test_seraph_dispatch_timeout_reaches_subprocess_run_seam(tmp_path, monkeypatch) -> None:
+    """The resolved timeout must actually reach the dispatcher subprocess call.
+
+    Guards the _SUBPROCESS_RUN seam other tests in this module use to
+    capture what reached subprocess.run -- a future refactor of
+    _run_seraph_dispatcher must not silently drop the timeout kwarg.
+    """
+    monkeypatch.setenv("SKFLEET_SERAPH_DISPATCH_TIMEOUT_SECONDS", "900")
+    captured = {}
+
+    def run(*_args, **kwargs):
+        captured["timeout"] = kwargs.get("timeout")
+        return SimpleNamespace(
+            returncode=0,
+            stdout="NOOP_RECEIPT|chiap08|reason=no_eligible_work|seat=seraph\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(seat_entrypoint.subprocess, "run", run)
+
+    assert seraph_operation(tmp_path)["reason"] == "seraph_no_eligible_work"
+    assert captured["timeout"] == 900
+
+
 def test_seraph_zero_available_capacity_is_truthful_noop(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
         "skcapstone.seat_cycle_entrypoint.subprocess.run",
