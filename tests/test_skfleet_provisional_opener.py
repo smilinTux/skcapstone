@@ -544,11 +544,7 @@ def test_created_review_carries_sk_s_size_label(tmp_path: Path) -> None:
     board.outcome("a1b2c3d4")
 
     assert board.open(1) == 1
-    labels = [
-        board.calls[0][i + 1]
-        for i, value in enumerate(board.calls[0])
-        if value == "--tag"
-    ]
+    labels = [board.calls[0][i + 1] for i, value in enumerate(board.calls[0]) if value == "--tag"]
     assert "sk-s" in labels
 
 
