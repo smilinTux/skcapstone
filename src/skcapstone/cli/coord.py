@@ -1552,9 +1552,11 @@ def register_coord_commands(main: click.Group) -> None:
         verdict recorded here can actually open the review it asks for, which is
         what ``coord link verdict PASS_FOR_REVIEW`` could never do.
 
-        Record it LAST. A generation is current only while nothing follows it,
-        so link the branch and commit_sha first and let the verdict close the
-        card out.
+        Record it LAST when you can. A generation is current only while nothing
+        invalidating follows it: a new outcome link, a blocked_on chain, or an
+        evidence_sha256 link supersedes it and the review never opens. Any other
+        link after the verdict, such as your own evidence or commit reference,
+        is fine and does not disturb it.
         """
         from ..jarvis_emergency import authorize_coord_mutation
         from ..provisional_verdict import candidate_evidence

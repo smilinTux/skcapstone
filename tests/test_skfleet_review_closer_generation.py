@@ -11,6 +11,7 @@ from skcapstone.coord_completion import GATED_EXIT_CODE
 SCRIPT = Path(__file__).parents[1] / "scripts" / "fleet" / "skfleet-rotate.py"
 FUNCTIONS = {
     "_event_sort_key",
+    "_fold_key",
     "_event_identity",
     "_generation_invalidated",
     "_matching_outcome_events",
@@ -66,7 +67,6 @@ class Harness:
                 r"^\s*(PASS_FOR_[A-Z_]+|PASS_READY_[A-Z_]+)\b", re.I
             ),
             "_PASS_ONLY_RE": re.compile(r"^\s*PASS(?!_FOR)", re.I),
-            "_fold_key": lambda value: str(value or "").lower(),
             "_native_outcome_value": lambda event: event.get("verdict"),
             "GATED_EXIT_CODE": GATED_EXIT_CODE,
         }

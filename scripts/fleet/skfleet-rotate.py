@@ -5494,7 +5494,40 @@ def _generation_invalidated(card_id, outcome_event):
                 "verdict", "blocked", "evidence", "review_candidate_evidence"}:
             return True
         if action == "link":
-            return True
+            fk = _fold_key(event.get("link_key"))
+            raw = str(event.get("link_value") or "")
+            # A later link invalidates only when some reader would compute a
+            # different outcome because of it. This is the exact predicate
+            # _load_outcomes uses to select an outcome from a link: an
+            # outcome-shaped key alone is not enough (verdict_artifact carries
+            # paths, not verdicts), the value must parse too.
+            if any(key in fk for key in _OUTCOME_KEYS) and (
+                    _OUTCOME_VALUE_RE.match(raw) or _PIPE_OUTCOME_RE.search(raw)):
+                return True
+            # blocked_on opens the four-part BLOCKED protocol, and a well-formed
+            # evidence_sha256 is the field _load_outcomes records a chained
+            # BLOCKED outcome on, including a chain whose first parts predate
+            # this verdict. Either can move the selected outcome after the fact,
+            # so both fail closed. The bare evidence and referent fields can
+            # never record on their own.
+            if fk == "blocked_on":
+                return True
+            if fk in ("evidence_sha256", "blocked_evidence_sha256") and \
+                    re.fullmatch(r"[0-9a-fA-F]{64}", raw):
+                return True
+            # _load_outcomes reads independent_review unordered and lets it
+            # retroactively suppress review_verdict links from folding, so a
+            # late one can change which outcome is selected.
+            if fk == "independent_review" and raw.strip():
+                return True
+            # A review_join that fails the exact self-referential match above
+            # is not proven harmless. It may name a different source event or
+            # a different writer, which means it can be evidence that this
+            # generation was already superseded by another join, so it fails
+            # closed rather than falling through as a bare link.
+            if fk == "review_join":
+                return True
+            continue
         if action == "move" and str(event.get("column") or "") in {
                 "backlog", "open", "ready", "doing"}:
             return True

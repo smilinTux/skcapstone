@@ -24,6 +24,7 @@ ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 FUNCTIONS = {
     "_log_once_per_hour",
     "_event_sort_key",
+    "_fold_key",
     "_event_identity",
     "_generation_invalidated",
     "_matching_outcome_events",
@@ -661,3 +662,329 @@ def test_later_source_mutation_in_the_overlay_invalidates_the_generation(
 
     assert board.open(1) == 0
     assert board.calls == []
+
+
+def _link(ts, key, value, writer="pi-codex-source", event_id=""):
+    return {
+        "action": "link",
+        "ts": ts,
+        "writer": writer,
+        "link_key": key,
+        "link_value": value,
+        "event_id": event_id,
+    }
+
+
+def _verdict_event(ts="2026-09-01T12:00:00Z", writer="pi-codex-source", verdict="PASS_FOR_REVIEW"):
+    return {"action": "evidence", "ts": ts, "writer": writer, "verdict": verdict}
+
+
+def _invalidated(board, card_id, outcome_event):
+    return bool(board.ns["_generation_invalidated"](card_id, outcome_event))
+
+
+def test_same_writer_annotation_link_shortly_after_does_not_invalidate(
+    tmp_path: Path,
+) -> None:
+    """The measured starvation case: a producer attaching its own evidence.
+
+    120 of the 178 catch-all refusals on the live estate were the same writer
+    as the verdict, 79 of them within 5 seconds, typically a producer linking
+    its own evidence or commit right after its own verdict. None of that is a
+    new outcome, so it must not invalidate.
+    """
+    board = OpenerHarness(tmp_path)
+    outcome_event = _verdict_event()
+    later = _link("2026-09-01T12:00:08Z", "evidence", "/path/REVIEW-EVIDENCE.md")
+    board.events["a1b2c3d4"] = [outcome_event, later]
+
+    assert _invalidated(board, "a1b2c3d4", outcome_event) is False
+
+
+def test_harmless_links_of_any_writer_or_delay_do_not_invalidate(
+    tmp_path: Path,
+) -> None:
+    """Links no reader interprets as an outcome must stay annotation.
+
+    Bookkeeping keys, pipeline plumbing, an evidence_sha256 whose value never
+    parsed as a hash, and an arbitrary one-off key all pass through unless
+    something later gives them meaning.
+    """
+    board = OpenerHarness(tmp_path)
+    outcome_event = _verdict_event()
+    harmless = [
+        ("commit", "a" * 40),
+        ("repository", "smilinTux/skcapstone"),
+        ("base_revision", "b" * 40),
+        ("pr", "https://github.com/smilinTux/skcapstone/pull/1"),
+        ("worker_liveness", "alive"),
+        ("review_card", "a1b2c3d4"),
+        ("evidence_sha256", "not-a-hash"),
+        ("some_arbitrary_one_off_key", "whatever"),
+    ]
+    for index, (key, value) in enumerate(harmless):
+        writer = "pi-codex-source" if index % 2 == 0 else "fleet-review-closer"
+        ts = "2026-09-0%dT12:00:00Z" % (2 + index)
+        board.events["a1b2c3d4"] = [outcome_event, _link(ts, key, value, writer=writer)]
+        assert _invalidated(board, "a1b2c3d4", outcome_event) is False, key
+
+
+def test_outcome_shaped_key_with_non_outcome_value_does_not_invalidate(
+    tmp_path: Path,
+) -> None:
+    """verdict_artifact carries a path, not a verdict.
+
+    The key folds to something containing "verdict", but the value never
+    parses as one of the outcome tokens, so no reader would compute a
+    different outcome because of it.
+    """
+    board = OpenerHarness(tmp_path)
+    outcome_event = _verdict_event()
+    later = _link("2026-09-02T12:00:00Z", "verdict_artifact", "/path/file.md")
+    board.events["a1b2c3d4"] = [outcome_event, later]
+
+    assert _invalidated(board, "a1b2c3d4", outcome_event) is False
+
+
+def test_review_join_exemption_by_closer_naming_this_event_does_not_invalidate(
+    tmp_path: Path,
+) -> None:
+    """The existing review_join exemption survives the rewrite untouched."""
+    board = OpenerHarness(tmp_path)
+    outcome_event = _verdict_event()
+    identity = board.ns["_event_identity"](outcome_event)
+    later = _link(
+        "2026-09-02T12:00:00Z",
+        "review_join",
+        "generation=g1 source=a1b2c3d4 source_event_sha256=%s review=r1" % identity,
+        writer="fleet-review-closer",
+    )
+    board.events["a1b2c3d4"] = [outcome_event, later]
+
+    assert _invalidated(board, "a1b2c3d4", outcome_event) is False
+
+
+def test_matching_review_candidate_evidence_exemption_does_not_invalidate(
+    tmp_path: Path,
+) -> None:
+    """The existing review_candidate_evidence exemption survives untouched."""
+    board = OpenerHarness(tmp_path)
+    outcome_event = _verdict_event()
+    later = {
+        "action": "review_candidate_evidence",
+        "ts": "2026-09-02T12:00:00Z",
+        "writer": "fleet-review-opener",
+        "source_outcome_ts": outcome_event["ts"],
+        "source_verdict": outcome_event["verdict"],
+    }
+    board.events["a1b2c3d4"] = [outcome_event, later]
+
+    assert _invalidated(board, "a1b2c3d4", outcome_event) is False
+
+
+def test_move_to_done_or_review_does_not_invalidate(tmp_path: Path) -> None:
+    """Only a move back to backlog/open/ready/doing is a move-back signal."""
+    board = OpenerHarness(tmp_path)
+    outcome_event = _verdict_event()
+    for column in ("done", "review"):
+        move = {
+            "action": "move",
+            "column": column,
+            "ts": "2026-09-02T12:00:00Z",
+            "writer": "pi-codex-source",
+        }
+        board.events["a1b2c3d4"] = [outcome_event, move]
+        assert _invalidated(board, "a1b2c3d4", outcome_event) is False, column
+
+
+def test_later_native_outcome_actions_and_nonmatching_candidate_evidence_invalidate(
+    tmp_path: Path,
+) -> None:
+    """A second native outcome action always invalidates the first."""
+    board = OpenerHarness(tmp_path)
+    outcome_event = _verdict_event()
+    for action in ("verdict", "blocked", "evidence"):
+        later = {
+            "action": action,
+            "ts": "2026-09-02T12:00:00Z",
+            "writer": "pi-codex-source",
+            "verdict": "FAIL",
+        }
+        board.events["a1b2c3d4"] = [outcome_event, later]
+        assert _invalidated(board, "a1b2c3d4", outcome_event) is True, action
+
+    nonmatching = {
+        "action": "review_candidate_evidence",
+        "ts": "2026-09-02T12:00:00Z",
+        "writer": "fleet-review-opener",
+        "source_outcome_ts": "2026-01-01T00:00:00Z",
+        "source_verdict": "FAIL",
+    }
+    board.events["a1b2c3d4"] = [outcome_event, nonmatching]
+    assert _invalidated(board, "a1b2c3d4", outcome_event) is True
+
+
+def test_later_outcome_links_invalidate(tmp_path: Path) -> None:
+    """A later link naming a real outcome key and a parsed outcome value."""
+    board = OpenerHarness(tmp_path)
+    outcome_event = _verdict_event()
+    cases = [
+        ("verdict", "FAIL"),
+        ("review_decision", "PASS"),
+        ("result", "BLOCKED|x"),
+    ]
+    for key, value in cases:
+        board.events["a1b2c3d4"] = [
+            outcome_event,
+            _link("2026-09-02T12:00:00Z", key, value),
+        ]
+        assert _invalidated(board, "a1b2c3d4", outcome_event) is True, key
+
+
+def test_fold_key_normalization_adversarial_keys_invalidate(tmp_path: Path) -> None:
+    """_fold_key strips a trailing date or hex suffix and lowercases dashes.
+
+    Verdict-20260918 folds to verdict, verdict_a1b2c3d4 folds to verdict via
+    its hex suffix, and My-Result folds to my_result which still contains
+    result.
+    """
+    board = OpenerHarness(tmp_path)
+    outcome_event = _verdict_event()
+    cases = [
+        ("Verdict-20260918", "FAIL"),
+        ("verdict_a1b2c3d4", "PASS"),
+        ("My-Result", "FAIL"),
+    ]
+    for key, value in cases:
+        board.events["a1b2c3d4"] = [
+            outcome_event,
+            _link("2026-09-02T12:00:00Z", key, value),
+        ]
+        assert _invalidated(board, "a1b2c3d4", outcome_event) is True, key
+
+
+def test_pipe_embedded_outcome_value_invalidates(tmp_path: Path) -> None:
+    """An outcome token wrapped in unrelated notes on either side still counts."""
+    board = OpenerHarness(tmp_path)
+    outcome_event = _verdict_event()
+    later = _link("2026-09-02T12:00:00Z", "disposition", "note|FAIL|note")
+    board.events["a1b2c3d4"] = [outcome_event, later]
+
+    assert _invalidated(board, "a1b2c3d4", outcome_event) is True
+
+
+def test_blocked_on_link_always_invalidates_regardless_of_value(
+    tmp_path: Path,
+) -> None:
+    """blocked_on opens the four-part BLOCKED protocol on its own."""
+    board = OpenerHarness(tmp_path)
+    outcome_event = _verdict_event()
+    later = _link("2026-09-02T12:00:00Z", "blocked_on", "dependency|abc")
+    board.events["a1b2c3d4"] = [outcome_event, later]
+
+    assert _invalidated(board, "a1b2c3d4", outcome_event) is True
+
+
+def test_evidence_sha256_link_invalidates_including_split_chain(
+    tmp_path: Path,
+) -> None:
+    """A well-formed evidence_sha256 always invalidates, alone or chained.
+
+    _load_outcomes records a chained BLOCKED outcome on evidence_sha256, even
+    when blocked_on, referent, and evidence were written before this verdict.
+    A naive allowlist that only trusted a complete post-verdict chain would
+    miss this: the chain's earlier parts predate the boundary and are skipped,
+    but the completing evidence_sha256 link must still invalidate on its own.
+    """
+    board = OpenerHarness(tmp_path)
+    digest = "a" * 64
+
+    simple_outcome = _verdict_event(ts="2026-09-01T12:00:00Z")
+    simple_later = _link("2026-09-02T12:00:00Z", "evidence_sha256", digest)
+    board.events["a1b2c3d4"] = [simple_outcome, simple_later]
+    assert _invalidated(board, "a1b2c3d4", simple_outcome) is True
+
+    chained_outcome = _verdict_event(ts="2026-09-05T12:00:00Z")
+    pre_verdict = [
+        _link("2026-09-03T12:00:00Z", "blocked_on", "dependency|other-card"),
+        _link("2026-09-04T12:00:00Z", "referent", "other-card"),
+        _link("2026-09-04T12:00:01Z", "evidence", "/path/blocked-note.md"),
+    ]
+    post_verdict_completion = _link("2026-09-06T12:00:00Z", "evidence_sha256", digest)
+    board.events["a1b2c3d4"] = pre_verdict + [chained_outcome, post_verdict_completion]
+    assert _invalidated(board, "a1b2c3d4", chained_outcome) is True
+
+
+def test_independent_review_link_invalidates_a_recorded_review_verdict(
+    tmp_path: Path,
+) -> None:
+    """independent_review can retroactively suppress a review_verdict fold."""
+    board = OpenerHarness(tmp_path)
+    outcome_event = _link("2026-09-01T12:00:00Z", "review_verdict", "PASS")
+    later = _link("2026-09-02T12:00:00Z", "independent_review", "other-review-card")
+    board.events["a1b2c3d4"] = [outcome_event, later]
+
+    assert _invalidated(board, "a1b2c3d4", outcome_event) is True
+
+
+def test_structural_actions_and_move_to_doing_invalidate(tmp_path: Path) -> None:
+    """describe, amend_criteria, add_dependency, remove_dependency, and doing."""
+    board = OpenerHarness(tmp_path)
+    outcome_event = _verdict_event()
+    for action in ("describe", "amend_criteria", "add_dependency", "remove_dependency"):
+        later = {"action": action, "ts": "2026-09-02T12:00:00Z", "writer": "chef"}
+        board.events["a1b2c3d4"] = [outcome_event, later]
+        assert _invalidated(board, "a1b2c3d4", outcome_event) is True, action
+
+    move = {
+        "action": "move",
+        "column": "doing",
+        "ts": "2026-09-02T12:00:00Z",
+        "writer": "pi-codex-source",
+    }
+    board.events["a1b2c3d4"] = [outcome_event, move]
+    assert _invalidated(board, "a1b2c3d4", outcome_event) is True
+
+
+def test_invalidating_event_only_in_overlay_with_boundary_only_in_structure_invalidates(
+    tmp_path: Path,
+) -> None:
+    """_outcome_scan_rows must union the structure store and the overlay.
+
+    The boundary event lives only in the structure store, the invalidating
+    link lives only in the legacy overlay. A scan that read only one of the
+    two stores would miss it and report the generation as still current.
+    """
+    board = OpenerHarness(tmp_path)
+    outcome_event = _verdict_event()
+    board.structure["a1b2c3d4"] = [outcome_event]
+    board.events["a1b2c3d4"] = [_link("2026-09-02T12:00:00Z", "verdict", "FAIL")]
+
+    assert _invalidated(board, "a1b2c3d4", outcome_event) is True
+
+
+def test_review_join_wrong_writer_or_wrong_event_still_invalidates(
+    tmp_path: Path,
+) -> None:
+    """The review_join exemption is narrow: wrong writer or wrong sha both fail it."""
+    board = OpenerHarness(tmp_path)
+    outcome_event = _verdict_event()
+    identity = board.ns["_event_identity"](outcome_event)
+
+    wrong_writer = _link(
+        "2026-09-02T12:00:00Z",
+        "review_join",
+        "generation=g1 source=a1b2c3d4 source_event_sha256=%s review=r1" % identity,
+        writer="someone-else",
+    )
+    board.events["a1b2c3d4"] = [outcome_event, wrong_writer]
+    assert _invalidated(board, "a1b2c3d4", outcome_event) is True
+
+    wrong_event = _link(
+        "2026-09-02T12:00:00Z",
+        "review_join",
+        "generation=g1 source=a1b2c3d4 source_event_sha256=%s review=r1" % ("0" * 64),
+        writer="fleet-review-closer",
+    )
+    board.events["a1b2c3d4"] = [outcome_event, wrong_event]
+    assert _invalidated(board, "a1b2c3d4", outcome_event) is True

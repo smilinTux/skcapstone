@@ -67,8 +67,11 @@ REMEDY = (
     "    --commit $(git rev-parse HEAD) \\\n"
     "    --tree $(git rev-parse HEAD^{tree}) \\\n"
     "    --ref refs/heads/<branch> --agent <your_name>\n"
-    "Record it LAST. A generation is current only while nothing follows it, so any\n"
-    "link or edit you make after the verdict supersedes it and the review never opens."
+    "Record it LAST when you can. A generation is current only while nothing\n"
+    "invalidating follows it: a new outcome link, a blocked_on chain, or an\n"
+    "evidence_sha256 link supersedes it and the review never opens. Any other\n"
+    "link you make after the verdict, such as your own evidence or commit\n"
+    "reference, is fine and does not disturb it."
 )
 
 
