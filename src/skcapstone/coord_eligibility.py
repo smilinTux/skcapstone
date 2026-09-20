@@ -22,6 +22,33 @@ class LeafEligibilityCounts:
     malformed: int = 0
 
 
+def dependency_blockers(cards: Collection[object], dependencies: Collection[str]) -> tuple[str, ...]:
+    """Return deterministic machine-readable blockers for non-PASS dependencies.
+
+    A dependency is satisfied only by an explicit terminal PASS verdict.  Board
+    lifecycle state alone is deliberately insufficient: review, void, FAIL,
+    and malformed or missing records all fail closed.
+    """
+    by_id = {str(card.id): card for card in cards}
+    blockers: list[str] = []
+    for dependency_id in dependencies:
+        card = by_id.get(str(dependency_id))
+        if card is None:
+            blockers.append(f"dependency:{dependency_id}:missing")
+            continue
+        links = getattr(card, "links", {}) or {}
+        meta = getattr(card, "meta", {}) or {}
+        verdict = str(
+            links.get("verdict") or links.get("outcome")
+            or meta.get("verdict") or meta.get("outcome") or ""
+        ).strip().upper()
+        if getattr(card, "status", None) == Column.DONE and verdict == "PASS":
+            continue
+        state = getattr(getattr(card, "status", None), "value", None) or "unknown"
+        blockers.append(f"dependency:{dependency_id}:{state}")
+    return tuple(blockers)
+
+
 def _has_excluded_label(labels: set[str]) -> bool:
     """Return whether labels explicitly prohibit a claim."""
     return bool(labels & _EXCLUDED_LABELS) or any(

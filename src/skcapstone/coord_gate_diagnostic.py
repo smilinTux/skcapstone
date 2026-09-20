@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .card_store import CardStore
+from .coord_eligibility import dependency_blockers
 from .review_admission import (
     dependency_blocker_unresolved,
     governed_review_gate_reasons,
@@ -22,11 +23,9 @@ def diagnose(home: Path, card_id: str) -> dict[str, object]:
     if card is None:
         return {"card_id": card_id, "eligible": False, "reasons": ["unknown-card"]}
 
-    cards = {row.id: row for row in store.list_cards()}
-    dependency_blocked = any(
-        dependency not in cards or cards[dependency].status.value != "done"
-        for dependency in card.dependencies
-    )
+    cards = store.list_cards()
+    blockers = dependency_blockers(cards, card.dependencies)
+    dependency_blocked = bool(blockers)
     core = {
         "id": card.id,
         "title": card.title,
@@ -49,6 +48,8 @@ def diagnose(home: Path, card_id: str) -> dict[str, object]:
             dependency_blocker_holds=dependency_blocker_unresolved(home, core, card.labels),
         )
     )
+    if blockers:
+        reasons.extend(blockers)
     if "do-not-claim" in labels:
         reasons.append("do-not-claim")
     if card.status.value == "done" or card.archived or card.meta.get("voided"):

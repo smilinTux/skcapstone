@@ -506,10 +506,9 @@ def _failed_launch_is_retryable(
         or "[human]" in str(getattr(card, "title", "")).lower()
     ):
         return False
-    return all(
-        (dependency := store.fold(dependency_id)) is not None and dependency.status == Column.DONE
-        for dependency_id in getattr(card, "dependencies", ())
-    )
+    from .coord_eligibility import dependency_blockers
+
+    return not dependency_blockers(store.list_cards(), getattr(card, "dependencies", ()))
 
 
 def seraph_operation(home: Path) -> dict[str, int | str]:
@@ -716,10 +715,9 @@ def _failed_claim_is_retryable(
         or bool(getattr(card, "archived", False))
     ):
         return False
-    return all(
-        (dependency := store.fold(dependency_id)) is not None and dependency.status == Column.DONE
-        for dependency_id in getattr(card, "dependencies", ())
-    )
+    from .coord_eligibility import dependency_blockers
+
+    return not dependency_blockers(store.list_cards(), getattr(card, "dependencies", ()))
 
 
 def role_dispatch_operation(home: Path, seat: str) -> dict[str, int | str]:
