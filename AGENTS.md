@@ -54,7 +54,58 @@ skcapstone coord move <card_id> review --agent <your_name>
 ```
 
 Bad: opening a file below `cards/<card_id>/events/` or
-`coordination/card_events/` and writing JSONL yourself.
+`coordination/card_events/` and writing JSONL yourself. An agent that did
+exactly this left 54 unreadable lines that every fold on every host paid for
+until they were cleaned up. `skcapstone coord` is the only write boundary,
+with no exception for "just this once."
+
+`core.json` is **not** the card's title. It keeps the birth title write-once;
+the *folded* title (what the dispatcher actually reads) comes from event
+state, and `authoritative_claimability` overwrites it from the latest
+`describe` event. Checking `core.json` and concluding a title is healthy is a
+trap: read the folded card, not the birth record.
+
+### `coord describe`: titles are content, not CLI flags
+
+`--title`/`title` take the title text itself, never a flag name and never a
+placeholder. 118 real corruption events, 42 in one day, were exactly these
+two mistakes:
+
+Good (CLI):
+
+```bash
+skcapstone coord describe <card_id> --title "[M] Fix login retry backoff" --agent <your_name>
+```
+
+Good (MCP, same event, same effect):
+
+```json
+{"tool": "coord_describe", "task_id": "<card_id>", "title": "[M] Fix login retry backoff", "agent": "<your_name>"}
+```
+
+Bad, an option NAME typed as the option VALUE (the caller confused the CLI
+signature with the MCP one and put `--description` *inside* the title field
+instead of the actual text):
+
+```json
+{"tool": "coord_describe", "task_id": "<card_id>", "title": "--description", "agent": "<your_name>"}
+```
+
+This is refused (`refusing title '--description': it starts with '-'...`),
+not written, but only because the guard exists. Put the real title text in
+the field; never a flag name.
+
+Bad, a placeholder from testing/poking the tool, also refused:
+
+```json
+{"tool": "coord_describe", "task_id": "<card_id>", "title": "x", "agent": "<your_name>"}
+```
+
+**Every title needs exactly one size marker: `[S]`, `[M]`, `[L]`, or
+`[XL]`.** A title with none is silently un-routable: the dispatcher drops the
+card from the candidate scan with no log line, no error, nothing. `[M]` is
+the safe default when you're unsure. `[L]` fails closed on any estate that
+has no L-class provider admitted, so don't reach for it out of habit.
 
 ## Step 3: Claim Work
 
