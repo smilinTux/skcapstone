@@ -401,6 +401,16 @@ cycle("replay", "seraph")
     skcoord_root = Path(lifecycle_reassessment.__file__).resolve().parents[1]
     env = os.environ.copy()
     env.pop("SKFLEET_WORKSPACE", None)
+    # No SKFLEET_MODEL_S / SKFLEET_CODEX_MODEL_S here on purpose. This mock
+    # gateway only ever advertises "sk-s" at size S (see _HealthyGateway.do_GET
+    # above); a governed review card's resolved model is what actually gets
+    # requested (skfleet-rotate.py, the _review_seat branch), and
+    # resolve_and_preflight fails any card closed whose resolved model is not
+    # in that live catalog. A previous version of this test set
+    # SKFLEET_CODEX_MODEL_S=sk-codex-mid here, a model this mock never
+    # advertises; it was inert while the review branch still hardcoded the
+    # bare bucket regardless of any override, and turned into exactly that
+    # closed-card failure the moment the branch started honouring it.
     env.update(
         {
             "HOME": str(home),
@@ -424,7 +434,6 @@ cycle("replay", "seraph")
             "SKFLEET_ESC_TARGET": "0",
             "SKFLEET_SEAT_TARGET": "2",
             "SKFLEET_CODEX_PHYSICAL_LIMIT": "3",
-            "SKFLEET_CODEX_MODEL_S": "sk-codex-mid",
             "SKFLEET_MAX_LAUNCH": "2",
             "SKFLEET_PI_CARDSTORE_GUARD": str(
                 ROOT / "scripts" / "fleet" / "pi-cardstore-guard.mjs"

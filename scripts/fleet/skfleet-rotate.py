@@ -7817,6 +7817,25 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
     # served by gpt-5.6-luna, not the pool alias, so success was pool luck
     # rather than reviewer competence.
     #
+    # A tempting alternative is reading model back off _selected_route
+    # (str(_selected_route["model_or_bucket"])) instead, so the request
+    # always names the exact route choose_review_route reserved. That was
+    # tried and reverted: it is the pattern the 2026-09-18 producer-dispatch
+    # fix (95c04b06) deliberately removed and pinned against in
+    # test_skfleet_logical_routes.py and test_skfleet_pool_v2_authority.py,
+    # for good reason. _selected_route only exists to pick a capacity_domain
+    # for LOCAL oversubscription bookkeeping against the live queue snapshot;
+    # it is not the gateway's authority on what a model request will
+    # actually do. resolve_and_preflight, called on `model` a few lines
+    # below, is that authority: it independently probes the exact model
+    # about to be requested against the live catalog before any dispatch
+    # happens, and fails the card closed if that model is not currently
+    # advertised or healthy. Coupling `model` to `_selected_route` would
+    # make two same-size concurrent review cards send two DIFFERENT models
+    # depending on which route each happened to reserve, silently defeating
+    # the operator's per-size configuration for exactly the cards that raced
+    # each other for capacity, which is the opposite of what this fix is for.
+    #
     # model already carries the resolved value from _lane_model(...) above,
     # same as the non-governed path below; the capacity_domain chosen by
     # choose_review_route is applied separately into _route_identity a few

@@ -40,3 +40,36 @@ replaced with tests covering the resolved model reaching a governed review
 card, the capacity domain surviving unchanged, the producer path being
 unaffected, and an unconfigured card still resolving to a sane, non-empty
 default.
+
+
+`tests/test_skfleet_seraph_selector_e2e.py::test_real_selector_runs_distinct_heads_concurrently_and_blocks_duplicates`
+caught a tempting-but-wrong alternative along the way: reading the dispatched
+model back off `_selected_route` (`model=str(_selected_route["model_or_bucket"])`)
+instead of simply leaving `model` alone. That was tried, and the live
+subprocess test failed for a real reason: `eligible_review_routes` accepts
+any route sized AT LEAST the card's required size, so two same-size [S]
+review cards routinely resolve to two DIFFERENT concrete routes on two
+different capacity_domains. Reading `model` back off `_selected_route` would
+make two concurrent same-size review cards request two different models
+depending only on which route each happened to reserve, silently defeating
+an operator's per-size configuration for exactly the cards that raced each
+other for capacity. It is also the exact pattern the 2026-09-18
+producer-dispatch fix (95c04b06) deliberately removed and pinned against in
+`test_skfleet_logical_routes.py` and `test_skfleet_pool_v2_authority.py`, for
+the same reason `_selected_route` only picks a `capacity_domain` for local
+oversubscription bookkeeping; `resolve_and_preflight`, called on `model`
+separately, is the actual authority on whether a requested model is
+currently advertised and healthy. That alternative was reverted in favour of
+the simpler fix described above.
+
+The e2e test itself needed one unrelated line removed:
+`SKFLEET_CODEX_MODEL_S=sk-codex-mid` in its subprocess env, a model its mock
+gateway never advertises at any size. It was inert while the review branch
+still hardcoded the bare bucket regardless of any override, and only turned
+into a real (and correct) `ROUTE_PREFLIGHT_BLOCKED`/no-launch failure once
+the branch started honouring it, since nothing in this specific mock's
+catalog can serve `sk-codex-mid`. The test's own second scenario
+(`test_generic_niobe_launches_seraph_review_through_codex`) never set that
+variable, confirming it was disconnected boilerplate rather than a
+deliberate scenario; removed with a comment explaining why, no assertions
+changed.

@@ -31,10 +31,10 @@ themselves were fine:
 A second, narrower instance of the same defect survived inside the review
 branch itself. `model` was resolved correctly via `_lane_model(...)` for
 EVERY card, then for a governed review card only, immediately reset back to
-`_bucket` a few lines later. The comment guarding that reset (and a test
-that asserted it) argued `eligible_review_routes`/`choose_review_route` had
-already made a better-informed selection than the lane's model resolution,
-so overriding back to the bucket preserved that selection. That is false:
+`_bucket` a few lines later. The comment guarding that reset argued
+`eligible_review_routes`/`choose_review_route` had already made a
+better-informed selection than the lane's model resolution, so overriding
+back to the bucket preserved that selection. That reasoning does not hold:
 those two functions choose a `capacity_domain` for admission and occupancy
 bookkeeping, never the model string sent to the gateway. Overriding `model`
 to `_bucket` there did exactly what the fix above stops it doing everywhere
@@ -50,6 +50,27 @@ backend on the gateway that day (80 errors of 3,943 requests, every other
 backend zero). A review turn landing there returned an empty completion, the
 reviewer recorded no verdict, and the wrapper exited 75 no_card_mutation;
 cards accumulated 17 claims and 18 releases this way.
+
+A tempting "fix" for that reset is reading `model` back off `_selected_route`
+instead (`model=str(_selected_route["model_or_bucket"])`), so the request
+always names the exact route `choose_review_route` reserved capacity for.
+That was tried in review here and reverted: it is the pattern the
+2026-09-18 producer-dispatch fix (95c04b06) deliberately removed and pinned
+against in `test_skfleet_logical_routes.py`
+(`test_launch_never_replaces_logical_route_with_selected_member`) and
+`test_skfleet_pool_v2_authority.py`
+(`test_worker_runtime_contract_is_unchanged`). `_selected_route` only exists
+to pick a `capacity_domain` for LOCAL oversubscription bookkeeping against
+the live queue snapshot; it is not the gateway's authority on what a model
+request will actually do. `resolve_and_preflight`, called on the resolved
+`model` a few lines below, is that authority: it independently probes the
+exact model about to be requested against the live catalog before dispatch,
+and fails the card closed if that model is not currently advertised or
+healthy. Coupling `model` to `_selected_route` would make two same-size
+concurrent review cards send two DIFFERENT models depending on which route
+each happened to reserve, silently defeating the operator's per-size
+configuration for exactly the cards that raced each other for capacity,
+which is the opposite of what this fix is for.
 """
 
 from __future__ import annotations
@@ -186,27 +207,26 @@ def _governed_branch_window() -> str:
     """
     source = _source()
     seat = source.rindex("_review_seat=governed_review_seat(")
-    return source[seat : seat + 3400]
+    return source[seat : seat + 4700]
 
 
 def test_a_governed_review_card_keeps_the_resolved_model_not_the_bucket():
     """Review dispatch must send the SAME resolved model producer dispatch
-    sends, not the bare bucket.
-
-    A prior version of this test (and the comment beside the code it was
-    guarding) asserted the opposite: that resetting `model=_bucket` inside
-    the governed branch was required to preserve a route selection made by
-    `eligible_review_routes`/`choose_review_route`. That reasoning does not
-    hold. Those two functions choose a `capacity_domain`, never the `model`
-    string sent to the gateway, so the reset did nothing but discard the
-    operator's configured reviewer model (SKFLEET_MODEL_S /
-    SKFLEET_CODEX_MODEL_S) for every governed review card. See the
-    module docstring for the measured consequence.
+    sends, not the bare bucket, and must not read a substitute model back off
+    `_selected_route` either (see the module docstring for why that
+    alternative was tried and reverted): `model` must simply be left alone
+    between its resolution via `_lane_model(...)` and the `_route_identity`
+    literal that records it.
     """
     window = _governed_branch_window()
     assert "model=_bucket" not in window, (
         "a governed review card must not be reset back onto the bare bucket; "
         "it should keep the model _lane_model(...) already resolved"
+    )
+    assert 'model=str(_selected_route["model_or_bucket"])' not in window, (
+        "a governed review card must not read its dispatched model back off "
+        "_selected_route either; that desyncs concurrent same-size cards "
+        "onto different models depending only on which route each reserved"
     )
     assert "keeps the BARE BUCKET" not in _source(), (
         "the misleading rationale for the bucket reset must not still be in "
@@ -252,12 +272,15 @@ def test_a_producer_card_route_identity_is_unaffected():
     assert '"capacity_domains":[str(_selected_route["capacity_domain"])],' in window
     assert '"model_or_bucket":model,' in window
     assert "model=_bucket" not in window
+    assert 'model=str(_selected_route["model_or_bucket"])' not in window
 
 
 def test_a_governed_review_card_resolves_the_operator_configured_model(monkeypatch):
     """End-to-end through the REAL (unstubbed) constant/function chain: an
     operator's SKFLEET_MODEL_S drop-in must reach the model a governed [S]
-    review card dispatches with.
+    review card dispatches with. `tests/test_skfleet_seraph_selector_e2e.py`
+    proves this through the actual dispatcher subprocess, not just this
+    isolated chain.
     """
     lane_model = _load_real_size_model_chain(monkeypatch, {"SKFLEET_MODEL_S": "sk-codex-mid"})
     core = {"title": "[S][REVIEW] some governed review card"}
