@@ -312,6 +312,8 @@ def release_superseded_review_claim(args: argparse.Namespace) -> bool:
     home = Path.home() / ".skcapstone"
     store = CardStore(home)
     card = store.fold(args.card)
+    read_events = getattr(store, "_read_events", None)
+    events = read_events(args.card) if card is not None and callable(read_events) else []
     if (
         card is not None
         and card.owner is None
@@ -320,7 +322,27 @@ def release_superseded_review_claim(args: argparse.Namespace) -> bool:
             event.get("action") == "release_claim"
             and event.get("released_owner") == args.owner
             and event.get("expected_claim_revision") == args.claim_revision
-            for event in store._read_events(args.card)
+            for event in events
+        )
+    ):
+        return True
+    # Normal completion is itself the terminal release.  ``complete`` clears
+    # the owner and claim revision while folding, so retain the exact claim
+    # identity from the append-only event stream for this idempotent exit.
+    if (
+        card is not None
+        and getattr(getattr(card, "status", None), "value", getattr(card, "status", None)) == "done"
+        and card.owner is None
+        and not card.meta.get("_claim_revision")
+        and any(
+            event.get("action") == "claim"
+            and event.get("owner") == args.owner
+            and event.get("claim_revision") == args.claim_revision
+            and any(
+                later.get("action") == "complete"
+                for later in events[index + 1 :]
+            )
+            for index, event in enumerate(events)
         )
     ):
         return True
