@@ -19,16 +19,34 @@ NEUTRAL = {"S": "sk-s", "M": "sk-m", "L": "sk-l", "XL": "sk-xl"}
 
 
 @pytest.fixture(autouse=True)
-def installed_dispatcher(tmp_path):
-    """Provide the DEPLOYED launcher the seat dispatch paths actually run.
+def user_home(tmp_path, monkeypatch):
+    """A USER home that is NOT the estate home these operations are passed.
 
-    Placed under the estate home (tmp_path) at .local/bin, matching the
-    identical fixture in tests/test_seat_cycle_entrypoint.py. It used to be
-    placed next to a monkeypatched sys.executable, which put it in the PIP
-    copy's directory -- right only while the two copies matched.
+    ``.local/bin`` hangs off the USER home, never off the estate tree, and
+    on a live host the two are different directories. This module used to
+    pass ``tmp_path`` as the estate home AND deploy the dispatcher to
+    ``tmp_path/.local/bin``, which collapsed the two onto one file and made
+    a base mix-up invisible -- the same collapse that let the production
+    defect ship. See tests/test_seraph_dispatcher_path.py.
     """
 
-    dispatcher = tmp_path / ".local" / "bin" / "skfleet-rotate.py"
+    home = tmp_path / "user"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    return home
+
+
+@pytest.fixture(autouse=True)
+def installed_dispatcher(user_home):
+    """Provide the DEPLOYED launcher the seat dispatch paths actually run.
+
+    Placed under the USER home at .local/bin, matching the identical
+    fixture in tests/test_seat_cycle_entrypoint.py. It used to be placed
+    next to a monkeypatched sys.executable, which put it in the PIP copy's
+    directory -- right only while the two copies matched.
+    """
+
+    dispatcher = user_home / ".local" / "bin" / "skfleet-rotate.py"
     dispatcher.parent.mkdir(parents=True, exist_ok=True)
     dispatcher.touch(mode=0o755)
     return dispatcher
