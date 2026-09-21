@@ -19,7 +19,7 @@ SUPPORTED_REPOSITORIES = frozenset(
 )
 SERAPH_CAPAUTH_URI = "capauth:seraph@skworld.io"
 REVIEW_PERMISSIONS = frozenset({"metadata:read", "contents:read", "pull_requests:write"})
-FORGEJO_REVIEW_PERMISSIONS = frozenset({"write:repository"})
+FORGEJO_REVIEW_PERMISSIONS = frozenset({"read:organization", "read:user", "write:repository"})
 _GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _PASS = re.compile(r"^\s*PASS(?:\b|$)", re.IGNORECASE)

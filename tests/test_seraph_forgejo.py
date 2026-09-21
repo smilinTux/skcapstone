@@ -100,7 +100,10 @@ def connector(forge):
     return ForgejoReviewConnector(
         forge,
         attest_capabilities=lambda client, repository: ConnectorCapabilities(
-            SERVICE, frozenset({"write:repository"}), "forgejo", frozenset({SKGIT_REPOSITORY})
+            SERVICE,
+            frozenset({"read:organization", "read:user", "write:repository"}),
+            "forgejo",
+            frozenset({SKGIT_REPOSITORY}),
         ),
     )
 
@@ -137,7 +140,7 @@ def credential(**changes):
         "token_sha256": hashlib.sha256(token.encode()).hexdigest(),
         "token_id": 17,
         "token_name": "sklegal-seraph-review-publisher",
-        "scopes": ("write:repository",),
+        "scopes": ("read:organization", "read:user", "write:repository"),
         "repositories": ("smilinTux/sklegal",),
     }
     values.update(changes)
@@ -248,7 +251,11 @@ def test_authorization_missing_cannot_post():
 @pytest.mark.parametrize(
     "changes",
     [
-        {"permissions": frozenset({"write:repository", "write:admin"})},
+        {
+            "permissions": frozenset(
+                {"read:organization", "read:user", "write:repository", "write:admin"}
+            )
+        },
         {"repositories": frozenset()},
         {"forge": "github"},
     ],

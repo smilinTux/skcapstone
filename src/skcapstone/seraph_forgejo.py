@@ -74,7 +74,7 @@ def attest_private_credential(
     if (
         binding.token_id < 1
         or binding.token_name != _TOKEN_NAME
-        or binding.scopes != ("write:repository",)
+        or binding.scopes != ("read:organization", "read:user", "write:repository")
         or binding.repositories != (_REPOSITORY_SLUG,)
         or not hmac.compare_digest(
             hashlib.sha256(binding.token.encode("utf-8")).hexdigest(),
@@ -102,7 +102,7 @@ def attest_private_credential(
         raise ReviewPublicationError("forge_credential_team_invalid")
     return ConnectorCapabilities(
         _SERVICE_IDENTITY,
-        frozenset({"write:repository"}),
+        frozenset({"read:organization", "read:user", "write:repository"}),
         "forgejo",
         frozenset({SKGIT_REPOSITORY}),
     )

@@ -21,7 +21,7 @@ The existing `publish_seraph_pass` function requires these trusted ports:
    the exact `forge-review:publish` capability, and binds it to the publisher's
    request digest. A caller-supplied identity or boolean is insufficient.
 2. A `ForgejoReviewConnector` with a credential attestor that verifies the live
-   service identity, exact repository scope, and `write:repository` permission.
+   service identity, exact repository scope, and the three required scopes.
    A successful read or environment variable does not prove credential scope.
 3. `LiveCardStoreGateway`, an approved evidence root, and a durable receipt
    directory owned by the publication service.
@@ -37,9 +37,10 @@ administrator response. Forgejo PATs cannot read token-management endpoints.
 The dedicated forge identity is `seraph-review-bot`. It belongs only to team
 `sklegal-seraph-reviewers`, which has code read and pull-request write on only
 `smilinTux/sklegal`. The token name is `sklegal-seraph-review-publisher`, with
-scope `write:repository` restricted to that repository. Forgejo has no narrower
-approval-only token scope, so the transport endpoint allowlist and exact payload
-remain required.
+scopes `read:user`, `read:organization`, and `write:repository`, with repository
+access restricted to SKLegal. The two read scopes permit live identity and team
+attestation. Forgejo has no narrower approval-only write scope, so the transport
+endpoint allowlist and exact payload remain required.
 
 ## Local evidence preflight
 

@@ -36,7 +36,7 @@ def test_credential_file_must_be_owner_only_and_exact(tmp_path):
         f"SKGIT_TOKEN_SHA256={digest}\n"
         "SKGIT_TOKEN_ID=17\n"
         "SKGIT_TOKEN_NAME=sklegal-seraph-review-publisher\n"
-        "SKGIT_TOKEN_SCOPES=write:repository\n"
+        "SKGIT_TOKEN_SCOPES=read:organization,read:user,write:repository\n"
         "SKGIT_PROVISIONED_REPOSITORY=smilinTux/sklegal\n",
         encoding="utf-8",
     )

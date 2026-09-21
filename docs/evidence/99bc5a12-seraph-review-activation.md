@@ -22,6 +22,10 @@ without printing or copying its token: mode `0600`, authenticated login
   repository access, and team permissions through PAT-compatible endpoints.
   Owner-only provisioning metadata binds the token hash, ID, name, scope, and
   repository from the one-time administrator response.
+- Live qualification proved Forgejo requires `read:user` for self identity and
+  `read:organization` for team attestation. The unusable repository-only token
+  was revoked before any approval, and the exact accepted scope set now adds
+  those two read scopes to repository-restricted `write:repository`.
 - The timer consumes the mediated Link feed and still revalidates live cards,
   artifact bytes, protected main, required checks, ancestry, remote review, and
   immutable receipt at publication time.
@@ -37,7 +41,7 @@ PYTHONPATH=src /home/skuser01/.skenv/bin/python -m pytest -q \
   tests/fleet/test_timer_enablement.py
 ```
 
-Result before account ceremony: **230 passed in 12.67s**.
+Result after live-scope repair: **230 passed in 13.02s**.
 
 ## Activation and rollback boundary
 
