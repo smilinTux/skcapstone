@@ -7230,6 +7230,48 @@ def _review_withheld_reason_histogram(withheld):
     )
 
 
+_WORKSPACE_COOLDOWN_PATH = Path(HOME) / ".skcapstone/fleet/workspace-cooldown.json"
+_WORKSPACE_COOLDOWN_SECONDS = max(0.0, float(os.environ.get(
+    "SKFLEET_WORKSPACE_COOLDOWN_SECONDS", "3600")))
+
+
+def _workspace_cooldowns(now=None):
+    """Read dispatch-local workspace cooldowns, failing open on bad state."""
+    try:
+        payload = json.loads(_WORKSPACE_COOLDOWN_PATH.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            return {}
+        current = time.time() if now is None else float(now)
+        return {str(cid): float(until) for cid, until in payload.items()
+                if float(until) > current}
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return {}
+
+
+def _record_workspace_cooldown(card_id, now=None):
+    """Remember a workspace-integrity failure without affecting CardStore."""
+    try:
+        current = time.time() if now is None else float(now)
+        _WORKSPACE_COOLDOWN_PATH.parent.mkdir(parents=True, exist_ok=True)
+        cooldowns = _workspace_cooldowns(current)
+        cooldowns[str(card_id)] = current + _WORKSPACE_COOLDOWN_SECONDS
+        temporary = _WORKSPACE_COOLDOWN_PATH.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(cooldowns, sort_keys=True) + "\n",
+                             encoding="utf-8")
+        temporary.replace(_WORKSPACE_COOLDOWN_PATH)
+    except (OSError, TypeError, ValueError):
+        # A missing or corrupt cooldown file must preserve historical behavior.
+        return
+
+
+def _without_workspace_cooldown(candidates, now=None):
+    cooldowns = _workspace_cooldowns(now)
+    if not cooldowns:
+        return candidates
+    return (candidate for candidate in candidates
+            if str(candidate[2]) not in cooldowns)
+
+
 def _bounded_candidate_sequence(candidates, limit):
     """Return a stable, duplicate-free candidate sequence for one rotation.
 
@@ -7306,8 +7348,9 @@ if _unrouted_candidates:
           "ids=%s|omitted=%d"%
         (HOST,len(_unrouted_candidates),_unrouted_shown,_unrouted_omitted))
 _candidate_scan = _bounded_candidate_sequence(
-    (candidate for candidate in owned
-     if _logical_route_for(candidate[3],candidate[4]) is not None),
+    _without_workspace_cooldown(
+        (candidate for candidate in owned
+         if _logical_route_for(candidate[3],candidate[4]) is not None)),
     MAX_CANDIDATE_SCAN)
 while _i<len(owned) and _i<len(_candidate_scan):
     _card=_candidate_scan[_i]; _i+=1
@@ -7928,6 +7971,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             fresh_claimability["labels"],
         )
     except ValueError as exc:
+        _record_workspace_cooldown(cid)
         log(d,"WORKSPACE_BLOCKED|%s|%s|%s"%(HOST,cid,exc))
         continue
     if _fanout_request is not None:
