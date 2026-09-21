@@ -94,7 +94,15 @@ state, and `authoritative_claimability` overwrites it from the latest
 `describe` event. Checking `core.json` and concluding a title is healthy is a
 trap: read the folded card, not the birth record.
 
-### `coord describe`: titles are content, not CLI flags
+### `coord edit` (renamed from `coord describe`): titles are content, not CLI flags
+
+**The CLI verb is now `coord edit`.** `coord describe` still works as a
+deprecated alias and warns on stderr, but it will be removed. The rename
+happened because every other CLI spells "describe" as a READ (kubectl, aws,
+docker) while here it WRITES, and that collision reliably sent agents to the
+wrong verb. **To read one card, use `coord show <id>`** (see "Reading the board
+without blowing your context"). The MCP tool is still named `coord_describe`;
+only the CLI verb moved.
 
 `--title`/`title` take the title text itself, never a flag name and never a
 placeholder. 118 real corruption events, 42 in one day, were exactly these
@@ -103,7 +111,7 @@ two mistakes:
 Good (CLI):
 
 ```bash
-skcapstone coord describe <card_id> --title "[M] Fix login retry backoff" --agent <your_name>
+skcapstone coord edit <card_id> --title "[M] Fix login retry backoff" --agent <your_name>
 ```
 
 Good (MCP, same event, same effect):
@@ -354,11 +362,12 @@ category is one of `dependency`, `card`, `human`, `capability`
    `governed review claim denied: producer-self-review, ...`
    (`src/skcapstone/review_admission.py:reviewer_candidate_reasons`). Use
    an agent name that is not the producer's.
-5. **`coord describe <id>` with no flags does not read a card**, despite
-   `skcapstone coord --help`'s own epilogue claiming `coord describe <id>
-   read one card`. Verified today: it errors with `Pass --title and/or
-   --description.` There is no CLI single-card read; use the targeted
-   `coord status` filters in "Reading the board" below.
+5. **`coord describe <id>` with no flags does not read a card.** It is a
+   WRITE, renamed to `coord edit` on 2026-09-21 with `describe` kept as a
+   warning alias. It errors with `Pass --title and/or --description.`
+   **The single-card read is now `coord show <id>`** (3,854 bytes, versus
+   11,925,646 for `kanban --json`). Older notes saying "there is no CLI
+   single-card read" are stale.
 6. `seat-seraph` is the reviewer seat you will actually see. `link` and
    `mero` remain logically qualified reviewer seats in the code
    (`LOGICAL_REVIEWER_SEATS = {"link", "mero", "seraph"}` in
@@ -370,6 +379,24 @@ category is one of `dependency`, `card`, `human`, `capability`
    `seat-link` or `seat-mero` card, the same recipe above should apply
    (the completion gate does not branch on which qualified seat you are),
    but that combination is not verified end-to-end under today's rules.
+
+7. **A terminal PASS is not finished when the verdict is recorded.**
+   `coord complete` refuses a PASS review card whose CI evidence is missing,
+   and the refusal is the last step, so the work looks done right up until it
+   is rejected. Measured 2026-09-21: of 137 review cards carrying a verdict
+   but still open, **60 were refused on exactly this**, 30 for a missing
+   `hosted_checks` (skcoord, sklegal), 29 for absent `ci_check_*` links, 1
+   malformed. Link the evidence BEFORE you call complete, using the recipe in
+   "The verdict sequence that actually closes a review" above: six
+   `ci_check_*` links for a skcapstone-repo card, one `hosted_checks` pinned
+   to the exact head for any other repo. **Record only what the checks
+   actually report.** A `SUCCESS` link for a check that did not pass is a
+   false evidence record, and that is worse than leaving the card open.
+8. **A nonterminal verdict blocks completion too.** `PASS_FOR_REVIEW`,
+   `FAIL_CLOSED` and `QUARANTINED` are not terminal, and `coord complete`
+   rejects them with `has nonterminal verdict '<value>'`. Twelve cards sat in
+   that state in the same 2026-09-21 measurement. If the review is genuinely
+   finished, record a terminal `PASS`, `FAIL` or `BLOCKED` last.
 
 ### One contradiction in the code that is left unresolved on purpose
 
@@ -432,6 +459,48 @@ data comes from `src/skcapstone/data/lifecycle-seat-profiles.json`
   Its own operational flow beyond that is not established from the code
   read for this task.
 
+## ITIL changes: an agent can never approve one
+
+If you are asked to move an ITIL change to `approved`, you cannot, and the CLI
+used to hide that. Measured 2026-09-20 on `chg-ca4d0ea5`: five successive
+`itil change update --status` calls each printed a green
+`Updated: chg-ca4d0ea5 -> reviewing` while the status never moved. That is
+fixed now (the command reports the real refusal), but understand why it
+refuses:
+
+`_cab_resolved_status` in `skcoord/itil.py` grants approval only when
+
+```python
+approvals = [v for v in votes if v.decision == APPROVED and v.agent != prepared_by]
+if any(_is_human_approval(v) for v in approvals): return "approved"
+```
+
+Two independent blocks, both deliberate:
+
+1. **Self-approval guard.** A vote from the change's `prepared_by` is excluded.
+2. **`_is_human_approval`** requires `agent == "human"` or `subject_role` in
+   `{owner, approver}`. An agent vote never qualifies, whatever `--agent` says.
+
+**`itil cab vote` records the caller's capauth-resolved identity, not
+`--agent`.** On chiap08 that resolves to `jarvis`, so voting as another agent
+still writes a `jarvis` vote, and if jarvis is also `prepared_by`, block 1
+discards it silently. Check `prepared_by` before voting.
+
+`reviewing -> approved` IS a legal transition in `_CHANGE_TRANSITIONS`; the CAB
+guard is what refuses it, so "not a legal transition" is the wrong diagnosis.
+Three distinct refusals exist: an illegal transition, the CAB guard, and an
+empty `--note` on `deployed->verified` or `failed->closed`.
+
+The only path is a human grant, which a human runs:
+
+```bash
+skcapstone itil cab authorize <change_id> --decision approved --role approver \
+  --target <change_id> --scope <scope> --output ~/grant.json
+skcapstone itil cab vote <change_id> --decision approved --authorization ~/grant.json
+```
+
+Do not try to route around this. Escalate to the operator and say what you need.
+
 ## Reading the board without blowing your context
 
 Measured today against the live board: bare `skcapstone coord status`
@@ -453,6 +522,23 @@ If you only have your own review card's id and need its parent, the parent
 id is in your card's description (see "Find your parent and candidate"
 above); you do not need a board-wide read to get it.
 
+**`skcapstone coord show <card_id>` is the single-card read.** Measured
+2026-09-21 on the live board: **3,854 bytes** rendered, **2,851 bytes** with
+`--json`, against **11,925,646 bytes** for `coord kanban --json`. That is the
+same answer for roughly one three-thousandth of the context. It prints status,
+column, labels, links, assignee and description, folded through
+`CardStore.fold`, and falls back to the same legacy projection `kanban` uses so
+the two can never disagree about a card.
+
+```bash
+skcapstone coord show <card_id>          # human-readable panel
+skcapstone coord show <card_id> --json   # same card, machine-readable
+```
+
+Reach for it before any board-wide read. Checking one card's status, its
+verdict link, or whether your write actually landed is a `coord show`, never a
+`coord status` and never a `kanban --json`.
+
 `skcapstone coord gates <card_id>` is also small and directly answers "why
 can I not claim or dispatch this": it returns the seat, your capacity
 slot, and the exact refusal reasons as JSON, for example
@@ -466,9 +552,10 @@ slot, and the exact refusal reasons as JSON, for example
   11,689,722 bytes measured today. Worse than bare `coord status`, not
   better.
 - `skcapstone coord describe <card_id>` with no `--title`/`--description`:
-  does not read the card. `Error: Pass --title and/or --description.`
-  This is despite `skcapstone coord --help`'s own "WHERE TO LOOK" epilogue
-  claiming `coord describe <id> read one card`; that line is stale.
+  does not read the card. `Error: Pass --title and/or --description.` It is a
+  WRITE, now renamed to `coord edit`. **Use `coord show <card_id>` to read
+  one card** (added 2026-09-21); before it existed the only way to read a
+  single card was to render the whole board and filter it.
 - `skcapstone fleet get workers`: `fleet` is a different subsystem
   entirely (SKWorld node/service control plane, not the task board).
   `workers` is not even a valid resource there: `Error: unknown resource:
