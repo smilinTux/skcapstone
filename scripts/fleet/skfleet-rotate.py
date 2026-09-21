@@ -8131,6 +8131,19 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
     launch_action="LAUNCHED" if ok else "LAUNCH_FAILED"
     log(d,"%s|%s|%s|%s|lane=%s|model=%s%s"%
         (launch_action,HOST,sess,cid,_LANE["name"],model,launch_identity))
+    if not ok:
+        # The launch output is captured above and was previously discarded, so
+        # a failing launch recorded only "LAUNCH_FAILED" with no reason, and
+        # the release-claim below returned the card to the pool to fail again
+        # next cycle. A card can loop like that indefinitely while every
+        # receipt, log file and cycle summary stays silent about why: the
+        # dispatcher log for such a card is zero bytes. Record the exit status
+        # and the first line of each stream, bounded because this lands in the
+        # cycle log rather than a file of its own.
+        _streams = [(r.stderr or "").strip(), (r.stdout or "").strip()]
+        _why = " ".join(stream.splitlines()[0] for stream in _streams if stream)
+        log(d,"LAUNCH_FAILED_DETAIL|%s|%s|rc=%s|%s"%
+            (HOST,cid,r.returncode,_why[:400] or "no output on either stream"))
     launch_receipts+=1
     if _fanout_request is not None:
         try:
