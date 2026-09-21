@@ -89,6 +89,8 @@ def test_describe_alias_warns_but_still_writes(tmp_path: Path):
 
 def test_describe_alias_still_rejects_an_empty_edit(tmp_path: Path):
     _seed(tmp_path, "eee55555", "Old title", "body")
-    result = CliRunner().invoke(_main(), ["coord", "describe", "eee55555", "--home", str(tmp_path)])
+    result = CliRunner().invoke(
+        _main(), ["coord", "describe", "eee55555", "--home", str(tmp_path)]
+    )
     assert result.exit_code != 0
     assert CardStore(tmp_path).fold("eee55555").title == "Old title"
