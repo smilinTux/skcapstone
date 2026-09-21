@@ -49,15 +49,15 @@ _MAX_ROLE_BATCH = 8
 # raise on its own. It is fenced by two production constants this module
 # does not own:
 #   - src/skcapstone/data/systemd/skfleet-seraph.service sets
-#     TimeoutStartSec=300, so systemd itself SIGKILLs the whole unit at 300s,
+#     TimeoutStartSec=540, so systemd itself SIGKILLs the whole unit at 540s,
 #     uncontrolled, if our own bounded reap has not already finished.
 #   - src/skcapstone/data/systemd/skfleet-seraph.timer fires the service
-#     every five minutes (300s) on the clock (see its OnCalendar). A cycle
-#     that runs past 300s overlaps its own next scheduled firing.
+#     every ten minutes (600s) on the clock (see its OnCalendar). A cycle
+#     that runs past 600s overlaps its own next scheduled firing.
 # test_dispatcher_routes_niobe_and_seraph_through_safe_bounded_waits (in
 # tests/test_rotation_lock_fairness.py) enforces the resulting invariant:
 #   SERAPH_LOCK_WAIT_SECONDS + _SERAPH_DISPATCH_TIMEOUT_SECONDS + 30 < 300
-# which, with SERAPH_LOCK_WAIT_SECONDS == 75, caps this constant at 194.
+# which, with SERAPH_LOCK_WAIT_SECONDS == 75, caps this constant at 434.
 # Do NOT weaken or delete that test to make room for a bigger number here;
 # it is the thing that caught this constant being raised past what the
 # service timeout and timer cadence can actually absorb.
@@ -67,19 +67,38 @@ _MAX_ROLE_BATCH = 8
 # _SERAPH_DISPATCH_TIMEOUT_MAX_SECONDS below); see
 # _resolve_seraph_dispatch_timeout_seconds for how the override is read.
 #
-# WHY 190, not 180: measured on the chi estate 2026-09-20, folding a card
-# store of roughly 7,000 cards, a normal Seraph dispatcher run already takes
-# close to 180s on its own (00:36:33 to 00:39:10, 2m37s), and the next run
-# hit the old 180s timeout exactly and was killed (01:15:00 to 01:18:00,
-# reason=seraph_dispatch_timeout), even though the cycle had already
-# launched two reviewer units. 190 is the largest round value this module
-# can hold without sitting exactly on the 300s ceiling above (75 + 190 + 30
-# = 295, a 5s margin) -- it is ONLY a modest improvement over 180, and a run
-# that lands anywhere near the measured 180s point is still at real risk of
-# being killed. The actual fix for that is making the dispatcher run faster
-# against a growing card store, or deliberately raising the whole budget
-# (TimeoutStartSec and the timer cadence together, with the cadence proven
-# to tolerate it) rather than this constant in isolation.
+# WHY 420: the budget was raised as a whole on 2026-09-20, which is what the
+# previous note (kept below) said the real fix had to be.
+#
+# 190 was never enough. Measured over 3h on chiap08 against a 7304-card store,
+# fourteen consecutive cycles ran 150s to 188s wall clock, so a normal run sat
+# permanently within 2s to 40s of its own deadline. Over that window
+# seraph_dispatch_timeout was the DOMINANT cycle outcome (7 of 11 classified
+# cycles), ahead of seraph_no_available_capacity (2). Profiling showed no
+# single hotspot to optimise away: the full CardStore fold is 1.2s, the event
+# log read 0.3s, the overlay fold 0.1s, and `skmail read seraph` under 1s. The
+# time is spread across the dispatcher's own per-card subprocess work, which
+# grows with the card store.
+#
+# So the ceiling moved instead, together, exactly as the old note required:
+#   TimeoutStartSec 300 -> 540 (skfleet-seraph.service)
+#   timer cadence   5min -> 10min (skfleet-seraph.timer)
+# The cadence half was already proven in production: chiap08 had been running
+# a 10-minute OnCalendar drop-in over the 5-minute template for some time, so
+# the template had drifted from the live estate and this aligns it.
+#
+# The invariant still holds with room to spare: 75 + 420 + 30 = 525 < 540,
+# and 540 < 600 so a cycle cannot overlap its next firing. Against measured
+# runs of 150s to 188s that is a margin of roughly 2.2x rather than 1.01x.
+#
+# The ORIGINAL note, which remains the standing rule for anyone tempted to
+# raise this constant alone: 190 was the largest round value the module could
+# hold against the old 300s ceiling (75 + 190 + 30 = 295, a 5s margin). It was
+# only a modest improvement over 180, and a run near the measured 180s point
+# was still at real risk of being killed. The fix for that is making the
+# dispatcher run faster against a growing card store, or deliberately raising
+# the whole budget (TimeoutStartSec and the timer cadence together, with the
+# cadence proven to tolerate it) rather than this constant in isolation.
 #
 # _run_seraph_dispatcher reaps a timeout with
 # os.killpg(process.pid, signal.SIGTERM) across the whole process group. A
@@ -88,14 +107,14 @@ _MAX_ROLE_BATCH = 8
 # That orphaned claim then occupies the card until a reaper clears it, which
 # is why an unbounded dispatcher is worse than one that occasionally gets
 # killed -- do not remove the timeout to dodge this ceiling.
-_SERAPH_DISPATCH_TIMEOUT_SECONDS = 190
+_SERAPH_DISPATCH_TIMEOUT_SECONDS = 420
 _SERAPH_DISPATCH_TIMEOUT_ENV = "SKFLEET_SERAPH_DISPATCH_TIMEOUT_SECONDS"
 # Mirrors skfleet-seraph.service's TimeoutStartSec and the 30s cleanup_margin
 # test_dispatcher_routes_niobe_and_seraph_through_safe_bounded_waits budgets
 # alongside SERAPH_LOCK_WAIT_SECONDS. Kept here, not imported, because the
-# test asserts against its OWN literal 300/30 to catch either side drifting;
+# test asserts against its OWN literal 540/30 to catch either side drifting;
 # importing would let both drift together silently.
-_SERAPH_SERVICE_DEADLINE_SECONDS = 300
+_SERAPH_SERVICE_DEADLINE_SECONDS = 540
 _SERAPH_CLEANUP_MARGIN_SECONDS = 30
 # An env override at or above this is rejected (falls back to the default)
 # rather than accepted, because it would violate the invariant above outright.
@@ -625,7 +644,7 @@ def _resolve_seraph_dispatch_timeout_seconds() -> int:
     default, for a different reason: that ceiling is load-bearing, not
     advisory. It is what keeps SERAPH_LOCK_WAIT_SECONDS +
     _SERAPH_DISPATCH_TIMEOUT_SECONDS + _SERAPH_CLEANUP_MARGIN_SECONDS under
-    the 300s systemd TimeoutStartSec and the 300s timer cadence on
+    the 540s systemd TimeoutStartSec and the 600s timer cadence on
     skfleet-seraph.service/.timer. An env var that could push this module
     past that ceiling would let a single operator override silently break
     an invariant a dedicated test exists to protect

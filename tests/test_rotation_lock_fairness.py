@@ -187,8 +187,15 @@ def test_dispatcher_routes_niobe_and_seraph_through_safe_bounded_waits() -> None
     assert all("Persistent=false" in timer for timer in timers)
     assert all("Unit=skfleet-niobe-live.service" in timer for timer in timers)
     cleanup_margin = 30
+    # Seraph carries its OWN deadline: its budget was raised to 540s (with the
+    # timer cadence to 600s) on 2026-09-20 because measured cycles ran 150-188s
+    # against the old 190s dispatcher timeout and seraph_dispatch_timeout was
+    # the dominant cycle outcome. niobe-live is unchanged at 300s, so these two
+    # literals are deliberately separate rather than one shared constant.
+    seraph_service_deadline = 540
+    assert f"TimeoutStartSec={seraph_service_deadline}" in seraph
     assert (
         SERAPH_LOCK_WAIT_SECONDS + _SERAPH_DISPATCH_TIMEOUT_SECONDS + cleanup_margin
-        < service_deadline
+        < seraph_service_deadline
     )
     assert "SKFLEET_SERAPH_BATCH_SIZE=2" in seraph

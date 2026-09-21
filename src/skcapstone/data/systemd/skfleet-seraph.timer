@@ -2,7 +2,7 @@
 Description=Run one bounded Seraph review batch every five minutes
 
 [Timer]
-OnCalendar=*-*-* *:1,6,11,16,21,26,31,36,41,46,51,56:00
+OnCalendar=*-*-* *:05,15,25,35,45,55:00
 Persistent=false
 Unit=skfleet-seraph.service
 
