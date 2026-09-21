@@ -9,6 +9,7 @@ from skfleet_readiness import (
     unit_modules,
     check_module_imports,
     parse_systemd_environment,
+    dispatcher_imports,
 )
 
 
@@ -137,3 +138,52 @@ def test_unit_python_ignores_a_non_python_executable():
     has no module to import under it."""
     assert unit_python("[Service]\nExecStart=/usr/bin/node server.js\n") is None
     assert unit_python("[Service]\nExecStart=/usr/local/bin/skfleet-rotate.py --go\n") is None
+
+
+# ── the dispatcher SCRIPT, not just its env ──────────────────────────────────
+#
+# unit_modules() only recognises `python -m <module>` units, so
+# skfleet-rotate.service, whose ExecStart names a script path, had no import
+# check at all. Measured 2026-09-21: chiap02 crashed at import every cycle for
+# hours (capauth 0.3.1 against the fleet 0.3.9+) while this gate reported only
+# that its env vars were set, and 11 cards sat owned by that host.
+
+
+def test_dispatcher_imports_collects_plain_and_from_imports():
+    source = "import os\nimport json\nfrom skcapstone.card_store import CardStore\n"
+    assert dispatcher_imports(source) == ["os", "json", "skcapstone.card_store"]
+
+
+def test_dispatcher_imports_keeps_dotted_paths_and_ignores_aliases():
+    source = "import importlib.util\nimport numpy as np\n"
+    assert dispatcher_imports(source) == ["importlib.util", "numpy"]
+
+
+def test_dispatcher_imports_collapses_duplicates_in_first_seen_order():
+    assert dispatcher_imports("import os\nimport json\nimport os\n") == ["os", "json"]
+
+
+def test_dispatcher_imports_ignores_imports_inside_a_function():
+    """A guarded import is not startup-critical and is frequently deliberate."""
+    source = "import os\n\n\ndef helper():\n    import pytest\n    return pytest\n"
+    assert dispatcher_imports(source) == ["os"]
+
+
+def test_dispatcher_imports_skips_relative_imports():
+    """The dispatcher is a script, not a package: a relative import cannot be
+    resolved standalone and must not be reported as a failure."""
+    source = "from . import sibling\nfrom .pkg import thing\nimport os\n"
+    assert dispatcher_imports(source) == ["os"]
+
+
+def test_dispatcher_imports_returns_nothing_for_unparseable_source():
+    assert dispatcher_imports("def (((:\n") == []
+
+
+def test_dispatcher_imports_covers_the_real_rotate_script():
+    """Guards the wiring: the check must reach the real dispatcher."""
+    rotate = Path(__file__).resolve().parents[1] / "scripts" / "fleet" / "skfleet-rotate.py"
+    modules = dispatcher_imports(rotate.read_text(encoding="utf-8"))
+    assert (
+        "skcapstone.card_store" in modules
+    ), "skcapstone.card_store is the exact import that was failing on chiap02"
