@@ -123,6 +123,46 @@ def unit_python(unit_text: str) -> str | None:
     return None
 
 
+def dispatcher_imports(source: str) -> list[str]:
+    """Return every top-level module the dispatcher SCRIPT imports.
+
+    unit_modules() only recognises ``python -m <module>`` ExecStart lines, so a
+    unit whose ExecStart names a SCRIPT PATH gets no import verification at all.
+    That is skfleet-rotate.service, the single most important unit in the fleet.
+
+    Measured 2026-09-21: chiap02 crashed at import on EVERY cycle for hours
+    (``ImportError: cannot import name 'AuthorizationDecision' from 'capauth'``,
+    capauth 0.3.1 against the fleet's 0.3.9+) while this gate reported only that
+    the unit's environment variables were set. Eleven cards sat owned by a host
+    that could not start its dispatcher, and the gate said nothing about it.
+
+    Only top-level imports are returned. An import inside a function is not
+    startup-critical and is frequently guarded on purpose.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    modules: list[str] = []
+    seen: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            # A relative import cannot be resolved standalone, and the script is
+            # not part of a package, so there should never be one here.
+            if node.level or not node.module:
+                continue
+            names = [node.module]
+        else:
+            continue
+        for name in names:
+            if name not in seen:
+                seen.add(name)
+                modules.append(name)
+    return modules
+
+
 def check_module_imports(modules: list[str], python_bin: str) -> dict[str, bool]:
     """Return {module: True/False} for whether each imports under python_bin.
 
@@ -376,6 +416,27 @@ def _run(
         return 1
 
     mandatory = required_env(dispatcher_source)
+
+    # Verify the dispatcher script itself actually imports. Its unit names a
+    # script path, not `python -m`, so unit_modules() below never covers it.
+    dispatcher_modules = dispatcher_imports(dispatcher_source)
+    if dispatcher_modules:
+        dispatcher_results = check_module_imports(dispatcher_modules, python_bin)
+        dispatcher_failed = [
+            module for module in dispatcher_modules if not dispatcher_results.get(module)
+        ]
+        if dispatcher_failed:
+            ok = False
+            lines.append(
+                "FAIL dispatcher import: %s does not import under %s; "
+                "%s crashes at startup on every cycle"
+                % (", ".join(dispatcher_failed), python_bin, rotate_script)
+            )
+        else:
+            lines.append(
+                "OK dispatcher imports: all %d top-level imports of %s resolve under %s"
+                % (len(dispatcher_modules), rotate_script, python_bin)
+            )
 
     # env_from_systemd names a *role* unit (skfleet-rotate.service): the
     # host this gate is running on may simply not carry that role. Checking
