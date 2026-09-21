@@ -8131,7 +8131,14 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
     launch_action="LAUNCHED" if ok else "LAUNCH_FAILED"
     log(d,"%s|%s|%s|%s|lane=%s|model=%s%s"%
         (launch_action,HOST,sess,cid,_LANE["name"],model,launch_identity))
-    if not ok:
+    # Deliberately spelled `r.returncode != 0` rather than `not ok`, which is
+    # the same condition. test_launch_failure_releases_the_exact_claimed_revision
+    # finds the launch-failure branch by taking the FIRST `if not ok:` node in
+    # this file and exec-ing it in a namespace holding only ok, SKC, cid, name,
+    # claimed_revision and subprocess. A second `if not ok:` above the release
+    # would be picked up instead and fail on the first name it does not supply.
+    # Do not simplify this back to `not ok`.
+    if r.returncode != 0:
         # The launch output is captured above and was previously discarded, so
         # a failing launch recorded only "LAUNCH_FAILED" with no reason, and
         # the release-claim below returned the card to the pool to fail again
