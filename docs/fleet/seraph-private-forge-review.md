@@ -5,10 +5,9 @@ Card: `99bc5a11`. This source supports the exact SKLegal repository at
 
 ## Runtime state
 
-Source tests and actual-card preflight pass. Live publication is not activated.
-The CLI exposes local `preflight` only. It deliberately returns a blocked
-publication result because it has no installed trusted authorization bindings.
-An independent card PASS is not a forge approval.
+The source publisher includes a bounded timer entrypoint. Installation and live
+qualification remain a separate card step. An independent card PASS is not a
+forge approval until remote readback and the durable receipt agree.
 
 Link consumes the mediated observation feed. Seraph owns independent review.
 The approval connector uses a distinct forge service identity with access only
@@ -27,10 +26,20 @@ The existing `publish_seraph_pass` function requires these trusted ports:
 3. `LiveCardStoreGateway`, an approved evidence root, and a durable receipt
    directory owned by the publication service.
 
-Existing signed-request and CapAuth authorization primitives can support an
-adapter, but the current deployment has no qualified publisher binding, approved
-capability rule/grant, or identified independent forge credential. This change
-does not invent those authorities or create an account.
+`SeraphCapAuthVerifier` binds the approved Seraph fingerprint to the fixed
+principal, rejects unsigned-grace operation, requires a signed VERIFIED grant,
+uses a restart-durable nonce store, and fsyncs a sanitized authorization audit
+before returning an allow. `attest_private_credential` reads the live Forgejo
+identity, private repository access, and team unit permissions. It also checks
+the PAT against owner-only provisioning metadata captured from the one-time
+administrator response. Forgejo PATs cannot read token-management endpoints.
+
+The dedicated forge identity is `seraph-review-bot`. It belongs only to team
+`sklegal-seraph-reviewers`, which has code read and pull-request write on only
+`smilinTux/sklegal`. The token name is `sklegal-seraph-review-publisher`, with
+scope `write:repository` restricted to that repository. Forgejo has no narrower
+approval-only token scope, so the transport endpoint allowlist and exact payload
+remain required.
 
 ## Local evidence preflight
 
@@ -79,6 +88,15 @@ and credential bindings on the intended host. First run private observations,
 then publish one authorized approval and verify its exact remote review ID,
 commit, service identity, and durable receipt. Only then enable automation.
 Approval of an input repair does not approve a later combined candidate.
+
+The timer runs `skcapstone.seraph_review_runner` five minutes after boot and
+every five minutes thereafter. It consumes only the fresh, hash-bound Link feed,
+reconstructs exact evidence from live CardStore folds, signs the exact publisher
+request digest with the Seraph key, and attempts only private SKLegal records
+whose lineage outcome and CI are PASS. Its Forgejo token and provisioning
+metadata stay in `~/api-keys/seraph-skgit.env`, mode `0600`. The file binds the
+token hash, numeric token ID, name, scope, and repository returned during the
+administrator ceremony. Link never reads it.
 
 Rollback restores the previous executable and service configuration, disables
 the new publication job, and preserves all remote review and receipt history.

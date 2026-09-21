@@ -70,6 +70,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import threading
 import time
 from dataclasses import dataclass, field
@@ -334,7 +335,7 @@ def verify_signed_request(
         ts_val = float(ts)
     except ValueError:
         return AuthResult(None, REASON_SIGNATURE_INVALID, "X-SK-Timestamp is not numeric")
-    if abs(now - ts_val) > AUTH_SKEW_S:
+    if not math.isfinite(ts_val) or not math.isfinite(now) or abs(now - ts_val) > AUTH_SKEW_S:
         return AuthResult(
             None, REASON_SIGNATURE_INVALID, f"timestamp skew exceeds {AUTH_SKEW_S:.0f}s"
         )

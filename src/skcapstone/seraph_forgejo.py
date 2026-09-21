@@ -8,8 +8,11 @@ no environment-based substitute for either decision.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -31,6 +34,78 @@ from .seraph_review_contracts import (
 )
 
 _ROOT = "/api/v1/repos/smilinTux/sklegal"
+_REPOSITORY_SLUG = "smilinTux/sklegal"
+_SERVICE_IDENTITY = "seraph-review-bot"
+_TOKEN_NAME = "sklegal-seraph-review-publisher"
+_TEAM_NAME = "sklegal-seraph-reviewers"
+
+
+@dataclass(frozen=True)
+class ProvisionedCredential:
+    """Authority metadata sealed beside the owner-only PAT at provisioning."""
+
+    token: str
+    token_sha256: str
+    token_id: int
+    token_name: str
+    scopes: tuple[str, ...]
+    repositories: tuple[str, ...]
+
+
+def attest_private_credential(
+    client: ForgejoClient,
+    repository: str,
+    binding: ProvisionedCredential,
+) -> ConnectorCapabilities:
+    """Derive exact service identity and repository scope from live Forgejo state."""
+    _repository(repository)
+    user = client.request("GET", "/api/v1/user")
+    teams = _pages(client, "/api/v1/user/teams")
+    accessible = client.request("GET", _ROOT)
+    if (
+        not isinstance(user, dict)
+        or user.get("login") != _SERVICE_IDENTITY
+        or user.get("is_admin") is not False
+        or not isinstance(accessible, dict)
+        or accessible.get("full_name") != _REPOSITORY_SLUG
+        or accessible.get("private") is not True
+    ):
+        raise ReviewPublicationError("forge_credential_identity_invalid")
+    if (
+        binding.token_id < 1
+        or binding.token_name != _TOKEN_NAME
+        or binding.scopes != ("write:repository",)
+        or binding.repositories != (_REPOSITORY_SLUG,)
+        or not hmac.compare_digest(
+            hashlib.sha256(binding.token.encode("utf-8")).hexdigest(),
+            binding.token_sha256,
+        )
+    ):
+        raise ReviewPublicationError("forge_credential_scope_invalid")
+    if len(teams) != 1:
+        raise ReviewPublicationError("forge_credential_team_invalid")
+    team = teams[0]
+    units = team.get("units_map")
+    if (
+        team.get("name") != _TEAM_NAME
+        or team.get("includes_all_repositories") is not False
+        or team.get("can_create_org_repo") is not False
+        or not isinstance(units, dict)
+        or units.get("repo.code") != "read"
+        or units.get("repo.pulls") != "write"
+        or any(
+            value != "none"
+            for key, value in units.items()
+            if key not in {"repo.code", "repo.pulls"}
+        )
+    ):
+        raise ReviewPublicationError("forge_credential_team_invalid")
+    return ConnectorCapabilities(
+        _SERVICE_IDENTITY,
+        frozenset({"write:repository"}),
+        "forgejo",
+        frozenset({SKGIT_REPOSITORY}),
+    )
 
 
 def _repository(repository: str) -> None:

@@ -1,5 +1,6 @@
 """Private-forge publication and current card-binding regression tests."""
 
+import hashlib
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -8,7 +9,12 @@ import pytest
 from skcapstone.card_store import CardCore, CardStore
 from skcapstone.forgejo import SKGIT_REPOSITORY
 from skcapstone.seat_boundaries import Action, BoundaryError, require_authority
-from skcapstone.seraph_forgejo import ForgejoReviewConnector, main
+from skcapstone.seraph_forgejo import (
+    ForgejoReviewConnector,
+    ProvisionedCredential,
+    attest_private_credential,
+    main,
+)
 from skcapstone.seraph_review_cardstore import LiveCardStoreGateway, _candidate
 from skcapstone.seraph_review_contracts import ConnectorCapabilities, ReviewPublicationError
 from tests.test_seraph_review_publisher import (
@@ -97,6 +103,82 @@ def connector(forge):
             SERVICE, frozenset({"write:repository"}), "forgejo", frozenset({SKGIT_REPOSITORY})
         ),
     )
+
+
+class CredentialState:
+    """Serve authoritative service-account scope records."""
+
+    def __init__(self):
+        self.user = {"login": SERVICE, "is_admin": False}
+        self.repository = {"full_name": "smilinTux/sklegal", "private": True}
+        self.teams = [
+            {
+                "name": "sklegal-seraph-reviewers",
+                "includes_all_repositories": False,
+                "can_create_org_repo": False,
+                "units_map": {"repo.code": "read", "repo.pulls": "write", "repo.wiki": "none"},
+            }
+        ]
+
+    def request(self, method, path, payload=None):
+        if path == "/api/v1/user":
+            return self.user
+        if "teams?" in path:
+            return self.teams if "page=1" in path else []
+        if path == ROOT:
+            return self.repository
+        raise AssertionError(path)
+
+
+def credential(**changes):
+    token = "synthetic"
+    values = {
+        "token": token,
+        "token_sha256": hashlib.sha256(token.encode()).hexdigest(),
+        "token_id": 17,
+        "token_name": "sklegal-seraph-review-publisher",
+        "scopes": ("write:repository",),
+        "repositories": ("smilinTux/sklegal",),
+    }
+    values.update(changes)
+    return ProvisionedCredential(**values)
+
+
+def test_live_credential_attestation_requires_exact_identity_scope_and_team():
+    state = CredentialState()
+    value = attest_private_credential(state, SKGIT_REPOSITORY, credential())
+    value.validate(SERVICE)
+
+
+@pytest.mark.parametrize(
+    "change,error",
+    [
+        (lambda state: state.user.update(login="producer"), "identity"),
+        (lambda state: state.user.update(is_admin=True), "identity"),
+        (lambda state: state.repository.update(full_name="smilinTux/other"), "identity"),
+        (lambda state: state.teams[0].update(includes_all_repositories=True), "team"),
+        (lambda state: state.teams[0]["units_map"].update({"repo.issues": "write"}), "team"),
+    ],
+)
+def test_live_credential_attestation_rejects_broader_authority(change, error):
+    state = CredentialState()
+    change(state)
+    with pytest.raises(ReviewPublicationError, match=error):
+        attest_private_credential(state, SKGIT_REPOSITORY, credential())
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        credential(token_sha256="0" * 64),
+        credential(token_id=0),
+        credential(scopes=("all",)),
+        credential(repositories=("smilinTux/other",)),
+    ],
+)
+def test_live_credential_attestation_rejects_unsealed_or_broad_token(binding):
+    with pytest.raises(ReviewPublicationError, match="scope"):
+        attest_private_credential(CredentialState(), SKGIT_REPOSITORY, binding)
 
 
 def test_forgejo_native_approval_exact_head_and_replay():

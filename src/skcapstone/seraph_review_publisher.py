@@ -39,6 +39,24 @@ from .seraph_review_contracts import (
 SERAPH_REVIEW_CAPABILITY = "forge-review:publish"
 
 
+def publication_request_sha256(evidence: SeraphPassEvidence, service: str) -> str:
+    """Return the exact request digest authenticated by CapAuth and used for retries."""
+    return _digest(
+        {
+            "repository": evidence.repository,
+            "number": evidence.number,
+            "head_sha": evidence.head_sha,
+            "source_card": evidence.source_card,
+            "source_card_revision": evidence.source_card_revision,
+            "review_card": evidence.review_card,
+            "review_card_revision": evidence.review_card_revision,
+            "evidence_sha256": evidence.evidence_sha256,
+            "reviewer_identity": evidence.reviewer_identity.lower(),
+            "service_identity": service,
+        }
+    )
+
+
 def _principal(identity: str | None) -> str:
     """Resolve the lifecycle principal behind an attributed worker identity."""
     if not identity:
@@ -334,20 +352,7 @@ def publish_seraph_pass(
         raise ReviewPublicationError("link_cannot_publish_review")
     if service == SERAPH_CAPAUTH_URI:
         raise ReviewPublicationError("service_and_reviewer_must_differ")
-    key = _digest(
-        {
-            "repository": evidence.repository,
-            "number": evidence.number,
-            "head_sha": evidence.head_sha,
-            "source_card": evidence.source_card,
-            "source_card_revision": evidence.source_card_revision,
-            "review_card": evidence.review_card,
-            "review_card_revision": evidence.review_card_revision,
-            "evidence_sha256": evidence.evidence_sha256,
-            "reviewer_identity": evidence.reviewer_identity.lower(),
-            "service_identity": service,
-        }
-    )
+    key = publication_request_sha256(evidence, service)
     review = _validate_cards(evidence, cards)
     _validate_evidence_artifact(evidence, review, approved_evidence_root)
     _verify_caller(caller, capauth, key)
@@ -449,4 +454,5 @@ __all__ = [
     "VerifiedCaller",
     "_digest",
     "publish_seraph_pass",
+    "publication_request_sha256",
 ]

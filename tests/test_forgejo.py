@@ -65,6 +65,7 @@ def test_wrong_origin_is_rejected_before_network(origin):
         "https://elsewhere/api/v1/user",
         "//elsewhere/api/v1/user",
         "/api/v1/repos/other/repo/pulls",
+        "/api/v1/users/another-user/tokens",
         "/api/v1/user?token=synthetic",
         "/api/v1/../admin/users",
         "/api/v1/repos/smilinTux/sklegal/pulls#fragment",

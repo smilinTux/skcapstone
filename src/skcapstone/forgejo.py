@@ -59,7 +59,10 @@ class ForgejoClient:
             or any(len(values) != 1 for values in query.values())
             or any(not query[key][0].isdigit() for key in ("page", "limit") if key in query)
             or ("state" in query and query["state"][0] != "open")
-            or not (parsed.path == "/api/v1/user" or parsed.path.startswith(_ROOT + "/"))
+            or not (
+                parsed.path in {"/api/v1/user", "/api/v1/user/teams"}
+                or parsed.path.startswith(_ROOT + "/")
+            )
         ):
             raise ForgejoError("forge_path_not_authorized")
         if method == "POST":
