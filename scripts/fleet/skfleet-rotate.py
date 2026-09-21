@@ -891,6 +891,90 @@ def _verify_source_workspace(path, repository, base_ref, base_revision,
         raise ValueError("workspace HEAD does not match exact base_revision")
 
 
+#: A card whose workspace cannot be materialized must YIELD ITS DISPATCH SLOT.
+#: Measured 2026-09-21 on chiap08: the same five cards were attempted 18 times
+#: each over three hours out of a pool of 35, and the fleet launched nothing.
+#: The workspace guard logged WORKSPACE_BLOCKED and continued without recording
+#: any backoff, and it runs BEFORE `coord claim`, so no claim-based backoff
+#: applied either. The candidate list is truncated to the lane target before the
+#: dispatch loop, so a blocked card kept its slot forever while the other thirty
+#: candidates never got a turn.
+#:
+#: Deliberately NOT wired into blocked_backoff(): that keys on a BLOCKED VERDICT,
+#: and a workspace-integrity failure is an infrastructure condition, not a review
+#: outcome. Recording a verdict for it would falsify the review record for a card
+#: nobody reviewed.
+#:
+#: Every path here FAILS OPEN. A missing, unreadable or malformed cooldown file
+#: behaves exactly as before this existed, because a bug in a throttle must never
+#: be able to stop the fleet.
+_WORKSPACE_COOLDOWN_PATH = os.path.join(HOME, ".skcapstone/fleet/workspace-cooldown.json")
+_WORKSPACE_COOLDOWN_DEFAULT_SECONDS = 3600
+_WORKSPACE_COOLDOWN_ENV = "SKFLEET_WORKSPACE_COOLDOWN_SECONDS"
+
+
+def _workspace_cooldown_seconds():
+    """Resolve the cooldown window. A bad override falls back, never raises."""
+    raw = (os.environ.get(_WORKSPACE_COOLDOWN_ENV) or "").strip()
+    if raw:
+        try:
+            parsed = int(raw)
+        except ValueError:
+            return _WORKSPACE_COOLDOWN_DEFAULT_SECONDS
+        if parsed >= 0:
+            return parsed
+    return _WORKSPACE_COOLDOWN_DEFAULT_SECONDS
+
+
+def _load_workspace_cooldown():
+    """Return {card_id: epoch_seconds}, or {} for any problem at all."""
+    try:
+        with open(_WORKSPACE_COOLDOWN_PATH, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out = {}
+    for card_id, stamp in data.items():
+        try:
+            out[str(card_id)] = float(stamp)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _record_workspace_cooldown(card_id, now=None):
+    """Note that card_id just failed materialization. Never raises."""
+    try:
+        window = _workspace_cooldown_seconds()
+        moment = time.time() if now is None else float(now)
+        data = _load_workspace_cooldown()
+        # Prune expired entries on every write so the file cannot grow forever.
+        data = {k: v for k, v in data.items() if moment - v < window}
+        data[str(card_id)] = moment
+        os.makedirs(os.path.dirname(_WORKSPACE_COOLDOWN_PATH), exist_ok=True)
+        temporary = _WORKSPACE_COOLDOWN_PATH + ".tmp"
+        with open(temporary, "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+        os.replace(temporary, _WORKSPACE_COOLDOWN_PATH)
+    except (OSError, ValueError, TypeError):
+        return
+
+
+def _workspace_cooldown_active(card_id, cooldown=None, now=None):
+    """True while card_id is still inside its cooldown window."""
+    window = _workspace_cooldown_seconds()
+    if window <= 0:
+        return False
+    table = _load_workspace_cooldown() if cooldown is None else cooldown
+    stamp = table.get(str(card_id))
+    if stamp is None:
+        return False
+    moment = time.time() if now is None else float(now)
+    return (moment - stamp) < window
+
+
 def _preclaim_source_ref(repository, base_ref, base_revision, runner=subprocess.run):
     """Check reconstructability before creating a reviewer workspace."""
     candidates = [base_ref] if base_ref.startswith("refs/") else [
@@ -6388,6 +6472,18 @@ for cd in glob.glob(CARDS+"/*"):
 for row in pool: row.append(unblocks.get(row[2],0))
 pool_ids=",".join(sorted(row[2] for row in pool)) or "-"
 log(d,"POOL_IDS|%s|ids=%s"%(HOST,pool_ids))
+_workspace_cooldown_table = _load_workspace_cooldown()
+if _workspace_cooldown_table:
+    _cooling = sorted(
+        row[2] for row in pool
+        if _workspace_cooldown_active(row[2], _workspace_cooldown_table)
+    )
+    if _cooling:
+        _cooling_set = set(_cooling)
+        pool = [row for row in pool if row[2] not in _cooling_set]
+        log(d, "WORKSPACE_COOLDOWN_SKIPPED|%s|count=%d|window=%ds|ids=%s" % (
+            HOST, len(_cooling), _workspace_cooldown_seconds(),
+            ",".join(_cooling[:12])))
 # lane, then most-unblocking first, then priority, then stable id
 pool.sort(key=lambda x:(x[0],-x[5],x[1],x[2]))
 lc={0:0,1:0,2:0}
@@ -7982,6 +8078,9 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         )
     except ValueError as exc:
         log(d,"WORKSPACE_BLOCKED|%s|%s|%s"%(HOST,cid,exc))
+        # Yield the slot: without this the same card is re-picked every
+        # cycle and the rest of the pool never gets a turn.
+        _record_workspace_cooldown(cid)
         continue
     if _fanout_request is not None:
         try:
