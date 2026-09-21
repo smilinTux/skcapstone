@@ -128,9 +128,9 @@ def test_the_blocked_path_actually_records_the_cooldown():
     marker = 'log(d,"WORKSPACE_BLOCKED|%s|%s|%s"%(HOST,cid,exc))'
     assert marker in source
     tail = source[source.index(marker) : source.index(marker) + 400]
-    assert "_record_workspace_cooldown(cid)" in tail, (
-        "WORKSPACE_BLOCKED must record a cooldown or the card keeps its slot"
-    )
+    assert (
+        "_record_workspace_cooldown(cid)" in tail
+    ), "WORKSPACE_BLOCKED must record a cooldown or the card keeps its slot"
 
 
 def test_the_pool_filter_runs_before_the_lane_truncation():
