@@ -6472,18 +6472,6 @@ for cd in glob.glob(CARDS+"/*"):
 for row in pool: row.append(unblocks.get(row[2],0))
 pool_ids=",".join(sorted(row[2] for row in pool)) or "-"
 log(d,"POOL_IDS|%s|ids=%s"%(HOST,pool_ids))
-_workspace_cooldown_table = _load_workspace_cooldown()
-if _workspace_cooldown_table:
-    _cooling = sorted(
-        row[2] for row in pool
-        if _workspace_cooldown_active(row[2], _workspace_cooldown_table)
-    )
-    if _cooling:
-        _cooling_set = set(_cooling)
-        pool = [row for row in pool if row[2] not in _cooling_set]
-        log(d, "WORKSPACE_COOLDOWN_SKIPPED|%s|count=%d|window=%ds|ids=%s" % (
-            HOST, len(_cooling), _workspace_cooldown_seconds(),
-            ",".join(_cooling[:12])))
 # lane, then most-unblocking first, then priority, then stable id
 pool.sort(key=lambda x:(x[0],-x[5],x[1],x[2]))
 lc={0:0,1:0,2:0}
@@ -6995,6 +6983,24 @@ def owns(cid):
     # partition also apply would strand any card whose pin and hash slice disagree:
     # pinned to chiap08 but hashed into chiap02's slice means NO host takes it.
     return owner_host(cid) == HOST
+# Drop recently blocked workspaces LAST, immediately before `owned` is derived.
+# This must sit after the POOL_V2 authority rebuild at _pool_v2_authority_rows
+# and after _seraph_unique_source_heads, both of which REPLACE `pool` wholesale.
+# Filtering earlier is silently undone: measured 2026-09-21, the filter logged
+# WORKSPACE_COOLDOWN_SKIPPED for four cards and all four were still attempted in
+# the same cycle, because the legacy pool it had filtered was thrown away.
+_workspace_cooldown_table = _load_workspace_cooldown()
+if _workspace_cooldown_table:
+    _cooling = sorted(
+        row[2] for row in pool
+        if _workspace_cooldown_active(row[2], _workspace_cooldown_table)
+    )
+    if _cooling:
+        _cooling_set = set(_cooling)
+        pool = [row for row in pool if row[2] not in _cooling_set]
+        log(d, "WORKSPACE_COOLDOWN_SKIPPED|%s|count=%d|window=%ds|ids=%s" % (
+            HOST, len(_cooling), _workspace_cooldown_seconds(),
+            ",".join(_cooling[:12])))
 owned=[x for x in pool if owns(x[2])]
 
 # Source-only logical-route cards are offered to the Niobe builder path first,

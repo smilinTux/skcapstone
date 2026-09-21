@@ -133,11 +133,29 @@ def test_the_blocked_path_actually_records_the_cooldown():
     ), "WORKSPACE_BLOCKED must record a cooldown or the card keeps its slot"
 
 
-def test_the_pool_filter_runs_before_the_lane_truncation():
+def test_the_pool_filter_runs_after_every_rebuild_of_pool():
+    """The filter must sit after the POOL_V2 authority rebuild.
+
+    `pool` is REPLACED wholesale twice late in the cycle, by
+    _pool_v2_authority_rows and then _seraph_unique_source_heads. A filter
+    placed before either is silently undone. Measured 2026-09-21: the filter
+    logged WORKSPACE_COOLDOWN_SKIPPED for four cards and all four were still
+    attempted in the same cycle, because the legacy pool it had filtered was
+    thrown away and rebuilt from POOL_V2.
+    """
     source = ROTATE.read_text(encoding="utf-8")
-    pool_log = 'log(d,"POOL_IDS|%s|ids=%s"%(HOST,pool_ids))'
-    sort_line = "pool.sort(key=lambda x:"
-    assert pool_log in source and sort_line in source
-    between = source[source.index(pool_log) : source.index(sort_line)]
-    assert "_workspace_cooldown_active" in between
-    assert "WORKSPACE_COOLDOWN_SKIPPED" in between
+    authority = "_pool_v2_authority_rows("
+    unique_heads = "_seraph_unique_source_heads(pool)"
+    owned = "owned=[x for x in pool if owns(x[2])]"
+    skip = "WORKSPACE_COOLDOWN_SKIPPED"
+    for needle in (authority, unique_heads, owned, skip):
+        assert needle in source, needle
+    assert source.index(skip) > source.index(
+        authority
+    ), "cooldown filter must run AFTER the POOL_V2 authority rebuild"
+    assert source.index(skip) > source.index(
+        unique_heads
+    ), "cooldown filter must run AFTER _seraph_unique_source_heads"
+    assert source.index(skip) < source.index(
+        owned
+    ), "cooldown filter must run BEFORE owned is derived from pool"
