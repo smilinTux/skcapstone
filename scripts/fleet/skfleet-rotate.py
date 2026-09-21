@@ -3358,12 +3358,25 @@ def _report_worker_progress(session_names, units=(), now=None):
                      else classify_wedge(
                          observation, now=now_dt, claim_age_s=claim_age,
                          receipt_local=local))
+            # claim_age_s is REPORTED, never acted on. classify_wedge returns
+            # "wedge-progressing" for any progress-fresh worker no matter how
+            # long it has held its claim, and that exemption is deliberate:
+            # "Long is not the same as wedged. Elapsed time is never evidence."
+            # Arming a time deadline was measured to reap about half of all
+            # active work, so this line does not change that decision, it just
+            # stops the condition being invisible. Measured 2026-09-21: cards
+            # a81000a2 (chiap03) and cf460fde (chiap04) each held a codex slot
+            # for 9.5 HOURS reporting state=progress-fresh with
+            # progress_age_s=4 and 0, and nothing in any log said how long they
+            # had been running. Both had to be found and stopped by hand.
             log(d, "WORKER_PROGRESS|%s|%s|%s|owner=%s|claim_revision=%s|"
                    "state=%s|progress_age_s=%s|timeout_s=%d|"
-                   "source=%s|scanned=%d|truncated=%s|receipt=%s|"
+                   "claim_age_s=%s|source=%s|scanned=%d|truncated=%s|receipt=%s|"
                    "wedge=%s|wedge_timeout_s=%d|actuation=%s" %
                 (HOST, session, cid, owner, claim_revision, state, age,
-                 int(DEFAULT_PROGRESS_TIMEOUT_S), source, scanned,
+                 int(DEFAULT_PROGRESS_TIMEOUT_S),
+                 "none" if claim_age is None else str(int(max(0, claim_age))),
+                 source, scanned,
                  str(truncated).lower(), "local" if local else "absent",
                  wedge, int(DEFAULT_WEDGE_TIMEOUT_S), _wedge_mode() or "off"))
             records.append({
