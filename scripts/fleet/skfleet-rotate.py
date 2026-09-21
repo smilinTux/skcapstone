@@ -996,6 +996,29 @@ def _preclaim_source_ref(repository, base_ref, base_revision, runner=subprocess.
         raise ValueError("reconstructability_blocked: base_ref is missing or ambiguous")
 
 
+def _clone_branch_argument(base_ref):
+    """Return the name ``git clone --branch`` will actually accept.
+
+    ``--branch`` takes a BRANCH or TAG NAME, never a full ref path. A card whose
+    base_ref is ``refs/heads/<name>`` (which ``git fetch`` accepts happily, and
+    which the verify path below passes through unchanged) makes the clone fail
+    with:
+
+        warning: Could not find remote branch refs/heads/<name> to clone.
+        fatal: Remote branch refs/heads/<name> not found in upstream origin
+
+    Measured 2026-09-21 on chiap03 card d621aeec: the branch
+    ``fix/d621aeec-reproducible-role-spec`` existed on skgit and ls-remote found
+    it, while the clone reported it missing, so the card read as a dead binding
+    when the only fault was this argument.
+    """
+    ref = str(base_ref or "")
+    for prefix in ("refs/heads/", "refs/tags/"):
+        if ref.startswith(prefix):
+            return ref[len(prefix):]
+    return ref
+
+
 def _materialize_worker_workspace(default, core, labels, runner=subprocess.run):
     """Materialize one source checkout atomically before a worker is claimed."""
     configured = os.environ.get("SKFLEET_WORKSPACE")
@@ -1024,7 +1047,7 @@ def _materialize_worker_workspace(default, core, labels, runner=subprocess.run):
     try:
         clone_command = [
             "git", "clone", "--quiet", "--no-checkout", "--single-branch",
-            "--branch", base_ref,
+            "--branch", _clone_branch_argument(base_ref),
         ]
         clone_command.extend(["--", repository, str(temporary)])
         result = runner(
