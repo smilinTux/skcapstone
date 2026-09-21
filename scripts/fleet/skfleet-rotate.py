@@ -3256,7 +3256,7 @@ def _session_progress_at(workspace, root=_SESSION_ROOT):
 
 
 def _session_transcript_bytes(workspace, root=_SESSION_ROOT):
-    """Bytes in the agent's largest transcript for this worker, or None.
+    """Bytes in the agent's CURRENT transcript for this worker, or None.
 
     Size is the signal mtime cannot give. A worker stuck in an exploration
     loop keeps its transcript mtime perfectly fresh, so classify_progress
@@ -3271,21 +3271,28 @@ def _session_transcript_bytes(workspace, root=_SESSION_ROOT):
     That shape is not rare. Across chiap02/03/04, 33 of 1,253 worker sessions
     exceed 50MB and account for a large share of 5.4GB of transcript.
 
-    REPORTED ONLY. os.stat is already being called here for mtime, so this
-    costs nothing extra, and no kill decision reads it.
+    Takes the NEWEST transcript by mtime, which is this run, NOT the largest.
+    pi opens a new .jsonl per run in the same per-workspace directory, so the
+    directory accumulates every previous run. Measured 2026-09-21 on card
+    cf460fde: 2.4MB (current run), 35MB, 194MB and 329MB (2026-09-19) side by
+    side. Taking the largest made a card that ran away ONCE permanently over
+    the limit and killed on every relaunch, which is exactly what happened:
+    two kills in four minutes against a healthy 2.4MB run.
     """
     base = os.path.basename(str(workspace).rstrip("/"))
     if not base:
         return None
-    largest = None
+    newest_at = None
+    newest_size = None
     for path in glob.glob(os.path.join(root, "*" + base + "--", "*.jsonl")):
         try:
-            size = os.stat(path).st_size
+            stat = os.stat(path)
         except OSError:
             continue
-        if largest is None or size > largest:
-            largest = size
-    return largest
+        if newest_at is None or stat.st_mtime > newest_at:
+            newest_at = stat.st_mtime
+            newest_size = stat.st_size
+    return newest_size
 
 
 def _report_worker_progress(session_names, units=(), now=None):
