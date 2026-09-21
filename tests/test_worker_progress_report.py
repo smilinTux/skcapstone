@@ -462,3 +462,49 @@ def test_the_deadline_clears_the_worst_observed_healthy_silence():
 def test_the_deadline_stays_below_the_known_incident():
     """139ec63d sat silent 22,680s. The deadline must fire well before that."""
     assert DEFAULT_WEDGE_TIMEOUT_S < 22680.0
+
+
+# ── the transcript measured must be THIS run ─────────────────────────────────
+#
+# pi opens a new .jsonl per run in the same per-workspace directory, so the
+# directory accumulates every previous run. Measuring the largest made a card
+# that ran away ONCE permanently over the limit: cf460fde was killed on sight,
+# relaunched and killed again, two WEDGE_RELEASED_BY_WRAPPER in four minutes,
+# while its current run was a healthy 2.4MB against a 329MB file from two days
+# earlier.
+#
+# The replay fixture could not catch this: it holds no repeat-offender card.
+
+
+def _transcript(tmp_path, workspace, name, size, age_s):
+    slug = tmp_path / ".pi" / "agent" / "sessions" / f"--slugged-{workspace.name}--"
+    slug.mkdir(parents=True, exist_ok=True)
+    path = slug / name
+    path.write_bytes(b"x" * size)
+    stamp = time.time() - age_s
+    os.utime(path, (stamp, stamp))
+    return path
+
+
+def test_transcript_size_is_the_current_run_not_the_largest(tmp_path):
+    """The cf460fde shape: a huge old run beside a small healthy current one."""
+    lines = []
+    namespace, workspace = _reporter_namespace(tmp_path, lines)
+    _transcript(tmp_path, workspace, "2026-09-19T00-00-00-000Z_old.jsonl", 900, age_s=48 * 3600)
+    _transcript(tmp_path, workspace, "2026-09-21T00-00-00-000Z_now.jsonl", 10, age_s=5)
+    measured = namespace["_session_transcript_bytes"](workspace)
+    assert measured == 10, "must report the newest run (10B), not the historical maximum (900B)"
+
+
+def test_a_single_transcript_is_reported_as_itself(tmp_path):
+    lines = []
+    namespace, workspace = _reporter_namespace(tmp_path, lines)
+    _transcript(tmp_path, workspace, "2026-09-21T00-00-00-000Z_only.jsonl", 4096, age_s=5)
+    assert namespace["_session_transcript_bytes"](workspace) == 4096
+
+
+def test_no_transcript_reports_none_and_never_zero(tmp_path):
+    """None is not zero: an unmeasured transcript must never actuate."""
+    lines = []
+    namespace, workspace = _reporter_namespace(tmp_path, lines)
+    assert namespace["_session_transcript_bytes"](workspace) is None
