@@ -8,7 +8,10 @@ dynamic = ["version"]
 description = "Sovereign Agent Framework — conscious AI through identity, trust, memory, and security"
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}
-requires-python = ">=3.10"
+# 3.11 is the real floor: the `all` extra depends on skwhisper, which
+# declares Requires-Python >=3.11, so a 3.10 install of skcapstone[all]
+# cannot resolve at all (verified in CI 2026-09-21).
+requires-python = ">=3.11"
 authors = [
     {name = "smilinTux", email = "admin@smilintux.org"},
 ]
@@ -22,11 +25,8 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3.14",
     "Topic :: Security :: Cryptography",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries",

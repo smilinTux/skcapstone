@@ -90,7 +90,14 @@ class TestPublishGating:
             step for step in workflow["jobs"]["classify"]["steps"] if step.get("id") == "matrix"
         )
         assert '["3.11","3.12"]' in matrix_step["run"]
-        assert '["3.10","3.11","3.12","3.13","3.14"]' in matrix_step["run"]
+        # The push matrix was deliberately narrowed to match the PR matrix on
+        # 2026-09-21. 3.10 cannot install at all (the `all` extra needs
+        # skwhisper, which floors at 3.11) and 3.13/3.14 die on pgpy's import
+        # of imghdr, removed from the stdlib in 3.13. Re-adding any of them
+        # here without first fixing that dependency floor makes main
+        # permanently unpublishable, which is exactly what happened: every
+        # publish run failed while each PR stayed green.
+        assert '["3.10","3.11","3.12","3.13","3.14"]' not in matrix_step["run"]
 
     def test_npm_publish_job_is_retired(self, publish):
         """The npm publish job was dropped; skcapstone is Python-first.

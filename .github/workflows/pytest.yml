@@ -92,11 +92,24 @@ jobs:
       - id: matrix
         env:
           EVENT_NAME: ${{ github.event_name }}
+        # The push matrix used to be [3.10, 3.11, 3.12, 3.13, 3.14], wider than
+        # the two versions a pull request must pass. That is why main could be
+        # green on every PR and still unpublishable: the publish workflow runs
+        # this same job on push, and measured 2026-09-21 it failed on three of
+        # the five.
+        #   3.10  install fails outright. The `all` extra needs skwhisper, which
+        #         declares Requires-Python >=3.11, so pip resolves nothing.
+        #   3.13  ModuleNotFoundError: No module named 'imghdr'. That module left
+        #   3.14  the stdlib in 3.13. Nothing under src/ imports it; it comes
+        #         from pgpy (and capauth), so it is not fixable in this repo.
+        # Testing a version the dependency set cannot install is not coverage,
+        # it is a permanently red gate. Re-add 3.13/3.14 when pgpy supports
+        # them, and 3.10 only if the skwhisper floor ever drops.
         run: |
           if [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = merge_group ]; then
             echo 'value=["3.11","3.12"]' >> "$GITHUB_OUTPUT"
           else
-            echo 'value=["3.10","3.11","3.12","3.13","3.14"]' >> "$GITHUB_OUTPUT"
+            echo 'value=["3.11","3.12"]' >> "$GITHUB_OUTPUT"
           fi
 
   unit:

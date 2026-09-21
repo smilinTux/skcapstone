@@ -66,7 +66,14 @@ def test_workflow_preserves_required_checks_and_coverage() -> None:
 
     assert unit["name"] == "unit tests (py${{ matrix.python-version }})"
     assert '["3.11","3.12"]' in workflow
-    assert '["3.10","3.11","3.12","3.13","3.14"]' in workflow
+    # The push matrix was deliberately narrowed to match the PR matrix on
+    # 2026-09-21. 3.10 cannot install at all (the `all` extra needs
+    # skwhisper, which floors at 3.11) and 3.13/3.14 die on pgpy's import
+    # of imghdr, removed from the stdlib in 3.13. Re-adding any of them
+    # here without first fixing that dependency floor makes main
+    # permanently unpublishable, which is exactly what happened: every
+    # publish run failed while each PR stayed green.
+    assert '["3.10","3.11","3.12","3.13","3.14"]' not in workflow
     assert "github.event_name != 'pull_request'" in workflow
     assert "matrix.python-version == '3.12'" in workflow
     assert "run-python311-compat.sh" in workflow
