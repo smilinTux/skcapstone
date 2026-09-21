@@ -1019,6 +1019,45 @@ def _clone_branch_argument(base_ref):
     return ref
 
 
+def _failed_materialization(path, runner=subprocess.run):
+    """True only when this directory is a FAILED clone with nothing to lose.
+
+    All three must hold, and every one of them is checked, because deleting a
+    workspace that held real work is unrecoverable:
+
+      * no remote is configured, so it cannot be the checkout a card is bound to
+      * no HEAD, so it carries no commit
+      * a clean tree, so it carries no uncommitted custody state
+
+    A directory that is not a git repository at all also qualifies, since it can
+    hold no commits and no git-tracked work.
+
+    Measured 2026-09-21 on chiap03: 634 of 714 workspaces were unusable (465
+    empty, 169 non-git). Card d621aeec was bound to one whose only content was
+    an empty nested clone: no remotes, no HEAD, clean. Materialization reuses an
+    existing directory rather than cloning, so such a card was blocked forever
+    with "workspace repository does not match card binding", which reads like a
+    binding defect and is really a dead directory.
+    """
+    def _git(*args):
+        try:
+            done = runner(
+                ["git", "-C", str(path), *args],
+                capture_output=True, text=True, timeout=15,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return done.stdout.strip() if done.returncode == 0 else None
+
+    if _git("rev-parse", "--git-dir") is None:
+        return True
+    if _git("config", "--get-regexp", r"^remote\..*\.url$"):
+        return False
+    if _git("rev-parse", "--verify", "HEAD") is not None:
+        return False
+    return not _git("status", "--porcelain=v1")
+
+
 def _materialize_worker_workspace(default, core, labels, runner=subprocess.run):
     """Materialize one source checkout atomically before a worker is claimed."""
     configured = os.environ.get("SKFLEET_WORKSPACE")
@@ -1034,12 +1073,25 @@ def _materialize_worker_workspace(default, core, labels, runner=subprocess.run):
     repository, base_ref, base_revision = spec
     target = Path(default)
     if target.exists() and any(target.iterdir()):
-        checkout = _resolve_workspace_root(target)
-        _verify_source_workspace(
-            checkout, repository, base_ref, base_revision, reset=True,
-            runner=runner
-        )
-        return checkout
+        try:
+            checkout = _resolve_workspace_root(target)
+        except ValueError:
+            checkout = None
+        # A failed clone left behind blocks its card forever, because this path
+        # REUSES an existing directory instead of cloning. Clearing one that
+        # provably holds nothing is the difference between a card that retries
+        # and a card that is dead. Anything with a remote, a commit or an
+        # uncommitted change is left strictly alone.
+        if checkout is None or _failed_materialization(checkout, runner=runner):
+            log(d, "WORKSPACE_REMATERIALIZE|%s|%s|discarding a failed clone with "
+                   "no remote, no HEAD and a clean tree" % (HOST, target.name))
+            shutil.rmtree(target, ignore_errors=True)
+        else:
+            _verify_source_workspace(
+                checkout, repository, base_ref, base_revision, reset=True,
+                runner=runner
+            )
+            return checkout
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f".{target.name}.materializing-{os.getpid()}")
     if temporary.exists():
