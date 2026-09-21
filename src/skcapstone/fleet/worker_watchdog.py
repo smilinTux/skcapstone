@@ -322,14 +322,19 @@ def classify_wedge(
       never read as a kill signal.
     """
     state = classify_progress(observation, now=now, progress_timeout_s=progress_timeout_s)
-    # Checked BEFORE the progress-fresh exemption, because a runaway is fresh by
-    # definition: it never stops writing. Size, not elapsed time, is the
-    # evidence here, which is why this does not contradict the rule below.
-    limit = transcript_limit_bytes()
-    measured = observation.transcript_bytes
-    if isinstance(measured, int) and measured > limit:
-        return "wedge-transcript-runaway"
     if state == "progress-fresh":
+        # A runaway is fresh BY DEFINITION: it never stops writing, so every
+        # deadline in this module exempts it. Size is the evidence elapsed time
+        # cannot be, which is why this sits inside the exemption rather than
+        # contradicting the rule below.
+        #
+        # It must stay INSIDE this branch. Checked earlier it would fire on a
+        # claim-mismatched or exited observation, actuating against a
+        # superseded generation, which is the one thing this module exists to
+        # prevent. classify_progress has already cleared identity by here.
+        measured = observation.transcript_bytes
+        if isinstance(measured, int) and measured > transcript_limit_bytes():
+            return "wedge-transcript-runaway"
         # Long is not the same as wedged.  Elapsed time is never evidence.
         return "wedge-progressing"
     if state not in {"progress-stale", "progress-missing"}:

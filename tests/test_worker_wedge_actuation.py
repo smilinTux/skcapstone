@@ -32,6 +32,7 @@ from skcapstone.fleet.worker_watchdog import (
     WEDGE_ACTUATING_STATES,
     ProgressObservation,
     classify_wedge,
+    transcript_limit_bytes,
     wedge_actuation_fenced,
 )
 
@@ -368,3 +369,86 @@ def test_the_slow_starting_worker_is_never_touched():
     assert counts["wedge-within-margin"] == 3
     assert counts["wedge-progressing"] == 9
     assert not set(counts) & WEDGE_ACTUATING_STATES
+
+
+# ── runaway transcript, armed 2026-09-21 ─────────────────────────────────────
+#
+# Two workers held a codex slot for 9.5 hours while every signal said healthy:
+# fresh heartbeat, fresh transcript mtime, state=progress-fresh. A runaway is
+# fresh BY DEFINITION because it never stops writing, so size is the evidence
+# elapsed time cannot be.
+
+
+def _runaway_observation(**overrides):
+    base = dict(
+        owner="pi-codex-testhost-cafe0001",
+        card_id="cafe0001",
+        session_id="codex-auto-cafe0001",
+        claim_revision="rev-1",
+        expected_claim_revision="rev-1",
+        progress_at=datetime.now(timezone.utc).isoformat(),
+        session_alive=True,
+    )
+    base.update(overrides)
+    return ProgressObservation(**base)
+
+
+def _runaway_wedge(observation, claim_age_s=60.0):
+    return classify_wedge(
+        observation,
+        now=datetime.now(timezone.utc),
+        claim_age_s=claim_age_s,
+        receipt_local=True,
+    )
+
+
+def test_a_transcript_over_the_limit_is_a_runaway_even_when_fresh():
+    """The a81000a2 shape: writing constantly, producing nothing."""
+    observation = _runaway_observation(transcript_bytes=165 * 1024 * 1024)
+    assert _runaway_wedge(observation) == "wedge-transcript-runaway"
+
+
+def test_a_runaway_actuates():
+    assert "wedge-transcript-runaway" in WEDGE_ACTUATING_STATES
+
+
+def test_a_transcript_under_the_limit_keeps_the_progress_exemption():
+    """A healthy worker measured 2.5MB at 29 minutes; it must not be touched."""
+    observation = _runaway_observation(transcript_bytes=2_569_472)
+    assert _runaway_wedge(observation) == "wedge-progressing"
+
+
+def test_exactly_at_the_limit_is_not_a_runaway():
+    """Strictly greater-than, so the boundary itself survives."""
+    observation = _runaway_observation(transcript_bytes=100 * 1024 * 1024)
+    assert _runaway_wedge(observation) == "wedge-progressing"
+
+
+def test_an_unmeasured_transcript_never_actuates():
+    """None is not zero and is not 'huge'. A measurement failure must never
+    read as a kill signal, which is the rule the whole module is built on."""
+    observation = _runaway_observation(transcript_bytes=None)
+    assert _runaway_wedge(observation) == "wedge-progressing"
+
+
+def test_the_limit_is_overridable_and_a_bad_override_falls_back(monkeypatch):
+    monkeypatch.setenv("SKFLEET_TRANSCRIPT_LIMIT_BYTES", "1024")
+    assert transcript_limit_bytes() == 1024
+    for bad in ("", "   ", "abc", "0", "-5"):
+        monkeypatch.setenv("SKFLEET_TRANSCRIPT_LIMIT_BYTES", bad)
+        assert transcript_limit_bytes() == 100 * 1024 * 1024
+
+
+def test_a_lowered_limit_makes_a_small_transcript_a_runaway(monkeypatch):
+    """Proves the limit is actually consulted, not a constant folded in."""
+    monkeypatch.setenv("SKFLEET_TRANSCRIPT_LIMIT_BYTES", "1000")
+    observation = _runaway_observation(transcript_bytes=2000)
+    assert _runaway_wedge(observation) == "wedge-transcript-runaway"
+
+
+def test_a_claim_mismatch_still_beats_the_runaway_check():
+    """Identity fences come first: never act on a superseded generation."""
+    observation = _runaway_observation(
+        transcript_bytes=300 * 1024 * 1024, expected_claim_revision="rev-2"
+    )
+    assert _runaway_wedge(observation) == "wedge-refused-progress-claim-mismatch"
