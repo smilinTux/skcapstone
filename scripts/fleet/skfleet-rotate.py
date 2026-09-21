@@ -1307,6 +1307,45 @@ def _coord_task_claimable(core):
     """Return whether the task-only coord claim command accepts this card kind."""
     return core.get("kind") == "task"
 
+#: Lines the CardStore fold emits on stderr for a malformed historical event.
+#: They are benign (the line is already dropped from the fold and changes no
+#: state) but they are NOT empty, and `stderr or stdout` therefore returned the
+#: warning and hid the real error, which the claim CLI writes to STDOUT.
+#:
+#: Measured 2026-09-21 on chiap04 card bde8bd35: every CLAIM_REFUSED receipt
+#: read "card_events chiap08.jsonl line 19797 is not a card event" while the
+#: actual reason, on stdout, was
+#: "human claim denied: blocked_on_human=approval:exact-repository-head".
+#: The host looked broken for hours when it was correctly waiting on approval.
+_BENIGN_FOLD_NOISE = (
+    "is not a card event, dropping it from the fold",
+    "unreadable lines total",
+)
+
+
+def _claim_failure_detail(stdout, stderr):
+    """Build a claim-refusal detail that shows the REASON, not the noise.
+
+    Keeps both streams, drops only the known-benign fold warnings, and prefers
+    whatever actually explains the refusal. Falls back to the raw text rather
+    than to nothing, because an unexplained refusal is worse than a noisy one.
+    """
+    def _useful(text):
+        lines = [
+            line for line in (text or "").splitlines()
+            if line.strip() and not any(noise in line for noise in _BENIGN_FOLD_NOISE)
+        ]
+        return " ".join(lines).strip()
+
+    return (
+        _useful(stderr)
+        or _useful(stdout)
+        or (stderr or "").strip()
+        or (stdout or "").strip()
+        or "claim not visible with an explicit revision in CardStore fold"
+    )
+
+
 def _classify_claim_outcome(still_assignable, returncode=None,
                             claimed_owner=None, expected_owner=None):
     """Classify a final assignability check and the following claim result."""
@@ -8169,8 +8208,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         name)
     if claim_outcome == "claim_refused":
         claim_refused += 1
-        detail=(claim.stderr or claim.stdout or
-                "claim not visible with an explicit revision in CardStore fold").strip()[:140]
+        detail=_claim_failure_detail(claim.stdout, claim.stderr)[:140]
         log(d,"CLAIM_REFUSED|%s|%s|%s|owner=%s|%s"%(HOST,sess,cid,claimed_owner,detail))
         continue
     # Atomic exact-card admission: a live holder for this card (another
