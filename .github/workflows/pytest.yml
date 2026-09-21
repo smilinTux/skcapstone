@@ -1,8 +1,10 @@
 name: pytest
 
 # Pull requests run the complete deterministic suite once on Python 3.12 and
-# a focused compatibility lane on Python 3.11. Main, schedule, and reusable
-# release calls run the complete advertised Python 3.10 through 3.14 matrix.
+# a focused compatibility lane on Python 3.11. Main, schedule and reusable
+# release calls run the SAME 3.11/3.12 matrix: 3.10 cannot install the `all`
+# extra (skwhisper floors at 3.11) and 3.13/3.14 fail on pgpy's imghdr
+# import, so a wider matrix here was a permanently red publish gate.
 # Required check names remain "unit tests (py3.11)" and "unit tests (py3.12)".
 #
 # merge_group (prerequisite for a GitHub merge queue, not yet enabled) is
@@ -39,12 +41,21 @@ concurrency:
   # github.event.pull_request.number is empty for merge_group, so this falls
   # back to github.ref - GitHub gives every merge-queue entry its own
   # temporary ref (refs/heads/gh-readonly-queue/...), so different entries
-  # never collide in this group. cancel-in-progress deliberately stays
-  # pull_request-only: a merge-queue entry that gets cancelled mid-run when a
-  # newer entry supersedes it needs GitHub's own queue handling, not a blind
-  # cancel here.
+  # never collide in this group. cancel-in-progress excludes merge_group on
+  # purpose: a merge-queue entry that gets cancelled mid-run when a newer entry
+  # supersedes it needs GitHub's own queue handling, not a blind cancel here.
+  #
+  # push is included (added 2026-09-21). It was previously excluded along with
+  # merge_group, but the merge-queue reasoning never applied to it, and the
+  # omission cost real releases: with cancel-in-progress false, GitHub holds at
+  # most ONE pending run per group and evicts it when the next arrives, so on a
+  # busy main every push run was cancelled at `classify test impact` before it
+  # could test anything. Cancelling a superseded push run is correct here, and
+  # it cannot interrupt a publish: this group covers only the reusable tests
+  # job, which has already released it by the time `tag`, `build` and
+  # `pypi-publish` run, and those serialize on their own `publish-tag-` group.
   group: pytest-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 jobs:
   classify:

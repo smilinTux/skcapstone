@@ -82,6 +82,14 @@ def test_workflow_preserves_required_checks_and_coverage() -> None:
         ROOT / ".github" / "workflows" / "publish.yml"
     ).read_text(encoding="utf-8")
     assert "cache-dependency-path: pyproject.toml" in workflow
-    assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in workflow
+    # push joined pull_request on 2026-09-21. merge_group stays excluded:
+    # a merge-queue entry cancelled mid-run needs GitHub's own queue
+    # handling. With push excluded, GitHub held one pending run per group
+    # and evicted it on the next push, so every publish run died at
+    # `classify test impact` before testing anything.
+    assert (
+        "cancel-in-progress: ${{ github.event_name == 'pull_request'"
+        " || github.event_name == 'push' }}" in workflow
+    )
     assert "continue-on-error" not in workflow
     assert "|| true" not in workflow
