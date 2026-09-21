@@ -3254,6 +3254,39 @@ def _session_progress_at(workspace, root=_SESSION_ROOT):
     return newest, seen
 
 
+def _session_transcript_bytes(workspace, root=_SESSION_ROOT):
+    """Bytes in the agent's largest transcript for this worker, or None.
+
+    Size is the signal mtime cannot give. A worker stuck in an exploration
+    loop keeps its transcript mtime perfectly fresh, so classify_progress
+    reports progress-fresh and classify_wedge exempts it indefinitely.
+
+    Measured 2026-09-21 on card a81000a2, which held a codex slot for 9.5
+    hours at state=progress-fresh: a 165MB transcript containing 4,459 `read`,
+    3,609 `bash` and 2,555 `grep` calls against FOUR `edit` calls totalling 520
+    bytes. It was not wedged and it was not idle; it was looping on
+    exploration and producing nothing.
+
+    That shape is not rare. Across chiap02/03/04, 33 of 1,253 worker sessions
+    exceed 50MB and account for a large share of 5.4GB of transcript.
+
+    REPORTED ONLY. os.stat is already being called here for mtime, so this
+    costs nothing extra, and no kill decision reads it.
+    """
+    base = os.path.basename(str(workspace).rstrip("/"))
+    if not base:
+        return None
+    largest = None
+    for path in glob.glob(os.path.join(root, "*" + base + "--", "*.jsonl")):
+        try:
+            size = os.stat(path).st_size
+        except OSError:
+            continue
+        if largest is None or size > largest:
+            largest = size
+    return largest
+
+
 def _report_worker_progress(session_names, units=(), now=None):
     """Log one WORKER_PROGRESS classification per live local worker.
 
@@ -3334,6 +3367,7 @@ def _report_worker_progress(session_names, units=(), now=None):
                 expected_claim_revision=fresh_revision or "",
                 progress_at=progress_at, session_alive=True)
             state = classify_progress(observation, now=now_dt)
+            transcript_bytes = _session_transcript_bytes(workspace)
             age = ("none" if progress_ts is None
                    else str(int(max(0, now - progress_ts))))
             claim_age = (now - fresh_ts) if fresh_ts else None
@@ -3371,11 +3405,13 @@ def _report_worker_progress(session_names, units=(), now=None):
             # had been running. Both had to be found and stopped by hand.
             log(d, "WORKER_PROGRESS|%s|%s|%s|owner=%s|claim_revision=%s|"
                    "state=%s|progress_age_s=%s|timeout_s=%d|"
-                   "claim_age_s=%s|source=%s|scanned=%d|truncated=%s|receipt=%s|"
+                   "claim_age_s=%s|transcript_bytes=%s|"
+                   "source=%s|scanned=%d|truncated=%s|receipt=%s|"
                    "wedge=%s|wedge_timeout_s=%d|actuation=%s" %
                 (HOST, session, cid, owner, claim_revision, state, age,
                  int(DEFAULT_PROGRESS_TIMEOUT_S),
                  "none" if claim_age is None else str(int(max(0, claim_age))),
+                 "none" if transcript_bytes is None else str(transcript_bytes),
                  source, scanned,
                  str(truncated).lower(), "local" if local else "absent",
                  wedge, int(DEFAULT_WEDGE_TIMEOUT_S), _wedge_mode() or "off"))
