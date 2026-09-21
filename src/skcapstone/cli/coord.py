@@ -1583,6 +1583,17 @@ def register_coord_commands(main: click.Group) -> None:
         read command is ``coord show``. Kept as an alias so existing scripts and
         agent instructions keep working, but it warns.
         """
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        # This alias is itself a mutation entrypoint, so it consults the gate
+        # here rather than relying on the one inside coord_edit. The check is a
+        # pure policy call that raises on refusal, so the inner call repeating
+        # it is harmless, and an entrypoint that reached the gate only by
+        # delegation would be invisible to
+        # test_every_mutating_cli_verb_consults_the_gate.
+        authorize_coord_mutation(agent or "", Action.DESCRIBE_CARD, task_id, None, None)
+
         click.echo(
             "warning: 'coord describe' is deprecated and will be removed; "
             "use 'coord edit' to change a card, or 'coord show' to read one.",

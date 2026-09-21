@@ -329,6 +329,10 @@ READ_ONLY_CLI = {
     "waiting-on-human",
     "board",
     "kanban",
+    # Deliberately classified read-only 2026-09-20: show folds ONE card and
+    # prints it. It is the single-card counterpart to kanban, which is already
+    # classified here for the same reason, and it appends no event.
+    "show",
     "parity",
     "changelog",
     "briefing",
