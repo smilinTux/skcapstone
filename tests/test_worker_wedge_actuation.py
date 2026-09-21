@@ -227,9 +227,22 @@ def test_fence_requires_the_exact_owner_and_revision():
         ), wrong
 
 
-def test_actuating_states_are_exactly_two():
-    """Widening this set is a deliberate act, not an accident."""
-    assert WEDGE_ACTUATING_STATES == frozenset({"wedge-stale-confirmed", "wedge-absent-confirmed"})
+def test_actuating_states_are_exactly_the_three_that_were_authorised():
+    """Widening this set is a deliberate act, not an accident.
+
+    "wedge-transcript-runaway" was added 2026-09-21 by operator decision, after
+    two workers (a81000a2 on chiap03, cf460fde on chiap04) each held a codex
+    slot for 9.5 hours while every existing signal reported them healthy: fresh
+    heartbeat, fresh transcript mtime, state=progress-fresh. The first had a
+    165MB transcript holding 11,423 exploration calls against 4 edits.
+    """
+    assert WEDGE_ACTUATING_STATES == frozenset(
+        {
+            "wedge-stale-confirmed",
+            "wedge-absent-confirmed",
+            "wedge-transcript-runaway",
+        }
+    )
 
 
 # --- replay of the real measurement window -----------------------------------

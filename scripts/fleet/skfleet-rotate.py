@@ -26,6 +26,7 @@ from skcapstone.fleet.gateway_failure import (
 from skcapstone.fleet.worker_watchdog import (
     DEFAULT_PROGRESS_TIMEOUT_S,
     DEFAULT_WEDGE_TIMEOUT_S,
+    transcript_limit_bytes,
     WEDGE_ACTUATING_STATES,
     ProgressObservation,
     StartupObservation,
@@ -3361,13 +3362,14 @@ def _report_worker_progress(session_names, units=(), now=None):
                 datetime.datetime.fromtimestamp(
                     progress_ts, datetime.timezone.utc).isoformat()
                 if progress_ts is not None else None)
+            transcript_bytes = _session_transcript_bytes(workspace)
             observation = ProgressObservation(
                 owner=owner, card_id=cid, session_id=session,
                 claim_revision=claim_revision,
                 expected_claim_revision=fresh_revision or "",
-                progress_at=progress_at, session_alive=True)
+                progress_at=progress_at, session_alive=True,
+                transcript_bytes=transcript_bytes)
             state = classify_progress(observation, now=now_dt)
-            transcript_bytes = _session_transcript_bytes(workspace)
             age = ("none" if progress_ts is None
                    else str(int(max(0, now - progress_ts))))
             claim_age = (now - fresh_ts) if fresh_ts else None
@@ -3387,7 +3389,13 @@ def _report_worker_progress(session_names, units=(), now=None):
             # built for, and a slow-starting worker is now covered twice over,
             # because pi writes its transcript from the first turn.
             measurable = progress_ts is None or source == "session-mtime"
-            wedge = ("wedge-unmeasured"
+            runaway = (
+                isinstance(transcript_bytes, int)
+                and transcript_bytes > transcript_limit_bytes()
+            )
+            wedge = ("wedge-transcript-runaway"
+                     if runaway
+                     else "wedge-unmeasured"
                      if truncated or not measurable
                      else classify_wedge(
                          observation, now=now_dt, claim_age_s=claim_age,

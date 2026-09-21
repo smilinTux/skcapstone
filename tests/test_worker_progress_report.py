@@ -30,6 +30,7 @@ from pathlib import Path
 from skcapstone.fleet.worker_watchdog import (
     DEFAULT_PROGRESS_TIMEOUT_S,
     DEFAULT_WEDGE_TIMEOUT_S,
+    transcript_limit_bytes,
     ProgressObservation,
     classify_progress,
     classify_wedge,
@@ -142,6 +143,7 @@ def _reporter_namespace(tmp_path, lines):
         [
             "_workspace_progress_at",
             "_session_progress_at",
+            "_session_transcript_bytes",
             "_report_worker_progress",
             "_admission_lock_path",
             "_read_admission_receipt",
@@ -170,6 +172,7 @@ def _reporter_namespace(tmp_path, lines):
             "ProgressObservation": ProgressObservation,
             "DEFAULT_PROGRESS_TIMEOUT_S": DEFAULT_PROGRESS_TIMEOUT_S,
             "DEFAULT_WEDGE_TIMEOUT_S": DEFAULT_WEDGE_TIMEOUT_S,
+            "transcript_limit_bytes": transcript_limit_bytes,
             "_wedge_mode": lambda *_a, **_k: "",
         },
     )

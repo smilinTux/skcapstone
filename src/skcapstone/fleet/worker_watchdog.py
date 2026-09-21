@@ -123,6 +123,9 @@ class ProgressObservation:
     terminal_evidence_seen: bool = False
     process_alive: bool | None = None
     session_alive: bool | None = None
+    #: Bytes in this worker's largest agent transcript, or None when unknown.
+    #: None is NOT zero: an unmeasured transcript must never actuate.
+    transcript_bytes: int | None = None
 
 
 def classify_progress(
@@ -250,9 +253,46 @@ def classify_progress(
 # tree writes a record per turn like any other worker.
 DEFAULT_WEDGE_TIMEOUT_S = 7200.0
 
+# A runaway transcript is the one progress signal that separates working from
+# looping, because a looping worker keeps its mtime perfectly fresh.
+#
+# Measured 2026-09-21, card a81000a2: 9.5 hours holding a codex slot at
+# state=progress-fresh with a 165MB transcript containing 4,459 `read`, 3,609
+# `bash` and 2,555 `grep` calls against FOUR `edit` calls totalling 520 bytes.
+# Not wedged and not idle: looping on exploration, producing nothing, and
+# exempt from every existing deadline because it never stopped writing.
+#
+# 100MB is chosen against the measured distribution, not picked round: across
+# chiap02/03/04, 33 of 1,253 worker sessions exceeded 50MB. A healthy worker
+# measured 2.5MB at 29 minutes. 100MB sits far above normal work and far below
+# the 165MB/282MB/338MB runaways, so it separates them without clipping the
+# long tail of legitimately large jobs.
+DEFAULT_TRANSCRIPT_LIMIT_BYTES = 100 * 1024 * 1024
+TRANSCRIPT_LIMIT_ENV = "SKFLEET_TRANSCRIPT_LIMIT_BYTES"
 
-# Exactly two states actuate.  Widening this set is a deliberate act.
-WEDGE_ACTUATING_STATES = frozenset({"wedge-stale-confirmed", "wedge-absent-confirmed"})
+
+def transcript_limit_bytes(env=None) -> int:
+    """Resolve the runaway-transcript ceiling. A bad override falls back."""
+    import os as _os
+
+    source = _os.environ if env is None else env
+    raw = str(source.get(TRANSCRIPT_LIMIT_ENV, "")).strip()
+    if raw:
+        try:
+            parsed = int(raw)
+        except ValueError:
+            return DEFAULT_TRANSCRIPT_LIMIT_BYTES
+        if parsed > 0:
+            return parsed
+    return DEFAULT_TRANSCRIPT_LIMIT_BYTES
+
+
+# Widening this set is a deliberate act. "wedge-transcript-runaway" was added
+# 2026-09-21 by operator decision after two workers held slots for 9.5 hours
+# each while every existing signal reported them healthy.
+WEDGE_ACTUATING_STATES = frozenset(
+    {"wedge-stale-confirmed", "wedge-absent-confirmed", "wedge-transcript-runaway"}
+)
 
 
 def classify_wedge(
@@ -282,6 +322,13 @@ def classify_wedge(
       never read as a kill signal.
     """
     state = classify_progress(observation, now=now, progress_timeout_s=progress_timeout_s)
+    # Checked BEFORE the progress-fresh exemption, because a runaway is fresh by
+    # definition: it never stops writing. Size, not elapsed time, is the
+    # evidence here, which is why this does not contradict the rule below.
+    limit = transcript_limit_bytes()
+    measured = observation.transcript_bytes
+    if isinstance(measured, int) and measured > limit:
+        return "wedge-transcript-runaway"
     if state == "progress-fresh":
         # Long is not the same as wedged.  Elapsed time is never evidence.
         return "wedge-progressing"
