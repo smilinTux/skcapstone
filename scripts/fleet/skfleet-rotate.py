@@ -7683,6 +7683,22 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
       "  supersedes it and the review never opens.\n"
       "- A terminal outcome, plain PASS or BLOCKED, has no candidate to bind and still\n"
       "  uses skcapstone coord link <card> verdict <outcome> --agent \"$SKAGENT\".\n\n"
+      "- A terminal PASS is NOT finished until its CI evidence is linked.\n"
+      "  skcapstone coord complete REFUSES a PASS review card without it. Sixty such\n"
+      "  cards sat reviewed-but-open because this requirement lived only in AGENTS.md\n"
+      "  and never in this brief, so the reviewer had no way to know it applied.\n"
+      "  If the card meta.repository is the skcapstone repo, or it has none, link all\n"
+      "  six, each value byte-exact SUCCESS:\n"
+      "    skcapstone coord link <card> ci_check_docs SUCCESS --agent \"$SKAGENT\"\n"
+      "    then ci_check_gitleaks, ci_check_lint, ci_check_shim_imports,\n"
+      "    ci_check_python311, ci_check_python312, the same way.\n"
+      "  For any OTHER repository (skcoord, sklegal, skgateway, skdashboard and so\n"
+      "  on), skip those six and link one hosted_checks instead, pinned to the exact\n"
+      "  head your meta.link_head_revision names:\n"
+      "    skcapstone coord link <card> hosted_checks \\\n"
+      "      \"<passed>/<total> SUCCESS at exact head <40-hex head>\" --agent \"$SKAGENT\"\n"
+      "  Record only what the checks actually report. A SUCCESS link for a check that\n"
+      "  did not pass is a false evidence record, and that is worse than an open card.\n\n"
       "CARD %s (%s)\nTITLE: %s\nDESCRIPTION: %s\n\nACCEPTANCE CRITERIA:\n%s\n\n" % (cid,cid,core.get("kind"),core.get("title"),core.get("description"),ac))
     _seat = None if _elastic_review else seat_for(cid, core)
     # A seat-owned card runs under the seat's identity, not the lane's. The
