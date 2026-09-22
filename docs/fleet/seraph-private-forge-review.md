@@ -21,7 +21,8 @@ The existing `publish_seraph_pass` function requires these trusted ports:
    the exact `forge-review:publish` capability, and binds it to the publisher's
    request digest. A caller-supplied identity or boolean is insufficient.
 2. A `ForgejoReviewConnector` with a credential attestor that verifies the live
-   service identity, exact repository scope, and the three required scopes.
+   service identity, exact repository scope, and separate read-only identity
+   and repository-scoped write credentials.
    A successful read or environment variable does not prove credential scope.
 3. `LiveCardStoreGateway`, an approved evidence root, and a durable receipt
    directory owned by the publication service.
@@ -29,18 +30,36 @@ The existing `publish_seraph_pass` function requires these trusted ports:
 `SeraphCapAuthVerifier` binds the approved Seraph fingerprint to the fixed
 principal, rejects unsigned-grace operation, requires a signed VERIFIED grant,
 uses a restart-durable nonce store, and fsyncs a sanitized authorization audit
-before returning an allow. `attest_private_credential` reads the live Forgejo
-identity, private repository access, and team unit permissions. It also checks
-the PAT against owner-only provisioning metadata captured from the one-time
-administrator response. Forgejo PATs cannot read token-management endpoints.
+before returning an allow. `attest_credentials` reads the live Forgejo identity
+and team permissions with an identity-only client, then checks private
+repository access with the separate writer. Both tokens are checked against
+owner-only provisioning metadata captured during administrator setup, including
+the same numeric account ID and login. Neither administrator nor account-login
+credentials are passed to the publisher.
 
 The dedicated forge identity is `seraph-review-bot`. It belongs only to team
 `sklegal-seraph-reviewers`, which has code read and pull-request write on only
-`smilinTux/sklegal`. The token name is `sklegal-seraph-review-publisher`, with
-scopes `read:user`, `read:organization`, and `write:repository`, with repository
-access restricted to SKLegal. The two read scopes permit live identity and team
-attestation. Forgejo has no narrower approval-only write scope, so the transport
-endpoint allowlist and exact payload remain required.
+`smilinTux/sklegal`. Forgejo 15 forbids user and organization scopes on
+repository-specific tokens, so the credential version is now 2:
+
+- `sklegal-seraph-identity` has exactly `read:organization` and `read:user`.
+  Its client permits only identity and team GETs, never repository operations
+  or writes.
+- `sklegal-seraph-review-publisher` has exactly `write:repository` and an exact
+  repository restriction to `smilinTux/sklegal`.
+
+The JSON credential file has exactly `version`, `identity`, and `writer`.
+Each token record has `token`, `token_sha256`, `token_id`, `token_name`, `scopes`,
+`repositories`, `account_id`, and `account_login`. Version is integer 2; both
+records must bind the same positive account ID and `seraph-review-bot` login.
+Identity repositories are an empty list; writer repositories are exactly
+`["smilinTux/sklegal"]`. Scope lists use the order above. Token IDs and hashes
+must be distinct. Duplicate fields, unknown fields, symlinks and permissive
+file modes are rejected. Provision this metadata from the verified same-account
+token-creation responses, never by labeling arbitrary caller-supplied tokens.
+
+Forgejo has no narrower approval-only write scope, so the transport endpoint
+allowlist and exact payload remain required.
 
 ## Local evidence preflight
 
@@ -94,11 +113,11 @@ The timer runs `skcapstone.seraph_review_runner` five minutes after boot and
 every five minutes thereafter. It consumes only the fresh, hash-bound Link feed,
 reconstructs exact evidence from live CardStore folds, signs the exact publisher
 request digest with the Seraph key, and attempts only private SKLegal records
-whose lineage outcome and CI are PASS. Its Forgejo token and provisioning
-metadata stay in `~/api-keys/seraph-skgit.env`, mode `0600`. The file binds the
-token hash, numeric token ID, name, scope, and repository returned during the
-administrator ceremony. Link never reads it.
+whose lineage outcome and CI are PASS. Its tokens and provisioning metadata
+stay in `~/api-keys/seraph-skgit.json`, mode `0600`. Link never reads this file.
 
 Rollback restores the previous executable and service configuration, disables
-the new publication job, and preserves all remote review and receipt history.
+the new publication job, revokes both new token IDs, and preserves all remote
+review and receipt history. Do not restore the incompatible single-token
+configuration as a working Forgejo 15 publisher.
 No protection changes, application deployment, or corpus processing are needed.

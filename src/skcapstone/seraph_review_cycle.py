@@ -15,7 +15,6 @@ from .link_observation_feed import LinkObservationFeed
 from .seraph_forgejo import (
     ForgejoReviewConnector,
     ProvisionedCredential,
-    attest_private_credential,
 )
 from .seraph_review_capauth import (
     PUBLISH_METHOD,
@@ -32,6 +31,7 @@ from .seraph_review_contracts import (
     ReviewPublicationError,
     SeraphPassEvidence,
 )
+from .seraph_review_credentials import IdentityReadClient, attest_credentials, read_credentials
 from .seraph_review_publisher import publication_request_sha256, publish_seraph_pass
 
 SERVICE_IDENTITY = "seraph-review-bot"
@@ -147,12 +147,13 @@ def publish_ready(
 ) -> list[str]:
     """Publish each exact private PASS in a fresh mediated feed."""
     cards = LiveCardStoreGateway(home)
-    credential = read_credential(credential_file)
-    client = ForgejoClient(SKGIT_ORIGIN, credential.token)
+    credentials = read_credentials(credential_file)
+    client = ForgejoClient(SKGIT_ORIGIN, credentials.writer.token)
+    identity_client = IdentityReadClient(SKGIT_ORIGIN, credentials.identity.token)
     connector = ForgejoReviewConnector(
         client,
-        attest_capabilities=lambda forge, repository: attest_private_credential(
-            forge, repository, credential
+        attest_capabilities=lambda forge, repository: attest_credentials(
+            identity_client, forge, credentials, repository
         ),
     )
     verifier = SeraphCapAuthVerifier(

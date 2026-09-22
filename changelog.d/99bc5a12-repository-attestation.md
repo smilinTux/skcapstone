@@ -1,0 +1,2 @@
+- Card `99bc5a12`: allow the exact SKLegal repository metadata GET required by Seraph credential attestation, with real transport coverage and unchanged write restrictions.
+- Use separate same-account read-only identity and SKLegal-scoped write credentials because Forgejo 15 rejects identity scopes on repository-specific tokens. Reject mixed accounts, altered provisioning records and writes through the identity client.

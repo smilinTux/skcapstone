@@ -9,7 +9,7 @@ Environment=SKAGENT=seraph
 Environment=SKCAPSTONE_AGENT=seraph
 Environment=CAPAUTH_HOME=%h/.skcapstone/agents/seraph/capauth
 Environment=PATH=%h/.skenv/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/.skenv/bin/python3 -m skcapstone.seraph_review_runner --feed %h/.skcapstone/coordination/link-observations.json --home %h/.skcapstone --evidence-root %h/.skcapstone/evidence/work --runtime-dir %h/.skcapstone/runtime/seraph-review --credential-file %h/api-keys/seraph-skgit.env
+ExecStart=%h/.skenv/bin/python3 -m skcapstone.seraph_review_runner --feed %h/.skcapstone/coordination/link-observations.json --home %h/.skcapstone --evidence-root %h/.skcapstone/evidence/work --runtime-dir %h/.skcapstone/runtime/seraph-review --credential-file %h/api-keys/seraph-skgit.json
 TimeoutStartSec=180
 NoNewPrivileges=yes
 PrivateTmp=yes

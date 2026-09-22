@@ -65,6 +65,8 @@ def test_wrong_origin_is_rejected_before_network(origin):
         "https://elsewhere/api/v1/user",
         "//elsewhere/api/v1/user",
         "/api/v1/repos/other/repo/pulls",
+        "/api/v1/repos/smilinTux/sklegal-other",
+        "/api/v1/repos/smilinTux/other",
         "/api/v1/users/another-user/tokens",
         "/api/v1/user?token=synthetic",
         "/api/v1/../admin/users",
@@ -116,6 +118,8 @@ def test_write_is_only_exact_review_endpoint(monkeypatch):
         c.request("DELETE", "/api/v1/repos/smilinTux/sklegal/branch_protections/main")
     with pytest.raises(ForgejoError):
         c.request("POST", "/api/v1/admin/users", {})
+    with pytest.raises(ForgejoError):
+        c.request("POST", "/api/v1/repos/smilinTux/sklegal", {})
     assert not opener.calls
     c.request(
         "POST",

@@ -1,13 +1,16 @@
 """Private-forge publication and current card-binding regression tests."""
 
 import hashlib
+import io
+import json
 from dataclasses import replace
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import pytest
 
 from skcapstone.card_store import CardCore, CardStore
-from skcapstone.forgejo import SKGIT_REPOSITORY
+from skcapstone.forgejo import SKGIT_ORIGIN, SKGIT_REPOSITORY, ForgejoClient
 from skcapstone.seat_boundaries import Action, BoundaryError, require_authority
 from skcapstone.seraph_forgejo import (
     ForgejoReviewConnector,
@@ -151,6 +154,27 @@ def test_live_credential_attestation_requires_exact_identity_scope_and_team():
     state = CredentialState()
     value = attest_private_credential(state, SKGIT_REPOSITORY, credential())
     value.validate(SERVICE)
+
+
+def test_credential_attestation_uses_real_transport_allowlist(monkeypatch):
+    """Repository identity must be reachable through the production client."""
+    state = CredentialState()
+    paths = []
+
+    class AttestationOpener:
+        """Serve synthetic HTTP responses below the real transport checks."""
+
+        def open(self, request, timeout):
+            parts = urlsplit(request.full_url)
+            path = parts.path + ("?" + parts.query if parts.query else "")
+            paths.append(path)
+            return io.BytesIO(json.dumps(state.request(request.method, path)).encode())
+
+    monkeypatch.setattr("skcapstone.forgejo.build_opener", lambda *args: AttestationOpener())
+    binding = credential()
+    forge = ForgejoClient(SKGIT_ORIGIN, binding.token)
+    attest_private_credential(forge, SKGIT_REPOSITORY, binding).validate(SERVICE)
+    assert ROOT in paths
 
 
 @pytest.mark.parametrize(
