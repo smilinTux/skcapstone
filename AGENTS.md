@@ -88,6 +88,14 @@ exactly this left 54 unreadable lines that every fold on every host paid for
 until they were cleaned up. `skcapstone coord` is the only write boundary,
 with no exception for "just this once."
 
+If a coordination CLI or MCP call fails to import, validate, or write, record
+the exact error and stop dependent writes. Never fall back to direct JSONL
+events. For a broken CardStore chain, preserve the original bytes and hash,
+identify the card, writer file, and failing event, and treat later events as
+untrusted. Resume only after an exact claimed recovery task uses a reviewed
+mediated command and strict fold readback. This does not add a human approval
+gate.
+
 `core.json` is **not** the card's title. It keeps the birth title write-once;
 the *folded* title (what the dispatcher actually reads) comes from event
 state, and `authoritative_claimability` overwrites it from the latest
