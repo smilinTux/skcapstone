@@ -168,6 +168,40 @@ def test_timeout_cleanup_rejects_inactive_service_with_pending_job(tmp_path, mon
     ]
 
 
+def test_generation_admission_deadline_remains_600_seconds(tmp_path, monkeypatch) -> None:
+    """A full generation never admits another seat at or after 600 seconds."""
+
+    monkeypatch.setattr(
+        "skcapstone.fleet.seat_cycle_orchestrator.select_niobe_service",
+        lambda _home: "skfleet-niobe.service",
+    )
+    now = 0.0
+    starts: list[str] = []
+
+    def clock() -> float:
+        return now
+
+    def runner(command, **_kwargs):
+        nonlocal now
+        if command[2:4] == ["start", "--wait"]:
+            starts.append(command[-1])
+            now += 300.0
+        return SimpleNamespace(
+            returncode=0,
+            stdout="LoadState=loaded\nActiveState=inactive\nJob=\n",
+            stderr="",
+        )
+
+    result = run_generation(tmp_path, runner=runner, clock=clock)
+
+    assert seat_cycle_orchestrator._GENERATION_ADMISSION_SECONDS == 600
+    assert starts == ["skfleet-atlas.service", "skfleet-seraph.service"]
+    assert result["aborted"] is True
+    assert result["recovery"] == "generation_budget_exhausted"
+    root = Path(__file__).parents[1]
+    assert "TimeoutStartSec=960" in (root / "systemd/skfleet-seat-cycle.service").read_text()
+
+
 def test_next_generation_stays_blocked_on_lingering_middle_seat(tmp_path, monkeypatch):
     prior = {
         "schema": "skfleet.seat-cycle-generation/v1",

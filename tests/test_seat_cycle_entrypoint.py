@@ -440,9 +440,71 @@ def test_seraph_timeout_terminates_reaps_process_group_and_reports_cleanup(
     assert summary.exception_type == receipt["exception_type"] == "TimeoutExpired"
 
 
+def test_main_fsyncs_one_terminal_seraph_timeout_receipt_and_returns_nonzero(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """A reaped dispatcher timeout is one durable, parent-visible failure."""
+
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    monkeypatch.setattr(seat_entrypoint.socket, "gethostname", lambda: "chiap08")
+    monkeypatch.setattr(seat_entrypoint, "startup_hello", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        seat_entrypoint,
+        "poll_mail",
+        lambda _seat: SimpleNamespace(as_dict=lambda: {}),
+    )
+    monkeypatch.setattr(
+        seat_entrypoint,
+        "seraph_operation",
+        lambda _home: {
+            "cards_examined": 0,
+            "recommendations": 0,
+            "suppressed": 1,
+            "dispatch_failed": 1,
+            "reason": "seraph_dispatch_timeout",
+            "exception_type": "TimeoutExpired",
+            "cleanup": "process_group_reaped",
+        },
+    )
+    original_fsync = os.fsync
+    fsynced_health_receipts: list[str] = []
+
+    def record_fsync(fd: int) -> None:
+        target = os.readlink(f"/proc/self/fd/{fd}")
+        if target.endswith("/seraph.health.jsonl"):
+            fsynced_health_receipts.append(target)
+        original_fsync(fd)
+
+    monkeypatch.setattr(seat_entrypoint.os, "fsync", record_fsync)
+
+    assert (
+        seat_entrypoint.main(
+            [
+                "--seat",
+                "seraph",
+                "--home",
+                str(tmp_path),
+                "--control-plane",
+                str(control_path),
+            ]
+        )
+        == 1
+    )
+
+    health_path = tmp_path / "coordination/seat-cycles/seraph.health.jsonl"
+    receipts = [json.loads(line) for line in health_path.read_text().splitlines()]
+    assert len(receipts) == 1
+    assert receipts[0]["result"] == "seraph_dispatch_timeout"
+    assert receipts[0]["dispatch_failed"] == 1
+    assert receipts[0]["cleanup"] == "process_group_reaped"
+    assert len(fsynced_health_receipts) == 1
+    assert json.loads(capsys.readouterr().out)["result"] == "seraph_dispatch_timeout"
+
+
 def test_seraph_dispatch_timeout_default_used_when_env_unset(monkeypatch) -> None:
     monkeypatch.delenv("SKFLEET_SERAPH_DISPATCH_TIMEOUT_SECONDS", raising=False)
-    assert seat_entrypoint._resolve_seraph_dispatch_timeout_seconds() == 420
+    assert seat_entrypoint._resolve_seraph_dispatch_timeout_seconds() == 180
 
 
 def test_seraph_dispatch_timeout_env_override_honoured(monkeypatch) -> None:
@@ -453,38 +515,32 @@ def test_seraph_dispatch_timeout_env_override_honoured(monkeypatch) -> None:
 @pytest.mark.parametrize("raw", ["not-a-number", "0", "-1", "", "600.5"])
 def test_seraph_dispatch_timeout_invalid_env_falls_back_to_default(monkeypatch, raw) -> None:
     monkeypatch.setenv("SKFLEET_SERAPH_DISPATCH_TIMEOUT_SECONDS", raw)
-    assert seat_entrypoint._resolve_seraph_dispatch_timeout_seconds() == 420
+    assert seat_entrypoint._resolve_seraph_dispatch_timeout_seconds() == 180
 
 
 def test_seraph_dispatch_timeout_env_override_at_budget_ceiling_is_accepted(monkeypatch) -> None:
-    """The largest value the load-bearing 540s budget can still hold is honoured.
+    """The largest value the nested 300s seat budget can hold is honoured.
 
-    SERAPH_LOCK_WAIT_SECONDS(75) + timeout + a 30s cleanup margin must stay
-    under the 540s systemd TimeoutStartSec, itself under the 600s timer cadence
-    on skfleet-seraph.service/.timer, so 434 is the last value that still fits
-    (75 + 434 + 30 == 539 < 540).
+    The 75s lock wait, timeout, 5s process-group cleanup, and 30s receipt
+    margin must remain strictly below the 300s service admission boundary.
+    Therefore 189s is the largest accepted override.
     """
-    monkeypatch.setenv("SKFLEET_SERAPH_DISPATCH_TIMEOUT_SECONDS", "434")
-    assert seat_entrypoint._resolve_seraph_dispatch_timeout_seconds() == 434
+    monkeypatch.setenv("SKFLEET_SERAPH_DISPATCH_TIMEOUT_SECONDS", "189")
+    assert seat_entrypoint._resolve_seraph_dispatch_timeout_seconds() == 189
 
 
-@pytest.mark.parametrize("raw", ["435", "900"])
+@pytest.mark.parametrize("raw", ["190", "435", "900"])
 def test_seraph_dispatch_timeout_env_override_exceeding_budget_is_rejected(
     monkeypatch, raw
 ) -> None:
-    """An override that would blow the load-bearing 540s budget is rejected.
+    """An override that would consume the receipt margin is rejected.
 
-    test_dispatcher_routes_niobe_and_seraph_through_safe_bounded_waits (in
-    tests/test_rotation_lock_fairness.py) asserts SERAPH_LOCK_WAIT_SECONDS +
-    this timeout + a 30s cleanup margin stays under the 540s systemd
-    TimeoutStartSec, itself under the 600s timer cadence, on
-    skfleet-seraph.service/.timer. An
-    operator env override must not be able to silently break that invariant
-    -- it falls back to the default instead of being honoured, rather than
-    crashing or disabling the timeout.
+    An operator override cannot widen the child past the shared lock,
+    process-group cleanup, durable receipt, parent wait, and generation
+    admission contract. It falls back to the bounded default.
     """
     monkeypatch.setenv("SKFLEET_SERAPH_DISPATCH_TIMEOUT_SECONDS", raw)
-    assert seat_entrypoint._resolve_seraph_dispatch_timeout_seconds() == 420
+    assert seat_entrypoint._resolve_seraph_dispatch_timeout_seconds() == 180
 
 
 def test_seraph_dispatch_timeout_reaches_subprocess_run_seam(tmp_path, monkeypatch) -> None:
@@ -1060,7 +1116,7 @@ def test_unit_templates_preserve_limits_and_disabled_install_contract() -> None:
     assert "OnUnitActiveSec=5min" in link_timer
     assert "OnUnitActiveSec=5min" in mero_timer
     assert "skfleet-mero.service" in mero_timer
-    assert "TimeoutStartSec=540" in seraph
+    assert "TimeoutStartSec=300" in seraph
     assert "--seat seraph" in seraph
     assert "SKFLEET_MAX_LAUNCH" not in seraph
     assert "Environment=SKFLEET_TARGET=2" in seraph

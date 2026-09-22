@@ -8,6 +8,7 @@ import threading
 import time
 from pathlib import Path
 
+from skcapstone import seat_cycle_entrypoint
 from skcapstone.fleet.rotation_lock import SERAPH_LOCK_WAIT_SECONDS, acquire_rotation_lock
 from skcapstone.niobe_live_entrypoint import _DISPATCH_TIMEOUT_SECONDS
 from skcapstone.seat_cycle_entrypoint import _SERAPH_DISPATCH_TIMEOUT_SECONDS
@@ -187,15 +188,23 @@ def test_dispatcher_routes_niobe_and_seraph_through_safe_bounded_waits() -> None
     assert all("Persistent=false" in timer for timer in timers)
     assert all("Unit=skfleet-niobe-live.service" in timer for timer in timers)
     cleanup_margin = 30
-    # Seraph carries its OWN deadline: its budget was raised to 540s (with the
-    # timer cadence to 600s) on 2026-09-20 because measured cycles ran 150-188s
-    # against the old 190s dispatcher timeout and seraph_dispatch_timeout was
-    # the dominant cycle outcome. niobe-live is unchanged at 300s, so these two
-    # literals are deliberately separate rather than one shared constant.
-    seraph_service_deadline = 540
+    # PR867 bounds the scan itself. The timeout remains a failure boundary,
+    # not a performance budget that may consume the serialized generation.
+    seraph_service_deadline = 300
     assert f"TimeoutStartSec={seraph_service_deadline}" in seraph
-    assert (
-        SERAPH_LOCK_WAIT_SECONDS + _SERAPH_DISPATCH_TIMEOUT_SECONDS + cleanup_margin
-        < seraph_service_deadline
+    process_group_cleanup = seat_cycle_entrypoint._DISPATCH_TERMINATE_GRACE_SECONDS
+    receipt_margin = getattr(seat_cycle_entrypoint, "_SERAPH_RECEIPT_MARGIN_SECONDS", None)
+    parent_wait = getattr(seat_cycle_entrypoint, "_SERAPH_PARENT_WAIT_SECONDS", None)
+    generation_admission = getattr(seat_cycle_entrypoint, "_GENERATION_ADMISSION_SECONDS", None)
+    assert receipt_margin == cleanup_margin
+    assert parent_wait == 310
+    assert generation_admission == 600
+    worst_case = (
+        SERAPH_LOCK_WAIT_SECONDS
+        + _SERAPH_DISPATCH_TIMEOUT_SECONDS
+        + process_group_cleanup
+        + receipt_margin
     )
+    assert worst_case < seraph_service_deadline < parent_wait
+    assert worst_case < generation_admission / 2
     assert "SKFLEET_SERAPH_BATCH_SIZE=2" in seraph
