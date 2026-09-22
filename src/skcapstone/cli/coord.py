@@ -1771,7 +1771,7 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option(
         "--writer-quiesced",
         is_flag=True,
-        help="Assert pre-upgrade appenders are stopped or upgraded before apply.",
+        help="Assert pre-upgrade appenders are stopped or upgraded before apply or rollback.",
     )
     def coord_recover_overlay(
         operation,
