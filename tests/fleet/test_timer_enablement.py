@@ -11,6 +11,10 @@ import pytest
 from skcapstone.fleet import installer, timer_enablement
 from skcapstone.fleet.profile_doctor import DriftReport
 
+CONTROL_PROFILE = (
+    Path(__file__).resolve().parents[2] / "deploy" / "fleet-objects" / "profile" / "control.json"
+)
+
 
 class Systemd:
     def __init__(self, fragment: Path, *, enabled: bool = False, active: bool = False, fail=False):
@@ -317,6 +321,40 @@ def test_forbidden_pre_enabled_timers_stop_before_orchestrator_starts(tmp_path):
     event = json.loads(evidence.read_text().splitlines()[0])
     assert event["actor"] == "jarvis"
     assert event["requested_state"] == "disabled_inactive"
+
+
+def test_control_profile_converges_all_serialized_seat_timers_inactive(tmp_path):
+    """The shipped seat-cycle policy fences every independently scheduled seat."""
+
+    profile = json.loads(CONTROL_PROFILE.read_text(encoding="utf-8"))["spec"]
+    serialized = {
+        "skfleet-atlas.timer",
+        "skfleet-seraph.timer",
+        "skfleet-niobe.timer",
+        "skfleet-niobe-live.timer",
+    }
+    assert "skfleet-seat-cycle.timer" in timer_enablement.required_timers(profile)
+    assert serialized <= set(timer_enablement.forbidden_timers(profile))
+
+    systemd = TransitionSystemd(
+        timer_file="enabled",
+        timer_active="active",
+        service_active="active",
+    )
+    rows = timer_enablement.converge_forbidden_timers(
+        profile,
+        runner=systemd,
+        config_home=tmp_path,
+        evidence_path=tmp_path / "evidence.jsonl",
+        actor="jarvis",
+        source_revision="a71a5d20",
+    )
+
+    assert serialized <= {row["unit"] for row in rows}
+    assert serialized <= {call[-1] for call in systemd.calls if call[2] == "disable"}
+    assert {timer.removesuffix(".timer") + ".service" for timer in serialized} <= {
+        call[-1] for call in systemd.calls if call[2] == "stop"
+    }
 
 
 @pytest.mark.parametrize("service_state", ["active", "activating", "deactivating"])

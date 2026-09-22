@@ -19,15 +19,15 @@ from skcapstone.lifecycle_seats import LIFECYCLE_SEATS
 #: kept asserting skfleet-tank.service was allowed after spec 3.6 folded tank
 #: into atlas and deleted its units. Third instance of that drift in this fold.
 SEATS = tuple(sorted(LIFECYCLE_SEATS))
-SEAT_TIMERS = tuple(f"skfleet-{seat}.timer" for seat in ("atlas", "link", "mero")) + (
+SEAT_TIMERS = tuple(f"skfleet-{seat}.timer" for seat in ("link", "mero")) + (
     "skfleet-seat-cycle.timer",
 )
-#: Legacy independently scheduled seat timers the control role forbids, because
-#: the single seat-cycle timer serializes them. Tank was a fourth member until
-#: spec 3.6 folded it into Atlas; its units no longer exist, so there is nothing
-#: left to forbid. Kept in step with SERIALIZED_SEAT_MUST_NOT in
+#: Independently scheduled seat timers the control role forbids because the
+#: single seat-cycle timer serializes Atlas, Seraph, and Niobe. Kept in step
+#: with SERIALIZED_SEAT_MUST_NOT in
 #: scripts/fleet/gen-profile-manifests.py.
 SERIALIZED_TIMERS = (
+    "skfleet-atlas.timer",
     "skfleet-niobe-live.timer",
     "skfleet-niobe.timer",
     "skfleet-seraph.timer",
@@ -42,7 +42,7 @@ def _control_spec() -> dict:
 
 
 def test_control_profile_requires_serialized_seat_orchestrator() -> None:
-    """Tank, Seraph, and Niobe recur only through one generation timer."""
+    """Atlas, Seraph, and Niobe recur only through one generation timer."""
     spec = _control_spec()
     assert set(SEAT_TIMERS) <= set(spec["units"]["required"])
     assert set(SEAT_TIMERS) <= set(spec["units"]["allowed"])
@@ -55,6 +55,7 @@ def test_control_profile_forbids_competing_serialized_seat_timers() -> None:
     spec = _control_spec()
     assert set(SERIALIZED_TIMERS) <= set(spec["units"]["mustNot"])
     assert not set(SERIALIZED_TIMERS) & set(spec["units"]["allowed"])
+    assert {"skfleet-link.timer", "skfleet-mero.timer"} <= set(spec["units"]["required"])
 
 
 def test_an_estate_with_no_seat_units_no_longer_reports_ok() -> None:

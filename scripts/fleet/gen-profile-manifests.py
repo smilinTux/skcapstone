@@ -70,17 +70,15 @@ CONTROL_REQUIRED = [
     "skoperator.timer",
 ]
 
-#: Legacy independently scheduled seat timers. The control role forbids them
-#: because the single seat-cycle timer serializes Seraph and Niobe. Tank was
-#: a third member of that serialized set until spec 3.6 folded it into
-#: Atlas, which keeps its own independent timer below rather than joining
-#: this forbidden list; skfleet-tank.timer no longer exists to forbid.
+#: Independently scheduled seat timers. The control role forbids them because
+#: the single seat-cycle timer serializes Atlas, Seraph, and Niobe.
 SERIALIZED_SEAT_MUST_NOT = [
+    "skfleet-atlas.timer",
     "skfleet-niobe-live.timer",
     "skfleet-niobe.timer",
     "skfleet-seraph.timer",
 ]
-SEAT_CYCLE_TIMERS = [f"skfleet-{seat}.timer" for seat in ("atlas", "link", "mero")] + [
+SEAT_CYCLE_TIMERS = [f"skfleet-{seat}.timer" for seat in ("link", "mero")] + [
     "skfleet-link-producer.timer",
     "skfleet-seat-cycle.timer",
 ]
@@ -240,11 +238,14 @@ def build_control() -> dict:
             "description": (
                 "The single control seat (.158, node-noroc2027). Holds the full "
                 "sovereign tree and runs the control-plane loops. Changes almost "
-                "nothing, which is the point. Atlas, Link, and Mero retain "
-                "bounded timers; one required seat-cycle timer serializes "
-                "Seraph and activation-selected Niobe so generations cannot "
-                "overlap. Individual Seraph, Niobe, and Niobe-live timers "
-                "are forbidden alongside that orchestrator. " + _IGNORE_RULE + " " + _ADR_LINK
+                "nothing, which is the point. Link and Mero retain bounded "
+                "timers; one required seat-cycle timer serializes Atlas, "
+                "Seraph, and activation-selected Niobe so generations cannot "
+                "overlap. Individual Atlas, Seraph, Niobe, and Niobe-live "
+                "timers are forbidden alongside that orchestrator. "
+                + _IGNORE_RULE
+                + " "
+                + _ADR_LINK
             ),
             "units": _units_block(
                 sorted(set(allowed) | set(SEAT_ALLOWED_EXTRA)),
