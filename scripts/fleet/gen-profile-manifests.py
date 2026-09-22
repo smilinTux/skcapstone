@@ -106,7 +106,11 @@ SEAT_ALLOWED_EXTRA = [
 #: reproduce exactly that bug: it would let the manifest agree with whatever
 #: state the node drifted into. A seat timer that is required here and not
 #: enabled on the node is a REAL drift finding, and surfacing it is the fix.
-CONTROL_ROLE_REQUIRED = sorted(set(CONTROL_REQUIRED) | set(SEAT_CYCLE_TIMERS))
+#: Atlas's service is explicit because the seat-cycle invokes it while its
+#: standalone timer is forbidden, so timer-to-service expansion cannot supply it.
+CONTROL_ROLE_REQUIRED = sorted(
+    set(CONTROL_REQUIRED) | set(SEAT_CYCLE_TIMERS) | {"skfleet-atlas.service"}
+)
 
 #: Desktop, distro and third-party noise. Patterns, not names, so a manifest
 #: does not have to be regenerated every time someone installs a snap.

@@ -105,6 +105,7 @@
       "required": [
         "capauth-authz.service",
         "skcapstone.service",
+        "skfleet-atlas.service",
         "skfleet-link-producer.timer",
         "skfleet-link.timer",
         "skfleet-mero.timer",

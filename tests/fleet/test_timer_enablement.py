@@ -763,6 +763,8 @@ def test_apply_refreshes_required_core_unit_bytes_even_without_inventory_drift(
     calls = []
 
     def core(names, **kwargs):
+        """Record the exact required core units selected for installation."""
+
         calls.append((names, kwargs))
         return "ok", ""
 
@@ -782,6 +784,42 @@ def test_apply_refreshes_required_core_unit_bytes_even_without_inventory_drift(
     assert calls == [
         (["skfleet-seat-cycle.timer"], {"dry_run": False, "enable": False, "start": False})
     ]
+
+
+def test_zero_drift_control_apply_installs_atlas_service_without_standalone_timer(
+    tmp_path, monkeypatch
+):
+    """A fresh serialized scheduler still installs the first governed service."""
+
+    paths = type("Paths", (), {"root": tmp_path / "fleet"})()
+    policy = json.loads(CONTROL_PROFILE.read_text(encoding="utf-8"))["spec"]
+    monkeypatch.setattr(installer.store, "is_frozen", lambda paths: False)
+    monkeypatch.setattr(installer.converge, "actuation_enabled", lambda paths, node: True)
+    monkeypatch.setattr(installer, "load_drift", lambda *args, **kwargs: DriftReport())
+    monkeypatch.setattr(installer, "_profile_spec", lambda *args: policy)
+    calls = []
+
+    def core(names, **kwargs):
+        calls.append((names, kwargs))
+        return "ok", ""
+
+    result = installer.run_install(
+        paths,
+        "control",
+        node="node",
+        mode="apply",
+        dry_run=False,
+        enable=False,
+        start=False,
+        only=None,
+        backends={"core": core},
+    )
+
+    installed = {name for names, _kwargs in calls for name in names}
+    assert result["ok"] is True
+    assert "skfleet-atlas.service" in installed
+    assert "skfleet-atlas.timer" not in installed
+    assert "skfleet-seat-cycle.timer" in installed
 
 
 def test_apply_preserves_activation_for_services_but_not_timers(tmp_path, monkeypatch):
