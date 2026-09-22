@@ -86,7 +86,7 @@ def test_nonzero_start_aborts_when_service_cannot_be_proven_inactive(tmp_path, m
     ]
 
 
-def test_timeout_stops_and_proves_seat_inactive_before_continuing(tmp_path, monkeypatch):
+def test_timeout_fails_closed_and_proves_seat_inactive_before_continuing(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "skcapstone.fleet.seat_cycle_orchestrator.select_niobe_service",
         lambda _home: "skfleet-niobe.service",
@@ -112,7 +112,8 @@ def test_timeout_stops_and_proves_seat_inactive_before_continuing(tmp_path, monk
         ("show", "--property=LoadState,ActiveState,Job"),
     ]
     assert ("start", "skfleet-seraph.service") in verbs
-    assert result["aborted"] is False
+    assert result["aborted"] is True
+    assert result["failures"] == 1
 
 
 def test_timeout_aborts_generation_when_inactive_state_cannot_be_proven(tmp_path, monkeypatch):

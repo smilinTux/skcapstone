@@ -1,0 +1,1 @@
+- Card `c9e7a140`: preserve a successful serialized seat generation when its final seat crosses the 600-second admission boundary; previously the terminal global inactivity scan could turn three zero-return seats into an aborted receipt, while timeouts and nonzero results were not themselves fail-closed.

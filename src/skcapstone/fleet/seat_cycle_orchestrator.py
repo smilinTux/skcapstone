@@ -7,6 +7,7 @@ import fcntl
 import json
 import os
 import subprocess
+import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +21,7 @@ _SERAPH = "skfleet-seraph.service"
 _NIOBE_LIVE = "skfleet-niobe-live.service"
 _NIOBE_SHADOW = "skfleet-niobe.service"
 _GOVERNED_SERVICES = (_ATLAS, _SERAPH, _NIOBE_SHADOW, _NIOBE_LIVE)
+_GENERATION_BUDGET_SECONDS = 600
 
 
 def _recovery_marker(home: Path) -> Path:
@@ -257,10 +259,12 @@ def _run_generation_locked(
     home: Path,
     *,
     runner: Callable[..., Any] = subprocess.run,
+    clock: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
     """Run one generation while the caller holds the process-lifetime lock."""
 
     started_at = datetime.now(timezone.utc).isoformat()
+    deadline = clock() + _GENERATION_BUDGET_SECONDS
     recovery_required = _recovery_marker(home).exists() or _recovery_required(home)
     _arm_recovery_fence(home)
     if recovery_required and not _prove_recovery_inactive(runner, cancel_jobs=True):
@@ -278,7 +282,12 @@ def _run_generation_locked(
     units = (_ATLAS, _SERAPH, select_niobe_service(home))
     seats: list[dict[str, Any]] = []
     aborted = False
+    abort_reason = None
     for unit in units:
+        if clock() >= deadline:
+            aborted = True
+            abort_reason = "generation_budget_exhausted"
+            break
         try:
             completed = runner(
                 ["systemctl", "--user", "start", "--wait", unit],
@@ -304,11 +313,10 @@ def _run_generation_locked(
                 "timeout_cleanup_proven": cleanup_ok,
             }
         )
-        if cleanup_ok is False:
+        if returncode != 0:
             aborted = True
+        if cleanup_ok is False:
             break
-    if not aborted and not _prove_recovery_inactive(runner):
-        aborted = True
     receipt = {
         "schema": "skfleet.seat-cycle-generation/v1",
         "started_at": started_at,
@@ -317,6 +325,8 @@ def _run_generation_locked(
         "failures": sum(seat["returncode"] != 0 for seat in seats),
         "aborted": aborted,
     }
+    if abort_reason is not None:
+        receipt["recovery"] = abort_reason
     _append_receipt(home, receipt)
     if not aborted:
         _clear_recovery_fence(home)
@@ -327,6 +337,7 @@ def run_generation(
     home: Path,
     *,
     runner: Callable[..., Any] = subprocess.run,
+    clock: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
     """Run one serialized generation or fail closed on live contention."""
 
@@ -342,7 +353,7 @@ def run_generation(
             "recovery": "generation_lock_contended",
         }
     try:
-        return _run_generation_locked(home, runner=runner)
+        return _run_generation_locked(home, runner=runner, clock=clock)
     finally:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
         os.close(lock_fd)
