@@ -225,27 +225,16 @@ jobs:
             tests/test_cli_kanban.py \
             tests/test_coord_kanban_mcp.py \
             tests/test_coord_amend.py
-      - name: Resolve exact sibling revisions
+      # These are reviewed, immutable sibling revisions. Do not resolve a branch
+      # or HEAD here: a foreign repository change must not alter this workflow's
+      # dependency graph without an SKCapstone review.
+      - name: Install reviewed sibling revisions
         if: needs.classify.outputs.docs-only != 'true'
-        id: siblings
-        run: |
-          set -euo pipefail
-          dashboard="$(git ls-remote https://github.com/smilinTux/skdashboard HEAD | cut -f1)"
-          harness="$(git ls-remote https://github.com/smilinTux/skharness HEAD | cut -f1)"
-          [[ "$dashboard" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$harness" =~ ^[0-9a-f]{40}$ ]]
-          echo "dashboard=$dashboard" >> "$GITHUB_OUTPUT"
-          echo "harness=$harness" >> "$GITHUB_OUTPUT"
-          printf 'Sibling freshness fence: skdashboard=%s skharness=%s\n' "$dashboard" "$harness"
-      - name: Install extracted siblings at exact revisions
-        if: needs.classify.outputs.docs-only != 'true'
-        env:
-          DASHBOARD_SHA: ${{ steps.siblings.outputs.dashboard }}
-          HARNESS_SHA: ${{ steps.siblings.outputs.harness }}
         run: |
           pip install --force-reinstall --no-deps --no-cache-dir \
-            "skdashboard @ git+https://github.com/smilinTux/skdashboard@${DASHBOARD_SHA}" \
-            "skharness @ git+https://github.com/smilinTux/skharness@${HARNESS_SHA}"
+            "skcoord @ git+https://github.com/smilinTux/skcoord@05161d77464f952359df5be4fd351a791e851292" \
+            "skdashboard @ git+https://github.com/smilinTux/skdashboard@0eb7ff5ece4d6774eeec92864418be9824c5e5a2" \
+            "skharness @ git+https://github.com/smilinTux/skharness@01342dfb6beac265acaf1448e1307b4ae700ff26"
       - name: Run complete deterministic unit suite
         # PR-scoped (pull_request or merge_group): only py3.12 runs the full
         # suite, matching the 2-version matrix above. Anything else (push to
