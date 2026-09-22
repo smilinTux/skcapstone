@@ -7615,19 +7615,24 @@ def _observe_assigned_reviews():
         }
     )
     for cid in review_ids:
-        rows = event_rows(cid)
-        try:
-            reconciled = reconcile_fanout_receipt(
-                Path(HOME) / ".skcapstone",
-                cid,
-                live_sessions=live_sessions,
-                live_units=live_units,
-            )
-            if reconciled is not None:
-                log(d, "FANOUT_RECONCILED|%s|%s|state=%s" %
-                    (HOST, cid, reconciled["state"]))
-        except (FanoutBoundaryError, OSError, ValueError) as exc:
-            log(d, "FANOUT_RECONCILE_FAILED|%s|%s|%s" % (HOST, cid, exc))
+        # POOL_V2 already folded every review candidate. Reuse that immutable
+        # per-cycle index instead of probing all review streams a second time.
+        rows = _claim_rows.get(cid)
+        if rows is None:
+            rows = event_rows(cid)
+        if any(event.get("action") == "niobe_fanout_request" for event in rows):
+            try:
+                reconciled = reconcile_fanout_receipt(
+                    Path(HOME) / ".skcapstone",
+                    cid,
+                    live_sessions=live_sessions,
+                    live_units=live_units,
+                )
+                if reconciled is not None:
+                    log(d, "FANOUT_RECONCILED|%s|%s|state=%s" %
+                        (HOST, cid, reconciled["state"]))
+            except (FanoutBoundaryError, OSError, ValueError) as exc:
+                log(d, "FANOUT_RECONCILE_FAILED|%s|%s|%s" % (HOST, cid, exc))
         receipts = [
             event for event in rows
             if event.get("action") == "review_assignment_launch"
