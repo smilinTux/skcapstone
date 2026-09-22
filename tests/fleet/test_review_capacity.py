@@ -396,6 +396,42 @@ def test_review_launch_lanes_follow_healthy_domains_and_physical_maximum():
     assert review_physical_free(lanes, routes, {"review-domain": 1}, 3) == 1
 
 
+def test_physical_ceiling_counts_busy_workers_on_exhausted_review_domains():
+    """A free logical domain must not hide workers on an exhausted domain."""
+    lanes = [
+        {
+            "name": "ordinary-review",
+            "capacity_domains": ["exhausted-domain"],
+            "busy": ["existing-review"],
+            "free": 0,
+        },
+        {
+            "name": "alternate-review",
+            "capacity_domains": ["free-domain"],
+            "busy": [],
+            "free": 1,
+        },
+    ]
+    logically_free_routes = [{"capacity_domain": "free-domain", "free": 1}]
+
+    physical_free = review_physical_free(lanes, logically_free_routes, {}, 1)
+
+    assert physical_free == 0
+    assert (
+        eligible_review_launch_lanes(
+            lanes,
+            logically_free_routes,
+            {},
+            physical_free,
+            {
+                "ordinary-review": (True, "healthy"),
+                "alternate-review": (True, "healthy"),
+            },
+        )
+        == []
+    )
+
+
 def _strict_opener(documents):
     """Route on the EXACT path a real server would see, and 404 a miss.
 

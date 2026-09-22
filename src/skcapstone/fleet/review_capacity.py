@@ -417,18 +417,15 @@ def eligible_review_launch_lanes(
 
 def review_physical_free(
     lanes: Sequence[Mapping[str, Any]],
-    routes: Sequence[Mapping[str, Any]],
+    _routes: Sequence[Mapping[str, Any]],
     reservations: Mapping[str, int],
     physical_maximum: int,
 ) -> int:
-    """Return remaining physical review slots across matching logical domains."""
-    domains = {str(route.get("capacity_domain") or "") for route in routes}
+    """Return global physical headroom without dropping exhausted domains."""
     busy = sum(
-        len(lane.get("busy", ()))
-        for lane in lanes
-        if domains.intersection(str(value) for value in lane.get("capacity_domains", ()))
+        len(lane.get("busy", ())) for lane in lanes if tuple(lane.get("capacity_domains", ()))
     )
-    reserved = sum(int(reservations.get(domain, 0)) for domain in domains)
+    reserved = sum(max(0, int(count)) for count in reservations.values())
     return max(0, int(physical_maximum) - busy - reserved)
 
 
