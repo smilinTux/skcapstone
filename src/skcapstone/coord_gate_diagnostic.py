@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .card_store import CardStore
 from .review_admission import (
+    card_review_generation_eligibility,
     dependency_blocker_unresolved,
     governed_review_gate_reasons,
     governed_review_metadata,
@@ -51,6 +52,9 @@ def diagnose(home: Path, card_id: str) -> dict[str, object]:
             dependency_blocker_holds=dependency_blocker_unresolved(home, core, card.labels),
         )
     )
+    generation = card_review_generation_eligibility(store, card)
+    if not generation.eligible and generation.reason:
+        reasons.append(generation.reason)
     if "do-not-claim" in labels:
         reasons.append("do-not-claim")
     if card.status.value == "done" or card.archived or card.meta.get("voided"):

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 LOGICAL_REVIEWER_SEATS = frozenset({"link", "mero", "seraph"})
@@ -17,6 +18,142 @@ _COMBINED_BLOCKED_ON_RE = re.compile(
     re.IGNORECASE,
 )
 _CARD_REFERENT_RE = re.compile(r"^card:([0-9a-f]{8})$", re.IGNORECASE)
+_REVIEW_GENERATION_KEYS = (
+    "producer_identity",
+    "candidate_evidence_sha256",
+    "link_source_card",
+    "link_head_revision",
+)
+_OUTCOME_KEY_RE = re.compile(r"verdict|outcome|result|disposition|review_decision", re.IGNORECASE)
+_TERMINAL_REVIEW_RE = re.compile(
+    r"^\s*(?:PASS(?=\s*(?::|$))|FAIL(?=\s*(?::|_|$))|" r"BLOCKED(?=\s|:|_|\||$))",
+    re.IGNORECASE,
+)
+_ITIL_DISPATCH_HOLDS = {
+    "incident": frozenset({"detected"}),
+    "problem": frozenset({"known_error"}),
+}
+
+
+@dataclass(frozen=True)
+class ReviewGenerationEligibility:
+    """Eligibility of the currently bound independent-review generation."""
+
+    applicable: bool
+    eligible: bool
+    reason: str | None = None
+
+
+def _review_generation(values: Mapping[str, object]) -> tuple[str, str, str, str] | None:
+    """Return one fully typed candidate generation, or ``None``."""
+    producer = str(values.get("producer_identity") or "").strip()
+    evidence = str(values.get("candidate_evidence_sha256") or "").strip().lower()
+    source = str(values.get("link_source_card") or "").strip()
+    head = str(values.get("link_head_revision") or "").strip().lower()
+    if (
+        not producer
+        or not source
+        or not _DIGEST_RE.fullmatch(evidence)
+        or not re.fullmatch(r"[0-9a-f]{40}", head)
+    ):
+        return None
+    return producer, evidence, source, head
+
+
+def _review_outcome_value(event: Mapping[str, object]) -> str:
+    """Return an outcome-shaped value from one event, if present."""
+    action = str(event.get("action") or "")
+    if action == "link":
+        if not _OUTCOME_KEY_RE.search(str(event.get("link_key") or "")):
+            return ""
+        return str(event.get("link_value") or "")
+    if action not in {"verdict", "blocked", "evidence"}:
+        return ""
+    for key in ("verdict", "outcome", "result", "disposition", "review_decision", "value"):
+        value = event.get(key)
+        if value is not None:
+            return str(value)
+    return ""
+
+
+def _explicit_itil_dispatch_hold(core: Mapping[str, object]) -> bool:
+    """Return whether a non-task ITIL projection is explicitly parked."""
+    meta = core.get("meta") if isinstance(core.get("meta"), Mapping) else {}
+    raw_kind = core.get("kind") or meta.get("kind")
+    kind = str(getattr(raw_kind, "value", raw_kind) or "").strip().lower()
+    status = str(meta.get("itil_status") or "").strip().lower()
+    return status in _ITIL_DISPATCH_HOLDS.get(kind, ())
+
+
+def review_generation_eligibility(
+    core: Mapping[str, object],
+    labels: Sequence[str],
+    events: Sequence[Mapping[str, object]],
+) -> ReviewGenerationEligibility:
+    """Return whether the current exact review generation may be launched.
+
+    PASS, FAIL-family, BLOCKED, and completion events retire only the fully typed
+    candidate generation present when the event was recorded. Reopening or
+    rewriting the same binding cannot revive it; a different exact binding can.
+    Explicit non-task ITIL workflow holds are also ineligible. Ordinary cards
+    remain outside this gate.
+    """
+    if _explicit_itil_dispatch_hold(core):
+        return ReviewGenerationEligibility(
+            applicable=True,
+            eligible=False,
+            reason="itil-dispatch-hold",
+        )
+    if "review" not in {str(label).strip().lower() for label in labels}:
+        return ReviewGenerationEligibility(applicable=False, eligible=True)
+
+    links = core.get("links") if isinstance(core.get("links"), Mapping) else {}
+    meta = core.get("meta") if isinstance(core.get("meta"), Mapping) else {}
+    values = {key: links.get(key) or meta.get(key) for key in _REVIEW_GENERATION_KEYS}
+    terminal: set[tuple[str, str, str, str]] = set()
+    ordered = sorted(
+        events,
+        key=lambda event: (
+            str(event.get("ts") or ""),
+            str(event.get("writer") or ""),
+            int(event.get("seq") or 0),
+            str(event.get("event_id") or ""),
+        ),
+    )
+    for event in ordered:
+        action = str(event.get("action") or "")
+        if action == "link":
+            key = str(event.get("link_key") or "").strip().lower().replace("-", "_")
+            if key in _REVIEW_GENERATION_KEYS:
+                values[key] = event.get("link_value")
+        generation = _review_generation(values)
+        if generation is None:
+            continue
+        if action == "complete" or _TERMINAL_REVIEW_RE.match(_review_outcome_value(event)):
+            terminal.add(generation)
+
+    current = _review_generation(values)
+    if current is not None and current in terminal:
+        return ReviewGenerationEligibility(
+            applicable=True,
+            eligible=False,
+            reason="terminal-review-generation",
+        )
+    return ReviewGenerationEligibility(applicable=True, eligible=True)
+
+
+def card_review_generation_eligibility(store, card) -> ReviewGenerationEligibility:
+    """Evaluate one folded card against its immutable core and full event union."""
+    raw_core = store._load_core(card.id)  # CardStore has no public raw-core/event reader.
+    if isinstance(raw_core, Mapping):
+        core = dict(raw_core)
+        core.setdefault("links", {})
+        core.setdefault("meta", card.meta)
+    else:
+        core = {"links": card.links, "meta": card.meta}
+    core.setdefault("kind", getattr(card.kind, "value", card.kind))
+    events = [*store._read_events(card.id), *store._legacy_events(card.id)]
+    return review_generation_eligibility(core, card.labels, events)
 
 
 def parse_blocked_on_link(value: object) -> tuple[str, str | None] | None:
@@ -316,9 +453,13 @@ def assert_governed_review_claim(home: Path, card_id: str, agent: str) -> None:
     """Fail closed when a SKCapstone claim bypasses governed review admission."""
     from .card_store import CardStore
 
-    card = CardStore(home).fold(card_id)
+    store = CardStore(home)
+    card = store.fold(card_id)
     if card is None:
         return
+    generation = card_review_generation_eligibility(store, card)
+    if not generation.eligible and generation.reason:
+        raise ValueError("claim denied: " + generation.reason)
     labels = [str(label).strip().lower() for label in card.labels]
     if "review" not in labels:
         return
