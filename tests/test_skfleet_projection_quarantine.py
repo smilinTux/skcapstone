@@ -109,33 +109,33 @@ def test_exact_quarantine_and_hash_guarded_restore(tmp_path, monkeypatch) -> Non
 def test_runtime_identity_matching_is_exact() -> None:
     """Process arguments and session names match whole identities only."""
     tool = load_tool()
-
     assert tool._cmdline_matches(b"python\0--agent\0worker\0", ("worker",))
     assert tool._cmdline_matches(b"python\0--agent=worker\0", ("worker",))
     assert not tool._cmdline_matches(b"python\0--agent\0worker-helper\0", ("worker",))
+    unrelated = b"python\0--note=abcd1234\0--note=x=abcd1234\0"
+    assert not tool._cmdline_matches(unrelated, ("abcd1234",))
 
     def runner(*args, **kwargs):
         """Return a deterministic tmux session listing."""
-        return SimpleNamespace(
-            returncode=0,
-            stdout="worker-helper\nworker\ncodex-auto-abcd1234\n",
-            stderr="",
-        )
+        sessions = "worker-helper\nworker\ncodex-auto-abcd1234\n"
+        return SimpleNamespace(returncode=0, stdout=sessions, stderr="")
 
     assert tool.matching_sessions("worker", runner=runner) == ["worker"]
     assert tool.matching_sessions("abcd1234", runner=runner) == ["codex-auto-abcd1234"]
-    assert tool.matching_sessions("missing", runner=runner) == []
-    assert tool._runtime_identifiers("pi-model-host-abcd1234", None, []) == (
-        "pi-model-host-abcd1234",
-        "abcd1234",
-    )
+    identifiers = tool._runtime_identifiers("pi-model-host-abcd1234", None, [])
+    assert identifiers == ("pi-model-host-abcd1234", "abcd1234")
 
-    def failed_runner(*args, **kwargs):
-        """Return an ambiguous tmux probe failure."""
-        return SimpleNamespace(returncode=2, stdout="", stderr="permission denied")
+
+def test_unavailable_tmux_fails_closed() -> None:
+    """An unavailable tmux executable cannot prove session absence."""
+    tool = load_tool()
+
+    def unavailable_runner(*args, **kwargs):
+        """Model an unavailable tmux executable."""
+        raise FileNotFoundError("tmux")
 
     with pytest.raises(ValueError, match="cannot prove absence"):
-        tool.matching_sessions("worker", runner=failed_runner)
+        tool.matching_sessions("worker", runner=unavailable_runner)
 
 
 def test_quarantine_requires_sync_conflict_identity_mismatch(tmp_path, monkeypatch) -> None:

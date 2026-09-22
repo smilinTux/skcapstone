@@ -1,3 +1,4 @@
-- Card `bc4d12b2`: malformed projection quarantine now checks exact process and
-  tmux-session identities; previously it used substring process matching and did
-  not inspect tmux sessions before moving a hash-fenced sync-conflict record.
+- Card `bc4d12b2`: malformed projection quarantine now recognizes only exact
+  identity-bearing process arguments and fails closed when tmux cannot be
+  probed; previously unrelated assignment suffixes could look live and an
+  unavailable tmux executable was treated as proof that no session existed.

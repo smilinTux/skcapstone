@@ -28,6 +28,12 @@ from pathlib import Path
 RETIRE_AFTER_DAYS = 30
 GLOB = "pi-*.json"
 CONFLICT_MARKER = ".sync-conflict-"
+IDENTITY_ASSIGNMENTS = frozenset(
+    (
+        "--agent --card --owner --session --task --task-id SKAGENT "
+        "SKCAPSTONE_AGENT SKMEMORY_AGENT SKFLEET_CARD_ID SKFLEET_SESSION_ID"
+    ).split()
+)
 
 
 def agents_dir() -> Path:
@@ -62,11 +68,13 @@ def validate_directory_chain(home: Path, *parts: str) -> Path:
 def _cmdline_matches(command: bytes, identifiers: tuple[str, ...]) -> bool:
     """Return whether a command line contains one exact identity argument."""
     arguments = [part.decode(errors="replace") for part in command.split(b"\0") if part]
-    return any(
-        argument == identifier or argument.endswith(f"={identifier}")
-        for argument in arguments
-        for identifier in identifiers
-    )
+    for argument in arguments:
+        if argument in identifiers:
+            return True
+        name, separator, value = argument.partition("=")
+        if separator and name in IDENTITY_ASSIGNMENTS and value in identifiers:
+            return True
+    return False
 
 
 def _is_card_id(value: str) -> bool:
@@ -121,8 +129,6 @@ def matching_sessions(*identifiers: str, runner=subprocess.run) -> list[str]:
             text=True,
             timeout=5,
         )
-    except FileNotFoundError:
-        return []
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ValueError("cannot prove absence of matching live session") from exc
     if result.returncode == 0:
