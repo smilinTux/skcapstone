@@ -64,6 +64,7 @@ from skcapstone.review_admission import (
     governed_review_gate_reasons,
     governed_review_seat,
     qualified_reviewer_seats,
+    review_generation_eligibility,
 )
 from skcapstone.review_verdict import validate_review_completion
 from skcapstone.fleet.review_pool import elastic_reviewer_identity, review_fanout_limit
@@ -4286,15 +4287,11 @@ def awaiting_review(cid):
     return bool(ts and _PASS_RE.match(str(val or "")))
 
 def terminal_review_verdict(cid, core=None):
-    """True when an independent review card already recorded PASS or FAIL."""
+    """True when the current exact review generation is terminal."""
     labels = folded_labels(cid, core or {})
-    if "review" not in {str(label).strip().lower() for label in labels}:
-        return False
-    ts, value = _load_outcomes().get(cid, (None, None))
-    return bool(
-        ts
-        and re.match(r"^\s*(?:PASS\s*(?::|$)|FAIL(?:\s*(?::|$)|_))", str(value or ""), re.I)
-    )
+    return not review_generation_eligibility(
+        core or {}, labels, _outcome_scan_rows(cid)
+    ).eligible
 
 
 def outcome_lifecycle_bucket(lifecycle, historical_review):
@@ -6660,6 +6657,8 @@ def _pool_v2_dispatchable(admission):
     # unchanged blocked_on dependency because dispatchable ignored backoff.
     if overlay.get("backoff") is True:
         return False
+    if overlay.get("terminal_review_generation") is True:
+        return False
     if not _pool_v2_candidate_allowed(admission):
         return False
     cid = admission["card_id"]
@@ -6714,13 +6713,18 @@ def _pool_v2_preclaim_matches(selected, fresh):
 
 def _pool_v2_overlay(cid, core, reason):
     """Capture every non-claimability exclusion used by POOL_V2."""
+    generation = review_generation_eligibility(
+        core, folded_labels(cid, core), _outcome_scan_rows(cid)
+    )
     return {
         "lifecycle": lifecycle_state(cid),
         "itil_terminal": itil_terminal(cid),
         "superseded": cid in _POOL_V2_CLASSES.get("superseded_cards", set()),
         "excluded": cid in _POOL_V2_EXCLUDED,
         "review_readback": cid in _REVIEW_READBACK_BLOCKED,
-        "terminal_review": bool(terminal_review_verdict(cid, core)),
+        "terminal_review": not generation.eligible,
+        "terminal_review_generation": not generation.eligible,
+        "review_generation_reason": generation.reason,
         "awaiting_review": awaiting_review(cid),
         "backoff": blocked_backoff(cid),
         "claim_ceiling": _claim_ceiling_hit(cid),
@@ -6746,6 +6750,7 @@ def _pool_v2_admission(cid, core, claimability, fresh=False):
     # namespaces that stub only _pool_v2_overlay do not NameError.
     overlay = _pool_v2_overlay(cid, core, reason)
     hold = overlay.get("backoff") is True
+    terminal_generation = overlay.get("terminal_review_generation") is True
     seraph_review_admitted = bool(
         globals().get("_ONLY_SEAT", "") == review_seat
         and review_seat is not None
@@ -6754,6 +6759,7 @@ def _pool_v2_admission(cid, core, claimability, fresh=False):
         and claimability.get("claimable") is (reason == "governed-review")
         and governed_review
         and not hold
+        and not terminal_generation
     )
     elastic_review_admitted = bool(
         not globals().get("_ONLY_SEAT", "")
@@ -6763,6 +6769,7 @@ def _pool_v2_admission(cid, core, claimability, fresh=False):
         and review_seat is not None
         and review_status
         and not hold
+        and not terminal_generation
     )
     return {
         "card_id": cid,
@@ -6963,7 +6970,9 @@ def _shadow_pool_v2():
                     lifecycle_excluded=cid in all_excluded and not mapped_exclusion,
                     selector_excluded=(
                         cid in _REVIEW_READBACK_BLOCKED
-                        or terminal_review_verdict(cid, core)
+                        or _POOL_V2_ADMISSIONS[cid]["overlay"].get(
+                            "terminal_review_generation"
+                        )
                         or str(core.get("title") or "").startswith("CMDB drift")
                         or not _pool_v2_candidate_allowed(_POOL_V2_ADMISSIONS[cid])
                     ),
@@ -7621,6 +7630,8 @@ for _cid,_admission in sorted(_POOL_V2_ADMISSIONS.items()):
         capacity_available=_cid not in _lane_deferred_cards,
         dependency_blocker_holds=_overlay.get("backoff") is True,
     )
+    if _overlay.get("review_generation_reason"):
+        _reasons=tuple((*_reasons,_overlay["review_generation_reason"]))
     if _cid in _SEAT_BLOCKED:
         _reasons=tuple((*_reasons,"wrong-seat"))
     if not _pool_v2_dispatchable(_admission) or _reasons:

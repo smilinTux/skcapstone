@@ -8,6 +8,7 @@ from typing import Collection
 
 from .card import Column, Kind
 from .card_store import CardStore
+from .review_admission import card_review_generation_eligibility
 
 _EXCLUDED_LABELS = frozenset({"do-not-claim", "human-gate", "not-claimable", "superseded"})
 _CONTAINER_LABELS = frozenset({"parent-container", "sprint-container"})
@@ -54,7 +55,8 @@ def leaf_eligibility_counts(
         Separate counts for backlog leaves, review work requiring a reviewer,
         and malformed candidate records. Missing dependencies fail closed.
     """
-    cards = CardStore(home).list_cards()
+    store = CardStore(home)
+    cards = store.list_cards()
     by_id = {card.id: card for card in cards}
     parent_ids = {
         label.removeprefix("parent-")
@@ -87,7 +89,8 @@ def leaf_eligibility_counts(
         if not card.id.strip() or card.title.strip().lower() in {"", "x"}:
             malformed += 1
         elif card.status == Column.REVIEW:
-            review += 1
+            generation = card_review_generation_eligibility(store, card)
+            review += int(generation.eligible)
         else:
             leaves += 1
 

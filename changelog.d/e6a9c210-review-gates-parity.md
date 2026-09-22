@@ -1,0 +1,1 @@
+- Card `e6a9c210`: make review eligibility generation-aware across coordination gates, atomic claims, fleet admission, and demand reporting; terminal PASS, FAIL-family, rollback, BLOCKED, completed generations, and explicitly parked ITIL projections previously appeared launchable outside Seraph.
