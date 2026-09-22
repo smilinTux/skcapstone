@@ -36,7 +36,11 @@ from __future__ import annotations
 import glob
 import json
 import re
+from datetime import datetime
 from pathlib import Path
+
+from .card import CardEvent
+from .review_admission import reviewer_candidate_reasons
 
 #: Governed review and rereview cards use either a terminal tag or a tag with an
 #: embedded identifier, for example [REVIEW] or [REREVIEW-119db735].
@@ -67,6 +71,13 @@ _REQUIRED_CI_LINK_KEYS = frozenset(
 _RECEIPT_KEY = "applicability_receipt"
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _HEAD_RE = re.compile(r"[0-9a-f]{40}")
+_SOURCE_ONLY_EVIDENCE_KEYS = frozenset(
+    {"evidence_sha256", "patch_sha256", "review_evidence_sha256", "reviewer_evidence_sha256"}
+)
+_SOURCE_ONLY_EVIDENCE_PATH_KEYS = frozenset({"evidence", "review_evidence"})
+_PR_BINDING_KEY_RE = re.compile(r"(?:^|_)(?:open_)?pr(?:_|$)|pull_request", re.IGNORECASE)
+_EMBEDDED_SHA256_RE = re.compile(r"(?:#|\|)sha256=([0-9a-f]{64})$", re.IGNORECASE)
+_EMBEDDED_SHA256_MARKER_RE = re.compile(r"(?:#|\|)sha256=", re.IGNORECASE)
 
 
 def _is_terminal_verdict(value: str) -> bool:
@@ -159,19 +170,49 @@ def unsuccessful_checks(card_id: str, home: Path) -> list[str]:
 
 
 def _card_events(card_id: str, home: Path):
-    """Yield parsed evidence events, ignoring malformed historical lines."""
+    """Yield canonical overlay events, ignoring malformed historical lines."""
     for path in sorted(glob.glob(str(Path(home) / "coordination" / "card_events" / "*.jsonl"))):
         try:
             with open(path, encoding="utf-8", errors="replace") as handle:
                 for line in handle:
                     try:
                         row = json.loads(line)
-                    except ValueError:
+                        if not isinstance(row, dict) or "ts" not in row:
+                            continue
+                        event = CardEvent.model_validate(row)
+                    except (TypeError, ValueError):
                         continue
-                    if row.get("card_id") == card_id:
-                        yield row
+                    if event.card_id == card_id:
+                        yield event.model_dump()
         except OSError:
             continue
+
+
+def _event_position(row: dict) -> tuple[str, str, int] | None:
+    """Return the exact CardStore order key after validating the timestamp."""
+    stamp = row.get("ts")
+    if not isinstance(stamp, str) or not stamp.strip():
+        return None
+    try:
+        datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return stamp, str(row.get("writer") or ""), int(row.get("seq") or 0)
+
+
+def _normalized_identity(value: object) -> str:
+    """Use the same principal normalization as governed review admission."""
+    return str(value or "").strip().casefold().replace("_", "-")
+
+
+def _has_pr_or_ci_binding(key: object) -> bool:
+    """Return true for a governed pull request or hosted CI binding key."""
+    lowered = str(key or "").strip().lower()
+    return bool(
+        lowered == "hosted_checks"
+        or lowered in _REQUIRED_CI_LINK_KEYS
+        or _PR_BINDING_KEY_RE.search(lowered)
+    )
 
 
 def _source_only_applicability(card_id: str, home: Path) -> bool:
@@ -182,22 +223,83 @@ def _source_only_applicability(card_id: str, home: Path) -> bool:
         )
     except (OSError, ValueError):
         return False
-    labels = core.get("labels", [])
+    labels = {
+        str(label).strip().lower()
+        for label in [
+            *(core.get("labels") or []),
+            *(core.get("initial_labels") or []),
+        ]
+    }
     meta = core.get("meta") if isinstance(core.get("meta"), dict) else {}
-    if not ("source-only" in labels or "source-only" in meta.get("labels", [])):
+    labels.update(str(label).strip().lower() for label in (meta.get("labels") or []))
+
+    overlay_events = list(_card_events(card_id, home))
+    ordered_label_events = []
+    for row in overlay_events:
+        action = row.get("action")
+        label = str(row.get("label") or "").strip().lower()
+        if action not in {"add_label", "remove_label"} or label != "source-only":
+            continue
+        position = _event_position(row)
+        if position is None:
+            return False
+        ordered_label_events.append((position, row))
+    ordered_label_events.sort(key=lambda item: item[0])
+    label_positions: dict[tuple[str, str, int], str] = {}
+    for position, row in ordered_label_events:
+        previous_action = label_positions.setdefault(position, str(row["action"]))
+        if previous_action != row["action"]:
+            return False
+        label = str(row.get("label") or "").strip().lower()
+        if not label:
+            continue
+        if row["action"] == "add_label":
+            labels.add(label)
+        else:
+            labels.discard(label)
+    if "source-only" not in labels:
         return False
-    receipts = []
-    for row in _card_events(card_id, home):
-        key = row.get("link_key") or row.get("key")
+
+    core_links = core.get("links") if isinstance(core.get("links"), dict) else {}
+    expected_heads = {
+        str(value).strip().lower()
+        for value in (
+            core_links.get("link_head_revision"),
+            core_links.get("head_revision"),
+            meta.get("link_head_revision"),
+            meta.get("head_revision"),
+        )
+        if str(value or "").strip()
+    }
+    if len(expected_heads) != 1 or not _HEAD_RE.fullmatch(next(iter(expected_heads), "")):
+        return False
+    expected_head = next(iter(expected_heads))
+
+    producers = {
+        _normalized_identity(value)
+        for value in (core_links.get("producer_identity"), meta.get("producer_identity"))
+        if _normalized_identity(value)
+    }
+    if len(producers) != 1:
+        return False
+    producer = next(iter(producers))
+    for mapping in (core_links, meta):
+        if any(value is not None and _has_pr_or_ci_binding(key) for key, value in mapping.items()):
+            return False
+
+    events = [row for row in overlay_events if row.get("action") == "link"]
+    receipts: list[tuple[dict, dict]] = []
+    for row in events:
+        key = row.get("link_key")
         if key == _RECEIPT_KEY:
             try:
                 value = json.loads(row.get("link_value") or row.get("value") or "")
             except (TypeError, ValueError):
                 return False
-            receipts.append(value)
-    if len(receipts) != 1 or not isinstance(receipts[0], dict):
+            receipts.append((row, value))
+    if len(receipts) != 1 or not isinstance(receipts[0][1], dict):
         return False
-    receipt = receipts[0]
+    receipt_event, receipt = receipts[0]
     required = {"type", "card_id", "source_head", "reviewer", "evidence_digest", "governed_pr_ci"}
     if set(receipt) != required or receipt["type"] != "source-only-applicability":
         return False
@@ -207,12 +309,19 @@ def _source_only_applicability(card_id: str, home: Path) -> bool:
         or not receipt["reviewer"].strip()
     ):
         return False
+    reviewer = receipt["reviewer"].strip()
+    reviewer_identity = _normalized_identity(reviewer)
+    if (
+        not reviewer_identity
+        or _normalized_identity(receipt_event.get("writer")) != reviewer_identity
+        or "producer-self-review" in reviewer_candidate_reasons(reviewer, producer=producer)
+    ):
+        return False
     if not isinstance(receipt["source_head"], str) or not _HEAD_RE.fullmatch(
         receipt["source_head"].lower()
     ):
         return False
-    expected_head = str(meta.get("link_head_revision") or meta.get("head_revision") or "").lower()
-    if expected_head and receipt["source_head"].lower() != expected_head:
+    if receipt["source_head"].lower() != expected_head:
         return False
     if not isinstance(receipt["evidence_digest"], str) or not _SHA256_RE.fullmatch(
         receipt["evidence_digest"].lower()
@@ -220,12 +329,84 @@ def _source_only_applicability(card_id: str, home: Path) -> bool:
         return False
     if receipt["governed_pr_ci"] is not False:
         return False
-    for row in _card_events(card_id, home):
-        key = str(row.get("link_key") or row.get("key") or "").lower()
+    latest_evidence: tuple[tuple[str, str, int], str, str] | None = None
+    latest_evidence_path: tuple[tuple[str, str, int], str, str] | None = None
+    latest_outcome: tuple[tuple[str, str, int], str, str] | None = None
+    for row in events:
+        key = str(row.get("link_key") or "").lower()
         if key == _RECEIPT_KEY:
             continue
-        if key == "hosted_checks" or key == "pr" or key.startswith("pr_") or "pull_request" in key:
+        value = str(row.get("link_value") or row.get("value") or "")
+        if _has_pr_or_ci_binding(key):
             return False
+        position = _event_position(row)
+        writer = _normalized_identity(row.get("writer"))
+        is_evidence = key in _SOURCE_ONLY_EVIDENCE_KEYS
+        is_evidence_path = key in _SOURCE_ONLY_EVIDENCE_PATH_KEYS
+        is_outcome = bool(_OUTCOME_KEY_RE.search(key))
+        if position is None and (is_evidence or is_evidence_path or is_outcome):
+            return False
+        if position is None:
+            continue
+        if is_evidence:
+            candidate = (position, value.lower(), writer)
+            if latest_evidence is not None and candidate[0] == latest_evidence[0]:
+                if candidate[1:] != latest_evidence[1:]:
+                    return False
+            if latest_evidence is None or candidate[0] >= latest_evidence[0]:
+                latest_evidence = candidate
+        if is_evidence_path:
+            candidate_path = (position, value.strip(), writer)
+            if latest_evidence_path is not None and candidate_path[0] == latest_evidence_path[0]:
+                if candidate_path[1:] != latest_evidence_path[1:]:
+                    return False
+            if latest_evidence_path is None or candidate_path[0] >= latest_evidence_path[0]:
+                latest_evidence_path = candidate_path
+            digest_markers = _EMBEDDED_SHA256_MARKER_RE.findall(value.strip())
+            embedded_digest = _EMBEDDED_SHA256_RE.search(value.strip())
+            if digest_markers and (len(digest_markers) != 1 or embedded_digest is None):
+                return False
+            if embedded_digest is not None:
+                candidate = (position, embedded_digest.group(1).lower(), writer)
+                if latest_evidence is not None and candidate[0] == latest_evidence[0]:
+                    if candidate[1:] != latest_evidence[1:]:
+                        return False
+                if latest_evidence is None or candidate[0] >= latest_evidence[0]:
+                    latest_evidence = candidate
+        if is_outcome:
+            candidate_outcome = (position, value, writer)
+            if latest_outcome is not None and candidate_outcome[0] == latest_outcome[0]:
+                if candidate_outcome[1:] != latest_outcome[1:]:
+                    return False
+            if latest_outcome is None or candidate_outcome[0] >= latest_outcome[0]:
+                latest_outcome = candidate_outcome
+    if (
+        latest_evidence is None
+        or latest_evidence[1] != receipt["evidence_digest"].lower()
+        or latest_evidence[2] != reviewer_identity
+    ):
+        return False
+    if (
+        latest_evidence_path is None
+        or not latest_evidence_path[1]
+        or latest_evidence_path[2] != reviewer_identity
+    ):
+        return False
+    linked_digest = _EMBEDDED_SHA256_RE.search(latest_evidence_path[1])
+    if linked_digest is not None:
+        if linked_digest.group(1).lower() != receipt["evidence_digest"].lower():
+            return False
+    if (
+        latest_outcome is None
+        or latest_outcome[1] != "PASS"
+        or latest_outcome[2] != reviewer_identity
+    ):
+        return False
+    receipt_position = _event_position(receipt_event)
+    if receipt_position is None or receipt_position <= max(
+        latest_evidence[0], latest_evidence_path[0], latest_outcome[0]
+    ):
+        return False
     return True
 
 

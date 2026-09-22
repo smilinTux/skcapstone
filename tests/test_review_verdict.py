@@ -27,20 +27,36 @@ _SUCCESSFUL_CI = (
 )
 
 
-def _home(tmp_path, card_id, title, links=(), meta=None):
+def _home(tmp_path, card_id, title, links=(), meta=None, labels=(), core_links=None):
     card = tmp_path / "cards" / card_id
     card.mkdir(parents=True)
-    (card / "core.json").write_text(json.dumps({"title": title, "meta": meta or {}}))
+    (card / "core.json").write_text(
+        json.dumps(
+            {
+                "title": title,
+                "meta": meta or {},
+                "initial_labels": list(labels),
+                "links": core_links or {},
+            }
+        )
+    )
     ev = tmp_path / "coordination" / "card_events"
     ev.mkdir(parents=True)
-    rows = [
-        # the REAL shape the evidence store writes: link_key / link_value.
-        # Fixtures using key/value passed while the module was broken.
-        json.dumps(
-            {"card_id": card_id, "action": "link", "link_key": k, "link_value": v, "ts": ts}
+    rows = []
+    for link in links:
+        k, v, ts, *writer = link
+        rows.append(
+            json.dumps(
+                {
+                    "card_id": card_id,
+                    "action": "link",
+                    "link_key": k,
+                    "link_value": v,
+                    "ts": ts,
+                    "writer": writer[0] if writer else "fixture-writer",
+                }
+            )
         )
-        for k, v, ts in links
-    ]
     (ev / "host.jsonl").write_text("\n".join(rows))
     return tmp_path
 
@@ -77,15 +93,343 @@ def test_source_only_applicability_receipt_replaces_hosted_ci(tmp_path):
         "239b24bf",
         "[REVIEW] source-only",
         [
-            ("verdict", "PASS", "2026-08-28T03:00:00"),
-            ("applicability_receipt", receipt, "2026-08-28T03:01:00"),
+            ("verdict", "PASS", "2026-08-28T03:00:00", "reviewer@example"),
+            ("evidence", "review.md", "2026-08-28T03:01:00", "reviewer@example"),
+            ("patch_sha256", "a" * 64, "2026-08-28T03:02:00", "reviewer@example"),
+            ("applicability_receipt", receipt, "2026-08-28T03:03:00", "reviewer@example"),
         ],
-        meta={"labels": ["source-only"], "link_head_revision": head},
+        meta={"link_head_revision": head, "producer_identity": "producer@example"},
+        labels=["source-only"],
     )
     validate_review_completion("239b24bf", "[REVIEW] source-only", home)
 
 
-def test_source_only_receipt_is_rejected_when_pr_bound(tmp_path):
+def test_source_only_supported_label_and_embedded_digest_activate_receipt(tmp_path):
+    head = "2" * 40
+    digest = "a" * 64
+    receipt = json.dumps(
+        {
+            "type": "source-only-applicability",
+            "card_id": "239b24bf",
+            "source_head": head,
+            "reviewer": "reviewer@example",
+            "evidence_digest": digest,
+            "governed_pr_ci": False,
+        },
+        sort_keys=True,
+    )
+    home = _home(
+        tmp_path,
+        "239b24bf",
+        "[REVIEW] source-only",
+        [
+            ("verdict", "PASS", "2026-08-28T03:00:00", "reviewer@example"),
+            (
+                "evidence",
+                f"review.md|sha256={digest}",
+                "2026-08-28T03:01:00",
+                "reviewer@example",
+            ),
+            ("applicability_receipt", receipt, "2026-08-28T03:03:00", "reviewer@example"),
+        ],
+        meta={"link_head_revision": head, "producer_identity": "producer@example"},
+    )
+    event_path = home / "coordination" / "card_events" / "host.jsonl"
+    with event_path.open("a") as handle:
+        handle.write(
+            "\n"
+            + json.dumps(
+                {
+                    "card_id": "239b24bf",
+                    "action": "add_label",
+                    "label": "source-only",
+                    "ts": "2026-08-28T02:59:00",
+                    "writer": "coordinator@example",
+                }
+            )
+        )
+    validate_review_completion("239b24bf", "[REVIEW] source-only", home)
+
+
+def test_source_only_supported_remove_label_disables_receipt(tmp_path):
+    head = "2" * 40
+    digest = "a" * 64
+    receipt = json.dumps(
+        {
+            "type": "source-only-applicability",
+            "card_id": "239b24bf",
+            "source_head": head,
+            "reviewer": "reviewer@example",
+            "evidence_digest": digest,
+            "governed_pr_ci": False,
+        },
+        sort_keys=True,
+    )
+    home = _home(
+        tmp_path,
+        "239b24bf",
+        "[REVIEW] source-only",
+        [
+            ("verdict", "PASS", "2026-08-28T03:00:00", "reviewer@example"),
+            (
+                "evidence",
+                f"review.md|sha256={digest}",
+                "2026-08-28T03:01:00",
+                "reviewer@example",
+            ),
+            ("applicability_receipt", receipt, "2026-08-28T03:03:00", "reviewer@example"),
+        ],
+        meta={"link_head_revision": head, "producer_identity": "producer@example"},
+        labels=["source-only"],
+    )
+    event_path = home / "coordination" / "card_events" / "host.jsonl"
+    with event_path.open("a") as handle:
+        handle.write(
+            "\n"
+            + json.dumps(
+                {
+                    "card_id": "239b24bf",
+                    "action": "remove_label",
+                    "label": "source-only",
+                    "ts": "2026-08-28T03:04:00",
+                    "writer": "coordinator@example",
+                }
+            )
+        )
+    with pytest.raises(ValueError, match="required checks"):
+        validate_review_completion("239b24bf", "[REVIEW] source-only", home)
+
+
+@pytest.mark.parametrize("remove_timestamp", ["not-a-time", "2026-08-28T03:04:00"])
+def test_source_only_ambiguous_or_invalid_remove_label_fails_closed(tmp_path, remove_timestamp):
+    head = "2" * 40
+    digest = "a" * 64
+    receipt = json.dumps(
+        {
+            "type": "source-only-applicability",
+            "card_id": "239b24bf",
+            "source_head": head,
+            "reviewer": "reviewer@example",
+            "evidence_digest": digest,
+            "governed_pr_ci": False,
+        },
+        sort_keys=True,
+    )
+    home = _home(
+        tmp_path,
+        "239b24bf",
+        "[REVIEW] source-only",
+        [
+            ("verdict", "PASS", "2026-08-28T03:00:00", "reviewer@example"),
+            ("evidence", "review.md", "2026-08-28T03:01:00", "reviewer@example"),
+            ("patch_sha256", digest, "2026-08-28T03:02:00", "reviewer@example"),
+            ("applicability_receipt", receipt, "2026-08-28T03:03:00", "reviewer@example"),
+        ],
+        meta={"link_head_revision": head, "producer_identity": "producer@example"},
+        labels=["source-only"],
+    )
+    event_path = home / "coordination" / "card_events" / "host.jsonl"
+    events = [
+        {
+            "card_id": "239b24bf",
+            "action": "remove_label",
+            "label": "source-only",
+            "ts": remove_timestamp,
+            "writer": "coordinator@example",
+            "seq": 1,
+        }
+    ]
+    if remove_timestamp != "not-a-time":
+        events.insert(
+            0,
+            {
+                "card_id": "239b24bf",
+                "action": "add_label",
+                "label": "source-only",
+                "ts": remove_timestamp,
+                "writer": "coordinator@example",
+                "seq": 1,
+            },
+        )
+    with event_path.open("a") as handle:
+        for event in events:
+            handle.write("\n" + json.dumps(event))
+    with pytest.raises(ValueError, match="required checks"):
+        validate_review_completion("239b24bf", "[REVIEW] source-only", home)
+
+
+def test_source_only_label_fold_uses_cardstore_raw_timestamp_order(tmp_path):
+    head = "2" * 40
+    digest = "a" * 64
+    receipt = json.dumps(
+        {
+            "type": "source-only-applicability",
+            "card_id": "239b24bf",
+            "source_head": head,
+            "reviewer": "reviewer@example",
+            "evidence_digest": digest,
+            "governed_pr_ci": False,
+        },
+        sort_keys=True,
+    )
+    home = _home(
+        tmp_path,
+        "239b24bf",
+        "[REVIEW] source-only",
+        [
+            ("verdict", "PASS", "2026-08-28T03:30:00+00:00", "reviewer@example"),
+            ("evidence", "review.md", "2026-08-28T03:31:00+00:00", "reviewer@example"),
+            ("patch_sha256", digest, "2026-08-28T03:32:00+00:00", "reviewer@example"),
+            (
+                "applicability_receipt",
+                receipt,
+                "2026-08-28T04:00:00+00:00",
+                "reviewer@example",
+            ),
+        ],
+        meta={"link_head_revision": head, "producer_identity": "producer@example"},
+    )
+    event_path = home / "coordination" / "card_events" / "host.jsonl"
+    with event_path.open("a") as handle:
+        for event in (
+            {
+                "card_id": "239b24bf",
+                "action": "add_label",
+                "label": "source-only",
+                "ts": "2026-08-28T02:30:00-01:00",
+                "writer": "coordinator@example",
+            },
+            {
+                "card_id": "239b24bf",
+                "action": "remove_label",
+                "label": "source-only",
+                "ts": "2026-08-28T03:00:00+00:00",
+                "writer": "coordinator@example",
+            },
+        ):
+            handle.write("\n" + json.dumps(event))
+    with pytest.raises(ValueError, match="required checks"):
+        validate_review_completion("239b24bf", "[REVIEW] source-only", home)
+
+
+def test_source_only_evidence_fold_uses_cardstore_raw_timestamp_order(tmp_path):
+    head = "2" * 40
+    digest = "a" * 64
+    receipt = json.dumps(
+        {
+            "type": "source-only-applicability",
+            "card_id": "239b24bf",
+            "source_head": head,
+            "reviewer": "reviewer@example",
+            "evidence_digest": digest,
+            "governed_pr_ci": False,
+        },
+        sort_keys=True,
+    )
+    home = _home(
+        tmp_path,
+        "239b24bf",
+        "[REVIEW] source-only",
+        [
+            ("verdict", "PASS", "2026-08-28T03:30:00+00:00", "reviewer@example"),
+            ("evidence", "review.md", "2026-08-28T03:31:00+00:00", "reviewer@example"),
+            ("patch_sha256", digest, "2026-08-28T02:30:00-01:00", "reviewer@example"),
+            ("patch_sha256", "b" * 64, "2026-08-28T03:00:00+00:00", "reviewer@example"),
+            (
+                "applicability_receipt",
+                receipt,
+                "2026-08-28T04:00:00+00:00",
+                "reviewer@example",
+            ),
+        ],
+        meta={"link_head_revision": head, "producer_identity": "producer@example"},
+        labels=["source-only"],
+    )
+    with pytest.raises(ValueError, match="required checks"):
+        validate_review_completion("239b24bf", "[REVIEW] source-only", home)
+
+
+@pytest.mark.parametrize(
+    "evidence_path",
+    [
+        "review.md|sha256=bogus",
+        "review.md#sha256=bogus",
+        f"review.md|sha256={'a' * 64}#sha256={'a' * 64}",
+    ],
+)
+def test_source_only_malformed_or_duplicate_digest_marker_fails_closed(tmp_path, evidence_path):
+    head = "2" * 40
+    digest = "a" * 64
+    receipt = json.dumps(
+        {
+            "type": "source-only-applicability",
+            "card_id": "239b24bf",
+            "source_head": head,
+            "reviewer": "reviewer@example",
+            "evidence_digest": digest,
+            "governed_pr_ci": False,
+        },
+        sort_keys=True,
+    )
+    home = _home(
+        tmp_path,
+        "239b24bf",
+        "[REVIEW] source-only",
+        [
+            ("verdict", "PASS", "2026-08-28T03:00:00", "reviewer@example"),
+            ("evidence", evidence_path, "2026-08-28T03:01:00", "reviewer@example"),
+            ("patch_sha256", digest, "2026-08-28T03:02:00", "reviewer@example"),
+            ("applicability_receipt", receipt, "2026-08-28T03:03:00", "reviewer@example"),
+        ],
+        meta={"link_head_revision": head, "producer_identity": "producer@example"},
+        labels=["source-only"],
+    )
+    with pytest.raises(ValueError, match="required checks"):
+        validate_review_completion("239b24bf", "[REVIEW] source-only", home)
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("patch_sha256", "b" * 64),
+        ("evidence", "conflicting-review.md"),
+        ("verdict", "PASS"),
+    ],
+)
+def test_source_only_invalid_timestamp_support_mutation_fails_closed(tmp_path, key, value):
+    head = "2" * 40
+    digest = "a" * 64
+    receipt = json.dumps(
+        {
+            "type": "source-only-applicability",
+            "card_id": "239b24bf",
+            "source_head": head,
+            "reviewer": "reviewer@example",
+            "evidence_digest": digest,
+            "governed_pr_ci": False,
+        },
+        sort_keys=True,
+    )
+    home = _home(
+        tmp_path,
+        "239b24bf",
+        "[REVIEW] source-only",
+        [
+            ("verdict", "PASS", "2026-08-28T03:00:00", "reviewer@example"),
+            ("evidence", "review.md", "2026-08-28T03:01:00", "reviewer@example"),
+            ("patch_sha256", digest, "2026-08-28T03:02:00", "reviewer@example"),
+            ("applicability_receipt", receipt, "2026-08-28T03:03:00", "reviewer@example"),
+            (key, value, "not-a-time", "reviewer@example"),
+        ],
+        meta={"link_head_revision": head, "producer_identity": "producer@example"},
+        labels=["source-only"],
+    )
+    with pytest.raises(ValueError, match="required checks"):
+        validate_review_completion("239b24bf", "[REVIEW] source-only", home)
+
+
+@pytest.mark.parametrize("binding_key", ["pr", "open_pr"])
+def test_source_only_receipt_is_rejected_when_pr_bound(tmp_path, binding_key):
     head = "3" * 40
     receipt = json.dumps(
         {
@@ -103,14 +447,340 @@ def test_source_only_receipt_is_rejected_when_pr_bound(tmp_path):
         "7c1f0a2e",
         "[REVIEW] source-only",
         [
-            ("verdict", "PASS", "2026-08-28T03:00:00"),
-            ("applicability_receipt", receipt, "2026-08-28T03:01:00"),
-            ("pr", "https://example.invalid/p/1", "2026-08-28T03:02:00"),
+            ("verdict", "PASS", "2026-08-28T03:00:00", "reviewer@example"),
+            ("evidence", "review.md", "2026-08-28T03:01:00", "reviewer@example"),
+            ("evidence_sha256", "b" * 64, "2026-08-28T03:02:00", "reviewer@example"),
+            ("applicability_receipt", receipt, "2026-08-28T03:03:00", "reviewer@example"),
+            (binding_key, "https://example.invalid/p/1", "2026-08-28T03:04:00"),
         ],
-        meta={"labels": ["source-only"], "link_head_revision": head},
+        meta={"link_head_revision": head, "producer_identity": "producer@example"},
+        labels=["source-only"],
     )
     with pytest.raises(ValueError, match="required checks"):
         validate_review_completion("7c1f0a2e", "[REVIEW] source-only", home)
+
+
+@pytest.mark.parametrize(
+    ("receipt_update", "event_writer", "evidence_digest"),
+    [
+        ({"source_head": "4" * 40}, "reviewer@example", "a" * 64),
+        ({"reviewer": "producer@example"}, "producer@example", "a" * 64),
+        ({}, "forged@example", "a" * 64),
+        ({"evidence_digest": "b" * 64}, "reviewer@example", "a" * 64),
+        ({"governed_pr_ci": True}, "reviewer@example", "a" * 64),
+    ],
+)
+def test_source_only_receipt_rejects_stale_or_forged_bindings(
+    tmp_path, receipt_update, event_writer, evidence_digest
+):
+    head = "2" * 40
+    receipt_data = {
+        "type": "source-only-applicability",
+        "card_id": "239b24bf",
+        "source_head": head,
+        "reviewer": "reviewer@example",
+        "evidence_digest": "a" * 64,
+        "governed_pr_ci": False,
+    }
+    receipt_data.update(receipt_update)
+    home = _home(
+        tmp_path,
+        "239b24bf",
+        "[REVIEW] source-only",
+        [
+            ("verdict", "PASS", "2026-08-28T03:00:00", "reviewer@example"),
+            ("evidence", "review.md", "2026-08-28T03:01:00", "reviewer@example"),
+            ("evidence_sha256", evidence_digest, "2026-08-28T03:02:00", "reviewer@example"),
+            (
+                "applicability_receipt",
+                json.dumps(receipt_data, sort_keys=True),
+                "2026-08-28T03:03:00",
+                event_writer,
+            ),
+        ],
+        meta={"link_head_revision": head, "producer_identity": "producer@example"},
+        labels=["source-only"],
+    )
+    with pytest.raises(ValueError, match="required checks"):
+        validate_review_completion("239b24bf", "[REVIEW] source-only", home)
+
+
+def test_source_only_receipt_rejects_duplicate_or_stale_append(tmp_path):
+    head = "2" * 40
+    receipt = json.dumps(
+        {
+            "type": "source-only-applicability",
+            "card_id": "239b24bf",
+            "source_head": head,
+            "reviewer": "reviewer@example",
+            "evidence_digest": "a" * 64,
+            "governed_pr_ci": False,
+        },
+        sort_keys=True,
+    )
+    home = _home(
+        tmp_path,
+        "239b24bf",
+        "[REVIEW] source-only",
+        [
+            ("verdict", "PASS", "2026-08-28T03:00:00", "reviewer@example"),
+            ("evidence", "review.md", "2026-08-28T03:01:00", "reviewer@example"),
+            ("applicability_receipt", receipt, "2026-08-28T03:02:00", "reviewer@example"),
+            ("evidence_sha256", "a" * 64, "2026-08-28T03:03:00", "reviewer@example"),
+            ("applicability_receipt", receipt, "2026-08-28T03:04:00", "reviewer@example"),
+        ],
+        meta={"link_head_revision": head, "producer_identity": "producer@example"},
+        labels=["source-only"],
+    )
+    with pytest.raises(ValueError, match="required checks"):
+        validate_review_completion("239b24bf", "[REVIEW] source-only", home)
+
+
+def test_source_only_receipt_rejects_pr_binding_in_card_metadata(tmp_path):
+    head = "2" * 40
+    receipt = json.dumps(
+        {
+            "type": "source-only-applicability",
+            "card_id": "239b24bf",
+            "source_head": head,
+            "reviewer": "reviewer@example",
+            "evidence_digest": "a" * 64,
+            "governed_pr_ci": False,
+        },
+        sort_keys=True,
+    )
+    home = _home(
+        tmp_path,
+        "239b24bf",
+        "[REVIEW] source-only",
+        [
+            ("verdict", "PASS", "2026-08-28T03:00:00", "reviewer@example"),
+            ("evidence", "review.md", "2026-08-28T03:01:00", "reviewer@example"),
+            ("evidence_sha256", "a" * 64, "2026-08-28T03:02:00", "reviewer@example"),
+            ("applicability_receipt", receipt, "2026-08-28T03:03:00", "reviewer@example"),
+        ],
+        meta={
+            "link_head_revision": head,
+            "producer_identity": "producer@example",
+            "pull_request": "https://example.invalid/p/1",
+        },
+        labels=["source-only"],
+    )
+    with pytest.raises(ValueError, match="required checks"):
+        validate_review_completion("239b24bf", "[REVIEW] source-only", home)
+
+
+@pytest.mark.parametrize("binding_key", ["open_pr", "pr_head", "pull_request"])
+def test_source_only_receipt_rejects_pr_binding_in_core_links(tmp_path, binding_key):
+    head = "2" * 40
+    receipt = json.dumps(
+        {
+            "type": "source-only-applicability",
+            "card_id": "239b24bf",
+            "source_head": head,
+            "reviewer": "reviewer@example",
+            "evidence_digest": "a" * 64,
+            "governed_pr_ci": False,
+        },
+        sort_keys=True,
+    )
+    home = _home(
+        tmp_path,
+        "239b24bf",
+        "[REVIEW] source-only",
+        [
+            ("verdict", "PASS", "2026-08-28T03:00:00", "reviewer@example"),
+            ("evidence", "review.md", "2026-08-28T03:01:00", "reviewer@example"),
+            ("patch_sha256", "a" * 64, "2026-08-28T03:02:00", "reviewer@example"),
+            ("applicability_receipt", receipt, "2026-08-28T03:03:00", "reviewer@example"),
+        ],
+        meta={"producer_identity": "producer@example"},
+        labels=["source-only"],
+        core_links={"link_head_revision": head, binding_key: "https://example.invalid/p/1"},
+    )
+    with pytest.raises(ValueError, match="required checks"):
+        validate_review_completion("239b24bf", "[REVIEW] source-only", home)
+
+
+def test_source_only_receipt_requires_authoritative_head(tmp_path):
+    receipt = json.dumps(
+        {
+            "type": "source-only-applicability",
+            "card_id": "239b24bf",
+            "source_head": "2" * 40,
+            "reviewer": "reviewer@example",
+            "evidence_digest": "a" * 64,
+            "governed_pr_ci": False,
+        },
+        sort_keys=True,
+    )
+    home = _home(
+        tmp_path,
+        "239b24bf",
+        "[REVIEW] source-only",
+        [
+            ("verdict", "PASS", "2026-08-28T03:00:00", "reviewer@example"),
+            ("evidence", "review.md", "2026-08-28T03:01:00", "reviewer@example"),
+            ("patch_sha256", "a" * 64, "2026-08-28T03:02:00", "reviewer@example"),
+            ("applicability_receipt", receipt, "2026-08-28T03:03:00", "reviewer@example"),
+        ],
+        meta={"producer_identity": "producer@example"},
+        labels=["source-only"],
+    )
+    with pytest.raises(ValueError, match="required checks"):
+        validate_review_completion("239b24bf", "[REVIEW] source-only", home)
+
+
+@pytest.mark.parametrize(
+    ("producer", "evidence_writer"),
+    [
+        ("Reviewer_Example", "reviewer-example"),
+        ("producer@example", "producer@example"),
+    ],
+)
+def test_source_only_receipt_rejects_same_principal_or_foreign_evidence(
+    tmp_path, producer, evidence_writer
+):
+    head = "2" * 40
+    receipt = json.dumps(
+        {
+            "type": "source-only-applicability",
+            "card_id": "239b24bf",
+            "source_head": head,
+            "reviewer": "reviewer_example",
+            "evidence_digest": "a" * 64,
+            "governed_pr_ci": False,
+        },
+        sort_keys=True,
+    )
+    home = _home(
+        tmp_path,
+        "239b24bf",
+        "[REVIEW] source-only",
+        [
+            ("verdict", "PASS", "2026-08-28T03:00:00", "reviewer-example"),
+            ("evidence", "review.md", "2026-08-28T03:01:00", evidence_writer),
+            ("patch_sha256", "a" * 64, "2026-08-28T03:02:00", evidence_writer),
+            ("applicability_receipt", receipt, "2026-08-28T03:03:00", "reviewer-example"),
+        ],
+        meta={"link_head_revision": head, "producer_identity": producer},
+        labels=["source-only"],
+    )
+    with pytest.raises(ValueError, match="required checks"):
+        validate_review_completion("239b24bf", "[REVIEW] source-only", home)
+
+
+def test_source_only_receipt_uses_governed_seat_independence(tmp_path):
+    head = "2" * 40
+    receipt = json.dumps(
+        {
+            "type": "source-only-applicability",
+            "card_id": "239b24bf",
+            "source_head": head,
+            "reviewer": "pi-seraph-reviewer",
+            "evidence_digest": "a" * 64,
+            "governed_pr_ci": False,
+        },
+        sort_keys=True,
+    )
+    home = _home(
+        tmp_path,
+        "239b24bf",
+        "[REVIEW] source-only",
+        [
+            ("verdict", "PASS", "2026-08-28T03:00:00", "pi-seraph-reviewer"),
+            ("evidence", "review.md", "2026-08-28T03:01:00", "pi-seraph-reviewer"),
+            ("patch_sha256", "a" * 64, "2026-08-28T03:02:00", "pi-seraph-reviewer"),
+            (
+                "applicability_receipt",
+                receipt,
+                "2026-08-28T03:03:00",
+                "pi-seraph-reviewer",
+            ),
+        ],
+        meta={"link_head_revision": head, "producer_identity": "pi-seraph-producer"},
+        labels=["source-only"],
+    )
+    with pytest.raises(ValueError, match="required checks"):
+        validate_review_completion("239b24bf", "[REVIEW] source-only", home)
+
+
+@pytest.mark.parametrize(
+    "malformation",
+    [
+        "wrong_action",
+        "missing_timestamp",
+        "equal_timestamp",
+        "invalid_pr_timestamp",
+        "conflicting_digest_timestamp",
+    ],
+)
+def test_source_only_receipt_rejects_malformed_or_unordered_events(tmp_path, malformation):
+    head = "2" * 40
+    receipt = json.dumps(
+        {
+            "type": "source-only-applicability",
+            "card_id": "239b24bf",
+            "source_head": head,
+            "reviewer": "reviewer@example",
+            "evidence_digest": "a" * 64,
+            "governed_pr_ci": False,
+        },
+        sort_keys=True,
+    )
+    home = _home(
+        tmp_path,
+        "239b24bf",
+        "[REVIEW] source-only",
+        [
+            ("verdict", "PASS", "2026-08-28T03:00:00", "reviewer@example"),
+            ("evidence", "review.md", "2026-08-28T03:01:00", "reviewer@example"),
+            ("patch_sha256", "a" * 64, "2026-08-28T03:02:00", "reviewer@example"),
+            (
+                "applicability_receipt",
+                receipt,
+                (
+                    "2026-08-28T03:02:00"
+                    if malformation == "equal_timestamp"
+                    else "2026-08-28T03:03:00"
+                ),
+                "reviewer@example",
+            ),
+        ],
+        meta={"link_head_revision": head, "producer_identity": "producer@example"},
+        labels=["source-only"],
+    )
+    event_path = home / "coordination" / "card_events" / "host.jsonl"
+    rows = [json.loads(line) for line in event_path.read_text().splitlines()]
+    if malformation == "wrong_action":
+        rows[-1]["action"] = "verdict"
+    elif malformation == "missing_timestamp":
+        rows[-1].pop("ts")
+    elif malformation == "invalid_pr_timestamp":
+        rows.append(
+            {
+                "card_id": "239b24bf",
+                "action": "link",
+                "link_key": "open_pr",
+                "link_value": "https://example.invalid/p/1",
+                "ts": "not-a-time",
+                "writer": "reviewer@example",
+            }
+        )
+    elif malformation == "conflicting_digest_timestamp":
+        rows.append(
+            {
+                "card_id": "239b24bf",
+                "action": "link",
+                "link_key": "patch_sha256",
+                "link_value": "b" * 64,
+                "ts": "2026-08-28T03:02:00",
+                "writer": "reviewer@example",
+            }
+        )
+    event_path.write_text("\n".join(json.dumps(row) for row in rows))
+    with pytest.raises(ValueError, match="required checks"):
+        validate_review_completion("239b24bf", "[REVIEW] source-only", home)
 
 
 @pytest.mark.parametrize(
