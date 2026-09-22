@@ -28,11 +28,9 @@ from pathlib import Path
 RETIRE_AFTER_DAYS = 30
 GLOB = "pi-*.json"
 CONFLICT_MARKER = ".sync-conflict-"
-IDENTITY_ASSIGNMENTS = frozenset(
-    (
-        "--agent --card --owner --session --task --task-id SKAGENT "
-        "SKCAPSTONE_AGENT SKMEMORY_AGENT SKFLEET_CARD_ID SKFLEET_SESSION_ID"
-    ).split()
+IDENTITY_FLAGS = frozenset("--agent --card --owner --session".split())
+IDENTITY_ASSIGNMENTS = IDENTITY_FLAGS | frozenset(
+    ("SKAGENT SKCAPSTONE_AGENT SKMEMORY_AGENT SKFLEET_CARD_ID " "SKFLEET_SESSION_ID").split()
 )
 
 
@@ -68,8 +66,12 @@ def validate_directory_chain(home: Path, *parts: str) -> Path:
 def _cmdline_matches(command: bytes, identifiers: tuple[str, ...]) -> bool:
     """Return whether a command line contains one exact identity argument."""
     arguments = [part.decode(errors="replace") for part in command.split(b"\0") if part]
-    for argument in arguments:
-        if argument in identifiers:
+    for index, argument in enumerate(arguments):
+        if (
+            argument in IDENTITY_FLAGS
+            and arguments[index + 1 : index + 2]
+            and arguments[index + 1] in identifiers
+        ):
             return True
         name, separator, value = argument.partition("=")
         if separator and name in IDENTITY_ASSIGNMENTS and value in identifiers:

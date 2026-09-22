@@ -111,9 +111,8 @@ def test_runtime_identity_matching_is_exact() -> None:
     tool = load_tool()
     assert tool._cmdline_matches(b"python\0--agent\0worker\0", ("worker",))
     assert tool._cmdline_matches(b"python\0--agent=worker\0", ("worker",))
-    assert not tool._cmdline_matches(b"python\0--agent\0worker-helper\0", ("worker",))
-    unrelated = b"python\0--note=abcd1234\0--note=x=abcd1234\0"
-    assert not tool._cmdline_matches(unrelated, ("abcd1234",))
+    bad = b"--agent\0worker-helper\0--note\0abcd1234\0--note=x=abcd1234"
+    assert not tool._cmdline_matches(bad, ("abcd1234", "worker"))
 
     def runner(*args, **kwargs):
         """Return a deterministic tmux session listing."""
