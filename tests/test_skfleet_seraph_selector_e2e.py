@@ -434,6 +434,8 @@ cycle("replay", "seraph")
             "SKFLEET_ESC_TARGET": "0",
             "SKFLEET_SEAT_TARGET": "2",
             "SKFLEET_CODEX_PHYSICAL_LIMIT": "3",
+            "SKFLEET_CODEX_CAPACITY_DOMAINS": "provider-alpha,provider-beta",
+            "SKFLEET_ESC_CAPACITY_DOMAINS": "provider-alpha,provider-beta",
             "SKFLEET_MAX_LAUNCH": "2",
             "SKFLEET_PI_CARDSTORE_GUARD": str(
                 ROOT / "scripts" / "fleet" / "pi-cardstore-guard.mjs"
@@ -721,8 +723,10 @@ print(output.getvalue(), end="")
             "SKFLEET_GLM_TARGET": "0",
             "SKFLEET_QWEN_TARGET": "0",
             "SKFLEET_KIMI_TARGET": "0",
-            "SKFLEET_ESC_TARGET": "1",
+            "SKFLEET_ESC_TARGET": "2",
             "SKFLEET_CODEX_PHYSICAL_LIMIT": "3",
+            "SKFLEET_CODEX_CAPACITY_DOMAINS": "provider-alpha,provider-beta",
+            "SKFLEET_ESC_CAPACITY_DOMAINS": "provider-alpha,provider-beta",
             "SKFLEET_MAX_LAUNCH": "3",
             "SKFLEET_REVIEW_MAXIMUM": "2",
             "SKFLEET_PI_CARDSTORE_GUARD": str(
@@ -757,7 +761,7 @@ print(output.getvalue(), end="")
     assert completed.returncode == 0, completed.stderr
     assert env["SKFLEET_GLM_TARGET"] == env["SKFLEET_QWEN_TARGET"] == "0"
     assert env["SKFLEET_KIMI_TARGET"] == "0"
-    assert env["SKFLEET_ESC_TARGET"] == "1"
+    assert env["SKFLEET_ESC_TARGET"] == "2"
     assert "reason=foreign-hash-partition" not in completed.stdout
     first_blocked = "WORKSPACE_BLOCKED|chiap08|1280a113|"
     second_blocked = "WORKSPACE_BLOCKED|chiap08|1280a115|"

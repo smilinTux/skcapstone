@@ -21,6 +21,7 @@ def _load_lane_helpers() -> dict[str, object]:
         "qwen_suitable",
         "lane_compatibility",
         "select_compatible_lane",
+        "select_elastic_review_lane",
     }
     body = [
         node
@@ -47,6 +48,9 @@ def _load_lane_helpers() -> dict[str, object]:
         "event_rows": lambda cid: [],
         "_load_evidence_events": lambda: {},
         "_fold_key": lambda value: str(value),
+        "eligible_review_launch_lanes": __import__(
+            "skcapstone.fleet.review_capacity", fromlist=["eligible_review_launch_lanes"]
+        ).eligible_review_launch_lanes,
     }
     exec(compile(ast.Module(body=body, type_ignores=[]), str(ROTATE), "exec"), namespace)
     assert names <= namespace.keys()
@@ -125,6 +129,48 @@ def test_no_compatible_slot_does_not_consume_another_lane() -> None:
     assert selected is None
     assert reason == "no-free-lane:codex"
     assert remaining == {"codex": 0, "glm": 3, "escalate": 2}
+
+
+def test_niobe_review_uses_every_healthy_compatible_domain_without_overwrite() -> None:
+    namespace = _load_lane_helpers()
+    lanes = [
+        {
+            "name": "codex",
+            "target": 3,
+            "busy": ["existing"],
+            "free": 2,
+            "capacity_domains": ["review-domain"],
+        },
+        {
+            "name": "escalate",
+            "target": 2,
+            "busy": [],
+            "free": 2,
+            "capacity_domains": ["review-domain"],
+        },
+    ]
+    route = {"logical_route": "sk-m", "capacity_domain": "review-domain", "free": 1}
+    remaining = {"codex": 2, "escalate": 2}
+    health = {"codex": (True, "healthy"), "escalate": (True, "healthy")}
+
+    selected, reason = namespace["select_elastic_review_lane"](
+        lanes,
+        [route],
+        remaining,
+        {},
+        physical_free=2,
+        health=health,
+    )
+
+    assert selected == "codex"
+    assert reason == "eligible"
+    source = ROTATE.read_text(encoding="utf-8")
+    assert "if not ONLY_SEAT:\n    _gateway_routes=" not in source
+    selector = source[
+        source.index("def select_elastic_review_lane") : source.index("def needs_escalation")
+    ]
+    assert 'name == "codex"' not in selector
+    assert 'name == "escalate"' not in selector
 
 
 def test_ordinary_card_reassigns_only_to_compatible_healthy_lane() -> None:

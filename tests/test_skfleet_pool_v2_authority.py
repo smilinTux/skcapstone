@@ -291,6 +291,7 @@ def test_canonical_review_card_enters_seraph_or_elastic_codex_selector() -> None
             "_ONLY_SEAT": "seraph",
             "_pool_v2_overlay": lambda _cid, _core, reason: {"reason": reason},
             "seat_for": lambda _cid, _core: "seraph",
+            "_review_route_snapshot": {"capacity_revision": "c" * 64},
         }
     )
     card_id = "3ca49674"
@@ -324,6 +325,7 @@ def test_canonical_review_card_enters_seraph_or_elastic_codex_selector() -> None
 
     assert admission["governed_review"] is True
     assert admission["seraph_review_admitted"] is True
+    assert admission["review_capacity_revision"] == "c" * 64
     assert helpers["_pool_v2_ready_ids"](decisions, {card_id: admission}) == {card_id}
 
     backlog = helpers["_pool_v2_admission"](card_id, core, dict(claimability, status="backlog"))

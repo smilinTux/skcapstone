@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import os
 import time
@@ -76,6 +77,9 @@ def acquire_review_route_snapshot(
     *,
     opener: Callable[..., Any] = urllib.request.urlopen,
     now: Callable[[], float] = time.time,
+    occupancy: Mapping[str, int] | None = None,
+    occupancy_ambiguous: bool = False,
+    physical_maximum: int | None = None,
 ) -> dict[str, Any]:
     """Seal one bounded model, health, and queue view for Seraph selection."""
     # Normalize to the gateway ORIGIN. This function appends "/v1" itself for
@@ -168,6 +172,12 @@ def acquire_review_route_snapshot(
             "routes": sorted(routes, key=lambda row: row["logical_route"]),
             "error": None,
         }
+    snapshot = seal_review_capacity_truth(
+        snapshot,
+        occupancy or {},
+        occupancy_ambiguous=occupancy_ambiguous,
+        physical_maximum=physical_maximum,
+    )
     encoded = (json.dumps(snapshot, sort_keys=True, separators=(",", ":")) + "\n").encode()
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.new")
@@ -180,6 +190,40 @@ def acquire_review_route_snapshot(
     finally:
         temporary.unlink(missing_ok=True)
     return snapshot
+
+
+def seal_review_capacity_truth(
+    snapshot: Mapping[str, Any],
+    occupancy: Mapping[str, int],
+    *,
+    occupancy_ambiguous: bool = False,
+    physical_maximum: int | None = None,
+) -> dict[str, Any]:
+    """Bind route and occupancy observations into one revisioned truth."""
+    sealed = {key: value for key, value in snapshot.items() if key != "capacity_revision"}
+    sealed["occupancy"] = {
+        str(domain): int(count)
+        for domain, count in sorted(occupancy.items())
+        if str(domain) and int(count) >= 0
+    }
+    sealed["occupancy_ambiguous"] = bool(occupancy_ambiguous)
+    if physical_maximum is not None:
+        sealed["physical_maximum"] = max(0, int(physical_maximum))
+    material = json.dumps(sealed, sort_keys=True, separators=(",", ":")).encode()
+    sealed["capacity_revision"] = hashlib.sha256(material).hexdigest()
+    return sealed
+
+
+def _review_capacity_truth_is_current(snapshot: Mapping[str, Any]) -> bool:
+    """Return whether the sealed capacity revision matches its exact facts."""
+    revision = str(snapshot.get("capacity_revision") or "")
+    if len(revision) != 64:
+        return False
+    material = {key: value for key, value in snapshot.items() if key != "capacity_revision"}
+    actual = hashlib.sha256(
+        json.dumps(material, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return revision == actual
 
 
 def load_route_occupancy(home: Path, *, now: float | None = None) -> tuple[dict[str, int], bool]:
@@ -270,6 +314,122 @@ def eligible_review_routes(
     ):
         return []
     return eligible_gateway_routes(snapshot, required_size, labels, occupancy)
+
+
+def evaluate_review_capacity(
+    snapshot: Mapping[str, Any],
+    required_size: str,
+    labels: Sequence[str],
+    producer: str,
+    reviewer: str,
+    *,
+    declared_seat: str | None = None,
+    qualified_seats: set[str] | frozenset[str] = LOGICAL_REVIEWER_SEATS,
+    physical_free: int | None = None,
+) -> dict[str, Any]:
+    """Evaluate one reviewer from the exact sealed route-capacity revision."""
+    revision = str(snapshot.get("capacity_revision") or "")
+    occupancy = snapshot.get("occupancy")
+    valid_occupancy = isinstance(occupancy, dict) and all(
+        isinstance(domain, str) and domain and type(count) is int and count >= 0
+        for domain, count in occupancy.items()
+    )
+    routes: list[dict[str, Any]] = []
+    logical_available = 0
+    physical_maximum = snapshot.get("physical_maximum")
+    if type(physical_maximum) is not int or physical_maximum < 0:
+        physical_maximum = None
+    if not _review_capacity_truth_is_current(snapshot) or not valid_occupancy:
+        reason = "route-snapshot-ambiguity"
+    elif snapshot.get("schema_version") != 1 or snapshot.get("error") is not None:
+        reason = "route-snapshot-ambiguity"
+    elif snapshot.get("occupancy_ambiguous") is True:
+        reason = "occupancy-ambiguity"
+    else:
+        routes = eligible_review_routes(
+            snapshot,
+            required_size,
+            labels,
+            producer,
+            reviewer,
+            occupancy,
+            declared_seat=declared_seat,
+            qualified_seats=qualified_seats,
+        )
+        logical_available = aggregate_review_capacity(
+            routes, sum(int(route["free"]) for route in routes)
+        )
+        if physical_free is None:
+            physical_free = (
+                logical_available
+                if physical_maximum is None
+                else max(0, physical_maximum - sum(occupancy.values()))
+            )
+        else:
+            physical_free = max(0, int(physical_free))
+        if physical_free <= 0:
+            reason = "physical-exhaustion"
+        elif routes:
+            reason = "eligible"
+        elif eligible_gateway_routes(snapshot, required_size, (), occupancy):
+            reason = "policy-incompatibility"
+        else:
+            reason = "route-exhaustion"
+    if physical_free is None:
+        physical_free = 0
+    available = min(logical_available, physical_free) if reason == "eligible" else 0
+    return {
+        "capacity_revision": revision,
+        "reason": reason,
+        "routes": routes,
+        "occupancy": dict(occupancy) if valid_occupancy else {},
+        "physical_maximum": physical_maximum,
+        "physical_free": physical_free,
+        "logical_available": logical_available,
+        "available": available,
+    }
+
+
+def eligible_review_launch_lanes(
+    lanes: Sequence[Mapping[str, Any]],
+    routes: Sequence[Mapping[str, Any]],
+    reservations: Mapping[str, int],
+    physical_free: int,
+    health: Mapping[str, tuple[bool, str]],
+) -> list[str]:
+    """Return healthy physical lanes backed by free logical capacity domains."""
+    if physical_free <= 0:
+        return []
+    domains = {
+        str(route.get("capacity_domain") or "")
+        for route in routes
+        if int(route.get("free", 0))
+        > int(reservations.get(str(route.get("capacity_domain") or ""), 0))
+    }
+    return [
+        str(lane["name"])
+        for lane in lanes
+        if int(lane.get("free", 0)) > 0
+        and health.get(str(lane["name"]), (True, "healthy"))[0]
+        and domains.intersection(str(value) for value in lane.get("capacity_domains", ()))
+    ]
+
+
+def review_physical_free(
+    lanes: Sequence[Mapping[str, Any]],
+    routes: Sequence[Mapping[str, Any]],
+    reservations: Mapping[str, int],
+    physical_maximum: int,
+) -> int:
+    """Return remaining physical review slots across matching logical domains."""
+    domains = {str(route.get("capacity_domain") or "") for route in routes}
+    busy = sum(
+        len(lane.get("busy", ()))
+        for lane in lanes
+        if domains.intersection(str(value) for value in lane.get("capacity_domains", ()))
+    )
+    reserved = sum(int(reservations.get(domain, 0)) for domain in domains)
+    return max(0, int(physical_maximum) - busy - reserved)
 
 
 def aggregate_review_capacity(routes: Sequence[Mapping[str, Any]], target: int) -> int:

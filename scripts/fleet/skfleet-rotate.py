@@ -46,11 +46,12 @@ from skcapstone.fleet_route_preflight import resolve_and_preflight
 from skcapstone.fleet import builder_dispatch, store as fleet_store
 from skcapstone.fleet.review_capacity import (
     acquire_review_route_snapshot,
-    aggregate_review_capacity,
     choose_review_route,
     eligible_gateway_routes,
-    eligible_review_routes,
+    eligible_review_launch_lanes,
+    evaluate_review_capacity,
     load_route_occupancy,
+    review_physical_free,
 )
 from skcapstone.fleet.paths import default_paths as default_fleet_paths
 from skcapstone.fleet.rotation_lock import acquire_rotation_lock
@@ -1721,13 +1722,16 @@ _review_route_ambiguous=False
 if ONLY_SEAT in {"", "link", "mero", "seraph"}:
     if not _GATEWAY_ENDPOINT:
         raise SystemExit("SKFLEET_GATEWAY_URL is required")
+    _review_route_occupancy,_review_route_ambiguous=load_route_occupancy(
+        Path(HOME)/".skcapstone"
+    )
     _review_route_snapshot=acquire_review_route_snapshot(
         _GATEWAY_ENDPOINT,
         Path(HOME)/".skcapstone/evidence/fleet-review-routes.json",
         new_cycle_id(HOST,STAMP),
-    )
-    _review_route_occupancy,_review_route_ambiguous=load_route_occupancy(
-        Path(HOME)/".skcapstone"
+        occupancy=_review_route_occupancy,
+        occupancy_ambiguous=_review_route_ambiguous,
+        physical_maximum=CODEX_PHYSICAL_LIMIT,
     )
 GLM_HOLD_PATH=os.path.join(HOME,".skcapstone/evidence/fleet-glm-dispatch-hold.json")
 glm_held=False
@@ -1807,6 +1811,17 @@ LANES=[
      "model":os.environ.get("SKFLEET_ESC_MODEL", ESC_MODEL if "ESC_MODEL" in dir() else "gpt-5.6-sol"),
      "target":int(os.environ.get("SKFLEET_ESC_TARGET","2"))},
 ]
+_CAPACITY_DOMAINS={
+    "codex":tuple(os.environ.get("SKFLEET_CODEX_CAPACITY_DOMAINS","codex").split(",")),
+    "glm":tuple(os.environ.get("SKFLEET_GLM_CAPACITY_DOMAINS","zai").split(",")),
+    "qwen":tuple(os.environ.get(
+        "SKFLEET_QWEN_CAPACITY_DOMAINS","chiap01-qwen38,chiap08-qwen38").split(",")),
+    "kimi":tuple(os.environ.get(
+        "SKFLEET_KIMI_CAPACITY_DOMAINS","kimi-for-coding,kimi-k3").split(",")),
+    "escalate":tuple(os.environ.get("SKFLEET_ESC_CAPACITY_DOMAINS","codex").split(",")),
+}
+for _lane in LANES:
+    _lane["capacity_domains"]=_CAPACITY_DOMAINS.get(_lane["name"],())
 _GLM_LEVEL_DEFAULTS={"S":"sk-glm-s","M":"sk-glm-m","L":"sk-glm-l","XL":"sk-glm-l"}
 _GLM_LEVELS={key:os.environ.get("SKFLEET_GLM_MODEL_"+key,value)
              for key,value in _GLM_LEVEL_DEFAULTS.items()}
@@ -1894,23 +1909,12 @@ if glm_held:
 for _L in LANES:
     _L["busy"]=_lane_busy(_L,sessions,worker_units)
     _L["free"]=max(0,_L["target"]-len(_L["busy"]))
-if not ONLY_SEAT:
-    _gateway_routes=([] if _review_route_ambiguous else eligible_gateway_routes(
-        _review_route_snapshot or {},"S",[],_review_route_occupancy))
-    _codex=next(lane for lane in LANES if lane["name"]=="codex")
-    _codex["free"]=aggregate_review_capacity(
-        _gateway_routes,min(TARGET,CODEX_PHYSICAL_LIMIT,MAX_LAUNCH))
 if ONLY_SEAT:
     if not _SEAT_RE.fullmatch(ONLY_SEAT) or SEAT_TARGET < 1:
         raise SystemExit("BLOCKED|SKFLEET_SEAT_TARGET|seat dispatch requires a positive target")
     _codex=next(lane for lane in LANES if lane["name"]=="codex")
     _busy_cards=_worker_cards(sessions,worker_units,[_codex])
-    if ONLY_SEAT in {"link","mero","seraph"}:
-        _capacity_routes=([] if _review_route_ambiguous else eligible_review_routes(
-            _review_route_snapshot or {},"S",[],"producer","pi-seraph-capacity",
-            _review_route_occupancy))
-        _codex["free"]=aggregate_review_capacity(_capacity_routes,SEAT_TARGET)
-    else:
+    if ONLY_SEAT not in {"link","mero","seraph"}:
         _codex["free"]=_seat_capacity(
             ONLY_SEAT,SEAT_TARGET,CODEX_PHYSICAL_LIMIT,_busy_cards,_last_claim_owner)
     _codex["target"]=SEAT_TARGET
@@ -6771,6 +6775,11 @@ def _pool_v2_admission(cid, core, claimability, fresh=False):
         "governed_review": governed_review,
         "seraph_review_admitted": seraph_review_admitted,
         "elastic_review_admitted": elastic_review_admitted,
+        "review_capacity_revision": (
+            str((globals().get("_review_route_snapshot") or {}).get(
+                "capacity_revision") or "")
+            if governed_review else None
+        ),
         "overlay": overlay,
         "source_revision": claimability.get("source_revision"),
     }
@@ -7046,13 +7055,11 @@ _elastic_rows = [
     for row in pool
     if _POOL_V2_ADMISSIONS[row[2]].get("elastic_review_admitted")
 ]
+_all_review_routes=([] if _review_route_ambiguous else eligible_gateway_routes(
+    _review_route_snapshot or {},"S",[],_review_route_occupancy))
 _elastic_limit = review_fanout_limit(
     len(_elastic_rows),
-    max(
-        0,
-        CODEX_PHYSICAL_LIMIT
-        - sum(len(lane["busy"]) for lane in LANES if lane["name"] == "codex"),
-    ),
+    review_physical_free(LANES,_all_review_routes,{},CODEX_PHYSICAL_LIMIT),
     REVIEW_MAXIMUM,
 )
 elastic_launch_remaining = _elastic_limit
@@ -7306,6 +7313,24 @@ def select_compatible_lane(
     return None,"no-free-lane:%s"%",".join(compatible)
 
 
+def select_elastic_review_lane(
+        lanes, routes, remaining, reservations, physical_free, health):
+    """Choose a healthy physical lane from eligible logical capacity domains."""
+    available = [
+        {**lane,"free":remaining.get(lane["name"],0)}
+        for lane in lanes
+    ]
+    eligible=eligible_review_launch_lanes(
+        available,routes,reservations,physical_free,health)
+    if eligible:
+        return eligible[0],"eligible"
+    route_domains={str(route.get("capacity_domain") or "") for route in routes}
+    configured=any(
+        route_domains.intersection(str(value) for value in lane.get("capacity_domains",()))
+        for lane in lanes)
+    return None,"physical-exhaustion" if configured else "policy-incompatibility"
+
+
 def needs_escalation(cid, core=None, labels=None):
     """True if this card has exhausted the ordinary lanes and needs a stronger model.
 
@@ -7375,15 +7400,6 @@ def _lane_model(lane, core):
 _LANE_HEALTH_PATH=os.environ.get(
     "SKFLEET_LANE_HEALTH_PATH",
     os.path.join(HOME,".skcapstone/evidence/fleet-lane-health.json"))
-_CAPACITY_DOMAINS={
-    "codex":tuple(os.environ.get("SKFLEET_CODEX_CAPACITY_DOMAINS","codex").split(",")),
-    "glm":tuple(os.environ.get("SKFLEET_GLM_CAPACITY_DOMAINS","zai").split(",")),
-    "qwen":tuple(os.environ.get(
-        "SKFLEET_QWEN_CAPACITY_DOMAINS","chiap01-qwen38,chiap08-qwen38").split(",")),
-    "kimi":tuple(os.environ.get(
-        "SKFLEET_KIMI_CAPACITY_DOMAINS","kimi-for-coding,kimi-k3").split(",")),
-    "escalate":tuple(os.environ.get("SKFLEET_ESC_CAPACITY_DOMAINS","codex").split(",")),
-}
 _health_lanes=list(LANES)
 for _glm_model in sorted(set(_GLM_LEVELS.values())):
     if _glm_model!=next(lane for lane in LANES if lane["name"]=="glm")["model"]:
@@ -7460,20 +7476,24 @@ def _bounded_candidate_sequence(candidates, limit):
 
 
 def _has_launchable_pick(picks, remaining, elastic_remaining, lane_order,
-                         admission_by_id, qwen_enabled=True, glm_enabled=True):
+                         admission_by_id, reservations, physical_limit,
+                         qwen_enabled=True, glm_enabled=True):
     """Return whether a remaining pick can use a healthy lane with live budget."""
     for _lane, candidate in picks:
         card_id, core, labels = candidate[2], candidate[3], candidate[4]
-        escalation, qwen_exclusive, health, elastic = admission_by_id[card_id]
-        available = (
-            {name: min(slots, elastic_remaining) if name == "codex" else 0
-             for name, slots in remaining.items()}
-            if elastic else remaining
-        )
-        lane_name, _reason = select_compatible_lane(
-            labels, escalation, lane_order, available, qwen_suitable(core, labels),
-            qwen_exclusive, health, qwen_enabled, glm_enabled,
-        )
+        escalation, qwen_exclusive, health, elastic, review_routes = admission_by_id[card_id]
+        if review_routes is not None:
+            physical_free=review_physical_free(
+                lane_order,review_routes,reservations,physical_limit)
+            if elastic:
+                physical_free=min(physical_free,elastic_remaining)
+            lane_name,_reason=select_elastic_review_lane(
+                lane_order,review_routes,remaining,reservations,physical_free,health)
+        else:
+            lane_name, _reason = select_compatible_lane(
+                labels, escalation, lane_order, remaining, qwen_suitable(core, labels),
+                qwen_exclusive, health, qwen_enabled, glm_enabled,
+            )
         if lane_name is not None:
             return True
     return False
@@ -7524,30 +7544,46 @@ while _i<len(owned) and _i<len(_candidate_scan):
     _card_lane_health={lane["name"]:_health_for(
         lane["name"],_lane_model(lane,_card[3]))
         for lane in LANES}
-    if not _ONLY_SEAT:
+    if not _ONLY_SEAT and not _elastic_review:
         _producer_routes=_producer_routes_for(
             _card[3],_labels,"codex" if "codex-only" in {
                 str(label).strip().lower() for label in _labels} else None)
         _card_lane_health["codex"]=(
             bool(_producer_routes),"gateway-route-capacity" if _producer_routes else "unknown")
-    if _ONLY_SEAT in {"link","mero","seraph"}:
-        _card_lane_health["codex"]=(
-            remaining.get("codex",0)>0,"review-route-capacity")
-    if _elastic_review:
-        _elastic_available = min(remaining.get("codex", 0), elastic_launch_remaining)
-        _card_lane_health["codex"]=(
-            _elastic_available>0,"review-route-capacity")
-    _selection_remaining=(
-        {name:_elastic_available if name=="codex" else 0
-         for name in remaining}
-        if _elastic_review else remaining)
-    _lane_name,_defer=select_compatible_lane(
-        _labels,_esc,lane_order,_selection_remaining,qwen_suitable(_card[3],_labels),_qwen_exclusive,
-        _card_lane_health,QWEN_TARGET>0,GLM_TARGET>0)
+    _review_seat=governed_review_seat(_labels,qualified_reviewer_seats(_card[3]))
+    _review_routes=None
+    if _review_seat is not None:
+        _metadata=_governed_review_metadata(_card[3],_labels)
+        _reviewer=(elastic_reviewer_identity(HOST,_card[2]) if _elastic_review
+                   else _worker_owner("review",_card[2],_review_seat))
+        _physical_free=review_physical_free(
+            LANES,_all_review_routes,{},CODEX_PHYSICAL_LIMIT)
+        if _elastic_review:
+            _physical_free=min(_physical_free,elastic_launch_remaining)
+        _capacity=evaluate_review_capacity(
+            _review_route_snapshot or {},_size_class_for(_card[3],_labels) or "",
+            _labels,_metadata[0] if _metadata else "",_reviewer,
+            declared_seat=_review_seat,
+            qualified_seats=qualified_reviewer_seats(_card[3]),
+            physical_free=_physical_free)
+        _review_routes=_capacity["routes"]
+        if _capacity["reason"]=="eligible":
+            _lane_name,_defer=select_elastic_review_lane(
+                lane_order,_review_routes,remaining,{},_physical_free,_card_lane_health)
+        else:
+            _lane_name,_defer=None,_capacity["reason"]
+    else:
+        _lane_name,_defer=select_compatible_lane(
+            _labels,_esc,lane_order,remaining,qwen_suitable(_card[3],_labels),_qwen_exclusive,
+            _card_lane_health,QWEN_TARGET>0,GLM_TARGET>0)
     if _lane_name is None:
         _lane_deferred[_defer]+=1
         _lane_deferred_cards[_card[2]]=_defer
-        if _defer.startswith("no-compatible-healthy-lane:"):
+        if _review_seat is not None:
+            log(d,"REVIEW_ROUTE_BLOCKED|%s|%s|reason=%s|revision=%s"%
+                (HOST,_card[2],_defer,
+                 str((_review_route_snapshot or {}).get("capacity_revision") or "missing")))
+        elif _defer.startswith("no-compatible-healthy-lane:"):
             details=",".join("%s=%s"%(name,state[1])
                              for name,state in sorted(_card_lane_health.items()))
             _log_once_per_hour(
@@ -7563,7 +7599,7 @@ while _i<len(owned) and _i<len(_candidate_scan):
         log(d,"DRY_SELECTION|%s|%s|selected=%s|reason=%s"%
             (HOST,_card[2],_lane_name,"qwen-first" if _qwen_exclusive else "compatible"))
     _pick_admission[_card[2]]=(
-        _esc,_qwen_exclusive,_card_lane_health,_elastic_review)
+        _esc,_qwen_exclusive,_card_lane_health,_elastic_review,_review_routes)
     picks.append((_lane,_card))
 if _lane_deferred:
     log(d,"LANE_DEFER|%s|%s"%(HOST,",".join(
@@ -7725,7 +7761,8 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         break
     if not _has_launchable_pick(
             picks[_pick_index:],launch_remaining,elastic_launch_remaining,
-            lane_order,_pick_admission,QWEN_TARGET>0,GLM_TARGET>0):
+            lane_order,_pick_admission,_review_route_reservations,
+            CODEX_PHYSICAL_LIMIT,QWEN_TARGET>0,GLM_TARGET>0):
         _exhausted_ids,_exhausted_omitted=_bounded_ids(
             candidate[1][2] for candidate in picks[_pick_index:])
         log(d,"LAUNCH_BUDGET_EXHAUSTED|%s|remaining=%d ids=%s omitted=%d"%
@@ -7735,7 +7772,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
     _attempt_escalation=needs_escalation(cid,core,_labels)
     _attempt_health={lane["name"]:_health_for(
         lane["name"],_lane_model(lane,core)) for lane in LANES}
-    if not _ONLY_SEAT:
+    if not _ONLY_SEAT and not _elastic_review:
         _producer_routes=_producer_routes_for(
             core,_labels,"codex" if "codex-only" in {
                 str(label).strip().lower() for label in _labels} else None)
@@ -7747,20 +7784,32 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         qualified_reviewer_seats(core),
     )
     if _review_seat is not None:
-        _elastic_available = min(
-            launch_remaining.get("codex", 0), elastic_launch_remaining
-        ) if _elastic_review else launch_remaining.get("codex", 0)
-        _attempt_health["codex"]=(
-            _elastic_available>0,"review-route-capacity")
-    _attempt_remaining = (
-        {name: _elastic_available if name == "codex" else 0
-         for name in launch_remaining}
-        if _elastic_review else launch_remaining
-    )
-    _attempt_lane_name,_attempt_defer=select_compatible_lane(
-        _labels,_attempt_escalation,lane_order,_attempt_remaining,
-        qwen_suitable(core,_labels),qwen_first_exclusive(cid,_labels),_attempt_health,
-        QWEN_TARGET>0,GLM_TARGET>0)
+        _metadata=_governed_review_metadata(core,_labels)
+        _reviewer=(elastic_reviewer_identity(HOST,cid) if _elastic_review
+                   else _worker_owner("review",cid,_review_seat))
+        _physical_free=review_physical_free(
+            LANES,_all_review_routes,_review_route_reservations,CODEX_PHYSICAL_LIMIT)
+        if _elastic_review:
+            _physical_free=min(_physical_free,elastic_launch_remaining)
+        _capacity=evaluate_review_capacity(
+            _review_route_snapshot or {},_size_class_for(core,_labels) or "",
+            _labels,_metadata[0] if _metadata else "",_reviewer,
+            declared_seat=_review_seat,
+            qualified_seats=qualified_reviewer_seats(core),
+            physical_free=_physical_free)
+        _attempt_routes=_capacity["routes"]
+        if _capacity["reason"]=="eligible":
+            _attempt_lane_name,_attempt_defer=select_elastic_review_lane(
+                lane_order,_attempt_routes,launch_remaining,
+                _review_route_reservations,_physical_free,_attempt_health)
+        else:
+            _attempt_lane_name,_attempt_defer=None,_capacity["reason"]
+    else:
+        _attempt_routes=None
+        _attempt_lane_name,_attempt_defer=select_compatible_lane(
+            _labels,_attempt_escalation,lane_order,launch_remaining,
+            qwen_suitable(core,_labels),qwen_first_exclusive(cid,_labels),_attempt_health,
+            QWEN_TARGET>0,GLM_TARGET>0)
     if _attempt_lane_name is None:
         log(d,"SKIPPED_ATTEMPT_ADMISSION|%s|%s|reason=%s"%
             (HOST,cid,_attempt_defer))
@@ -7974,6 +8023,16 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         launch_remaining[_LANE["name"]]-=1
         if _elastic_review:
             elastic_launch_remaining-=1
+        if _attempt_routes is not None:
+            _lane_domains={str(value) for value in _LANE.get("capacity_domains",())}
+            _dry_route=choose_review_route(
+                [route for route in _attempt_routes
+                 if str(route.get("capacity_domain") or "") in _lane_domains],
+                _review_route_reservations)
+            if _dry_route is not None:
+                _domain=str(_dry_route["capacity_domain"])
+                _review_route_reservations[_domain]=(
+                    _review_route_reservations.get(_domain,0)+1)
         continue
     _review_recommendation = None
     _review_handoff = None
@@ -7989,16 +8048,21 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
     _selected_admission=_POOL_V2_ADMISSIONS.get(cid)
     fresh_escalation=needs_escalation(
         cid,fresh_claimability["core"],fresh_claimability["labels"])
-    compatible,affinity_reason=lane_compatibility(
-        fresh_claimability["labels"],fresh_escalation,
-        qwen_suitable(fresh_claimability["core"],fresh_claimability["labels"]),
-        qwen_first_exclusive(cid,fresh_claimability["labels"]),
-        QWEN_TARGET>0,GLM_TARGET>0)
-    if _LANE["name"] not in compatible:
-        lane_drift += 1
-        log(d,"SKIPPED_LANE_RACE|%s|%s|%s|selected=%s|reason=%s"%
-            (HOST,sess,cid,_LANE["name"],affinity_reason))
-        continue
+    _fresh_review_seat=governed_review_seat(
+        fresh_claimability["labels"],
+        qualified_reviewer_seats(fresh_claimability["core"]),
+    )
+    if _fresh_review_seat is None:
+        compatible,affinity_reason=lane_compatibility(
+            fresh_claimability["labels"],fresh_escalation,
+            qwen_suitable(fresh_claimability["core"],fresh_claimability["labels"]),
+            qwen_first_exclusive(cid,fresh_claimability["labels"]),
+            QWEN_TARGET>0,GLM_TARGET>0)
+        if _LANE["name"] not in compatible:
+            lane_drift += 1
+            log(d,"SKIPPED_LANE_RACE|%s|%s|%s|selected=%s|reason=%s"%
+                (HOST,sess,cid,_LANE["name"],affinity_reason))
+            continue
     _bucket=_logical_route_for(
         fresh_claimability["core"],fresh_claimability["labels"])
     if _bucket is None:
@@ -8015,10 +8079,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         "capacity_domains":[],
         "model_or_bucket":model,
     }
-    _review_seat=governed_review_seat(
-        fresh_claimability["labels"],
-        qualified_reviewer_seats(fresh_claimability["core"]),
-    )
+    _review_seat=_fresh_review_seat
     # A governed review card used to be forced back onto the BARE BUCKET
     # here, on the theory that eligible_review_routes/choose_review_route
     # below had already made a better-informed selection than the lane's
@@ -8071,17 +8132,26 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             fresh_claimability["core"],fresh_claimability["labels"])
         _size=_size_class_for(
             fresh_claimability["core"],fresh_claimability["labels"])
-        _routes=([] if _metadata is None or _size is None
-                 else eligible_review_routes(
-                     _review_route_snapshot or {},_size,
-                     fresh_claimability["labels"],_metadata[0],name,
-                     _review_route_occupancy,declared_seat=_review_seat,
-                     qualified_seats=qualified_reviewer_seats(
-                         fresh_claimability["core"])))
+        _physical_free=review_physical_free(
+            LANES,_all_review_routes,_review_route_reservations,CODEX_PHYSICAL_LIMIT)
+        if _elastic_review:
+            _physical_free=min(_physical_free,elastic_launch_remaining)
+        _capacity=evaluate_review_capacity(
+            _review_route_snapshot or {},_size or "",
+            fresh_claimability["labels"],_metadata[0] if _metadata else "",name,
+            declared_seat=_review_seat,
+            qualified_seats=qualified_reviewer_seats(fresh_claimability["core"]),
+            physical_free=_physical_free)
+        _lane_domains={str(value) for value in _LANE.get("capacity_domains",())}
+        _routes=[route for route in _capacity["routes"]
+                 if str(route.get("capacity_domain") or "") in _lane_domains]
         _selected_route=choose_review_route(_routes,_review_route_reservations)
         if _selected_route is None:
             lane_drift += 1
-            log(d,"SKIPPED_REVIEW_ROUTE|%s|%s|reason=no-eligible-route"%(HOST,cid))
+            _reason=(_capacity["reason"] if _capacity["reason"]!="eligible"
+                     else "policy-incompatibility")
+            log(d,"SKIPPED_REVIEW_ROUTE|%s|%s|reason=%s|revision=%s"%
+                (HOST,cid,_reason,_capacity["capacity_revision"] or "missing"))
             continue
         _route_identity={
             "logical_route":_bucket,

@@ -12,8 +12,12 @@ from skcapstone.fleet.review_capacity import (
     aggregate_review_capacity,
     choose_review_route,
     eligible_gateway_routes,
+    eligible_review_launch_lanes,
     eligible_review_routes,
+    evaluate_review_capacity,
     load_route_occupancy,
+    review_physical_free,
+    seal_review_capacity_truth,
 )
 
 
@@ -249,6 +253,147 @@ def test_snapshot_fetch_failure_has_no_routes(tmp_path):
     assert snapshot["routes"] == []
     assert snapshot["error"] == "OSError"
     assert eligible_review_routes(snapshot, "S", [], "producer", "reviewer", {}) == []
+
+
+def test_revisioned_capacity_truth_is_the_shared_admission_input(tmp_path):
+    now = 2_000_000_000.0
+    documents = dict(zip(("/v1/models", "/health", "/queue"), _documents(now)))
+
+    def opener(url, timeout):
+        assert timeout == 20
+        suffix = next(key for key in documents if url.endswith(key))
+        return _Response(json.dumps(documents[suffix]).encode())
+
+    snapshot = acquire_review_route_snapshot(
+        "https://gateway",
+        tmp_path / "snapshot.json",
+        "cycle-1",
+        opener=opener,
+        now=lambda: now,
+        occupancy={"cloud-b": 1},
+        physical_maximum=3,
+    )
+    evaluation = evaluate_review_capacity(
+        snapshot,
+        "M",
+        [],
+        "producer",
+        "pi-seraph-review",
+        declared_seat="seraph",
+    )
+
+    assert len(snapshot["capacity_revision"]) == 64
+    assert evaluation["capacity_revision"] == snapshot["capacity_revision"]
+    assert evaluation["reason"] == "eligible"
+    assert evaluation["physical_maximum"] == 3
+    assert evaluation["available"] == 2
+
+    tampered = json.loads(json.dumps(snapshot))
+    tampered["routes"][0]["max"] = 99
+    assert (
+        evaluate_review_capacity(
+            tampered,
+            "M",
+            [],
+            "producer",
+            "pi-seraph-review",
+            declared_seat="seraph",
+        )["reason"]
+        == "route-snapshot-ambiguity"
+    )
+
+
+def test_capacity_diagnostics_keep_distinct_failure_causes(tmp_path):
+    now = 2_000_000_000.0
+    documents = dict(zip(("/v1/models", "/health", "/queue"), _documents(now)))
+
+    def opener(url, timeout):
+        assert timeout == 20
+        suffix = next(key for key in documents if url.endswith(key))
+        return _Response(json.dumps(documents[suffix]).encode())
+
+    snapshot = acquire_review_route_snapshot(
+        "https://gateway",
+        tmp_path / "snapshot.json",
+        "cycle-1",
+        opener=opener,
+        now=lambda: now,
+    )
+
+    def reason(value, *, labels=(), size="M", physical_free=None):
+        return evaluate_review_capacity(
+            value,
+            size,
+            labels,
+            "producer",
+            "pi-seraph-review",
+            declared_seat="seraph",
+            physical_free=physical_free,
+        )["reason"]
+
+    assert reason({**snapshot, "error": "TimeoutError"}) == "route-snapshot-ambiguity"
+    assert (
+        reason(seal_review_capacity_truth(snapshot, {}, occupancy_ambiguous=True))
+        == "occupancy-ambiguity"
+    )
+    assert reason(snapshot, labels=("local-only",), physical_free=1) == "eligible"
+
+    policy_snapshot = seal_review_capacity_truth(
+        {
+            **snapshot,
+            "routes": [row for row in snapshot["routes"] if row["policy_tier"] != "local"],
+        },
+        {},
+    )
+    assert reason(policy_snapshot, labels=("local-only",), physical_free=1) == (
+        "policy-incompatibility"
+    )
+    assert reason(snapshot, physical_free=0) == "physical-exhaustion"
+    assert reason(snapshot, size="XL", physical_free=1) == "route-exhaustion"
+
+
+def test_review_launch_lanes_follow_healthy_domains_and_physical_maximum():
+    routes = [{"capacity_domain": "review-domain", "free": 1}]
+    lanes = [
+        {
+            "name": "ordinary-review",
+            "capacity_domains": ["review-domain"],
+            "free": 2,
+        },
+        {
+            "name": "strong-review",
+            "capacity_domains": ["review-domain"],
+            "free": 2,
+        },
+        {"name": "unrelated", "capacity_domains": ["other"], "free": 9},
+    ]
+    health = {
+        "ordinary-review": (True, "healthy"),
+        "strong-review": (True, "healthy"),
+        "unrelated": (True, "healthy"),
+    }
+
+    assert eligible_review_launch_lanes(lanes, routes, {}, 2, health) == [
+        "ordinary-review",
+        "strong-review",
+    ]
+    assert eligible_review_launch_lanes(lanes, routes, {}, 0, health) == []
+    assert (
+        eligible_review_launch_lanes(
+            lanes,
+            routes,
+            {"review-domain": 1},
+            2,
+            health,
+        )
+        == []
+    )
+    health["ordinary-review"] = (False, "owner-down")
+    assert eligible_review_launch_lanes(lanes, routes, {}, 1, health) == ["strong-review"]
+    lanes[0]["busy"] = ["existing"]
+    lanes[1]["busy"] = []
+    assert review_physical_free(lanes, routes, {}, 3) == 2
+    assert review_physical_free(lanes, routes, {"review-domain": 1}, 3) == 1
 
 
 def _strict_opener(documents):

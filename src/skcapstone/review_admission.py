@@ -148,10 +148,20 @@ def reviewer_capacity(
     reviewer: str,
 ) -> tuple[int, int]:
     """Return occupied and total qualified SKGateway slots for this card."""
+    evaluation = reviewer_capacity_evaluation(home, core, labels, producer, reviewer)
+    return sum(evaluation["occupancy"].values()), int(evaluation["logical_available"])
+
+
+def reviewer_capacity_evaluation(
+    home: Path,
+    core: Mapping[str, object],
+    labels: Sequence[str],
+    producer: str,
+    reviewer: str,
+) -> dict[str, object]:
+    """Return the revisioned capacity decision shared by claim and diagnostics."""
     from .fleet.review_capacity import (
-        aggregate_review_capacity,
-        eligible_review_routes,
-        load_route_occupancy,
+        evaluate_review_capacity,
     )
 
     title = str(core.get("title") or "")
@@ -170,22 +180,16 @@ def reviewer_capacity(
     try:
         snapshot = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return 0, 0
-    occupancy, ambiguous = load_route_occupancy(home)
-    if size is None or ambiguous:
-        return 0, 0
-    routes = eligible_review_routes(
+        snapshot = {}
+    return evaluate_review_capacity(
         snapshot,
-        size,
+        size or "",
         labels,
         producer,
         reviewer,
-        occupancy,
         declared_seat=governed_review_seat(labels, qualified_reviewer_seats(core)),
         qualified_seats=qualified_reviewer_seats(core),
     )
-    total = aggregate_review_capacity(routes, sum(int(route["free"]) for route in routes))
-    return sum(occupancy.values()), total
 
 
 def reviewer_candidate_reasons(
@@ -335,7 +339,7 @@ def assert_governed_review_claim(home: Path, card_id: str, agent: str) -> None:
     )
     metadata = governed_review_metadata(core, labels)
     producer = metadata[0] if metadata else ""
-    busy, target = reviewer_capacity(home, core, labels, producer, reviewer)
+    capacity = reviewer_capacity_evaluation(home, core, labels, producer, reviewer)
     candidate_reasons = reviewer_candidate_reasons(
         reviewer,
         producer=producer,
@@ -343,7 +347,7 @@ def assert_governed_review_claim(home: Path, card_id: str, agent: str) -> None:
             governed_review_seat(labels, qualified_reviewer_seats(core)) if elastic else None
         ),
         qualified_seats=qualified_reviewer_seats(core),
-        capacity_available=target > 0,
+        capacity_available=capacity["reason"] == "eligible",
     )
     if "unqualified-reviewer" in candidate_reasons:
         reasons = ("wrong-reviewer", *reasons)

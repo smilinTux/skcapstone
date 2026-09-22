@@ -75,6 +75,14 @@ def _launchable_predicate():
     namespace = {
         "qwen_suitable": lambda _core, _labels=None: True,
         "select_compatible_lane": select,
+        "review_physical_free": lambda _lanes, _routes, _reservations, limit: limit,
+        "select_elastic_review_lane": (
+            lambda lanes, _routes, remaining, _reservations, physical, _health: (
+                (lanes[0]["name"], "eligible")
+                if physical and remaining.get(lanes[0]["name"], 0)
+                else (None, "physical-exhaustion")
+            )
+        ),
     }
     exec(compile(ast.Module(body=[node], type_ignores=[]), str(ROTATE), "exec"), namespace)
     return namespace["_has_launchable_pick"]
@@ -164,7 +172,8 @@ def test_runtime_counts_only_successful_launches() -> None:
     assert "if _logical_route_for(candidate[3],candidate[4]) is not None)" in source
     assert "if not _has_launchable_pick(" in source
     assert "_attempt_lane_name,_attempt_defer=select_compatible_lane(" in source
-    assert "_attempt_remaining," in source
+    assert "_attempt_lane_name,_attempt_defer=select_elastic_review_lane(" in source
+    assert "_attempt_routes" in source
     assert "else:\n        launched+=1" in source
 
 
@@ -176,14 +185,26 @@ def test_exhausted_elastic_budget_preserves_later_other_lane() -> None:
         (0, 0, "escalation", {}, ["escalation-only"], 0),
     )
     admissions = {
-        "codex-tail": (False, False, {"codex": (True, "healthy")}, True),
-        "escalation": (True, False, {"escalate": (True, "healthy")}, False),
+        "codex-tail": (
+            False,
+            False,
+            {"codex": (True, "healthy")},
+            True,
+            [{"capacity_domain": "review", "free": 1}],
+        ),
+        "escalation": (
+            True,
+            False,
+            {"escalate": (True, "healthy")},
+            False,
+            None,
+        ),
     }
     remaining = {"codex": 1, "escalate": 1}
-    lane_order = ["codex", "escalate"]
+    lane_order = [{"name": "codex"}, {"name": "escalate"}]
 
-    assert predicate([codex], remaining, 0, lane_order, admissions) is False
-    assert predicate([codex, escalation], remaining, 0, lane_order, admissions) is True
+    assert predicate([codex], remaining, 0, lane_order, admissions, {}, 3) is False
+    assert predicate([codex, escalation], remaining, 0, lane_order, admissions, {}, 3) is True
 
 
 def test_prelaunch_recheck_uses_gateway_routes_for_producer_health() -> None:
@@ -198,16 +219,17 @@ def test_prelaunch_recheck_uses_gateway_routes_for_producer_health() -> None:
     assert 'bool(_producer_routes),"gateway-route-capacity"' in block
 
 
-def test_first_pass_elastic_review_uses_codex_health_and_capacity_only() -> None:
+def test_first_pass_elastic_review_uses_revisioned_logical_domains() -> None:
     source = ROTATE.read_text(encoding="utf-8")
     start = source.index("while _i<len(owned)")
     end = source.index("if _lane_deferred:", start)
     block = source[start:end]
 
     assert "_elastic_review = _POOL_V2_ADMISSIONS.get(_card[2], {}).get(" in block
-    assert '_card_lane_health["codex"]=(' in block
-    assert 'remaining.get("codex",0)>0,"review-route-capacity"' in block
-    assert "if _elastic_review else remaining" in block
+    assert "evaluate_review_capacity(" in block
+    assert "select_elastic_review_lane(" in block
+    assert "review_physical_free(" in block
+    assert 'remaining.get("codex",0)' not in block
 
 
 def test_elastic_review_limit_counts_successes_not_preflight_candidates() -> None:
@@ -215,7 +237,7 @@ def test_elastic_review_limit_counts_successes_not_preflight_candidates() -> Non
 
     assert "_elastic_rows[:_elastic_limit]" not in source
     assert "elastic_launch_remaining = _elastic_limit" in source
-    assert source.count('min(remaining.get("codex", 0), elastic_launch_remaining)') == 1
+    assert source.count("min(_physical_free,elastic_launch_remaining)") == 3
     assert source.count("elastic_launch_remaining-=1") == 2
 
     workspace_block = source.index('log(d,"WORKSPACE_BLOCKED|')

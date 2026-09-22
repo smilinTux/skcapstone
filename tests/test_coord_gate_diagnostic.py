@@ -10,6 +10,7 @@ from skcoord.card_store import CardCore
 
 from skcapstone.card_store import CardStore
 from skcapstone.cli import main
+from skcapstone.fleet.review_capacity import seal_review_capacity_truth
 from skcapstone.review_admission import (
     assert_governed_review_claim,
     governed_review_gate_reasons,
@@ -22,28 +23,32 @@ def _write_gateway_capacity(
 ) -> None:
     path = home / "evidence" / "fleet-review-routes.json"
     path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot = seal_review_capacity_truth(
+        {
+            "schema_version": 1,
+            "cycle_id": "diagnostic-test",
+            "observed_at": 2_000_000_000.0,
+            "endpoint": "https://gateway",
+            "error": None,
+            "routes": [
+                {
+                    "logical_route": route,
+                    "model_or_bucket": route,
+                    "provider": "qualified-provider-" + str(index),
+                    "capacity_domain": "qualified-domain-" + str(index),
+                    "size_class": "M",
+                    "policy_tier": "standard",
+                    "state": "healthy",
+                    "max": maximum,
+                    "gateway_active": active,
+                }
+                for index, route in enumerate(routes)
+            ],
+        },
+        {},
+    )
     path.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "error": None,
-                "routes": [
-                    {
-                        "logical_route": route,
-                        "model_or_bucket": route,
-                        "provider": "qualified-provider-" + str(index),
-                        "capacity_domain": "qualified-domain-" + str(index),
-                        "size_class": "M",
-                        "policy_tier": "standard",
-                        "state": "healthy",
-                        "max": maximum,
-                        "gateway_active": active,
-                    }
-                    for index, route in enumerate(routes)
-                ],
-            }
-        )
-        + "\n",
+        json.dumps(snapshot) + "\n",
         encoding="utf-8",
     )
 
@@ -355,7 +360,14 @@ def test_coord_gates_aggregates_all_qualified_gateway_slots(tmp_path, monkeypatc
 
     assert result.exit_code == 0, result.output
     report = json.loads(result.output)
-    assert report["capacity"] == {"busy": 0, "target": 4}
+    assert report["capacity"] == {
+        "busy": 0,
+        "target": 4,
+        "available": 4,
+        "reason": "eligible",
+        "revision": report["capacity"]["revision"],
+    }
+    assert len(report["capacity"]["revision"]) == 64
     assert report["eligible"] is True
 
     claim = CliRunner().invoke(
@@ -373,6 +385,39 @@ def test_coord_gates_aggregates_all_qualified_gateway_slots(tmp_path, monkeypatc
     assert claim.exit_code == 0, claim.output
     assert store.fold("aabb0001").owner == "pi-seraph-first"
     assert store.fold("aabb0002").owner == "pi-seraph-second"
+
+
+def test_coord_gates_rejects_capacity_bytes_that_do_not_match_revision(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    _write_gateway_capacity(tmp_path)
+    path = tmp_path / "evidence" / "fleet-review-routes.json"
+    snapshot = json.loads(path.read_text(encoding="utf-8"))
+    snapshot["routes"][0]["max"] = 99
+    path.write_text(json.dumps(snapshot) + "\n", encoding="utf-8")
+    CardStore(tmp_path).create(
+        CardCore(
+            id="aabb0010",
+            title="[S] revision-bound review",
+            created_by="scheduler",
+            initial_labels=["review", "seat-seraph", "sk-s"],
+            meta={
+                "producer_identity": "source-producer",
+                "candidate_evidence_sha256": "a" * 64,
+                "link_source_card": "source10",
+                "link_head_revision": "b" * 40,
+            },
+        )
+    )
+
+    result = CliRunner().invoke(main, ["coord", "gates", "aabb0010", "--home", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert report["eligible"] is False
+    assert report["reasons"] == ["capacity"]
+    assert report["capacity"]["reason"] == "route-snapshot-ambiguity"
 
 
 def test_coord_gates_reports_do_not_claim_exclusion(tmp_path, monkeypatch) -> None:

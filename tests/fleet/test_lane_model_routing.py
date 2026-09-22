@@ -206,8 +206,8 @@ def _governed_branch_window() -> str:
     before route preflight reads `model`.
     """
     source = _source()
-    seat = source.rindex("_review_seat=governed_review_seat(")
-    return source[seat : seat + 4700]
+    seat = source.rindex("_review_seat=_fresh_review_seat")
+    return source[seat : seat + 7000]
 
 
 def test_a_governed_review_card_keeps_the_resolved_model_not_the_bucket():
@@ -243,7 +243,7 @@ def test_the_governed_review_route_identity_keeps_the_chosen_capacity_domain():
     still carries the resolved `model`, not `_bucket`.
     """
     window = _governed_branch_window()
-    routes_idx = window.index("_routes=(")
+    routes_idx = window.index('_routes=[route for route in _capacity["routes"]')
     selected_idx = window.index("_selected_route=choose_review_route(_routes,")
     identity_idx = window.index('"capacity_domains":[str(_selected_route["capacity_domain"])]')
     model_idx = window.index('"model_or_bucket":model,')
