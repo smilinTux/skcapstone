@@ -208,8 +208,9 @@ def test_unreadable_card_is_reported_without_blocking_healthy_leaves(tmp_path, c
     store = CardStore(tmp_path)
     store.create(CardCore(id="broken01", title="Broken chain", kind="task"))
     store.create(
-        CardCore(id="blocked1", title="Depends on broken chain", kind="task",
-                 dependencies=["broken01"])
+        CardCore(
+            id="blocked1", title="Depends on broken chain", kind="task", dependencies=["broken01"]
+        )
     )
     store.create(CardCore(id="healthy1", title="Healthy leaf", kind="task"))
     store.create(CardCore(id="review01", title="Healthy review", kind="task"))
