@@ -1177,13 +1177,25 @@ def _check_store_integrity(home: Path) -> list[Check]:
     coord_dir = home / "coordination"
     card_cores = sorted(cards_dir.glob("*/core.json"))
     card_events = sorted(cards_dir.glob("*/events/*.jsonl"))
-    legacy_jsonl = sorted((coord_dir / "archive").glob("*.jsonl")) + sorted(
-        (coord_dir / "card_events").glob("*.jsonl")
-    )
+    archive_jsonl = sorted((coord_dir / "archive").glob("*.jsonl"))
+    overlay_jsonl = sorted((coord_dir / "card_events").glob("*.jsonl"))
     scanned_j, problems_j = _scan_json_store(card_cores, jsonl=False)
-    scanned_l, problems_l = _scan_json_store(card_events + legacy_jsonl, jsonl=True)
-    card_scanned = scanned_j + scanned_l
-    card_problems = problems_j + problems_l
+    scanned_l, problems_l = _scan_json_store(card_events + archive_jsonl, jsonl=True)
+    from skcoord.card_event_recovery import scan_overlay_records
+
+    overlay_problems = scan_overlay_records(home)
+    card_scanned = scanned_j + scanned_l + len(overlay_jsonl)
+    card_problems = (
+        problems_j
+        + problems_l
+        + [
+            (
+                f"{item['file']} line {item['line']}: {item['error_type']}"
+                + (f" card_hint={item['card_hint']}" if item.get("card_hint") else "")
+            )
+            for item in overlay_problems
+        ]
+    )
     checks.append(
         Check(
             name="store:cards",
@@ -1192,13 +1204,13 @@ def _check_store_integrity(home: Path) -> list[Check]:
             detail=(
                 f"{card_scanned} file(s) OK"
                 if not card_problems
-                else f"{len(card_problems)} corrupt: {'; '.join(card_problems[:3])}"
+                else f"{len(card_problems)} rejected: {'; '.join(card_problems[:3])}"
             ),
             fix=(
                 ""
                 if not card_problems
-                else "Repair or remove the corrupt store file(s); "
-                "append-only logs must be valid JSON per line"
+                else "Use the supported hash-pinned recovery command for rejected overlay "
+                "records; append-only logs must be schema-valid JSON per line"
             ),
             category="store",
         )
@@ -1842,7 +1854,7 @@ def _check_identity_consistency(home: Path) -> list[Check]:
                 passed=False,
                 unknown=True,
                 detail=(
-                    "UNKNOWN: capauth.canonical_subject not importable: " f"{subject_import_error}"
+                    f"UNKNOWN: capauth.canonical_subject not importable: {subject_import_error}"
                 ),
                 category="identity",
             )
