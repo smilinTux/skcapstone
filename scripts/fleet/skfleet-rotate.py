@@ -7769,6 +7769,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             (HOST,len(picks)-_pick_index,_exhausted_ids,_exhausted_omitted))
         break
     processed_picks+=1
+    _elastic_review = _POOL_V2_ADMISSIONS.get(cid, {}).get("elastic_review_admitted") is True
     _attempt_escalation=needs_escalation(cid,core,_labels)
     _attempt_health={lane["name"]:_health_for(
         lane["name"],_lane_model(lane,core)) for lane in LANES}
@@ -7778,7 +7779,6 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
                 str(label).strip().lower() for label in _labels} else None)
         _attempt_health["codex"]=(
             bool(_producer_routes),"gateway-route-capacity" if _producer_routes else "unknown")
-    _elastic_review = _POOL_V2_ADMISSIONS.get(cid, {}).get("elastic_review_admitted") is True
     _review_seat=governed_review_seat(
         _labels,
         qualified_reviewer_seats(core),

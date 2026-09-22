@@ -88,6 +88,60 @@ def _launchable_predicate():
     return namespace["_has_launchable_pick"]
 
 
+def _prelaunch_producer_route_calls(order: tuple[str, str]) -> list[str]:
+    """Execute the real current-card elastic assignment and producer gate."""
+    tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
+    launch_loop = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.For)
+        and any(
+            isinstance(name, ast.Name) and name.id == "_pick_index"
+            for name in ast.walk(node.target)
+        )
+    )
+    selected = [
+        node
+        for node in launch_loop.body
+        if (
+            isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "_elastic_review"
+                for target in node.targets
+            )
+        )
+        or (
+            isinstance(node, ast.If)
+            and "_elastic_review" in ast.unparse(node.test)
+            and "_producer_routes_for"
+            in (ast.get_source_segment(ROTATE.read_text(encoding="utf-8"), node) or "")
+        )
+    ]
+    calls: list[str] = []
+    admissions = {
+        "ordinary": {"elastic_review_admitted": False},
+        "elastic": {"elastic_review_admitted": True},
+    }
+    namespace = {
+        "_ONLY_SEAT": "",
+        "_POOL_V2_ADMISSIONS": admissions,
+        "_elastic_review": admissions[order[-1]]["elastic_review_admitted"],
+        "_producer_routes_for": (lambda core, _labels, _lane: calls.append(str(core["id"])) or []),
+    }
+    compiled = compile(ast.Module(body=selected, type_ignores=[]), str(ROTATE), "exec")
+    for cid in order:
+        namespace.update(
+            {
+                "cid": cid,
+                "core": {"id": cid},
+                "_labels": [],
+                "_attempt_health": {},
+            }
+        )
+        exec(compiled, namespace)
+    return calls
+
+
 def _fill(outcomes: list[tuple[str, bool]], seats: int, pool_bound: int) -> list[str]:
     candidates = [(0, 0, card_id) for card_id, _ok in outcomes]
     bounded = _bounded_sequence()(candidates, pool_bound)
@@ -205,6 +259,14 @@ def test_exhausted_elastic_budget_preserves_later_other_lane() -> None:
 
     assert predicate([codex], remaining, 0, lane_order, admissions, {}, 3) is False
     assert predicate([codex, escalation], remaining, 0, lane_order, admissions, {}, 3) is True
+
+
+@pytest.mark.parametrize(
+    "order",
+    [("ordinary", "elastic"), ("elastic", "ordinary")],
+)
+def test_prelaunch_admission_uses_the_current_cards_elastic_state(order) -> None:
+    assert _prelaunch_producer_route_calls(order) == ["ordinary"]
 
 
 def test_prelaunch_recheck_uses_gateway_routes_for_producer_health() -> None:
