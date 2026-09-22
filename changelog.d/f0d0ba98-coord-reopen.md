@@ -1,0 +1,1 @@
+- Card `f0d0ba98`: add a preconditioned `coord reopen` command for reviving an unowned completed card through the existing append-only lifecycle event, and retain an attributed default writer for `coord edit` under strict overlay validation.

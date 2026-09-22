@@ -84,4 +84,3 @@ secrets, push source, or deploy elsewhere. Preserve all `bf712d72` and
 `3c65c0fc` evidence. Store candidate, review, live preimages, plan, per-row
 custody, receipt, rollback proof, strict folds, and unit restoration under
 `/home/skuser01/.skcapstone/evidence/work/a62b5f8d/`.
-

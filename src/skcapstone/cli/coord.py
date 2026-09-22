@@ -33,6 +33,7 @@ def register_coord_commands(main: click.Group) -> None:
             "  coord link <id> evidence <path>            record the proof\n"
             "  coord move <id> review --agent <you>       hand to an independent reviewer\n"
             "  coord complete <id> --agent <you>          done\n"
+            "  coord reopen <id> --reason ... --agent ... revive a completed card\n"
             "\n"
             "\b\n"
             "COLUMNS\n"
@@ -693,6 +694,40 @@ def register_coord_commands(main: click.Group) -> None:
 
         # board.complete_task() automatically mints Joules via _mint_joules_for_task
         console.print(f"\n  [green]Completed:[/] [{task_id}] by [bold]{result.agent}[/]\n")
+
+    @coord.command("reopen")
+    @click.argument("task_id")
+    @click.option("--reason", required=True, help="Why the completed card must resume.")
+    @click.option("--agent", required=True, help="Audited reopen actor.")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--casey-authorization", type=click.Path(path_type=Path))
+    @click.option("--casey-change-id")
+    def coord_reopen(task_id, reason, agent, home, casey_authorization, casey_change_id):
+        """Revive one unowned, unarchived terminal card to backlog."""
+        validate_task_id(task_id)
+        validate_agent_name(agent)
+        if not reason.strip():
+            raise click.ClickException("a reopen reason is required")
+
+        from ..coord_reopen import reopen_card
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation(
+            agent,
+            Action.MOVE_CARD,
+            f"{task_id}:reopen",
+            casey_authorization,
+            casey_change_id,
+        )
+        try:
+            event = reopen_card(Path(home).expanduser(), task_id, reason, agent)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from None
+        console.print(
+            f"\n  [green]Reopened:[/] [{task_id}] to backlog by [bold]{agent}[/]\n"
+            f"  [dim]event_id {event.get('event_id')}[/]\n"
+        )
 
     @coord.command("satisfy-gate")
     @click.argument("task_id")
@@ -1528,10 +1563,12 @@ def register_coord_commands(main: click.Group) -> None:
         attributed to its writer and reversed by describing again. Only the
         options you pass are changed; pass an empty string to clear a field.
         """
+        actor = agent or "coord-edit"
+
         from ..jarvis_emergency import authorize_coord_mutation
         from ..seat_boundaries import Action
 
-        authorize_coord_mutation(agent or "", Action.DESCRIBE_CARD, task_id, None, None)
+        authorize_coord_mutation(actor, Action.DESCRIBE_CARD, task_id, None, None)
 
         from ..describe_guard import DegenerateTitleError, check_title
 
@@ -1551,14 +1588,14 @@ def register_coord_commands(main: click.Group) -> None:
                     action="describe",
                     title=title,
                     description=description,
-                    writer=agent or "",
+                    writer=actor,
                 )
             )
             from ..card_store import card_store_write_enabled, mirror_coord_describe
 
             if card_store_write_enabled():
                 mirror_coord_describe(
-                    home_path, task_id, agent or "", title=title, description=description
+                    home_path, task_id, actor, title=title, description=description
                 )
         except ValueError as exc:
             raise click.ClickException(str(exc)) from None

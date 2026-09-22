@@ -72,6 +72,7 @@ def test_edit_writes_the_title(tmp_path: Path):
     )
     assert result.exit_code == 0, result.output
     assert CardStore(tmp_path).fold("ccc33333").title == "New title"
+    assert CardStore(tmp_path)._read_events("ccc33333")[-1]["writer"] == "coord-edit"
 
 
 def test_describe_alias_warns_but_still_writes(tmp_path: Path):
@@ -85,6 +86,7 @@ def test_describe_alias_warns_but_still_writes(tmp_path: Path):
     assert result.exit_code == 0, result.output
     assert "deprecated" in result.output
     assert CardStore(tmp_path).fold("ddd44444").title == "Aliased title"
+    assert CardStore(tmp_path)._read_events("ddd44444")[-1]["writer"] == "coord-edit"
 
 
 def test_describe_alias_still_rejects_an_empty_edit(tmp_path: Path):

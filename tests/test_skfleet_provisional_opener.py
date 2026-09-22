@@ -22,6 +22,9 @@ ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 
 FUNCTIONS = {
+    "_complete_governed_review",
+    "_dependency_value",
+    "_fold_claimability",
     "_log_once_per_hour",
     "_event_sort_key",
     "_fold_key",
@@ -41,6 +44,7 @@ FUNCTIONS = {
     "open_provisional_reviews",
 }
 CONSTANTS = {
+    "_COLUMNS",
     "_PROVISIONAL_PASS_RE",
     "_REVIEW_TITLE_RE",
     "_ID_RE",
@@ -135,7 +139,7 @@ class OpenerHarness:
                 "_load_evidence_events": lambda: self.events,
                 "event_rows": lambda cid: self.structure.get(cid, self.events.get(cid, [])),
                 "_native_outcome_value": lambda event: str(event.get("verdict") or ""),
-                "lifecycle_state": lambda cid: self.states.get(cid, "open"),
+                "lifecycle_state": self._lifecycle_state,
                 "folded_labels": lambda cid, core: core.get("initial_labels", []),
                 "log": lambda _dest, value: self.logs.append(value),
                 "subprocess": type("Subprocess", (), {"run": self._run}),
@@ -151,6 +155,25 @@ class OpenerHarness:
                 "_rows": {},
             }
         )
+
+    def _lifecycle_state(self, card_id: str) -> str:
+        if card_id in self.states:
+            return self.states[card_id]
+        core_path = self.cards / card_id / "core.json"
+        if not core_path.exists():
+            return "open"
+        core = json.loads(core_path.read_text(encoding="utf-8"))
+        state = self.ns["_fold_claimability"](
+            core,
+            self.structure.get(card_id, self.events.get(card_id, [])),
+        )
+        if state["status"] == "done":
+            return "complete"
+        if state["archived"] or state["voided"]:
+            return "void"
+        if state["owner"] and state["status"] in {"ready", "doing", "review"}:
+            return "claimed"
+        return "open"
 
     def card(
         self,
@@ -285,6 +308,33 @@ def test_zero_capacity_dry_run_is_empty(tmp_path: Path) -> None:
     assert board.open(0, dry_run=True) == 0
     assert board.calls == []
     assert any("capacity=0|eligible=0|batch=0|dry_run=true" in row for row in board.logs)
+
+
+def test_reopened_terminal_parent_is_consumed_by_normal_opener(tmp_path: Path) -> None:
+    board = OpenerHarness(tmp_path)
+    board.outcome("a1b2c3d4")
+    outcome = dict(board.events["a1b2c3d4"][0])
+    board.structure["a1b2c3d4"] = [
+        outcome,
+        {
+            "action": "complete",
+            "ts": "2026-09-01T12:01:00Z",
+            "writer": "worker",
+        },
+    ]
+    assert board.open(1) == 0
+
+    board.structure["a1b2c3d4"].append(
+        {
+            "action": "reopen",
+            "column": "backlog",
+            "reason": "open a fresh candidate-bound review",
+            "ts": "2026-09-01T12:02:00Z",
+            "writer": "jarvis",
+        }
+    )
+
+    assert board.open(1) == 1
 
 
 def test_dry_run_bounds_batch_by_free_slots_and_eligible_sources(tmp_path: Path) -> None:
