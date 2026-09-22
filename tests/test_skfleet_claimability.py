@@ -406,6 +406,25 @@ def test_move_does_not_release_owner_but_exact_release_after_move_does() -> None
     assert state["status"] == "backlog"
 
 
+def test_completed_card_ignores_late_claim_and_release_stream() -> None:
+    namespace = _load_claimability()
+    core = _core("56f9d32f")
+    events = [
+        _event("2026-09-04T21:26:13Z", "jarvis", "complete"),
+        _claim("2026-09-04T21:29:11Z", "chiap04", "late-a"),
+        _release("2026-09-04T22:25:28Z", "chiap04", "chiap04", "late-a"),
+        _claim("2026-09-04T22:29:11Z", "chiap04", "late-b"),
+        _release("2026-09-04T22:30:18Z", "chiap04", "chiap04", "late-b"),
+    ]
+    state = namespace["_fold_claimability"](core, events)
+    assert state["status"] == "done"
+    assert state["owner"] is None
+    assert state["terminal"]
+    assert state["late_claims"]
+    assert state["late_releases"]
+    assert namespace["_claimability_reason"](core, state) == "done"
+
+
 def test_cross_writer_timestamp_order_and_stale_projection_parity() -> None:
     namespace = _load_claimability()
     core = _core("order001")

@@ -2452,6 +2452,7 @@ def _fold_claimability(core, rows):
         "status": "backlog", "owner": None, "claim_revision": None,
         "claim_origin_status": None,
         "archived": False, "voided": False, "terminal": False,
+        "late_claims": [], "late_releases": [],
         "review_seen": False,
         "title": str(core.get("title") or ""),
         "description": str(core.get("description") or ""),
@@ -2505,6 +2506,9 @@ def _fold_claimability(core, rows):
         elif action == "release_claim":
             owner = event.get("released_owner")
             revision = event.get("expected_claim_revision")
+            if state["terminal"]:
+                state["late_releases"].append(str(event.get("event_id") or event.get("ts") or "release_claim"))
+                continue
             if (
                 owner == state["owner"]
                 and revision == state["claim_revision"]
@@ -2520,6 +2524,7 @@ def _fold_claimability(core, rows):
             if not isinstance(owner, str) or not owner:
                 raise ValueError("claim owner is missing")
             if state["terminal"]:
+                state["late_claims"].append(str(event.get("event_id") or event.get("ts") or owner))
                 continue
             if (state["owner"] and state["owner"] != owner and
                     state["status"] in {"ready", "doing", "review"}):
