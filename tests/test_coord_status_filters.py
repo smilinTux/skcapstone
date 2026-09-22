@@ -202,3 +202,34 @@ def test_status_leaf_eligible_known_mix_uses_folded_cards(tmp_path):
     assert leaf_eligibility_counts(tmp_path) == LeafEligibilityCounts(
         leaves=1, review=1, malformed=1
     )
+
+
+def test_unreadable_card_is_reported_without_blocking_healthy_leaves(tmp_path, caplog):
+    store = CardStore(tmp_path)
+    store.create(CardCore(id="broken01", title="Broken chain", kind="task"))
+    store.create(
+        CardCore(id="blocked1", title="Depends on broken chain", kind="task",
+                 dependencies=["broken01"])
+    )
+    store.create(CardCore(id="healthy1", title="Healthy leaf", kind="task"))
+    store.create(CardCore(id="review01", title="Healthy review", kind="task"))
+    store.append_event("review01", "move", "fixture", column="review")
+    store.append_event("broken01", "note", "fixture", body="first")
+    store.append_event("broken01", "note", "fixture", body="second")
+
+    writer = next((tmp_path / "cards" / "broken01" / "events").glob("*.jsonl"))
+    lines = writer.read_text().splitlines()
+    first = json.loads(lines[0])
+    first["body"] = "changed after append"
+    lines[0] = json.dumps(first)
+    writer.write_text("\n".join(lines) + "\n")
+
+    with pytest.raises(ValueError, match="chain broken"):
+        store.fold("broken01")
+    with pytest.raises(ValueError, match="chain broken"):
+        store.list_cards()
+
+    assert leaf_eligibility_counts(tmp_path) == LeafEligibilityCounts(
+        leaves=1, review=1, malformed=1
+    )
+    assert "CardStore card broken01 is unreadable" in caplog.text
