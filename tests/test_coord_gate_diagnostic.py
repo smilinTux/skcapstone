@@ -7,10 +7,13 @@ import json
 import pytest
 from click.testing import CliRunner
 from skcoord.card_store import CardCore
+from skcoord.coordination import Board as CoordBoard
 
+from skcapstone.card import Kind
 from skcapstone.card_store import CardStore
 from skcapstone.cli import main
 from skcapstone.fleet.review_capacity import seal_review_capacity_truth
+from skcapstone.mcp_tools import coord_tools
 from skcapstone.review_admission import (
     assert_governed_review_claim,
     governed_review_gate_reasons,
@@ -51,6 +54,29 @@ def _write_gateway_capacity(
         json.dumps(snapshot) + "\n",
         encoding="utf-8",
     )
+
+
+def _bound_review(home) -> CardStore:
+    """Create one active, fully bound Seraph review fixture."""
+    _write_gateway_capacity(home, routes=("sk-s",))
+    store = CardStore(home)
+    store.create(CardCore(id="source01", title="source", created_by="producer"))
+    store.create(
+        CardCore(
+            id="deadbeef",
+            title="[REVIEW][S] exact candidate",
+            created_by="scheduler",
+            initial_labels=["review", "seat-seraph", "sk-s", "parent-source01"],
+            meta={
+                "producer_identity": "producer",
+                "candidate_evidence_sha256": "a" * 64,
+                "link_source_card": "source01",
+                "link_head_revision": "b" * 40,
+            },
+        )
+    )
+    store.append_event("deadbeef", "move", "scheduler", column="review")
+    return store
 
 
 def test_original_incomplete_review_shape_reports_exact_reasons() -> None:
@@ -437,6 +463,198 @@ def test_coord_gates_reports_do_not_claim_exclusion(tmp_path, monkeypatch) -> No
     report = json.loads(result.output)
     assert report["eligible"] is False
     assert report["reasons"] == ["do-not-claim"]
+
+
+@pytest.mark.parametrize(
+    "verdict",
+    [
+        "PASS",
+        "FAIL_FOR_REPAIR",
+        "FAIL_CLOSED",
+        "FAIL_ROLLED_BACK",
+        "BLOCKED blocked_on=capability referent=ac:1",
+    ],
+)
+def test_coord_gates_withholds_terminal_review_generation(
+    tmp_path, monkeypatch, verdict: str
+) -> None:
+    """Reproduce coord gates disagreeing with Seraph on terminal reviews."""
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    store = _bound_review(tmp_path)
+    store.append_event("deadbeef", "link", "reviewer", link_key="verdict", link_value=verdict)
+
+    result = CliRunner().invoke(main, ["coord", "gates", "deadbeef", "--home", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["reasons"] == ["terminal-review-generation"]
+
+
+@pytest.mark.parametrize(
+    ("kind", "itil_status"),
+    [(Kind.INCIDENT, "detected"), (Kind.PROBLEM, "known_error")],
+)
+def test_coord_gates_withholds_explicit_itil_dispatch_hold(
+    tmp_path, monkeypatch, kind: Kind, itil_status: str
+) -> None:
+    """Non-task ITIL workflow holds are not launchable review demand."""
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    store = CardStore(tmp_path)
+    store.create(
+        CardCore(
+            id="deadbeef",
+            kind=kind,
+            title="[S] stale ITIL projection",
+            created_by="itil",
+            meta={"itil_status": itil_status},
+        )
+    )
+
+    result = CliRunner().invoke(main, ["coord", "gates", "deadbeef", "--home", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["reasons"] == ["itil-dispatch-hold"]
+
+
+def test_coord_gates_withholds_completed_generation_after_stale_reopen(
+    tmp_path, monkeypatch
+) -> None:
+    """Moving a completed generation back to review cannot relaunch it."""
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    store = _bound_review(tmp_path)
+    store.append_event("deadbeef", "link", "reviewer", link_key="verdict", link_value="PASS")
+    store.append_event("deadbeef", "complete", "reviewer")
+    store.append_event("deadbeef", "reopen", "scheduler", column="review")
+
+    result = CliRunner().invoke(main, ["coord", "gates", "deadbeef", "--home", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["reasons"] == ["terminal-review-generation"]
+
+
+def test_coord_gates_admits_newer_exact_candidate_generation(tmp_path, monkeypatch) -> None:
+    """A changed, fully typed candidate binding reopens review eligibility."""
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    store = _bound_review(tmp_path)
+    store.append_event("deadbeef", "link", "reviewer", link_key="verdict", link_value="PASS")
+    store.append_event(
+        "deadbeef",
+        "link",
+        "scheduler",
+        link_key="candidate_evidence_sha256",
+        link_value="c" * 64,
+    )
+    store.append_event(
+        "deadbeef",
+        "link",
+        "scheduler",
+        link_key="link_head_revision",
+        link_value="d" * 40,
+    )
+
+    result = CliRunner().invoke(main, ["coord", "gates", "deadbeef", "--home", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["eligible"] is True, result.output
+
+
+@pytest.mark.parametrize(
+    "verdict",
+    [
+        "PASS",
+        "FAIL_FOR_REPAIR",
+        "FAIL_CLOSED",
+        "FAIL_ROLLED_BACK",
+        "BLOCKED blocked_on=capability referent=ac:1",
+    ],
+)
+def test_atomic_claim_rejects_terminal_review_generation(tmp_path, verdict: str) -> None:
+    """Direct claims cannot bypass the shared review-generation gate."""
+    store = _bound_review(tmp_path)
+    store.append_event("deadbeef", "link", "reviewer", link_key="verdict", link_value=verdict)
+
+    with pytest.raises(ValueError, match="terminal-review-generation"):
+        assert_governed_review_claim(tmp_path, "deadbeef", "pi-seraph-worker")
+
+
+@pytest.mark.parametrize(
+    ("kind", "itil_status"),
+    [(Kind.INCIDENT, "detected"), (Kind.PROBLEM, "known_error")],
+)
+def test_atomic_claim_rejects_explicit_itil_dispatch_hold(
+    tmp_path, kind: Kind, itil_status: str
+) -> None:
+    """Direct claims share the non-task ITIL dispatch hold."""
+    store = CardStore(tmp_path)
+    store.create(
+        CardCore(
+            id="deadbeef",
+            kind=kind,
+            title="[S] stale ITIL projection",
+            created_by="itil",
+            meta={"itil_status": itil_status},
+        )
+    )
+
+    with pytest.raises(ValueError, match="itil-dispatch-hold"):
+        assert_governed_review_claim(tmp_path, "deadbeef", "worker")
+
+
+def _terminalize_before_claim_lock(monkeypatch, store: CardStore) -> None:
+    """Inject a terminal verdict after surface prechecks but before Board locks."""
+    original = CoordBoard.claim_task
+
+    def racing_claim(self, agent_name, task_id, force=False):
+        store.append_event(
+            task_id,
+            "link",
+            "independent-reviewer",
+            link_key="verdict",
+            link_value="PASS",
+        )
+        return original(self, agent_name, task_id, force=force)
+
+    monkeypatch.setattr(CoordBoard, "claim_task", racing_claim)
+
+
+def test_cli_claim_rechecks_review_generation_under_card_lock(tmp_path, monkeypatch) -> None:
+    """A verdict between the CLI precheck and Board lock prevents mutation."""
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    store = _bound_review(tmp_path)
+    _terminalize_before_claim_lock(monkeypatch, store)
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "coord",
+            "claim",
+            "deadbeef",
+            "--home",
+            str(tmp_path),
+            "--agent",
+            "pi-seraph-worker",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "terminal-review-generation" in result.output
+    assert store.fold("deadbeef").owner is None
+
+
+@pytest.mark.asyncio
+async def test_mcp_claim_rechecks_review_generation_under_card_lock(tmp_path, monkeypatch) -> None:
+    """The MCP surface shares the same lock-bound admission callback."""
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    store = _bound_review(tmp_path)
+    _terminalize_before_claim_lock(monkeypatch, store)
+    monkeypatch.setattr(coord_tools, "_home", lambda: tmp_path)
+
+    result = await coord_tools._handle_coord_claim(
+        {"task_id": "deadbeef", "agent_name": "pi-seraph-worker"}
+    )
+    payload = json.loads(result[0].text)
+
+    assert payload["error"].endswith("terminal-review-generation")
+    assert store.fold("deadbeef").owner is None
 
 
 @pytest.mark.parametrize("action", ["archive", "void"])

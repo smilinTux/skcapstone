@@ -202,3 +202,54 @@ def test_status_leaf_eligible_known_mix_uses_folded_cards(tmp_path):
     assert leaf_eligibility_counts(tmp_path) == LeafEligibilityCounts(
         leaves=1, review=1, malformed=1
     )
+
+
+@pytest.mark.parametrize(
+    "verdict",
+    [
+        "PASS",
+        "FAIL_FOR_REPAIR",
+        "FAIL_CLOSED",
+        "FAIL_ROLLED_BACK",
+        "BLOCKED blocked_on=capability referent=ac:1",
+    ],
+)
+def test_review_demand_excludes_terminal_generation_and_keeps_new_candidate(
+    tmp_path, verdict: str
+):
+    """Demand reports the same exact-generation eligibility as dispatch."""
+    store = CardStore(tmp_path)
+    binding = {
+        "producer_identity": "producer",
+        "candidate_evidence_sha256": "a" * 64,
+        "link_head_revision": "b" * 40,
+    }
+    store.create(CardCore(id="source01", title="source"))
+    store.create(CardCore(id="source02", title="source"))
+    for card_id, source_id in (("review01", "source01"), ("review02", "source02")):
+        store.create(
+            CardCore(
+                id=card_id,
+                title="[REVIEW][S] candidate",
+                initial_labels=["review", "seat-seraph", f"parent-{source_id}"],
+                meta={**binding, "link_source_card": source_id},
+            )
+        )
+        store.append_event(card_id, "move", "scheduler", column="review")
+        store.append_event(card_id, "link", "reviewer", link_key="verdict", link_value=verdict)
+    store.append_event(
+        "review02",
+        "link",
+        "scheduler",
+        link_key="candidate_evidence_sha256",
+        link_value="c" * 64,
+    )
+    store.append_event(
+        "review02",
+        "link",
+        "scheduler",
+        link_key="link_head_revision",
+        link_value="d" * 40,
+    )
+
+    assert leaf_eligibility_counts(tmp_path).review == 1

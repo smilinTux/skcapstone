@@ -203,6 +203,47 @@ def test_seraph_admission_clears_when_blocked_backoff_holds() -> None:
     assert helpers["_pool_v2_ready_ids"](decisions, {card_id: admission}) == set()
 
 
+def test_seraph_admission_clears_for_terminal_review_generation() -> None:
+    """Seraph and POOL_V2 both consume the terminal-generation gate."""
+    helpers = _load_helpers(
+        "_governed_review_metadata", "_pool_v2_admission", "_pool_v2_dispatchable"
+    )
+    helpers.update(
+        {
+            "_ONLY_SEAT": "seraph",
+            "_pool_v2_overlay": lambda _cid, _core, reason: {
+                "reason": reason,
+                "backoff": False,
+                "terminal_review_generation": True,
+            },
+        }
+    )
+    core = {
+        "id": "deadbeef",
+        "meta": {
+            "producer_identity": "producer",
+            "candidate_evidence_sha256": "a" * 64,
+            "link_source_card": "source01",
+            "link_head_revision": "b" * 40,
+        },
+    }
+    claimability = {
+        "claimable": True,
+        "reason": "governed-review",
+        "status": "review",
+        "host_pin": None,
+        "title": "[REVIEW][S] candidate",
+        "labels": ["review", "seat-seraph"],
+        "core": core,
+        "source_revision": "c" * 64,
+    }
+
+    admission = helpers["_pool_v2_admission"]("deadbeef", core, claimability)
+
+    assert admission["seraph_review_admitted"] is False
+    assert helpers["_pool_v2_dispatchable"](admission) is False
+
+
 def test_pool_v2_is_authoritative_for_large_only_v2_population() -> None:
     """Forty-five V2-only cards enter even when the legacy pool has two rows."""
     ready_ids = _load_helpers("_pool_v2_dispatchable", "_pool_v2_ready_ids")["_pool_v2_ready_ids"]
