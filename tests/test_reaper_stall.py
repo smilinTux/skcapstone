@@ -20,6 +20,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 SRC = os.path.join(os.path.dirname(__file__), "..", "scripts", "fleet", "skfleet-rotate.py")
 
@@ -81,13 +82,26 @@ def test_publish_live_logs_exact_attribution(tmp_path):
         for n in tree.body
         if (
             isinstance(n, ast.Assign)
-            and getattr(n.targets[0], "id", "") in {"STALL_GRACE", "_NO_PROGRESS"}
+            and getattr(n.targets[0], "id", "")
+            in {
+                "STALL_GRACE",
+                "_NO_PROGRESS",
+                "_PROGRESS_SCAN_CAP",
+                "_PROGRESS_FRESH_EXIT_S",
+                "_PROGRESS_IGNORED_DIRS",
+                "_SESSION_ROOT",
+            }
         )
         or (
             isinstance(n, ast.FunctionDef)
             and n.name
             in {
                 "_never_started",
+                "_recent_pi_activity",
+                "_workspace_progress_at",
+                "_session_progress_at",
+                "_pi_process_attributed",
+                "_exact_pi_progress",
                 "_record_live_no_progress",
                 "publish_live",
                 "_worker_cards",
@@ -117,7 +131,11 @@ def test_publish_live_logs_exact_attribution(tmp_path):
         "json": json,
         "LANES": [{"prefix": "glm-auto-"}],
         "LIVE": str(live),
+        "LIVE_FRESH": 30 * 60,
         "Path": Path,
+        "PI": "/missing/pi",
+        "_LIVENESS_OBSERVATIONS": (),
+        "collect_observations": lambda _root: (),
         "log": lambda _directory, message: messages.append(message),
         "os": os,
         "time": time,
@@ -150,6 +168,145 @@ def test_publish_live_logs_exact_attribution(tmp_path):
 
     assert ns["publish_live"]([], [unit]) == ["aaaa0001"]
     assert len(list((tmp_path / ".skcapstone/evidence/live-no-progress").glob("*.json"))) == 1
+
+
+def test_systemd_only_worker_with_exact_progress_is_not_reported_stalled(tmp_path):
+    """A real unit remains live when tmux reports zero sessions and stdout is buffered."""
+    tree = ast.parse(open(SRC, encoding="utf-8").read())
+    names = {
+        "_never_started",
+        "_recent_pi_activity",
+        "_workspace_progress_at",
+        "_session_progress_at",
+        "_pi_process_attributed",
+        "_exact_pi_progress",
+        "_record_live_no_progress",
+        "publish_live",
+        "_worker_cards",
+    }
+    constants = {
+        "STALL_GRACE",
+        "_NO_PROGRESS",
+        "_PROGRESS_SCAN_CAP",
+        "_PROGRESS_FRESH_EXIT_S",
+        "_PROGRESS_IGNORED_DIRS",
+        "_SESSION_ROOT",
+    }
+    nodes = [
+        node
+        for node in tree.body
+        if (
+            isinstance(node, ast.FunctionDef)
+            and node.name in names
+            or isinstance(node, ast.Assign)
+            and getattr(node.targets[0], "id", "") in constants
+        )
+    ]
+    home = str(tmp_path)
+    live = tmp_path / "live"
+    messages = []
+    owner = "pi-glm-chiap08-aaaa0001"
+    revision = "revision-1"
+    session = "glm-auto-aaaa0001"
+    unit_name = "skfleet-worker-glm-aaaa0001.service"
+    workspace = tmp_path / ".skcapstone/fleet/workspaces" / owner
+    workspace.mkdir(parents=True)
+
+    pi = tmp_path / "pi"
+    pi.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    node = tmp_path / "node"
+    node.write_text("", encoding="utf-8")
+    proc = tmp_path / "proc" / "4243"
+    proc.mkdir(parents=True)
+    (proc / "exe").symlink_to(node)
+    (proc / "cmdline").write_bytes(b"node\0" + str(pi).encode() + b"\0")
+    exact_environment = (
+        b"SKAGENT="
+        + owner.encode()
+        + b"\0SKFLEET_CARD_ID=aaaa0001\0SKFLEET_CLAIM_REVISION="
+        + revision.encode()
+        + b"\0SKFLEET_SESSION_ID="
+        + session.encode()
+        + b"\0"
+    )
+    (proc / "environ").write_bytes(exact_environment)
+    transcript = tmp_path / ".pi/agent/sessions" / ("--" + workspace.name + "--") / "live.jsonl"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text('{"type":"message"}\n', encoding="utf-8")
+
+    observation = SimpleNamespace(
+        host="chiap08",
+        observer_host="chiap08",
+        owner=owner,
+        card_id="aaaa0001",
+        claim_generation=revision,
+        current_claim_generation=revision,
+        claim_active=True,
+        unit=unit_name,
+        pid=4242,
+        process_identity="pid:4242",
+        process_alive=True,
+        process_tree=(4242, 4243),
+        cgroup="/user.slice/" + unit_name,
+        cgroup_processes=2,
+        session_id=session,
+        workspace_path=str(workspace),
+    )
+    ns = {
+        "CardStore": type(
+            "CardStore",
+            (),
+            {
+                "__init__": lambda self, _root: None,
+                "fold": lambda self, _cid: {
+                    "owner": owner,
+                    "meta": {"_claim_revision": revision},
+                },
+            },
+        ),
+        "d": home,
+        "glob": glob,
+        "hashlib": hashlib,
+        "HOME": home,
+        "HOST": "chiap08",
+        "json": json,
+        "LANES": [{"name": "glm", "prefix": "glm-auto-"}],
+        "LIVE": str(live),
+        "LIVE_FRESH": 30 * 60,
+        "Path": Path,
+        "PI": str(pi),
+        "_LIVENESS_OBSERVATIONS": (observation,),
+        "_PROC_ROOT": tmp_path / "proc",
+        "collect_observations": lambda _root: (observation,),
+        "log": lambda _directory, message: messages.append(message),
+        "os": os,
+        "time": time,
+    }
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), SRC, "exec"), ns)
+    logs = tmp_path / ".skcapstone/fleet/logs"
+    logs.mkdir(parents=True)
+    path = logs / "aaaa0001-20260831T000000Z.log"
+    path.touch()
+    old = time.time() - 3600
+    os.utime(path, (old, old))
+    worker = {"card": "aaaa0001", "lane": "glm", "unit": unit_name}
+
+    assert ns["_exact_pi_progress"]("aaaa0001", unit_name, (observation,))
+    observation.current_claim_generation = "other-revision"
+    assert not ns["_exact_pi_progress"]("aaaa0001", unit_name, (observation,))
+    observation.current_claim_generation = revision
+    (proc / "environ").write_bytes(b"SKAGENT=broad-pi-name-only\0")
+    assert not ns["_exact_pi_progress"]("aaaa0001", unit_name, (observation,))
+    (proc / "environ").write_bytes(exact_environment)
+    stale = time.time() - 2 * 3600
+    os.utime(transcript, (stale, stale))
+    assert not ns["_exact_pi_progress"]("aaaa0001", unit_name, (observation,))
+    os.utime(transcript, None)
+
+    assert ns["publish_live"]([], [worker]) == ["aaaa0001"]
+    assert not messages
+    assert not list((tmp_path / ".skcapstone/evidence/live-no-progress").glob("*.json"))
+    assert json.loads((live / "chiap08.json").read_text())["cards"] == ["aaaa0001"]
 
 
 if __name__ == "__main__":

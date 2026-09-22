@@ -35,7 +35,7 @@ from skcapstone.fleet.worker_watchdog import (
     startup_actuation_fenced,
     wedge_actuation_fenced,
 )
-from skcapstone.fleet.worker_liveness_runtime import run_production_cycle
+from skcapstone.fleet.worker_liveness_runtime import collect_observations, run_production_cycle
 from skcapstone.coord_eligibility import leaf_eligibility_counts
 from skcapstone.fleet_lane_health import (
     acquire_lane_snapshot,
@@ -1971,6 +1971,146 @@ REAP_QUORUM = 3
 STALL_GRACE = 30 * 60     # a zero-byte log younger than this may still be starting
 _NO_PROGRESS = os.path.join(HOME, ".skcapstone/evidence/live-no-progress")
 
+_PROGRESS_SCAN_CAP = 20000
+_PROGRESS_FRESH_EXIT_S = 60.0
+_PROGRESS_IGNORED_DIRS = frozenset({
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".mypy_cache",
+    ".tox",
+    ".nox",
+    ".cache",
+    "uv-cache",
+    "node_modules",
+    ".venv",
+    "venv",
+    "htmlcov",
+})
+
+
+_SESSION_ROOT = os.path.join(HOME, ".pi/agent/sessions")
+
+
+def _recent_pi_activity(workspace, now=None, cap=_PROGRESS_SCAN_CAP):
+    """Return true for a fresh transcript or bounded worktree write."""
+    now = time.time() if now is None else now
+    base = os.path.basename(str(workspace).rstrip("/"))
+    if not base:
+        return False
+    for path in glob.glob(os.path.join(_SESSION_ROOT, "*" + base + "--", "*.jsonl")):
+        try:
+            age = now - os.stat(path).st_mtime
+        except OSError:
+            continue
+        if 0 <= age <= LIVE_FRESH:
+            return True
+    scanned = 0
+    stack = [str(workspace)]
+    while stack and scanned < cap:
+        try:
+            entries = list(os.scandir(stack.pop()))
+        except OSError:
+            continue
+        for entry in entries:
+            scanned += 1
+            if scanned >= cap:
+                return False
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    if entry.name not in _PROGRESS_IGNORED_DIRS:
+                        stack.append(entry.path)
+                elif entry.is_file(follow_symlinks=False):
+                    age = now - entry.stat(follow_symlinks=False).st_mtime
+                    if 0 <= age <= LIVE_FRESH:
+                        return True
+            except OSError:
+                continue
+    return False
+
+
+_PROC_ROOT = Path("/proc")
+
+
+def _pi_process_attributed(observation, proc_root=None, worker_executable=None):
+    """Return true when the exact worker cgroup contains its attributed Pi."""
+    root = Path(proc_root or _PROC_ROOT)
+    try:
+        expected = Path(worker_executable or PI).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False
+    expected_env = {
+        "SKAGENT": str(observation.owner),
+        "SKFLEET_CARD_ID": str(observation.card_id),
+        "SKFLEET_CLAIM_REVISION": str(observation.claim_generation),
+        "SKFLEET_SESSION_ID": str(observation.session_id),
+    }
+    for pid in tuple(observation.process_tree or ())[:256]:
+        proc = root / str(pid)
+        try:
+            executable = (proc / "exe").resolve(strict=True)
+            argv = (proc / "cmdline").read_bytes().split(b"\0")
+            environment = dict(
+                item.split(b"=", 1)
+                for item in (proc / "environ").read_bytes().split(b"\0")
+                if b"=" in item
+            )
+            matches = executable == expected
+            if executable.name in {"node", "nodejs"} and len(argv) > 1:
+                matches = Path(os.fsdecode(argv[1])).resolve() == expected
+            attributed = all(
+                environment.get(key.encode()) == value.encode()
+                for key, value in expected_env.items()
+            )
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if matches and attributed:
+            return True
+    return False
+
+
+def _exact_pi_progress(cid, worker, observations, now=None):
+    """Join exact unit, cgroup, Pi, claim and progress evidence."""
+    now = time.time() if now is None else now
+    try:
+        folded = CardStore(Path(HOME) / ".skcapstone").fold(cid)
+        if isinstance(folded, dict):
+            owner, meta = folded.get("owner"), folded.get("meta")
+        else:
+            owner, meta = getattr(folded, "owner", None), getattr(folded, "meta", None)
+        owner = str(owner or "")
+        revision = str((meta or {}).get("_claim_revision") or "")
+    except Exception:
+        return False
+    for observation in observations:
+        unit = str(getattr(observation, "unit", "") or "")
+        cgroup = str(getattr(observation, "cgroup", "") or "")
+        pid = getattr(observation, "pid", None)
+        process_tree = tuple(getattr(observation, "process_tree", ()) or ())
+        if not all((
+            getattr(observation, "host", None) == HOST,
+            getattr(observation, "observer_host", None) == HOST,
+            str(getattr(observation, "card_id", "")) == str(cid),
+            unit == worker,
+            cgroup.endswith("/" + unit),
+            getattr(observation, "process_alive", False),
+            getattr(observation, "cgroup_processes", 0),
+            pid in process_tree,
+            getattr(observation, "claim_active", False),
+            str(getattr(observation, "owner", "")) == owner,
+            str(getattr(observation, "claim_generation", "")) == revision,
+            str(getattr(observation, "current_claim_generation", "")) == revision,
+            getattr(observation, "process_identity", None) == "pid:%s" % pid,
+            getattr(observation, "session_id", None),
+            getattr(observation, "workspace_path", None),
+        )):
+            continue
+        if not _pi_process_attributed(observation):
+            continue
+        if _recent_pi_activity(observation.workspace_path, now=now):
+            return True
+    return False
+
 def _never_started(cid):
     """Return the zero-byte launch log and age when this card never started.
 
@@ -2044,6 +2184,7 @@ def _record_live_no_progress(cid, worker, path, age):
 def publish_live(sessions, units=()):
     """Record legacy tmux and transient-service workers for every other host."""
     cards = _worker_cards(sessions,units,LANES)
+    observations = None
     for _cid in cards:
         stalled = _never_started(_cid)
         if stalled:
@@ -2053,6 +2194,13 @@ def publish_live(sessions, units=()):
                  if s.startswith(L["prefix"]) and s[len(L["prefix"]):] == _cid),
                 next((u["unit"] for u in units if u["card"] == _cid), "unknown"),
             )
+            if observations is None:
+                try:
+                    observations = collect_observations(Path(HOME) / ".skcapstone")
+                except Exception:
+                    observations = ()
+            if _exact_pi_progress(_cid, worker, observations):
+                continue
             if _record_live_no_progress(_cid, worker, path, age):
                 log(d, "LIVE_NO_PROGRESS|%s|%s|worker=%s|log=%s|age_seconds=%d|"
                        "worker remains live; bounded escalation recorded"
@@ -3178,30 +3326,6 @@ def _worker_health_snapshot(session_names):
 # what it WRITES distinguishes WORKING from STALLED (learnings doc, section
 # 18: wedged = no workspace writes for hours or no workspace at all; working
 # = writes within minutes, whatever the CPU says).
-_PROGRESS_SCAN_CAP = 20000
-_PROGRESS_FRESH_EXIT_S = 60.0
-
-# Directory names whose contents are tool scratch, never work product. A
-# worker that only re-runs pytest/ruff/uv still rewrites these every cycle,
-# which is exactly how 1960b107 read as progress-fresh on chi for 2.5h while
-# producing nothing: its newest entry was .tools/uv-cache/..., then
-# .pytest_cache/v/cache/nodeids, then .ruff_cache. Measured 2026-09-19.
-_PROGRESS_IGNORED_DIRS = frozenset({
-    "__pycache__",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".mypy_cache",
-    ".tox",
-    ".nox",
-    ".cache",
-    "uv-cache",
-    "node_modules",
-    ".venv",
-    "venv",
-    "htmlcov",
-})
-
-
 def _workspace_progress_at(workspace, cap=_PROGRESS_SCAN_CAP,
                            fresh_within=_PROGRESS_FRESH_EXIT_S, now=None):
     """Newest write under one worker workspace: the OUTPUT liveness signal.
@@ -3261,9 +3385,6 @@ def _workspace_progress_at(workspace, cap=_PROGRESS_SCAN_CAP,
                 if now - newest <= fresh_within:
                     return newest, scanned, truncated
     return newest, scanned, truncated
-
-
-_SESSION_ROOT = os.path.join(HOME, ".pi/agent/sessions")
 
 
 def _session_progress_at(workspace, root=_SESSION_ROOT):
