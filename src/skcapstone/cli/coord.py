@@ -1756,6 +1756,114 @@ def register_coord_commands(main: click.Group) -> None:
             raise click.ClickException(str(exc)) from None
         console.print(f"\n  [green]Linked {task_id}: {key} = {value}.[/]\n")
 
+    @coord.command("recover-overlay")
+    @click.argument("operation", type=click.Choice(("plan", "apply", "rollback")))
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--agent", required=True, help="Claimed recovery actor.")
+    @click.option("--writer", help="Overlay shard filename for plan.")
+    @click.option("--line", "line_number", type=click.IntRange(min=1), help="Physical line.")
+    @click.option("--source-sha256", help="Exact current shard SHA256.")
+    @click.option("--line-sha256", help="Exact rejected line SHA256.")
+    @click.option("--recovery-card", help="Claimed recovery card ID.")
+    @click.option("--evidence", type=click.Path(), help="Existing evidence directory.")
+    @click.option("--plan", "plan_path", type=click.Path(), help="Saved plan for apply.")
+    @click.option("--receipt", "receipt_path", type=click.Path(), help="Receipt for rollback.")
+    @click.option(
+        "--writer-quiesced",
+        is_flag=True,
+        help="Assert pre-upgrade appenders are stopped or upgraded before apply.",
+    )
+    def coord_recover_overlay(
+        operation,
+        home,
+        agent,
+        writer,
+        line_number,
+        source_sha256,
+        line_sha256,
+        recovery_card,
+        evidence,
+        plan_path,
+        receipt_path,
+        writer_quiesced,
+    ):
+        """Plan, apply, or roll back one hash-pinned rejected overlay row."""
+        from skcoord.card_event_recovery import (
+            apply_overlay_recovery,
+            plan_overlay_recovery,
+            rollback_overlay_recovery,
+            save_recovery_plan,
+        )
+
+        home_path = Path(home).expanduser()
+        try:
+            if operation == "plan":
+                required = {
+                    "--writer": writer,
+                    "--line": line_number,
+                    "--source-sha256": source_sha256,
+                    "--line-sha256": line_sha256,
+                    "--recovery-card": recovery_card,
+                    "--evidence": evidence,
+                }
+                missing = [name for name, value in required.items() if value in (None, "")]
+                if missing:
+                    raise click.UsageError(f"plan requires {', '.join(missing)}")
+                plan = plan_overlay_recovery(
+                    home=home_path,
+                    writer=writer,
+                    line_number=line_number,
+                    source_sha256=source_sha256,
+                    line_sha256=line_sha256,
+                    recovery_card_id=recovery_card,
+                    evidence=Path(evidence).expanduser(),
+                    actor=agent,
+                )
+                saved = save_recovery_plan(plan)
+                click.echo(
+                    json.dumps(
+                        {"plan": str(saved), "plan_sha256": plan["plan_sha256"]},
+                        sort_keys=True,
+                    )
+                )
+                return
+
+            from ..jarvis_emergency import authorize_coord_mutation
+            from ..seat_boundaries import Action
+
+            authorize_coord_mutation(agent, Action.MAINTAIN_BOARD, "overlay-recovery", None, None)
+            if operation == "apply":
+                if not plan_path:
+                    raise click.UsageError("apply requires --plan")
+                if not writer_quiesced:
+                    raise click.UsageError(
+                        "apply requires --writer-quiesced because pre-upgrade appenders "
+                        "do not honor the stable recovery lock"
+                    )
+                result = apply_overlay_recovery(
+                    home=home_path,
+                    plan_path=Path(plan_path).expanduser(),
+                    actor=agent,
+                    writer_quiesced=writer_quiesced,
+                )
+            else:
+                if not receipt_path:
+                    raise click.UsageError("rollback requires --receipt")
+                if not writer_quiesced:
+                    raise click.UsageError(
+                        "rollback requires --writer-quiesced because pre-upgrade appenders "
+                        "do not honor the stable recovery lock"
+                    )
+                result = rollback_overlay_recovery(
+                    home=home_path,
+                    receipt_path=Path(receipt_path).expanduser(),
+                    actor=agent,
+                    writer_quiesced=writer_quiesced,
+                )
+        except (OSError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from None
+        click.echo(json.dumps(result, sort_keys=True))
+
     @coord.command("changelog")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--output", "-o", default=None, type=click.Path(), help="Output file path.")

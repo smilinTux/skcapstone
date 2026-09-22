@@ -1,0 +1,1 @@
+- Card `f0d0ba98`: add supported hash-pinned plan, apply, and rollback routing for rejected coordination overlay records, plus schema-aware doctor diagnostics.
