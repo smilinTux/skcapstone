@@ -99,6 +99,7 @@
         "skfleet-atlas.timer",
         "skfleet-niobe-live.timer",
         "skfleet-niobe.timer",
+        "skfleet-rotate.timer",
         "skfleet-seraph.timer",
         "whisper-stt.service"
       ],
