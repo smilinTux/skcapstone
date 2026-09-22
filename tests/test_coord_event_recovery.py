@@ -69,6 +69,7 @@ def _fixture(tmp_path: Path) -> dict[str, object]:
         "shard": shard,
         "source_sha": _sha(valid + rejected),
         "line_sha": _sha(rejected),
+        "original": valid + rejected,
         "repaired": valid,
     }
 
@@ -146,3 +147,45 @@ def test_doctor_reports_schema_rejection_with_line_and_card_hint(tmp_path: Path)
     assert "1 rejected" in cards.detail
     assert "chiap08.jsonl line 2" in cards.detail
     assert "card_hint=086ea05c" in cards.detail
+
+
+def test_rollback_requires_quiescence_and_routes_to_skcoord(tmp_path: Path, monkeypatch) -> None:
+    fixture = _fixture(tmp_path)
+    planned = CliRunner().invoke(_main(), _plan_args(fixture))
+    plan_path = json.loads(planned.output)["plan"]
+    monkeypatch.setattr(
+        "skcapstone.jarvis_emergency.authorize_coord_mutation", lambda *args, **kwargs: None
+    )
+    applied = CliRunner().invoke(
+        _main(),
+        [
+            "coord",
+            "recover-overlay",
+            "apply",
+            "--home",
+            str(fixture["home"]),
+            "--agent",
+            "operator",
+            "--plan",
+            plan_path,
+            "--writer-quiesced",
+        ],
+    )
+    receipt = json.loads(applied.output)
+    command = [
+        "coord",
+        "recover-overlay",
+        "rollback",
+        "--home",
+        str(fixture["home"]),
+        "--agent",
+        "operator",
+        "--receipt",
+        str(Path(fixture["evidence"]) / receipt["receipt_artifact"]),
+    ]
+    refused = CliRunner().invoke(_main(), command)
+    assert refused.exit_code != 0
+    assert "writer-quiesced" in refused.output
+    rolled_back = CliRunner().invoke(_main(), command + ["--writer-quiesced"])
+    assert rolled_back.exit_code == 0, rolled_back.output
+    assert Path(fixture["shard"]).read_bytes() == fixture["original"]
