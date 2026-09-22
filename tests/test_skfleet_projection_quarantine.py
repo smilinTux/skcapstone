@@ -6,6 +6,9 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 PATH = Path(__file__).parents[1] / "scripts" / "fleet" / "skfleet-projection-retire"
 
@@ -39,8 +42,14 @@ def test_exact_quarantine_and_hash_guarded_restore(tmp_path, monkeypatch) -> Non
     """Quarantine and restore preserve exact bytes and the canonical sibling."""
     tool = load_tool()
     home, source, digest = world(tmp_path)
+    unrelated = source.parent / "unrelated.json"
+    unrelated.write_text('{"agent":"unrelated"}\n', encoding="utf-8")
     monkeypatch.setattr(tool, "matching_processes", lambda *args: [])
+    monkeypatch.setattr(tool, "matching_sessions", lambda *args: [])
     relative = f"coordination/agents/{source.name}"
+    original_bytes = source.read_bytes()
+
+    assert source.stem != "worker"
 
     assert (
         tool.main(
@@ -58,12 +67,23 @@ def test_exact_quarantine_and_hash_guarded_restore(tmp_path, monkeypatch) -> Non
         == 0
     )
     destination = home / "coordination" / "recovery" / "sync-conflict-quarantine" / source.name
-    assert destination.read_bytes()
+    assert destination.read_bytes() == original_bytes
     assert not source.exists()
     assert (home / "coordination" / "agents" / "worker.json").exists()
+    assert unrelated.read_text(encoding="utf-8") == '{"agent":"unrelated"}\n'
     receipt = json.loads((destination.parent / "manifest.jsonl").read_text().splitlines()[0])
-    assert receipt["sha256"] == digest
-    assert receipt["original_path"] == relative
+    assert receipt == {
+        "actor": "jarvis",
+        "bytes": len(original_bytes),
+        "event": "prepared",
+        "filename": source.name,
+        "moved_at": receipt["moved_at"],
+        "original_path": relative,
+        "quarantine_path": (f"coordination/recovery/sync-conflict-quarantine/{source.name}"),
+        "rollback_command": receipt["rollback_command"],
+        "sha256": digest,
+    }
+    assert receipt["moved_at"].endswith("+00:00")
     assert receipt["rollback_command"].startswith("skfleet-projection-retire --home ")
 
     assert (
@@ -83,6 +103,69 @@ def test_exact_quarantine_and_hash_guarded_restore(tmp_path, monkeypatch) -> Non
     )
     assert hashlib.sha256(source.read_bytes()).hexdigest() == digest
     assert not destination.exists()
+    assert unrelated.exists()
+
+
+def test_runtime_identity_matching_is_exact() -> None:
+    """Process arguments and session names match whole identities only."""
+    tool = load_tool()
+
+    assert tool._cmdline_matches(b"python\0--agent\0worker\0", ("worker",))
+    assert tool._cmdline_matches(b"python\0--agent=worker\0", ("worker",))
+    assert not tool._cmdline_matches(b"python\0--agent\0worker-helper\0", ("worker",))
+
+    def runner(*args, **kwargs):
+        """Return a deterministic tmux session listing."""
+        return SimpleNamespace(
+            returncode=0,
+            stdout="worker-helper\nworker\ncodex-auto-abcd1234\n",
+            stderr="",
+        )
+
+    assert tool.matching_sessions("worker", runner=runner) == ["worker"]
+    assert tool.matching_sessions("abcd1234", runner=runner) == ["codex-auto-abcd1234"]
+    assert tool.matching_sessions("missing", runner=runner) == []
+    assert tool._runtime_identifiers("pi-model-host-abcd1234", None, []) == (
+        "pi-model-host-abcd1234",
+        "abcd1234",
+    )
+
+    def failed_runner(*args, **kwargs):
+        """Return an ambiguous tmux probe failure."""
+        return SimpleNamespace(returncode=2, stdout="", stderr="permission denied")
+
+    with pytest.raises(ValueError, match="cannot prove absence"):
+        tool.matching_sessions("worker", runner=failed_runner)
+
+
+def test_quarantine_requires_sync_conflict_identity_mismatch(tmp_path, monkeypatch) -> None:
+    """A payload matching the full conflict stem is not malformed evidence."""
+    tool = load_tool()
+    home, source, _ = world(tmp_path)
+    source.write_text(
+        json.dumps({"agent": source.stem, "current_task": None, "claimed_tasks": []}) + "\n",
+        encoding="utf-8",
+    )
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    monkeypatch.setattr(tool, "matching_processes", lambda *args: [])
+    monkeypatch.setattr(tool, "matching_sessions", lambda *args: [])
+
+    assert (
+        tool.main(
+            [
+                "--home",
+                str(home),
+                "--quarantine-malformed",
+                f"coordination/agents/{source.name}",
+                "--expected-sha256",
+                digest,
+                "--actor",
+                "jarvis",
+            ]
+        )
+        == 1
+    )
+    assert source.exists()
 
 
 def test_quarantine_refuses_drift_identity_liveness_and_unsafe_paths(
@@ -91,6 +174,7 @@ def test_quarantine_refuses_drift_identity_liveness_and_unsafe_paths(
     """Every source, identity, and generation guard fails closed."""
     tool = load_tool()
     monkeypatch.setattr(tool, "matching_processes", lambda *args: [])
+    monkeypatch.setattr(tool, "matching_sessions", lambda *args: [])
     home, source, digest = world(tmp_path)
     base = [
         "--home",
@@ -125,11 +209,44 @@ def test_quarantine_refuses_drift_identity_liveness_and_unsafe_paths(
     assert source.exists()
 
     source.unlink()
+    _, source, _ = world(tmp_path)
+    source.write_text('{"agent":"worker","current_task":null,"claimed_tasks":["abcd1234"]}\n')
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    assert tool.main([*base, digest, "--actor", "jarvis"]) == 1
+    assert source.exists()
+    assert (
+        tool.main(
+            [
+                "--home",
+                str(home),
+                "--quarantine-malformed",
+                str(source),
+                "--expected-sha256",
+                digest,
+                "--actor",
+                "jarvis",
+            ]
+        )
+        == 1
+    )
+
+    source.unlink()
     _, source, digest = world(tmp_path)
     hardlink = source.with_name(source.name + ".hardlink")
     hardlink.hardlink_to(source)
     assert tool.main([*base, digest, "--actor", "jarvis"]) == 1
     assert source.exists()
+
+    hardlink.unlink()
+    source.unlink()
+    target = tmp_path / "outside.json"
+    target.write_text('{"agent":"worker","current_task":null,"claimed_tasks":[]}\n')
+    source.symlink_to(target)
+    digest = hashlib.sha256(target.read_bytes()).hexdigest()
+    assert tool.main([*base, digest, "--actor", "jarvis"]) == 1
+    source.unlink()
+    source.mkdir()
+    assert tool.main([*base, digest, "--actor", "jarvis"]) == 1
 
 
 def test_quarantine_refuses_destination_collision_and_matching_process(
@@ -152,6 +269,9 @@ def test_quarantine_refuses_destination_collision_and_matching_process(
     ]
     assert tool.main(args) == 1
     monkeypatch.setattr(tool, "matching_processes", lambda *args: [])
+    monkeypatch.setattr(tool, "matching_sessions", lambda *args: ["worker"])
+    assert tool.main(args) == 1
+    monkeypatch.setattr(tool, "matching_sessions", lambda *args: [])
     destination = home / "coordination" / "recovery" / "sync-conflict-quarantine" / source.name
     destination.parent.mkdir(parents=True)
     destination.write_text("existing", encoding="utf-8")
@@ -165,6 +285,7 @@ def test_restore_refuses_original_path_collision(tmp_path, monkeypatch) -> None:
     tool = load_tool()
     home, source, digest = world(tmp_path)
     monkeypatch.setattr(tool, "matching_processes", lambda *args: [])
+    monkeypatch.setattr(tool, "matching_sessions", lambda *args: [])
     relative = f"coordination/agents/{source.name}"
     assert (
         tool.main(
@@ -199,6 +320,27 @@ def test_restore_refuses_original_path_collision(tmp_path, monkeypatch) -> None:
     )
     assert source.read_text() == "new occupant"
 
+    source.unlink()
+    destination = home / "coordination" / "recovery" / "sync-conflict-quarantine" / source.name
+    destination.write_text("changed quarantine bytes", encoding="utf-8")
+    assert (
+        tool.main(
+            [
+                "--home",
+                str(home),
+                "--restore-malformed",
+                source.name,
+                "--expected-sha256",
+                digest,
+                "--actor",
+                "jarvis",
+            ]
+        )
+        == 1
+    )
+    assert not source.exists()
+    assert destination.read_text(encoding="utf-8") == "changed quarantine bytes"
+
 
 def test_quarantine_refuses_intermediate_coordination_symlink(tmp_path, monkeypatch) -> None:
     """An intermediate coordination symlink cannot redirect containment."""
@@ -213,6 +355,7 @@ def test_quarantine_refuses_intermediate_coordination_symlink(tmp_path, monkeypa
     source.write_text('{"agent":"worker","current_task":null,"claimed_tasks":[]}\n')
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     monkeypatch.setattr(tool, "matching_processes", lambda *args: [])
+    monkeypatch.setattr(tool, "matching_sessions", lambda *args: [])
 
     assert (
         tool.main(
@@ -239,6 +382,7 @@ def test_receipt_failure_compensates_rename_without_stranding(tmp_path, monkeypa
     home, source, digest = world(tmp_path)
     relative = f"coordination/agents/{source.name}"
     monkeypatch.setattr(tool, "matching_processes", lambda *args: [])
+    monkeypatch.setattr(tool, "matching_sessions", lambda *args: [])
     monkeypatch.setattr(
         tool,
         "_append_conflict_receipt",
@@ -273,6 +417,7 @@ def test_receipt_failure_with_source_collision_keeps_durable_rollback(
     home, source, digest = world(tmp_path)
     relative = f"coordination/agents/{source.name}"
     monkeypatch.setattr(tool, "matching_processes", lambda *args: [])
+    monkeypatch.setattr(tool, "matching_sessions", lambda *args: [])
     original_append = tool._append_conflict_receipt
     calls = 0
 
@@ -322,6 +467,7 @@ def test_coordination_symlink_swap_cannot_redirect_mutation(tmp_path, monkeypatc
     (outside / "recovery" / "sync-conflict-quarantine").mkdir(parents=True)
     held = home / "coordination-held"
     monkeypatch.setattr(tool, "matching_processes", lambda *args: [])
+    monkeypatch.setattr(tool, "matching_sessions", lambda *args: [])
     original_rename = tool.rename_no_replace_at
     swapped = False
 

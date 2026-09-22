@@ -19,6 +19,7 @@ import json
 import os
 import shutil
 import stat
+import subprocess
 import sys
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -58,6 +59,30 @@ def validate_directory_chain(home: Path, *parts: str) -> Path:
     return current
 
 
+def _cmdline_matches(command: bytes, identifiers: tuple[str, ...]) -> bool:
+    """Return whether a command line contains one exact identity argument."""
+    arguments = [part.decode(errors="replace") for part in command.split(b"\0") if part]
+    return any(
+        argument == identifier or argument.endswith(f"={identifier}")
+        for argument in arguments
+        for identifier in identifiers
+    )
+
+
+def _is_card_id(value: str) -> bool:
+    """Return whether a value is one canonical short card identifier."""
+    return len(value) == 8 and all(character in "0123456789abcdef" for character in value)
+
+
+def _runtime_identifiers(agent: str, task: object, claims: list[object]) -> tuple[str, ...]:
+    """Return exact process and session identities for one projection."""
+    identifiers = [agent, *(str(value) for value in (task, *claims) if value)]
+    card_id = agent.rsplit("-", 1)[-1]
+    if _is_card_id(card_id):
+        identifiers.append(card_id)
+    return tuple(dict.fromkeys(identifiers))
+
+
 def matching_processes(*identifiers: str) -> list[str]:
     """Return live process command lines matching an exact projection identity."""
     wanted = tuple(value for value in identifiers if value)
@@ -77,12 +102,42 @@ def matching_processes(*identifiers: str) -> list[str]:
         if int(cmdline.parent.name) in ancestors:
             continue
         try:
-            command = cmdline.read_bytes().replace(b"\0", b" ").decode(errors="replace")
+            command = cmdline.read_bytes()
         except OSError:
             continue
-        if command and any(value in command for value in wanted):
-            matches.append(command)
+        if _cmdline_matches(command, wanted):
+            matches.append(command.replace(b"\0", b" ").decode(errors="replace"))
     return matches
+
+
+def matching_sessions(*identifiers: str, runner=subprocess.run) -> list[str]:
+    """Return tmux sessions whose complete name is an exact identity."""
+    wanted = {value for value in identifiers if value}
+    card_ids = {value for value in wanted if _is_card_id(value)}
+    try:
+        result = runner(
+            ["tmux", "list-sessions", "-F", "#{session_name}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except FileNotFoundError:
+        return []
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError("cannot prove absence of matching live session") from exc
+    if result.returncode == 0:
+        return [
+            name
+            for name in result.stdout.splitlines()
+            if name in wanted or name.rsplit("-", 1)[-1] in card_ids
+        ]
+    if result.returncode == 1 and (
+        "no server running" in result.stderr
+        or "failed to connect to server" in result.stderr
+        or "No such file or directory" in result.stderr
+    ):
+        return []
+    raise ValueError("cannot prove absence of matching live session")
 
 
 def rename_no_replace_at(
@@ -234,7 +289,8 @@ def quarantine_malformed(home: Path, relative: str, expected: str, actor: str) -
         claims = payload.get("claimed_tasks", [])
         if task not in (None, "") or claims not in (None, []):
             raise ValueError("projection carries a live exact generation")
-        if matching_processes(agent, str(task or ""), *(str(item) for item in claims or [])):
+        identities = _runtime_identifiers(agent, task, claims or [])
+        if matching_processes(*identities) or matching_sessions(*identities):
             raise ValueError("matching live process or session exists")
         final_info = os.stat(filename, dir_fd=agents_fd, follow_symlinks=False)
         if (final_info.st_dev, final_info.st_ino, final_info.st_size) != (
