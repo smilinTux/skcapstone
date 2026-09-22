@@ -140,9 +140,17 @@ def matching_sessions(*identifiers: str, runner=subprocess.run) -> list[str]:
             if name in wanted or name.rsplit("-", 1)[-1] in card_ids
         ]
     if result.returncode == 1:
-        diagnostic = result.stderr.lower()
-        if "no server running on " in diagnostic or (
-            "connect" in diagnostic and "no such file or directory" in diagnostic
+        diagnostics = [line.strip().lower() for line in result.stderr.splitlines() if line.strip()]
+        denied = ("permission denied", "operation not permitted", "access denied")
+        if any(marker in line for line in diagnostics for marker in denied):
+            raise ValueError("cannot prove absence of matching live session")
+        if diagnostics and all(
+            line.startswith("no server running on ")
+            or (
+                line.startswith(("failed to connect to server:", "error connecting to "))
+                and "no such file or directory" in line
+            )
+            for line in diagnostics
         ):
             return []
     raise ValueError("cannot prove absence of matching live session")

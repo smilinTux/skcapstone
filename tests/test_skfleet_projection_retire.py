@@ -10,6 +10,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 PATH = Path(__file__).parents[1] / "scripts" / "fleet" / "skfleet-projection-retire"
 
 
@@ -207,7 +209,19 @@ def test_restore_refuses_digest_mismatch(tmp_path, monkeypatch, capsys) -> None:
     assert quarantined.is_file()
 
 
-def test_exact_quarantine_refuses_ambiguous_tmux_connection_failure(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "diagnostic",
+    [
+        "failed to connect to server: Permission denied\n",
+        (
+            "failed to connect to server: Permission denied\n"
+            "cleanup: No such file or directory\n"
+        ),
+    ],
+)
+def test_exact_quarantine_refuses_ambiguous_tmux_connection_failure(
+    tmp_path, monkeypatch, diagnostic
+) -> None:
     """Permission-denied tmux output cannot authorize an exact quarantine."""
     tool = load_tool()
     home = tmp_path / ".skcapstone"
@@ -226,7 +240,7 @@ def test_exact_quarantine_refuses_ambiguous_tmux_connection_failure(tmp_path, mo
         return SimpleNamespace(
             returncode=1,
             stdout="",
-            stderr="failed to connect to server: Permission denied\n",
+            stderr=diagnostic,
         )
 
     monkeypatch.setattr(tool, "matching_processes", lambda *args: [])
