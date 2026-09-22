@@ -8,7 +8,7 @@ from subprocess import CompletedProcess
 
 import pytest
 
-from skcapstone.fleet import installer, timer_enablement
+from skcapstone.fleet import install_backends, installer, timer_enablement
 from skcapstone.fleet.profile_doctor import DriftReport
 
 CONTROL_PROFILE = (
@@ -786,22 +786,29 @@ def test_apply_refreshes_required_core_unit_bytes_even_without_inventory_drift(
     ]
 
 
-def test_zero_drift_control_apply_installs_atlas_service_without_standalone_timer(
+def test_full_control_apply_copies_atlas_before_serialized_scheduler_without_activation(
     tmp_path, monkeypatch
 ):
-    """A fresh serialized scheduler still installs the first governed service."""
+    """Full activation copies Atlas but leaves its execution to seat-cycle."""
 
     paths = type("Paths", (), {"root": tmp_path / "fleet"})()
     policy = json.loads(CONTROL_PROFILE.read_text(encoding="utf-8"))["spec"]
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setattr(installer.store, "is_frozen", lambda paths: False)
     monkeypatch.setattr(installer.converge, "actuation_enabled", lambda paths, node: True)
     monkeypatch.setattr(installer, "load_drift", lambda *args, **kwargs: DriftReport())
     monkeypatch.setattr(installer, "_profile_spec", lambda *args: policy)
-    calls = []
+    events = []
 
-    def core(names, **kwargs):
-        calls.append((names, kwargs))
-        return "ok", ""
+    def core_runner(command, **_kwargs):
+        events.append(("copy-or-activate", command))
+        return CompletedProcess(command, 0, "", "")
+
+    systemd = TransitionSystemd(config_home=tmp_path / "config")
+
+    def timer_runner(command, **kwargs):
+        events.append(("scheduler", command))
+        return systemd(command, **kwargs)
 
     result = installer.run_install(
         paths,
@@ -809,17 +816,33 @@ def test_zero_drift_control_apply_installs_atlas_service_without_standalone_time
         node="node",
         mode="apply",
         dry_run=False,
-        enable=False,
-        start=False,
+        enable=True,
+        start=True,
         only=None,
-        backends={"core": core},
+        backends=install_backends.default_backends(runner=core_runner),
+        timer_runner=timer_runner,
     )
 
-    installed = {name for names, _kwargs in calls for name in names}
     assert result["ok"] is True
-    assert "skfleet-atlas.service" in installed
-    assert "skfleet-atlas.timer" not in installed
-    assert "skfleet-seat-cycle.timer" in installed
+    atlas_source = str(install_backends._packaged_core_unit("skfleet-atlas.service"))
+    atlas_copy = next(
+        i
+        for i, (_phase, command) in enumerate(events)
+        if command[:4] == ["install", "-D", "-m", "0644"] and command[4] == atlas_source
+    )
+    atlas_stop = events.index(
+        ("scheduler", ["systemctl", "--user", "stop", "skfleet-atlas.service"])
+    )
+    seat_cycle_enable = events.index(
+        ("scheduler", ["systemctl", "--user", "enable", "skfleet-seat-cycle.timer"])
+    )
+    assert atlas_copy < atlas_stop < seat_cycle_enable
+    assert not any(
+        command[:3] == ["systemctl", "--user", verb]
+        and command[-1] in {"skfleet-atlas.service", "skfleet-atlas.timer"}
+        for _phase, command in events
+        for verb in ("enable", "start")
+    )
 
 
 def test_apply_preserves_activation_for_services_but_not_timers(tmp_path, monkeypatch):

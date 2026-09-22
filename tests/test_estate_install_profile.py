@@ -46,7 +46,7 @@ def test_control_profile_requires_serialized_seat_orchestrator() -> None:
     spec = _control_spec()
     assert set(SEAT_TIMERS) <= set(spec["units"]["required"])
     assert set(SEAT_TIMERS) <= set(spec["units"]["allowed"])
-    assert "skfleet-atlas.service" in spec["units"]["required"]
+    assert "skfleet-atlas.service" not in spec["units"]["required"]
     for seat in SEATS:
         assert f"skfleet-{seat}.service" in spec["units"]["allowed"]
 
@@ -91,7 +91,7 @@ def test_zero_drift_refresh_selects_only_units_this_distribution_ships() -> None
     ]
     assert "skgateway.service" in required
     assert "skgateway.service" not in selected
-    assert "skfleet-atlas.service" in selected
+    assert "skfleet-atlas.service" not in selected
     assert "skfleet-seat-cycle.timer" in selected
     assert all(
         (Path(__file__).parents[1] / "src/skcapstone/data/systemd" / unit).is_file()

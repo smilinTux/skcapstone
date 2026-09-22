@@ -135,13 +135,15 @@ def test_core_backend_starts_each_non_timer_unit_when_start_set():
     assert ["systemctl", "--user", "start", "skgateway.service"] in runner.calls
 
 
-def test_core_backend_installs_timer_and_paired_service_before_enable(monkeypatch, tmp_path):
+def test_core_backend_expands_only_seat_cycle_to_copy_all_serialized_services(
+    monkeypatch, tmp_path
+):
     monkeypatch.setenv("SKCAPSTONE_REPOS", "/opt/custom-repos")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     runner = _FakeRunner()
     backend = default_backends(runner=runner)["core"]
 
-    status, detail = backend(["skfleet-seat-cycle.timer"], dry_run=False, enable=True, start=False)
+    status, detail = backend(["skfleet-seat-cycle.timer"], dry_run=False, enable=True, start=True)
 
     assert (status, detail) == ("ok", "")
     packaged = str(install_backends._packaged_core_unit("skfleet-seat-cycle.service"))
@@ -171,8 +173,14 @@ def test_core_backend_installs_timer_and_paired_service_before_enable(monkeypatc
     }
     assert installed_sources >= {
         str(install_backends._packaged_core_unit(f"skfleet-{seat}.service"))
-        for seat in ("seraph", "niobe", "niobe-live")
+        for seat in ("atlas", "seraph", "niobe", "niobe-live")
     }
+    assert not any(
+        call[:3] == ["systemctl", "--user", verb]
+        and call[-1] in {"skfleet-atlas.service", "skfleet-atlas.timer"}
+        for call in runner.calls
+        for verb in ("enable", "start")
+    )
 
 
 def test_core_copy_uses_packaged_bytes_on_wheel_only_host(monkeypatch, tmp_path):
