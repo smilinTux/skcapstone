@@ -177,7 +177,9 @@ def _card_events(card_id: str, home: Path):
 def _source_only_applicability(card_id: str, home: Path) -> bool:
     """Return true only for one valid, exact-card source-only receipt."""
     try:
-        core = json.loads((Path(home) / "cards" / card_id / "core.json").read_text(encoding="utf-8"))
+        core = json.loads(
+            (Path(home) / "cards" / card_id / "core.json").read_text(encoding="utf-8")
+        )
     except (OSError, ValueError):
         return False
     labels = core.get("labels", [])
@@ -199,14 +201,22 @@ def _source_only_applicability(card_id: str, home: Path) -> bool:
     required = {"type", "card_id", "source_head", "reviewer", "evidence_digest", "governed_pr_ci"}
     if set(receipt) != required or receipt["type"] != "source-only-applicability":
         return False
-    if receipt["card_id"] != card_id or not isinstance(receipt["reviewer"], str) or not receipt["reviewer"].strip():
+    if (
+        receipt["card_id"] != card_id
+        or not isinstance(receipt["reviewer"], str)
+        or not receipt["reviewer"].strip()
+    ):
         return False
-    if not isinstance(receipt["source_head"], str) or not _HEAD_RE.fullmatch(receipt["source_head"].lower()):
+    if not isinstance(receipt["source_head"], str) or not _HEAD_RE.fullmatch(
+        receipt["source_head"].lower()
+    ):
         return False
     expected_head = str(meta.get("link_head_revision") or meta.get("head_revision") or "").lower()
     if expected_head and receipt["source_head"].lower() != expected_head:
         return False
-    if not isinstance(receipt["evidence_digest"], str) or not _SHA256_RE.fullmatch(receipt["evidence_digest"].lower()):
+    if not isinstance(receipt["evidence_digest"], str) or not _SHA256_RE.fullmatch(
+        receipt["evidence_digest"].lower()
+    ):
         return False
     if receipt["governed_pr_ci"] is not False:
         return False
