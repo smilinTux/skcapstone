@@ -110,6 +110,77 @@ def test_plan_writes_only_the_hash_bound_plan(tmp_path: Path) -> None:
     assert list(Path(fixture["evidence"]).glob("*.original.jsonl")) == []
 
 
+def test_repeated_line_options_apply_one_atomic_multi_row_plan(
+    tmp_path: Path, monkeypatch
+) -> None:
+    fixture = _fixture(tmp_path)
+    second_rejected = (
+        json.dumps(
+            {
+                "card_id": "second01",
+                "action": "verdict",
+                "writer": "legacy",
+                "verdict": "BLOCKED",
+            }
+        ).encode()
+        + b"\n"
+    )
+    original = fixture["original"]
+    shard = fixture["shard"]
+    assert isinstance(original, bytes)
+    assert isinstance(shard, Path)
+    third_rejected = b'{"card_id":"third003","action":"verdict","writer":"legacy"}\n'
+    multi_original = original + second_rejected + third_rejected
+    shard.write_bytes(multi_original)
+    fixture["source_sha"] = _sha(multi_original)
+
+    args = _plan_args(fixture) + [
+        "--line",
+        "3",
+        "--line-sha256",
+        _sha(second_rejected),
+        "--line",
+        "4",
+        "--line-sha256",
+        _sha(third_rejected),
+    ]
+    planned = CliRunner().invoke(_main(), args)
+    assert planned.exit_code == 0, planned.output
+    plan_path = Path(json.loads(planned.output)["plan"])
+    plan = json.loads(plan_path.read_text())
+    assert [target["line_number"] for target in plan["targets"]] == [2, 3, 4]
+
+    monkeypatch.setattr(
+        "skcapstone.jarvis_emergency.authorize_coord_mutation", lambda *args, **kwargs: None
+    )
+    applied = CliRunner().invoke(
+        _main(),
+        [
+            "coord",
+            "recover-overlay",
+            "apply",
+            "--home",
+            str(fixture["home"]),
+            "--agent",
+            "operator",
+            "--plan",
+            str(plan_path),
+            "--writer-quiesced",
+        ],
+    )
+    assert applied.exit_code == 0, applied.output
+    receipt = json.loads(applied.output)
+    assert len(receipt["rejected_artifacts"]) == 3
+    assert shard.read_bytes() == fixture["repaired"]
+
+
+def test_plan_rejects_unpaired_repeated_line_options(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    result = CliRunner().invoke(_main(), _plan_args(fixture) + ["--line", "3"])
+    assert result.exit_code != 0
+    assert "matching counts" in result.output
+
+
 def test_apply_requires_quiescence_and_then_routes_to_skcoord(tmp_path: Path, monkeypatch) -> None:
     fixture = _fixture(tmp_path)
     planned = CliRunner().invoke(_main(), _plan_args(fixture))

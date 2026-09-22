@@ -1761,9 +1761,20 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", required=True, help="Claimed recovery actor.")
     @click.option("--writer", help="Overlay shard filename for plan.")
-    @click.option("--line", "line_number", type=click.IntRange(min=1), help="Physical line.")
+    @click.option(
+        "--line",
+        "line_numbers",
+        type=click.IntRange(min=1),
+        multiple=True,
+        help="Physical line. Repeat with --line-sha256 for atomic multi-row recovery.",
+    )
     @click.option("--source-sha256", help="Exact current shard SHA256.")
-    @click.option("--line-sha256", help="Exact rejected line SHA256.")
+    @click.option(
+        "--line-sha256",
+        "line_sha256s",
+        multiple=True,
+        help="Exact rejected line SHA256. Repeat in the same order as --line.",
+    )
     @click.option("--recovery-card", help="Claimed recovery card ID.")
     @click.option("--evidence", type=click.Path(), help="Existing evidence directory.")
     @click.option("--plan", "plan_path", type=click.Path(), help="Saved plan for apply.")
@@ -1778,16 +1789,16 @@ def register_coord_commands(main: click.Group) -> None:
         home,
         agent,
         writer,
-        line_number,
+        line_numbers,
         source_sha256,
-        line_sha256,
+        line_sha256s,
         recovery_card,
         evidence,
         plan_path,
         receipt_path,
         writer_quiesced,
     ):
-        """Plan, apply, or roll back one hash-pinned rejected overlay row."""
+        """Plan, apply, or roll back hash-pinned rejected overlay rows."""
         from skcoord.card_event_recovery import (
             apply_overlay_recovery,
             plan_overlay_recovery,
@@ -1800,21 +1811,25 @@ def register_coord_commands(main: click.Group) -> None:
             if operation == "plan":
                 required = {
                     "--writer": writer,
-                    "--line": line_number,
+                    "--line": line_numbers,
                     "--source-sha256": source_sha256,
-                    "--line-sha256": line_sha256,
+                    "--line-sha256": line_sha256s,
                     "--recovery-card": recovery_card,
                     "--evidence": evidence,
                 }
-                missing = [name for name, value in required.items() if value in (None, "")]
+                missing = [name for name, value in required.items() if value in (None, "", ())]
                 if missing:
                     raise click.UsageError(f"plan requires {', '.join(missing)}")
+                if len(line_numbers) != len(line_sha256s):
+                    raise click.UsageError(
+                        "plan requires matching counts of --line and --line-sha256"
+                    )
                 plan = plan_overlay_recovery(
                     home=home_path,
                     writer=writer,
-                    line_number=line_number,
+                    line_number=line_numbers,
                     source_sha256=source_sha256,
-                    line_sha256=line_sha256,
+                    line_sha256=line_sha256s,
                     recovery_card_id=recovery_card,
                     evidence=Path(evidence).expanduser(),
                     actor=agent,
