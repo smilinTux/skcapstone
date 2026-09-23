@@ -1329,3 +1329,246 @@ def test_decline_reason_is_none_when_offer_would_place(paths, operator, noded41)
     request = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
     assert request is not None
     assert builder_dispatch.decline_reason(paths, _card(), ["sk-m", "source-only"]) is None
+
+
+def _links_only_card() -> dict:
+    card = _card()
+    meta = card.pop("meta")
+    card["links"] = dict(meta)
+    return card
+
+
+def test_links_only_source_binding_dispatches(paths, operator, noded41) -> None:
+    _node(paths, operator, noded41)
+    writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
+    request = builder_dispatch.offer(
+        paths,
+        _links_only_card(),
+        ["sk-m", "source-only"],
+        writer=writer,
+        now=datetime(2026, 9, 23, tzinfo=timezone.utc),
+    )
+    assert request["repository"] == "https://github.com/smilinTux/skcapstone.git"
+    assert request["base_ref"] == "main"
+    assert request["base_revision"] == "9cc415465d6bacc22b51b09a3c861c61f0823d45"
+
+
+def test_dual_matching_sources_coalesce(paths, operator, noded41) -> None:
+    _node(paths, operator, noded41)
+    card = _card()
+    card["links"] = dict(card["meta"])
+    writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
+    request = builder_dispatch.offer(paths, card, ["sk-m", "source-only"], writer=writer)
+    assert request is not None
+    assert request["repository"] == card["meta"]["repository"]
+    assert request["base_ref"] == card["meta"]["base_ref"]
+    assert request["base_revision"] == card["meta"]["base_revision"]
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["repository", "base_ref", "base_revision"],
+)
+
+def test_conflicting_sources_fail_closed(paths, operator, noded41, field) -> None:
+    _node(paths, operator, noded41)
+    card = _card()
+    card["links"] = dict(card["meta"])
+    if field == "repository":
+        card["links"]["repository"] = "https://github.com/smilinTux/skcoord.git"
+    elif field == "base_ref":
+        card["links"]["base_ref"] = "develop"
+    else:
+        card["links"]["base_revision"] = "f" * 40
+    writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
+    with pytest.raises(builder_dispatch.BuilderDispatchError) as exc_info:
+        builder_dispatch.offer(paths, card, ["sk-m", "source-only"], writer=writer)
+    assert str(exc_info.value) == f"source binding conflict: {field}"
+
+
+def test_decline_reason_invalid_source_conflict(paths, operator, noded41) -> None:
+    _node(paths, operator, noded41)
+    card = _card()
+    card["links"] = dict(card["meta"])
+    card["links"]["repository"] = "https://github.com/smilinTux/skcoord.git"
+    reason = builder_dispatch.decline_reason(paths, card, ["sk-m", "source-only"])
+    assert reason is not None
+    assert reason.startswith("invalid-source")
+    assert "source binding conflict: repository" in reason
+
+
+def test_link_amendment_after_offer_blocks_materialization_and_claim(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41)
+    builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+    )
+    amended = _folded()
+    amended.links["repository"] = "https://github.com/smilinTux/skcoord.git"
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: amended)
+    monkeypatch.setattr(
+        builder_dispatch.Board, "claim_task", lambda *_args: pytest.fail("amended card was claimed")
+    )
+    assert (
+        builder_dispatch.consume_one(
+            paths,
+            tmp_path,
+            "node-ziowk01",
+            materializer=lambda *_args: pytest.fail("amended source was materialized"),
+        )
+        is None
+    )
+    status = builder_dispatch._load(
+        builder_dispatch.status_path(paths, "node-ziowk01", "24b00003")
+    )
+    assert status["state"] == "blocked"
+    assert status["attempt"] == 0
+    assert "changed after dispatch" in status["error"]
+
+
+def test_legacy_link_review_work_workspace_link_shape_dispatches(
+    paths, operator, noded41
+) -> None:
+    _node(paths, operator, noded41)
+    card = _card()
+    meta = card.pop("meta")
+    card["links"] = {
+        "repository": meta["repository"],
+        "base_ref": meta["base_ref"],
+        "base_revision": meta["base_revision"],
+    }
+    writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
+    request = builder_dispatch.offer(paths, card, ["sk-m", "source-only"], writer=writer)
+    assert request is not None
+    assert request["repository"] == meta["repository"]
+    assert request["base_ref"] == meta["base_ref"]
+    assert request["base_revision"] == meta["base_revision"]
+
+
+def test_link_only_binding_dispatches(paths, operator, noded41) -> None:
+    """Links-only cards (legacy shape) dispatch with link values."""
+    _node(paths, operator, noded41)
+    card = _card()
+    meta = card.pop("meta")
+    card["links"] = {
+        "repository": meta["repository"],
+        "base_ref": meta["base_ref"],
+        "base_revision": meta["base_revision"],
+    }
+    writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
+    request = builder_dispatch.offer(paths, card, ["sk-m", "source-only"], writer=writer)
+    assert request is not None
+    assert request["repository"] == meta["repository"]
+    assert request["base_ref"] == meta["base_ref"]
+    assert request["base_revision"] == meta["base_revision"]
+
+
+def test_matching_dual_source_dispatches(paths, operator, noded41) -> None:
+    """Meta and folded-card links that agree both dispatch."""
+    _node(paths, operator, noded41)
+    card = _card()
+    card["links"] = {
+        "repository": card["meta"]["repository"],
+        "base_ref": card["meta"]["base_ref"],
+        "base_revision": card["meta"]["base_revision"],
+    }
+    writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
+    request = builder_dispatch.offer(paths, card, ["sk-m", "source-only"], writer=writer)
+    assert request is not None
+    assert request["repository"] == card["meta"]["repository"]
+
+
+def test_repository_conflict_blocks(paths, operator, noded41) -> None:
+    """Meta and links disagree on repository: fail closed with exact message."""
+    _node(paths, operator, noded41)
+    card = _card()
+    card["links"] = {
+        "repository": "sklegal-fast",
+        "base_ref": card["meta"]["base_ref"],
+        "base_revision": card["meta"]["base_revision"],
+    }
+    writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
+    with pytest.raises(builder_dispatch.BuilderDispatchError) as excinfo:
+        builder_dispatch.offer(paths, card, ["sk-m", "source-only"], writer=writer)
+    assert "source binding conflict: repository" in str(excinfo.value)
+
+
+def test_base_ref_conflict_blocks(paths, operator, noded41) -> None:
+    """Meta and links disagree on base_ref: fail closed with exact message."""
+    _node(paths, operator, noded41)
+    card = _card()
+    card["links"] = {
+        "repository": card["meta"]["repository"],
+        "base_ref": "refs/heads/main",
+        "base_revision": card["meta"]["base_revision"],
+    }
+    writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
+    with pytest.raises(builder_dispatch.BuilderDispatchError) as excinfo:
+        builder_dispatch.offer(paths, card, ["sk-m", "source-only"], writer=writer)
+    assert "source binding conflict: base_ref" in str(excinfo.value)
+
+
+def test_base_revision_conflict_blocks(paths, operator, noded41) -> None:
+    """Meta and links disagree on base_revision: fail closed with exact message."""
+    _node(paths, operator, noded41)
+    card = _card()
+    card["links"] = {
+        "repository": card["meta"]["repository"],
+        "base_ref": card["meta"]["base_ref"],
+        "base_revision": "0000000000000000000000000000000000000001",
+    }
+    writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
+    with pytest.raises(builder_dispatch.BuilderDispatchError) as excinfo:
+        builder_dispatch.offer(paths, card, ["sk-m", "source-only"], writer=writer)
+    assert "source binding conflict: base_revision" in str(excinfo.value)
+
+
+def test_decline_reason_invalid_source(paths, operator, noded41) -> None:
+    """A malformed or invalid source value is rejected, not silently used."""
+    _node(paths, operator, noded41)
+    card = _card()
+    card["meta"] = {"base_ref": 42}  # wrong type -> invalid source
+    writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
+    with pytest.raises(builder_dispatch.BuilderDispatchError) as excinfo:
+        builder_dispatch.offer(paths, card, ["sk-m", "source-only"], writer=writer)
+    assert "invalid source binding" in str(excinfo.value)
+
+
+def test_amendment_after_offer_blocks(paths, operator, noded41) -> None:
+    """A link amendment folded into the card after the offer blocks materialization."""
+    _node(paths, operator, noded41)
+    card = _card()
+    writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
+    offer = builder_dispatch.offer(paths, card, ["sk-m", "source-only"], writer=writer)
+    assert offer is not None
+
+    # Amend the card with a new folded-card link (e.g. a link_review_work
+    # shape amendment), then revalidate against the CURRENT card.
+    writer2 = store.Writer(role="reviewer", node="seraph", identity="capauth:seraph")
+    store.link(paths, card["id"], "repository", "sklegal-fast", writer=writer2)
+
+    with pytest.raises(builder_dispatch.BuilderDispatchError) as excinfo:
+        builder_dispatch.materialize(paths, offer["request"]["id"], ["sk-m", "source-only"], writer=writer)
+    assert "amended after offer" in str(excinfo.value)
+
+
+def test_link_source_card_and_head_revision_are_not_aliased(paths, operator, noded41) -> None:
+    """link_source_card / link_head_revision must never fill the binding fields."""
+    _node(paths, operator, noded41)
+    card = _card()
+    meta = card["meta"]
+    card["links"] = {
+        "link_source_card": "abc123",
+        "link_head_revision": "0000000000000000000000000000000000000009",
+    }
+    # Without the canonical link keys, meta must still drive the binding.
+    writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
+    request = builder_dispatch.offer(paths, card, ["sk-m", "source-only"], writer=writer)
+    assert request is not None
+    assert request["repository"] == meta["repository"]
+    assert request["base_ref"] == meta["base_ref"]
+    assert request["base_revision"] == meta["base_revision"]
