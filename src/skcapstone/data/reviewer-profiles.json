@@ -1,0 +1,181 @@
+{
+  "schema": "skfleet.reviewer-profiles/v1",
+  "description": "Governed elastic reviewer seat profiles. Each profile runs the shared fleet worker lifecycle while retaining distinct seat identity, policy, mailbox, model route, tool allowlist, recurring responsibility, and independent-review separation. Link is the routing seat and can never also be a reviewing seat.",
+  "routing_seat": "link",
+  "reviewing_seats": ["seraph", "mero", "qwen", "codex"],
+  "reserved_capacity": {
+    "seraph": 2,
+    "mero": 2,
+    "qwen": 1,
+    "codex": 1
+  },
+  "default_model_route": "sk-codex-mid",
+  "model_escalation_policy": {
+    "scope": "card",
+    "mode": "opt_in",
+    "automatic": false
+  },
+  "recovery": {
+    "max_claims_per_seat": 3,
+    "superseded_by_fresh_observation": true,
+    "abandon_only_after_exact_process_generation_is_dead": true,
+    "preserve_receipts": true
+  },
+  "seats": {
+    "seraph": {
+      "identity": "seraph",
+      "role": "independent_verifier",
+      "activation_state": "active_bounded",
+      "card_label": "seat-seraph",
+      "cadence_seconds": 300,
+      "timeout_seconds": 300,
+      "model_route": "sk-codex-mid",
+      "model_profile": "gpt-5.6-luna",
+      "mailbox": {
+        "address": "seraph",
+        "poll_direct_and_all": true,
+        "write": true,
+        "automatic_ack": false,
+        "mail_is_authority": false
+      },
+      "owns": [
+        "independent_review",
+        "exact_candidate_verification",
+        "verdict"
+      ],
+      "denies": [
+        "self_review",
+        "reviewer_assignment",
+        "merge",
+        "fleet_dispatch",
+        "deployment",
+        "release",
+        "application_actuation"
+      ],
+      "tool_allowlist": [
+        "git",
+        "python",
+        "pytest",
+        "ruff",
+        "sha256sum"
+      ],
+      "recurring_responsibility": "exact candidate verification and verdict for routed review cards"
+    },
+    "mero": {
+      "identity": "mero",
+      "role": "read_only_reviewer",
+      "activation_state": "active_bounded",
+      "card_label": "seat-mero",
+      "cadence_seconds": 300,
+      "timeout_seconds": 300,
+      "model_route": "sk-codex-mid",
+      "model_profile": "gpt-5.6-luna",
+      "mailbox": {
+        "address": "mero",
+        "poll_direct_and_all": true,
+        "write": true,
+        "automatic_ack": false,
+        "mail_is_authority": false
+      },
+      "owns": [
+        "read_only_review",
+        "drift_observation",
+        "typed_recommendation"
+      ],
+      "denies": [
+        "card_claim",
+        "reviewer_assignment",
+        "merge",
+        "fleet_dispatch",
+        "deployment",
+        "release",
+        "application_actuation"
+      ],
+      "tool_allowlist": [
+        "git",
+        "python",
+        "ruff",
+        "sha256sum"
+      ],
+      "recurring_responsibility": "read-only source review and drift observation on routed review cards"
+    },
+    "qwen": {
+      "identity": "qwen",
+      "role": "independent_verifier",
+      "activation_state": "active_bounded",
+      "card_label": "seat-qwen",
+      "cadence_seconds": 300,
+      "timeout_seconds": 300,
+      "model_route": "sk-codex-mid",
+      "model_profile": "qwen-coder-30b",
+      "mailbox": {
+        "address": "qwen",
+        "poll_direct_and_all": true,
+        "write": true,
+        "automatic_ack": false,
+        "mail_is_authority": false
+      },
+      "owns": [
+        "independent_review",
+        "exact_candidate_verification",
+        "verdict"
+      ],
+      "denies": [
+        "self_review",
+        "reviewer_assignment",
+        "merge",
+        "fleet_dispatch",
+        "deployment",
+        "release",
+        "application_actuation"
+      ],
+      "tool_allowlist": [
+        "git",
+        "python",
+        "pytest",
+        "ruff",
+        "sha256sum"
+      ],
+      "recurring_responsibility": "exact candidate verification and verdict for routed review cards"
+    },
+    "codex": {
+      "identity": "codex",
+      "role": "independent_verifier",
+      "activation_state": "active_bounded",
+      "card_label": "seat-codex",
+      "cadence_seconds": 300,
+      "timeout_seconds": 300,
+      "model_route": "sk-codex-mid",
+      "model_profile": "gpt-5.6-luna",
+      "mailbox": {
+        "address": "codex",
+        "poll_direct_and_all": true,
+        "write": true,
+        "automatic_ack": false,
+        "mail_is_authority": false
+      },
+      "owns": [
+        "independent_review",
+        "exact_candidate_verification",
+        "verdict"
+      ],
+      "denies": [
+        "self_review",
+        "reviewer_assignment",
+        "merge",
+        "fleet_dispatch",
+        "deployment",
+        "release",
+        "application_actuation"
+      ],
+      "tool_allowlist": [
+        "git",
+        "python",
+        "pytest",
+        "ruff",
+        "sha256sum"
+      ],
+      "recurring_responsibility": "exact candidate verification and verdict for routed review cards"
+    }
+  }
+}
