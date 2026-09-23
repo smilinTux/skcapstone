@@ -62,7 +62,15 @@ dependencies = [
     # refusal that stops one voided card from killing the node worker. Newest
     # published skcoord tag at the time of writing is v0.1.77, so the floor is
     # again set one past it: skcoord ships first, then this resolves.
-    "skcoord>=0.1.78",
+    #
+    # Bumped 2026-09-22: skcoord v0.1.82 is the published release that ships
+    # governed CardStore overlay recovery: scan_overlay_records,
+    # plan_overlay_recovery, save_recovery_plan, apply_overlay_recovery and
+    # rollback_overlay_recovery in skcoord.card_event_recovery, plus strict
+    # CardEvent append validation and doctor diagnostics. SKCapstone now
+    # requires that published floor so recovery is resolvable from the public
+    # wheel instead of an unreleased branch only.
+    "skcoord>=0.1.82",
     "skmemory>=0.5.0",
     "skskills>=0.1.1",
 ]
