@@ -38,11 +38,11 @@ Rules that must stay:
 
 ## Source-candidate review vs installed-runtime qualification
 
-This card binds the candidate source commit for review:
+This card binds one candidate source commit for review:
 
-- commit: 1684e15d8b87beb6b03b799c087765a05cde7e0a
-- tree: (recorded at commit time)
-- ref: work/ca220923-builder-binding
+- base commit: `1684e15d8b87beb6b03b799c087765a05cde7e0a`
+- final commit and tree: recorded in the producer receipt
+- ref: `refs/heads/work/ca220923-builder-binding`
 
 The installed runtime (e.g. a deployed package) is a separate qualification
 track; this work does not install, restart, or dispatch into the runtime.

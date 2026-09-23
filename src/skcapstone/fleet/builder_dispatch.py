@@ -111,10 +111,30 @@ def eligible(core: dict, labels: list[str] | tuple[str, ...]) -> bool:
 
 def _source(core: dict) -> tuple[str, str, str]:
     """Read and validate exact credential-free source metadata."""
-    meta = core.get("meta") if isinstance(core.get("meta"), dict) else {}
-    repository = str(meta.get("repository") or "").strip()
-    base_ref = str(meta.get("base_ref") or "").strip()
-    revision = str(meta.get("base_revision") or "").strip().lower()
+    raw_meta = core.get("meta")
+    raw_links = core.get("links")
+    meta: dict = raw_meta if isinstance(raw_meta, dict) else {}
+    links: dict = raw_links if isinstance(raw_links, dict) else {}
+
+    def coalesce(field: str, *, lowercase: bool = False) -> str:
+        raw_meta_value = meta.get(field)
+        raw_link_value = links.get(field)
+        if raw_meta_value is not None and not isinstance(raw_meta_value, str):
+            raise BuilderDispatchError(f"{field} must be a string")
+        if raw_link_value is not None and not isinstance(raw_link_value, str):
+            raise BuilderDispatchError(f"{field} must be a string")
+        meta_value = (raw_meta_value or "").strip()
+        link_value = (raw_link_value or "").strip()
+        if lowercase:
+            meta_value = meta_value.lower()
+            link_value = link_value.lower()
+        if meta_value and link_value and meta_value != link_value:
+            raise BuilderDispatchError(f"source binding conflict: {field}")
+        return link_value or meta_value
+
+    repository = coalesce("repository")
+    base_ref = coalesce("base_ref")
+    revision = coalesce("base_revision", lowercase=True)
     if not repository.startswith("https://") or "@" in repository:
         raise BuilderDispatchError("repository must be credential-free https")
     if not base_ref or len(base_ref) > 160 or any(ch.isspace() for ch in base_ref):
@@ -129,7 +149,7 @@ def _request_matches_current_card(coordination_home: Path, request: dict) -> Non
     card = CardStore(coordination_home).fold(str(request.get("card_id") or ""))
     if card is None:
         raise BuilderDispatchError("offered card is no longer foldable")
-    core = {"id": card.id, "meta": card.meta}
+    core = {"id": card.id, "meta": card.meta, "links": card.links}
     labels = sorted(str(label).strip().lower() for label in card.labels)
     expected_labels = request.get("labels")
     if (
