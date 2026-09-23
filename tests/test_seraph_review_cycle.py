@@ -10,6 +10,7 @@ import pytest
 from skcapstone.seraph_review_capauth import PUBLISH_METHOD, PUBLISH_PATH, SERAPH_FINGERPRINT
 from skcapstone.seraph_review_contracts import ReviewPublicationError
 from skcapstone.seraph_review_cycle import read_credential, signed_caller
+from skcapstone.seraph_review_runner import main as runner_main
 from tests.test_seraph_review_publisher import SERVICE, evidence
 
 
@@ -71,4 +72,46 @@ def test_service_can_write_runtime_coordination_and_card_receipts():
         "systemd/skfleet-seraph-review-publisher.service",
         "src/skcapstone/data/systemd/skfleet-seraph-review-publisher.service",
     ):
-        assert expected in (root / relative).read_text(encoding="utf-8")
+        unit = (root / relative).read_text(encoding="utf-8")
+        assert expected in unit
+        assert "--protection-credential-file %h/api-keys/chef-skgit.env" in unit
+
+
+def test_runner_requires_and_forwards_explicit_protection_credential(tmp_path, monkeypatch):
+    captured = {}
+    monkeypatch.setattr("skcapstone.seraph_review_runner.capauth_signer", lambda: lambda _: "sig")
+    monkeypatch.setattr(
+        "skcapstone.seraph_review_runner.own_fingerprint", lambda: SERAPH_FINGERPRINT
+    )
+    monkeypatch.setattr(
+        "skcapstone.seraph_review_runner.load_observation_feed", lambda _: object()
+    )
+
+    def publish(feed, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr("skcapstone.seraph_review_runner.publish_ready", publish)
+    names = ("feed", "home", "evidence", "runtime", "writer", "protection")
+    paths = {name: tmp_path / name for name in names}
+    assert (
+        runner_main(
+            [
+                "--feed",
+                str(paths["feed"]),
+                "--home",
+                str(paths["home"]),
+                "--evidence-root",
+                str(paths["evidence"]),
+                "--runtime-dir",
+                str(paths["runtime"]),
+                "--credential-file",
+                str(paths["writer"]),
+                "--protection-credential-file",
+                str(paths["protection"]),
+            ]
+        )
+        == 0
+    )
+    assert captured["credential_file"] == paths["writer"]
+    assert captured["protection_credential_file"] == paths["protection"]

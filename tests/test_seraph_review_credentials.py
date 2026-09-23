@@ -5,16 +5,19 @@ import hashlib
 import io
 import json
 import os
+from urllib.error import HTTPError
 from urllib.parse import urlsplit
 
 import pytest
 
-from skcapstone.forgejo import SKGIT_ORIGIN, SKGIT_REPOSITORY, ForgejoClient
+from skcapstone.forgejo import SKGIT_ORIGIN, SKGIT_REPOSITORY, ForgejoClient, ForgejoError
 from skcapstone.seraph_review_contracts import ReviewPublicationError
 from skcapstone.seraph_review_credentials import (
     IdentityReadClient,
+    ProtectionReadClient,
     attest_credentials,
     read_credentials,
+    read_protection_token,
 )
 
 
@@ -55,6 +58,20 @@ def document():
 def stored(tmp_path, data):
     path = tmp_path / "credentials.json"
     path.write_text(json.dumps(data))
+    os.chmod(path, 0o600)
+    return path
+
+
+def protection_file(tmp_path, token="synthetic-admin"):
+    path = tmp_path / "chef-skgit.env"
+    path.write_text(
+        "# Existing operator credential\n"
+        "GITHUB_USER=operator\n"
+        f"GITHUB_TOKEN={token}\n"
+        f"GH_TOKEN={token}\n"
+        "GH_URL=https://skgit.skstack01.douno.it\n",
+        encoding="utf-8",
+    )
     os.chmod(path, 0o600)
     return path
 
@@ -163,3 +180,84 @@ def test_split_file_rejects_permissions_symlinks_and_duplicate_fields(tmp_path):
     path.write_text('{"version":2,"version":2}')
     with pytest.raises(ReviewPublicationError):
         read_credentials(path)
+
+
+def test_protection_credential_reads_one_matching_token_without_shell_evaluation(tmp_path):
+    path = protection_file(tmp_path)
+    assert read_protection_token(path) == "synthetic-admin"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda text: text + "GH_TOKEN=second\n",
+        lambda text: text.replace("GH_TOKEN=synthetic-admin", "GH_TOKEN=other"),
+        lambda text: text.replace("GH_URL=", "UNKNOWN="),
+        lambda text: text.replace("GITHUB_USER=operator", "export GITHUB_USER=operator"),
+        lambda text: text.replace("GITHUB_TOKEN=synthetic-admin", "GITHUB_TOKEN=$(id)"),
+    ],
+)
+def test_protection_credential_rejects_malformed_or_ambiguous_content(tmp_path, change):
+    path = protection_file(tmp_path)
+    path.write_text(change(path.read_text(encoding="utf-8")), encoding="utf-8")
+    with pytest.raises(ReviewPublicationError, match="credential_file_invalid"):
+        read_protection_token(path)
+
+
+def test_protection_credential_rejects_permissions_and_symlinks(tmp_path):
+    path = protection_file(tmp_path)
+    os.chmod(path, 0o640)
+    with pytest.raises(ReviewPublicationError, match="permissions"):
+        read_protection_token(path)
+    os.chmod(path, 0o600)
+    link = tmp_path / "credential-link"
+    link.symlink_to(path)
+    with pytest.raises(ReviewPublicationError, match="credential_file_invalid"):
+        read_protection_token(link)
+
+
+def test_writer_policy_403_isolated_from_confined_protection_reader(monkeypatch):
+    protection = {
+        "rule_name": "main",
+        "enable_status_check": True,
+        "status_check_contexts": ["SKLegal CI / check"],
+        "required_approvals": 1,
+        "apply_to_admins": True,
+        "block_on_rejected_reviews": True,
+        "block_on_outdated_branch": True,
+        "dismiss_stale_approvals": True,
+        "ignore_stale_approvals": False,
+        "enable_push": False,
+    }
+
+    class Opener:
+        def open(self, request, timeout):
+            if request.get_header("Authorization") == "token synthetic-writer":
+                raise HTTPError(request.full_url, 403, "forbidden", {}, None)
+            assert request.get_header("Authorization") == "token synthetic-admin"
+            return io.BytesIO(json.dumps(protection).encode())
+
+    monkeypatch.setattr("skcapstone.forgejo.build_opener", lambda *args: Opener())
+    path = "/api/v1/repos/smilinTux/sklegal/branch_protections/main"
+    with pytest.raises(ForgejoError, match="forge_http_403"):
+        ForgejoClient(SKGIT_ORIGIN, "synthetic-writer").request("GET", path)
+    policy = ProtectionReadClient(SKGIT_ORIGIN, "synthetic-admin").read(SKGIT_REPOSITORY, "main")
+    assert policy.required_checks == frozenset({"SKLegal CI / check"})
+
+
+@pytest.mark.parametrize(
+    "method,path,payload",
+    [
+        ("POST", "/api/v1/repos/smilinTux/sklegal/branch_protections/main", {}),
+        ("GET", "/api/v1/repos/smilinTux/sklegal/branches/main", None),
+        ("GET", "/api/v1/repos/smilinTux/sklegal/branch_protections/main?page=1", None),
+        ("GET", "/api/v1/repos/smilinTux/sklegal/branch_protections/main", {}),
+    ],
+)
+def test_protection_reader_rejects_every_other_request_before_transport(
+    monkeypatch, method, path, payload
+):
+    monkeypatch.setattr("skcapstone.forgejo.build_opener", lambda *args: None)
+    client = ProtectionReadClient(SKGIT_ORIGIN, "synthetic-admin")
+    with pytest.raises(ReviewPublicationError, match="protection_request_not_authorized"):
+        client.request(method, path, payload)

@@ -31,7 +31,13 @@ from .seraph_review_contracts import (
     ReviewPublicationError,
     SeraphPassEvidence,
 )
-from .seraph_review_credentials import IdentityReadClient, attest_credentials, read_credentials
+from .seraph_review_credentials import (
+    IdentityReadClient,
+    ProtectionReadClient,
+    attest_credentials,
+    read_credentials,
+    read_protection_token,
+)
 from .seraph_review_publisher import publication_request_sha256, publish_seraph_pass
 
 SERVICE_IDENTITY = "seraph-review-bot"
@@ -143,6 +149,7 @@ def publish_ready(
     evidence_root: Path,
     runtime_dir: Path,
     credential_file: Path,
+    protection_credential_file: Path,
     signer: Callable[[bytes], str],
 ) -> list[str]:
     """Publish each exact private PASS in a fresh mediated feed."""
@@ -150,6 +157,9 @@ def publish_ready(
     credentials = read_credentials(credential_file)
     client = ForgejoClient(SKGIT_ORIGIN, credentials.writer.token)
     identity_client = IdentityReadClient(SKGIT_ORIGIN, credentials.identity.token)
+    protection_client = ProtectionReadClient(
+        SKGIT_ORIGIN, read_protection_token(protection_credential_file)
+    )
     connector = ForgejoReviewConnector(
         client,
         attest_capabilities=lambda forge, repository: attest_credentials(
@@ -173,7 +183,7 @@ def publish_ready(
             service_identity=SERVICE_IDENTITY,
             connector=connector,
             cards=cards,
-            protections=connector,
+            protections=protection_client,
             receipt_dir=runtime_dir / "receipts",
             approved_evidence_root=evidence_root,
         )

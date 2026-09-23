@@ -6,16 +6,24 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .forgejo import SKGIT_REPOSITORY, ForgejoClient, _pages
-from .seraph_review_contracts import ConnectorCapabilities, ReviewPublicationError
+from .forgejo import SKGIT_ORIGIN, SKGIT_REPOSITORY, ForgejoClient, _pages
+from .seraph_review_contracts import (
+    BranchProtection,
+    ConnectorCapabilities,
+    ReviewPublicationError,
+)
 
 _LOGIN = "seraph-review-bot"
 _REPOSITORY = "smilinTux/sklegal"
+_PROTECTION_PATH = "/api/v1/repos/smilinTux/sklegal/branch_protections/main"
+_PROTECTION_FILE_KEYS = frozenset({"GITHUB_USER", "GITHUB_TOKEN", "GH_TOKEN", "GH_URL"})
+_TOKEN = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 @dataclass(frozen=True)
@@ -103,6 +111,44 @@ def read_credentials(path: Path) -> ReviewerCredentials:
         raise ReviewPublicationError("forge_credential_file_invalid") from None
 
 
+def read_protection_token(path: Path) -> str:
+    """Read one effective token from the existing non-shell operator file."""
+    metadata = path.lstat()
+    if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+        raise ReviewPublicationError("forge_protection_credential_file_invalid")
+    if metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
+        raise ReviewPublicationError("forge_protection_credential_file_permissions_invalid")
+    values: dict[str, str] = {}
+    try:
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            key, separator, value = raw.partition("=")
+            if (
+                not separator
+                or key != key.strip()
+                or value != value.strip()
+                or key not in _PROTECTION_FILE_KEYS
+                or key in values
+                or not value
+            ):
+                raise ReviewPublicationError("forge_protection_credential_file_invalid")
+            values[key] = value
+    except UnicodeError:
+        raise ReviewPublicationError("forge_protection_credential_file_invalid") from None
+    token = values.get("GH_TOKEN")
+    if (
+        set(values) != _PROTECTION_FILE_KEYS
+        or token != values.get("GITHUB_TOKEN")
+        or not isinstance(token, str)
+        or not _TOKEN.fullmatch(token)
+        or values["GH_URL"] != SKGIT_ORIGIN
+    ):
+        raise ReviewPublicationError("forge_protection_credential_file_invalid")
+    return token
+
+
 class IdentityReadClient(ForgejoClient):
     """Confine the attestation credential to identity and team GETs."""
 
@@ -115,6 +161,22 @@ class IdentityReadClient(ForgejoClient):
         ):
             raise ReviewPublicationError("forge_identity_request_not_authorized")
         return super().request(method, path)
+
+
+class ProtectionReadClient(ForgejoClient):
+    """Confine the operator credential to one exact branch-policy read."""
+
+    def request(self, method: str, path: str, payload: dict | None = None):
+        """Reject every request except the payload-free exact policy GET."""
+        if method != "GET" or path != _PROTECTION_PATH or payload is not None:
+            raise ReviewPublicationError("forge_protection_request_not_authorized")
+        return super().request(method, path)
+
+    def read(self, repository: str, base_branch: str) -> BranchProtection:
+        """Use the existing policy parser while retaining transport confinement."""
+        from .seraph_forgejo import ForgejoReviewConnector
+
+        return ForgejoReviewConnector(self).read(repository, base_branch)
 
 
 def attest_credentials(
