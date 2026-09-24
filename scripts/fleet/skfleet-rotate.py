@@ -7953,8 +7953,8 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
     # 264,609,995 queries, a 17.2% hit rate. Invariant rails now come FIRST and the
     # card-specific text LAST, so every worker shares one long cacheable prefix.
     _RAILS=("CONSTRAINTS (standing rails, non-negotiable):\n"
-      "- CardStore is append-only. Build JSON with a serializer and parse every line before appending. Never concatenate strings into JSON.\n"
-      "- Join structural CardStore events with separate evidence events. Never infer a verdict from lifecycle state or from links alone.\n"
+      "- Use skcapstone coord for every CardStore read and write. Never open or modify raw CardStore JSONL files.\n"
+      "- Verify card state and evidence through skcapstone coord show. Never infer a verdict from lifecycle state or links alone.\n"
       + _worker_mail_instructions(
           _worker_mail_routing(os.environ, core.get("originator"))) +
       _worker_search_instructions() +
