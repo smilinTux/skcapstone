@@ -21,7 +21,8 @@ _SERAPH = "skfleet-seraph.service"
 _NIOBE_LIVE = "skfleet-niobe-live.service"
 _NIOBE_SHADOW = "skfleet-niobe.service"
 _GOVERNED_SERVICES = (_ATLAS, _SERAPH, _NIOBE_SHADOW, _NIOBE_LIVE)
-_GENERATION_BUDGET_SECONDS = 600
+# Covers the 300s Atlas, 540s Seraph, and 300s Niobe service deadlines.
+_GENERATION_BUDGET_SECONDS = 1200
 
 
 def _recovery_marker(home: Path) -> Path:
@@ -331,7 +332,8 @@ def _run_generation_locked(
             completed = runner(
                 ["systemctl", "--user", "start", "--wait", unit],
                 check=False,
-                timeout=310,
+                # Seraph is allowed 540s by its unit; bound waits by the generation.
+                timeout=min(550, max(1, deadline - clock())),
             )
             returncode = int(completed.returncode)
             error = None if returncode == 0 else "systemctl_start_failed"

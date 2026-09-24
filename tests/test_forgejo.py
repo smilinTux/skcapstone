@@ -105,7 +105,11 @@ def test_transport_failures_do_not_expose_credentials(monkeypatch, error):
     assert caught.value.__suppress_context__
 
 
-@pytest.mark.parametrize("body", [b"not JSON synthetic-private-token", b"[]" * 10000000])
+@pytest.mark.parametrize(
+    "body",
+    [b"not JSON synthetic-private-token", b"[]" * 10000000],
+    ids=["malformed-json", "oversized-body"],
+)
 def test_malformed_or_oversized_body_fails_closed(monkeypatch, body):
     with pytest.raises(ForgejoError):
         client(monkeypatch, Opener(body)).request("GET", "/api/v1/user")

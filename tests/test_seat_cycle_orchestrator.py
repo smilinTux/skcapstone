@@ -606,7 +606,7 @@ def test_orchestrator_units_are_packaged_and_prevent_overlapping_generations() -
     root = Path(__file__).parents[1]
     service = (root / "systemd/skfleet-seat-cycle.service").read_text()
     timer = (root / "systemd/skfleet-seat-cycle.timer").read_text()
-    assert "TimeoutStartSec=960" in service
+    assert "TimeoutStartSec=1260" in service
     assert "--home" not in service
     assert "OnUnitInactiveSec=5min" in timer
     assert "OnUnitActiveSec" not in timer and "OnCalendar" not in timer
@@ -628,3 +628,36 @@ def test_control_profile_requires_only_orchestrator_for_serialized_seats() -> No
     ):
         assert f'"{timer}"' in source
     assert "SERIALIZED_SEAT_MUST_NOT" in source
+
+
+def test_generation_honors_all_live_seat_service_deadlines(tmp_path, monkeypatch):
+    """The 540s Seraph unit must not exhaust its parent before Niobe starts."""
+    monkeypatch.setattr(
+        seat_cycle_orchestrator, "select_niobe_service", lambda _home: "skfleet-niobe-live.service"
+    )
+    elapsed = [0.0]
+    starts = []
+    durations = {
+        "skfleet-atlas.service": 290,
+        "skfleet-seraph.service": 530,
+        "skfleet-niobe-live.service": 290,
+    }
+
+    def runner(command, **kwargs):
+        if command[2:4] == ["start", "--wait"]:
+            unit = command[-1]
+            starts.append(unit)
+            duration = durations[unit]
+            if kwargs["timeout"] < duration:
+                elapsed[0] += kwargs["timeout"]
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+            elapsed[0] += duration
+        return SimpleNamespace(
+            returncode=0, stdout="LoadState=loaded\nActiveState=inactive\nJob=\nMainPID=0\n"
+        )
+
+    result = run_generation(tmp_path, runner=runner, clock=lambda: elapsed[0])
+    assert result["aborted"] is False
+    assert result["failures"] == 0
+    assert starts == list(durations)
+    assert elapsed[0] < seat_cycle_orchestrator._GENERATION_BUDGET_SECONDS
