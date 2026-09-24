@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.machinery
 import importlib.util
 import json
@@ -7,6 +8,9 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 PATH = Path(__file__).parents[1] / "scripts" / "fleet" / "skfleet-projection-retire"
 
@@ -203,3 +207,58 @@ def test_restore_refuses_digest_mismatch(tmp_path, monkeypatch, capsys) -> None:
     quarantined.write_text("tampered bytes", encoding="utf-8")
     assert tool.main(["--restore", "pi-a-host-aaaa1111.json"]) == 1
     assert quarantined.is_file()
+
+
+@pytest.mark.parametrize(
+    "diagnostic",
+    [
+        "failed to connect to server: Permission denied\n",
+        (
+            "failed to connect to server: Permission denied\n"
+            "cleanup: No such file or directory\n"
+        ),
+    ],
+)
+def test_exact_quarantine_refuses_ambiguous_tmux_connection_failure(
+    tmp_path, monkeypatch, diagnostic
+) -> None:
+    """Permission-denied tmux output cannot authorize an exact quarantine."""
+    tool = load_tool()
+    home = tmp_path / ".skcapstone"
+    agents = home / "coordination" / "agents"
+    agents.mkdir(parents=True)
+    source = agents / "worker.sync-conflict-20260912-010203-DEVICE.json"
+    source.write_text(
+        '{"agent":"worker","current_task":null,"claimed_tasks":[]}\n',
+        encoding="utf-8",
+    )
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    probe = tool.matching_sessions
+
+    def permission_denied(*args, **kwargs):
+        """Return the ambiguous tmux diagnostic from the review finding."""
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr=diagnostic,
+        )
+
+    monkeypatch.setattr(tool, "matching_processes", lambda *args: [])
+    monkeypatch.setattr(
+        tool,
+        "matching_sessions",
+        lambda *identities: probe(*identities, runner=permission_denied),
+    )
+    relative = f"coordination/agents/{source.name}"
+    args = [
+        "--home",
+        str(home),
+        "--quarantine-malformed",
+        relative,
+        "--expected-sha256",
+        digest,
+        "--actor",
+        "jarvis",
+    ]
+    assert tool.main(args) == 1
+    assert source.is_file()
