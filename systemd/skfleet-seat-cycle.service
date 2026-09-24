@@ -6,7 +6,7 @@ After=network-online.target
 Type=oneshot
 Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/.skenv/bin/python3 -m skcapstone.fleet.seat_cycle_orchestrator
-TimeoutStartSec=960
+TimeoutStartSec=1260
 NoNewPrivileges=yes
 PrivateTmp=yes
 

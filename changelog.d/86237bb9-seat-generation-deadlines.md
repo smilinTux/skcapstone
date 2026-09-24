@@ -1,0 +1,1 @@
+- Align serialized coordinator waits with Seraph's 540-second service deadline and allow all three stages to complete within a bounded generation.
