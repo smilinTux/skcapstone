@@ -84,9 +84,10 @@ def test_successful_final_seat_may_cross_generation_boundary(tmp_path: Path, mon
     assert seat_cycle_orchestrator.main() == 0
 
 
-def test_exhausted_budget_prevents_starting_another_seat(tmp_path: Path) -> None:
-    """A generation at 600 seconds must not admit the next seat."""
+def test_exhausted_budget_prevents_starting_another_seat(tmp_path: Path, monkeypatch) -> None:
+    """An injected 600-second budget must not admit the next seat."""
 
+    monkeypatch.setattr(seat_cycle_orchestrator, "_GENERATION_BUDGET_SECONDS", 600)
     clock = FakeClock()
     starts: list[str] = []
 
