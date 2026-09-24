@@ -1894,17 +1894,18 @@ def _kimi_model_for(core):
     return "k3" if match and match.group(1)=="XL" else "kimi-for-coding"
 
 
+def _routes_in_lane(routes, lane):
+    """Reserve only capacity domains that can serve the selected lane."""
+    domains={str(domain).strip() for domain in _CAPACITY_DOMAINS.get(lane, ())}
+    return [route for route in routes if str(route.get("capacity_domain") or "") in domains]
+
+
 def _producer_routes_for(core, labels, lane=None):
     """Return current gateway routes for one producer card and optional lane pin."""
     size=_size_class_for(core,labels)
     routes=([] if _review_route_ambiguous or size is None else eligible_gateway_routes(
         _review_route_snapshot or {},size,labels,_review_route_occupancy))
-    if lane is None:
-        return routes
-    token=str(lane).lower()
-    return [route for route in routes if token in (
-        str(route.get("provider") or "")+" "+str(route.get("logical_route") or "")
-    ).lower()]
+    return routes if lane is None else _routes_in_lane(routes, lane)
 if glm_held:
     log(d,"GLM_HOLD|%s|new GLM dispatch disabled by %s"%(HOST,GLM_HOLD_PATH))
 for _L in LANES:
@@ -8267,6 +8268,8 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         _lane_domains={str(value) for value in _LANE.get("capacity_domains",())}
         _routes=[route for route in _capacity["routes"]
                  if str(route.get("capacity_domain") or "") in _lane_domains]
+        if model != _bucket:
+            _routes=_routes_in_lane(_routes,"codex")
         _selected_route=choose_review_route(_routes,_review_route_reservations)
         if _selected_route is None:
             lane_drift += 1
@@ -8286,9 +8289,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         admitted,health_reason=_health_for(_LANE["name"],model)
         _producer_routes=_producer_routes_for(
             fresh_claimability["core"],fresh_claimability["labels"],
-            _LANE["name"] if "%s-only"%_LANE["name"] in {
-                str(label).strip().lower() for label in fresh_claimability["labels"]}
-            else None)
+            _LANE["name"] if model != _bucket else None)
         _selected_route=choose_review_route(_producer_routes,_review_route_reservations)
         if _selected_route is None:
             lane_drift += 1
