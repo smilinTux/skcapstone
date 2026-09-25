@@ -13,8 +13,17 @@ from skcoord.coordination import Board, Task, TaskPriority
 from .source_binding import source_binding_meta
 
 MAX_PACKET_BYTES = 32768
+SUPPORTED_LOGICAL_ROUTES = frozenset({"sk-s", "sk-m", "sk-l", "sk-xl"})
 PACKET_KEYS = frozenset(
-    {"request_id", "title", "objective", "criteria", "allowed_paths", "verification_commands"}
+    {
+        "request_id",
+        "title",
+        "objective",
+        "criteria",
+        "allowed_paths",
+        "verification_commands",
+        "logical_route",
+    }
 )
 HELPER_LIMIT = (
     "Work only in an isolated checkout at the inherited source revision. "
@@ -79,6 +88,11 @@ def validate_packet(packet: object) -> dict:
         raise ValueError("helper title must contain exactly one bounded size: [S] or [M]")
     if re.search(r"\[(?:REVIEW|REREVIEW|REPAIR|EPIC|SPRINT|HUMAN)\b", title, re.I):
         raise ValueError("helper title must not impersonate a governed review or container")
+    logical_route = packet["logical_route"]
+    if not isinstance(logical_route, str) or logical_route not in SUPPORTED_LOGICAL_ROUTES:
+        raise ValueError(
+            "logical_route must be exactly one of: " + ", ".join(sorted(SUPPORTED_LOGICAL_ROUTES))
+        )
     paths = _strings(packet["allowed_paths"], "allowed_paths", 16, empty=True)
     for path in paths:
         parts = path.split("/")
@@ -106,6 +120,7 @@ def validate_packet(packet: object) -> dict:
         "verification_commands": _strings(
             packet["verification_commands"], "verification_commands", 8
         ),
+        "logical_route": logical_route,
     }
 
 
@@ -145,12 +160,14 @@ def build_helper(parent, packet: dict, actor: str, claim_revision: str) -> Task:
         raise ValueError(
             "helpers cannot recursively request helpers; return scope growth to the parent owner"
         )
-    labels = [label for label in parent.labels if not label.lower().startswith("parent-")]
+    labels = [
+        label for label in parent.labels if label.strip().lower() not in SUPPORTED_LOGICAL_ROUTES
+    ]
     if any(label.lower() == "review" or label.lower().startswith("seat-") for label in labels):
         raise ValueError("governed seat or review parents cannot request source helpers")
     if re.search(r"\[(?:REVIEW|REREVIEW)\]", parent.title, re.I):
         raise ValueError("review parents must use their existing independent review contract")
-    for label in ("source-only", "owner-helper", f"parent-{parent.id}"):
+    for label in ("source-only", "owner-helper", f"parent-{parent.id}", packet["logical_route"]):
         if label not in labels:
             labels.append(label)
     helper_id = hashlib.sha256(f"{parent.id}:{packet['request_id']}".encode()).hexdigest()[:8]
@@ -184,6 +201,7 @@ def build_helper(parent, packet: dict, actor: str, claim_revision: str) -> Task:
             "helper_allowed_paths": packet["allowed_paths"],
             "helper_verification": packet["verification_commands"],
             "helper_objective": packet["objective"],
+            "logical_route": packet["logical_route"],
         },
     )
 

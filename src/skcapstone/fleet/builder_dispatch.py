@@ -98,11 +98,27 @@ def logical_route(labels: list[str] | tuple[str, ...]) -> str | None:
     return next(iter(routes)) if len(routes) == 1 else None
 
 
+def _helper_route_agrees(core: dict, labels: list[str] | tuple[str, ...]) -> bool:
+    """Return whether an owner-helper's metadata and one label agree exactly.
+
+    Ordinary cards never consult helper metadata, so their behavior is
+    unchanged. A helper must carry one scalar supported ``logical_route`` in
+    its metadata that byte-matches both its single supported route label and
+    the derived dispatch route. Missing, non-scalar, unsupported, ambiguous or
+    mismatched values fail closed.
+    """
+    meta = core.get("meta")
+    declared = meta.get("logical_route") if isinstance(meta, dict) else None
+    derived = logical_route(labels)
+    return isinstance(declared, str) and declared in LOGICAL_ROUTES and declared == derived
+
+
 def eligible(core: dict, labels: list[str] | tuple[str, ...]) -> bool:
     """Return whether a card is a bounded provider-neutral source workload."""
     normalized = {str(label).strip().lower() for label in labels}
     return (
         logical_route(labels) is not None
+        and ("owner-helper" not in normalized or _helper_route_agrees(core, labels))
         and "source-only" in normalized
         and not any(label.startswith("seat-") for label in normalized)
         and not normalized.intersection(

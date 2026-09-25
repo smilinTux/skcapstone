@@ -770,6 +770,44 @@ def test_provider_neutral_logical_routes_are_eligible(route) -> None:
     assert builder_dispatch.eligible(_card(), [route, "source-only"])
 
 
+@pytest.mark.parametrize("route", ["sk-s", "sk-m", "sk-l", "sk-xl"])
+def test_owner_helper_requires_one_matching_metadata_route(route) -> None:
+    core = _card()
+    core["meta"]["logical_route"] = route
+    assert builder_dispatch.eligible(core, [route, "source-only", "owner-helper"])
+
+
+@pytest.mark.parametrize(
+    ("declared", "labels"),
+    [
+        (None, ["sk-m", "source-only", "owner-helper"]),
+        (12, ["sk-m", "source-only", "owner-helper"]),
+        ("SK-M", ["sk-m", "source-only", "owner-helper"]),
+        ("sk-l", ["sk-m", "source-only", "owner-helper"]),
+        ("sk-m", ["sk-m", "sk-l", "source-only", "owner-helper"]),
+    ],
+)
+def test_owner_helper_route_mismatch_is_ineligible(declared, labels) -> None:
+    core = _card()
+    if declared is not None:
+        core["meta"]["logical_route"] = declared
+    assert not builder_dispatch.eligible(core, labels)
+
+
+def test_owner_helper_offer_carries_exact_metadata_route(paths, operator, noded41) -> None:
+    _node(paths, operator, noded41)
+    core = _card()
+    core["meta"]["logical_route"] = "sk-l"
+    request = builder_dispatch.offer(
+        paths,
+        core,
+        ["sk-l", "source-only", "owner-helper"],
+        writer=store.Writer(role="scheduler", node="niobe", identity="capauth:niobe"),
+    )
+    assert request is not None
+    assert request["logical_route"] == "sk-l"
+
+
 def test_ambiguous_or_direct_provider_routes_are_rejected() -> None:
     assert not builder_dispatch.eligible(_card(), ["sk-s", "sk-m", "source-only"])
     assert not builder_dispatch.eligible(_card(), ["sk-l", "source-only", "glm-only"])

@@ -36,6 +36,7 @@ def _packet():
         "criteria": ["Report the reproducer and exact observed result"],
         "allowed_paths": [],
         "verification_commands": ["python -m pytest -q tests/test_retry.py"],
+        "logical_route": "sk-m",
     }
 
 
@@ -100,10 +101,18 @@ def test_build_preserves_parent_and_inherits_exact_contract(tmp_path):
     assert parent.model_dump() == before
     assert helper.dependencies == ["deaf1234"]
     assert PARENT not in helper.dependencies
-    assert helper.tags == ["source-only", "no-external-action", "owner-helper", f"parent-{PARENT}"]
+    assert helper.tags == [
+        "source-only",
+        "no-external-action",
+        "parent-dead1234",
+        "owner-helper",
+        f"parent-{PARENT}",
+        "sk-m",
+    ]
     assert {key: helper.meta[key] for key in SOURCE} == SOURCE
     assert helper.meta["helper_parent_claim_revision"] == REVISION
     assert helper.meta["helper_allowed_paths"] == []
+    assert helper.meta["logical_route"] == "sk-m"
     assert parent.description in helper.description
     assert parent.acceptance_criteria[0] in helper.description
     assert helper.created_at == parent.created_at
@@ -155,6 +164,50 @@ def test_generated_helper_reaches_actual_fleet_pool_admission(tmp_path):
     assert namespace["_pool_v2_candidate_allowed"](old_shape) is False
 
 
+@pytest.mark.parametrize("route", ["sk-s", "sk-m", "sk-l", "sk-xl"])
+def test_packet_accepts_each_supported_logical_route(route):
+    packet = _packet()
+    packet["logical_route"] = route
+    validated = validate_packet(packet)
+    assert validated["logical_route"] == route
+
+
+@pytest.mark.parametrize("route", ["sk-s", "sk-m", "sk-l", "sk-xl"])
+def test_build_helper_appends_selected_logical_route(tmp_path, route):
+    parent = _parent(tmp_path)
+    parent.labels.append("sk-l")
+    packet = _packet()
+    packet["logical_route"] = route
+    helper = build_helper(parent, packet, OWNER, REVISION)
+    assert helper.tags.count(route) == 1
+    assert [label for label in helper.tags if label in {"sk-s", "sk-m", "sk-l", "sk-xl"}] == [
+        route
+    ]
+    assert helper.meta["logical_route"] == route
+
+
+def test_build_helper_strips_inherited_routes_and_keeps_restrictions(tmp_path):
+    parent = _parent(tmp_path)
+    parent.labels.extend(["sk-s", " sk-m ", "SK-L", "sk-xl\t", "sk-xxl", "no-external-action"])
+    helper = build_helper(parent, _packet(), OWNER, REVISION)
+    assert [
+        label
+        for label in helper.tags
+        if label.strip().lower()
+        in {
+            "sk-s",
+            "sk-m",
+            "sk-l",
+            "sk-xl",
+        }
+    ] == ["sk-m"]
+    assert "sk-xxl" in helper.tags
+    assert "no-external-action" in helper.tags
+    assert "source-only" in helper.tags
+    assert "owner-helper" in helper.tags
+    assert helper.meta["logical_route"] == "sk-m"
+
+
 @pytest.mark.parametrize(
     ("key", "value"),
     [
@@ -177,12 +230,29 @@ def test_generated_helper_reaches_actual_fleet_pool_admission(tmp_path):
         ("allowed_paths", ["src//file.py"]),
         ("verification_commands", []),
         ("verification_commands", ["echo a\necho b"]),
+        ("logical_route", 12),
+        ("logical_route", None),
+        ("logical_route", ["sk-m"]),
+        ("logical_route", " sk-m"),
+        ("logical_route", "sk-m "),
+        ("logical_route", "\tsk-m"),
+        ("logical_route", "SK-M"),
+        ("logical_route", "Sk-M"),
+        ("logical_route", "sk-xxl"),
+        ("logical_route", ""),
     ],
 )
 def test_packet_rejects_ambiguous_or_unbounded_values(key, value):
     packet = _packet()
     packet[key] = value
     with pytest.raises(ValueError):
+        validate_packet(packet)
+
+
+def test_packet_requires_the_logical_route_key():
+    packet = _packet()
+    del packet["logical_route"]
+    with pytest.raises(ValueError, match="logical_route"):
         validate_packet(packet)
 
 
