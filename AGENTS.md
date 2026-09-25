@@ -167,6 +167,16 @@ Follow the project conventions:
 - Google-style docstrings on every function
 - Max 500 lines per file
 
+For an active source task with useful independent work, use the bounded crew
+procedure in `docs/fleet/679a6d6e-AUTO-CREW.md`. Keep the exact parent claim and
+reserve nonoverlapping owner/helper paths. Request help immediately when useful;
+there is no minimum task duration. Persistent deputy, technical, verification
+and support roles are records, not idle model sessions. A support request selects
+an already authorized slot and never grants installation, credentials or access.
+Check delivery evidence and integrate it under the parent; helpers do not accept
+their parent. Fleet or project pause remains authoritative. Existing workspaces,
+dirty files and receipts must survive crew registration and any later handoff.
+
 **Changelog: add a NEW file, never edit `CHANGELOG.md`.** Any PR touching `src/**`
 or `pyproject.toml` must record a changelog entry or the `docs / docs-check`
 tier-2 gate fails it. Record it as a new fragment:

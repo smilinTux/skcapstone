@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -21,6 +22,13 @@ def _clear_process_registry(monkeypatch):
     builder_dispatch._PROCESSES.clear()
     monkeypatch.setenv("SKFLEET_PI", "/test/bin/pi")
     monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: _folded())
+    # Runtime observation is separately tested with synthetic service/cgroup
+    # readers. No integration fixture may query this machine's systemd.
+    monkeypatch.setattr(
+        builder_dispatch.builder_execution,
+        "observe",
+        lambda *_args, **_kwargs: builder_dispatch.builder_execution.ExecutionObservation(None),
+    )
     yield
     builder_dispatch._PROCESSES.clear()
 
@@ -59,6 +67,346 @@ def _folded(**values) -> SimpleNamespace:
     }
     defaults.update(values)
     return SimpleNamespace(**defaults)
+
+
+def _execution_observation(monkeypatch, alive, exit_code=None):
+    monkeypatch.setattr(
+        builder_dispatch.builder_execution,
+        "observe",
+        lambda *_args, **_kwargs: builder_dispatch.builder_execution.ExecutionObservation(
+            alive, exit_code
+        ),
+    )
+
+
+@pytest.fixture
+def clean_attempt(paths, operator, noded41, monkeypatch, tmp_path):
+    """Run the lifecycle against real isolated Git, without any live service."""
+    _node(paths, operator, noded41)
+    seed = tmp_path / "seed"
+    seed.mkdir()
+
+    def git(path, *args):
+        return subprocess.check_output(
+            ["git", "-C", str(path), *args],
+            text=True,
+            stderr=subprocess.PIPE,
+        ).strip()
+
+    git(seed, "init", "--quiet")
+    git(seed, "config", "user.name", "Synthetic Worker")
+    git(seed, "config", "user.email", "worker@example.invalid")
+    (seed / "code.py").write_text("initial = True\n")
+    git(seed, "add", ".")
+    git(seed, "commit", "--quiet", "-m", "base")
+    core = _card()
+    core["meta"]["base_revision"] = git(seed, "rev-parse", "HEAD")
+    request = builder_dispatch.offer(
+        paths,
+        core,
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+    )
+    folded = _folded(meta=dict(core["meta"]))
+    claims, releases, launches = [], [], []
+
+    def claim(_self, owner, _card_id):
+        claims.append(owner)
+        folded.owner = owner
+        folded.meta = dict(core["meta"], _claim_revision=f"claim-{len(claims)}")
+
+    def release(_self, owner, card_id, **kwargs):
+        assert owner == folded.owner
+        assert kwargs["expected_claim_revision"] == folded.meta["_claim_revision"]
+        # Custody must be durable before the original writer can be retired.
+        assert list((paths.root / "recovery" / request["request_id"]).glob("*.json"))
+        releases.append((owner, kwargs["expected_claim_revision"]))
+        folded.owner = None
+        folded.meta = dict(core["meta"])
+        return True
+
+    def materialize(_request, workspace):
+        workspace.parent.mkdir(parents=True, exist_ok=True)
+        git(seed, "clone", "--quiet", "--no-local", str(seed), str(workspace))
+        git(workspace, "remote", "set-url", "origin", request["repository"])
+        return workspace
+
+    def launch(command, workspace):
+        process = SimpleNamespace(pid=100 + len(launches), poll=lambda: None)
+        launches.append((workspace, process))
+        return process
+
+    monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
+    monkeypatch.setattr(builder_dispatch.Board, "release_claim", release)
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: folded)
+    monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(builder_dispatch, "_send_status", lambda *_args: True)
+    status = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=launch,
+        materializer=materialize,
+    )
+    workspace, process = launches[0]
+    git(workspace, "config", "user.name", "Synthetic Worker")
+    git(workspace, "config", "user.email", "worker@example.invalid")
+    (workspace / "code.py").write_text("completed_progress = True\n")
+    git(workspace, "commit", "--quiet", "-am", "preserved progress")
+    return SimpleNamespace(
+        request=request,
+        status=status,
+        workspace=workspace,
+        process=process,
+        folded=folded,
+        claims=claims,
+        releases=releases,
+        launches=launches,
+        launch=launch,
+        git=git,
+    )
+
+
+def test_confirmed_dead_attempt_preserves_commit_and_restarts_in_fresh_workspace(
+    clean_attempt,
+    paths,
+    tmp_path,
+    monkeypatch,
+):
+    attempt = clean_attempt
+    original_head = attempt.git(attempt.workspace, "rev-parse", "HEAD")
+    attempt.process.poll = lambda: 1
+    _execution_observation(monkeypatch, False, 1)
+    result = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=attempt.launch,
+        materializer=lambda *_args: pytest.fail("continuation reset to original base"),
+    )
+    assert result["attempt"] == 2 and result["claim_revision"] == "claim-2"
+    assert len(attempt.releases) == 1 and len(attempt.claims) == 2
+    resumed = attempt.launches[1][0]
+    assert resumed != attempt.workspace
+    assert result["owner"].endswith("-attempt-2")
+    assert attempt.git(resumed, "rev-parse", "HEAD") == original_head
+    assert attempt.git(attempt.workspace, "rev-parse", "HEAD") == original_head
+    assert attempt.git(attempt.workspace, "status", "--porcelain") == ""
+
+
+@pytest.mark.parametrize("proof", [None, True, "foreign"])
+def test_unproven_whole_execution_never_releases_or_retries(
+    clean_attempt,
+    paths,
+    tmp_path,
+    monkeypatch,
+    proof,
+):
+    attempt = clean_attempt
+    attempt.process.poll = lambda: 1
+    _execution_observation(monkeypatch, proof if proof != "foreign" else False, 1)
+    if proof == "foreign":
+        attempt.status["execution_host"] = "another-host"
+        builder_dispatch.atomic_write_text(
+            builder_dispatch.status_path(paths, "node-ziowk01", attempt.request["card_id"]),
+            json.dumps(attempt.status) + "\n",
+        )
+    result = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=lambda *_args: pytest.fail("relaunched"),
+    )
+    assert result["state"] == "running"
+    assert attempt.releases == [] and len(attempt.claims) == 1
+
+
+def test_dead_dirty_attempt_is_preserved_without_claim_release(
+    clean_attempt,
+    paths,
+    tmp_path,
+    monkeypatch,
+):
+    attempt = clean_attempt
+    (attempt.workspace / "unfinished.py").write_text("unfinished = True\n")
+    attempt.process.poll = lambda: 1
+    _execution_observation(monkeypatch, False, 1)
+    result = builder_dispatch.consume_one(paths, tmp_path, "node-ziowk01")
+    assert result["state"] == "custody-held"
+    assert attempt.releases == [] and len(attempt.claims) == 1
+    assert (attempt.workspace / "unfinished.py").read_text() == "unfinished = True\n"
+
+
+def test_dead_old_generation_cannot_release_a_replacement_claim(
+    clean_attempt,
+    paths,
+    tmp_path,
+    monkeypatch,
+):
+    attempt = clean_attempt
+    attempt.process.poll = lambda: 1
+    _execution_observation(monkeypatch, False, 1)
+    attempt.folded.meta["_claim_revision"] = "replacement-claim"
+    result = builder_dispatch.consume_one(paths, tmp_path, "node-ziowk01")
+    assert result["state"] == "blocked" and result["claim_released"] is False
+    assert attempt.releases == []
+
+
+def test_confirmed_recovery_is_bounded_to_configured_attempt_limit(
+    clean_attempt,
+    paths,
+    tmp_path,
+    monkeypatch,
+):
+    attempt = clean_attempt
+    _execution_observation(monkeypatch, False, 1)
+    attempt.process.poll = lambda: 1
+    builder_dispatch.consume_one(paths, tmp_path, "node-ziowk01", launcher=attempt.launch)
+    attempt.launches[1][1].poll = lambda: 1
+    result = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=lambda *_args: pytest.fail("third attempt"),
+    )
+    assert result["state"] == "failed" and result["attempt"] == builder_dispatch.MAX_ATTEMPTS
+    assert len(attempt.claims) == len(attempt.releases) == 2
+
+
+def test_prior_checkpoint_claim_mismatch_never_reconstructs_or_claims(
+    clean_attempt,
+    paths,
+    tmp_path,
+    monkeypatch,
+):
+    attempt = clean_attempt
+    attempt.process.poll = lambda: 1
+    _execution_observation(monkeypatch, False, 1)
+    failed = builder_dispatch._reconcile_running(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        attempt.request,
+        attempt.status,
+    )
+    failed["checkpoint"]["claim_revision"] = "unrelated-claim"
+    builder_dispatch.atomic_write_text(
+        builder_dispatch.status_path(paths, "node-ziowk01", attempt.request["card_id"]),
+        json.dumps(failed) + "\n",
+    )
+    builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=lambda *_args: pytest.fail("relaunched"),
+    )
+    assert len(attempt.claims) == 1
+    assert not (paths.root / "workspaces" / (attempt.status["owner"] + "-attempt-2")).exists()
+
+
+def test_recovery_rechecks_extinction_after_sealing_before_release(
+    clean_attempt,
+    paths,
+    tmp_path,
+    monkeypatch,
+):
+    attempt = clean_attempt
+    attempt.process.poll = lambda: 1
+    observations = iter([False, True])
+    monkeypatch.setattr(
+        builder_dispatch.builder_execution,
+        "observe",
+        lambda *_args, **_kwargs: builder_dispatch.builder_execution.ExecutionObservation(
+            next(observations), 1
+        ),
+    )
+    result = builder_dispatch.consume_one(paths, tmp_path, "node-ziowk01")
+    assert result["state"] == "custody-held"
+    assert result["checkpoint"]["head"] == attempt.git(attempt.workspace, "rev-parse", "HEAD")
+    assert attempt.releases == []
+
+
+def test_paused_stale_recovery_never_probes_or_releases(
+    clean_attempt,
+    paths,
+    tmp_path,
+    monkeypatch,
+    operator,
+):
+    attempt = clean_attempt
+    store.set_frozen(paths, True, writer=operator, reason="user pause")
+    monkeypatch.setattr(
+        builder_dispatch, "_process_state", lambda *_args: pytest.fail("probed while paused")
+    )
+    assert not builder_dispatch.recover_stale(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        attempt.request["card_id"],
+        now=datetime(2099, 1, 1, tzinfo=timezone.utc),
+    )
+    assert attempt.releases == []
+
+
+def test_crash_after_launch_before_running_status_preserves_discoverable_intent(
+    paths,
+    operator,
+    noded41,
+    monkeypatch,
+    tmp_path,
+):
+    _node(paths, operator, noded41)
+    request = builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+    )
+    folded = _folded()
+    launches = []
+
+    def claim(_self, owner, _card):
+        folded.owner = owner
+        folded.meta = dict(_card_meta, _claim_revision="crash-claim")
+
+    _card_meta = dict(_card()["meta"])
+    monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: folded)
+    monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
+    original_write = builder_dispatch._write_status
+
+    def interrupted_write(paths, node, request, state, **values):
+        if state == "running":
+            raise OSError("synthetic interrupted status write")
+        return original_write(paths, node, request, state, **values)
+
+    monkeypatch.setattr(builder_dispatch, "_write_status", interrupted_write)
+    with pytest.raises(OSError, match="interrupted status"):
+        builder_dispatch.consume_one(
+            paths,
+            tmp_path,
+            "node-ziowk01",
+            launcher=lambda *_args: (
+                launches.append(True) or SimpleNamespace(pid=42, poll=lambda: None)
+            ),
+            materializer=lambda _request, workspace: workspace,
+        )
+    intent = builder_dispatch._load(
+        builder_dispatch.status_path(paths, "node-ziowk01", request["card_id"])
+    )
+    assert intent["state"] == "launching" and intent["execution_unit"]
+    assert intent["workspace"] and intent["claim_revision"] == "crash-claim"
+    builder_dispatch._PROCESSES.clear()
+    monkeypatch.setattr(builder_dispatch, "_write_status", original_write)
+    _execution_observation(monkeypatch, True)
+    result = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=lambda *_args: pytest.fail("duplicate launched"),
+    )
+    assert result["state"] == "running" and result["liveness"] == "live"
+    assert len(launches) == 1
 
 
 def test_niobe_places_one_generic_medium_card(paths, operator, noded41) -> None:
@@ -164,7 +512,8 @@ def test_consumer_reconciles_live_first_and_fills_four_slots(
     assert len(launches) == 4
     assert len(set(launches)) == 4
     assert claims == [request["card_id"] for request in requests]
-    builder_dispatch._PROCESSES.clear()  # daemon restart: PID birth tokens remain exact
+    builder_dispatch._PROCESSES.clear()  # daemon restart: exact unit remains observable
+    _execution_observation(monkeypatch, True)
     builder_dispatch.consume_one(
         paths,
         tmp_path,
@@ -202,6 +551,7 @@ def test_live_first_request_does_not_hide_queued_second(
         pid=123,
         pid_start_ticks="123",
         attempt=1,
+        **builder_dispatch.builder_execution.identity(first, "first-claim"),
     )
     folded = {
         first["card_id"]: _folded(
@@ -222,6 +572,7 @@ def test_live_first_request_does_not_hide_queued_second(
     monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda _self, card_id: folded[card_id])
     monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
     monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
+    _execution_observation(monkeypatch, True)
     result = builder_dispatch.consume_one(
         paths,
         tmp_path,
@@ -280,8 +631,8 @@ def test_changed_request_preserves_uncertain_live_generation(
             "node-ziowk01",
             launcher=lambda *_args: pytest.fail("launched"),
             materializer=lambda *_args: pytest.fail("materialized"),
-        )
-        is None
+        )["owner"]
+        == "prior-owner"
     )
     status = builder_dispatch._load(
         builder_dispatch.status_path(paths, "node-ziowk01", request["card_id"])
@@ -342,6 +693,7 @@ def test_consumer_keeps_fifth_waiting_until_a_slot_closes(
     )
     assert len(processes) == 4
     processes[0].poll = lambda: 0
+    _execution_observation(monkeypatch, False, 0)
     folded[requests[0]["card_id"]].status = SimpleNamespace(value="done")
     monkeypatch.setattr(builder_dispatch, "_send_status", lambda *_args: True)
     builder_dispatch.consume_one(
@@ -394,6 +746,23 @@ def test_offer_rejects_wrong_scheduler_and_lane_pins(paths) -> None:
     else:
         raise AssertionError("non-Niobe scheduler was accepted")
     assert not builder_dispatch.eligible(_card(), ["sk-m", "source-only", "codex-only"])
+
+
+@pytest.mark.parametrize(
+    ("restriction", "expected"),
+    [
+        ("kimi", False),
+        ("kimi-only", False),
+        ("kimi-suitable", False),
+        ("kimi-lane", False),
+        (None, True),
+    ],
+)
+def test_kimi_restrictions_are_ineligible_for_neutral_builder(restriction, expected) -> None:
+    labels = ["sk-m", "source-only"]
+    if restriction is not None:
+        labels.append(restriction)
+    assert builder_dispatch.eligible(_card(), labels) is expected
 
 
 @pytest.mark.parametrize("route", ["sk-s", "sk-m", "sk-l", "sk-xl"])
@@ -529,7 +898,7 @@ def test_transient_mismatch_refolds_before_launch(
         tmp_path,
         "node-ziowk01",
         materializer=lambda _request, workspace: workspace,
-        launcher=lambda *_args: (launches.append(1) or SimpleNamespace(pid=43, poll=lambda: None)),
+        launcher=lambda *_args: launches.append(1) or SimpleNamespace(pid=43, poll=lambda: None),
     )
     assert result["state"] == "running"
     assert result["attempt"] == 1
@@ -591,8 +960,70 @@ def test_reoffer_after_source_amendment_mints_a_new_bound_request(
     )
 
 
+@pytest.mark.parametrize("state", ["running", "launching", "custody-held"])
+@pytest.mark.parametrize("same_generation", [True, False])
+def test_changed_offer_cannot_replace_active_execution_custody(
+    paths,
+    operator,
+    noded41,
+    state,
+    same_generation,
+):
+    _node(paths, operator, noded41)
+    writer = store.Writer(role="scheduler", node="niobe", identity="")
+    request = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
+    prior_request = request if same_generation else dict(request, request_id="older-execution")
+    builder_dispatch._write_status(
+        paths,
+        "node-ziowk01",
+        prior_request,
+        state,
+        owner="prior-owner",
+        claim_revision="prior-revision",
+        workspace="/preserved/source",
+    )
+    request_path = builder_dispatch.request_path(paths, "node-ziowk01", request["card_id"])
+    status_path = builder_dispatch.status_path(paths, "node-ziowk01", request["card_id"])
+    before = (request_path.read_bytes(), status_path.read_bytes())
+    amended = _card()
+    amended["meta"]["base_ref"] = "amended"
+    reason = builder_dispatch.decline_reason(paths, amended, ["sk-m", "source-only"])
+    assert reason == f"superseded-binding-{state}: node=node-ziowk01"
+    assert builder_dispatch.offer(paths, amended, ["sk-m", "source-only"], writer=writer) is None
+    assert (request_path.read_bytes(), status_path.read_bytes()) == before
+    assert builder_dispatch.request_holds_card(
+        request,
+        builder_dispatch._load(status_path),
+        datetime(2099, 1, 1, tzinfo=timezone.utc),
+    )
+
+
+@pytest.mark.parametrize("state", ["launching", "custody-held"])
+def test_new_execution_states_reserve_capacity_and_preserve_idempotent_offer(
+    paths,
+    operator,
+    noded41,
+    state,
+):
+    _node(paths, operator, noded41)
+    writer = store.Writer(role="scheduler", node="niobe", identity="")
+    for number in range(builder_dispatch.BUILDER_CAPACITY):
+        core = _card() | {"id": f"24b000{number:02d}"}
+        request = builder_dispatch.offer(paths, core, ["sk-m", "source-only"], writer=writer)
+        builder_dispatch._write_status(paths, "node-ziowk01", request, state, owner="retained")
+        assert (
+            builder_dispatch.offer(paths, core, ["sk-m", "source-only"], writer=writer) == request
+        )
+    fifth = _card() | {"id": "24b00009"}
+    assert builder_dispatch._node_load(paths, "node-ziowk01") == builder_dispatch.BUILDER_CAPACITY
+    assert builder_dispatch.decline_reason(paths, fifth, ["sk-m", "source-only"]).startswith(
+        "builders-at-capacity:"
+    )
+    assert builder_dispatch.offer(paths, fifth, ["sk-m", "source-only"], writer=writer) is None
+
+
 @pytest.mark.parametrize("release_result", [True, False])
-def test_changed_offer_releases_prior_exact_claim_without_launch(
+def test_changed_offer_preserves_prior_claim_without_execution_proof(
     paths, operator, noded41, monkeypatch, tmp_path, release_result
 ) -> None:
     _node(paths, operator, noded41)
@@ -637,10 +1068,10 @@ def test_changed_offer_releases_prior_exact_claim_without_launch(
         materializer=lambda *_args: pytest.fail("replacement offer materialized"),
     )
 
-    assert releases == [("prior-owner", "24b00003", "prior-revision")]
-    assert result["request_id"] == second["request_id"]
+    assert releases == []
+    assert result["request_id"] == first["request_id"] != second["request_id"]
     assert result["state"] == "blocked"
-    assert result["claim_released"] is release_result
+    assert result["claim_released"] is False
 
 
 def test_amendment_during_claim_releases_generation_without_launch(
@@ -1021,7 +1452,7 @@ def test_live_old_worker_refreshes_and_cannot_be_reaped(
     assert refreshed["liveness"] == "live"
 
 
-def test_dead_worker_recovery_releases_only_matching_generation(
+def test_legacy_pid_recovery_does_not_release_without_execution_proof(
     paths, operator, noded41, monkeypatch, tmp_path
 ) -> None:
     _node(paths, operator, noded41)
@@ -1056,25 +1487,19 @@ def test_dead_worker_recovery_releases_only_matching_generation(
         return True
 
     monkeypatch.setattr(builder_dispatch.Board, "release_claim", release)
-    assert builder_dispatch.recover_stale(
+    assert not builder_dispatch.recover_stale(
         paths,
         tmp_path,
         "node-ziowk01",
         "24b00003",
         now=datetime(2026, 9, 11, tzinfo=timezone.utc),
     )
-    assert releases == [
-        (
-            "owner",
-            "24b00003",
-            {"actor": "niobe", "expected_claim_revision": "claim-dead"},
-        )
-    ]
+    assert releases == []
     assert (
         builder_dispatch._load(builder_dispatch.status_path(paths, "node-ziowk01", "24b00003"))[
             "state"
         ]
-        == "stale"
+        == "running"
     )
 
 
@@ -1179,7 +1604,7 @@ def test_unexpected_materializer_failure_still_escapes(paths, operator, noded41,
         )
 
 
-def test_launch_failure_releases_exact_claim_and_retries_once(
+def test_ambiguous_launch_failure_holds_exact_claim_without_retry(
     paths, operator, noded41, monkeypatch, tmp_path
 ) -> None:
     _node(paths, operator, noded41)
@@ -1220,29 +1645,19 @@ def test_launch_failure_releases_exact_claim_and_retries_once(
     failed = builder_dispatch._load(
         builder_dispatch.status_path(paths, "node-ziowk01", "24b00003")
     )
-    assert failed["state"] == "failed"
-    assert failed["claim_released"] is True
+    assert failed["state"] == "launching"
+    assert failed["claim_released"] is False
     result = builder_dispatch.consume_one(
         paths,
         tmp_path,
         "node-ziowk01",
-        launcher=lambda *_args: SimpleNamespace(pid=44, poll=lambda: None),
+        launcher=lambda *_args: pytest.fail("uncertain unit relaunched"),
         materializer=lambda _request, workspace: workspace,
     )
-    assert result["attempt"] == 2
-    assert result["claim_revision"] == "claim-2"
-    process = builder_dispatch._PROCESSES[result["request_id"]]
-    process.poll = lambda: 1
-    builder_dispatch.consume_one(paths, tmp_path, "node-ziowk01")
-    assert (
-        builder_dispatch.offer(
-            paths,
-            _card(),
-            ["sk-m", "source-only"],
-            writer=store.Writer(role="scheduler", node="niobe", identity=""),
-        )
-        is None
-    )
+    assert result["attempt"] == 1
+    assert result["claim_revision"] == "claim-1"
+    assert result["liveness"] == "unknown"
+    assert len(claims) == 1
 
 
 def test_supervisor_records_completion_and_sends_mail(
@@ -1277,6 +1692,7 @@ def test_supervisor_records_completion_and_sends_mail(
         materializer=lambda _request, workspace: workspace,
     )
     process.poll = lambda: 0
+    _execution_observation(monkeypatch, False, 0)
     folded.status = SimpleNamespace(value="done")
     result = builder_dispatch.consume_one(paths, tmp_path, "node-ziowk01")
     assert result["state"] == "completed"

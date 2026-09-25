@@ -196,6 +196,15 @@ def run_once(paths: FleetPaths, node: str) -> dict:
     if unadmitted and store.read_node_file(paths, node, "join.json") is None:
         join = build_join_request(paths, node, report["status"]["capacity"], now_iso)
         join_written = store.write_node_file(paths, writer, "join.json", join, if_changed=False)
+    # One coordinator consumes only immutable owner-authorized crew mandates.
+    # The consumer honors freeze and never starts a second dispatch loop.
+    try:
+        from .crew_controller import reconcile_crews
+
+        crew = reconcile_crews(paths, paths.root.parent, node)
+    except Exception as exc:
+        logger.warning("crew reconciliation held: %s", type(exc).__name__)
+        crew = {"state": "held", "error": type(exc).__name__}
     dispatch = None
     if (spec := store.read_spec(paths, "node", node)) and (
         spec.get("spec", {}).get("role") == "builder-standby"
@@ -210,6 +219,8 @@ def run_once(paths: FleetPaths, node: str) -> dict:
     }
     if dispatch is not None:
         result["dispatch"] = dispatch
+    if crew is not None:
+        result["crew"] = crew
     return result
 
 

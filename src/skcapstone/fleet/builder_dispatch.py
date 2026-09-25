@@ -21,7 +21,7 @@ from skcoord.coordination import TaskUnclaimable
 from ..atomic_io import atomic_write_text
 from ..coordination import Board
 from ..seat_mail import startup_hello
-from . import scheduler, store
+from . import builder_execution, scheduler, store
 from .churn_breaker import ClaimRefusedError, assert_claim_permitted
 from .node_controller import NodeView, node_views
 from .paths import SOVEREIGN_HOME, FleetPaths, valid_name
@@ -31,6 +31,7 @@ PROVIDER = "skgateway"
 LOGICAL_ROUTES = frozenset({"sk-s", "sk-m", "sk-l", "sk-xl"})
 LEASE_SECONDS = 900
 TERMINAL_STATES = {"completed", "blocked", "failed", "stale"}
+ACTIVE_EXECUTION_STATES = frozenset({"running", "launching", "custody-held"})
 MAX_ATTEMPTS = 2
 MATCH_RETRY_LIMIT = 3
 BUILDER_CAPACITY = 4
@@ -104,7 +105,18 @@ def eligible(core: dict, labels: list[str] | tuple[str, ...]) -> bool:
         logical_route(labels) is not None
         and "source-only" in normalized
         and not any(label.startswith("seat-") for label in normalized)
-        and not normalized.intersection({"host-pin", "codex-only", "qwen-only", "glm-only"})
+        and not normalized.intersection(
+            {
+                "host-pin",
+                "codex-only",
+                "qwen-only",
+                "glm-only",
+                "kimi",
+                "kimi-only",
+                "kimi-suitable",
+                "kimi-lane",
+            }
+        )
         and isinstance(core.get("id"), str)
     )
 
@@ -149,6 +161,12 @@ def _request_matches_current_card(coordination_home: Path, request: dict) -> Non
     card = CardStore(coordination_home).fold(str(request.get("card_id") or ""))
     if card is None:
         raise BuilderDispatchError("offered card is no longer foldable")
+    from .crew_admission import validate_helper_generation
+
+    try:
+        validate_helper_generation(coordination_home, card)
+    except ValueError as exc:
+        raise BuilderDispatchError(f"owner-helper admission refused: {exc}") from exc
     core = {"id": card.id, "meta": card.meta, "links": card.links}
     labels = sorted(str(label).strip().lower() for label in card.labels)
     expected_labels = request.get("labels")
@@ -249,6 +267,10 @@ def request_holds_card(request: dict, status: dict, now: datetime) -> bool:
     """
     if not request:
         return False
+    if status.get("state") in ACTIVE_EXECUTION_STATES:
+        # A newer offer or an expired offer lease cannot retire an execution
+        # whose exact generation still has unresolved process or source custody.
+        return True
     if status.get("request_id") == request.get("request_id"):
         return status.get("state") not in TERMINAL_STATES
     return not _lease_expired(request, now)
@@ -355,10 +377,7 @@ def offer(
                 return None
             return existing
         prior = _load(status_path(paths, view.name, card_id)) or {}
-        if (
-            prior.get("request_id") == existing.get("request_id")
-            and prior.get("state") == "running"
-        ):
+        if prior.get("state") in ACTIVE_EXECUTION_STATES:
             return None
         selected_node = view.name
         break
@@ -467,8 +486,8 @@ def decline_reason(
                     f" attempt={prior.get('attempt')}"
                 )
             return None
-        if same_generation and prior.get("state") == "running":
-            return f"superseded-binding-running: node={view.name}"
+        if prior.get("state") in ACTIVE_EXECUTION_STATES:
+            return f"superseded-binding-{prior['state']}: node={view.name}"
         return None
     builders = [view for view in ready if _node_load(paths, view.name) < BUILDER_CAPACITY]
     if not builders:
@@ -538,7 +557,20 @@ def _proc_start_ticks(pid: int) -> str | None:
 
 
 def _process_state(status: dict) -> tuple[bool | None, int | None]:
-    """Return exact-generation liveness, or unknown when death is unproven."""
+    """Return host-bound whole-execution state; leader exit is insufficient."""
+    try:
+        host, boot = builder_execution.local_identity()
+        unit = builder_execution.unit_name(
+            status["card_id"], status["request_id"], status["claim_revision"]
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return None, None
+    if (
+        status.get("execution_host"),
+        status.get("execution_boot_id"),
+        status.get("execution_unit"),
+    ) != (host, boot, unit):
+        return None, None
     request_id = str(status.get("request_id") or "")
     process = _PROCESSES.get(request_id)
     if process is not None:
@@ -546,16 +578,10 @@ def _process_state(status: dict) -> tuple[bool | None, int | None]:
         if code is None:
             return True, None
         _PROCESSES.pop(request_id, None)
-        return False, int(code)
-    try:
-        pid = int(status["pid"])
-        expected = str(status["pid_start_ticks"])
-    except (KeyError, TypeError, ValueError):
-        return None, None
-    if not expected:
-        return None, None
-    current = _proc_start_ticks(pid)
-    return (current == expected, None) if current is not None else (False, None)
+    observation = builder_execution.observe(status)
+    if observation.cgroup:
+        status["execution_cgroup"] = observation.cgroup
+    return observation.alive, observation.exit_code
 
 
 def _release_exact(
@@ -598,7 +624,17 @@ def _frozen_claim_status(
 def _reconcile_running(
     paths: FleetPaths, coordination_home: Path, node: str, request: dict, status: dict
 ) -> dict:
-    """Refresh one live generation or close it after exact process death."""
+    """Join freeze exclusion with exact local death proof and source custody."""
+    with store.actuation_exclusion(paths):
+        if not store.actuation_allowed(paths):
+            return status
+        return _reconcile_execution(paths, coordination_home, node, request, status)
+
+
+def _reconcile_execution(
+    paths: FleetPaths, coordination_home: Path, node: str, request: dict, status: dict
+) -> dict:
+    """Refresh or checkpoint one execution while holding freeze exclusion."""
     alive, exit_code = _process_state(status)
     owner = str(status.get("owner") or "")
     revision = str(status.get("claim_revision") or "")
@@ -608,13 +644,24 @@ def _reconcile_running(
         "pid": status.get("pid"),
         "pid_start_ticks": status.get("pid_start_ticks"),
         "attempt": int(status.get("attempt") or 1),
+        **{
+            key: status[key]
+            for key in (
+                "workspace",
+                "execution_host",
+                "execution_boot_id",
+                "execution_unit",
+                "execution_cgroup",
+            )
+            if key in status
+        },
     }
     if alive is not False:
         return _write_status(
             paths,
             node,
             request,
-            "running",
+            status.get("state", "running") if alive is None else "running",
             **common,
             liveness="live" if alive else "unknown",
         )
@@ -629,6 +676,49 @@ def _reconcile_running(
             or card.links.get("candidate_evidence_sha256"),
         }
     else:
+        if not card or card.owner != owner or card.meta.get("_claim_revision") != revision:
+            return _write_status(
+                paths,
+                node,
+                request,
+                "blocked",
+                **common,
+                claim_released=False,
+                error="execution claim changed",
+            )
+        from .builder_checkpoint import seal_clean_checkpoint
+
+        try:
+            receipt = seal_clean_checkpoint(
+                Path(status.get("workspace") or ""),
+                request,
+                status,
+                paths.root
+                / "recovery"
+                / request["request_id"]
+                / (hashlib.sha256(revision.encode()).hexdigest() + ".json"),
+            )
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            return _write_status(
+                paths,
+                node,
+                request,
+                "custody-held",
+                **common,
+                claim_released=False,
+                error=str(exc),
+            )
+        common["checkpoint"] = receipt
+        if _process_state(status)[0] is not False:
+            return _write_status(
+                paths,
+                node,
+                request,
+                "custody-held",
+                **common,
+                claim_released=False,
+                error="execution extinction changed during checkpoint",
+            )
         released = _release_exact(
             coordination_home, request["card_id"], owner, revision, actor=owner
         )
@@ -722,14 +812,24 @@ def materialize_source(request: dict, workspace: Path) -> Path:
             capture_output=True,
             text=True,
         )
+        clean = subprocess.run(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+        )
         if (
             head.returncode == 0
             and head.stdout.strip() == request["base_revision"]
             and remote.returncode == 0
             and remote.stdout.strip() == request["repository"]
+            and clean.returncode == 0
+            and not clean.stdout
         ):
             return workspace
-        raise BuilderDispatchError("existing workspace does not match exact source binding")
+        raise BuilderDispatchError(
+            "existing workspace is dirty or differs from exact source; preserved for checkpoint"
+        )
     workspace.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=f".{workspace.name}.", dir=workspace.parent))
     try:
@@ -793,13 +893,13 @@ def _consume_available(
             ):
                 continue
             prior = _load(status_path(paths, node, request["card_id"])) or {}
-            if prior.get("state") != "running":
+            if prior.get("state") not in ACTIVE_EXECUTION_STATES:
                 continue
             if prior.get("request_id") != request.get("request_id"):
                 active += 1  # Preserve an uncertain prior generation and its claim.
                 continue
             result = _reconcile_running(paths, coordination_home, node, request, prior)
-            active += result["state"] == "running"
+            active += result["state"] in ACTIVE_EXECUTION_STATES
     for path in paths_to_visit:
         with _request_exclusion(path):
             request = _load(path) or {}
@@ -814,30 +914,12 @@ def _consume_available(
                 and prior.get("request_id") != request.get("request_id")
                 and (prior.get("owner") or prior.get("claim_revision"))
             ):
-                if prior.get("state") == "running":
-                    continue
-                prior_owner = str(prior.get("owner") or "")
-                prior_revision = str(prior.get("claim_revision") or "")
-                released = bool(prior_owner and prior_revision) and _release_exact(
-                    coordination_home,
-                    request["card_id"],
-                    prior_owner,
-                    prior_revision,
-                    actor=prior_owner,
-                )
-                result = _write_status(
-                    paths,
-                    node,
-                    request,
-                    "blocked",
-                    owner=prior_owner,
-                    claim_revision=prior_revision,
-                    attempt=int(prior.get("attempt") or 0),
-                    claim_released=released,
-                )
+                # A changed source request cannot authorize retiring its prior
+                # execution. Preserve the old identity and its custody receipt.
+                result = prior
                 continue
             if prior.get("request_id") == request.get("request_id"):
-                if prior.get("state") == "running":
+                if prior.get("state") in ACTIVE_EXECUTION_STATES:
                     continue
                 if prior.get("state") not in {"failed", "frozen"} or (
                     prior.get("state") == "failed"
@@ -865,6 +947,8 @@ def _consume_available(
                 continue
             attempt = int(prior.get("attempt") or 0) + 1
             owner = f"pi-builder-standby-{node}-{request['card_id']}"
+            if attempt > 1:
+                owner += f"-attempt-{attempt}"
             workspace = paths.root / "workspaces" / owner
             if not store.actuation_allowed(paths):
                 return None
@@ -882,8 +966,25 @@ def _consume_available(
                 )
                 continue
             try:
-                materializer(request, workspace)
-            except BuilderDispatchError as exc:
+                checkpoint = prior.get("checkpoint")
+                if prior.get("owner") and prior.get("state") == "failed":
+                    if (
+                        not isinstance(checkpoint, dict)
+                        or prior.get("claim_released") is not True
+                        or any(
+                            checkpoint.get(key) != prior.get(key)
+                            for key in ("owner", "claim_revision", "request_id", "card_id")
+                        )
+                    ):
+                        raise BuilderDispatchError(
+                            "prior execution has no exact retired checkpoint"
+                        )
+                    from .builder_checkpoint import restore_clean_checkpoint
+
+                    restore_clean_checkpoint(checkpoint, request, workspace)
+                else:
+                    materializer(request, workspace)
+            except (BuilderDispatchError, ValueError) as exc:
                 _write_status(
                     paths,
                     node,
@@ -930,6 +1031,9 @@ def _consume_available(
                     error=str(exc),
                 )
                 continue
+            # Read host identity before acquiring a claim. An unreadable boot
+            # identity must never leave an otherwise untracked claimed attempt.
+            execution_host, execution_boot_id = builder_execution.local_identity()
             try:
                 Board(coordination_home).claim_task(owner, request["card_id"])
             except TaskUnclaimable as exc:
@@ -1003,6 +1107,13 @@ def _consume_available(
                 return frozen
             startup_hello(coordination_home, owner, host=node)
             command = worker_command(request, owner, revision, workspace)
+            execution = {
+                "execution_host": execution_host,
+                "execution_boot_id": execution_boot_id,
+                "execution_unit": builder_execution.unit_name(
+                    request["card_id"], request["request_id"], revision
+                ),
+            }
             frozen = _frozen_claim_status(
                 paths,
                 coordination_home,
@@ -1014,7 +1125,9 @@ def _consume_available(
             )
             if frozen is not None:
                 return frozen
-            run = launcher or (lambda argv, cwd: subprocess.Popen(argv, cwd=cwd))
+            run = launcher or (
+                lambda argv, cwd: builder_execution.launch(argv, cwd, execution["execution_unit"])
+            )
             exclusion_acquired = False
             try:
                 with store.actuation_exclusion(paths):
@@ -1030,27 +1143,39 @@ def _consume_available(
                     )
                     if frozen is not None:
                         return frozen
+                    intent = _write_status(
+                        paths,
+                        node,
+                        request,
+                        "launching",
+                        owner=owner,
+                        claim_revision=revision,
+                        attempt=attempt,
+                        workspace=str(workspace),
+                        **execution,
+                    )
                     process = run(command, workspace)
             except Exception:
-                released = _release_exact(
-                    coordination_home, request["card_id"], owner, revision, actor=owner
-                )
-                state = "failed" if released and exclusion_acquired else "blocked"
+                # The service may already exist even if its launch command
+                # timed out. Retain this generation until its unit proves
+                # complete extinction; never release from a launcher error.
                 _write_status(
                     paths,
                     node,
                     request,
-                    state,
+                    "launching",
                     owner=owner,
                     claim_revision=revision,
                     attempt=attempt if exclusion_acquired else int(prior.get("attempt") or 0),
-                    claim_released=released,
-                    mail_sent=_send_status(owner, request, state),
+                    claim_released=False,
+                    workspace=str(workspace),
+                    **execution,
                 )
                 raise
             pid = getattr(process, "pid", None)
             if pid is not None:
                 _PROCESSES[request["request_id"]] = process
+            observed = builder_execution.observe(intent) if launcher is None else None
             result = _write_status(
                 paths,
                 node,
@@ -1061,6 +1186,9 @@ def _consume_available(
                 pid=pid,
                 pid_start_ticks=_proc_start_ticks(pid) if pid is not None else None,
                 attempt=attempt,
+                workspace=str(workspace),
+                **execution,
+                execution_cgroup=observed.cgroup if observed else None,
             )
             active += 1
     return result
@@ -1074,12 +1202,27 @@ def recover_stale(
     *,
     now: datetime | None = None,
 ) -> bool:
-    """Release only the exact expired generation reported by this node."""
+    """Recover through the same local custody path; expiry alone proves nothing."""
+    with _request_exclusion(request_path(paths, node, card_id)):
+        return _recover_stale_locked(paths, coordination_home, node, card_id, now=now)
+
+
+def _recover_stale_locked(
+    paths: FleetPaths,
+    coordination_home: Path,
+    node: str,
+    card_id: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Inspect a stale generation without racing its consumer or human freeze."""
+    if not store.actuation_allowed(paths):
+        return False
     request = _load(request_path(paths, node, card_id)) or {}
     status = _load(status_path(paths, node, card_id)) or {}
     if not request or status.get("request_id") != request.get("request_id"):
         return False
-    if status.get("state") != "running":
+    if status.get("state") not in ACTIVE_EXECUTION_STATES:
         return False
     try:
         heartbeat = datetime.strptime(status["heartbeat_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
@@ -1089,12 +1232,5 @@ def recover_stale(
         return False
     if (now or _now()) <= heartbeat + timedelta(seconds=LEASE_SECONDS):
         return False
-    owner = str(status.get("owner") or "")
-    revision = str(status.get("claim_revision") or "")
-    alive, _ = _process_state(status)
-    if alive is not False:
-        return False
-    released = _release_exact(coordination_home, card_id, owner, revision, actor="niobe")
-    if released:
-        _write_status(paths, node, request, "stale", owner=owner, claim_revision=revision)
-    return released
+    result = _reconcile_running(paths, coordination_home, node, request, status)
+    return result.get("claim_released") is True

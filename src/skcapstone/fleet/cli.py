@@ -31,6 +31,7 @@ from . import (
 from . import profiles as profiles_mod
 from . import services as services_mod
 from . import sknoded as sknoded_mod
+from .crew_cli import register_crew_commands
 from .explain import explain as explain_kind
 from .guidance import enqueue_guidance
 from .paths import default_paths, self_node_name
@@ -1609,6 +1610,9 @@ def drill_teardown_cmd(root: str) -> None:
     except drill_mod.UnsafeDrillRootError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"removed drill tree {removed}")
+
+
+register_crew_commands(fleet)
 
 
 def register_fleet_commands(main: click.Group) -> None:
