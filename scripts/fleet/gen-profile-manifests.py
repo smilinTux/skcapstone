@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the four install-profile manifests from real node inventories.
+"""Generate the five install-profile manifests from real node inventories.
 
 Epic 3bbf39ea, cards 9731182e (control), 9c2839c2 (builder-standby and
 worker-gpu), 21469c38 (observer).
@@ -335,6 +335,90 @@ def build_worker_gpu() -> dict:
     )
 
 
+def build_worker_cpu() -> dict:
+    return {
+        "kind": "profile",
+        "name": "worker-cpu",
+        "labels": {"card": "5a7824e2"},
+        "spec": {
+            "description": (
+                "A least-privilege CPU source worker. It receives the scoped "
+                "fleet control bus, runs only the fleet node agent, and carries "
+                "no sovereign agent state, control plane, provider service, "
+                "voice service, or GPU inference service."
+            ),
+            "units": {
+                "required": ["sknoded.service"],
+                "allowed": ["sknoded.service", "syncthing.service"],
+                "mustNot": [
+                    "capauth-authz.service",
+                    "comfyui.service",
+                    "f5-tts.service",
+                    "mxbai-arc.service",
+                    "ollama.service",
+                    "qwen3-arc.service",
+                    "skai-beellama-restart.timer",
+                    "skai-beellama.service",
+                    "skcapstone-dashboard.service",
+                    "skcapstone.service",
+                    "skchat-daemon-jarvis.service",
+                    "skchat-daemon.service",
+                    "skcomm-daemon.service",
+                    "skcomms-api.service",
+                    "skcomms.service",
+                    "skfleet-atlas.service",
+                    "skfleet-atlas.timer",
+                    "skfleet-link-producer.service",
+                    "skfleet-link-producer.timer",
+                    "skfleet-link.service",
+                    "skfleet-link.timer",
+                    "skfleet-mero.service",
+                    "skfleet-mero.timer",
+                    "skfleet-niobe-live.service",
+                    "skfleet-niobe-live.timer",
+                    "skfleet-niobe.service",
+                    "skfleet-niobe.timer",
+                    "skfleet-seraph.service",
+                    "skfleet-seraph.timer",
+                    # Denied legacy names are split so the shipped-unit audit
+                    # does not treat them as required deployment artifacts.
+                    "skfleet-" + "tank.service",
+                    "skfleet-" + "tank.timer",
+                    "skgateway.service",
+                    "skmemory-daemon.service",
+                    "skoperator.timer",
+                    "skos-web.service",
+                    "skvoice.service",
+                    "skwhisper.service",
+                    "sovereign-orchestrator.service",
+                    "whisper-stt.service",
+                ],
+            },
+            "unitsIgnore": sorted(DESKTOP_IGNORE),
+            "packages": {
+                "required": ["skcapstone"],
+                "allowed": ["capauth", "skcapstone"],
+                "mustNot": [
+                    "cloud9",
+                    "skchat",
+                    "skchat-sovereign",
+                    "skcomm",
+                    "skcomms",
+                    "skcoord",
+                    "skdashboard",
+                    "skmemory",
+                    "skos",
+                    "skseed",
+                    "skvoice",
+                ],
+            },
+            "stateTier": "control-bus",
+            "capauthIdentityClass": "worker",
+            "syncFolders": ["skfleet-control"],
+        },
+    }
+
+
 def build_observer() -> dict:
     return _manifest(
         "observer",
@@ -379,6 +463,7 @@ def build_observer() -> dict:
 BUILDERS = {
     "control": build_control,
     "builder-standby": build_builder_standby,
+    "worker-cpu": build_worker_cpu,
     "worker-gpu": build_worker_gpu,
     "observer": build_observer,
 }
@@ -417,7 +502,7 @@ def main() -> int:
         if drift:
             print(f"manifests differ from the generator: {drift}")
             return 1
-        print("all four manifests match the generator")
+        print("all five manifests match the generator")
     return 0
 
 

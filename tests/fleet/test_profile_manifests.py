@@ -202,6 +202,7 @@ def test_manifests_match_their_generator() -> None:
         cwd=repo,
     )
     assert result.returncode == 0, f"manifests differ from the generator:\n{result.stdout}"
+    assert result.stdout.strip() == "all five manifests match the generator"
 
 
 def test_the_tier_agrees_with_the_folders_the_role_actually_joins() -> None:
