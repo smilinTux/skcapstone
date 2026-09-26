@@ -12,7 +12,7 @@ from skcoord.card_store import CardStore
 from ..coord_helpers import request_help
 from . import store as fleet_store
 from .crew_contract import helper_packet, validate_mandate
-from .crew_store import CrewStore, identifier
+from .crew_store import CrewStore, digest, identifier
 from .paths import FleetPaths
 
 MAX_PER_CYCLE = 8
@@ -43,35 +43,65 @@ def _next_manifest(paths, ledger, manifests, considered):
 
 def _auto_requests(paths, home, manifest, now):
     """Activate bounded initial work or one diagnostic per progress observation."""
-    from .crew_requests import submit_support
+    from .crew_requests import submit_support, validate_producer_candidate
 
     packet = manifest["packet"]
+    pair = packet.get("provider_pair")
+    rows = CrewStore(paths).list_requests(packet["crew_id"])
     for slot in packet["slots"]:
         trigger = slot["trigger"]
         if trigger == "support-request":
             continue
         evidence = manifest["manifest_sha256"]
-        if trigger == "stale-progress":
+        candidate = None
+        if pair is not None and slot["role"] == "verification":
+            producer_rows = [
+                row
+                for row in rows
+                if row.get("canonical_request_id") == row.get("request_id")
+                and row.get("state") == "delivered"
+                and row.get("producer_candidate") is not None
+                and next(item for item in packet["slots"] if item["slot_id"] == row["slot_id"])[
+                    "role"
+                ]
+                == "technical"
+            ]
+            if len(producer_rows) != 1:
+                continue
+            producer_row = producer_rows[0]
+            candidate = validate_producer_candidate(producer_row["producer_candidate"])
+            if (
+                producer_row.get("helper_id") != candidate["helper_id"]
+                or producer_row.get("receipt_sha256") != candidate["evidence_sha256"]
+                or not isinstance(producer_row.get("receipt"), dict)
+                or producer_row["receipt"].get("claim_revision") != candidate["claim_revision"]
+            ):
+                raise ValueError("technical producer candidate custody is inconsistent")
+            evidence = digest(candidate)
+        if trigger == "stale-progress" and candidate is None:
             from .crew_progress import stalled_evidence
 
             evidence = stalled_evidence(paths, manifest, now)
             if evidence is None:
                 continue
         identity = hashlib.sha256(f"{slot['slot_id']}:{evidence}".encode()).hexdigest()
+        request = {
+            "schema": "skfleet.crew-support/v1",
+            "crew_id": packet["crew_id"],
+            "request_id": f"auto-{identity[:40]}",
+            "slot_id": slot["slot_id"],
+            "requester_card_id": packet["parent_id"],
+            "requester_claim_revision": packet["parent_claim_revision"],
+            "evidence_sha256": evidence,
+            "reason": f"Authorized {trigger} crew assignment",
+        }
+        if candidate is not None:
+            request["producer_candidate"] = candidate
         submit_support(
             paths,
             home,
             manifest["authorizer"],
-            {
-                "schema": "skfleet.crew-support/v1",
-                "crew_id": packet["crew_id"],
-                "request_id": f"auto-{identity[:40]}",
-                "slot_id": slot["slot_id"],
-                "requester_card_id": packet["parent_id"],
-                "requester_claim_revision": packet["parent_claim_revision"],
-                "evidence_sha256": evidence,
-                "reason": f"Authorized {trigger} crew assignment",
-            },
+            request,
             automatic=True,
         )
 

@@ -28,7 +28,13 @@ from .paths import SOVEREIGN_HOME, FleetPaths, valid_name
 
 ROLE = "builder-standby"
 PROVIDER = "skgateway"
-LOGICAL_ROUTES = frozenset({"sk-s", "sk-m", "sk-l", "sk-xl"})
+GENERIC_LOGICAL_ROUTES = frozenset({"sk-s", "sk-m", "sk-l", "sk-xl"})
+FOCUSED_LOGICAL_ROUTES = frozenset(
+    f"sk-{family}-{size}"
+    for family in ("deepseek", "zai", "glm", "codex")
+    for size in ("s", "m", "l")
+)
+LOGICAL_ROUTES = GENERIC_LOGICAL_ROUTES | FOCUSED_LOGICAL_ROUTES
 LEASE_SECONDS = 900
 TERMINAL_STATES = {"completed", "blocked", "failed", "stale"}
 ACTIVE_EXECUTION_STATES = frozenset({"running", "launching", "custody-held"})
@@ -94,7 +100,13 @@ def _request_exclusion(path: Path):
 
 def logical_route(labels: list[str] | tuple[str, ...]) -> str | None:
     """Return the card's one unambiguous governed logical route."""
-    routes = LOGICAL_ROUTES.intersection(str(label).strip().lower() for label in labels)
+    routes = set()
+    for label in labels:
+        normalized = str(label).strip().lower()
+        if normalized in GENERIC_LOGICAL_ROUTES:
+            routes.add(normalized)
+        elif isinstance(label, str) and label in FOCUSED_LOGICAL_ROUTES:
+            routes.add(label)
     return next(iter(routes)) if len(routes) == 1 else None
 
 

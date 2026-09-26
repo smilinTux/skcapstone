@@ -15,6 +15,25 @@ from types import SimpleNamespace
 import pytest
 
 from skcapstone.fleet import builder_dispatch, sknoded, store
+from skcapstone.fleet.paths import FleetPaths
+
+
+@pytest.fixture
+def paths(tmp_path):
+    """Provide fleet paths even when pytest visits a root test first."""
+    return FleetPaths(root=tmp_path / "fleet")
+
+
+@pytest.fixture
+def operator():
+    """Provide the operator writer without nested-conftest ordering dependence."""
+    return store.Writer(role="operator", node="node-158", identity="capauth:chef@skworld.io")
+
+
+@pytest.fixture
+def noded41():
+    """Provide one node writer without nested-conftest ordering dependence."""
+    return store.Writer(role="sknoded", node="node-41", identity="")
 
 
 @pytest.fixture(autouse=True)
@@ -768,6 +787,53 @@ def test_kimi_restrictions_are_ineligible_for_neutral_builder(restriction, expec
 @pytest.mark.parametrize("route", ["sk-s", "sk-m", "sk-l", "sk-xl"])
 def test_provider_neutral_logical_routes_are_eligible(route) -> None:
     assert builder_dispatch.eligible(_card(), [route, "source-only"])
+
+
+def test_legacy_generic_route_normalization_is_preserved() -> None:
+    assert builder_dispatch.logical_route([" SK-M "]) == "sk-m"
+
+
+@pytest.mark.parametrize(
+    "route",
+    [
+        f"sk-{family}-{size}"
+        for family in ("deepseek", "zai", "glm", "codex")
+        for size in ("s", "m", "l")
+    ],
+)
+def test_canonical_focused_logical_routes_are_eligible(route) -> None:
+    assert builder_dispatch.eligible(_card(), [route, "source-only"])
+
+
+def test_focused_owner_helper_and_worker_command_keep_exact_route(monkeypatch) -> None:
+    route = "sk-deepseek-m"
+    core = _card()
+    core["meta"]["logical_route"] = route
+    assert builder_dispatch.eligible(core, [route, "source-only", "owner-helper"])
+    monkeypatch.setattr(builder_dispatch, "_guard_path", lambda: "/guard.mjs")
+    monkeypatch.setenv("SKFLEET_PI", "/usr/bin/pi")
+    command = builder_dispatch.worker_command(
+        core | {"card_id": "24b00003", "logical_route": route},
+        "owner",
+        "revision",
+        "/tmp/work",
+    )
+    assert command[command.index("--model") + 1] == route
+
+
+@pytest.mark.parametrize(
+    "route",
+    [
+        "sk-deepseek-xl",
+        "sk-openai-m",
+        "sk-deep-seek-m",
+        "sk-DeepSeek-m",
+        "sk-zai-M",
+        17,
+    ],
+)
+def test_noncanonical_focused_routes_are_ineligible(route) -> None:
+    assert not builder_dispatch.eligible(_card(), [route, "source-only"])
 
 
 @pytest.mark.parametrize("route", ["sk-s", "sk-m", "sk-l", "sk-xl"])

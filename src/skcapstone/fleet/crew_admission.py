@@ -8,7 +8,7 @@ from pathlib import Path
 from skcoord.card_store import CardStore
 from skcoord.owner_helpers import parent_contract_digest
 
-from ..coord_helpers import _source
+from ..coord_helpers import SUPPORTED_LOGICAL_ROUTES, _source
 from ..jarvis_emergency import authorize_coord_mutation
 from ..seat_boundaries import Action
 
@@ -45,7 +45,32 @@ def validate_helper_generation(home: Path, card) -> None:
         or card.meta.get("helper_parent_contract_sha256") != parent_contract_digest(parent)
     ):
         raise ValueError("owner-helper parent generation changed")
-    expected = {label for label in parent.labels if not label.lower().startswith("parent-")}
+    route = card.meta.get("logical_route")
+    if route is None:
+        expected = {label for label in parent.labels if not label.lower().startswith("parent-")}
+    else:
+        if not isinstance(route, str) or route not in SUPPORTED_LOGICAL_ROUTES:
+            raise ValueError("owner-helper logical route is unsupported")
+        selected = [
+            label
+            for label in card.labels
+            if isinstance(label, str) and label.strip().lower() == route
+        ]
+        other_routes = [
+            label
+            for label in card.labels
+            if isinstance(label, str)
+            and label.strip().lower() in SUPPORTED_LOGICAL_ROUTES
+            and label.strip().lower() != route
+        ]
+        if selected != [route] or other_routes:
+            raise ValueError("owner-helper logical route label is missing or ambiguous")
+        expected = {
+            label
+            for label in parent.labels
+            if label.strip().lower() not in SUPPORTED_LOGICAL_ROUTES
+        }
+        expected.add(route)
     expected |= {"owner-helper", "source-only", f"parent-{parent_id}"}
     if labels != expected or set(card.dependencies) != set(parent.dependencies):
         raise ValueError("owner-helper parent restrictions changed")

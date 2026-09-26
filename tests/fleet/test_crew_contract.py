@@ -25,6 +25,7 @@ def helper_packet():
         "criteria": ["Return exact evidence"],
         "allowed_paths": ["tests/test_seam.py"],
         "verification_commands": ["pytest -q tests/test_seam.py"],
+        "logical_route": "sk-m",
     }
 
 
@@ -48,6 +49,32 @@ def crew_packet():
             }
         ],
     }
+
+
+def paired_packet():
+    """Return one producer and a different-family delayed reviewer."""
+    packet = crew_packet()
+    packet["slots"][0].update(slot_id="produce", role="technical")
+    packet["slots"][0]["packet"].update(request_id="produce-1", logical_route="sk-deepseek-m")
+    reviewer = copy.deepcopy(packet["slots"][0])
+    reviewer.update(slot_id="review", role="verification")
+    reviewer["packet"].update(
+        request_id="review-1",
+        allowed_paths=[],
+        logical_route="sk-glm-m",
+    )
+    packet["slots"].append(reviewer)
+    packet["provider_pair"] = {
+        "schema": "skfleet.provider-pair/v1",
+        "state": "paired",
+        "snapshot_revision": "f" * 64,
+        "producer": {
+            "provider_family": "deepseek",
+            "logical_route": "sk-deepseek-m",
+        },
+        "reviewer": {"provider_family": "glm", "logical_route": "sk-glm-m"},
+    }
+    return packet
 
 
 @pytest.fixture
@@ -81,6 +108,66 @@ def test_registration_is_read_only_replayable_and_records_original_authority(hom
     packet["slots"][0]["packet"]["objective"] = "changed caller memory"
     assert record["packet"]["slots"][0]["packet"]["objective"] == "Verify seam"
     assert CardStore(home).fold("aaaa1111").model_dump() == before
+
+
+def test_provider_pair_is_sealed_and_slot_routes_byte_match(home):
+    packet = paired_packet()
+    record = contract.register_payload(home, "test-owner", packet)
+    assert record["packet"]["provider_pair"] == packet["provider_pair"]
+    assert contract.validate_mandate(home, record) == record
+    changed = copy.deepcopy(record)
+    changed["packet"]["provider_pair"]["reviewer"]["logical_route"] = "sk-zai-m"
+    with pytest.raises(ValueError):
+        contract.validate_mandate(home, changed)
+
+
+def test_verification_helper_packet_appends_exact_sealed_candidate(home):
+    record = contract.register_payload(home, "test-owner", paired_packet())
+    candidate = {
+        "ref": "refs/heads/work/candidate",
+        "commit": "1" * 40,
+        "tree": "2" * 40,
+        "helper_id": "bbbb2222",
+        "claim_revision": "helper-1",
+        "evidence_sha256": "3" * 64,
+    }
+    row = {
+        "crew_id": "crew-1",
+        "request_id": "review",
+        "dedup_key": "4" * 64,
+        "packet": {"producer_candidate": candidate},
+    }
+    packet = contract.helper_packet(record, row, record["packet"]["slots"][1])
+    assert '"commit":"' + "1" * 40 + '"' in packet["objective"]
+    assert '"evidence_sha256":"' + "3" * 64 + '"' in packet["objective"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda packet: packet["slots"][0]["packet"].update(logical_route="sk-glm-m"),
+        lambda packet: packet["slots"][1]["packet"].update(logical_route="sk-deepseek-m"),
+        lambda packet: packet["provider_pair"]["reviewer"].update(
+            provider_family="deepseek", logical_route="sk-deepseek-m"
+        ),
+    ],
+)
+def test_provider_pair_rejects_route_or_family_mismatch(home, mutation):
+    packet = paired_packet()
+    mutation(packet)
+    with pytest.raises(ValueError):
+        contract.register_payload(home, "test-owner", packet)
+
+
+def test_unavailable_pair_cannot_authorize_verification(home):
+    packet = paired_packet()
+    packet["provider_pair"].update(state="independent_review_unavailable", reviewer=None)
+    packet["slots"].pop()
+    assert contract.register_payload(home, "test-owner", packet)
+    packet = paired_packet()
+    packet["provider_pair"].update(state="independent_review_unavailable", reviewer=None)
+    with pytest.raises(ValueError, match="cannot contain a verification"):
+        contract.register_payload(home, "test-owner", packet)
 
 
 @pytest.mark.parametrize(

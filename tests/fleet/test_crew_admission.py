@@ -40,6 +40,7 @@ def helper(tmp_path):
         "criteria": ["Deliver exact output"],
         "allowed_paths": [],
         "verification_commands": ["pytest -q"],
+        "logical_route": "sk-m",
     }
     task = build_helper(cards.fold("aaaa1111"), packet, "test-owner", "parent-1")
     cards.create(
@@ -72,6 +73,46 @@ def test_current_helper_passes_and_ordinary_cards_remain_unchanged(helper):
     validate_helper_generation(home, card)
     builder_dispatch._request_matches_current_card(home, request(card))
     validate_helper_generation(home, CardStore(home).fold("aaaa1111"))
+
+
+def test_focused_route_replaces_parent_route_and_preserves_restrictions(helper):
+    home, card = helper
+    parent = CardStore(home).fold("aaaa1111")
+    parent.labels.extend(["no-external-action", "parent-legacy", " SK-L "])
+    card.labels = [
+        "source-only",
+        "no-external-action",
+        "parent-legacy",
+        "owner-helper",
+        "parent-aaaa1111",
+        "sk-deepseek-m",
+    ]
+    card.meta["logical_route"] = "sk-deepseek-m"
+    original = CardStore.fold
+
+    def changed(store, card_id):
+        return parent if card_id == "aaaa1111" else original(store, card_id)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(CardStore, "fold", changed)
+        validate_helper_generation(home, card)
+
+
+@pytest.mark.parametrize("change", ["missing", "extra", "mismatch", "spelling", "type"])
+def test_routed_helper_rejects_missing_extra_ambiguous_or_mismatched_route(helper, change):
+    home, card = helper
+    if change == "missing":
+        card.labels.remove("sk-m")
+    elif change == "extra":
+        card.labels.append("sk-glm-m")
+    elif change == "mismatch":
+        card.meta["logical_route"] = "sk-glm-m"
+    elif change == "spelling":
+        card.labels[card.labels.index("sk-m")] = "SK-M"
+    else:
+        card.meta["logical_route"] = 17
+    with pytest.raises(ValueError, match="route"):
+        validate_helper_generation(home, card)
 
 
 @pytest.mark.parametrize(

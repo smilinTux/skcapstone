@@ -172,6 +172,20 @@ def test_packet_accepts_each_supported_logical_route(route):
     assert validated["logical_route"] == route
 
 
+@pytest.mark.parametrize(
+    "route",
+    [
+        f"sk-{family}-{size}"
+        for family in ("deepseek", "zai", "glm", "codex")
+        for size in ("s", "m", "l")
+    ],
+)
+def test_packet_accepts_each_canonical_focused_route(route):
+    packet = _packet()
+    packet["logical_route"] = route
+    assert validate_packet(packet)["logical_route"] == route
+
+
 @pytest.mark.parametrize("route", ["sk-s", "sk-m", "sk-l", "sk-xl"])
 def test_build_helper_appends_selected_logical_route(tmp_path, route):
     parent = _parent(tmp_path)
@@ -239,6 +253,11 @@ def test_build_helper_strips_inherited_routes_and_keeps_restrictions(tmp_path):
         ("logical_route", "SK-M"),
         ("logical_route", "Sk-M"),
         ("logical_route", "sk-xxl"),
+        ("logical_route", "sk-deepseek-xl"),
+        ("logical_route", "sk-openai-m"),
+        ("logical_route", "sk-deep-seek-m"),
+        ("logical_route", "sk-DeepSeek-m"),
+        ("logical_route", "sk-zai-M"),
         ("logical_route", ""),
     ],
 )

@@ -15,6 +15,7 @@ from ..coord_helpers import _source, build_helper
 from ..coord_helpers import validate_packet as validate_helper_packet
 from ..jarvis_emergency import authorize_coord_mutation
 from ..seat_boundaries import Action
+from .provider_pairs import validate_provider_pair
 
 SCHEMA = "skfleet.crew/v1"
 MAX_MANIFEST_BYTES = 131072
@@ -68,13 +69,18 @@ def _paths(values: object) -> list[str]:
             "criteria": ["Literal scope"],
             "allowed_paths": values,
             "verification_commands": ["No execution"],
+            "logical_route": "sk-s",
         }
     )["allowed_paths"]
 
 
 def validate_packet(packet: object) -> dict:
     """Validate the exact finite crew declaration, without deriving new work."""
-    if not isinstance(packet, dict) or set(packet) != _KEYS or packet["schema"] != SCHEMA:
+    if (
+        not isinstance(packet, dict)
+        or set(packet) not in (_KEYS, _KEYS | {"provider_pair"})
+        or packet["schema"] != SCHEMA
+    ):
         raise ValueError("invalid crew manifest fields or schema")
     packet = _bounded(packet)
     for key in ("crew_id", "coordinator_node"):
@@ -155,6 +161,29 @@ def validate_packet(packet: object) -> dict:
                     r"[0-9a-f]{64}", resource[key]
                 ):
                     raise ValueError("invalid support policy/context digest")
+    if "provider_pair" in packet:
+        pair = validate_provider_pair(packet["provider_pair"])
+        packet["provider_pair"] = pair
+        technical = [slot for slot in slots if slot["role"] == "technical"]
+        verification = [slot for slot in slots if slot["role"] == "verification"]
+        producer = pair["producer"]
+        reviewer = pair["reviewer"]
+        if producer is None:
+            if technical:
+                raise ValueError("provider pair without a producer cannot contain technical slots")
+        elif (
+            len(technical) != 1
+            or technical[0]["packet"]["logical_route"] != producer["logical_route"]
+        ):
+            raise ValueError("technical slot must match the sealed producer route")
+        if pair["state"] == "paired":
+            if (
+                len(verification) != 1
+                or verification[0]["packet"]["logical_route"] != reviewer["logical_route"]
+            ):
+                raise ValueError("verification slot must match the sealed reviewer route")
+        elif verification:
+            raise ValueError("unavailable independent review cannot contain a verification slot")
     return packet
 
 
@@ -213,6 +242,13 @@ def helper_packet(manifest, row, slot):
             + ". Reuse matching already-authorized resources first. If absent, construct "
             "only what this exact source scope authorizes, otherwise report the missing "
             "capability. Do not install, execute downloaded tools or widen access."
+        )
+    if slot["role"] == "verification" and "producer_candidate" in row.get("packet", {}):
+        from .crew_requests import validate_producer_candidate
+
+        candidate = validate_producer_candidate(row["packet"]["producer_candidate"])
+        instruction += " Sealed producer candidate: " + json.dumps(
+            candidate, sort_keys=True, separators=(",", ":")
         )
     packet["objective"] += instruction
     return validate_helper_packet(packet)

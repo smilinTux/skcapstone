@@ -13,7 +13,7 @@ from skcoord.card_store import CardCore, CardStore
 
 from skcapstone.fleet import crew_contract
 from skcapstone.fleet import crew_requests as requests
-from skcapstone.fleet.crew_store import CrewStore
+from skcapstone.fleet.crew_store import CrewStore, digest
 
 
 def git(cwd, *args):
@@ -61,6 +61,7 @@ def scenario(paths, tmp_path, monkeypatch):
         "criteria": ["Exact bytes and source"],
         "allowed_paths": [],
         "verification_commands": ["Hash authorized fixture"],
+        "logical_route": "sk-m",
     }
     packet = {
         "schema": "skfleet.crew/v1",
@@ -198,6 +199,69 @@ def receipt(s, **updates):
     }
     packet.update(updates)
     return packet
+
+
+def paired_assignment(s):
+    """Register and assign a producer in a cross-provider crew."""
+    packet = copy.deepcopy(s.packet)
+    packet["crew_id"] = "paired-crew"
+    packet["owner_paths"] = ["paired/owner.py"]
+    packet["slots"][0].pop("resource")
+    packet["slots"][0].update(slot_id="produce", role="technical", trigger="initial")
+    packet["slots"][0]["packet"].update(
+        request_id="produce-template", logical_route="sk-deepseek-m"
+    )
+    reviewer = copy.deepcopy(packet["slots"][0])
+    reviewer.update(slot_id="review", role="verification")
+    reviewer["packet"].update(request_id="review-template", logical_route="sk-glm-m")
+    packet["slots"].append(reviewer)
+    packet["provider_pair"] = {
+        "schema": "skfleet.provider-pair/v1",
+        "state": "paired",
+        "snapshot_revision": "a" * 64,
+        "producer": {
+            "provider_family": "deepseek",
+            "logical_route": "sk-deepseek-m",
+        },
+        "reviewer": {"provider_family": "glm", "logical_route": "sk-glm-m"},
+    }
+    manifest = requests.register(s.paths, s.home, "test-owner", packet)
+    producer_request = support(crew_id="paired-crew", request_id="produce", slot_id="produce")
+    row = requests.submit_support(s.paths, s.home, "test-owner", producer_request)
+    helper_id = "cccc3333"
+    s.cards.create(
+        CardCore(
+            id=helper_id,
+            title="[S] Producer helper",
+            description="Produce exact candidate",
+            initial_owner="producer-helper",
+            initial_claim_revision="producer-1",
+            initial_labels=[
+                "source-only",
+                "owner-helper",
+                "parent-aaaa1111",
+                "sk-deepseek-m",
+            ],
+            meta={
+                **s.source,
+                "helper_parent_id": "aaaa1111",
+                "helper_parent_claim_revision": "parent-1",
+                "helper_parent_contract_sha256": manifest["parent_contract_sha256"],
+                "logical_route": "sk-deepseek-m",
+            },
+        )
+    )
+    with CrewStore(s.paths).lock() as store:
+        row.update(state="assigned", helper_id=helper_id, cwd=str(s.workspace))
+        store.save_request(row)
+    payload = receipt(
+        s,
+        crew_id="paired-crew",
+        request_id="produce",
+        helper_id=helper_id,
+        claim_revision="producer-1",
+    )
+    return packet, payload
 
 
 def test_absent_status_is_read_only(paths):
@@ -356,6 +420,82 @@ def test_actual_receipt_and_idempotent_replay(scenario):
     (s.workspace / "result.txt").write_text("changed after delivery")
     with pytest.raises(ValueError, match="artifact bytes"):
         requests.record_receipt(s.paths, s.home, "test-helper", payload)
+
+
+def test_paired_producer_receipt_derives_exact_git_candidate(scenario):
+    s = scenario
+    _, payload = paired_assignment(s)
+    row = requests.record_receipt(s.paths, s.home, "producer-helper", payload)
+    candidate = row["producer_candidate"]
+    assert candidate == {
+        "ref": git(s.workspace, "symbolic-ref", "-q", "HEAD"),
+        "commit": git(s.workspace, "rev-parse", "HEAD"),
+        "tree": git(s.workspace, "rev-parse", "HEAD^{tree}"),
+        "helper_id": "cccc3333",
+        "claim_revision": "producer-1",
+        "evidence_sha256": row["receipt_sha256"],
+    }
+
+
+def test_paired_producer_receipt_rejects_detached_head(scenario):
+    s = scenario
+    _, payload = paired_assignment(s)
+    git(s.workspace, "checkout", "--quiet", "--detach")
+    with pytest.raises((ValueError, OSError), match="Git proof|symbolic branch"):
+        requests.record_receipt(s.paths, s.home, "producer-helper", payload)
+
+
+def test_paired_producer_receipt_rejects_ref_change_during_derivation(scenario, monkeypatch):
+    s = scenario
+    _, payload = paired_assignment(s)
+    original = requests._git
+    symbolic_reads = 0
+
+    def changed(cwd, *args):
+        nonlocal symbolic_reads
+        result = original(cwd, *args)
+        if args == ("symbolic-ref", "-q", "HEAD"):
+            symbolic_reads += 1
+            if symbolic_reads == 2:
+                return "refs/heads/changed"
+        return result
+
+    monkeypatch.setattr(requests, "_git", changed)
+    with pytest.raises(ValueError, match="changed during verification"):
+        requests.record_receipt(s.paths, s.home, "producer-helper", payload)
+
+
+def test_paired_receipt_replay_rejects_a_changed_candidate_commit(scenario):
+    s = scenario
+    _, payload = paired_assignment(s)
+    requests.record_receipt(s.paths, s.home, "producer-helper", payload)
+    (s.workspace / "later.txt").write_text("later\n")
+    git(s.workspace, "add", "later.txt")
+    git(s.workspace, "commit", "--quiet", "-m", "later")
+    with pytest.raises(ValueError, match="candidate custody changed"):
+        requests.record_receipt(s.paths, s.home, "producer-helper", payload)
+
+
+def test_verification_intake_forwards_only_exact_sealed_candidate(scenario):
+    s = scenario
+    _, payload = paired_assignment(s)
+    producer = requests.record_receipt(s.paths, s.home, "producer-helper", payload)
+    candidate = producer["producer_candidate"]
+    verification = support(
+        crew_id="paired-crew",
+        request_id="review",
+        slot_id="review",
+        evidence_sha256=digest(candidate),
+    )
+    verification["producer_candidate"] = candidate
+    row = requests.submit_support(s.paths, s.home, "test-owner", verification)
+    assert row["packet"]["producer_candidate"] == candidate
+    changed = copy.deepcopy(verification)
+    changed["producer_candidate"]["commit"] = "f" * 40
+    changed["evidence_sha256"] = digest(changed["producer_candidate"])
+    changed["request_id"] = "forged-review"
+    with pytest.raises(ValueError, match="sealed technical delivery"):
+        requests.submit_support(s.paths, s.home, "test-owner", changed)
 
 
 @pytest.mark.parametrize("tamper", ["bytes", "symlink", "traversal", "claim", "actor", "origin"])

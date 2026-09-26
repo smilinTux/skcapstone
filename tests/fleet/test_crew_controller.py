@@ -62,6 +62,7 @@ def scenario(tmp_path, monkeypatch):
                     "criteria": ["Exact evidence"],
                     "allowed_paths": [],
                     "verification_commands": ["pytest -q tests/test_boundary.py"],
+                    "logical_route": "sk-m",
                 },
             }
         ],
@@ -96,6 +97,59 @@ def test_real_node_hook_assigns_once_for_thirty_unchanged_cycles(scenario, monke
     assert helper.owner is None
     assert helper.meta["helper_parent_id"] == "aabb0011"
     assert cards.fold("aabb0011").model_dump(mode="json") == before
+
+
+def test_paired_reviewer_waits_for_exact_producer_candidate(scenario):
+    _, paths, cards, _, packet = scenario
+    packet["slots"][0].update(slot_id="produce", role="technical")
+    packet["slots"][0]["packet"].update(
+        request_id="produce-template", logical_route="sk-deepseek-m"
+    )
+    reviewer = copy.deepcopy(packet["slots"][0])
+    reviewer.update(slot_id="review", role="verification")
+    reviewer["packet"].update(request_id="review-template", logical_route="sk-glm-m")
+    packet["slots"].append(reviewer)
+    packet["provider_pair"] = {
+        "schema": "skfleet.provider-pair/v1",
+        "state": "paired",
+        "snapshot_revision": "a" * 64,
+        "producer": {
+            "provider_family": "deepseek",
+            "logical_route": "sk-deepseek-m",
+        },
+        "reviewer": {"provider_family": "glm", "logical_route": "sk-glm-m"},
+    }
+    register(scenario)
+    first = cycle(scenario)
+    assert len(first["created"]) == 1
+    rows = CrewStore(paths).list_requests("crew-test")
+    assert len(rows) == 1 and rows[0]["slot_id"] == "produce"
+    candidate = {
+        "ref": "refs/heads/work/candidate",
+        "commit": "1" * 40,
+        "tree": "2" * 40,
+        "helper_id": rows[0]["helper_id"],
+        "claim_revision": "producer-claim",
+        "evidence_sha256": "3" * 64,
+    }
+    with CrewStore(paths).lock() as ledger:
+        producer = ledger.get_request("crew-test", rows[0]["request_id"])
+        producer.update(
+            state="delivered",
+            producer_candidate=candidate,
+            receipt={"claim_revision": "producer-claim"},
+            receipt_sha256="3" * 64,
+        )
+        ledger.save_request(producer)
+    second = cycle(scenario)
+    assert len(second["created"]) == 1
+    review = next(
+        row for row in CrewStore(paths).list_requests("crew-test") if row["slot_id"] == "review"
+    )
+    assert review["packet"]["producer_candidate"] == candidate
+    helper = cards.fold(review["helper_id"])
+    assert helper.meta["logical_route"] == "sk-glm-m"
+    assert '"commit":"' + "1" * 40 + '"' in helper.meta["helper_objective"]
 
 
 def test_no_manifest_is_no_store_write(scenario):

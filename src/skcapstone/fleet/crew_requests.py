@@ -29,6 +29,7 @@ _REQUEST = {
     "reason",
 }
 _RECEIPT = {"schema", "crew_id", "request_id", "helper_id", "claim_revision", "cwd"}
+_CANDIDATE = {"ref", "commit", "tree", "helper_id", "claim_revision", "evidence_sha256"}
 
 
 def _copy(value):
@@ -52,6 +53,25 @@ def _card_id(value):
     """Require an exact card ID rather than a path or prefix."""
     if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{8}", value):
         raise ValueError("invalid requester/helper card ID")
+    return value
+
+
+def validate_producer_candidate(value):
+    """Validate exact producer Git and receipt custody."""
+    if not isinstance(value, dict) or set(value) != _CANDIDATE:
+        raise ValueError("invalid producer candidate fields")
+    value = _copy(value)
+    ref = _text(value["ref"], "producer candidate ref", 1024)
+    if not re.fullmatch(r"refs/heads/[A-Za-z0-9][A-Za-z0-9._/-]*", ref) or any(
+        part in {"", ".", ".."} for part in ref.split("/")
+    ):
+        raise ValueError("invalid producer candidate branch ref")
+    for key in ("commit", "tree"):
+        if not isinstance(value[key], str) or not re.fullmatch(r"[0-9a-f]{40,64}", value[key]):
+            raise ValueError(f"invalid producer candidate {key}")
+    _card_id(value["helper_id"])
+    _text(value["claim_revision"], "producer candidate claim revision", 128)
+    _sha(value["evidence_sha256"])
     return value
 
 
@@ -151,7 +171,10 @@ def _write_scopes(packet):
 def _support_packet(packet):
     """Validate strict support intake that selects an existing slot."""
     packet = _copy(packet)
-    if set(packet) != _REQUEST or packet["schema"] != SUPPORT_SCHEMA:
+    if (
+        set(packet) not in (_REQUEST, _REQUEST | {"producer_candidate"})
+        or packet["schema"] != SUPPORT_SCHEMA
+    ):
         raise ValueError("invalid support request fields or schema")
     for key in ("request_id", "crew_id", "slot_id"):
         crew_contract.identifier(packet[key])
@@ -159,6 +182,8 @@ def _support_packet(packet):
     _text(packet["requester_claim_revision"], "requester claim revision", 128)
     _sha(packet["evidence_sha256"])
     _text(packet["reason"], "request reason", 2048)
+    if "producer_candidate" in packet:
+        packet["producer_candidate"] = validate_producer_candidate(packet["producer_candidate"])
     return packet
 
 
@@ -176,6 +201,8 @@ def _dedup(manifest, slot, packet):
         common["resource"] = slot["resource"]
     else:
         common.update(slot_id=slot["slot_id"], evidence_sha256=packet["evidence_sha256"])
+    if "producer_candidate" in packet:
+        common["producer_candidate"] = packet["producer_candidate"]
     return digest(common)
 
 
@@ -191,6 +218,25 @@ def submit_support(paths, home, actor, packet, *, automatic=False):
         manifest = _manifest(store, home, packet["crew_id"])
         slot = _slot(manifest, packet["slot_id"])
         _requester(store, home, actor, packet, manifest)
+        candidate = packet.get("producer_candidate")
+        if candidate is not None:
+            pair = manifest["packet"].get("provider_pair")
+            if pair is None or pair["state"] != "paired" or slot["role"] != "verification":
+                raise ValueError("producer candidate requires a paired verification slot")
+            producer_rows = [
+                row
+                for row in store.list_requests(packet["crew_id"])
+                if row.get("canonical_request_id") == row.get("request_id")
+                and _slot(manifest, row["slot_id"])["role"] == "technical"
+                and row.get("state") == "delivered"
+                and row.get("producer_candidate") == candidate
+                and row.get("helper_id") == candidate["helper_id"]
+                and row.get("receipt_sha256") == candidate["evidence_sha256"]
+                and isinstance(row.get("receipt"), dict)
+                and row["receipt"].get("claim_revision") == candidate["claim_revision"]
+            ]
+            if len(producer_rows) != 1 or packet["evidence_sha256"] != digest(candidate):
+                raise ValueError("producer candidate does not match sealed technical delivery")
         # Only the original owner may select controller-driven initial/stall slots.
         if (
             slot["trigger"] != "support-request"
@@ -292,6 +338,32 @@ def _result(payload, cwd):
         _text(test["outcome"], "reported outcome", 2048)
 
 
+def _producer_candidate(cwd, payload, receipt_sha256):
+    """Derive stable branch, commit and tree custody from the verified workspace."""
+    ref = _git(cwd, "symbolic-ref", "-q", "HEAD")
+    if not ref.startswith("refs/heads/"):
+        raise ValueError("producer workspace must be on a symbolic branch ref")
+    commit = _git(cwd, "rev-parse", "HEAD")
+    tree = _git(cwd, "rev-parse", "HEAD^{tree}")
+    if (
+        _git(cwd, "symbolic-ref", "-q", "HEAD") != ref
+        or _git(cwd, "rev-parse", ref) != commit
+        or _git(cwd, "rev-parse", "HEAD") != commit
+        or _git(cwd, "rev-parse", "HEAD^{tree}") != tree
+    ):
+        raise ValueError("producer workspace Git custody changed during verification")
+    return validate_producer_candidate(
+        {
+            "ref": ref,
+            "commit": commit,
+            "tree": tree,
+            "helper_id": payload["helper_id"],
+            "claim_revision": payload["claim_revision"],
+            "evidence_sha256": receipt_sha256,
+        }
+    )
+
+
 def record_receipt(paths, home, actor, packet):
     """Record verified helper delivery or an exact blocker, never acceptance."""
     payload = _copy(packet)
@@ -331,9 +403,22 @@ def record_receipt(paths, home, actor, packet):
             _result(payload, cwd)
             if "receipt" in row and row["receipt"] != payload:
                 raise ValueError("receipt replay conflict")
+            receipt_sha256 = digest(payload)
+            slot = _slot(manifest, row["slot_id"])
+            candidate = None
+            if (
+                "blocker" not in payload
+                and "provider_pair" in manifest["packet"]
+                and slot["role"] == "technical"
+            ):
+                candidate = _producer_candidate(cwd, payload, receipt_sha256)
+                if "producer_candidate" in row and row["producer_candidate"] != candidate:
+                    raise ValueError("producer candidate custody changed")
             row.update(
                 receipt=payload,
-                receipt_sha256=digest(payload),
+                receipt_sha256=receipt_sha256,
                 state="blocked" if "blocker" in payload else "delivered",
             )
+            if candidate is not None and "blocker" not in payload:
+                row["producer_candidate"] = candidate
             return store.save_request(row)

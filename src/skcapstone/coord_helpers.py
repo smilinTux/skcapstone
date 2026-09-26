@@ -13,7 +13,13 @@ from skcoord.coordination import Board, Task, TaskPriority
 from .source_binding import source_binding_meta
 
 MAX_PACKET_BYTES = 32768
-SUPPORTED_LOGICAL_ROUTES = frozenset({"sk-s", "sk-m", "sk-l", "sk-xl"})
+GENERIC_LOGICAL_ROUTES = frozenset({"sk-s", "sk-m", "sk-l", "sk-xl"})
+FOCUSED_LOGICAL_ROUTES = frozenset(
+    f"sk-{family}-{size}"
+    for family in ("deepseek", "zai", "glm", "codex")
+    for size in ("s", "m", "l")
+)
+SUPPORTED_LOGICAL_ROUTES = GENERIC_LOGICAL_ROUTES | FOCUSED_LOGICAL_ROUTES
 PACKET_KEYS = frozenset(
     {
         "request_id",
