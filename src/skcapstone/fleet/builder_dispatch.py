@@ -1,4 +1,4 @@
-"""Governed remote card dispatch for builder standby nodes."""
+"""Governed remote card dispatch for builder and CPU worker nodes."""
 
 from __future__ import annotations
 
@@ -26,7 +26,10 @@ from .churn_breaker import ClaimRefusedError, assert_claim_permitted
 from .node_controller import NodeView, node_views
 from .paths import SOVEREIGN_HOME, FleetPaths, valid_name
 
-ROLE = "builder-standby"
+BUILDER_ROLE = "builder-standby"
+CPU_ROLE = "worker-cpu"
+DISPATCH_ROLES = frozenset({BUILDER_ROLE, CPU_ROLE})
+ROLE_CAPACITY = {BUILDER_ROLE: 4, CPU_ROLE: 1}
 PROVIDER = "skgateway"
 GENERIC_LOGICAL_ROUTES = frozenset({"sk-s", "sk-m", "sk-l", "sk-xl"})
 FOCUSED_LOGICAL_ROUTES = frozenset(
@@ -40,7 +43,7 @@ TERMINAL_STATES = {"completed", "blocked", "failed", "stale"}
 ACTIVE_EXECUTION_STATES = frozenset({"running", "launching", "custody-held"})
 MAX_ATTEMPTS = 2
 MATCH_RETRY_LIMIT = 3
-BUILDER_CAPACITY = 4
+BUILDER_CAPACITY = ROLE_CAPACITY[BUILDER_ROLE]
 _PROCESSES: dict[str, object] = {}
 _WORKER_TOOLS = "read,bash,edit,write,grep,find,ls"
 _BUNDLED_GUARD = Path(__file__).resolve().parents[3] / "scripts/fleet/pi-cardstore-guard.mjs"
@@ -203,6 +206,7 @@ def _request_matches_current_card(coordination_home: Path, request: dict) -> Non
         or _source(core)
         != (request.get("repository"), request.get("base_ref"), request.get("base_revision"))
         or labels != expected_labels
+        or request.get("logical_route") != logical_route(labels)
     ):
         raise BuilderDispatchError("offered card changed after dispatch request")
 
@@ -219,13 +223,25 @@ def _ensure_request_matches_current_card(coordination_home: Path, request: dict)
 
 
 def _ready_builders(paths: FleetPaths) -> list[NodeView]:
-    """Return current Ready, actuating builder standby nodes."""
+    """Return current Ready nodes admitted to governed source dispatch."""
     result = []
     for view in node_views(paths):
         spec = store.read_spec(paths, "node", view.name) or {}
-        if view.role == ROLE and spec.get("spec", {}).get("actuate") is True:
+        if view.role in DISPATCH_ROLES and spec.get("spec", {}).get("actuate") is True:
             result.append(view)
     return result
+
+
+def _ensure_request_role(paths: FleetPaths, node: str, request: dict) -> str:
+    """Return the exact admitted role, or reject role drift and unknown roles."""
+    request_role = request.get("role")
+    if request_role not in DISPATCH_ROLES:
+        raise BuilderDispatchError("dispatch request has no supported node role")
+    spec = store.read_spec(paths, "node", node) or {}
+    node_spec = spec.get("spec", {})
+    if node_spec.get("role") != request_role or node_spec.get("actuate") is not True:
+        raise BuilderDispatchError("dispatch request role differs from actuating node role")
+    return request_role
 
 
 def _node_load(paths: FleetPaths, node: str) -> int:
@@ -382,7 +398,7 @@ def offer(
     if route is None:
         raise BuilderDispatchError("card must select exactly one logical route")
     ready = _ready_builders(paths)
-    selected_node = None
+    selected_view = None
     for view in ready:
         existing = _load(request_path(paths, view.name, card_id))
         if not existing:
@@ -392,7 +408,9 @@ def offer(
             existing.get("base_ref"),
             existing.get("base_revision"),
             existing.get("labels"),
-        ) == (repository, base_ref, revision, normalized_labels)
+            existing.get("role"),
+            existing.get("logical_route"),
+        ) == (repository, base_ref, revision, normalized_labels, view.role, route)
         if same_binding:
             prior = _load(status_path(paths, view.name, card_id)) or {}
             if prior.get("request_id") == existing.get("request_id") and (
@@ -407,14 +425,18 @@ def offer(
         prior = _load(status_path(paths, view.name, card_id)) or {}
         if prior.get("state") in ACTIVE_EXECUTION_STATES:
             return None
-        selected_node = view.name
+        selected_view = view
         break
-    if selected_node is None:
-        builders = [view for view in ready if _node_load(paths, view.name) < BUILDER_CAPACITY]
+    if selected_view is None:
+        builders = [
+            view for view in ready if _node_load(paths, view.name) < ROLE_CAPACITY[view.role]
+        ]
         decision = scheduler.select(builders, scheduler.Workload("job", card_id))
         if decision.node is None:
             return None
-        selected_node = decision.node
+        selected_view = next(view for view in builders if view.name == decision.node)
+    selected_node = selected_view.name
+    selected_role = selected_view.role
     scheduler.place(
         paths,
         scheduler.Workload("job", card_id),
@@ -423,7 +445,16 @@ def offer(
     )
     stamp = now or _now()
     identity = json.dumps(
-        [card_id, selected_node, repository, base_ref, revision, normalized_labels],
+        [
+            card_id,
+            selected_node,
+            selected_role,
+            route,
+            repository,
+            base_ref,
+            revision,
+            normalized_labels,
+        ],
         separators=(",", ":"),
     )
     request = {
@@ -431,7 +462,7 @@ def offer(
         "request_id": hashlib.sha256(identity.encode()).hexdigest(),
         "card_id": card_id,
         "node": selected_node,
-        "role": ROLE,
+        "role": selected_role,
         "provider": PROVIDER,
         "logical_route": route,
         "repository": repository,
@@ -499,7 +530,16 @@ def decline_reason(
             existing.get("base_ref"),
             existing.get("base_revision"),
             existing.get("labels"),
-        ) == (repository, base_ref, revision, normalized_labels)
+            existing.get("role"),
+            existing.get("logical_route"),
+        ) == (
+            repository,
+            base_ref,
+            revision,
+            normalized_labels,
+            view.role,
+            logical_route(labels),
+        )
         if same_binding:
             if (
                 same_generation
@@ -517,13 +557,14 @@ def decline_reason(
         if prior.get("state") in ACTIVE_EXECUTION_STATES:
             return f"superseded-binding-{prior['state']}: node={view.name}"
         return None
-    builders = [view for view in ready if _node_load(paths, view.name) < BUILDER_CAPACITY]
+    builders = [view for view in ready if _node_load(paths, view.name) < ROLE_CAPACITY[view.role]]
     if not builders:
         # The common real cause, and the one that used to reach the log as
         # "unschedulable: unschedulable ()": every Ready builder is full, so
         # the scheduler was handed nothing to choose between. Name the loads.
         loads = ", ".join(
-            f"{view.name}={_node_load(paths, view.name)}/{BUILDER_CAPACITY}" for view in ready
+            f"{view.name}={_node_load(paths, view.name)}/{ROLE_CAPACITY[view.role]}"
+            for view in ready
         )
         return f"builders-at-capacity: {loads}"
     decision = scheduler.select(builders, scheduler.Workload("job", card_id))
@@ -903,15 +944,17 @@ def _consume_available(
     materializer: Callable[[dict, Path], Path],
 ) -> dict | None:
     """Refresh every active generation before admitting pending requests."""
-    spec = store.read_spec(paths, "node", node) or {}
-    if spec.get("spec", {}).get("role") != ROLE or spec.get("spec", {}).get("actuate") is not True:
-        return None
     if not store.actuation_allowed(paths):
         return None
+    spec = store.read_spec(paths, "node", node) or {}
+    node_spec = spec.get("spec", {})
+    node_role = node_spec.get("role")
+    admit_new = node_role in DISPATCH_ROLES and node_spec.get("actuate") is True
     directory = paths.root / "dispatch" / node
     paths_to_visit = sorted(directory.glob("*.json")) if directory.exists() else ()
     result = None
     active = 0
+    role_changed_during_execution = False
     for path in paths_to_visit:
         with _request_exclusion(path):
             request = _load(path) or {}
@@ -926,8 +969,14 @@ def _consume_available(
             if prior.get("request_id") != request.get("request_id"):
                 active += 1  # Preserve an uncertain prior generation and its claim.
                 continue
-            result = _reconcile_running(paths, coordination_home, node, request, prior)
+            if not admit_new or request.get("role") != node_role:
+                result = prior
+                role_changed_during_execution = request.get("role") != node_role
+            else:
+                result = _reconcile_running(paths, coordination_home, node, request, prior)
             active += result["state"] in ACTIVE_EXECUTION_STATES
+    if not admit_new or role_changed_during_execution:
+        return result
     for path in paths_to_visit:
         with _request_exclusion(path):
             request = _load(path) or {}
@@ -971,10 +1020,23 @@ def _consume_available(
                     error="unclaimed offer expired",
                 )
                 continue
-            if active >= BUILDER_CAPACITY:
+            if active >= ROLE_CAPACITY[node_role]:
                 continue
             attempt = int(prior.get("attempt") or 0) + 1
-            owner = f"pi-builder-standby-{node}-{request['card_id']}"
+            try:
+                request_role = _ensure_request_role(paths, node, request)
+            except BuilderDispatchError as exc:
+                result = _write_status(
+                    paths,
+                    node,
+                    request,
+                    "blocked",
+                    attempt=int(prior.get("attempt") or 0),
+                    claim_released=False,
+                    error=str(exc),
+                )
+                continue
+            owner = f"pi-{request_role}-{node}-{request['card_id']}"
             if attempt > 1:
                 owner += f"-attempt-{attempt}"
             workspace = paths.root / "workspaces" / owner
@@ -1024,6 +1086,19 @@ def _consume_available(
                     error=str(exc),
                 )
                 continue
+            try:
+                _ensure_request_role(paths, node, request)
+            except BuilderDispatchError as exc:
+                result = _write_status(
+                    paths,
+                    node,
+                    request,
+                    "blocked",
+                    attempt=int(prior.get("attempt") or 0),
+                    claim_released=False,
+                    error=str(exc),
+                )
+                continue
             if not store.actuation_allowed(paths):
                 return _write_status(
                     paths,
@@ -1035,6 +1110,7 @@ def _consume_available(
                 )
             try:
                 _ensure_request_matches_current_card(coordination_home, request)
+                _ensure_request_role(paths, node, request)
             except BuilderDispatchError as exc:
                 _write_status(
                     paths,
@@ -1171,6 +1247,27 @@ def _consume_available(
                     )
                     if frozen is not None:
                         return frozen
+                    try:
+                        _ensure_request_role(paths, node, request)
+                    except BuilderDispatchError as exc:
+                        released = _release_exact(
+                            coordination_home,
+                            request["card_id"],
+                            owner,
+                            revision,
+                            actor=owner,
+                        )
+                        return _write_status(
+                            paths,
+                            node,
+                            request,
+                            "blocked",
+                            owner=owner,
+                            claim_revision=revision,
+                            attempt=int(prior.get("attempt") or 0),
+                            claim_released=released,
+                            error=str(exc),
+                        )
                     intent = _write_status(
                         paths,
                         node,

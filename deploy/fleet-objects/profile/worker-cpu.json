@@ -1,0 +1,128 @@
+{
+  "kind": "profile",
+  "labels": {
+    "card": "5a7824e2"
+  },
+  "name": "worker-cpu",
+  "spec": {
+    "capauthIdentityClass": "worker",
+    "description": "A least-privilege CPU source worker. It receives the scoped fleet control bus, runs only the fleet node agent, and carries no sovereign agent state, control plane, provider service, voice service, or GPU inference service.",
+    "packages": {
+      "allowed": [
+        "capauth",
+        "skcapstone"
+      ],
+      "mustNot": [
+        "cloud9",
+        "skchat",
+        "skchat-sovereign",
+        "skcomm",
+        "skcomms",
+        "skcoord",
+        "skdashboard",
+        "skmemory",
+        "skos",
+        "skseed",
+        "skvoice"
+      ],
+      "required": [
+        "skcapstone"
+      ]
+    },
+    "stateTier": "control-bus",
+    "syncFolders": [
+      "skfleet-control"
+    ],
+    "units": {
+      "allowed": [
+        "sknoded.service",
+        "syncthing.service"
+      ],
+      "mustNot": [
+        "capauth-authz.service",
+        "comfyui.service",
+        "f5-tts.service",
+        "mxbai-arc.service",
+        "ollama.service",
+        "qwen3-arc.service",
+        "skai-beellama-restart.timer",
+        "skai-beellama.service",
+        "skcapstone-dashboard.service",
+        "skcapstone.service",
+        "skchat-daemon-jarvis.service",
+        "skchat-daemon.service",
+        "skcomm-daemon.service",
+        "skcomms-api.service",
+        "skcomms.service",
+        "skfleet-atlas.service",
+        "skfleet-atlas.timer",
+        "skfleet-link-producer.service",
+        "skfleet-link-producer.timer",
+        "skfleet-link.service",
+        "skfleet-link.timer",
+        "skfleet-mero.service",
+        "skfleet-mero.timer",
+        "skfleet-niobe-live.service",
+        "skfleet-niobe-live.timer",
+        "skfleet-niobe.service",
+        "skfleet-niobe.timer",
+        "skfleet-seraph.service",
+        "skfleet-seraph.timer",
+        "skfleet-tank.service",
+        "skfleet-tank.timer",
+        "skgateway.service",
+        "skmemory-daemon.service",
+        "skoperator.timer",
+        "skos-web.service",
+        "skvoice.service",
+        "skwhisper.service",
+        "sovereign-orchestrator.service",
+        "whisper-stt.service"
+      ],
+      "required": [
+        "sknoded.service"
+      ]
+    },
+    "unitsIgnore": [
+      "anthropic-proxy.service",
+      "archive-sessions.timer",
+      "at-spi-*",
+      "battery-cycle-watch.timer",
+      "claude-code-api.service",
+      "cloudflared-*",
+      "dconf.service",
+      "dirmngr.socket",
+      "evolution*",
+      "filter-chain.service",
+      "gcr-*",
+      "gnome-keyring-daemon.*",
+      "gpg-agent*.socket",
+      "gpu-maint-reminder.timer",
+      "gvfs*",
+      "hermes-*",
+      "jarvis-heartbeat.service",
+      "keyboxd.socket",
+      "kokoro-proxy.service",
+      "launchpadlib-cache-clean.timer",
+      "livekit-server.service",
+      "obex.service",
+      "org.freedesktop.*",
+      "pipewire*",
+      "pk-debconf-helper.socket",
+      "pulseaudio*",
+      "push-pending.timer",
+      "session-migration.service",
+      "shadowcopy-*",
+      "snap.*",
+      "speech-dispatcher*",
+      "telegram-catchup.timer",
+      "tracker-*",
+      "ubuntu-report.path",
+      "virtualmic.service",
+      "weather-*",
+      "wiki-reconcile.timer",
+      "wireplumber*",
+      "xdg-*"
+    ]
+  }
+}

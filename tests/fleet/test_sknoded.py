@@ -51,6 +51,44 @@ def test_admitted_node_reports_generation_and_stops_joining(paths, operator) -> 
     assert store.read_node_file(paths, "node-41", "node.json")["observedGeneration"] == 1
 
 
+@pytest.mark.parametrize("role", ["builder-standby", "worker-cpu"])
+def test_dispatch_roles_run_the_shared_consumer(paths, operator, monkeypatch, role) -> None:
+    store.write_spec(
+        paths,
+        "node",
+        "node-41",
+        {"role": role, "actuate": True, "cordoned": False},
+        writer=operator,
+    )
+    calls = []
+    monkeypatch.setattr(
+        "skcapstone.fleet.builder_dispatch.consume_one",
+        lambda _paths, _home, node: calls.append(node) or {"state": "held"},
+    )
+
+    result = sknoded.run_once(paths, "node-41")
+
+    assert calls == ["node-41"]
+    assert result["dispatch"] == {"state": "held"}
+
+
+@pytest.mark.parametrize("role", ["", "control", "observer", "worker-gpu", "unknown"])
+def test_other_roles_remain_report_only(paths, operator, monkeypatch, role) -> None:
+    store.write_spec(
+        paths,
+        "node",
+        "node-41",
+        {"role": role, "actuate": True, "cordoned": False},
+        writer=operator,
+    )
+    monkeypatch.setattr(
+        "skcapstone.fleet.builder_dispatch.consume_one",
+        lambda *_args: pytest.fail("report-only role consumed dispatch"),
+    )
+
+    assert "dispatch" not in sknoded.run_once(paths, "node-41")
+
+
 def test_never_writes_outside_own_subtree(paths) -> None:
     sknoded.run_once(paths, "node-41")
     written = [p for p in paths.root.rglob("*") if p.is_file()]

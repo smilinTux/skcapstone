@@ -206,12 +206,11 @@ def run_once(paths: FleetPaths, node: str) -> dict:
         logger.warning("crew reconciliation held: %s", type(exc).__name__)
         crew = {"state": "held", "error": type(exc).__name__}
     dispatch = None
-    if (spec := store.read_spec(paths, "node", node)) and (
-        spec.get("spec", {}).get("role") == "builder-standby"
-    ):
-        from .builder_dispatch import consume_one
+    if spec := store.read_spec(paths, "node", node):
+        from .builder_dispatch import DISPATCH_ROLES, consume_one
 
-        dispatch = consume_one(paths, paths.root.parent, node)
+        if spec.get("spec", {}).get("role") in DISPATCH_ROLES:
+            dispatch = consume_one(paths, paths.root.parent, node)
     result = {
         "heartbeat": heartbeat,
         "node": node_written,
