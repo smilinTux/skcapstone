@@ -34,6 +34,7 @@ from . import sknoded as sknoded_mod
 from .crew_cli import register_crew_commands
 from .explain import explain as explain_kind
 from .guidance import enqueue_guidance
+from .herdr_handoff_cli import register_handoff_commands
 from .paths import default_paths, self_node_name
 
 
@@ -1613,6 +1614,7 @@ def drill_teardown_cmd(root: str) -> None:
 
 
 register_crew_commands(fleet)
+register_handoff_commands(fleet)
 
 
 def register_fleet_commands(main: click.Group) -> None:

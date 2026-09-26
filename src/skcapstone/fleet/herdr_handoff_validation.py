@@ -12,6 +12,7 @@ from pathlib import Path
 
 from skcoord.card_store import CardStore, card_mutation_lock, explicit_creation_request_digest
 
+from ..coord_helpers import SUPPORTED_LOGICAL_ROUTES
 from ..jarvis_emergency import authorize_coord_mutation
 from ..seat_boundaries import Action
 from ..source_binding import source_binding_meta
@@ -27,7 +28,7 @@ _RECEIPT = {
     "base_revision",
     "cwd",
 }
-_ROUTES = ("sk-s", "sk-m", "sk-l", "sk-xl")
+_ROUTES = SUPPORTED_LOGICAL_ROUTES
 
 
 class HandoffError(ValueError):
