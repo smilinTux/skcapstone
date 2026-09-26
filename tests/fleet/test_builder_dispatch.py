@@ -52,12 +52,12 @@ def _clear_process_registry(monkeypatch):
     builder_dispatch._PROCESSES.clear()
 
 
-def _node(paths, operator, noded41) -> None:
+def _node(paths, operator, noded41, *, role=builder_dispatch.BUILDER_ROLE) -> None:
     store.write_spec(
         paths,
         "node",
         "node-ziowk01",
-        {"role": "builder-standby", "actuate": True, "cordoned": False},
+        {"role": role, "actuate": True, "cordoned": False},
         writer=operator,
         labels={"host": "ziowk01"},
     )
@@ -490,6 +490,267 @@ def test_niobe_admits_four_distinct_requests_and_denies_fifth(paths, operator, n
         )
         is not None
     )
+
+
+def test_cpu_worker_admits_one_request_and_denies_second(paths, operator, noded41) -> None:
+    _node(paths, operator, noded41, role=builder_dispatch.CPU_ROLE)
+    writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
+    first = builder_dispatch.offer(
+        paths,
+        _card() | {"id": "24b00001"},
+        ["sk-m", "source-only"],
+        writer=writer,
+    )
+    second = builder_dispatch.offer(
+        paths,
+        _card() | {"id": "24b00002"},
+        ["sk-m", "source-only"],
+        writer=writer,
+    )
+
+    assert first["role"] == "worker-cpu"
+    assert second is None
+    assert (
+        builder_dispatch.decline_reason(
+            paths, _card() | {"id": "24b00002"}, ["sk-m", "source-only"]
+        )
+        == "builders-at-capacity: node-ziowk01=1/1"
+    )
+
+
+def test_cpu_worker_claim_owner_carries_exact_role(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41, role=builder_dispatch.CPU_ROLE)
+    request = builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+    )
+    folded = _folded()
+
+    def claim(_self, owner, _card_id):
+        folded.owner = owner
+        folded.meta = dict(_card()["meta"], _claim_revision="cpu-generation")
+
+    monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: folded)
+    monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
+    result = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=lambda *_args: SimpleNamespace(pid=42, poll=lambda: None),
+        materializer=lambda _request, workspace: workspace,
+    )
+
+    assert result["request_id"] == request["request_id"]
+    assert result["owner"] == "pi-worker-cpu-node-ziowk01-24b00003"
+
+
+def test_role_change_mints_a_new_request_generation(paths, operator, noded41) -> None:
+    _node(paths, operator, noded41, role=builder_dispatch.CPU_ROLE)
+    writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
+    first = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
+    store.write_spec(
+        paths,
+        "node",
+        "node-ziowk01",
+        {"role": builder_dispatch.BUILDER_ROLE, "actuate": True},
+        writer=operator,
+    )
+    second = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
+
+    assert first["role"] == "worker-cpu"
+    assert second["role"] == "builder-standby"
+    assert second["request_id"] != first["request_id"]
+
+
+@pytest.mark.parametrize("request_role", [None, "control", "unknown"])
+def test_missing_or_unknown_request_role_blocks_before_materialization(
+    paths, operator, noded41, monkeypatch, tmp_path, request_role
+) -> None:
+    _node(paths, operator, noded41, role=builder_dispatch.CPU_ROLE)
+    request = builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+    )
+    request["role"] = request_role
+    builder_dispatch.atomic_write_text(
+        builder_dispatch.request_path(paths, "node-ziowk01", request["card_id"]),
+        json.dumps(request) + "\n",
+    )
+
+    result = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        materializer=lambda *_args: pytest.fail("unsupported role materialized"),
+    )
+
+    assert result["state"] == "blocked"
+    assert result["attempt"] == 0
+    assert result["error"] == "dispatch request has no supported node role"
+
+
+def test_role_change_before_materialization_blocks_request(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41, role=builder_dispatch.CPU_ROLE)
+    request = builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+    )
+    store.write_spec(
+        paths,
+        "node",
+        "node-ziowk01",
+        {"role": builder_dispatch.BUILDER_ROLE, "actuate": True},
+        writer=operator,
+    )
+
+    result = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        materializer=lambda *_args: pytest.fail("role-mismatched request materialized"),
+    )
+
+    assert result["request_id"] == request["request_id"]
+    assert result["state"] == "blocked"
+    assert result["attempt"] == 0
+    assert "role differs" in result["error"]
+
+
+def test_role_change_after_materialization_blocks_claim(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41, role=builder_dispatch.CPU_ROLE)
+    builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+    )
+
+    def materialize(_request, workspace):
+        store.write_spec(
+            paths,
+            "node",
+            "node-ziowk01",
+            {"role": builder_dispatch.BUILDER_ROLE, "actuate": True},
+            writer=operator,
+        )
+        return workspace
+
+    monkeypatch.setattr(
+        builder_dispatch.Board,
+        "claim_task",
+        lambda *_args: pytest.fail("role-mismatched request claimed"),
+    )
+    result = builder_dispatch.consume_one(
+        paths, tmp_path, "node-ziowk01", materializer=materialize
+    )
+
+    assert result["state"] == "blocked"
+    assert result["attempt"] == 0
+
+
+def test_role_change_before_launch_releases_exact_claim(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41, role=builder_dispatch.CPU_ROLE)
+    builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+    )
+    folded = _folded()
+    releases = []
+
+    def claim(_self, owner, _card_id):
+        folded.owner = owner
+        folded.meta = dict(_card()["meta"], _claim_revision="cpu-claim")
+
+    def release(_self, owner, card_id, **kwargs):
+        releases.append((owner, card_id, kwargs["expected_claim_revision"]))
+        folded.owner = None
+        return True
+
+    def hello(*_args, **_kwargs):
+        store.write_spec(
+            paths,
+            "node",
+            "node-ziowk01",
+            {"role": builder_dispatch.BUILDER_ROLE, "actuate": True},
+            writer=operator,
+        )
+        return True
+
+    monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
+    monkeypatch.setattr(builder_dispatch.Board, "release_claim", release)
+    monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: folded)
+    monkeypatch.setattr(builder_dispatch, "startup_hello", hello)
+    result = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=lambda *_args: pytest.fail("role-mismatched request launched"),
+        materializer=lambda _request, workspace: workspace,
+    )
+
+    assert result["state"] == "blocked"
+    assert result["claim_released"] is True
+    assert releases == [("pi-worker-cpu-node-ziowk01-24b00003", "24b00003", "cpu-claim")]
+
+
+def test_active_cpu_custody_survives_node_role_change(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41, role=builder_dispatch.CPU_ROLE)
+    request = builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=store.Writer(role="scheduler", node="niobe", identity=""),
+    )
+    prior = builder_dispatch._write_status(
+        paths,
+        "node-ziowk01",
+        request,
+        "running",
+        owner="pi-worker-cpu-node-ziowk01-24b00003",
+        claim_revision="live-generation",
+        attempt=1,
+    )
+    store.write_spec(
+        paths,
+        "node",
+        "node-ziowk01",
+        {"role": builder_dispatch.BUILDER_ROLE, "actuate": True},
+        writer=operator,
+    )
+    monkeypatch.setattr(
+        builder_dispatch,
+        "_reconcile_running",
+        lambda *_args: pytest.fail("role-mismatched execution reconciled"),
+    )
+
+    result = builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        launcher=lambda *_args: pytest.fail("second execution launched"),
+        materializer=lambda *_args: pytest.fail("second execution materialized"),
+    )
+
+    assert result == prior
 
 
 def test_consumer_reconciles_live_first_and_fills_four_slots(

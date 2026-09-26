@@ -65,6 +65,7 @@ def request(card):
         "base_ref": card.meta["base_ref"],
         "base_revision": card.meta["base_revision"],
         "labels": sorted(card.labels),
+        "logical_route": card.meta["logical_route"],
     }
 
 

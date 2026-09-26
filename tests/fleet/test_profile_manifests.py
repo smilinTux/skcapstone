@@ -25,8 +25,8 @@ from skcapstone.fleet.profiles import (
 
 MANIFEST_DIR = Path(__file__).resolve().parents[2] / "deploy" / "fleet-objects" / "profile"
 
-#: Naming a fifth role has to be a deliberate edit here, not a silent addition.
-EXPECTED_ROLES = {"control", "builder-standby", "worker-gpu", "observer"}
+#: Naming another role has to be a deliberate edit here, not a silent addition.
+EXPECTED_ROLES = {"control", "builder-standby", "worker-cpu", "worker-gpu", "observer"}
 
 
 def _manifest_paths() -> list[Path]:
@@ -42,7 +42,7 @@ def test_the_manifest_directory_exists_and_is_not_empty() -> None:
     assert _manifest_paths(), "no manifests shipped"
 
 
-def test_exactly_the_four_expected_roles_ship() -> None:
+def test_exactly_the_expected_roles_ship() -> None:
     assert {p.stem for p in _manifest_paths()} == EXPECTED_ROLES
 
 
@@ -122,6 +122,7 @@ def test_full_replica_is_exactly_control_and_builder_standby() -> None:
     # folder, so it does hold the fleet store. `none` is reserved for the node
     # that holds no SK state at all, which is the observer.
     assert tiers["worker-gpu"] == "control-bus"
+    assert tiers["worker-cpu"] == "control-bus"
     assert tiers["observer"] == "none"
 
 
@@ -134,6 +135,29 @@ def test_the_worker_holds_no_state_and_joins_no_sovereign_folder() -> None:
     assert "skcapstone-sync" not in spec["syncFolders"]
     for package in ("skmemory", "skcoord", "skseed"):
         assert package in spec["packages"]["mustNot"], f"worker must forbid {package}"
+
+
+def test_the_cpu_worker_is_least_privilege() -> None:
+    spec = normalize_profile_spec(_load(MANIFEST_DIR / "worker-cpu.json")["spec"])
+    assert spec["stateTier"] == "control-bus"
+    assert spec["capauthIdentityClass"] == "worker"
+    assert spec["syncFolders"] == ["skfleet-control"]
+    assert spec["packages"]["required"] == ["skcapstone"]
+    assert spec["packages"]["allowed"] == ["capauth", "skcapstone"]
+    assert spec["units"]["required"] == ["sknoded.service"]
+    assert spec["units"]["allowed"] == ["sknoded.service", "syncthing.service"]
+    for package in ("skcoord", "skmemory", "skseed", "skvoice"):
+        assert package in spec["packages"]["mustNot"]
+    for unit in (
+        "skcapstone.service",
+        "skgateway.service",
+        "skmemory-daemon.service",
+        "skoperator.timer",
+        "skvoice.service",
+        "ollama.service",
+        "skai-beellama.service",
+    ):
+        assert unit in spec["units"]["mustNot"]
 
 
 def test_the_observer_can_never_be_installed_into() -> None:
@@ -178,6 +202,7 @@ def test_manifests_match_their_generator() -> None:
         cwd=repo,
     )
     assert result.returncode == 0, f"manifests differ from the generator:\n{result.stdout}"
+    assert result.stdout.strip() == "all five manifests match the generator"
 
 
 def test_the_tier_agrees_with_the_folders_the_role_actually_joins() -> None:
