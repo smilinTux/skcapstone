@@ -148,7 +148,11 @@ def scenario(tmp_path, monkeypatch):
     }
     journal = {
         "schema": 1,
-        "packet": {"helper_id": helper_id, "claim_revision": "helper-1"},
+        "packet": {
+            "assignment_id": "assignment-1",
+            "helper_id": helper_id,
+            "claim_revision": "helper-1",
+        },
         "contract": {
             "parent_id": "aabb0011",
             "crew_binding": {
@@ -273,6 +277,55 @@ def test_malformed_conflicting_or_incomplete_state_is_nonzero(scenario, damage):
     assert result.exit_code == 1
     assert "Error:" in result.output
     assert "raw_prompt" not in result.output
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("host", "RAW_PROMPT=protected-matter-text"),
+        ("workspace_id", "w" * 129),
+        ("tab_id", "tab\nprotected-matter-text"),
+        ("pane_id", {"protected": "matter-text"}),
+    ],
+)
+def test_receipt_display_identifiers_fail_closed_without_echo(scenario, field, value):
+    scenario.journal["delivery_receipt"][field] = value
+    scenario.delivery_path.write_text(json.dumps(scenario.journal))
+
+    result = invoke(scenario, "--crew", "crew-test", "--json")
+
+    assert result.exit_code == 1
+    assert result.output == f"Error: invalid delivery receipt {field}\n"
+    assert "protected-matter-text" not in result.output
+    assert len(result.output.encode()) <= 256
+
+
+@pytest.mark.parametrize(
+    ("damage", "message"),
+    [
+        ("null-contract", "invalid delivery journal contract"),
+        ("list-contract", "invalid delivery journal contract"),
+        ("timestamps", "invalid delivery receipt timestamps"),
+        ("identity", "invalid delivery agent identity"),
+    ],
+)
+def test_malformed_delivery_contract_is_bounded_and_readable(scenario, damage, message):
+    if damage == "null-contract":
+        scenario.journal["contract"] = None
+    elif damage == "list-contract":
+        scenario.journal["contract"] = ["protected-matter-text"]
+    elif damage == "timestamps":
+        scenario.journal["delivery_receipt"]["timestamps"] = None
+    else:
+        scenario.journal["delivery_receipt"]["agent_identity"] = {"protected-matter-text": "x"}
+    scenario.delivery_path.write_text(json.dumps(scenario.journal))
+
+    result = invoke(scenario, "--crew", "crew-test", "--json")
+
+    assert result.exit_code == 1
+    assert result.output == f"Error: {message}\n"
+    assert "protected-matter-text" not in result.output
+    assert len(result.output.encode()) <= 256
 
 
 def test_terminal_cleanup_eligibility_and_candidate_custody(scenario):

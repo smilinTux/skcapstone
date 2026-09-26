@@ -539,6 +539,25 @@ def test_delivery_receipt_is_strict_generation_bound_and_replayed(scenario):
     assert len(scenario.transport.sends) == 1
 
 
+def test_delivery_records_are_bounded_read_only_copies(scenario):
+    expected = scenario.manager.deliver(scenario.packet)
+    journal = scenario.manager._path("assignment-1")
+    before = (hashlib.sha256(journal.read_bytes()).hexdigest(), journal.stat().st_mtime_ns)
+
+    records = scenario.manager.delivery_records({"bbbb2222"})
+
+    assert records == [expected]
+    records[0]["delivery_receipt"]["host"] = "changed-copy"
+    assert scenario.manager.delivery_records({"bbbb2222"})[0] == expected
+    after = (hashlib.sha256(journal.read_bytes()).hexdigest(), journal.stat().st_mtime_ns)
+    assert after == before
+
+
+def test_delivery_records_reject_unbounded_query(scenario):
+    with pytest.raises(handoff.HandoffError, match="query bound"):
+        scenario.manager.delivery_records({f"{index:08x}" for index in range(33)})
+
+
 @pytest.mark.parametrize("state", ["idle", "working", "blocked", "unknown"])
 def test_cleanup_preserves_nonterminal_worker(scenario, state):
     scenario.manager.deliver(scenario.packet)

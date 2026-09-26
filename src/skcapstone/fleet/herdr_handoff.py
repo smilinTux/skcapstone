@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import fcntl
 import hashlib
 import json
@@ -53,10 +54,53 @@ _DELIVERY_RECEIPT_FIELDS = {
     "timestamps",
     "terminal_evidence",
 }
+_JOURNAL_FIELDS = {
+    "schema",
+    "packet",
+    "packet_sha256",
+    "contract",
+    "context",
+    "identity",
+    "initial_seq",
+    "observation",
+    "state",
+    "activity",
+    "delivery_receipt",
+    "pickup",
+    "result",
+}
+_JOURNAL_REQUIRED = {
+    "schema",
+    "packet",
+    "contract",
+    "delivery_receipt",
+}
+_DELIVERY_STATES = {
+    "reserved",
+    "delivering",
+    "delivered",
+    "terminal",
+    "cleaned",
+    "failed",
+    "held",
+}
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _receipt_identifier(value, name, maximum=128):
+    if (
+        not isinstance(value, str)
+        or not value
+        or value.strip() != value
+        or len(value) > maximum
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]*", value)
+    ):
+        raise HandoffError(f"invalid delivery receipt {name}")
+    return value
 
 
 def _delivery_receipt(value):
@@ -66,9 +110,10 @@ def _delivery_receipt(value):
         or value.get("schema") != _DELIVERY_RECEIPT_SCHEMA
     ):
         raise HandoffError("invalid delivery receipt fields or schema")
+    for key in ("parent_id", "helper_id"):
+        if not re.fullmatch(r"[0-9a-f]{8}", _text(value[key], key, 8)):
+            raise HandoffError(f"invalid delivery receipt {key}")
     for key in (
-        "parent_id",
-        "helper_id",
         "helper_generation",
         "claim_revision",
         "host",
@@ -76,24 +121,26 @@ def _delivery_receipt(value):
         "tab_id",
         "pane_id",
     ):
-        _text(value[key], key)
+        _receipt_identifier(value[key], key)
     if not re.fullmatch(r"[0-9a-f]{64}", value.get("delivery_token_sha256", "")):
         raise HandoffError("invalid delivery token digest")
-    if value["delivery_state"] not in {
-        "reserved",
-        "delivering",
-        "delivered",
-        "terminal",
-        "cleaned",
-        "failed",
-        "held",
-    }:
+    if value["delivery_state"] not in _DELIVERY_STATES:
         raise HandoffError("invalid delivery receipt state")
-    if not isinstance(value["timestamps"], dict) or not value["timestamps"]:
+    timestamps = value["timestamps"]
+    if (
+        not isinstance(timestamps, dict)
+        or not timestamps
+        or not set(timestamps).issubset(_DELIVERY_STATES)
+    ):
         raise HandoffError("invalid delivery receipt timestamps")
-    for name, timestamp in value["timestamps"].items():
-        _text(name, "timestamp name")
-        _text(timestamp, "timestamp")
+    for timestamp in timestamps.values():
+        timestamp = _text(timestamp, "timestamp", 64)
+        try:
+            parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HandoffError("invalid delivery receipt timestamps") from exc
+        if not timestamp.endswith("Z") or parsed.tzinfo != timezone.utc:
+            raise HandoffError("invalid delivery receipt timestamps")
     identity = value["agent_identity"]
     if not isinstance(identity, dict) or set(identity) != {
         "agent_name",
@@ -103,10 +150,10 @@ def _delivery_receipt(value):
     }:
         raise HandoffError("invalid delivery agent identity")
     for key in ("agent_kind", "terminal_id"):
-        _text(identity[key], key)
+        _text(identity[key], key, 128)
     for key in ("agent_name", "agent_session"):
         if identity[key] is not None:
-            _text(identity[key], key)
+            _text(identity[key], key, 128)
     terminal = value["terminal_evidence"]
     if terminal is not None and (
         not isinstance(terminal, dict)
@@ -143,18 +190,78 @@ class HandoffManager:
             fcntl.flock(handle, fcntl.LOCK_EX)
             yield
 
+    @contextmanager
+    def _read_locked(self):
+        """Share an existing journal lock without creating any store state."""
+        try:
+            fd = os.open(self.directory / ".lock", os.O_RDONLY | os.O_NOFOLLOW)
+        except FileNotFoundError:
+            yield
+            return
+        with os.fdopen(fd) as handle:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                raise HandoffError("unsafe handoff lock")
+            fcntl.flock(handle, fcntl.LOCK_SH)
+            yield
+
     def _path(self, assignment):
         return self.directory / f"{_identifier(assignment)}.json"
 
     def _read(self, assignment):
         try:
             row = json.loads(_regular(self._path(assignment), 262144), object_pairs_hook=_pairs)
-            if row["schema"] != 1 or row["packet"]["assignment_id"] != assignment:
+            if (
+                not isinstance(row, dict)
+                or not _JOURNAL_REQUIRED.issubset(row)
+                or not set(row).issubset(_JOURNAL_FIELDS)
+                or row["schema"] != 1
+                or not isinstance(row["packet"], dict)
+                or row["packet"].get("assignment_id") != assignment
+            ):
                 raise HandoffError("invalid assignment journal")
+            if not isinstance(row["contract"], dict):
+                raise HandoffError("invalid delivery journal contract")
             _delivery_receipt(row["delivery_receipt"])
             return row
         except (OSError, KeyError, TypeError, UnicodeError, json.JSONDecodeError) as exc:
             raise HandoffError("assignment journal unavailable") from exc
+
+    def delivery_records(self, helper_ids, limit=4096):
+        """Return validated copies for exact helpers without changing the store."""
+        if (
+            not isinstance(helper_ids, (set, frozenset))
+            or len(helper_ids) > 32
+            or type(limit) is not int
+            or not 1 <= limit <= 4096
+        ):
+            raise HandoffError("delivery query bound exceeded")
+        for helper_id in helper_ids:
+            if not re.fullmatch(r"[0-9a-f]{8}", _text(helper_id, "helper_id", 8)):
+                raise HandoffError("invalid helper_id")
+        if not self.directory.exists():
+            return []
+        if self.directory.resolve() != self.directory.absolute():
+            raise HandoffError("unsafe handoff directory")
+
+        def assignments():
+            names = sorted(
+                path.name for path in self.directory.iterdir() if path.suffix == ".json"
+            )
+            if len(names) > limit:
+                raise HandoffError("delivery store row bound exceeded")
+            return names
+
+        with self._read_locked():
+            names = assignments()
+            rows = []
+            for name in names:
+                assignment = _identifier(name.removesuffix(".json"))
+                row = self._read(assignment)
+                if row["packet"].get("helper_id") in helper_ids:
+                    rows.append(copy.deepcopy(row))
+            if assignments() != names:
+                raise HandoffError("delivery store changed during read")
+        return rows
 
     def _write(self, row):
         path = self._path(row["packet"]["assignment_id"])

@@ -11,43 +11,13 @@ from pathlib import Path
 import click
 from skcoord.card_store import CardStore
 
+from .herdr_handoff import HandoffManager
 from .herdr_handoff_validation import load_json
 from .paths import SOVEREIGN_HOME, FleetPaths, default_paths
 
 STATUS_SCHEMA = "skfleet.crew-status/v1"
 MAX_STATUS_ROWS = 32
 MAX_STATUS_BYTES = 131072
-_JOURNAL_KEYS = {
-    "schema",
-    "packet",
-    "packet_sha256",
-    "contract",
-    "context",
-    "identity",
-    "initial_seq",
-    "observation",
-    "state",
-    "activity",
-    "delivery_receipt",
-    "pickup",
-    "result",
-}
-_DELIVERY_KEYS = {
-    "schema",
-    "parent_id",
-    "helper_id",
-    "helper_generation",
-    "claim_revision",
-    "host",
-    "workspace_id",
-    "tab_id",
-    "pane_id",
-    "agent_identity",
-    "delivery_token_sha256",
-    "delivery_state",
-    "timestamps",
-    "terminal_evidence",
-}
 _SEALED_KEYS = {
     "packet",
     "authorizer",
@@ -76,61 +46,22 @@ _REQUEST_KEYS = {
 }
 
 
-def _sha(value, name):
-    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
-        raise ValueError(f"invalid {name}")
-    return value
-
-
-def _deliveries(paths, helper_ids):
-    """Read only bounded exact receipt journals and project no prompt content."""
-    directory = paths.root / "herdr-handoffs"
-    if not directory.exists():
-        return {}
-    names = sorted(directory.glob("*.json"))
-    if len(names) > 4096:
-        raise ValueError("delivery store row bound exceeded")
+def _deliveries(paths, home, helper_ids):
+    """Query validated receipt copies and retain exact crew custody only."""
     result = {}
-    for path in names:
-        row = load_json(path)
-        if not isinstance(row, dict) or not set(row).issubset(_JOURNAL_KEYS):
-            raise ValueError("invalid delivery journal fields")
-        packet = row.get("packet")
-        helper_id = packet.get("helper_id") if isinstance(packet, dict) else None
-        if helper_id not in helper_ids:
-            continue
+    manager = HandoffManager(paths, home, "crew-status", transport=object())
+    for row in manager.delivery_records(frozenset(helper_ids)):
+        packet = row["packet"]
+        helper_id = packet.get("helper_id")
         receipt = row.get("delivery_receipt")
+        contract = row.get("contract")
         if (
-            not isinstance(receipt, dict)
-            or set(receipt) != _DELIVERY_KEYS
-            or receipt.get("schema") != "skfleet.herdr-delivery-receipt/v1"
-            or receipt.get("helper_id") != helper_id
+            receipt.get("helper_id") != helper_id
             or receipt.get("claim_revision") != packet.get("claim_revision")
             or receipt.get("helper_generation") != packet.get("claim_revision")
-            or receipt.get("parent_id") != row.get("contract", {}).get("parent_id")
+            or receipt.get("parent_id") != contract.get("parent_id")
         ):
             raise ValueError("delivery receipt identity mismatch")
-        _sha(receipt.get("delivery_token_sha256"), "delivery token digest")
-        identity = receipt["agent_identity"]
-        terminal = receipt["terminal_evidence"]
-        if (
-            not isinstance(identity, dict)
-            or set(identity) != {"agent_name", "agent_kind", "terminal_id", "agent_session"}
-            or not isinstance(receipt["timestamps"], dict)
-            or not set(receipt["timestamps"]).issubset(
-                {"reserved", "delivering", "delivered", "terminal", "cleaned", "failed", "held"}
-            )
-            or receipt["delivery_state"]
-            not in {"reserved", "delivering", "delivered", "terminal", "cleaned", "failed", "held"}
-            or (
-                terminal is not None
-                and (
-                    not isinstance(terminal, dict)
-                    or set(terminal) != {"state", "state_change_seq", "process_group_alive"}
-                )
-            )
-        ):
-            raise ValueError("invalid delivery receipt evidence")
         if helper_id in result:
             raise ValueError("duplicate helper delivery receipts")
         result[helper_id] = row
@@ -184,7 +115,7 @@ def _status(paths, home, *, parent_id=None, crew_id=None):
     helper_ids = [row.get("helper_id") for row in canonical if row.get("helper_id") is not None]
     if len(helper_ids) != len(set(helper_ids)):
         raise ValueError("duplicate helper custody")
-    deliveries = _deliveries(paths, set(helper_ids))
+    deliveries = _deliveries(paths, home, set(helper_ids))
     helpers = []
     for row in sorted(canonical, key=lambda item: (item["slot_id"], item["request_id"])):
         slot = slots.get(row.get("slot_id"))
