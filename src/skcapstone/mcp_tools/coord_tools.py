@@ -228,9 +228,7 @@ async def _handle_coord_status(args: dict) -> list[TextContent]:
     truncated = bounded > limit
     views = [] if summary_only else all_views[:limit]
 
-    eligibility = leaf_eligibility_counts(
-        _home(), {v.task.id for v in all_views}
-    )
+    eligibility = leaf_eligibility_counts(_home(), {v.task.id for v in all_views})
 
     return _json_response(
         {

@@ -45,17 +45,10 @@ def test_coord_kanban_excludes_archived_and_include_archived_restores(tmp_path):
     archived = board.archive_done_tasks(older_than_days=14, now=aged)
     assert "c01d0001" in archived
 
-    active = CliRunner().invoke(
-        main, ["coord", "kanban", "--home", str(tmp_path), "--json"]
-    )
+    active = CliRunner().invoke(main, ["coord", "kanban", "--home", str(tmp_path), "--json"])
     assert active.exit_code == 0, active.output
     grid = json.loads(active.stdout)
-    ids = {
-        row["id"]
-        for columns in grid.values()
-        for rows in columns.values()
-        for row in rows
-    }
+    ids = {row["id"] for columns in grid.values() for rows in columns.values() for row in rows}
     assert "11fe0001" in ids
     assert "c01d0001" not in ids
 
@@ -66,10 +59,7 @@ def test_coord_kanban_excludes_archived_and_include_archived_restores(tmp_path):
     assert full.exit_code == 0, full.output
     grid_full = json.loads(full.stdout)
     ids_full = {
-        row["id"]
-        for columns in grid_full.values()
-        for rows in columns.values()
-        for row in rows
+        row["id"] for columns in grid_full.values() for rows in columns.values() for row in rows
     }
     assert ids_full == ids | {"c01d0001"}
 
