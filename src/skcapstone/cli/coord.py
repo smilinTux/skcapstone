@@ -1052,6 +1052,8 @@ def register_coord_commands(main: click.Group) -> None:
         if include_archived:
             grid = {lane: {col: [] for col in COLUMN_ORDER} for lane in LANE_ORDER}
             for c in kb.cards(include_archived=True):
+                if c.meta.get("voided"):
+                    continue  # voided cards never return to any board view
                 lane = c.swimlane if c.swimlane in LANE_ORDER else "feature"
                 grid[lane][c.status.value].append(c)
             for cells in grid.values():
