@@ -70,6 +70,18 @@ def test_guard_catches_an_abbreviated_reusable_workflow_sha(guard, tmp_path):
     assert any(f.level == "fail" and "ABBREVIATED" in f.msg for f in findings)
 
 
+def test_pytest_sibling_dependencies_are_immutable_and_reviewed():
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "pytest.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "git ls-remote" not in workflow
+    for package in ("skcoord", "skdashboard", "skharness"):
+        matching = [line for line in workflow.splitlines() if f'"{package} @ git+' in line]
+        assert len(matching) == 1, f"expected one immutable pin for {package}"
+        revision = matching[0].rsplit("@", 1)[-1].split('"', 1)[0]
+        assert len(revision) == 40 and all(c in "0123456789abcdef" for c in revision)
+
+
 def test_guard_catches_a_mutable_branch_pin(guard, tmp_path):
     """A branch pin is failure mode 1 waiting to happen: delete it and the gate
     goes absent rather than red."""
