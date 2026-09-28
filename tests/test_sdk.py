@@ -64,6 +64,7 @@ def test_coord_create_writes_task(home: Path):
     task = json.loads(matches[0].read_text())
     assert task["title"] == "hello"
     assert task["priority"] == "high"
+    assert not list((home / "coordination" / "recovery").glob("card-creation-attempts*.jsonl"))
 
 
 def test_coord_create_source_binding_parity(home: Path):
