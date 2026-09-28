@@ -32,6 +32,67 @@ def test_coord_kanban_text_summary(tmp_path):
     assert "feature" in result.output.lower()
 
 
+def test_coord_kanban_excludes_archived_and_include_archived_restores(tmp_path):
+    """Card 2f054aa5: archived cards leave the active view; flag restores all."""
+    import json
+
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(Task(id="11fe0001", title="Active card", created_by="opus"))
+    board.create_task(Task(id="c01d0001", title="Cold done card", created_by="opus"))
+    board.complete_task("opus", "c01d0001")
+    aged = datetime.now(timezone.utc) + timedelta(days=30)
+    archived = board.archive_done_tasks(older_than_days=14, now=aged)
+    assert "c01d0001" in archived
+
+    active = CliRunner().invoke(
+        main, ["coord", "kanban", "--home", str(tmp_path), "--json"]
+    )
+    assert active.exit_code == 0, active.output
+    grid = json.loads(active.stdout)
+    ids = {
+        row["id"]
+        for columns in grid.values()
+        for rows in columns.values()
+        for row in rows
+    }
+    assert "11fe0001" in ids
+    assert "c01d0001" not in ids
+
+    full = CliRunner().invoke(
+        main,
+        ["coord", "kanban", "--home", str(tmp_path), "--json", "--include-archived"],
+    )
+    assert full.exit_code == 0, full.output
+    grid_full = json.loads(full.stdout)
+    ids_full = {
+        row["id"]
+        for columns in grid_full.values()
+        for rows in columns.values()
+        for row in rows
+    }
+    assert ids_full == ids | {"c01d0001"}
+
+
+def test_coord_kanban_archive_keeps_dependency_claims_working(tmp_path):
+    """Archived done dependencies must not block claiming dependents."""
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(Task(id="dec00001", title="Done dependency", created_by="opus"))
+    board.complete_task("opus", "dec00001")
+    board.create_task(
+        Task(id="0a0b0001", title="Dependent", created_by="opus", dependencies=["dec00001"])
+    )
+    aged = datetime.now(timezone.utc) + timedelta(days=30)
+    assert "dec00001" in board.archive_done_tasks(older_than_days=14, now=aged)
+
+    result = CliRunner().invoke(
+        main,
+        ["coord", "claim", "0a0b0001", "--home", str(tmp_path), "--agent", "opus"],
+    )
+    assert result.exit_code == 0, result.output
+
+
 def test_coord_status_labels_old_active_record_as_stale_projection(tmp_path):
     board = Board(tmp_path)
     board.ensure_dirs()

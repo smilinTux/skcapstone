@@ -14,12 +14,22 @@ TOOLS: list[Tool] = [
     Tool(
         name="coord_status",
         description=(
-            "Show the multi-agent coordination board. Lists all tasks with status, priority, "
-            "and assignees. Shows active agents. Optional tag/parent/status filters bound "
-            "the output (parent matches the 'parent-<id>' tag convention)."
+            "Show the multi-agent coordination board. Bounded by default: returns at most "
+            "200 active (non-done) task rows while the summary reports full counts for "
+            "every status. Use summary_only=true for counts with no rows, tag/parent/status "
+            "filters to scope (parent matches the 'parent-<id>' tag convention), limit up to "
+            "5000, or active_only=false / status=done for terminal work."
         ),
         inputSchema={
             "properties": {
+                "active_only": {
+                    "description": "Exclude done and blocked rows (default true)",
+                    "type": "boolean",
+                },
+                "limit": {
+                    "description": "Maximum task rows returned (default 200, max 5000)",
+                    "type": "integer",
+                },
                 "parent": {
                     "description": "Only tasks tagged 'parent-<id>' (children of this card)",
                     "type": "string",
@@ -28,6 +38,10 @@ TOOLS: list[Tool] = [
                     "description": "Only tasks in this status",
                     "enum": ["open", "claimed", "in_progress", "review", "done", "blocked"],
                     "type": "string",
+                },
+                "summary_only": {
+                    "description": "Return counts and agents only, no task rows",
+                    "type": "boolean",
                 },
                 "tag": {
                     "description": "Only tasks carrying this tag (repeatable)",
@@ -163,12 +177,19 @@ TOOLS: list[Tool] = [
 
 
 async def _handle_coord_status(args: dict) -> list[TextContent]:
-    """Return coordination board status, with optional tag/parent/status filters."""
+    """Return coordination board status, with optional tag/parent/status filters.
+
+    Bounded by default (card f4791e84): the default response lists only active
+    (non-done) tasks, capped at ``limit`` rows, with a summary that always
+    reports full counts including done. ``summary_only`` returns counts and no
+    task rows. ``active_only: false`` or an explicit ``status`` filter that
+    selects done restores the full unbounded view when explicitly requested.
+    """
     from ..coord_eligibility import leaf_eligibility_counts
     from ..coordination import Board
 
     board = Board(_home())
-    views = board.get_task_views()
+    all_views = board.get_task_views()
     agents = board.load_agents()
 
     tags = list(args.get("tag") or [])
@@ -177,12 +198,39 @@ async def _handle_coord_status(args: dict) -> list[TextContent]:
         tags.append(f"parent-{parent}")
     if tags:
         wanted = {t.lower() for t in tags}
-        views = [v for v in views if wanted & {t.lower() for t in v.task.tags}]
+        all_views = [v for v in all_views if wanted & {t.lower() for t in v.task.tags}]
     status_filter = args.get("status")
     if status_filter:
-        views = [v for v in views if v.status.value == status_filter]
+        all_views = [v for v in all_views if v.status.value == status_filter]
 
-    eligibility = leaf_eligibility_counts(_home(), {v.task.id for v in views})
+    # Summary counts describe every view matching the filters, before any
+    # bounding, so callers always see true totals even when rows are capped.
+    matching = len(all_views)
+    counts = {
+        "open": sum(1 for v in all_views if v.status.value == "open"),
+        "claimed": sum(1 for v in all_views if v.status.value == "claimed"),
+        "in_progress": sum(1 for v in all_views if v.status.value == "in_progress"),
+        "done": sum(1 for v in all_views if v.status.value == "done"),
+        "blocked": sum(1 for v in all_views if v.status.value == "blocked"),
+        "review": sum(1 for v in all_views if v.status.value == "review"),
+    }
+
+    summary_only = bool(args.get("summary_only"))
+    active_only = bool(args.get("active_only", True))
+    if active_only and status_filter not in ("done", "blocked"):
+        all_views = [v for v in all_views if v.status.value not in ("done", "blocked")]
+    bounded = len(all_views)
+    try:
+        limit = int(args.get("limit", 200))
+    except (TypeError, ValueError):
+        limit = 200
+    limit = max(0, min(limit, 5000))
+    truncated = bounded > limit
+    views = [] if summary_only else all_views[:limit]
+
+    eligibility = leaf_eligibility_counts(
+        _home(), {v.task.id for v in all_views}
+    )
 
     return _json_response(
         {
@@ -209,14 +257,14 @@ async def _handle_coord_status(args: dict) -> list[TextContent]:
                 for a in agents
             ],
             "summary": {
-                "total": len(views),
-                "open": sum(1 for v in views if v.status.value == "open"),
+                "total": matching,
+                "active": bounded,
+                "returned": len(views),
+                "truncated": truncated,
                 "leaf_eligible": eligibility.leaves,
                 "review_needs_identity": eligibility.review,
                 "malformed": eligibility.malformed,
-                "claimed": sum(1 for v in views if v.status.value == "claimed"),
-                "in_progress": sum(1 for v in views if v.status.value == "in_progress"),
-                "done": sum(1 for v in views if v.status.value == "done"),
+                **counts,
             },
         }
     )

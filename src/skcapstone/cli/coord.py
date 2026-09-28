@@ -1027,27 +1027,53 @@ def register_coord_commands(main: click.Group) -> None:
         default=False,
         help="Emit the grid as JSON instead of a text summary.",
     )
-    def coord_kanban(home, html_out, as_json):
+    @click.option(
+        "--include-archived",
+        is_flag=True,
+        default=False,
+        help="Include cards archived off the active board (full historical scope).",
+    )
+    def coord_kanban(home, html_out, as_json, include_archived):
         """Unified kanban board over coord tasks and ITIL tickets.
 
         Columns are the shared lifecycle (backlog, ready, doing, review, done);
         swimlanes are the card kind (feature, bug, security, expedite, change,
-        problem). Reads both stores read-only.
+        problem). Reads both stores read-only. Archived cards (card 2f054aa5)
+        are excluded from the active view unless --include-archived is passed.
         """
         import json as _json
 
         from ..card import COLUMN_ORDER, LANE_ORDER, KanbanBoard, render_html
+        from ..coordination import Board
 
         home_path = Path(home).expanduser()
         kb = KanbanBoard(home_path)
+
+        if include_archived:
+            grid = {lane: {col: [] for col in COLUMN_ORDER} for lane in LANE_ORDER}
+            for c in kb.cards(include_archived=True):
+                lane = c.swimlane if c.swimlane in LANE_ORDER else "feature"
+                grid[lane][c.status.value].append(c)
+            for cells in grid.values():
+                for col in cells.values():
+                    col.sort(key=lambda c: (c.order if c.order else 9999, c.id))
+        else:
+            grid = kb.grid()
+            archived = Board(home_path).archived_ids()
+            if archived:
+                grid = {
+                    lane: {
+                        col: [c for c in grid[lane][col] if c.id not in archived]
+                        for col in grid[lane]
+                    }
+                    for lane in grid
+                }
 
         if html_out:
             out = Path(html_out).expanduser()
             out.write_text(render_html(kb), encoding="utf-8")
             console.print(f"\n  [green]Kanban board written to {out}[/]\n")
             return
-
-        grid = kb.grid()
         if as_json:
             payload = {
                 lane: {col: [c.model_dump() for c in grid[lane][col]] for col in COLUMN_ORDER}

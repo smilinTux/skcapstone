@@ -159,6 +159,67 @@ async def test_mcp_status_combined_filters(tmp_path, monkeypatch):
     assert ids == {"child001"}
 
 
+def _seed_with_done(tmp_path, done_ids=("epic0001", "other001")):
+    _seed(tmp_path)
+    board = Board(tmp_path)
+    for tid in done_ids:
+        board.complete_task("tester", tid)
+    return board
+
+
+@pytest.mark.asyncio
+async def test_mcp_status_default_excludes_done_but_counts_them(tmp_path, monkeypatch):
+    """Card f4791e84: default rows are active only; summary keeps true totals."""
+    monkeypatch.setattr(coord_tools, "_home", lambda: tmp_path)
+    _seed_with_done(tmp_path)
+    data = _parse(await coord_tools._handle_coord_status({}))
+    ids = {t["id"] for t in data["tasks"]}
+    assert ids == {"child001", "child002"}
+    assert data["summary"]["total"] == 4
+    assert data["summary"]["done"] == 2
+    assert data["summary"]["active"] == 2
+    assert data["summary"]["truncated"] is False
+
+
+@pytest.mark.asyncio
+async def test_mcp_status_limit_truncates_rows_not_totals(tmp_path, monkeypatch):
+    monkeypatch.setattr(coord_tools, "_home", lambda: tmp_path)
+    _seed_with_done(tmp_path)
+    data = _parse(await coord_tools._handle_coord_status({"limit": 1}))
+    assert len(data["tasks"]) == 1
+    assert data["summary"]["active"] == 2
+    assert data["summary"]["returned"] == 1
+    assert data["summary"]["truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_status_summary_only_returns_no_rows(tmp_path, monkeypatch):
+    monkeypatch.setattr(coord_tools, "_home", lambda: tmp_path)
+    _seed_with_done(tmp_path)
+    data = _parse(await coord_tools._handle_coord_status({"summary_only": True}))
+    assert data["tasks"] == []
+    assert data["summary"]["total"] == 4
+    assert data["summary"]["done"] == 2
+
+
+@pytest.mark.asyncio
+async def test_mcp_status_active_only_false_restores_full_rows(tmp_path, monkeypatch):
+    monkeypatch.setattr(coord_tools, "_home", lambda: tmp_path)
+    _seed_with_done(tmp_path)
+    data = _parse(await coord_tools._handle_coord_status({"active_only": False}))
+    ids = {t["id"] for t in data["tasks"]}
+    assert ids == {"epic0001", "child001", "child002", "other001"}
+
+
+@pytest.mark.asyncio
+async def test_mcp_status_explicit_done_filter_beats_active_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(coord_tools, "_home", lambda: tmp_path)
+    _seed_with_done(tmp_path)
+    data = _parse(await coord_tools._handle_coord_status({"status": "done"}))
+    ids = {t["id"] for t in data["tasks"]}
+    assert ids == {"epic0001", "other001"}
+
+
 def test_status_leaf_eligible_known_mix_uses_folded_cards(tmp_path):
     """Known noise, gate, container, dependency, and ownership cases are excluded."""
     store = CardStore(tmp_path)
@@ -208,9 +269,8 @@ def test_unreadable_card_is_reported_without_blocking_healthy_leaves(tmp_path, c
     store = CardStore(tmp_path)
     store.create(CardCore(id="broken01", title="Broken chain", kind="task"))
     store.create(
-        CardCore(
-            id="blocked1", title="Depends on broken chain", kind="task", dependencies=["broken01"]
-        )
+        CardCore(id="blocked1", title="Depends on broken chain", kind="task",
+                 dependencies=["broken01"])
     )
     store.create(CardCore(id="healthy1", title="Healthy leaf", kind="task"))
     store.create(CardCore(id="review01", title="Healthy review", kind="task"))
