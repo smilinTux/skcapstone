@@ -22,6 +22,7 @@ from skcapstone.fleet.profiles import (
     ProfileSpecError,
     normalize_profile_spec,
 )
+from skcapstone.fleet.rollout_drift import ALLOWED_UNSHIPPED_UNITS
 
 MANIFEST_DIR = Path(__file__).resolve().parents[2] / "deploy" / "fleet-objects" / "profile"
 
@@ -80,6 +81,23 @@ def test_every_manifest_forbids_something(path: Path) -> None:
     assert (
         spec["units"]["mustNot"] or spec["packages"]["mustNot"]
     ), f"{path.name} forbids nothing, so it can never produce an error-grade finding"
+
+
+def test_every_seat_cycle_profile_forbids_the_legacy_rotation_timer() -> None:
+    """An unshipped-unit exemption must not override durable profile policy."""
+
+    legacy_timer = "skfleet-rotate.timer"
+    assert legacy_timer in ALLOWED_UNSHIPPED_UNITS
+    seat_cycle_profiles = [
+        path
+        for path in _manifest_paths()
+        if "skfleet-seat-cycle.timer" in _load(path)["spec"]["units"]["required"]
+    ]
+    assert seat_cycle_profiles
+    for path in seat_cycle_profiles:
+        assert (
+            legacy_timer in _load(path)["spec"]["units"]["mustNot"]
+        ), f"{path.name} activates the seat cycle but does not forbid {legacy_timer}"
 
 
 @pytest.mark.parametrize("path", _manifest_paths(), ids=lambda p: p.stem)
