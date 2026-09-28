@@ -10,6 +10,8 @@ Each test targets a specific contract:
   - unknown job types return ok=False without raising
 """
 
+import json
+import os
 from pathlib import Path
 
 from skcapstone.scheduler_jobs import JobSpec
@@ -66,3 +68,33 @@ def test_unknown_type_is_error(tmp_path: Path):
     job = JobSpec(name="x", type="weird")
     result = JobRunner(log_dir=tmp_path).run(job)
     assert not result.ok
+
+
+def test_lock_pid_reuse_is_stale(tmp_path: Path, monkeypatch):
+    """A live replacement process with the same PID must not hold the lock."""
+    lock = tmp_path / "reused.lock"
+    lock.write_text(json.dumps({"v": 1, "pid": 4242, "btime": 11,
+                               "token": "00000000-0000-0000-0000-000000000001"}))
+    monkeypatch.setattr(JobRunner, "_owner_state", staticmethod(lambda pid, btime: "gone"))
+    assert JobRunner._classify_lock(lock) == JobRunner._STALE
+
+
+def test_lock_live_owner_remains_excluded(tmp_path: Path, monkeypatch):
+    lock = tmp_path / "live.lock"
+    lock.write_text(json.dumps({"v": 1, "pid": os.getpid(), "btime": 11,
+                               "token": "00000000-0000-0000-0000-000000000001"}))
+    monkeypatch.setattr(JobRunner, "_owner_state", staticmethod(lambda pid, btime: "alive"))
+    assert JobRunner._classify_lock(lock) == JobRunner._LIVE
+    runner = JobRunner(tmp_path)
+    with runner.lock(JobSpec(name="live", type="shell")) as acquired:
+        assert not acquired
+
+
+def test_lock_reclaims_crashed_owner(tmp_path: Path, monkeypatch):
+    lock = tmp_path / "crashed.lock"
+    lock.write_text(json.dumps({"v": 1, "pid": 4242, "btime": 11,
+                               "token": "00000000-0000-0000-0000-000000000001"}))
+    monkeypatch.setattr(JobRunner, "_owner_state", staticmethod(lambda pid, btime: "gone"))
+    runner = JobRunner(tmp_path)
+    with runner.lock(JobSpec(name="crashed", type="shell")) as acquired:
+        assert acquired
