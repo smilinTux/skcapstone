@@ -1,0 +1,93 @@
+"""Controller integration checks without production mutations or model calls."""
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import fiber_control as control
+from fiber_admission import Refused, card_fingerprint
+from test_fiber_admission import job, snapshot
+
+
+class ControlTest(unittest.TestCase):
+    def test_authority_claim_precedes_remote_launch_and_binds_revision(self):
+        task = dict(job(), owner='fiber-test')
+        row = {'owner': 'fiber-test', 'meta': {'_claim_revision': 'a' * 32}}
+        with patch.object(control.socket, 'gethostname', return_value='chiap08'), \
+             patch.object(control, 'claim_for_worker', return_value=row) as claim, \
+             patch.object(control, 'verify_source'), patch.object(control, 'remote', return_value={'state': 'running'}) as remote:
+            control.launch_claimed(task, {'token': 'b' * 32})
+            claim.assert_called_once_with(task['card'], task['owner'])
+            self.assertEqual(remote.call_args.args[1]['claim'],
+                             {'authority': 'chiap08', 'owner': 'fiber-test', 'revision': 'a' * 32})
+            claim.side_effect = Refused('claim-refused')
+            remote.reset_mock()
+            with self.assertRaisesRegex(Refused, 'claim-refused'):
+                control.launch_claimed(task, {'token': 'c' * 32})
+            remote.assert_not_called()
+
+    def test_full_estate_does_not_probe_models(self):
+        truth = snapshot()
+        truth['workers'] = [{'key': str(i)} for i in range(9)]
+        with patch.object(control, 'collect', return_value=truth), patch.object(control, 'qualify_route') as probe:
+            with self.assertRaisesRegex(Refused, 'estate-capacity'):
+                control.observation(job())
+            probe.assert_not_called()
+
+    def test_recollect_after_model_probe(self):
+        before, after = snapshot(1000), snapshot(1020)
+        task = dict(job(), model='deepseek-flash')
+        with patch.object(control, 'collect', side_effect=[before, after]) as collect, \
+             patch.object(control, 'remote', return_value={'state': 'ready', 'card': task['card'], 'host': task['host'], 'model': task['model']}), \
+             patch.object(control, 'qualify_route', return_value={'ready': True, 'cap': 3}):
+            value = control.observation(task)
+            self.assertEqual(value['observed_at'], 1020)
+            self.assertEqual(collect.call_count, 2)
+
+    def test_owned_or_missing_dependency_never_admitted(self):
+        self.assertFalse(control.eligible({'owner': 'another', 'status': 'doing'}, {}))
+        self.assertFalse(control.eligible({'status': 'ready', 'dependencies': ['missing']}, {}))
+
+    def test_task_fingerprint_ignores_claim_not_task_changes(self):
+        row = {'id': '1234abcd', 'title': 'test', 'description': 'bounded', 'acceptance_criteria': ['pass'],
+               'labels': ['source-only'], 'dependencies': [], 'meta': {}, 'links': {}}
+        original = card_fingerprint(row)
+        row.update(owner='fiber-test', status='doing')
+        row['meta']['_claim_revision'] = 'a' * 32
+        row['links']['evidence'] = 'new-evidence'
+        self.assertEqual(card_fingerprint(row), original)
+        row['acceptance_criteria'].append('different work')
+        self.assertNotEqual(card_fingerprint(row), original)
+
+    def test_wrong_host_refuses_before_observation(self):
+        with patch.object(control.socket, 'gethostname', return_value='chiap02'), patch.object(control, 'collect') as collect:
+            with self.assertRaisesRegex(Refused, 'not-authority-host'):
+                control.cycle(check=True)
+            collect.assert_not_called()
+
+    def test_empty_queue_does_not_start_or_claim(self):
+        with tempfile.TemporaryDirectory() as td, patch.object(control, 'STATE', Path(td) / 'state'), \
+             patch.object(control, 'QUEUE', Path(td) / 'queue'), \
+             patch.object(control, 'HOLD', Path(td) / 'HOLD'), \
+             patch.object(control.socket, 'gethostname', return_value='chiap08'), \
+             patch.object(control, 'remote') as remote, patch.object(control, 'cards') as cards:
+            self.assertEqual(control.cycle()['state'], 'waiting-for-reviewed-requests')
+            remote.assert_not_called()
+            cards.assert_not_called()
+
+    def test_hold_is_idempotent_and_preserves_workers(self):
+        with tempfile.TemporaryDirectory() as td, patch.object(control, 'STATE', Path(td) / 'state'), \
+             patch.object(control, 'HOLD', Path(td) / 'HOLD'), \
+             patch.object(control.socket, 'gethostname', return_value='chiap08'), \
+             patch.object(control, 'remote') as remote, patch.object(control, 'cards') as cards:
+            self.assertEqual(control.set_hold()['workers_stopped'], 0)
+            self.assertEqual(control.set_hold()['state'], 'admission-held')
+            self.assertEqual(control.cycle()['state'], 'admission-held')
+            remote.assert_not_called()
+            cards.assert_not_called()
+
+
+if __name__ == '__main__':
+    unittest.main()

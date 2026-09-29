@@ -1,0 +1,233 @@
+"""chiap08 authority for explicit, source-bound fleet stage requests."""
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import socket
+import subprocess
+import time
+import urllib.error
+import urllib.request
+
+from fiber_admission import ESTATE_CAP, PLACEMENT, Refused, card_fingerprint, claim_for_worker
+from fiber_dispatch import authority, dispatch_one, reconcile
+from fiber_probe import collect
+from fiber_worker import GATEWAY, ROUTES, source_binding, validate, verify_source
+
+STATE = Path.home() / '.local/state/skfleet-fiber'
+QUEUE = Path.home() / '.config/skfleet-fiber/jobs'
+HOLD = Path.home() / '.config/skfleet-fiber/HOLD'
+LIBRARY = '.local/lib/skfleet-fiber/fiber_worker.py'
+CAPS = {'deepseek': 3, 'codex': 2, 'zai': 5}
+
+
+def cards():
+    """Use the public coordination read API, not raw CardStore files."""
+    result = subprocess.run(['skcapstone', 'coord', 'kanban', '--json'], capture_output=True, text=True, timeout=60)
+    if result.returncode:
+        raise Refused('board-read-failed')
+    found = {}
+    def visit(value):
+        if isinstance(value, dict):
+            if re.fullmatch('[0-9a-f]{8}', str(value.get('id', ''))) and 'owner' in value:
+                if value['id'] in found:
+                    raise Refused('ambiguous-board-row')
+                found[value['id']] = value
+            for item in value.values():
+                visit(item)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+    visit(json.loads(result.stdout))
+    return found
+
+
+def eligible(row, board):
+    from skcapstone.coord_gate_diagnostic import diagnose
+    if row.get('owner') or row.get('archived') or row.get('status') not in {'backlog', 'ready', 'doing', 'review'}:
+        return False
+    if any(board.get(cid, {}).get('status') != 'done' for cid in row.get('dependencies', [])):
+        return False
+    return diagnose(Path.home() / '.skcapstone', row['id']).get('eligible') is True
+
+
+def describe(card, stage, family):
+    row = cards().get(card)
+    if row is None:
+        raise Refused('unknown-card')
+    repository, base_ref, revision = source_binding(row)
+    pi_provider, model = ROUTES[family]
+    return {'card': card, 'owner': 'pi-fiber-' + stage + '-' + card,
+            'stage': stage, 'host': PLACEMENT[stage][0], 'provider': family,
+            'pi_provider': pi_provider, 'model': model, 'repository': repository,
+            'base_ref': base_ref, 'base_revision': revision,
+            'card_fingerprint': card_fingerprint(row)}
+
+
+def remote(mode, request):
+    job = request['job']
+    if job['host'] not in {row[0] for row in PLACEMENT.values()}:
+        raise Refused('host-outside-initial-placement')
+    command = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', job['host'],
+               shlex.join(['/home/skuser01/.skenv/bin/python', '/home/skuser01/' + LIBRARY, mode])]
+    result = subprocess.run(command, input=json.dumps(request), capture_output=True, text=True, timeout=40)
+    if result.returncode:
+        raise Refused('remote-' + mode + '-failed')
+    return json.loads(result.stdout)
+
+
+def observe(run):
+    job = json.loads(run['binding'])
+    receipt = {key: run[key] for key in ['card', 'host', 'token', 'unit']}
+    receipt['provider'] = job['provider']
+    return remote('observe', {'job': job, 'receipt': receipt})
+
+
+def launch_claimed(job, receipt):
+    """Claim only on the authority, then bind the exact generation to the run."""
+    if socket.gethostname().split('.')[0].lower() != 'chiap08':
+        raise Refused('not-authority-host')
+    row = claim_for_worker(job['card'], job['owner'])
+    verify_source(row, job)
+    claim = {'authority': 'chiap08', 'owner': job['owner'],
+             'revision': row['meta']['_claim_revision']}
+    return remote('start', {'job': job, 'receipt': receipt, 'claim': claim})
+
+
+def qualify_route(job):
+    """One tiny completion through the configured SKGateway alias, no Matter data."""
+    from skcapstone.fleet_lane_health import acquire_lane_snapshot, lane_health
+    family, model = job['provider'], job['model']
+    stamp = str(time.time_ns())
+    path = STATE / 'observations' / ('lane-' + stamp + '.json')
+    endpoint = GATEWAY.removesuffix('/v1')
+    snapshot = acquire_lane_snapshot(endpoint, [{'name': family, 'model': model}],
+                                     {family: (family,)}, path, stamp)
+    ok, reason = lane_health(snapshot, family, model, cycle_id=stamp, endpoint=endpoint,
+                             capacity_domains=(family,), active_revision=snapshot['runtime_revision'])
+    if not ok:
+        raise Refused('lane-health:' + reason)
+    catalog = json.loads((Path.home() / '.pi/agent/models.json').read_text())
+    provider = catalog.get('providers', {}).get(job['pi_provider'], {})
+    if provider.get('baseUrl', '').rstrip('/') != GATEWAY or model not in {row['id'] for row in provider.get('models', [])}:
+        raise Refused('authority-catalog-mismatch')
+    key = provider.get('apiKey')
+    if not isinstance(key, str) or not key or key.startswith('!'):
+        raise Refused('credential-reference-unavailable')
+    if re.fullmatch('[A-Z_][A-Z0-9_]*', key):
+        key = os.environ.get(key)
+        if not key:
+            raise Refused('credential-environment-unavailable')
+    request = urllib.request.Request(GATEWAY + '/chat/completions',
+        data=json.dumps({'model': model, 'messages': [{'role': 'user', 'content': 'Reply only OK.'}], 'max_tokens': 256, 'stream': False}).encode(),
+        headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key})
+    try:
+        with urllib.request.urlopen(request, timeout=40) as response:
+            payload = response.read(65537)
+        if len(payload) > 65536:
+            raise Refused('completion-response-too-large')
+        answer = json.loads(payload)
+    except urllib.error.HTTPError as exc:
+        raise Refused('completion-http-' + str(exc.code)) from None
+    text = answer.get('choices', [{}])[0].get('message', {}).get('content')
+    served = answer.get('model', '')
+    prefixes = {'deepseek': ('deepseek',), 'codex': ('gpt-',), 'zai': ('glm',)}
+    if not isinstance(text, str) or not text.strip() or not isinstance(served, str) or not served.lower().startswith(prefixes[family]):
+        raise Refused('completion-or-provider-attribution-failed')
+    proof = {'observed_at': time.time(), 'requested_model': model, 'served_model': served,
+             'provider': family, 'gateway_revision': snapshot['runtime_revision'], 'nonempty': True}
+    evidence = STATE / 'observations' / ('completion-' + stamp + '.json')
+    with evidence.open('x') as stream:
+        json.dump(proof, stream, sort_keys=True)
+    return {'ready': True, 'cap': CAPS[family], 'proof': proof}
+
+
+def observation(job):
+    snapshot = collect()
+    if not snapshot['complete']:
+        raise Refused('incomplete-observation')
+    if len(snapshot['workers']) >= ESTATE_CAP:
+        raise Refused('estate-capacity')
+    if not snapshot['hosts'].get(job['host'], {}).get('ready'):
+        raise Refused('host-not-ready')
+    token = '0' * 32
+    check = remote('check', {'job': job, 'receipt': {'card': job['card'], 'host': job['host'],
+                   'provider': job['provider'], 'token': token,
+                   'unit': 'skfleet-fiber-' + job['card'] + '-' + token + '.service'}})
+    if check.get('state') != 'ready' or check.get('host') != job['host'] or check.get('card') != job['card'] or check.get('model') != job['model']:
+        raise Refused('remote-preflight-mismatch')
+    # No completion calls while the estate is already full.
+    proof = qualify_route(job)
+    # Re-probe after the potentially slow completion, not before it.
+    snapshot = collect()
+    snapshot['providers'][job['provider']] = proof
+    return snapshot
+
+
+def cycle(check=False):
+    if socket.gethostname().split('.')[0].lower() != 'chiap08':
+        raise Refused('not-authority-host')
+    if check:
+        return {'mode': 'check', 'observation': collect(), 'queued': len(list(QUEUE.glob('*.json')))}
+    with authority(STATE):
+        recovered = reconcile(STATE, observe)
+        if HOLD.exists():
+            return {'state': 'admission-held', 'reconciled': recovered}
+    paths = sorted(QUEUE.glob('*.json'))
+    if not paths:
+        return {'state': 'waiting-for-reviewed-requests', 'reconciled': recovered}
+    board = cards()
+    results = []
+    for path in paths:
+        job = json.loads(path.read_text())
+        token = '0' * 32
+        validate({'job': job, 'receipt': {'card': job['card'], 'host': job['host'],
+                  'provider': job['provider'], 'token': token, 'unit': 'skfleet-fiber-' + job['card'] + '-' + token + '.service'}})
+        row = board.get(job['card'])
+        if not row:
+            results.append({'card': job['card'], 'state': 'blocked', 'reason': 'unknown-card'})
+            continue
+        try:
+            verify_source(row, job)
+            job['claimable'] = eligible(row, board)
+            result = dispatch_one(STATE, job, lambda: observation(job),
+                launch_claimed, observe, hold_file=HOLD)
+        except Refused as exc:
+            result = {'card': job['card'], 'state': 'waiting', 'reason': str(exc)}
+        results.append(result)
+        if result.get('new_launch') or result.get('reason') in {'estate-capacity', 'actual-start-spacing', 'unresolved-launch', 'authority-busy'}:
+            break
+    return {'state': 'cycle-finished', 'jobs': results}
+
+
+def set_hold():
+    if socket.gethostname().split('.')[0].lower() != 'chiap08':
+        raise Refused('not-authority-host')
+    # Freeze and admission use the same lock. An already-acknowledged worker
+    # is preserved; no subsequent dispatch can slip between freeze and launch.
+    with authority(STATE):
+        HOLD.parent.mkdir(parents=True, exist_ok=True)
+        if not HOLD.exists():
+            with HOLD.open('x') as stream:
+                stream.write('New admission held by f1be0929 operator. Existing workers are preserved.\n')
+        return {'state': 'admission-held', 'workers_stopped': 0}
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--once', action='store_true')
+    parser.add_argument('--hold', action='store_true')
+    parser.add_argument('--describe-card')
+    parser.add_argument('--stage', choices=sorted(PLACEMENT), default='implementation')
+    parser.add_argument('--family', choices=sorted(ROUTES), default='deepseek')
+    args = parser.parse_args()
+    try:
+        value = set_hold() if args.hold else describe(args.describe_card, args.stage, args.family) if args.describe_card else cycle(check=not args.once)
+        print(json.dumps(value, sort_keys=True))
+    except Refused as exc:
+        print(json.dumps({'state': 'waiting', 'reason': str(exc)}))
+    except Exception as exc:
+        print(json.dumps({'state': 'blocked', 'reason': type(exc).__name__}))
+        raise SystemExit(70)
