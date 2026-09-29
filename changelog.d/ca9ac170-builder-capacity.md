@@ -1,0 +1,1 @@
+- Card `ca9ac170`: make each builder node's `builder-capacity` label govern scheduler offers, capacity diagnostics, and lifecycle-fenced node launches, while preserving the default ceiling of four.

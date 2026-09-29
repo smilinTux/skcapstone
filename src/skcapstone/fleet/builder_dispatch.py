@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import fcntl
-import hashlib
 import json
 import logging
 import os
+import secrets
 import shutil
 import subprocess
 import tempfile
@@ -34,6 +34,7 @@ TERMINAL_STATES = {"completed", "blocked", "failed", "stale"}
 MAX_ATTEMPTS = 2
 MATCH_RETRY_LIMIT = 3
 BUILDER_CAPACITY = 4
+CAPACITY_LABEL = "builder-capacity"
 _PROCESSES: dict[str, object] = {}
 _WORKER_TOOLS = "read,bash,edit,write,grep,find,ls"
 _BUNDLED_GUARD = Path(__file__).resolve().parents[3] / "scripts/fleet/pi-cardstore-guard.mjs"
@@ -76,6 +77,36 @@ def request_path(paths: FleetPaths, node: str, card_id: str) -> Path:
 def status_path(paths: FleetPaths, node: str, card_id: str) -> Path:
     """Return the node-owned dispatch status path."""
     return paths.status_path(node, "dispatch", card_id)
+
+
+def _validated_status(path: Path, paths: FleetPaths, node: str) -> dict | None:
+    """Return one canonical dispatch status, ignoring untrusted siblings."""
+    if store._is_conflict_copy(path):
+        return None
+    status = _load(path) or {}
+    card_id = status.get("card_id")
+    if (
+        status.get("schema") != "skfleet.builder-dispatch-status/v1"
+        or status.get("node") != node
+        or not isinstance(card_id, str)
+        or not valid_name(card_id)
+        or path != status_path(paths, node, card_id)
+        or not isinstance(status.get("request_id"), str)
+        or not status["request_id"]
+    ):
+        return None
+    return status
+
+
+def _dispatch_statuses(paths: FleetPaths, node: str) -> dict[str, dict]:
+    """Return canonical validated dispatch statuses keyed by safe card id."""
+    directory = status_path(paths, node, "placeholder").parent
+    records: dict[str, dict] = {}
+    for path in sorted(directory.glob("*.json")) if directory.exists() else ():
+        status = _validated_status(path, paths, node)
+        if status is not None:
+            records[status["card_id"]] = status
+    return records
 
 
 @contextmanager
@@ -182,20 +213,43 @@ def _ready_builders(paths: FleetPaths) -> list[NodeView]:
     return result
 
 
+def _node_capacity(paths: FleetPaths, node: str) -> int:
+    """Return one node's positive builder ceiling, defaulting to four."""
+    spec = store.read_spec(paths, "node", node) or {}
+    raw = (spec.get("labels") or {}).get(CAPACITY_LABEL)
+    try:
+        capacity = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return BUILDER_CAPACITY
+    return capacity if capacity > 0 else BUILDER_CAPACITY
+
+
 def _node_load(paths: FleetPaths, node: str) -> int:
-    """Return the number of nonterminal remote dispatches on one node."""
-    load = 0
+    """Return distinct cards occupying remote dispatch capacity on one node."""
+    active: set[str] = set()
+    statuses = _dispatch_statuses(paths, node)
     directory = paths.root / "dispatch" / node
     for path in sorted(directory.glob("*.json")) if directory.exists() else ():
         request = _load(path) or {}
-        status = _load(status_path(paths, node, str(request.get("card_id") or ""))) or {}
+        card_id = str(request.get("card_id") or "")
+        status = statuses.get(card_id, {})
         if (
             status.get("request_id") == request.get("request_id")
             and status.get("state") in TERMINAL_STATES
         ):
             continue
-        load += 1
-    return load
+        active.add(card_id or path.stem)
+    active.update(
+        card_id for card_id, status in statuses.items() if status.get("state") == "running"
+    )
+    return len(active)
+
+
+def _under_capacity(paths: FleetPaths, ready: list[NodeView]) -> list[NodeView]:
+    """Return Ready builders below their own configured ceilings."""
+    return [
+        view for view in ready if _node_load(paths, view.name) < _node_capacity(paths, view.name)
+    ]
 
 
 def _lease_expired(request: dict, now: datetime) -> bool:
@@ -344,7 +398,9 @@ def offer(
             existing.get("labels"),
         ) == (repository, base_ref, revision, normalized_labels)
         if same_binding:
-            prior = _load(status_path(paths, view.name, card_id)) or {}
+            prior = (
+                _validated_status(status_path(paths, view.name, card_id), paths, view.name) or {}
+            )
             if prior.get("request_id") == existing.get("request_id") and (
                 prior.get("state") in TERMINAL_STATES
                 and not (
@@ -354,7 +410,7 @@ def offer(
             ):
                 return None
             return existing
-        prior = _load(status_path(paths, view.name, card_id)) or {}
+        prior = _validated_status(status_path(paths, view.name, card_id), paths, view.name) or {}
         if (
             prior.get("request_id") == existing.get("request_id")
             and prior.get("state") == "running"
@@ -363,7 +419,7 @@ def offer(
         selected_node = view.name
         break
     if selected_node is None:
-        builders = [view for view in ready if _node_load(paths, view.name) < BUILDER_CAPACITY]
+        builders = _under_capacity(paths, ready)
         decision = scheduler.select(builders, scheduler.Workload("job", card_id))
         if decision.node is None:
             return None
@@ -375,13 +431,9 @@ def offer(
         views=[view for view in ready if view.name == selected_node],
     )
     stamp = now or _now()
-    identity = json.dumps(
-        [card_id, selected_node, repository, base_ref, revision, normalized_labels],
-        separators=(",", ":"),
-    )
     request = {
         "schema": "skfleet.builder-dispatch/v1",
-        "request_id": hashlib.sha256(identity.encode()).hexdigest(),
+        "request_id": secrets.token_hex(32),
         "card_id": card_id,
         "node": selected_node,
         "role": ROLE,
@@ -445,7 +497,7 @@ def decline_reason(
         existing = _load(request_path(paths, view.name, card_id))
         if not existing:
             continue
-        prior = _load(status_path(paths, view.name, card_id)) or {}
+        prior = _validated_status(status_path(paths, view.name, card_id), paths, view.name) or {}
         same_generation = prior.get("request_id") == existing.get("request_id")
         same_binding = (
             existing.get("repository"),
@@ -470,13 +522,14 @@ def decline_reason(
         if same_generation and prior.get("state") == "running":
             return f"superseded-binding-running: node={view.name}"
         return None
-    builders = [view for view in ready if _node_load(paths, view.name) < BUILDER_CAPACITY]
+    builders = _under_capacity(paths, ready)
     if not builders:
         # The common real cause, and the one that used to reach the log as
         # "unschedulable: unschedulable ()": every Ready builder is full, so
         # the scheduler was handed nothing to choose between. Name the loads.
         loads = ", ".join(
-            f"{view.name}={_node_load(paths, view.name)}/{BUILDER_CAPACITY}" for view in ready
+            f"{view.name}={_node_load(paths, view.name)}/{_node_capacity(paths, view.name)}"
+            for view in ready
         )
         return f"builders-at-capacity: {loads}"
     decision = scheduler.select(builders, scheduler.Workload("job", card_id))
@@ -782,8 +835,39 @@ def _consume_available(
         return None
     directory = paths.root / "dispatch" / node
     paths_to_visit = sorted(directory.glob("*.json")) if directory.exists() else ()
+    requests = {
+        str(request.get("card_id") or ""): request
+        for path in paths_to_visit
+        if (request := (_load(path) or {})).get("schema") == "skfleet.builder-dispatch/v1"
+        and request.get("node") == node
+    }
     result = None
-    active = 0
+    active_cards: set[str] = set()
+    reconciled_orphans: set[str] = set()
+    for card_id, status in _dispatch_statuses(paths, node).items():
+        if status.get("state") != "running":
+            continue
+        request = requests.get(card_id) or {}
+        if request.get("request_id") == status.get("request_id"):
+            continue
+        active_cards.add(card_id)  # Preserve live and unknown-liveness orphan generations.
+        try:
+            heartbeat = datetime.strptime(status["heartbeat_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+        if _now() <= heartbeat + timedelta(seconds=LEASE_SECONDS):
+            continue
+        generation = {
+            "request_id": status["request_id"],
+            "card_id": card_id,
+            "node": node,
+        }
+        result = _reconcile_running(paths, coordination_home, node, generation, status)
+        reconciled_orphans.add(card_id)
+        if result["state"] != "running":
+            active_cards.discard(card_id)
     for path in paths_to_visit:
         with _request_exclusion(path):
             request = _load(path) or {}
@@ -792,14 +876,19 @@ def _consume_available(
                 or request.get("node") != node
             ):
                 continue
-            prior = _load(status_path(paths, node, request["card_id"])) or {}
+            prior = (
+                _validated_status(status_path(paths, node, request["card_id"]), paths, node) or {}
+            )
             if prior.get("state") != "running":
                 continue
             if prior.get("request_id") != request.get("request_id"):
-                active += 1  # Preserve an uncertain prior generation and its claim.
+                active_cards.add(request["card_id"])
                 continue
             result = _reconcile_running(paths, coordination_home, node, request, prior)
-            active += result["state"] == "running"
+            if result["state"] == "running":
+                active_cards.add(request["card_id"])
+            else:
+                active_cards.discard(request["card_id"])
     for path in paths_to_visit:
         with _request_exclusion(path):
             request = _load(path) or {}
@@ -808,34 +897,40 @@ def _consume_available(
                 or request.get("node") != node
             ):
                 continue
-            prior = _load(status_path(paths, node, request["card_id"])) or {}
-            if (
-                prior
-                and prior.get("request_id") != request.get("request_id")
-                and (prior.get("owner") or prior.get("claim_revision"))
-            ):
+            prior = (
+                _validated_status(status_path(paths, node, request["card_id"]), paths, node) or {}
+            )
+            if request["card_id"] in reconciled_orphans:
+                continue
+            if prior and prior.get("request_id") != request.get("request_id"):
                 if prior.get("state") == "running":
                     continue
                 prior_owner = str(prior.get("owner") or "")
                 prior_revision = str(prior.get("claim_revision") or "")
-                released = bool(prior_owner and prior_revision) and _release_exact(
-                    coordination_home,
-                    request["card_id"],
-                    prior_owner,
-                    prior_revision,
-                    actor=prior_owner,
-                )
-                result = _write_status(
-                    paths,
-                    node,
-                    request,
-                    "blocked",
-                    owner=prior_owner,
-                    claim_revision=prior_revision,
-                    attempt=int(prior.get("attempt") or 0),
-                    claim_released=released,
-                )
-                continue
+                if prior_owner and prior_revision and not prior.get("claim_released"):
+                    released = _release_exact(
+                        coordination_home,
+                        request["card_id"],
+                        prior_owner,
+                        prior_revision,
+                        actor=prior_owner,
+                    )
+                    if released:
+                        result = _write_status(
+                            paths,
+                            node,
+                            {
+                                "request_id": prior["request_id"],
+                                "card_id": request["card_id"],
+                            },
+                            str(prior.get("state") or "blocked"),
+                            owner=prior_owner,
+                            claim_revision=prior_revision,
+                            attempt=int(prior.get("attempt") or 0),
+                            claim_released=True,
+                        )
+                    continue
+                prior = {}
             if prior.get("request_id") == request.get("request_id"):
                 if prior.get("state") == "running":
                     continue
@@ -861,7 +956,7 @@ def _consume_available(
                     error="unclaimed offer expired",
                 )
                 continue
-            if active >= BUILDER_CAPACITY:
+            if len(active_cards) >= _node_capacity(paths, node):
                 continue
             attempt = int(prior.get("attempt") or 0) + 1
             owner = f"pi-builder-standby-{node}-{request['card_id']}"
@@ -1062,7 +1157,7 @@ def _consume_available(
                 pid_start_ticks=_proc_start_ticks(pid) if pid is not None else None,
                 attempt=attempt,
             )
-            active += 1
+            active_cards.add(request["card_id"])
     return result
 
 
@@ -1076,8 +1171,16 @@ def recover_stale(
 ) -> bool:
     """Release only the exact expired generation reported by this node."""
     request = _load(request_path(paths, node, card_id)) or {}
-    status = _load(status_path(paths, node, card_id)) or {}
-    if not request or status.get("request_id") != request.get("request_id"):
+    status = _validated_status(status_path(paths, node, card_id), paths, node) or {}
+    if request and status.get("request_id") != request.get("request_id"):
+        return False
+    if not request:
+        request = {
+            "request_id": status.get("request_id"),
+            "card_id": status.get("card_id"),
+            "node": node,
+        }
+    if not request.get("request_id") or request.get("card_id") != card_id:
         return False
     if status.get("state") != "running":
         return False
