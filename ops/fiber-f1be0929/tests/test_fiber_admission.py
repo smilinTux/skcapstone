@@ -28,8 +28,42 @@ def job(card='1234abcd'):
 
 
 class AdmissionTest(unittest.TestCase):
-    def test_current_instruction_limit_is_nine_not_provider_entitlement(self):
-        self.assertEqual(module.ESTATE_CAP, 9)
+    def test_approved_estate_limit_is_twelve_not_provider_entitlement(self):
+        self.assertEqual(module.ESTATE_CAP, 12)
+        self.assertEqual(module.SPACING, 75)
+
+    def test_nine_legacy_sessions_admit_three_distributed_workers_not_four(self):
+        truth = snapshot()
+        truth['workers'] = [{'key': f'native:{i}', 'host': 'chiap08',
+                             'provider': 'codex' if i < 8 else None} for i in range(9)]
+        truth['hosts'].update(chiwk12={'ready': True, 'slots': 2}, ziowk01={'ready': True, 'slots': 2})
+        truth['providers']['zai'] = {'ready': True, 'cap': 5}
+        tasks = [dict(job('1234abc1'), host='chiwk12'),
+                 dict(job('1234abc2'), host='chiap03', stage='review', provider='zai', producer_provider='deepseek'),
+                 dict(job('1234abc3'), host='ziowk01')]
+        for index, task in enumerate(tasks):
+            now = 1000 + index * 75
+            truth['observed_at'] = now
+            self.assertEqual(self.reserve(task, truth, now)['host'], task['host'])
+        truth['observed_at'] = 1225
+        with self.assertRaisesRegex(module.Refused, 'estate-capacity'):
+            self.reserve(dict(job('1234abc4'), host='chiap04', stage='tests', provider='zai'), truth, 1225)
+        # Freeing one unrelated native slot still does not expand DeepSeek's
+        # provider cap: two reservations plus one unknown already consume 3.
+        truth['workers'] = truth['workers'][1:]
+        with self.assertRaisesRegex(module.Refused, 'provider-capacity'):
+            self.reserve(dict(job('1234abc4'), host='chiwk12'), truth, 1225)
+
+    def test_estate_rollback_to_nine_preserves_but_refuses_more_work(self):
+        from unittest.mock import patch
+        import sqlite3
+        self.reserve()
+        truth = snapshot(1075)
+        truth['workers'] = [{'key': f'native:{i}', 'host': 'chiap08', 'provider': 'codex'} for i in range(9)]
+        with patch.object(module, 'ESTATE_CAP', 9), self.assertRaisesRegex(module.Refused, 'estate-capacity'):
+            self.reserve(job('1234abc2'), truth=truth, now=1075)
+        with sqlite3.connect(self.db) as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM reservations').fetchone()[0], 1)
 
     def test_placement_spreads_work_and_counts_pending_reservations(self):
         truth = snapshot()
