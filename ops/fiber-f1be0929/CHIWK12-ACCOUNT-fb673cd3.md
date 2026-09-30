@@ -98,3 +98,17 @@ admission file and must not overwrite the installed twelve-worker module.
 Native configuration and ignore semantics:
 [Syncthing config API](https://docs.syncthing.net/rest/config.html),
 [Syncthing ignores](https://docs.syncthing.net/users/ignoring.html).
+
+## Live setup-order regression
+
+The initial live setup connected successfully but transferred no index.
+Native Syncthing had removed the folder's old-peer reference because that
+device was not registered when the folder was created. The helper now
+registers that device after filter verification, patches the still-paused
+new folder's exact two-device list and checks the native readback before
+modifying the old instance. Regression tests reproduce native normalization.
+
+For the already-created replica only, recovery is a bounded native patch:
+verify both public IDs, paths, ignore list and existing old share; pause only
+the new folder, add its missing old-peer reference, verify both IDs, then
+unpause. No configuration reset, identity regeneration or file deletion.

@@ -25,7 +25,11 @@ class Peer:
             return {'myID': self.name}
         if path == '/config/folders':
             if method == 'POST':
-                self.folders[body['id']] = body
+                # Native Syncthing removes folder devices not registered yet.
+                folder = copy.deepcopy(body)
+                known = {row['deviceID'] for row in self.devices}
+                folder['devices'] = [row for row in body['devices'] if row['deviceID'] in known]
+                self.folders[body['id']] = folder
             return list(self.folders.values())
         if path == '/config/devices':
             if method == 'POST':
@@ -55,6 +59,7 @@ class MetadataSyncTest(unittest.TestCase):
         self.assertEqual(new.options, OPTIONS)
         self.assertEqual(new.options['listenAddresses'], ['tcp://127.0.0.1:22001'])
         self.assertFalse(new.folders['skcapstone']['paused'])
+        self.assertEqual({row['deviceID'] for row in new.folders['skcapstone']['devices']}, {'old', 'new'})
         self.assertEqual(IGNORES[-1], '*')
         for unsafe in ('!/agents', '!/identity', '!/config', '!/coordination', '!/fleet', '!/evidence'):
             self.assertNotIn(unsafe, IGNORES)
@@ -64,6 +69,20 @@ class MetadataSyncTest(unittest.TestCase):
     def test_unverified_filter_never_modifies_existing_instance(self):
         old, new = Peer('old'), Peer('new', broken_ignores=True)
         with self.assertRaises(ValueError):
+            configure(old, new)
+        self.assertEqual(old.writes, [])
+        self.assertTrue(new.folders['skcapstone']['paused'])
+
+    def test_failed_new_sharing_readback_never_modifies_existing_instance(self):
+        old, new = Peer('old'), Peer('new')
+        original = new.call
+        def damaged(path, method='GET', body=None):
+            result = original(path, method, body)
+            if path == '/config/folders/skcapstone' and method == 'PATCH' and 'devices' in body:
+                new.folders['skcapstone']['devices'] = [{'deviceID': 'new'}]
+            return result
+        new.call = damaged
+        with self.assertRaisesRegex(ValueError, 'new-sharing-readback-failed'):
             configure(old, new)
         self.assertEqual(old.writes, [])
         self.assertTrue(new.folders['skcapstone']['paused'])

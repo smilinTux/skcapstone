@@ -65,20 +65,29 @@ def configure(old, new):
         raise ValueError('loopback-settings-readback-failed')
     folder = new.call('/config/defaults/folder')
     folder.update(id='skcapstone', label='SKFleet metadata only fb673cd3', path=ROOT,
-                  type='sendreceive', paused=True,
-                  devices=[{'deviceID': new_id}, {'deviceID': old_id}])
+                  type='sendreceive', paused=True, devices=[{'deviceID': new_id}])
     new.call('/config/folders', 'POST', folder)
     new.call('/db/ignores?folder=skcapstone', 'POST', {'ignore': IGNORES})
     if new.call('/db/ignores?folder=skcapstone').get('ignore') != IGNORES:
         raise ValueError('metadata-filter-readback-failed')
-    for peer, device, address, name in (
-        (new, old_id, 'tcp://127.0.0.1:22000', 'chiwk12-mrarch-existing'),
-        (old, new_id, 'tcp://127.0.0.1:22001', 'chiwk12-skuser01-fleet-fb673cd3'),
-    ):
-        entry = peer.call('/config/defaults/device')
-        entry.update(deviceID=device, name=name, addresses=[address],
-                     introducer=False, autoAcceptFolders=False, paused=False)
-        peer.call('/config/devices', 'POST', entry)
+    # Native Syncthing silently drops unknown devices from folder definitions.
+    # Register the peer first, then share the still-paused, filtered folder.
+    entry = new.call('/config/defaults/device')
+    entry.update(deviceID=old_id, name='chiwk12-mrarch-existing',
+                 addresses=['tcp://127.0.0.1:22000'], introducer=False,
+                 autoAcceptFolders=False, paused=False)
+    new.call('/config/devices', 'POST', entry)
+    new.call('/config/folders/skcapstone', 'PATCH',
+             {'devices': [{'deviceID': new_id}, {'deviceID': old_id}]})
+    shared = new.call('/config/folders/skcapstone')
+    if (not shared['paused'] or len(shared['devices']) != 2
+            or {row['deviceID'] for row in shared['devices']} != {new_id, old_id}):
+        raise ValueError('new-sharing-readback-failed')
+    entry = old.call('/config/defaults/device')
+    entry.update(deviceID=new_id, name='chiwk12-skuser01-fleet-fb673cd3',
+                 addresses=['tcp://127.0.0.1:22001'], introducer=False,
+                 autoAcceptFolders=False, paused=False)
+    old.call('/config/devices', 'POST', entry)
     current = old.call('/config/folders/skcapstone')
     # Native API has no conditional/add-item endpoint. This one-time operator
     # window is serialized locally; unrelated GUI/config writers must be idle.
