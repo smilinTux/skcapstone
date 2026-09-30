@@ -35,6 +35,8 @@ class _NoRedirect(HTTPRedirectHandler):
 class ForgejoClient:
     """Keep one credential confined to one explicitly authorized origin."""
 
+    _read_states = frozenset({"open"})
+
     def __init__(self, origin: str, token: str):
         if origin != SKGIT_ORIGIN:
             raise ForgejoError("forge_origin_not_authorized")
@@ -58,7 +60,7 @@ class ForgejoClient:
             or any(key not in {"page", "limit", "state"} for key in query)
             or any(len(values) != 1 for values in query.values())
             or any(not query[key][0].isdigit() for key in ("page", "limit") if key in query)
-            or ("state" in query and query["state"][0] != "open")
+            or ("state" in query and query["state"][0] not in self._read_states)
             or not (
                 parsed.path in {"/api/v1/user", "/api/v1/user/teams", _ROOT}
                 or parsed.path.startswith(_ROOT + "/")
@@ -82,6 +84,10 @@ class ForgejoClient:
                 raise ForgejoError("forge_review_request_invalid")
         elif method != "GET" or payload is not None:
             raise ForgejoError("forge_method_not_authorized")
+        return self._send(method, path, payload)
+
+    def _send(self, method: str, path: str, payload: dict | None) -> Any:
+        """Send an already-authorized request through the bounded transport."""
         data = None if payload is None else json.dumps(payload).encode("utf-8")
         request = Request(
             self._origin + path,
@@ -109,6 +115,37 @@ class ForgejoClient:
     def pages(self, path: str) -> list[dict[str, Any]]:
         """Read all bounded pages, never interpreting a short page as complete."""
         return _pages(self, path)
+
+
+class ForgejoWipClient(ForgejoClient):
+    """Separate publication capability: create drafts, never approve or merge."""
+
+    _read_states = frozenset({"open", "all"})
+
+    def request(self, method: str, path: str, payload: dict | None = None) -> Any:
+        """Permit only existing reads or one strictly shaped WIP creation."""
+        if method == "GET":
+            return super().request(method, path, payload)
+        if method != "POST" or path != _ROOT + "/pulls":
+            raise ForgejoError("forge_wip_write_not_authorized")
+        if not isinstance(payload, dict) or set(payload) != {"title", "body", "head", "base"}:
+            raise ForgejoError("forge_wip_payload_invalid")
+        title, body, head = (payload[k] for k in ("title", "body", "head"))
+        if (
+            not isinstance(title, str)
+            or not title.startswith("WIP: ")
+            or not title[5:].strip()
+            or len(title) > 240
+            or any(ord(c) < 32 or ord(c) == 127 for c in title)
+            or not isinstance(body, str)
+            or not body.strip()
+            or len(body) > 20000
+            or not isinstance(head, str)
+            or not re.fullmatch(r"wip-[0-9a-f]{8}-[0-9a-f]{40}", head)
+            or payload["base"] != "main"
+        ):
+            raise ForgejoError("forge_wip_payload_invalid")
+        return self._send(method, path, payload)
 
 
 def _pages(client: Any, path: str) -> list[dict[str, Any]]:

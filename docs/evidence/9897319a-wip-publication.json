@@ -1,0 +1,30 @@
+{
+  "card": "9897319a",
+  "producer": "jarvis",
+  "producer_family": "codex",
+  "base_revision": "712efc587f72387b0d1203adeb1729bf4f28c8ff",
+  "scope": "Staged source only. Narrow private Forgejo draft publication adapter, no live install or timer change.",
+  "red": "tests/test_wip_publication.py failed collection because ForgejoWipClient did not exist before implementation.",
+  "checks": [
+    {
+      "command": "PYTHONPATH=src /home/skuser01/.skenv/bin/python -m pytest -q tests/test_wip_publication.py tests/test_forgejo.py tests/test_seraph_forgejo.py tests/test_seraph_review_publisher.py tests/test_link_observation_producer.py tests/test_link_review_work.py",
+      "result": "204 passed in 2.64s"
+    },
+    {
+      "command": "ruff check src/skcapstone/forgejo.py src/skcapstone/wip_publication.py tests/test_wip_publication.py",
+      "result": "All checks passed"
+    },
+    {
+      "command": "black --check src/skcapstone/forgejo.py src/skcapstone/wip_publication.py tests/test_wip_publication.py",
+      "result": "3 files would be left unchanged"
+    }
+  ],
+  "limitations": [
+    "No live publication or hosted CI claimed by these offline tests.",
+    "The caller must qualify exact source, independent review evidence, authority, source-only scope, Git ancestry and CI effects before this transport is used.",
+    "Publication must be serialized by the existing authority lock. No additional scheduler is introduced.",
+    "Automatic inactive-claim handoff and continuous queue refill are not implemented by this transport increment.",
+    "The isolated review sandbox may not contain pytest. Independent review may run standard-library adversarial checks without installing dependencies; do not misreport reproduction of the operator pytest run."
+  ],
+  "rollback": "Not installed. Preserve local review snapshot and leave existing deployed modules and all timers unchanged."
+}
