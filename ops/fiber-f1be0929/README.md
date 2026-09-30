@@ -10,8 +10,11 @@ c6031047328348aca53dc3611cf94ceb56a9006c.
 All new files for this snapshot are under ops/fiber-f1be0929/.
 The local repository has no remote configured, preventing accidental pushes.
 
-The Python files correspond to ~/.local/lib/skfleet-fiber/ on chiap08.
-Admission and worker files also match chiap02/03/04. Shell candidates correspond
+The Python files are candidate operational sources for ~/.local/lib/skfleet-fiber/.
+The revised controller is staged, not installed. The worker startup PATH fix
+is installed on chiap08 and chiap03 to permit independent review execution;
+chiap02 and chiap04 still need the reviewed update before canary execution.
+The admission file also matches chiap02/03/04. Shell candidates correspond
 to the installed llm-orch wrappers. Reports are chronological and contain
 earlier hashes; READINESS-AUDIT-20260929T2219.md has the later installed hashes.
 MAINTENANCE-PAUSE-20260929.md supersedes the earlier natural-drain-only posture.
@@ -54,10 +57,19 @@ provider accounting, launch spacing, transport ambiguity, and native receipts.
 
 - No distributed implementation/review/test canary has run. No useful-work
   throughput improvement has been demonstrated.
-- The installed qualification helper accepts any nonempty glm-prefixed served
-  model. A live sk-zai-m response reported glm-5.3-flash, currently class S.
-  That transport success is not proof of M-class qualification. GLM admission
-  must remain held until exact requested/resolved/served qualification agrees.
+- The revised qualification helper rejects a served model different from the
+  native selected bucket member, or a different provider/request attribution.
+  A live sk-zai-m response selected glm-4.6 but served glm-5.3-flash. GLM
+  admission remains held; transport success is not exact-model qualification.
+- Live review startup exposed missing CLI and Node directories in systemd
+  and child PATH. The candidate sets one shared explicit PATH and runs Pi
+  --version during preflight. Failed attempts and workspaces were preserved.
+- The gateway omitted the deepseek-flash alias from per-model context limits.
+  A 120 KB fallback discarded hundreds of messages, causing repeated review
+  inspection. Bounded gateway repair 309ae923 added only this alias, passed
+  native rollback/reload checks and 30 regressions, and preserved a middle
+  marker in an actual 190 KB, 183-message DeepSeek completion. This does not
+  itself qualify the full rollout or its interrupted review.
 - Several native CLI processes are counted conservatively, including possibly
   idle terminals. Do not erase them from occupancy without positive evidence.
   Codex family accounting currently prevents adding another Codex worker.

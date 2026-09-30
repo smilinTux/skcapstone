@@ -19,6 +19,7 @@ ROUTES = {'deepseek': ('skgw-deepseek', 'deepseek-flash'),
 STATE = Path.home() / '.local/state/skfleet-fiber'
 DATA = Path.home() / '.local/share/skfleet-fiber'
 GATEWAY = 'http://chiap01:18790/v1'
+WORKER_PATH = ':'.join(str(Path.home() / path) for path in ('.skenv/bin', '.npm-global/bin', '.local/bin')) + ':/usr/local/bin:/usr/bin:/bin'
 
 
 def validate(request):
@@ -166,6 +167,7 @@ def start(request):
         stream.flush()
         os.fsync(stream.fileno())
     command = ['systemd-run', '--user', '--quiet', '--service-type=exec', '--unit', receipt['unit'],
+               '--setenv=PATH=' + WORKER_PATH,
                '--description', 'SKFleet fiber ' + job['card'] + ' ' + receipt['token'],
                '--property=RemainAfterExit=yes', '--property=KillMode=control-group',
                '--property=CPUQuota=200%', '--property=MemoryMax=3G', '--property=MemorySwapMax=512M',
@@ -214,7 +216,7 @@ def execute(request):
     runtime.mkdir()
     (runtime / 'tmp').mkdir()
     (runtime / 'output').mkdir()
-    env = {'HOME': str(Path.home()), 'PATH': str(Path.home() / '.skenv/bin') + ':' + str(Path.home() / '.npm-global/bin') + ':/usr/local/bin:/usr/bin:/bin',
+    env = {'HOME': str(Path.home()), 'PATH': WORKER_PATH,
            'LANG': 'C.UTF-8', 'SKAGENT': job['owner'], 'SKCAPSTONE_AGENT': job['owner'],
            'SKFLEET_CARD_ID': job['card'], 'SKFLEET_CLAIM_REVISION': row['meta']['_claim_revision'],
            'SKFLEET_PROVIDER': job['provider'], 'SKFLEET_MODEL': job['model'],
@@ -258,6 +260,11 @@ if __name__ == '__main__':
             check_catalog(job)
             if not (Path.home() / '.skenv/bin/pi-cardstore-guard.mjs').is_file() or not os.access(Path.home() / '.npm-global/bin/pi', os.X_OK):
                 raise Refused('worker-runtime-unqualified')
+            runtime = subprocess.run([str(Path.home() / '.npm-global/bin/pi'), '--version'],
+                                     env={'HOME': str(Path.home()), 'PATH': WORKER_PATH, 'LANG': 'C.UTF-8'},
+                                     capture_output=True, text=True, timeout=15)
+            if runtime.returncode:
+                raise Refused('worker-runtime-startup-failed')
             print(json.dumps({'state': 'ready', 'card': job['card'], 'host': job['host'], 'model': job['model']}))
         elif args.mode == 'start':
             print(json.dumps(start(request), sort_keys=True))

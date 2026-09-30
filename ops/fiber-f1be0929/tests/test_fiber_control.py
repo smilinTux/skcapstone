@@ -12,6 +12,33 @@ from test_fiber_admission import job, snapshot
 
 
 class ControlTest(unittest.TestCase):
+    def test_served_model_must_match_exact_routed_member(self):
+        task = {'provider': 'zai', 'model': 'sk-zai-m'}
+        headers = {'x-sk-provider': 'zai', 'x-sk-model-requested': 'sk-zai-m',
+                   'x-sk-bucket-member': 'glm-4.6', 'x-sk-model-served': 'glm-5.3-flash'}
+        answer = {'model': 'glm-5.3-flash', 'choices': [{'message': {'content': 'OK'}}]}
+        with self.assertRaisesRegex(Refused, 'completion-model-substitution'):
+            control.validate_completion(task, answer, headers)
+        answer['model'] = headers['x-sk-model-served'] = 'glm-4.6'
+        self.assertEqual(control.validate_completion(task, answer, headers), 'glm-4.6')
+        del headers['x-sk-bucket-member']
+        with self.assertRaises(Refused):
+            control.validate_completion(task, answer, headers)
+
+    def test_pinned_completion_requires_exact_provider_and_model(self):
+        task = {'provider': 'deepseek', 'model': 'deepseek-flash'}
+        headers = {'x-sk-provider': 'deepseek', 'x-sk-model-requested': 'deepseek-flash',
+                   'x-sk-model-served': 'deepseek-flash'}
+        answer = {'model': 'deepseek-flash', 'choices': [{'message': {'content': 'OK'}}]}
+        self.assertEqual(control.validate_completion(task, answer, headers), 'deepseek-flash')
+        backend_headers = dict(headers, **{'x-sk-backend': 'deepseek'})
+        del backend_headers['x-sk-provider']
+        self.assertEqual(control.validate_completion(task, answer, backend_headers), 'deepseek-flash')
+        for field in ['x-sk-provider', 'x-sk-model-requested', 'x-sk-model-served']:
+            bad = dict(headers, **{field: 'other'})
+            with self.subTest(field=field), self.assertRaises(Refused):
+                control.validate_completion(task, answer, bad)
+
     def test_authority_claim_precedes_remote_launch_and_binds_revision(self):
         task = dict(job(), owner='fiber-test')
         row = {'owner': 'fiber-test', 'meta': {'_claim_revision': 'a' * 32}}

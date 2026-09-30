@@ -96,6 +96,25 @@ def launch_claimed(job, receipt):
     return remote('start', {'job': job, 'receipt': receipt, 'claim': claim})
 
 
+def validate_completion(job, answer, headers):
+    """Require exact attribution, including the upstream's returned model.
+
+    Native bucket admission selects the qualified member. A different served
+    model is not evidence that member completed, even within the same family.
+    """
+    family, model = job['provider'], job['model']
+    served = answer.get('model')
+    content = answer.get('choices', [{}])[0].get('message', {}).get('content')
+    if not isinstance(content, str) or not content.strip():
+        raise Refused('completion-empty')
+    if headers.get('x-sk-provider', headers.get('x-sk-backend')) != family or headers.get('x-sk-model-requested') != model:
+        raise Refused('completion-attribution-mismatch')
+    expected = headers.get('x-sk-bucket-member') if model.startswith('sk-') else model
+    if not expected or served != expected or headers.get('x-sk-model-served') != served:
+        raise Refused('completion-model-substitution')
+    return served
+
+
 def qualify_route(job):
     """One tiny completion through the configured SKGateway alias, no Matter data."""
     from skcapstone.fleet_lane_health import acquire_lane_snapshot, lane_health
@@ -126,18 +145,16 @@ def qualify_route(job):
     try:
         with urllib.request.urlopen(request, timeout=40) as response:
             payload = response.read(65537)
+            headers = {key.lower(): value for key, value in response.headers.items()}
         if len(payload) > 65536:
             raise Refused('completion-response-too-large')
         answer = json.loads(payload)
     except urllib.error.HTTPError as exc:
         raise Refused('completion-http-' + str(exc.code)) from None
-    text = answer.get('choices', [{}])[0].get('message', {}).get('content')
-    served = answer.get('model', '')
-    prefixes = {'deepseek': ('deepseek',), 'codex': ('gpt-',), 'zai': ('glm',)}
-    if not isinstance(text, str) or not text.strip() or not isinstance(served, str) or not served.lower().startswith(prefixes[family]):
-        raise Refused('completion-or-provider-attribution-failed')
+    served = validate_completion(job, answer, headers)
     proof = {'observed_at': time.time(), 'requested_model': model, 'served_model': served,
-             'provider': family, 'gateway_revision': snapshot['runtime_revision'], 'nonempty': True}
+             'provider': family, 'gateway_revision': snapshot['runtime_revision'], 'nonempty': True,
+             'resolved_model': headers.get('x-sk-bucket-member', model)}
     evidence = STATE / 'observations' / ('completion-' + stamp + '.json')
     with evidence.open('x') as stream:
         json.dump(proof, stream, sort_keys=True)

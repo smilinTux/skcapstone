@@ -117,6 +117,10 @@ class WorkerTest(unittest.TestCase):
                      '--property=RuntimeMaxSec=3600', '--property=RemainAfterExit=yes']:
             self.assertIn(flag, calls[0])
         self.assertNotIn('--collect', calls[0])
+        self.assertIn('--setenv=PATH=' + str(Path.home() / '.skenv/bin') + ':'
+                      + str(Path.home() / '.npm-global/bin')
+                      + ':' + str(Path.home() / '.local/bin')
+                      + ':/usr/local/bin:/usr/bin:/bin', calls[0])
 
     def test_service_receipt_requires_exact_description_and_exit(self):
         receipt = request()['receipt']
