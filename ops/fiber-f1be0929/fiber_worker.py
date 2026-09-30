@@ -318,13 +318,15 @@ def execute(request):
                         check_claim=lambda: verify_claim(request)) as bridge:
         exit_code = fiber_sandbox.run_logged(wrapped, control / 'worker.log')
         calls = bridge.requests
+        failures = list(bridge.failures)
     # No shell or repository-controlled Git command is executed by the host
     # after model work. Even the Git config inside the task is now untrusted.
     verify_claim(request)
     proof = {'card': job['card'], 'claim_revision': row['meta']['_claim_revision'],
              'token': receipt['token'], 'host': job['host'], 'workspace': str(workspace),
              'base_revision': job['base_revision'], 'exit_code': exit_code,
-             'gateway_requests': calls, 'accepted': False, 'state': 'awaiting-external-verification'}
+             'gateway_requests': calls, 'gateway_failures': failures,
+             'accepted': False, 'state': 'awaiting-external-verification'}
     evidence = control / 'execution.json'
     with evidence.open('x') as stream:
         json.dump(proof, stream, sort_keys=True)

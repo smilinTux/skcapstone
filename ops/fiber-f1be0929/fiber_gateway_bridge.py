@@ -109,7 +109,14 @@ class GatewayHandler(QuietHandler):
                 if family != self.server.family or requested != self.server.model or not selected or served != selected:
                     raise ValueError('gateway-attribution-refused')
                 self.copy_response(response)
-        except Exception:
+        except Exception as exc:
+            failure = {'type': type(exc).__name__}
+            if isinstance(exc, urllib.error.HTTPError):
+                failure['http_status'] = exc.code
+            if isinstance(exc, ValueError) and str(exc) in {'gateway-attribution-refused', 'completion-model-refused', 'response-size'}:
+                failure['reason'] = str(exc)
+            if len(self.server.failures) < MAX_REQUESTS:
+                self.server.failures.append(failure)
             # No raw exception text: it may include tokens, URLs or prompt text.
             self.close_connection = True
             if not self.response_started:
@@ -127,6 +134,7 @@ def gateway_socket(path, *, endpoint, credential, family, model, check_claim):
     server.endpoint, server.credential = endpoint, credential
     server.family, server.model = family, model
     server.check_claim, server.requests = check_claim, 0
+    server.failures = []
     server.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

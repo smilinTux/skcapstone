@@ -48,10 +48,11 @@ def main():
                                           fiber_sandbox.public_catalog(catalog, provider, model))
             (control / 'probe.mjs').write_text(SCRIPT)
             with gateway_socket(control / 'gateway.sock', endpoint='http://chiap01:18790/v1',
-                                credential=key, family=family, model=model, check_claim=lambda: None):
+                                credential=key, family=family, model=model, check_claim=lambda: None) as server:
                 command = fiber_sandbox.command(work, control, Path.home() / '.npm-global/lib/node_modules',
                     ['/usr/bin/python3', '/opt/fiber_gateway_bridge.py', '/usr/bin/node', '/run/fleet/probe.mjs'])
                 result = subprocess.run(command, env={'PATH': '/usr/bin:/bin'}, timeout=180)
+                print(json.dumps({'provider': family, 'gateway_requests': server.requests, 'failures': server.failures}), flush=True)
                 if result.returncode:
                     return result.returncode
     return 0
