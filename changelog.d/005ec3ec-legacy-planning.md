@@ -1,0 +1,1 @@
+Legacy fleet rotation now requires live mode before invoking its actuating worker-liveness cycle or publishing a remote builder offer. Planning retains diagnostic output without activating these worker-control paths.

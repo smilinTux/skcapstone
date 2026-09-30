@@ -537,6 +537,9 @@ def test_timer_entrypoint_uses_relocated_fleet_root(
     ]
     assert len(calls) == 1
     assert calls[0].args == []
+    guards = [node for node in tree.body if isinstance(node, ast.If)
+              and ast.unparse(node.test) == "not DRY"]
+    assert any(calls[0] in list(ast.walk(node)) for node in guards)
 
 
 def test_child_activity_is_never_the_wrapper_beats_own_timestamp(
