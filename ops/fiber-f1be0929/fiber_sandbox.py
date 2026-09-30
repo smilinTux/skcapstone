@@ -55,8 +55,40 @@ def public_catalog(catalog, provider, model):
                                      'api': api, 'apiKey': 'isolated-controller', 'models': [selected]}}}
 
 
-def command(workspace, control, pi_root, argv, *, identity=None):
+def environment_mount(test_environment):
+    """Validate one qualified environment into read-only bind/env additions.
+
+    Only the operator venv is exposed, read-only, at the fixed private prefix
+    /opt/test-env. Its bin is prepended to PATH and validated repository-
+    relative source directories are added to PYTHONPATH under /work. No host
+    path is writable and no host credential or network is introduced.
+    """
+    if test_environment is None:
+        return [], {}
+    venv = Path(test_environment['venv'])
+    if venv.is_symlink() or not (venv / 'bin').is_dir():
+        raise Refused('test-environment-unavailable')
+    source_dirs = test_environment.get('source_dirs')
+    if not isinstance(source_dirs, list):
+        raise Refused('test-environment-source-dir')
+    pythonpath = []
+    for directory in source_dirs:
+        if (not isinstance(directory, str) or not directory or directory.startswith('/')
+                or directory.startswith('~') or '\\' in directory or '\x00' in directory
+                or any(part in {'', '.', '..'} for part in directory.split('/'))
+                or not re.fullmatch('[A-Za-z0-9_][A-Za-z0-9_./-]*', directory)):
+            raise Refused('test-environment-source-dir')
+        pythonpath.append('/work/' + directory)
+    additions = [['--ro-bind', str(venv), '/opt/test-env']]
+    environment = {'PATH': '/opt/test-env/bin:/opt/node/bin:/usr/bin:/bin'}
+    if pythonpath:
+        environment['PYTHONPATH'] = ':'.join(pythonpath)
+    return additions, environment
+
+
+def command(workspace, control, pi_root, argv, *, identity=None, test_environment=None):
     """Build a root containing system binaries and exactly one writable repo."""
+    mounts, environment = environment_mount(test_environment)
     result = ['/usr/bin/bwrap', '--unshare-all', '--unshare-user', '--disable-userns', '--new-session',
               '--die-with-parent', '--cap-drop', 'ALL', '--clearenv',
               '--ro-bind', '/usr', '/usr', '--symlink', 'usr/bin', '/bin',
@@ -66,22 +98,47 @@ def command(workspace, control, pi_root, argv, *, identity=None):
               '--bind', str(workspace), '/work', '--ro-bind', str(control), '/run/fleet',
               '--ro-bind', str(pi_root), '/opt/pi',
               '--ro-bind', str(node_executable()), NODE,
-              '--ro-bind', str(Path(__file__).with_name('fiber_gateway_bridge.py')), '/opt/fiber_gateway_bridge.py',
-              '--remount-ro', '/', '--remount-ro', '/run', '--chdir', '/work']
+              '--ro-bind', str(Path(__file__).with_name('fiber_gateway_bridge.py')), '/opt/fiber_gateway_bridge.py']
+    for mount in mounts:
+        result += mount
+    result += ['--remount-ro', '/', '--remount-ro', '/run', '--chdir', '/work']
     # Host sudo wrappers, shell initialization, keys, DBus and Docker sockets
     # are deliberately not present. /usr contains binaries, not operator state.
-    for name, value in {'HOME': '/work/.fiber-runtime/home', 'PATH': '/opt/node/bin:/usr/bin:/bin',
+    base_environment = {'HOME': '/work/.fiber-runtime/home', 'PATH': '/opt/node/bin:/usr/bin:/bin',
                         'LANG': 'C.UTF-8', 'TMPDIR': '/tmp', 'GIT_CONFIG_NOSYSTEM': '1',
                         'GIT_CONFIG_GLOBAL': '/dev/null', 'GIT_TERMINAL_PROMPT': '0',
                         'SKLEGAL_SIMULATION': '1', 'SKLEGAL_TEST_PORT': '0',
                         'SKLEGAL_TEST_DB': '/work/.fiber-runtime/test.sqlite3',
-                        'SKLEGAL_TEST_OUTPUT': '/work/.fiber-runtime/output'}.items():
+                        'SKLEGAL_TEST_OUTPUT': '/work/.fiber-runtime/output'}
+    base_environment.update(environment)
+    for name, value in base_environment.items():
         result += ['--setenv', name, value]
     for name, value in (identity or {}).items():
         if name not in {'SKFLEET_CARD_ID', 'SKFLEET_PROVIDER', 'SKFLEET_MODEL', 'SKAGENT', 'SKCAPSTONE_AGENT'}:
             raise Refused('sandbox-environment-refused')
         result += ['--setenv', name, value]
     return result + ['--', *argv]
+
+
+def environment_probe(workspace, control, pi_root, test_environment, *, timeout=60):
+    """Qualify the private Python prefix inside the real sandbox boundary.
+
+    Requires the mounted /opt/test-env prefix to report that exact prefix and
+    to import pytest and pydantic under Python 3.12. The host interpreter is
+    never consulted, so host availability cannot qualify a task. Any failure
+    refuses before model execution or workspace model work.
+    """
+    if test_environment is None:
+        return True
+    probe_code = ('import sys; assert sys.prefix == "/opt/test-env", sys.prefix; '
+                  'assert sys.version_info[:2] == (3, 12), sys.version_info; '
+                  'import pytest, pydantic')
+    result = subprocess.run(command(workspace, control, pi_root,
+        ['/opt/test-env/bin/python3.12', '-c', probe_code], test_environment=test_environment),
+        env={'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'}, capture_output=True, text=True, timeout=timeout)
+    if result.returncode:
+        raise Refused('test-environment-imports-failed')
+    return True
 
 
 def probe():

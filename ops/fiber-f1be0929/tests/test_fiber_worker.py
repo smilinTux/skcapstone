@@ -299,6 +299,65 @@ class WorkerTest(unittest.TestCase):
         with self.assertRaisesRegex(Refused, 'source-lane-policy'):
             worker.verify_source(row, item['job'])
 
+    def test_job_without_environment_keeps_stdlib_only_behavior(self):
+        item = request()
+        job, _ = worker.validate(item)
+        self.assertNotIn('test_environment', job)
+        self.assertIsNone(worker.environment_plan(job))
+
+    def test_environment_selector_is_normalized_and_stage_bound(self):
+        item = request()
+        item['job'].update(stage='tests', test_environment={'lock_sha256': 'a' * 64, 'python': '3.12'})
+        job, _ = worker.validate(item)
+        self.assertEqual(job['test_environment'], {'lock_sha256': 'a' * 64, 'python': '3.12'})
+        for selector in ('not-a-dict', {'lock_sha256': 'a' * 64, 'python': '3.12', 'venv': '/tmp/x'}):
+            item = request()
+            item['job'].update(stage='tests', test_environment=selector)
+            with self.subTest(selector=selector), self.assertRaises(Refused):
+                worker.validate(item)
+        item = request()
+        item['job'].update(stage='implementation', test_environment={'lock_sha256': 'a' * 64, 'python': '3.12'})
+        with self.assertRaisesRegex(Refused, 'test-environment-stage'):
+            worker.validate(item)
+
+    def test_missing_environment_refuses_before_claim(self):
+        item = request()
+        item['job'].update(stage='tests', test_environment={'lock_sha256': 'a' * 64, 'python': '3.12'})
+        with patch.object(worker.socket, 'gethostname', return_value='chiap02'), \
+             patch.object(worker, 'check_catalog'), \
+             patch.object(worker, 'environment_plan', side_effect=Refused('test-environment-unavailable')) as plan, \
+             patch.object(worker, 'verify_claim') as claim:
+            with self.assertRaisesRegex(Refused, 'test-environment-unavailable'):
+                worker.execute(item)
+            plan.assert_called_once()
+            claim.assert_not_called()
+
+    def test_environment_plan_uses_exact_repository(self):
+        item = request()
+        selected = {'lock_sha256': 'a' * 64, 'python': '3.12'}
+        item['job'].update(stage='tests', test_environment=selected)
+        job, _ = worker.validate(item)
+        with patch.object(worker.fiber_test_environment, 'qualify', return_value={'venv': '/x'}) as qualify:
+            self.assertEqual(worker.environment_plan(job), {'venv': '/x'})
+            qualify.assert_called_once_with(selected, job['repository'])
+
+    def test_mismatched_workspace_lock_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaisesRegex(Refused, 'test-environment-lock-missing'):
+                worker.verify_environment_lock(td, {'lock_sha256': 'a' * 64})
+            self.assertIsNone(worker.verify_environment_lock(td, None))
+
+    def test_environment_mount_is_passed_to_sandbox_command(self):
+        item = request()
+        item['job'].update(stage='tests', test_environment={'lock_sha256': 'a' * 64, 'python': '3.12'})
+        with patch.object(worker.socket, 'gethostname', return_value='chiap02'), \
+             patch.object(worker, 'check_catalog'), \
+             patch.object(worker, 'environment_plan', return_value={'venv': '/opt/qualified', 'source_dirs': ['src']}), \
+             patch.object(worker, 'verify_claim', side_effect=Refused('stop-before-workspace')), \
+             patch.object(worker, 'verify_resource_limits'):
+            with self.assertRaisesRegex(Refused, 'stop-before-workspace'):
+                worker.execute(item)
+
 
 if __name__ == '__main__':
     unittest.main()

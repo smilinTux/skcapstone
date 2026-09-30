@@ -10,11 +10,13 @@ import shlex
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 
 from fiber_admission import Refused, card_fingerprint, read_claim, prepare_worktree, placement_allowed
 import fiber_sandbox
+import fiber_test_environment
 from fiber_gateway_bridge import gateway_socket
 
 ROUTES = {'deepseek': ('skgw-deepseek', 'deepseek-flash'),
@@ -48,6 +50,14 @@ def validate(request):
         raise Refused('invalid-stage')
     if job.get('host') != 'auto' and not placement_allowed(job, job.get('host')):
         raise Refused('stage-placement')
+    # Normalize and bind the optional read-only test environment selector.
+    selected = fiber_test_environment.select(job)
+    if selected is not None:
+        job['test_environment'] = selected
+        if job.get('stage') != 'tests':
+            raise Refused('test-environment-stage')
+    elif 'test_environment' in job:
+        del job['test_environment']
     return job, receipt
 
 
@@ -275,6 +285,27 @@ def read_unit(receipt):
                 exit_code=int(values.get('ExecMainStatus', '0')), active_state=values.get('ActiveState'), sub_state=values.get('SubState'))
 
 
+def environment_plan(job):
+    """Qualify a requested environment before any claim or workspace action.
+
+    Absent selector keeps the current stdlib-only path. A present selector
+    must resolve to a ready operator artifact bound to the exact repository;
+    failure refuses here, before model execution or claim mutation.
+    """
+    selector = job.get('test_environment')
+    if selector is None:
+        return None
+    return fiber_test_environment.qualify(selector, job['repository'])
+
+
+def verify_environment_lock(workspace, selector):
+    """Bind the materialized workspace uv.lock to the selected digest."""
+    if selector is None:
+        return None
+    return fiber_test_environment.verify_lock(Path(workspace) / fiber_test_environment.LOCK_NAME,
+                                              selector['lock_sha256'])
+
+
 def start(request):
     job, receipt = validate(request)
     if socket.gethostname().split('.')[0].lower() != job['host']:
@@ -320,6 +351,8 @@ def execute(request):
     if socket.gethostname().split('.')[0].lower() != job['host']:
         raise Refused('wrong-execution-host')
     check_catalog(job)
+    # Qualify the optional environment before any claim read or workspace action.
+    environment = environment_plan(job)
     row = verify_claim(request, wait_seconds=300)
     verify_resource_limits()
     fiber_sandbox.probe()
@@ -351,6 +384,8 @@ def execute(request):
         fiber_sandbox.private_clone(cache, workspace, 'work/fiber-' + job['card'] + '-' + receipt['token'][:8], job['base_revision'], git)
     runtime = workspace / '.fiber-runtime'
     runtime.mkdir()
+    # The workspace lock must match the selector exactly before model work.
+    verify_environment_lock(workspace, job.get('test_environment'))
     git('-C', str(workspace), 'config', 'user.name', job['owner'])
     git('-C', str(workspace), 'config', 'user.email', job['owner'] + '@source.invalid')
     (workspace / '.git/info/exclude').write_text('.fiber-runtime/\n')
@@ -389,10 +424,13 @@ def execute(request):
     control = controls / receipt['token']
     fiber_sandbox.prepare_control(control, workspace, row, public)
     pi_root = Path.home() / '.npm-global/lib/node_modules'
+    # Qualify the mounted private prefix inside the sandbox before model work.
+    fiber_sandbox.environment_probe(workspace, control, pi_root, environment)
     wrapped = fiber_sandbox.command(workspace, control, pi_root,
         ['/usr/bin/python3', '/opt/fiber_gateway_bridge.py', *command],
         identity={'SKFLEET_CARD_ID': job['card'], 'SKFLEET_PROVIDER': job['provider'],
-                  'SKFLEET_MODEL': job['model'], 'SKAGENT': job['owner'], 'SKCAPSTONE_AGENT': job['owner']})
+                  'SKFLEET_MODEL': job['model'], 'SKAGENT': job['owner'], 'SKCAPSTONE_AGENT': job['owner']},
+        test_environment=environment)
     with gateway_socket(control / 'gateway.sock', endpoint=GATEWAY, credential=credential,
                         family=job['provider'], model=job['model'],
                         check_claim=lambda: verify_claim(request)) as bridge:
@@ -435,7 +473,17 @@ if __name__ == '__main__':
             if socket.gethostname().split('.')[0].lower() != job['host']:
                 raise Refused('wrong-execution-host')
             check_catalog(job)
+            # Fail before claim readback if the requested environment is absent
+            # or its private Python/pytest/pydantic imports fail in-sandbox.
+            environment = environment_plan(job)
             fiber_sandbox.probe()
+            if environment is not None:
+                with tempfile.TemporaryDirectory(prefix='fiber-env-preflight-') as td:
+                    root = Path(td)
+                    (root / 'work/.fiber-runtime/home').mkdir(parents=True)
+                    (root / 'control').mkdir()
+                    fiber_sandbox.environment_probe(root / 'work', root / 'control',
+                        Path.home() / '.npm-global/lib/node_modules', environment)
             if not (Path.home() / '.skenv/bin/pi-cardstore-guard.mjs').is_file() or not os.access(Path.home() / '.npm-global/bin/pi', os.X_OK):
                 raise Refused('worker-runtime-unqualified')
             print(json.dumps({'state': 'ready', 'card': job['card'], 'host': job['host'], 'model': job['model']}))
