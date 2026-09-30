@@ -4,9 +4,23 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
+import tempfile
 
 from fiber_admission import Refused
+
+WORKER_PATH = ':'.join(str(Path.home() / path) for path in ('.skenv/bin', '.npm-global/bin', '.local/bin')) + ':/usr/local/bin:/usr/bin:/bin'
+NODE = '/opt/node/bin/node'
+PI_CLI = '/opt/pi/@earendil-works/pi-coding-agent/dist/bundle/cli.js'
+
+
+def node_executable():
+    """Resolve only the trusted controller path, never job or shell input."""
+    node = shutil.which('node', path=WORKER_PATH)
+    if not node or not Path(node).is_file() or not os.access(node, os.X_OK):
+        raise Refused('worker-node-unavailable')
+    return Path(node).resolve(strict=True)
 
 
 def private_clone(cache, workspace, branch, revision, git):
@@ -51,11 +65,12 @@ def command(workspace, control, pi_root, argv, *, identity=None):
               '--tmpfs', '/tmp', '--tmpfs', '/run', '--dir', '/etc', '--dir', '/home',
               '--bind', str(workspace), '/work', '--ro-bind', str(control), '/run/fleet',
               '--ro-bind', str(pi_root), '/opt/pi',
+              '--ro-bind', str(node_executable()), NODE,
               '--ro-bind', str(Path(__file__).with_name('fiber_gateway_bridge.py')), '/opt/fiber_gateway_bridge.py',
               '--remount-ro', '/', '--remount-ro', '/run', '--chdir', '/work']
     # Host sudo wrappers, shell initialization, keys, DBus and Docker sockets
     # are deliberately not present. /usr contains binaries, not operator state.
-    for name, value in {'HOME': '/work/.fiber-runtime/home', 'PATH': '/usr/bin:/bin',
+    for name, value in {'HOME': '/work/.fiber-runtime/home', 'PATH': '/opt/node/bin:/usr/bin:/bin',
                         'LANG': 'C.UTF-8', 'TMPDIR': '/tmp', 'GIT_CONFIG_NOSYSTEM': '1',
                         'GIT_CONFIG_GLOBAL': '/dev/null', 'GIT_TERMINAL_PROMPT': '0',
                         'SKLEGAL_SIMULATION': '1', 'SKLEGAL_TEST_PORT': '0',
@@ -70,7 +85,7 @@ def command(workspace, control, pi_root, argv, *, identity=None):
 
 
 def probe():
-    """Require working namespaces before admission, not merely bwrap presence."""
+    """Require namespaces and actual isolated Pi startup before admission."""
     result = subprocess.run(['/usr/bin/bwrap', '--unshare-all', '--unshare-user', '--disable-userns',
         '--die-with-parent', '--cap-drop', 'ALL', '--ro-bind', '/usr', '/usr',
         '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib64', '/lib64',
@@ -79,6 +94,15 @@ def probe():
         capture_output=True, text=True, timeout=10)
     if result.returncode:
         raise Refused('worker-sandbox-unqualified')
+    with tempfile.TemporaryDirectory(prefix='fiber-runtime-') as td:
+        work, control = Path(td) / 'work', Path(td) / 'control'
+        (work / '.fiber-runtime/home').mkdir(parents=True)
+        control.mkdir()
+        runtime = subprocess.run(command(work, control, Path.home() / '.npm-global/lib/node_modules',
+            [NODE, PI_CLI, '--no-extensions', '--no-skills', '--version']),
+            env={'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'}, capture_output=True, text=True, timeout=15)
+        if runtime.returncode:
+            raise Refused('worker-runtime-startup-failed')
 
 
 def prepare_control(control, workspace, row, catalog):

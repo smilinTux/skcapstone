@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import fiber_sandbox as sandbox
@@ -13,6 +14,41 @@ import fiber_gateway_bridge as bridge
 
 
 class SandboxTest(unittest.TestCase):
+    def test_qualified_node_is_bound_as_one_read_only_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            node = root / 'node-qualified'
+            node.write_bytes(b'fixture')
+            node.chmod(0o700)
+            link = root / 'node'
+            link.symlink_to(node)
+            with patch('shutil.which', return_value=str(link)) as find:
+                argv = sandbox.command(root / 'work', root / 'control', root / 'pi', ['/usr/bin/true'])
+            binds = [argv[i + 1:i + 3] for i, arg in enumerate(argv) if arg == '--ro-bind']
+            self.assertIn([str(node), '/opt/node/bin/node'], binds)
+            self.assertNotIn([str(root), '/opt/node'], binds)
+            self.assertIn('/opt/node/bin:/usr/bin:/bin', argv)
+            self.assertEqual(find.call_args.args, ('node',))
+            self.assertNotIn('', find.call_args.kwargs['path'].split(':'))
+
+    def test_missing_node_fails_closed(self):
+        with patch('shutil.which', return_value=None), self.assertRaisesRegex(ValueError, 'worker-node-unavailable'):
+            sandbox.command('/tmp/work', '/tmp/control', '/tmp/pi', ['/usr/bin/true'])
+
+    def test_preflight_starts_pi_inside_the_real_sandbox(self):
+        with patch.object(sandbox.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as run:
+            sandbox.probe()
+        self.assertTrue(any('/opt/pi/@earendil-works/pi-coding-agent/dist/bundle/cli.js' in call.args[0]
+                            for call in run.call_args_list))
+        for call in run.call_args_list:
+            self.assertEqual(call.args[0][0], '/usr/bin/bwrap')
+            self.assertIn('--unshare-all', call.args[0])
+
+    def test_failed_isolated_pi_startup_refuses_admission(self):
+        checks = [subprocess.CompletedProcess([], 0), subprocess.CompletedProcess([], 1)]
+        with patch.object(sandbox.subprocess, 'run', side_effect=checks), self.assertRaisesRegex(ValueError, 'worker-runtime-startup-failed'):
+            sandbox.probe()
+
     def test_transcript_growth_is_bounded(self):
         with tempfile.TemporaryDirectory() as td:
             log = Path(td) / 'log'

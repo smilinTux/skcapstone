@@ -22,7 +22,7 @@ ROUTES = {'deepseek': ('skgw-deepseek', 'deepseek-flash'),
 STATE = Path.home() / '.local/state/skfleet-fiber'
 DATA = Path.home() / '.local/share/skfleet-fiber'
 GATEWAY = 'http://chiap01:18790/v1'
-WORKER_PATH = ':'.join(str(Path.home() / path) for path in ('.skenv/bin', '.npm-global/bin', '.local/bin')) + ':/usr/local/bin:/usr/bin:/bin'
+WORKER_PATH = fiber_sandbox.WORKER_PATH
 
 
 def validate(request):
@@ -293,7 +293,7 @@ def execute(request):
         "Write your proposed outcome and evidence in the worktree; the controller records execution, not acceptance. "
         "Never mark a producer card complete on its own review or fabricate checks. Report files, exact tests/results, limitations, and verified artifacts, then stop."
     )
-    command = ['/usr/bin/node', '/opt/pi/@earendil-works/pi-coding-agent/dist/bundle/cli.js',
+    command = [fiber_sandbox.NODE, fiber_sandbox.PI_CLI,
                '--no-approve', '--no-extensions', '--name', job['owner'],
                '--provider', job['pi_provider'], '--model', job['model'], '--thinking', 'off',
                '--no-context-files', '--no-skills', '--tools', 'read,bash,edit,write,grep,find,ls', '-p', prompt]
@@ -358,11 +358,6 @@ if __name__ == '__main__':
             fiber_sandbox.probe()
             if not (Path.home() / '.skenv/bin/pi-cardstore-guard.mjs').is_file() or not os.access(Path.home() / '.npm-global/bin/pi', os.X_OK):
                 raise Refused('worker-runtime-unqualified')
-            runtime = subprocess.run([str(Path.home() / '.npm-global/bin/pi'), '--version'],
-                                     env={'HOME': str(Path.home()), 'PATH': WORKER_PATH, 'LANG': 'C.UTF-8'},
-                                     capture_output=True, text=True, timeout=15)
-            if runtime.returncode:
-                raise Refused('worker-runtime-startup-failed')
             print(json.dumps({'state': 'ready', 'card': job['card'], 'host': job['host'], 'model': job['model']}))
         elif args.mode == 'start':
             print(json.dumps(start(request), sort_keys=True))

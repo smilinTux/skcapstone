@@ -58,7 +58,7 @@ subprocess.run(['git', '-C', '/work/repo', '-c', 'user.name=test', '-c', 'user.e
 head = subprocess.check_output(['git', '-C', '/work/repo', 'rev-parse', 'HEAD'], text=True).strip()
 assert len(head) == 40
 passed.append('task-write-and-git-commit-allowed')
-result = subprocess.run(['/usr/bin/node', '/opt/pi/@earendil-works/pi-coding-agent/dist/bundle/cli.js',
+result = subprocess.run(['/opt/node/bin/node', '/opt/pi/@earendil-works/pi-coding-agent/dist/bundle/cli.js',
                          '--no-extensions', '--no-skills', '--version'], capture_output=True, text=True)
 assert result.returncode == 0, result.stderr[:1000]
 passed.append('pi-startup-in-sandbox')
