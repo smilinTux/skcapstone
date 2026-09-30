@@ -2,6 +2,9 @@
 from pathlib import Path
 import sys
 import unittest
+import json
+import subprocess
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fiber_probe import process_provider, footer_provider, logical_workers
@@ -9,6 +12,14 @@ import fiber_probe as probe
 
 
 class ProbeTest(unittest.TestCase):
+    def test_chiwk12_readiness_uses_the_same_migrated_account(self):
+        result = subprocess.CompletedProcess([], 0, json.dumps({'host': 'chiwk12'}), '')
+        with patch.object(probe.socket, 'gethostname', return_value='chiap08'), \
+             patch.object(probe.subprocess, 'run', return_value=result) as run:
+            self.assertEqual(probe.probe_host('chiwk12')['host'], 'chiwk12')
+        self.assertIn('skuser01@chiwk12', run.call_args.args[0])
+        self.assertNotIn('mrarch@chiwk12', run.call_args.args[0])
+
     def test_host_slots_match_worker_memory_and_cpu_budgets(self):
         memory = {'MemAvailable': 10 * 1024 * 1024}
         self.assertEqual(probe.host_slots('chiap02', memory, 8), 3)

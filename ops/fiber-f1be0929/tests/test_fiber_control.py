@@ -14,6 +14,15 @@ from test_fiber_admission import job, snapshot
 
 
 class ControlTest(unittest.TestCase):
+    def test_chiwk12_execution_uses_the_migrated_worker_account(self):
+        request = {'job': dict(job(), host='chiwk12')}
+        with patch.object(control.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '{}', '')) as run:
+            control.remote('check', request)
+        argv = run.call_args.args[0]
+        self.assertIn('skuser01@chiwk12', argv)
+        self.assertIn('/home/skuser01/.skenv/bin/python', argv[-1])
+        self.assertNotIn('mrarch', ' '.join(argv))
+
     def test_observe_forwards_only_recorded_invocation_for_recovery(self):
         run = {'binding': json.dumps(job()), 'card': '1234abcd', 'host': 'chiap02',
                'token': 'a' * 32, 'unit': 'synthetic.service', 'invocation': 'b' * 32}

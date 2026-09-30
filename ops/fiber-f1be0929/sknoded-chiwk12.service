@@ -1,0 +1,19 @@
+[Unit]
+Description=SKWorld node self-report loop under skuser01 (fb673cd3)
+After=network-online.target syncthing-fleet-chiwk12.service
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+Environment=PATH=/home/skuser01/.skenv/bin:/home/skuser01/.local/bin:/usr/bin:/bin
+Environment=SKOPERATOR_HTTP=0
+ExecStart=/home/skuser01/.skenv/bin/skfleet sknoded --interval 60
+Restart=on-failure
+RestartSec=10
+WorkingDirectory=/home/skuser01
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

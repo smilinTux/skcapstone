@@ -107,7 +107,7 @@ def remote(mode, request):
     job = request['job']
     if job['host'] not in HOST_SLOTS:
         raise Refused('host-outside-initial-placement')
-    account = 'mrarch' if job['host'] == 'chiwk12' else 'skuser01'
+    account = 'skuser01'
     command = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', account + '@' + job['host'],
                shlex.join(['/home/' + account + '/.skenv/bin/python', '/home/' + account + '/' + LIBRARY, mode])]
     result = subprocess.run(command, input=json.dumps(request), capture_output=True, text=True, timeout=40)

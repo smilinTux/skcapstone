@@ -1,0 +1,20 @@
+[Unit]
+Description=SKFleet chiwk12 metadata-only replica (fb673cd3)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+ExecStart=/home/skuser01/.local/bin/syncthing serve --home=/home/skuser01/.local/state/syncthing-fleet-fb673cd3 --gui-address=http://127.0.0.1:8385 --no-browser --no-restart --no-upgrade
+Restart=on-failure
+RestartSec=15
+Environment=GOMAXPROCS=2
+UMask=0077
+NoNewPrivileges=yes
+CPUQuota=100%
+MemoryMax=1G
+TasksMax=256
+
+[Install]
+WantedBy=default.target

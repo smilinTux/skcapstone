@@ -16,7 +16,7 @@ import time
 import urllib.request
 
 HOSTS = ('chiap01', 'chiap02', 'chiap03', 'chiap04', 'chiap08', 'chiwk12', 'chiwk13', 'ziowk01')
-SSH_ACCOUNT = {'chiwk12': 'mrarch@chiwk12'}
+SSH_ACCOUNT = {'chiwk12': 'skuser01@chiwk12'}
 GATEWAY = 'http://chiap01:18790'
 MODEL_FAMILY = {'deepseek-flash': 'deepseek', 'deepseek-v4-pro': 'deepseek',
                 'gpt-5.6-sol': 'codex', 'gpt-5.6-terra': 'codex', 'sk-zai-m': 'zai'}
