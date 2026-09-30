@@ -11,7 +11,7 @@ import time
 import urllib.error
 import urllib.request
 
-from fiber_admission import ESTATE_CAP, PLACEMENT, Refused, card_fingerprint, claim_for_worker
+from fiber_admission import ESTATE_CAP, STAGE_HOSTS, HOST_SLOTS, Refused, card_fingerprint, claim_for_worker, select_host
 from fiber_dispatch import authority, dispatch_one, reconcile
 from fiber_probe import collect
 from fiber_worker import GATEWAY, ROUTES, source_binding, validate, verify_source
@@ -23,24 +23,25 @@ LIBRARY = '.local/lib/skfleet-fiber/fiber_worker.py'
 CAPS = {'deepseek': 3, 'codex': 2, 'zai': 5}
 
 
-def cards():
-    """Use the public coordination read API, not raw CardStore files."""
-    result = subprocess.run(['skcapstone', 'coord', 'kanban', '--json'], capture_output=True, text=True, timeout=60)
-    if result.returncode:
-        raise Refused('board-read-failed')
+def cards(card_ids):
+    """Read queued cards and direct dependencies, never the entire board."""
     found = {}
-    def visit(value):
-        if isinstance(value, dict):
-            if re.fullmatch('[0-9a-f]{8}', str(value.get('id', ''))) and 'owner' in value:
-                if value['id'] in found:
-                    raise Refused('ambiguous-board-row')
-                found[value['id']] = value
-            for item in value.values():
-                visit(item)
-        elif isinstance(value, list):
-            for item in value:
-                visit(item)
-    visit(json.loads(result.stdout))
+    def read(card):
+        if card in found:
+            return
+        if not re.fullmatch('[0-9a-f]{8}', str(card)):
+            raise Refused('invalid-card')
+        result = subprocess.run(['skcapstone', 'coord', 'show', card, '--json'], capture_output=True, text=True, timeout=60)
+        if result.returncode:
+            raise Refused('board-read-failed')
+        row = json.loads(result.stdout)
+        if not isinstance(row, dict) or row.get('id') != card or 'owner' not in row:
+            raise Refused('ambiguous-board-row')
+        found[card] = row
+    for card in dict.fromkeys(card_ids):
+        read(card)
+        for dependency in found[card].get('dependencies', []):
+            read(dependency)
     return found
 
 
@@ -53,25 +54,34 @@ def eligible(row, board):
     return diagnose(Path.home() / '.skcapstone', row['id']).get('eligible') is True
 
 
-def describe(card, stage, family):
-    row = cards().get(card)
+def describe(card, stage, family, *, producer_family=None):
+    row = cards([card]).get(card)
     if row is None:
         raise Refused('unknown-card')
     repository, base_ref, revision = source_binding(row)
     pi_provider, model = ROUTES[family]
-    return {'card': card, 'owner': 'pi-fiber-' + stage + '-' + card,
-            'stage': stage, 'host': PLACEMENT[stage][0], 'provider': family,
+    sizes = re.findall(r'\[(S|M|L|XL)\]', row.get('title', ''))
+    if len(sizes) != 1:
+        raise Refused('work-class-required')
+    if stage == 'review' and (producer_family not in ROUTES or producer_family == family):
+        raise Refused('review-independence')
+    task = {'card': card, 'owner': ('pi-seraph-fiber-' if stage == 'review' else 'pi-fiber-' + stage + '-') + card,
+            'stage': stage, 'host': 'auto', 'work_class': sizes[0], 'provider': family,
             'pi_provider': pi_provider, 'model': model, 'repository': repository,
             'base_ref': base_ref, 'base_revision': revision,
             'card_fingerprint': card_fingerprint(row)}
+    if stage == 'review':
+        task['producer_provider'] = producer_family
+    return task
 
 
 def remote(mode, request):
     job = request['job']
-    if job['host'] not in {row[0] for row in PLACEMENT.values()}:
+    if job['host'] not in HOST_SLOTS:
         raise Refused('host-outside-initial-placement')
-    command = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', job['host'],
-               shlex.join(['/home/skuser01/.skenv/bin/python', '/home/skuser01/' + LIBRARY, mode])]
+    account = 'mrarch' if job['host'] == 'chiwk12' else 'skuser01'
+    command = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', account + '@' + job['host'],
+               shlex.join(['/home/' + account + '/.skenv/bin/python', '/home/' + account + '/' + LIBRARY, mode])]
     result = subprocess.run(command, input=json.dumps(request), capture_output=True, text=True, timeout=40)
     if result.returncode:
         raise Refused('remote-' + mode + '-failed')
@@ -183,6 +193,38 @@ def observation(job):
     return snapshot
 
 
+def prepare_job(job):
+    """Resolve placement and runtime before spending a provider probe.
+
+    Called under dispatch_one's authority lock. Failed runtime candidates do
+    not prevent trying another allowed host. No claim or launch occurs here.
+    """
+    snapshot = collect()
+    rejected = []
+    while True:
+        try:
+            host = select_host(STATE / 'admission.sqlite3', job, snapshot, now=time.time())
+        except Refused as exc:
+            if str(exc) == 'no-eligible-host' and rejected:
+                raise Refused('no-runtime-qualified-host:' + ','.join(rejected)) from None
+            raise
+        chosen = dict(job, host=host)
+        token = '0' * 32
+        try:
+            check = remote('check', {'job': chosen, 'receipt': {'card': job['card'], 'host': host,
+                'provider': job['provider'], 'token': token, 'unit': 'skfleet-fiber-' + job['card'] + '-' + token + '.service'}})
+            if any(check.get(k) != v for k, v in {'state': 'ready', 'card': job['card'], 'host': host, 'model': job['model']}.items()):
+                raise Refused('remote-preflight-mismatch')
+            break
+        except (Refused, subprocess.SubprocessError):
+            rejected.append(host)
+            snapshot['hosts'][host] = dict(snapshot['hosts'][host], ready=False)
+    proof = qualify_route(chosen)
+    fresh = collect()
+    fresh['providers'][job['provider']] = proof
+    return chosen, fresh
+
+
 def cycle(check=False):
     if socket.gethostname().split('.')[0].lower() != 'chiap08':
         raise Refused('not-authority-host')
@@ -195,10 +237,10 @@ def cycle(check=False):
     paths = sorted(QUEUE.glob('*.json'))
     if not paths:
         return {'state': 'waiting-for-reviewed-requests', 'reconciled': recovered}
-    board = cards()
+    jobs = [json.loads(path.read_text()) for path in paths]
+    board = cards([job['card'] for job in jobs])
     results = []
-    for path in paths:
-        job = json.loads(path.read_text())
+    for job in jobs:
         token = '0' * 32
         validate({'job': job, 'receipt': {'card': job['card'], 'host': job['host'],
                   'provider': job['provider'], 'token': token, 'unit': 'skfleet-fiber-' + job['card'] + '-' + token + '.service'}})
@@ -210,7 +252,7 @@ def cycle(check=False):
             verify_source(row, job)
             job['claimable'] = eligible(row, board)
             result = dispatch_one(STATE, job, lambda: observation(job),
-                launch_claimed, observe, hold_file=HOLD)
+                launch_claimed, observe, hold_file=HOLD, prepare=prepare_job)
         except Refused as exc:
             result = {'card': job['card'], 'state': 'waiting', 'reason': str(exc)}
         results.append(result)
@@ -237,11 +279,12 @@ if __name__ == '__main__':
     parser.add_argument('--once', action='store_true')
     parser.add_argument('--hold', action='store_true')
     parser.add_argument('--describe-card')
-    parser.add_argument('--stage', choices=sorted(PLACEMENT), default='implementation')
+    parser.add_argument('--stage', choices=sorted(STAGE_HOSTS), default='implementation')
     parser.add_argument('--family', choices=sorted(ROUTES), default='deepseek')
+    parser.add_argument('--producer-family', choices=sorted(ROUTES))
     args = parser.parse_args()
     try:
-        value = set_hold() if args.hold else describe(args.describe_card, args.stage, args.family) if args.describe_card else cycle(check=not args.once)
+        value = set_hold() if args.hold else describe(args.describe_card, args.stage, args.family, producer_family=args.producer_family) if args.describe_card else cycle(check=not args.once)
         print(json.dumps(value, sort_keys=True))
     except Refused as exc:
         print(json.dumps({'state': 'waiting', 'reason': str(exc)}))

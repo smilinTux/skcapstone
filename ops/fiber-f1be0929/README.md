@@ -8,13 +8,35 @@ This directory is an exact review snapshot of staged operational artifacts,
 not a change to the SKCapstone product modules. Base revision:
 c6031047328348aca53dc3611cf94ceb56a9006c.
 All new files for this snapshot are under ops/fiber-f1be0929/.
-The local repository has no remote configured, preventing accidental pushes.
+The producer's isolated snapshot repository has no remote configured.
+Remote review worktrees may have an origin; pushes remain prohibited.
+
+## Approved capacity revision
+
+The human approved capacity-aware placement, a first trial ceiling of 12,
+and measured stepwise growth beyond that when stable. This supersedes the
+older nine-worker policy in chronological reports for the new candidate only.
+The installed dispatcher remains held on its earlier policy until reviewed.
+
+The candidate places automatic requests by occupied-slot ratio, including
+pending reservations, using fresh readiness and memory/CPU headroom. Fiber
+implementation targets chiap02 and chiwk12; review targets chiap03 and
+chiwk12; tests target chiap04, chiap02 and chiwk13. chiwk13 requires an S card.
+ZIOWK01 requires an explicit WAN pin. chiap08 coordinates and chiap01 keeps
+gateway headroom; neither receives new implementation workers.
+
+Limits are trial maxima, not entitlement or proof of throughput. Existing
+provider caps remain pending measurements. Unknown sessions continue counting;
+verified idle harness sessions are visible separately. Runtime preflight skips
+an unqualified host rather than claiming it is ready. Every worker verifies
+its actual kernel cgroup limits before task execution. Queued-card reads are
+scoped, and review requests require an explicit independent producer family.
+Do not activate or increase limits merely because these component tests pass.
 
 The Python files are candidate operational sources for ~/.local/lib/skfleet-fiber/.
-The revised controller is staged, not installed. The worker startup PATH fix
-is installed on chiap08 and chiap03 to permit independent review execution;
-chiap02 and chiap04 still need the reviewed update before canary execution.
-The admission file also matches chiap02/03/04. Shell candidates correspond
+This capacity revision is staged, not installed. The earlier worker startup
+PATH fix is installed on chiap08 and chiap03. All hosts require the reviewed
+capacity revision before its canary. Shell candidates correspond
 to the installed llm-orch wrappers. Reports are chronological and contain
 earlier hashes; READINESS-AUDIT-20260929T2219.md has the later installed hashes.
 MAINTENANCE-PAUSE-20260929.md supersedes the earlier natural-drain-only posture.

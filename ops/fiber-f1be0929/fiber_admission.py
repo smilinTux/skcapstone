@@ -16,10 +16,15 @@ import sqlite3
 import subprocess
 import uuid
 
-ESTATE_CAP = 9
+ESTATE_CAP = 12
 SPACING = 75
 PLACEMENT = {'implementation': ('chiap02', 2), 'review': ('chiap03', 1),
              'tests': ('chiap04', 1)}
+HOST_SLOTS = {'chiap02': 3, 'chiap03': 2, 'chiap04': 2,
+              'chiwk12': 2, 'chiwk13': 1, 'ziowk01': 2}
+STAGE_HOSTS = {'implementation': ('chiap02', 'chiwk12'),
+               'review': ('chiap03', 'chiwk12'),
+               'tests': ('chiap04', 'chiap02', 'chiwk13')}
 PROVIDERS = {'deepseek', 'codex', 'zai'}
 
 
@@ -41,7 +46,7 @@ def _positive_int(value):
     return type(value) is int and value > 0
 
 
-def _validate(job, snapshot, now):
+def observed_workers(snapshot, now):
     if not isinstance(now, (int, float)) or not math.isfinite(now):
         raise Refused('invalid-clock')
     observed = snapshot.get('observed_at')
@@ -49,24 +54,6 @@ def _validate(job, snapshot, now):
         raise Refused('stale-observation')
     if snapshot.get('complete') is not True:
         raise Refused('incomplete-observation')
-    if not re.fullmatch(r'[0-9a-f]{8}', str(job.get('card', ''))):
-        raise Refused('invalid-card')
-    if job.get('claimable') is not True:
-        raise Refused('card-not-claimable')
-    placement = PLACEMENT.get(job.get('stage'))
-    if not placement or job.get('host') != placement[0]:
-        raise Refused('stage-placement')
-    provider = job.get('provider')
-    if provider not in PROVIDERS:
-        raise Refused('provider-not-qualified')
-    if job['stage'] == 'review' and (not job.get('producer_provider') or job['producer_provider'] == provider):
-        raise Refused('review-independence')
-    host = snapshot.get('hosts', {}).get(job['host'], {})
-    if host.get('ready') is not True or not _positive_int(host.get('slots')):
-        raise Refused('host-not-ready')
-    route = snapshot.get('providers', {}).get(provider, {})
-    if route.get('ready') is not True or not _positive_int(route.get('cap')):
-        raise Refused('provider-not-qualified')
     workers = snapshot.get('workers')
     if not isinstance(workers, list):
         raise Refused('incomplete-observation')
@@ -79,7 +66,69 @@ def _validate(job, snapshot, now):
         if key in current and current[key] != identity:
             raise Refused('ambiguous-worker')
         current[key] = identity
-    return current, min(host['slots'], placement[1]), route['cap']
+    return current
+
+
+def placement_allowed(job, host):
+    if job.get('stage') not in STAGE_HOSTS:
+        return False
+    if host == 'ziowk01':
+        return job.get('host') == 'ziowk01'  # Explicit WAN pin only.
+    return host in STAGE_HOSTS[job['stage']] and (host != 'chiwk13' or job.get('work_class') == 'S')
+
+
+def select_host(database, job, snapshot, *, now):
+    """Choose a ready host under the authority lock, counting pending launches.
+
+    No provider qualification is inferred here. Normal reserve() still checks
+    the exact qualified route and a fresh observation before any launch.
+    """
+    workers = observed_workers(snapshot, now)
+    if Path(database).exists():
+        with closing(sqlite3.connect(Path(database).resolve().as_uri() + '?mode=ro', uri=True)) as db:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='reservations'").fetchone():
+                for card, host, provider in db.execute('SELECT card, host, provider FROM reservations'):
+                    key = 'card:' + card
+                    if key in workers and workers[key] != (host, provider):
+                        raise Refused('ambiguous-worker')
+                    workers[key] = (host, provider)
+    if len(workers) >= ESTATE_CAP:
+        raise Refused('estate-capacity')
+    candidates = STAGE_HOSTS.get(job.get('stage'), ()) if job.get('host') == 'auto' else (job.get('host'),)
+    ranked = []
+    for order, host in enumerate(candidates):
+        node = snapshot.get('hosts', {}).get(host, {})
+        if not placement_allowed(job, host) or node.get('ready') is not True or not _positive_int(node.get('slots')):
+            continue
+        slots = min(HOST_SLOTS[host], node['slots'])
+        occupied = sum(place == host for place, _ in workers.values())
+        if occupied < slots:
+            ranked.append((occupied / slots, order, host))
+    if not ranked:
+        raise Refused('no-eligible-host')
+    return min(ranked)[2]
+
+
+def _validate(job, snapshot, now):
+    current = observed_workers(snapshot, now)
+    if not re.fullmatch(r'[0-9a-f]{8}', str(job.get('card', ''))):
+        raise Refused('invalid-card')
+    if job.get('claimable') is not True:
+        raise Refused('card-not-claimable')
+    if not placement_allowed(job, job.get('host')):
+        raise Refused('stage-placement')
+    provider = job.get('provider')
+    if provider not in PROVIDERS:
+        raise Refused('provider-not-qualified')
+    if job['stage'] == 'review' and (not job.get('producer_provider') or job['producer_provider'] == provider):
+        raise Refused('review-independence')
+    host = snapshot.get('hosts', {}).get(job['host'], {})
+    if host.get('ready') is not True or not _positive_int(host.get('slots')):
+        raise Refused('host-not-ready')
+    route = snapshot.get('providers', {}).get(provider, {})
+    if route.get('ready') is not True or not _positive_int(route.get('cap')):
+        raise Refused('provider-not-qualified')
+    return current, min(host['slots'], HOST_SLOTS[job['host']]), route['cap']
 
 
 def reserve(database, job, snapshot, *, now):

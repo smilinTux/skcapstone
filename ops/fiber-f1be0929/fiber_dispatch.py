@@ -93,7 +93,7 @@ def reconcile(directory, observe, *, clock=time.time):
     return results
 
 
-def dispatch_one(directory, job, collect, launch, observe, *, clock=time.time, hold_file=None):
+def dispatch_one(directory, job, collect, launch, observe, *, clock=time.time, hold_file=None, prepare=None):
     """Admit and start at most one reviewed job, preserving ambiguous launches.
 
     collect() supplies a fresh, authoritative full-estate snapshot and exact
@@ -102,6 +102,7 @@ def dispatch_one(directory, job, collect, launch, observe, *, clock=time.time, h
     This module does not grant an adapter permission to bypass those gates.
     """
     directory = Path(directory)
+    job = dict(job)
     with authority(directory):
         if hold_file is not None and Path(hold_file).exists():
             raise Refused('admission-held')
@@ -111,6 +112,9 @@ def dispatch_one(directory, job, collect, launch, observe, *, clock=time.time, h
         with closing(connect(database)) as db:
             old = db.execute('SELECT * FROM runs WHERE card=?', (job['card'],)).fetchone()
             if old:
+                if job.get('host') == 'auto':
+                    job['host'] = old['host']
+                    binding = json.dumps({key: value for key, value in job.items() if key != 'claimable'}, sort_keys=True, separators=(',', ':'))
                 if old['binding'] != binding:
                     raise Refused('request-binding-changed')
                 return {'card': job['card'], 'state': old['state'], 'new_launch': False}
@@ -124,7 +128,16 @@ def dispatch_one(directory, job, collect, launch, observe, *, clock=time.time, h
                 raise Refused('actual-start-spacing')
         if job.get('claimable') is not True:
             raise Refused('card-not-claimable')
-        snapshot = collect()
+        if prepare is None:
+            snapshot = collect()
+        else:
+            prepared, snapshot = prepare(dict(job))
+            if ({k: v for k, v in prepared.items() if k != 'host'} !=
+                    {k: v for k, v in job.items() if k != 'host'} or
+                    job.get('host') != 'auto' and prepared.get('host') != job.get('host')):
+                raise Refused('prepared-job-changed')
+            job = prepared
+            binding = json.dumps({key: value for key, value in job.items() if key != 'claimable'}, sort_keys=True, separators=(',', ':'))
         receipt = reserve(database, job, snapshot, now=clock())
         receipt['unit'] = 'skfleet-fiber-' + job['card'] + '-' + receipt['token'] + '.service'
         with closing(connect(database)) as db:

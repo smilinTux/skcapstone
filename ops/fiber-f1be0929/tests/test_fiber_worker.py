@@ -23,6 +23,26 @@ def request():
 
 
 class WorkerTest(unittest.TestCase):
+    def test_actual_worker_resource_budget_is_required(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            for name, value in {'memory.max': '3221225472', 'memory.swap.max': '536870912',
+                                'pids.max': '256', 'cpu.max': '200000 100000'}.items():
+                (root / name).write_text(value)
+            worker.verify_resource_limits(root)
+            (root / 'memory.max').write_text('max')
+            with self.assertRaisesRegex(Refused, 'worker-resource-limits'):
+                worker.verify_resource_limits(root)
+
+    def test_small_host_rejects_forged_work_class(self):
+        item = request()['job']
+        item.update(host='chiwk13', stage='tests', work_class='S')
+        row = {'title': '[M] substantial test work', 'labels': ['source-only'],
+               'meta': {key: item[key] for key in ['repository', 'base_ref', 'base_revision']}}
+        item['card_fingerprint'] = worker.card_fingerprint(row)
+        with self.assertRaisesRegex(Refused, 'work-class-mismatch'):
+            worker.verify_source(row, item)
+
     def test_authority_and_local_claim_must_both_match(self):
         item = request()
         item['claim'] = {'authority': 'chiap08', 'owner': item['job']['owner'], 'revision': 'a' * 32}

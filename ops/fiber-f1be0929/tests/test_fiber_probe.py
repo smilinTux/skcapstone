@@ -5,9 +5,19 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fiber_probe import process_provider, footer_provider, logical_workers
+import fiber_probe as probe
 
 
 class ProbeTest(unittest.TestCase):
+    def test_host_slots_match_worker_memory_and_cpu_budgets(self):
+        memory = {'MemAvailable': 10 * 1024 * 1024}
+        self.assertEqual(probe.host_slots('chiap02', memory, 8), 3)
+        self.assertEqual(probe.host_slots('chiwk12', memory, 8), 2)
+        self.assertEqual(probe.host_slots('chiap02', memory, 2), 1)
+        self.assertEqual(probe.host_slots('chiap01', memory, 64), 0)
+        self.assertEqual(probe.host_slots('chiap08', memory, 64), 0)
+        self.assertEqual(probe.host_slots('chiap02', {'MemAvailable': 3 * 1024 * 1024}, 8), 0)
+
     def test_explicit_worker_route_matches_reservation_family(self):
         identity = {'SKFLEET_PROVIDER': 'deepseek', 'SKFLEET_MODEL': 'deepseek-flash'}
         self.assertEqual(process_provider('pi', identity), 'deepseek')

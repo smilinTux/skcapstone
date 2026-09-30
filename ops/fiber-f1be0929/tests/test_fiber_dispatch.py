@@ -12,6 +12,42 @@ from test_fiber_admission import job, snapshot
 
 
 class DispatchTest(unittest.TestCase):
+    def test_auto_placement_binds_resolved_host_and_retry_never_reselects(self):
+        task = dict(job(), host='auto')
+        calls = []
+        def prepare(candidate):
+            calls.append(candidate)
+            return dict(candidate, host='chiap02'), snapshot(self.now)
+        args = (self.root, task, lambda: self.fail('prepare supplies observation'),
+                self.launch, lambda run: self.observed.get(run['card']))
+        self.assertTrue(dispatch_one(*args, clock=lambda: self.now, prepare=prepare)['new_launch'])
+        self.assertFalse(dispatch_one(*args, clock=lambda: self.now, prepare=prepare)['new_launch'])
+        self.assertEqual(len(calls), 1)
+        with sqlite3.connect(self.root / 'admission.sqlite3') as db:
+            self.assertEqual(db.execute('SELECT host FROM runs').fetchone()[0], 'chiap02')
+        self.assertEqual(task['host'], 'auto')
+
+    def test_prepare_cannot_change_card_contract(self):
+        def changed(task):
+            return dict(task, provider='codex'), snapshot(self.now)
+        with self.assertRaisesRegex(Refused, 'prepared-job-changed'):
+            dispatch_one(self.root, job(), lambda: snapshot(self.now), self.launch,
+                         lambda run: None, clock=lambda: self.now, prepare=changed)
+        self.assertEqual(self.starts, [])
+
+    def test_lost_ack_followed_by_exact_terminal_receipt_recovers_capacity(self):
+        def lost(task, receipt):
+            self.launch(task, receipt)
+            raise TimeoutError()
+        with self.assertRaises(Refused):
+            self.run_job(launch=lost)
+        self.observed['1234abcd'].update(state='terminal', main_pid=0, exit_code=1)
+        self.now += 1
+        self.assertEqual(self.run_job()['state'], 'terminal')
+        self.assertEqual(len(self.starts), 1)
+        with sqlite3.connect(self.root / 'admission.sqlite3') as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM reservations').fetchone()[0], 0)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

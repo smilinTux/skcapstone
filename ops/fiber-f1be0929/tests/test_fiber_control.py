@@ -3,6 +3,8 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import json
+import subprocess
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -12,6 +14,47 @@ from test_fiber_admission import job, snapshot
 
 
 class ControlTest(unittest.TestCase):
+    def test_board_reads_only_requested_cards_and_direct_dependencies(self):
+        rows = {'1234abcd': {'id': '1234abcd', 'owner': None, 'dependencies': ['1234abce']},
+                '1234abce': {'id': '1234abce', 'owner': None, 'status': 'done'}}
+        def run(argv, **kwargs):
+            self.assertEqual(argv[:3], ['skcapstone', 'coord', 'show'])
+            return subprocess.CompletedProcess(argv, 0, json.dumps(rows[argv[3]]), '')
+        with patch.object(control.subprocess, 'run', side_effect=run) as read:
+            self.assertEqual(set(control.cards(['1234abcd'])), set(rows))
+            self.assertEqual(read.call_count, 2)
+
+    def test_review_description_requires_independence_and_qualified_identity(self):
+        row = {'id': '1234abcd', 'title': '[REVIEW][M] audit', 'owner': None}
+        with patch.object(control, 'cards', return_value={'1234abcd': row}), \
+             patch.object(control, 'source_binding', return_value=('https://example.invalid/repo', 'main', 'b' * 40)):
+            with self.assertRaisesRegex(Refused, 'review-independence'):
+                control.describe('1234abcd', 'review', 'deepseek')
+            task = control.describe('1234abcd', 'review', 'deepseek', producer_family='codex')
+            self.assertEqual(task['owner'], 'pi-seraph-fiber-1234abcd')
+            self.assertEqual(task['producer_provider'], 'codex')
+            self.assertEqual(task['host'], 'auto')
+            self.assertEqual(task['work_class'], 'M')
+
+    def test_automatic_placement_skips_unqualified_runtime_without_model_probe(self):
+        truth = snapshot()
+        truth['hosts']['chiwk12'] = {'ready': True, 'slots': 2}
+        task = dict(job(), host='auto', model='deepseek-flash')
+        def remote(mode, request):
+            chosen = request['job']
+            if chosen['host'] == 'chiap02':
+                raise Refused('remote-check-failed')
+            return {'state': 'ready', 'host': chosen['host'], 'card': chosen['card'], 'model': chosen['model']}
+        with tempfile.TemporaryDirectory() as td, patch.object(control, 'STATE', Path(td)), \
+             patch.object(control.time, 'time', return_value=1000), \
+             patch.object(control, 'collect', side_effect=[truth, snapshot() | {'hosts': truth['hosts']}]), \
+             patch.object(control, 'remote', side_effect=remote), \
+             patch.object(control, 'qualify_route', return_value={'ready': True, 'cap': 3}) as probe:
+            chosen, fresh = control.prepare_job(task)
+            self.assertEqual(chosen['host'], 'chiwk12')
+            self.assertEqual(probe.call_count, 1)
+            self.assertEqual(task['host'], 'auto')
+
     def test_served_model_must_match_exact_routed_member(self):
         task = {'provider': 'zai', 'model': 'sk-zai-m'}
         headers = {'x-sk-provider': 'zai', 'x-sk-model-requested': 'sk-zai-m',
@@ -57,7 +100,7 @@ class ControlTest(unittest.TestCase):
 
     def test_full_estate_does_not_probe_models(self):
         truth = snapshot()
-        truth['workers'] = [{'key': str(i)} for i in range(9)]
+        truth['workers'] = [{'key': str(i)} for i in range(12)]
         with patch.object(control, 'collect', return_value=truth), patch.object(control, 'qualify_route') as probe:
             with self.assertRaisesRegex(Refused, 'estate-capacity'):
                 control.observation(job())

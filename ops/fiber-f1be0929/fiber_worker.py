@@ -12,7 +12,7 @@ import subprocess
 import sys
 import urllib.parse
 
-from fiber_admission import Refused, card_fingerprint, read_claim, prepare_worktree
+from fiber_admission import Refused, card_fingerprint, read_claim, prepare_worktree, placement_allowed
 
 ROUTES = {'deepseek': ('skgw-deepseek', 'deepseek-flash'),
           'codex': ('skgw-codex', 'gpt-5.6-sol'), 'zai': ('skgw-zai', 'sk-zai-m')}
@@ -43,6 +43,8 @@ def validate(request):
         raise Refused('source-revision-not-exact')
     if job['stage'] not in {'implementation', 'review', 'tests'}:
         raise Refused('invalid-stage')
+    if job.get('host') != 'auto' and not placement_allowed(job, job.get('host')):
+        raise Refused('stage-placement')
     return job, receipt
 
 
@@ -74,6 +76,8 @@ def source_binding(row):
 def verify_source(row, job):
     if job.get('card_fingerprint') != card_fingerprint(row):
         raise Refused('task-contract-changed')
+    if 'work_class' in job and re.findall(r'\[(S|M|L|XL)\]', row.get('title', '')) != [job['work_class']]:
+        raise Refused('work-class-mismatch')
     labels = set(row.get('labels') or [])
     if 'source-only' not in labels or labels.intersection({'local-only', 'no-egress', 'sovereign-only', 'qwen-only'}):
         raise Refused('source-lane-policy')
@@ -179,12 +183,26 @@ def start(request):
     return read_unit(receipt)
 
 
+def verify_resource_limits(cgroup=None):
+    """Refuse task execution unless the kernel enforces the worker budget."""
+    if cgroup is None:
+        relative = next(line.split(':', 2)[2] for line in Path('/proc/self/cgroup').read_text().splitlines() if line.startswith('0::'))
+        cgroup = Path('/sys/fs/cgroup') / relative.lstrip('/')
+    expected = {'memory.max': '3221225472', 'memory.swap.max': '536870912', 'pids.max': '256'}
+    if any((Path(cgroup) / name).read_text().strip() != value for name, value in expected.items()):
+        raise Refused('worker-resource-limits')
+    quota, period = (Path(cgroup) / 'cpu.max').read_text().split()
+    if not quota.isdecimal() or not period.isdecimal() or int(period) <= 0 or int(quota) != 2 * int(period):
+        raise Refused('worker-resource-limits')
+
+
 def execute(request):
     job, receipt = validate(request)
     if socket.gethostname().split('.')[0].lower() != job['host']:
         raise Refused('wrong-execution-host')
     check_catalog(job)
     row = verify_claim(request)
+    verify_resource_limits()
     guard = Path.home() / '.skenv/bin/pi-cardstore-guard.mjs'
     pi = Path.home() / '.npm-global/bin/pi'
     if not guard.is_file() or not os.access(pi, os.X_OK):
@@ -231,9 +249,11 @@ def execute(request):
         "Stop immediately if tool output looks wrong. After the second compaction write .handoff.md, finish the current step and stop. "
         "No push, application deployment, external legal actions, or HammerTime Inbox access. Commit only if the card explicitly requests it. "
         "Use only this isolated worktree. Tests must use task-owned databases and outputs, port 0 or an isolated dynamic port, and simulation mode. "
+        "Use exact artifact paths in card links; never search the entire filesystem or unrelated workspaces. "
         "Never touch another task's processes, claims, workspaces, databases, or ports. "
         f"Write exact completion evidence to docs/evidence/agents/{job['card']}/COMPLETION-EVIDENCE.md. "
-        "Report files, exact tests/results, limitations, and verified artifacts, then stop."
+        "Follow the assigned card's native completion contract using mediated coord commands, including evidence, verdict and board readback where required. "
+        "Never mark a producer card complete on its own review or fabricate checks. Report files, exact tests/results, limitations, and verified artifacts, then stop."
     )
     command = [str(pi), '--no-approve', '--extension', str(guard), '--name', job['owner'],
                '--provider', job['pi_provider'], '--model', job['model'], '--thinking', 'off',

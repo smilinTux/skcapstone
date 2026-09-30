@@ -28,6 +28,46 @@ def job(card='1234abcd'):
 
 
 class AdmissionTest(unittest.TestCase):
+    def test_trial_limit_is_twelve_not_provider_entitlement(self):
+        self.assertEqual(module.ESTATE_CAP, 12)
+
+    def test_placement_spreads_work_and_counts_pending_reservations(self):
+        truth = snapshot()
+        truth['hosts']['chiwk12'] = {'ready': True, 'slots': 2}
+        truth['workers'] = [{'key': 'native', 'host': 'chiap02', 'provider': 'codex'}]
+        task = dict(job(), host='auto')
+        self.assertEqual(module.select_host(self.db, task, truth, now=1000), 'chiwk12')
+        self.reserve(dict(job(), host='chiwk12'), truth)
+        truth['workers'].append({'key': 'native2', 'host': 'chiwk12', 'provider': 'codex'})
+        self.assertEqual(module.select_host(self.db, task, truth, now=1000), 'chiap02')
+
+    def test_placement_requires_complete_fresh_truth_and_never_auto_wan(self):
+        truth = snapshot()
+        truth['hosts'] = {'ziowk01': {'ready': True, 'slots': 2},
+                          'chiap01': {'ready': True, 'slots': 20},
+                          'chiap08': {'ready': True, 'slots': 20}}
+        with self.assertRaisesRegex(module.Refused, 'no-eligible-host'):
+            module.select_host(self.db, dict(job(), host='auto'), truth, now=1000)
+        truth['complete'] = False
+        with self.assertRaisesRegex(module.Refused, 'incomplete-observation'):
+            module.select_host(self.db, dict(job(), host='auto'), truth, now=1000)
+        with self.assertRaisesRegex(module.Refused, 'stale-observation'):
+            module.select_host(self.db, dict(job(), host='auto'), snapshot(900), now=1000)
+
+    def test_light_host_requires_small_card_and_wan_requires_explicit_pin(self):
+        truth = snapshot()
+        truth['hosts']['chiwk13'] = {'ready': True, 'slots': 1}
+        truth['hosts']['chiap04']['ready'] = False
+        truth['hosts']['chiap02']['ready'] = False
+        task = dict(job(), stage='tests', host='auto', work_class='S')
+        self.assertEqual(module.select_host(self.db, task, truth, now=1000), 'chiwk13')
+        task['work_class'] = 'M'
+        with self.assertRaisesRegex(module.Refused, 'no-eligible-host'):
+            module.select_host(self.db, task, truth, now=1000)
+        task.update(host='ziowk01', stage='implementation')
+        truth['hosts']['ziowk01'] = {'ready': True, 'slots': 2}
+        self.assertEqual(module.select_host(self.db, task, truth, now=1000), 'ziowk01')
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -38,7 +78,7 @@ class AdmissionTest(unittest.TestCase):
 
     def test_existing_workers_count_without_name_prefix_filter(self):
         truth = snapshot()
-        truth['workers'] = [{'key': f'legacy:{i}', 'host': 'chiap08', 'provider': 'deepseek'} for i in range(9)]
+        truth['workers'] = [{'key': f'legacy:{i}', 'host': 'chiap08', 'provider': 'deepseek'} for i in range(12)]
         with self.assertRaisesRegex(module.Refused, 'estate-capacity'):
             self.reserve(truth=truth)
 

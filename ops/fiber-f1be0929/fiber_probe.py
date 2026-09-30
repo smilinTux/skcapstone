@@ -7,6 +7,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import re
 import socket
@@ -99,7 +100,7 @@ def node_observation():
                             'pid': int(directory.name), 'pane': identity.get('HERDR_PANE_ID')})
         except (FileNotFoundError, ProcessLookupError):
             continue
-    return {'host': host, 'observed_at': time.time(), 'service_active': command.returncode == 0 and service.get('ActiveState') == 'active',
+    return {'host': host, 'observed_at': time.time(), 'cpu_count': os.cpu_count(), 'service_active': command.returncode == 0 and service.get('ActiveState') == 'active',
             'service_pid_live': process_ok, 'heartbeat_age': beat_age, 'gateway_ok': gateway_ok, 'gateway_error': gateway_error,
             'meminfo': Path('/proc/meminfo').read_text(), 'workers': logical_workers(workers)}
 
@@ -122,6 +123,14 @@ def probe_host(host):
     return value
 
 
+def host_slots(host, memory, cpus):
+    """Conservative headroom matches the actual 3 GiB / two-core worker unit."""
+    from fiber_admission import HOST_SLOTS
+    available = max(0, (memory.get('MemAvailable', 0) - 1048576) // 3145728) if memory else 0
+    cpu_slots = cpus // 2 if type(cpus) is int and cpus > 0 else 0
+    return min(HOST_SLOTS.get(host, 0), available, cpu_slots)
+
+
 def collect():
     from skcapstone.fleet.capacity import admit_headroom
     errors, hosts, workers, received = [], {}, [], []
@@ -136,9 +145,8 @@ def collect():
                 headroom, reason, memory = admit_headroom(observed['meminfo'])
                 beat = observed['heartbeat_age']
                 ready = observed['service_active'] and observed['service_pid_live'] and observed['gateway_ok'] and beat is not None and 0 <= beat <= 180 and headroom
-                configured = {'chiap02': 2, 'chiap03': 1, 'chiap04': 1}.get(host, 0)
-                memory_slots = max(0, (memory['MemAvailable'] - 1048576) // 2097152) if memory else 0
-                hosts[host] = {'ready': bool(ready), 'slots': min(configured, memory_slots),
+                hosts[host] = {'ready': bool(ready), 'slots': host_slots(host, memory, observed.get('cpu_count')),
+                               'cpu_count': observed.get('cpu_count'),
                                'service_active': observed['service_active'], 'service_pid_live': observed['service_pid_live'],
                                'gateway_ok': observed['gateway_ok'], 'gateway_error': observed['gateway_error'],
                                'heartbeat_age': beat, 'headroom': reason, 'memory': memory}
@@ -148,6 +156,7 @@ def collect():
                 hosts[host] = {'ready': False, 'slots': 0}
     # Herdr detection is corroborated with a live process, never used alone.
     result = subprocess.run(['herdr', 'agent', 'list'], capture_output=True, text=True, timeout=10)
+    sessions = []
     if result.returncode:
         errors.append('herdr-unavailable')
     else:
@@ -170,6 +179,9 @@ def collect():
         filtered = []
         for worker in workers:
             agent = by_pane.get(worker['pane']) if worker['host'] == 'chiap08' else None
+            worker['activity'] = ('idle' if agent.get('agent_status') in {'idle', 'done'} else
+                                  'working' if agent.get('agent_status') == 'working' else 'unknown') if agent else 'unknown'
+            sessions.append(worker)
             if agent and agent.get('agent_status') in {'idle', 'done'}:
                 continue
             if agent:
@@ -182,7 +194,7 @@ def collect():
         if any(agent.get('agent_status') == 'working' and agent['pane_id'] not in live_panes for agent in agents):
             errors.append('working-pane-without-process')
     return {'observed_at': min(received) if received else time.time(), 'complete': not errors, 'hosts': hosts,
-            'workers': workers, 'providers': {}, 'errors': errors}
+            'workers': workers, 'sessions': sessions or workers, 'providers': {}, 'errors': errors}
 
 
 if __name__ == '__main__':
