@@ -28,14 +28,14 @@ def job(card='1234abcd'):
 
 
 class AdmissionTest(unittest.TestCase):
-    def test_explicitly_approved_canary_limit_is_fourteen(self):
-        self.assertEqual(module.ESTATE_CAP, 14)
+    def test_latest_human_mandated_limit_is_twelve(self):
+        self.assertEqual(module.ESTATE_CAP, 12)
         self.assertEqual(module.SPACING, 75)
 
-    def test_fourteenth_admitted_fifteenth_refused_including_reservation(self):
+    def test_twelfth_admitted_thirteenth_refused_including_reservation(self):
         truth = snapshot()
         truth['workers'] = [{'key': f'legacy:{i}', 'host': 'chiap08',
-                             'provider': 'codex'} for i in range(13)]
+                             'provider': 'codex'} for i in range(11)]
         task = dict(job(), host='auto')
         self.assertEqual(module.select_host(self.db, task, truth, now=1000), 'chiap02')
         self.reserve(truth=truth)
@@ -102,7 +102,7 @@ class AdmissionTest(unittest.TestCase):
 
     def test_existing_workers_count_without_name_prefix_filter(self):
         truth = snapshot()
-        truth['workers'] = [{'key': f'legacy:{i}', 'host': 'chiap08', 'provider': 'deepseek'} for i in range(14)]
+        truth['workers'] = [{'key': f'legacy:{i}', 'host': 'chiap08', 'provider': 'deepseek'} for i in range(12)]
         with self.assertRaisesRegex(module.Refused, 'estate-capacity'):
             self.reserve(truth=truth)
 

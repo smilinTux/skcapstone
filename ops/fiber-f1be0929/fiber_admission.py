@@ -16,9 +16,9 @@ import sqlite3
 import subprocess
 import uuid
 
-# Temporary 14-worker canary approved 2026-09-30, card 2c5ac908.
-# Live rollback baseline is 12, not this snapshot's historical nine.
-ESTATE_CAP = 14
+# Restored to the latest human-mandated ceiling; preserve later placement fixes.
+# Temporary canary 2c5ac908 is not authority to exceed this production limit.
+ESTATE_CAP = 12
 SPACING = 75
 PLACEMENT = {'implementation': ('chiap02', 2), 'review': ('chiap03', 1),
              'tests': ('chiap04', 1)}
