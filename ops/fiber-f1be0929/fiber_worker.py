@@ -10,6 +10,7 @@ import shlex
 import socket
 import subprocess
 import sys
+import time
 import urllib.parse
 
 from fiber_admission import Refused, card_fingerprint, read_claim, prepare_worktree, placement_allowed
@@ -100,25 +101,48 @@ def check_catalog(job):
         raise Refused('model-not-in-agent-catalog')
 
 
-def verify_claim(request):
-    """Never claim on a replica. Require authority and local visibility to agree."""
+def verify_claim(request, *, authority_only=False, wait_seconds=0):
+    """Wait only for replica visibility; authority revocation fails immediately.
+
+    The start adapter may validate authority alone before creating a tracked
+    waiting service. Actual execution always requires both copies to agree
+    before workspace creation or model work. No replicated state is written.
+    """
     job = request['job']
     claim = request.get('claim', {})
     revision = claim.get('revision')
     if claim.get('authority') != 'chiap08' or claim.get('owner') != job['owner'] or not re.fullmatch('[0-9a-f]{32}', str(revision)):
         raise Refused('authority-claim-required')
+    if type(wait_seconds) is not int or not 0 <= wait_seconds <= 300:
+        raise Refused('invalid-claim-wait')
+    deadline = time.monotonic() + wait_seconds
 
     def authority_read(argv, **kwargs):
+        kwargs['timeout'] = min(kwargs.get('timeout', 10), 10)
         command = ['env', 'SKAGENT=' + job['owner'], 'SKCAPSTONE_AGENT=' + job['owner'],
                    '/home/skuser01/.skenv/bin/skcapstone', *argv[1:]]
         return subprocess.run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
                                'chiap08', shlex.join(command)], **kwargs)
 
-    authoritative = read_claim(job['card'], job['owner'], revision=revision, runner=authority_read)
-    verify_source(authoritative, job)
-    local = read_claim(job['card'], job['owner'], revision=revision)
-    verify_source(local, job)
-    return local
+    def local_read(argv, **kwargs):
+        kwargs['timeout'] = min(kwargs.get('timeout', 10), 10)
+        return subprocess.run(argv, **kwargs)
+
+    while True:
+        authoritative = read_claim(job['card'], job['owner'], revision=revision, runner=authority_read)
+        verify_source(authoritative, job)
+        if authority_only:
+            return authoritative
+        try:
+            options = {'runner': local_read} if wait_seconds else {}
+            local = read_claim(job['card'], job['owner'], revision=revision, **options)
+            verify_source(local, job)
+            return local
+        except Refused as exc:
+            remaining = deadline - time.monotonic()
+            if not wait_seconds or remaining <= 0 or str(exc) not in {'claim-owner-or-revision-mismatch', 'task-contract-changed'}:
+                raise
+            time.sleep(min(2, remaining))
 
 
 def ensure_commit(cache, revision, git):
@@ -162,7 +186,7 @@ def start(request):
     if socket.gethostname().split('.')[0].lower() != job['host']:
         raise Refused('wrong-execution-host')
     check_catalog(job)
-    verify_claim(request)
+    verify_claim(request, authority_only=True)
     directory = STATE / 'requests'
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = directory / (receipt['token'] + '.json')
@@ -201,7 +225,7 @@ def execute(request):
     if socket.gethostname().split('.')[0].lower() != job['host']:
         raise Refused('wrong-execution-host')
     check_catalog(job)
-    row = verify_claim(request)
+    row = verify_claim(request, wait_seconds=300)
     verify_resource_limits()
     guard = Path.home() / '.skenv/bin/pi-cardstore-guard.mjs'
     pi = Path.home() / '.npm-global/bin/pi'

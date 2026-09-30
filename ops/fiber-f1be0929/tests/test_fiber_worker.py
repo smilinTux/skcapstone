@@ -23,6 +23,71 @@ def request():
 
 
 class WorkerTest(unittest.TestCase):
+    def test_replica_wait_rechecks_authority_before_acceptance(self):
+        item = request()
+        item['claim'] = {'authority': 'chiap08', 'owner': 'fiber-test', 'revision': 'a' * 32}
+        row = {'owner': 'fiber-test'}
+        with patch.object(worker, 'read_claim', side_effect=[row, Refused('claim-owner-or-revision-mismatch'), row, row]) as read, \
+             patch.object(worker, 'verify_source'), patch.object(worker.time, 'sleep') as sleep:
+            self.assertEqual(worker.verify_claim(item, wait_seconds=5), row)
+            self.assertEqual(read.call_count, 4)
+            sleep.assert_called_once()
+
+    def test_replica_wait_never_retries_authority_revocation(self):
+        item = request()
+        item['claim'] = {'authority': 'chiap08', 'owner': 'fiber-test', 'revision': 'a' * 32}
+        with patch.object(worker, 'read_claim', side_effect=[{}, Refused('claim-owner-or-revision-mismatch'), Refused('claim-not-active')]) as read, \
+             patch.object(worker, 'verify_source'), patch.object(worker.time, 'sleep'):
+            with self.assertRaisesRegex(Refused, 'claim-not-active'):
+                worker.verify_claim(item, wait_seconds=5)
+            self.assertEqual(read.call_count, 3)
+
+    def test_replica_wait_is_bounded_and_checks_no_other_failures(self):
+        item = request()
+        item['claim'] = {'authority': 'chiap08', 'owner': 'fiber-test', 'revision': 'a' * 32}
+        with patch.object(worker, 'read_claim', side_effect=[{}, Refused('claim-owner-or-revision-mismatch')]), \
+             patch.object(worker, 'verify_source'), patch.object(worker.time, 'monotonic', side_effect=[0, 6]), \
+             patch.object(worker.time, 'sleep') as sleep:
+            with self.assertRaisesRegex(Refused, 'claim-owner-or-revision-mismatch'):
+                worker.verify_claim(item, wait_seconds=5)
+            sleep.assert_not_called()
+        with patch.object(worker, 'read_claim', side_effect=[{}, Refused('claim-readback-invalid')]), \
+             patch.object(worker, 'verify_source'), patch.object(worker.time, 'sleep') as sleep:
+            with self.assertRaisesRegex(Refused, 'claim-readback-invalid'):
+                worker.verify_claim(item, wait_seconds=5)
+            sleep.assert_not_called()
+
+    def test_start_defers_replica_wait_to_tracked_service(self):
+        item = request()
+        with tempfile.TemporaryDirectory() as td, patch.object(worker, 'STATE', Path(td)), \
+             patch.object(worker.socket, 'gethostname', return_value='chiap02'), \
+             patch.object(worker, 'check_catalog'), patch.object(worker, 'verify_claim') as claim, \
+             patch.object(worker, 'read_unit', return_value={'state': 'running'}), \
+             patch.object(worker.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)):
+            worker.start(item)
+            claim.assert_called_once_with(item, authority_only=True)
+
+    def test_execute_waits_before_resource_or_workspace_actions(self):
+        item = request()
+        with patch.object(worker.socket, 'gethostname', return_value='chiap02'), \
+             patch.object(worker, 'check_catalog'), \
+             patch.object(worker, 'verify_claim', side_effect=Refused('claim-owner-or-revision-mismatch')) as claim, \
+             patch.object(worker, 'verify_resource_limits') as resources, \
+             patch.object(worker, 'prepare_worktree') as materialize:
+            with self.assertRaisesRegex(Refused, 'claim-owner-or-revision-mismatch'):
+                worker.execute(item)
+            claim.assert_called_once_with(item, wait_seconds=300)
+            resources.assert_not_called()
+            materialize.assert_not_called()
+
+    def test_authority_only_does_not_consult_replica(self):
+        item = request()
+        item['claim'] = {'authority': 'chiap08', 'owner': 'fiber-test', 'revision': 'a' * 32}
+        with patch.object(worker, 'read_claim', return_value={}) as read, patch.object(worker, 'verify_source'):
+            worker.verify_claim(item, authority_only=True)
+            self.assertEqual(read.call_count, 1)
+            self.assertIn('runner', read.call_args.kwargs)
+
     def test_actual_worker_resource_budget_is_required(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
