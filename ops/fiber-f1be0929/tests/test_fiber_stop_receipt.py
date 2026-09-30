@@ -25,13 +25,17 @@ class StopReceiptTest(unittest.TestCase):
                       '_BOOT_ID': 'c' * 32, '_UID': uid, '_EXE': '/usr/lib/systemd/systemd',
                       '_SYSTEMD_CGROUP': f'/user.slice/user-{uid}.slice/user@{uid}.service/init.scope',
                       '__CURSOR': 'synthetic-exact-stop', '__REALTIME_TIMESTAMP': '123456789'}
+        self.history = {'_SYSTEMD_USER_UNIT': self.receipt['unit'], '_SYSTEMD_INVOCATION_ID': 'b' * 32,
+                        '_BOOT_ID': 'c' * 32, '_UID': uid,
+                        '_SYSTEMD_CGROUP': f'/user.slice/user-{uid}.slice/user@{uid}.service/app.slice/nested.slice/' + self.receipt['unit']}
 
     def observe(self, *, events=None, populated=False, changes=None):
         calls = []
         def run(argv, **kwargs):
             calls.append(argv)
             if argv[0] == 'journalctl':
-                rows = [self.event] if events is None else events
+                rows = ([self.history] if any(arg.startswith('_SYSTEMD_USER_UNIT=') for arg in argv)
+                        else [self.event] if events is None else events)
                 return subprocess.CompletedProcess(argv, 0, '\n'.join(json.dumps(row) for row in rows), '')
             values = dict(self.values)
             if changes and len(calls) > 1:
@@ -42,6 +46,7 @@ class StopReceiptTest(unittest.TestCase):
             if str(path) == '/proc/sys/kernel/random/boot_id':
                 return 'c' * 32
             if path.name == 'cgroup.events':
+                self.assertEqual(str(path.parent), '/sys/fs/cgroup' + self.history['_SYSTEMD_CGROUP'])
                 return 'populated ' + ('1' if populated else '0') + '\nfrozen 0\n'
             raise AssertionError('unexpected read ' + str(path))
         with patch.object(worker.subprocess, 'run', side_effect=run), \
@@ -79,6 +84,11 @@ class StopReceiptTest(unittest.TestCase):
         result, calls = self.observe()
         self.assertEqual(result['state'], 'unknown')
         self.assertEqual(len(calls), 1)
+
+    def test_unproven_cgroup_path_stays_unknown(self):
+        for value in ('', '/outside/' + self.receipt['unit'], '/user.slice/../' + self.receipt['unit']):
+            self.history['_SYSTEMD_CGROUP'] = value
+            self.assertEqual(self.observe()[0]['state'], 'unknown')
 
 
 if __name__ == '__main__':

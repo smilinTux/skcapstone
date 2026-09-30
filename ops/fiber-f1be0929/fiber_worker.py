@@ -189,9 +189,36 @@ def stopped_unit(receipt, code, values):
     invocation = receipt.get('invocation')
     if not re.fullmatch('[0-9a-f]{32}', str(invocation)):
         return unknown
+    if values.get('MainPID') != '0' or values.get('ActiveState') != 'inactive':
+        return unknown
     uid = str(os.getuid())
     prefix = f'/user.slice/user-{uid}.slice/user@{uid}.service'
-    group = prefix + '/app.slice/' + receipt['unit']
+    boot = Path('/proc/sys/kernel/random/boot_id').read_text().strip().replace('-', '')
+    def entries(required, extra):
+        fields = ','.join([*required, *extra])
+        journal = subprocess.run(['journalctl', '--user', '--no-pager', '-o', 'json', '-n', '2',
+            '--output-fields=' + fields, *[key + '=' + value for key, value in required.items()]],
+            capture_output=True, text=True, timeout=10)
+        if journal.returncode or len(journal.stdout) > 32768:
+            return []
+        try:
+            rows = [json.loads(line) for line in journal.stdout.splitlines() if line.strip()]
+        except ValueError:
+            return []
+        if any(not isinstance(row, dict) or any(row.get(k) != v for k, v in required.items()) for row in rows):
+            return []
+        return rows
+    # Journal-supplied underscore fields bind the real cgroup, including
+    # nested slices. Do not guess where a systemd version placed the unit.
+    history = entries({'_SYSTEMD_USER_UNIT': receipt['unit'], '_SYSTEMD_INVOCATION_ID': invocation,
+                       '_BOOT_ID': boot, '_UID': uid}, ['_SYSTEMD_CGROUP'])
+    groups = {row.get('_SYSTEMD_CGROUP') for row in history}
+    if len(groups) != 1:
+        return unknown
+    group = groups.pop()
+    if (not isinstance(group, str) or not group.startswith(prefix + '/')
+            or not group.endswith('/' + receipt['unit']) or '..' in group.split('/')):
+        return unknown
     def inactive(returncode, current):
         description = 'SKFleet fiber ' + receipt['card'] + ' ' + receipt['token']
         return (current.get('Id') == receipt['unit'] and current.get('MainPID') == '0'
@@ -209,22 +236,12 @@ def stopped_unit(receipt, code, values):
         return events.get('populated') == '0'
     if not inactive(code, values) or not group_empty():
         return unknown
-    boot = Path('/proc/sys/kernel/random/boot_id').read_text().strip().replace('-', '')
     required = {'USER_UNIT': receipt['unit'], 'USER_INVOCATION_ID': invocation,
                 'MESSAGE_ID': '9d1aaa27d60140bd96365438aad20286', 'JOB_RESULT': 'done',
                 '_BOOT_ID': boot, '_UID': uid, '_EXE': '/usr/lib/systemd/systemd',
                 '_SYSTEMD_CGROUP': prefix + '/init.scope'}
-    fields = ','.join([*required, '__CURSOR', '__REALTIME_TIMESTAMP'])
-    journal = subprocess.run(['journalctl', '--user', '--no-pager', '-o', 'json', '-n', '2',
-        '--output-fields=' + fields, *[key + '=' + value for key, value in required.items()]],
-        capture_output=True, text=True, timeout=10)
-    if journal.returncode or len(journal.stdout) > 32768:
-        return unknown
-    try:
-        rows = [json.loads(line) for line in journal.stdout.splitlines() if line.strip()]
-    except ValueError:
-        return unknown
-    if len(rows) != 1 or not isinstance(rows[0], dict):
+    rows = entries(required, ['__CURSOR', '__REALTIME_TIMESTAMP'])
+    if len(rows) != 1:
         return unknown
     event = rows[0]
     if any(event.get(key) != value for key, value in required.items()) or not event.get('__CURSOR'):
@@ -234,6 +251,7 @@ def stopped_unit(receipt, code, values):
     return dict(receipt, state='stopped', main_pid=0, exit_code=None,
                 stop_receipt={'cursor': event['__CURSOR'], 'unit': receipt['unit'],
                               'invocation': invocation, 'boot_id': boot,
+                              'control_group': group,
                               'timestamp_us': event.get('__REALTIME_TIMESTAMP'),
                               'proof': 'systemd-user-manager-stop-completed'})
 
