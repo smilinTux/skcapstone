@@ -75,11 +75,15 @@ def cards(card_ids):
 
 
 def eligible(row, board):
-    from skcapstone.coord_gate_diagnostic import diagnose
+    """Reject obvious holds locally; require the native gate for admission."""
     if row.get('owner') or row.get('archived') or row.get('status') not in {'backlog', 'ready', 'doing', 'review'}:
         return False
     if any(board.get(cid, {}).get('status') != 'done' for cid in row.get('dependencies', [])):
         return False
+    try:
+        from skcapstone.coord_gate_diagnostic import diagnose
+    except ImportError:
+        raise Refused('board-gate-unavailable') from None
     return diagnose(Path.home() / '.skcapstone', row['id']).get('eligible') is True
 
 

@@ -215,6 +215,13 @@ class ControlTest(unittest.TestCase):
         self.assertFalse(control.eligible({'owner': 'another', 'status': 'doing'}, {}))
         self.assertFalse(control.eligible({'status': 'ready', 'dependencies': ['missing']}, {}))
 
+    def test_missing_board_client_is_explicitly_refused_after_local_holds(self):
+        with patch('builtins.__import__', side_effect=ImportError('synthetic missing client')):
+            self.assertFalse(control.eligible({'owner': 'another', 'status': 'doing'}, {}))
+            self.assertFalse(control.eligible({'status': 'ready', 'dependencies': ['missing']}, {}))
+            with self.assertRaisesRegex(Refused, 'board-gate-unavailable'):
+                control.eligible({'id': '1234abcd', 'status': 'ready'}, {})
+
     def test_task_fingerprint_ignores_claim_not_task_changes(self):
         row = {'id': '1234abcd', 'title': 'test', 'description': 'bounded', 'acceptance_criteria': ['pass'],
                'labels': ['source-only'], 'dependencies': [], 'meta': {}, 'links': {}}

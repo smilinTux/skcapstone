@@ -22,7 +22,7 @@ implementation failed with the expected missing `fiber_refill` module.
 - `python -m unittest discover -s ops/fiber-f1be0929/tests -p test_fiber_refill.py`:
   19 tests passed.
 - `python -m unittest discover -s ops/fiber-f1be0929/tests -p test_fiber_control.py`:
-  22 tests passed.
+  22 tests passed in the original operator run; revised results recorded below.
 - Complete fiber suite with the environment in REFILL-RUNBOOK.md:
   167 tests run, 166 passed, 1 skipped, 0 failures, 2.970 seconds.
   The cgroup-boundary test is skipped outside its bounded service context.
@@ -48,3 +48,25 @@ hash. Operators retain and actually qualify evidence before writing receipts.
 Rollback must park pending refill jobs before restoring the old controller,
 which does not know their expiry marker. Existing workers and claims are not
 stopped or transferred. See REFILL-RUNBOOK.md for exact activation and rollback.
+
+## First-review response
+
+Review 36486fb4 verified the 19 refill tests and safety properties, but returned
+FAIL because its system Python sandbox lacked skcapstone/skcoord, leaving one
+controller test unable to run. This does not contradict the documented operator
+environment passes, which were actually run and additionally repeated against
+the installed admission12 stack (41 tests passed). The review also incorrectly
+describes the old import as conditional on an owned/missing dependency, and says
+the recheck wrapper catches ImportError: neither statement matches the source.
+Preserve that original report and these corrections, rather than rewriting it.
+
+The revised implementation moves the native gate import after deterministic
+local denials and translates an unavailable import into the explicit fail-closed
+reason `board-gate-unavailable`. No missing dependency can authorize admission.
+A new test proves this behavior with a deliberately unavailable board client.
+The revised exact snapshot still requires independent review before installation.
+
+Revised actual results: complete operator fiber suite ran 168 tests, 167 passed,
+1 cgroup-context skip, 0 failures (2.948 seconds). System `/usr/bin/python3 -S`
+with no site packages independently ran all 23 controller tests successfully
+(0.108 seconds). The 19 refill tests remain part of the complete suite.
