@@ -1,6 +1,7 @@
 """Launch lifecycle tests, including lost acknowledgments and crash recovery."""
 from pathlib import Path
 import sqlite3
+import json
 import sys
 import tempfile
 import unittest
@@ -12,6 +13,26 @@ from test_fiber_admission import job, snapshot
 
 
 class DispatchTest(unittest.TestCase):
+    def test_confirmed_stop_releases_reservation_not_history_or_claim(self):
+        self.run_job()
+        self.observed['1234abcd'].update(state='stopped', main_pid=0, exit_code=None,
+            stop_receipt={'cursor': 'exact-manager-stop', 'invocation': 'a' * 32,
+                          'unit': self.observed['1234abcd']['unit']})
+        self.assertEqual(self.run_job()['state'], 'terminal')
+        with sqlite3.connect(self.root / 'admission.sqlite3') as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM reservations').fetchone()[0], 0)
+            receipt = json.loads(db.execute('SELECT receipt FROM runs').fetchone()[0])
+            self.assertIsNone(receipt['exit_code'])
+            self.assertEqual(receipt['state'], 'stopped')
+        self.assertEqual(len(self.starts), 1)
+
+    def test_stopped_without_exact_receipt_keeps_reservation(self):
+        self.run_job()
+        self.observed['1234abcd'].update(state='stopped', main_pid=0, exit_code=None)
+        self.assertEqual(self.run_job()['state'], 'running')
+        with sqlite3.connect(self.root / 'admission.sqlite3') as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM reservations').fetchone()[0], 1)
+
     def test_auto_placement_binds_resolved_host_and_retry_never_reselects(self):
         task = dict(job(), host='auto')
         calls = []

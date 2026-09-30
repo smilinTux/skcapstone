@@ -53,8 +53,9 @@ def reconcile(directory, observe, *, clock=time.time):
     """Reconcile only exact, live-observed remote unit generations.
 
     Caller holds authority(). Adapter observe(run) must query the remote
-    service manager now, not return a cached status file. Terminal requires
-    a known exit code and no live main process. Keep the immutable run record.
+    service manager now, not return a cached status file. A known exit code
+    requires no live main process. A verified manager stop retains an unknown
+    exit code and its distinct stop receipt. Keep the immutable run record.
     """
     database = Path(directory) / 'admission.sqlite3'
     results = []
@@ -70,6 +71,10 @@ def reconcile(directory, observe, *, clock=time.time):
                 results.append({'card': run['card'], 'state': 'unknown'})
                 continue
             state = observation.get('state')
+            stop = observation.get('stop_receipt') or {}
+            stopped = (state == 'stopped' and observation.get('exit_code') is None
+                       and isinstance(stop, dict) and isinstance(stop.get('cursor'), str) and bool(stop['cursor'])
+                       and stop.get('unit') == run['unit'] and stop.get('invocation') == run['invocation'])
             if state == 'running':
                 # Recovery waits a fresh full interval; never infer a start
                 # timestamp from an absent, stale, or different-host clock.
@@ -79,7 +84,7 @@ def reconcile(directory, observe, *, clock=time.time):
                            (observation['invocation'], json.dumps(observation, sort_keys=True), run['card']))
                 db.commit()
                 results.append({'card': run['card'], 'state': 'running'})
-            elif state == 'terminal' and observation.get('main_pid') == 0 and type(observation.get('exit_code')) is int:
+            elif observation.get('main_pid') == 0 and (stopped or state == 'terminal' and type(observation.get('exit_code')) is int):
                 # Even a very short failed job consumes the launch interval.
                 if run['state'] != 'running':
                     db.execute('INSERT OR REPLACE INTO clock VALUES (1, ?)', (clock(),))

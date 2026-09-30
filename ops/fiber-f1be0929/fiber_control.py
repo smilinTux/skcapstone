@@ -120,6 +120,7 @@ def observe(run):
     job = json.loads(run['binding'])
     receipt = {key: run[key] for key in ['card', 'host', 'token', 'unit']}
     receipt['provider'] = job['provider']
+    receipt['invocation'] = run.get('invocation')
     return remote('observe', {'job': job, 'receipt': receipt})
 
 

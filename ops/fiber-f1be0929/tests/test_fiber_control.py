@@ -14,6 +14,22 @@ from test_fiber_admission import job, snapshot
 
 
 class ControlTest(unittest.TestCase):
+    def test_observe_forwards_only_recorded_invocation_for_recovery(self):
+        run = {'binding': json.dumps(job()), 'card': '1234abcd', 'host': 'chiap02',
+               'token': 'a' * 32, 'unit': 'synthetic.service', 'invocation': 'b' * 32}
+        with patch.object(control, 'remote', return_value={'state': 'unknown'}) as remote:
+            control.observe(run)
+        self.assertEqual(remote.call_args.args[1]['receipt']['invocation'], 'b' * 32)
+
+    def test_stopped_unknown_exit_holds_new_admission(self):
+        with tempfile.TemporaryDirectory() as td, patch.object(control, 'STATE', Path(td)), \
+             patch.object(control, 'HOLD', Path(td) / 'HOLD'), \
+             patch.object(control.socket, 'gethostname', return_value='chiap08'), \
+             patch.object(control, 'reconcile', return_value=[{'card': '1234abcd', 'state': 'terminal', 'exit_code': None}]), \
+             patch.object(control, 'cards') as cards:
+            self.assertEqual(control.cycle()['state'], 'admission-held')
+            cards.assert_not_called()
+
     def test_failed_worker_holds_before_another_queue_read(self):
         with tempfile.TemporaryDirectory() as td, patch.object(control, 'STATE', Path(td)), \
              patch.object(control, 'HOLD', Path(td) / 'HOLD'), \
