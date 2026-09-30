@@ -1,0 +1,1 @@
+- Card `66988c69`: exclude only stable kernel zombie processes from fleet worker occupancy. Preserve live children and keep sleeping, stopped, inaccessible, changed and unknown processes counted.

@@ -71,6 +71,22 @@ def logical_workers(workers):
             and row.get('mode') == 'app-server' and row.get('parent_pid') in codex_pids)]
 
 
+def kernel_zombie(directory):
+    """Recognize a stable kernel zombie; uncertain or resumable states count."""
+    try:
+        before = (directory / 'stat').read_text()
+        prefix, separator, tail = before.rpartition(') ')
+        fields = tail.split()
+        if (not separator or not prefix.startswith(directory.name + ' (')
+                or len(fields) < 20 or fields[0] != 'Z'
+                or not fields[19].isdecimal() or int(fields[19]) <= 0):
+            return False
+        # A reaped/reused PID or a concurrent change must not exclude a worker.
+        return (directory / 'stat').read_text() == before
+    except (OSError, ValueError):
+        return False
+
+
 def node_observation():
     host = socket.gethostname().split('.')[0].lower()
     command = subprocess.run(['systemctl', '--user', 'show', 'sknoded.service',
@@ -98,6 +114,8 @@ def node_observation():
         try:
             name = (directory / 'comm').read_text().strip()
             if name not in {'pi', 'codex', 'claude', 'cursor-agent', 'opencode', 'gemini'}:
+                continue
+            if kernel_zombie(directory):
                 continue
             # Only explicitly allowlisted identity keys leave this process.
             identity = {}

@@ -6,6 +6,7 @@ import json
 import subprocess
 import io
 import tempfile
+import os
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -14,6 +15,37 @@ import fiber_probe as probe
 
 
 class ProbeTest(unittest.TestCase):
+    def test_kernel_zombie_requires_stable_exact_process_identity(self):
+        directory = Path('/proc/42')
+        def stat(state='Z', start='123', pid='42'):
+            return pid + ' (name with ) spaces) ' + ' '.join(
+                [state, '1'] + ['0'] * 17 + [start])
+        with patch.object(Path, 'read_text', side_effect=[stat(), stat()]):
+            self.assertTrue(probe.kernel_zombie(directory))
+        for value in [stat(state=s) for s in ['R', 'S', 'D', 'T', 't', 'I', 'X', '?']] + [
+                '', '42 (codex) Z', stat(start='0'), stat(start='bad'), stat(pid='142')]:
+            with self.subTest(value=value), patch.object(Path, 'read_text', return_value=value):
+                self.assertFalse(probe.kernel_zombie(directory))
+        for after in [stat(start='124'), stat(state='R'), FileNotFoundError(), PermissionError()]:
+            with self.subTest(after=str(after)), \
+                 patch.object(Path, 'read_text', side_effect=[stat(), after]):
+                self.assertFalse(probe.kernel_zombie(directory))
+        with patch.object(Path, 'read_text', side_effect=PermissionError()):
+            self.assertFalse(probe.kernel_zombie(directory))
+
+    @unittest.skipUnless(hasattr(os, 'fork') and Path('/proc/self/stat').exists(), 'Linux procfs required')
+    def test_real_kernel_live_then_exited_process(self):
+        self.assertFalse(probe.kernel_zombie(Path('/proc') / str(os.getpid())))
+        pid = os.fork()
+        if pid == 0:
+            os._exit(0)
+        try:
+            os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT)
+            self.assertTrue(probe.kernel_zombie(Path('/proc') / str(pid)))
+        finally:
+            os.waitpid(pid, 0)
+        self.assertFalse(probe.kernel_zombie(Path('/proc') / str(pid)))
+
     def test_only_exact_codex_pid_updater_is_maintenance(self):
         command = [b'/usr/bin/codex', b'app-server', b'daemon', b'pid-update-loop']
         encoded = b'\0'.join(command) + b'\0'
@@ -63,6 +95,9 @@ class ProbeTest(unittest.TestCase):
                 (45, 43, b''),
                 (46, 43, b'/usr/bin/codex\0app-server\0daemon\0pid-update-loop\0extra\0'),
                 (47, 43, b'/usr/bin/other\0app-server\0daemon\0pid-update-loop\0'),
+                (48, 1, b''),
+                (49, 48, b'/usr/bin/codex\0app-server\0'),
+                (50, 1, b'/usr/bin/codex\0resume\0'),
             ]:
                 directory = proc / str(pid)
                 directory.mkdir()
@@ -70,6 +105,9 @@ class ProbeTest(unittest.TestCase):
                 (directory / 'status').write_text(f'PPid:\t{parent}\n')
                 (directory / 'environ').write_bytes(b'')
                 (directory / 'cmdline').write_bytes(args)
+                state = 'Z' if pid == 48 else 'T' if pid == 50 else 'S'
+                fields = [state, str(parent)] + ['0'] * 17 + [str(pid * 100)]
+                (directory / 'stat').write_text(f'{pid} (codex) ' + ' '.join(fields))
             def mapped_path(*parts):
                 path = Path(*parts)
                 return proc / path.relative_to('/proc') if path.is_relative_to('/proc') else path
@@ -79,7 +117,7 @@ class ProbeTest(unittest.TestCase):
                  patch.object(probe.urllib.request, 'urlopen', return_value=io.BytesIO(b'{"status":"ok"}')):
                 paths.home.return_value = root / 'home'
                 observed = probe.node_observation()
-            self.assertEqual(sorted(row['pid'] for row in observed['workers']), [43, 44, 45, 46, 47])
+            self.assertEqual(sorted(row['pid'] for row in observed['workers']), [43, 44, 45, 46, 47, 49, 50])
             self.assertTrue(observed['service_pid_live'])
 
     def test_updater_exclusion_preserves_servers_and_unknown_workers(self):
