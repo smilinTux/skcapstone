@@ -34,7 +34,6 @@ class SelectorTest(unittest.TestCase):
     def test_absent_selector_is_backward_compatible(self):
         self.assertIsNone(testenv.select(None))
         self.assertIsNone(testenv.select({}))
-        self.assertIsNone(testenv.select({'test_environment': None}))
 
     def test_valid_selector_returns_exact_fields_only(self):
         selected = testenv.select({'test_environment': {'lock_sha256': LOCK, 'python': '3.12'}})
@@ -42,6 +41,7 @@ class SelectorTest(unittest.TestCase):
 
     def test_malformed_selectors_are_refused(self):
         bad = [
+            None,
             'not-a-dict',
             {'python': '3.12'},
             {'lock_sha256': LOCK},

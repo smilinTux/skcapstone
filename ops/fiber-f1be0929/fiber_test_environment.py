@@ -33,9 +33,9 @@ def select(job):
         return None
     if not isinstance(job, dict):
         raise Refused('invalid-job')
-    selector = job.get('test_environment')
-    if selector is None:
+    if 'test_environment' not in job:
         return None
+    selector = job['test_environment']
     if not isinstance(selector, dict) or set(selector) != {'lock_sha256', 'python'}:
         raise Refused('test-environment-selector-invalid')
     lock = selector.get('lock_sha256')

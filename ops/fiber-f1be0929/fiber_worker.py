@@ -50,14 +50,7 @@ def validate(request):
         raise Refused('invalid-stage')
     if job.get('host') != 'auto' and not placement_allowed(job, job.get('host')):
         raise Refused('stage-placement')
-    # Normalize and bind the optional read-only test environment selector.
-    selected = fiber_test_environment.select(job)
-    if selected is not None:
-        job['test_environment'] = selected
-        if job.get('stage') != 'tests':
-            raise Refused('test-environment-stage')
-    elif 'test_environment' in job:
-        del job['test_environment']
+    fiber_test_environment.select(job)
     return job, receipt
 
 
@@ -292,7 +285,7 @@ def environment_plan(job):
     must resolve to a ready operator artifact bound to the exact repository;
     failure refuses here, before model execution or claim mutation.
     """
-    selector = job.get('test_environment')
+    selector = fiber_test_environment.select(job)
     if selector is None:
         return None
     return fiber_test_environment.qualify(selector, job['repository'])

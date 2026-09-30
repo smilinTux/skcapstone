@@ -305,20 +305,20 @@ class WorkerTest(unittest.TestCase):
         self.assertNotIn('test_environment', job)
         self.assertIsNone(worker.environment_plan(job))
 
-    def test_environment_selector_is_normalized_and_stage_bound(self):
-        item = request()
-        item['job'].update(stage='tests', test_environment={'lock_sha256': 'a' * 64, 'python': '3.12'})
-        job, _ = worker.validate(item)
-        self.assertEqual(job['test_environment'], {'lock_sha256': 'a' * 64, 'python': '3.12'})
-        for selector in ('not-a-dict', {'lock_sha256': 'a' * 64, 'python': '3.12', 'venv': '/tmp/x'}):
+    def test_environment_selector_supports_every_existing_stage(self):
+        for stage in ('implementation', 'review', 'tests'):
+            item = request()
+            item['job'].update(stage=stage, host='auto',
+                               test_environment={'lock_sha256': 'a' * 64, 'python': '3.12'})
+            item['receipt']['host'] = 'auto'
+            with self.subTest(stage=stage):
+                job, _ = worker.validate(item)
+                self.assertEqual(job['test_environment'], {'lock_sha256': 'a' * 64, 'python': '3.12'})
+        for selector in (None, 'not-a-dict', {'lock_sha256': 'a' * 64, 'python': '3.12', 'venv': '/tmp/x'}):
             item = request()
             item['job'].update(stage='tests', test_environment=selector)
             with self.subTest(selector=selector), self.assertRaises(Refused):
                 worker.validate(item)
-        item = request()
-        item['job'].update(stage='implementation', test_environment={'lock_sha256': 'a' * 64, 'python': '3.12'})
-        with self.assertRaisesRegex(Refused, 'test-environment-stage'):
-            worker.validate(item)
 
     def test_missing_environment_refuses_before_claim(self):
         item = request()
