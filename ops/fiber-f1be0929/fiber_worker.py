@@ -140,9 +140,21 @@ def verify_claim(request, *, authority_only=False, wait_seconds=0):
             return local
         except Refused as exc:
             remaining = deadline - time.monotonic()
-            if not wait_seconds or remaining <= 0 or str(exc) not in {'claim-owner-or-revision-mismatch', 'task-contract-changed'}:
+            if not wait_seconds or remaining <= 0 or str(exc) not in {'claim-owner-or-revision-mismatch', 'task-contract-changed', 'claim-readback-failed'}:
                 raise
             time.sleep(min(2, remaining))
+
+
+def verify_cache_origin(cache, repository, git):
+    """Bind the stored source and permit only the estate's exact SSH transport."""
+    if cache.is_symlink() or git('-C', str(cache), 'config', '--get-all', 'remote.origin.url') != repository:
+        raise Refused('source-cache-mismatch')
+    allowed = {repository}
+    prefix = 'https://skgit.skstack01.douno.it/'
+    if repository.startswith(prefix):
+        allowed.add('ssh://git@skgit.skstack01.douno.it:222/' + repository[len(prefix):])
+    if git('-C', str(cache), 'remote', 'get-url', 'origin') not in allowed:
+        raise Refused('source-cache-mismatch')
 
 
 def ensure_commit(cache, revision, git):
@@ -250,8 +262,7 @@ def execute(request):
         if not cache.exists():
             git('init', '--bare', '--quiet', str(cache))
             git('-C', str(cache), 'remote', 'add', 'origin', job['repository'])
-        if cache.is_symlink() or git('-C', str(cache), 'remote', 'get-url', 'origin') != job['repository']:
-            raise Refused('source-cache-mismatch')
+        verify_cache_origin(cache, job['repository'], git)
         ensure_commit(cache, job['base_revision'], git)
         prepare_worktree(cache, workspace, 'work/fiber-' + job['card'] + '-' + receipt['token'][:8], job['base_revision'])
     runtime = workspace / '.fiber-runtime'

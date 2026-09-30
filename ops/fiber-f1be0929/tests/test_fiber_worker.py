@@ -1,6 +1,7 @@
 """Remote adapter refusal and exact service-manager receipt tests."""
 from pathlib import Path
 import subprocess
+import os
 import sys
 import tempfile
 import unittest
@@ -23,6 +24,67 @@ def request():
 
 
 class WorkerTest(unittest.TestCase):
+    def test_replica_read_failure_waits_but_authority_failure_does_not(self):
+        item = request()
+        item['claim'] = {'authority': 'chiap08', 'owner': 'fiber-test', 'revision': 'a' * 32}
+        row = {'owner': 'fiber-test'}
+        with patch.object(worker, 'read_claim', side_effect=[row, Refused('claim-readback-failed'), row, row]) as read, \
+             patch.object(worker, 'verify_source'), patch.object(worker.time, 'sleep') as sleep:
+            self.assertEqual(worker.verify_claim(item, wait_seconds=5), row)
+            self.assertEqual(read.call_count, 4)
+            sleep.assert_called_once()
+        for responses in ([Refused('claim-readback-failed')],
+                          [row, Refused('claim-readback-failed'), Refused('claim-not-active')]):
+            with patch.object(worker, 'read_claim', side_effect=responses) as read, \
+                 patch.object(worker, 'verify_source'), patch.object(worker.time, 'sleep'):
+                with self.assertRaises(Refused):
+                    worker.verify_claim(item, wait_seconds=5)
+                self.assertEqual(read.call_count, len(responses))
+
+    def test_replica_read_failure_has_deadline_and_no_wait_default(self):
+        item = request()
+        item['claim'] = {'authority': 'chiap08', 'owner': 'fiber-test', 'revision': 'a' * 32}
+        for seconds in (0, 5):
+            with patch.object(worker, 'read_claim', side_effect=[{}, Refused('claim-readback-failed')]), \
+                 patch.object(worker, 'verify_source'), patch.object(worker.time, 'monotonic', side_effect=[0, 6]), \
+                 patch.object(worker.time, 'sleep') as sleep:
+                with self.assertRaisesRegex(Refused, 'claim-readback-failed'):
+                    worker.verify_claim(item, wait_seconds=seconds)
+                sleep.assert_not_called()
+
+    def test_source_origin_allows_only_exact_forgejo_transport(self):
+        repository = 'https://skgit.skstack01.douno.it/smilinTux/sklegal.git'
+        with tempfile.TemporaryDirectory() as td:
+            cache = Path(td) / 'cache.git'
+            env = dict(os.environ, GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_NOSYSTEM='1')
+            def git(*args):
+                return subprocess.run(['git', *args], env=env, check=True,
+                                      capture_output=True, text=True).stdout.strip()
+            git('init', '--bare', '--quiet', str(cache))
+            git('-C', str(cache), 'remote', 'add', 'origin', repository)
+            worker.verify_cache_origin(cache, repository, git)
+            for target in ('ssh://git@skgit.skstack01.douno.it:222/smilinTux/sklegal.git',
+                           'ssh://git@evil.invalid:222/smilinTux/sklegal.git',
+                           'ssh://git@skgit.skstack01.douno.it:222/other/repo.git',
+                           'ssh://git@skgit.skstack01.douno.it:22/smilinTux/sklegal.git',
+                           'ssh://root@skgit.skstack01.douno.it:222/smilinTux/sklegal.git'):
+                key = 'url.' + target + '.insteadOf'
+                git('-C', str(cache), 'config', key, repository)
+                with self.subTest(target=target):
+                    if target == 'ssh://git@skgit.skstack01.douno.it:222/smilinTux/sklegal.git':
+                        worker.verify_cache_origin(cache, repository, git)
+                    else:
+                        with self.assertRaisesRegex(Refused, 'source-cache-mismatch'):
+                            worker.verify_cache_origin(cache, repository, git)
+                git('-C', str(cache), 'config', '--unset', key)
+            git('-C', str(cache), 'remote', 'set-url', 'origin', 'https://evil.invalid/repo.git')
+            with self.assertRaisesRegex(Refused, 'source-cache-mismatch'):
+                worker.verify_cache_origin(cache, repository, git)
+            link = Path(td) / 'link.git'
+            link.symlink_to(cache, target_is_directory=True)
+            with self.assertRaisesRegex(Refused, 'source-cache-mismatch'):
+                worker.verify_cache_origin(link, repository, git)
+
     def test_replica_wait_rechecks_authority_before_acceptance(self):
         item = request()
         item['claim'] = {'authority': 'chiap08', 'owner': 'fiber-test', 'revision': 'a' * 32}
