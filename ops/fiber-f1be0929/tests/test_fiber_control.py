@@ -112,6 +112,44 @@ class ControlTest(unittest.TestCase):
             self.assertEqual(probe.call_count, 1)
             self.assertEqual(task['host'], 'auto')
 
+    def test_refill_rechecks_before_and_after_provider_probe_under_authority(self):
+        task = dict(job(), model='deepseek-flash')
+        events = []
+        def check(request):
+            events.append('qualification')
+            if len(events) > 1:
+                raise Refused('refill-stale-qualification')
+        def probe(request):
+            events.append('probe')
+            return {'ready': True, 'cap': 3}
+        with tempfile.TemporaryDirectory() as td, patch.object(control, 'STATE', Path(td)), \
+             patch.object(control.time, 'time', return_value=1000), \
+             patch.object(control, 'recheck_qualification', side_effect=check), \
+             patch.object(control, 'collect', return_value=snapshot()), \
+             patch.object(control, 'remote', return_value={'state': 'ready', 'card': task['card'],
+                 'host': task['host'], 'model': task['model']}), \
+             patch.object(control, 'qualify_route', side_effect=probe):
+            with self.assertRaisesRegex(Refused, 'refill-stale'):
+                control.prepare_job(task)
+        self.assertEqual(events, ['qualification', 'probe', 'qualification'])
+
+    def test_refill_is_inside_existing_authority_and_checks_hold_first(self):
+        def refill(*args, **kwargs):
+            with self.assertRaisesRegex(Refused, 'authority-busy'):
+                with control.authority(control.STATE):
+                    self.fail('second controller acquired authority')
+            return {'state': 'refill-checked'}
+        with tempfile.TemporaryDirectory() as td, patch.object(control, 'STATE', Path(td) / 'state'), \
+             patch.object(control, 'QUEUE', Path(td) / 'jobs'), \
+             patch.object(control, 'HOLD', Path(td) / 'HOLD'), \
+             patch.object(control.socket, 'gethostname', return_value='chiap08'), \
+             patch.object(control, 'refill_queue', side_effect=refill) as mocked:
+            self.assertEqual(control.cycle()['state'], 'waiting-for-reviewed-requests')
+            self.assertEqual(mocked.call_count, 1)
+            control.set_hold()
+            self.assertEqual(control.cycle()['state'], 'admission-held')
+            self.assertEqual(mocked.call_count, 1)
+
     def test_served_model_must_match_exact_routed_member(self):
         task = {'provider': 'zai', 'model': 'sk-zai-m'}
         headers = {'x-sk-provider': 'zai', 'x-sk-model-requested': 'sk-zai-m',

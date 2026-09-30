@@ -16,6 +16,7 @@ import hashlib
 from fiber_admission import ESTATE_CAP, STAGE_HOSTS, HOST_SLOTS, Refused, card_fingerprint, claim_for_worker, select_host
 from fiber_dispatch import authority, dispatch_one, reconcile
 from fiber_probe import collect
+from fiber_refill import check_qualification, refill_queue
 from fiber_worker import GATEWAY, ROUTES, source_binding, validate, verify_source
 
 STATE = Path.home() / '.local/state/skfleet-fiber'
@@ -228,6 +229,7 @@ def prepare_job(job):
     Called under dispatch_one's authority lock. Failed runtime candidates do
     not prevent trying another allowed host. No claim or launch occurs here.
     """
+    recheck_qualification(job)
     snapshot = collect()
     rejected = []
     while True:
@@ -251,7 +253,28 @@ def prepare_job(job):
     proof = qualify_route(chosen)
     fresh = collect()
     fresh['providers'][job['provider']] = proof
+    recheck_qualification(chosen)
     return chosen, fresh
+
+
+def recheck_qualification(job):
+    """Refill authority must survive queue waits and slow provider probes."""
+    try:
+        check_qualification(job, QUEUE.parent / 'qualified', read_cards=cards,
+                            eligible=eligible, verify=verify_refill_request, clock=time.time)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        if isinstance(exc, Refused):
+            raise
+        raise Refused('refill-qualification-unavailable') from None
+
+
+def verify_refill_request(row, job):
+    """Apply existing route, stage and source validation before queueing."""
+    token = '0' * 32
+    validate({'job': job, 'receipt': {'card': job['card'], 'host': job['host'],
+              'provider': job['provider'], 'token': token,
+              'unit': 'skfleet-fiber-' + job['card'] + '-' + token + '.service'}})
+    verify_source(row, job)
 
 
 def cycle(check=False):
@@ -267,9 +290,12 @@ def cycle(check=False):
                 stream.write('Guarded admission stopped after a failed worker. Inspect terminal receipts before resuming.\n')
         if HOLD.exists():
             return {'state': 'admission-held', 'reconciled': recovered}
+        refill = refill_queue(STATE, QUEUE, QUEUE.parent / 'qualified', HOLD,
+                              read_cards=cards, eligible=eligible,
+                              verify=verify_refill_request, now=time.time())
     paths = sorted(QUEUE.glob('*.json'))
     if not paths:
-        return {'state': 'waiting-for-reviewed-requests', 'reconciled': recovered}
+        return {'state': 'waiting-for-reviewed-requests', 'reconciled': recovered, 'refill': refill}
     jobs = [json.loads(path.read_text()) for path in paths]
     board = cards([job['card'] for job in jobs])
     results = []
@@ -294,7 +320,7 @@ def cycle(check=False):
         results.append(result)
         if HOLD.exists() or result.get('new_launch') or result.get('reason') in {'estate-capacity', 'actual-start-spacing', 'unresolved-launch', 'authority-busy'}:
             break
-    return {'state': 'cycle-finished', 'jobs': results}
+    return {'state': 'cycle-finished', 'jobs': results, 'refill': refill}
 
 
 def set_hold():
