@@ -14,6 +14,17 @@ import fiber_gateway_bridge as bridge
 
 
 class SandboxTest(unittest.TestCase):
+    def test_review_prompt_preserves_boundaries_and_requires_typed_proposal(self):
+        job = {'card': '1234abcd', 'stage': 'implementation', 'owner': 'synthetic', 'base_revision': 'a' * 40}
+        row = {'meta': {'_claim_revision': 'b' * 32}}
+        self.assertNotIn('REVIEW-DECISION.json', sandbox.task_prompt(job, row))
+        prompt = sandbox.task_prompt(dict(job, stage='review'), row)
+        for text in ('REVIEW-DECISION.json', 'skfleet.review-proposal/v1', 'a' * 40, 'b' * 32,
+                     'git rev-parse HEAD', 'After every file write run ls', 'second compaction',
+                     'no host privileges', 'No push', 'Do not modify source or tests',
+                     'controller verification and native completion gates still apply'):
+            self.assertIn(text, prompt)
+
     def test_qualified_node_is_bound_as_one_read_only_file(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

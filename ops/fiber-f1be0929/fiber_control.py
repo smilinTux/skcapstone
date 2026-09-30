@@ -17,6 +17,9 @@ from fiber_admission import ESTATE_CAP, STAGE_HOSTS, HOST_SLOTS, Refused, card_f
 from fiber_dispatch import authority, dispatch_one, reconcile
 from fiber_probe import collect
 from fiber_refill import check_qualification, refill_queue
+from fiber_selection import select_requests
+from fiber_lifecycle import connect_reviews
+import fiber_bundle
 from fiber_worker import GATEWAY, ROUTES, source_binding, validate, verify_source
 
 STATE = Path.home() / '.local/state/skfleet-fiber'
@@ -91,7 +94,7 @@ def describe(card, stage, family, *, producer_family=None):
     row = cards([card]).get(card)
     if row is None:
         raise Refused('unknown-card')
-    repository, base_ref, revision = source_binding(row)
+    repository, base_ref, revision = source_binding(row, review=stage == 'review')
     pi_provider, model = ROUTES[family]
     sizes = re.findall(r'\[(S|M|L|XL)\]', row.get('title', ''))
     if len(sizes) != 1:
@@ -113,9 +116,17 @@ def remote(mode, request):
     if job['host'] not in HOST_SLOTS:
         raise Refused('host-outside-initial-placement')
     account = 'skuser01'
+    program = [LIBRARY, mode]
+    wire = request
+    if mode == 'candidate':
+        program = ['.local/lib/skfleet-fiber/fiber_candidate.py', '--bundle']
+    elif mode == 'bundle':
+        program = ['.local/lib/skfleet-fiber/fiber_bundle.py']
+        wire = request['bundle']
     command = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', account + '@' + job['host'],
-               shlex.join(['/home/' + account + '/.skenv/bin/python', '/home/' + account + '/' + LIBRARY, mode])]
-    result = subprocess.run(command, input=json.dumps(request), capture_output=True, text=True, timeout=40)
+               shlex.join(['/home/' + account + '/.skenv/bin/python',
+                           '/home/' + account + '/' + program[0], *program[1:]])]
+    result = subprocess.run(command, input=json.dumps(wire), capture_output=True, text=True, timeout=40)
     if result.returncode:
         raise Refused('remote-' + mode + '-failed')
     return json.loads(result.stdout)
@@ -129,12 +140,70 @@ def observe(run):
     return remote('observe', {'job': job, 'receipt': receipt})
 
 
+def collect_candidate(run):
+    """Ask the same host for a fresh, sandboxed terminal candidate export."""
+    job = json.loads(run['binding'])
+    receipt = {key: run[key] for key in ['card', 'host', 'token', 'unit', 'invocation']}
+    receipt['provider'] = job['provider']
+    return remote('candidate', {'job': job, 'receipt': receipt})
+
+
+def stage_bundle(job):
+    """Copy opaque exact bytes before worker admission, without Git or a launch."""
+    import base64
+    value = fiber_bundle.select(job)
+    if value is None:
+        return
+    root = Path.home() / '.local/share/skfleet-fiber'
+    fiber_bundle._directory(root)
+    fiber_bundle._directory(root / 'bundles')
+    raw = fiber_bundle.read_blob(root / 'bundles' / (value['sha256'] + '.bundle'), value['sha256'])
+    answer = remote('bundle', {'job': job, 'bundle': {
+        'sha256': value['sha256'], 'bundle_b64': base64.b64encode(raw).decode()}})
+    if answer != {'state': 'stored', 'sha256': value['sha256'], 'bytes': len(raw)}:
+        raise Refused('bundle-transfer-unverified')
+
+
+def native_revision(card):
+    """Read the existing native snapshot including its latest typed outcome."""
+    from skcapstone.seraph_review_cardstore import LiveCardStoreGateway
+    return LiveCardStoreGateway(Path.home() / '.skcapstone').read_card(card).revision
+
+
+def record_candidate(intent):
+    """Relay a review request through the exact guarded CLI write boundary."""
+    job, packet = intent['job'], intent['candidate']
+    fiber_bundle.read_blob(Path(intent['evidence_path']), packet['evidence_sha256'])
+    command = ['skcapstone', 'coord', 'verdict', job['card'], 'PASS_FOR_REVIEW',
+               '--candidate', intent['evidence_path'], '--commit', packet['commit'],
+               '--tree', packet['tree'], '--ref', packet['ref'], '--agent', job['owner'],
+               '--expected-source-revision', intent['source_revision'],
+               '--expected-claim-revision', intent['claim_revision'],
+               '--expected-candidate-sha256', packet['evidence_sha256'],
+               '--transition-id', intent['transition_id']]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    if result.returncode:
+        raise Refused('lifecycle-native-verdict-refused')
+
+
+def open_candidate_review(intent, revision):
+    """Use Chef's mediated review opener, not the old script's launcher."""
+    command = ['skcapstone', 'coord', 'review-work', intent['job']['card'],
+               '--producer', intent['job']['owner'], '--agent', 'link',
+               '--expected-source-revision', revision,
+               '--expected-claim-revision', intent['claim_revision']]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    if result.returncode:
+        raise Refused('lifecycle-native-review-refused')
+    return json.loads(result.stdout)
+
+
 def launch_claimed(job, receipt):
     """Claim only on the authority, then bind the exact generation to the run."""
     if socket.gethostname().split('.')[0].lower() != 'chiap08':
         raise Refused('not-authority-host')
     row = claim_for_worker(job['card'], job['owner'])
-    verify_source(row, job)
+    verify_refill_request(row, job)
     claim = {'authority': 'chiap08', 'owner': job['owner'],
              'revision': row['meta']['_claim_revision']}
     return remote('start', {'job': job, 'receipt': receipt, 'claim': claim})
@@ -246,6 +315,7 @@ def prepare_job(job):
         chosen = dict(job, host=host)
         token = '0' * 32
         try:
+            stage_bundle(chosen)
             check = remote('check', {'job': chosen, 'receipt': {'card': job['card'], 'host': host,
                 'provider': job['provider'], 'token': token, 'unit': 'skfleet-fiber-' + job['card'] + '-' + token + '.service'}})
             if any(check.get(k) != v for k, v in {'state': 'ready', 'card': job['card'], 'host': host, 'model': job['model']}.items()):
@@ -279,6 +349,10 @@ def verify_refill_request(row, job):
               'provider': job['provider'], 'token': token,
               'unit': 'skfleet-fiber-' + job['card'] + '-' + token + '.service'}})
     verify_source(row, job)
+    if 'source_bundle' in job:
+        meta = row.get('meta') or {}
+        if native_revision(meta.get('link_source_card')) != meta.get('source_revision'):
+            raise Refused('lifecycle-source-superseded')
 
 
 def cycle(check=False):
@@ -294,12 +368,24 @@ def cycle(check=False):
                 stream.write('Guarded admission stopped after a failed worker. Inspect terminal receipts before resuming.\n')
         if HOLD.exists():
             return {'state': 'admission-held', 'reconciled': recovered}
+        lifecycle = connect_reviews(STATE, QUEUE.parent / 'qualified',
+            QUEUE.parent / 'lifecycle.json', HOLD, home=Path.home() / '.skcapstone',
+            data_root=Path.home() / '.local/share/skfleet-fiber', read_cards=cards,
+            collect_candidate=collect_candidate, snapshot_revision=native_revision,
+            record_verdict=record_candidate, open_review=open_candidate_review,
+            describe=describe, eligible=eligible, verify=verify_refill_request,
+            now=time.time(), observe=observe)
+        selection = select_requests(STATE, QUEUE.parent / 'qualified',
+                                    QUEUE.parent / 'selection.json', HOLD,
+                                    read_cards=cards, describe=describe, eligible=eligible,
+                                    verify=verify_refill_request, now=time.time())
         refill = refill_queue(STATE, QUEUE, QUEUE.parent / 'qualified', HOLD,
                               read_cards=cards, eligible=eligible,
                               verify=verify_refill_request, now=time.time())
     paths = sorted(QUEUE.glob('*.json'))
     if not paths:
-        return {'state': 'waiting-for-reviewed-requests', 'reconciled': recovered, 'refill': refill}
+        return {'state': 'waiting-for-reviewed-requests', 'reconciled': recovered,
+                'selection': selection, 'refill': refill, 'lifecycle': lifecycle}
     jobs = [json.loads(path.read_text()) for path in paths]
     board = cards([job['card'] for job in jobs])
     results = []
@@ -324,7 +410,8 @@ def cycle(check=False):
         results.append(result)
         if HOLD.exists() or result.get('new_launch') or result.get('reason') in {'estate-capacity', 'actual-start-spacing', 'unresolved-launch', 'authority-busy'}:
             break
-    return {'state': 'cycle-finished', 'jobs': results, 'refill': refill}
+    return {'state': 'cycle-finished', 'jobs': results, 'selection': selection,
+            'refill': refill, 'lifecycle': lifecycle}
 
 
 def set_hold():
