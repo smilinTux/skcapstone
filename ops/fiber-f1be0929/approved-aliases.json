@@ -10,6 +10,7 @@
       "models": [
         {
           "id": "deepseek-flash",
+          "compat": { "thinkingFormat": "deepseek" },
           "name": "DeepSeek V4.1 Flash via SKGateway",
           "reasoning": true,
           "input": [
@@ -29,6 +30,7 @@
       "models": [
         {
           "id": "sk-zai-m",
+          "thinkingLevelMap": { "off": "low" },
           "name": "GLM M bucket via production SKGateway",
           "reasoning": true,
           "input": [
