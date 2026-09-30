@@ -53,7 +53,7 @@ claims, workspaces, credentials and Syncthing stay in place. W7 remains held.
    as skuser01's sknoded.service, enable lingering for skuser01, start it and
    require a fresh heartbeat. Existing Syncthing and agent sessions remain.
    The node spec must remain report-only, with no actuation or builder role.
-9. Install the reviewed controller/probe account changes on chiap08 under
+9. Use install_chiwk12_controller.sh to install the reviewed account changes on chiap08 under
    HOLD and the authority lock, with .fb673cd3-before backups. Recheck fresh
    fleet census, sandbox preflight and both provider lanes. Only then run an
    infrastructure canary. Completing this card is not permission to skip
@@ -74,10 +74,25 @@ enabled it and no other new service needs it. No existing agent is killed.
 
 ## Evidence limits
 
+Metadata-only is a content restriction, not read-only replication. Native
+worker execution links and the new node's heartbeats must propagate back;
+the old instance is an existing peer, not a separate authorization authority.
+Models cannot reach either replica, SSH key or GUI socket from the tested
+sandbox. The trusted skuser01 administrator already has passwordless sudo.
+
+The native API provides a devices-array patch, not a conditional or atomic
+per-folder device-add operation. Use a single-operator configuration window;
+the helper refuses overlapping copies with a local lock and checks old peer
+entries before and after the patch. It does not claim protection against an
+uncoordinated administrator writing the GUI in that narrow interval. On any
+partial failure, keep HOLD, inspect both native configurations, and remove
+only this migration's added peer/folder configuration before retrying. Do not
+erase replica files, rewrite CardStore data or overwrite whole native configs.
+
 Static independent review is not hosted CI or proof of live cutover. Report
 actual tests and activation separately. No copying of CapAuth, SSH, Syncthing,
 provider or agent private identities is authorized. The approved capacity
-module comes from separate card 706f6d7d; this branch retains its old base
+  module comes from separate card 706f6d7d; this branch retains its old base
 admission file and must not overwrite the installed twelve-worker module.
 
 Native configuration and ignore semantics:

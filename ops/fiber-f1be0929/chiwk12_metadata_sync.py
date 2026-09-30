@@ -1,5 +1,6 @@
 """One-time, operator-approved local metadata replica; never copies credentials."""
 import json
+import fcntl
 import os
 from pathlib import Path
 import socket
@@ -79,10 +80,17 @@ def configure(old, new):
                      introducer=False, autoAcceptFolders=False, paused=False)
         peer.call('/config/devices', 'POST', entry)
     current = old.call('/config/folders/skcapstone')
+    # Native API has no conditional/add-item endpoint. This one-time operator
+    # window is serialized locally; unrelated GUI/config writers must be idle.
     if current['devices'] != previous['devices']:
         raise ValueError('old-sharing-changed-during-setup')
     old.call('/config/folders/skcapstone', 'PATCH',
              {'devices': current['devices'] + [{'deviceID': new_id}]})
+    after = old.call('/config/folders/skcapstone')['devices']
+    by_id = {row['deviceID']: row for row in after}
+    if (len(by_id) != len(after) or set(by_id) != {new_id, *[row['deviceID'] for row in current['devices']]}
+            or any(by_id[row['deviceID']] != row for row in current['devices'])):
+        raise ValueError('old-sharing-readback-failed')
     # Sharing is enabled last, after the native ignore parser accepted our filter.
     new.call('/config/folders/skcapstone', 'PATCH', {'paused': False})
     return {'old_device': old_id, 'new_device': new_id, 'root': ROOT,
@@ -94,7 +102,11 @@ if __name__ == '__main__':
     if os.getuid() != 0 or socket.gethostname().split('.')[0].lower() != 'chiwk12':
         sys.exit('This bounded migration runs only as the chiwk12 administrator.')
     try:
-        print(json.dumps(configure(Peer(OLD_CONFIG, 8384), Peer(NEW_CONFIG, 8385)), sort_keys=True))
+        descriptor = os.open(NEW_CONFIG.parent / 'operator-migration.lock',
+                             os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, 'w') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            print(json.dumps(configure(Peer(OLD_CONFIG, 8384), Peer(NEW_CONFIG, 8385)), sort_keys=True))
     except Exception as exc:
         # Native config remains for inspection/rollback; do not leak GUI keys or payloads.
         print(json.dumps({'state': 'blocked', 'error_type': type(exc).__name__,

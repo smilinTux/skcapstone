@@ -1,4 +1,5 @@
 """Metadata replication must be filtered before the old peer shares anything."""
+import copy
 from pathlib import Path
 import sys
 import unittest
@@ -41,7 +42,7 @@ class Peer:
         if path == '/config/folders/skcapstone':
             if method == 'PATCH':
                 self.folders['skcapstone'].update(body)
-            return self.folders['skcapstone']
+            return copy.deepcopy(self.folders['skcapstone'])
         raise AssertionError(path)
 
 
@@ -50,6 +51,7 @@ class MetadataSyncTest(unittest.TestCase):
         old, new = Peer('old'), Peer('new')
         result = configure(old, new)
         self.assertEqual(result['old_device'], 'old')
+        self.assertEqual(result['prior_old_peer_ids'], ['old'])
         self.assertEqual(new.options, OPTIONS)
         self.assertEqual(new.options['listenAddresses'], ['tcp://127.0.0.1:22001'])
         self.assertFalse(new.folders['skcapstone']['paused'])
@@ -73,3 +75,31 @@ class MetadataSyncTest(unittest.TestCase):
             configure(old, new)
         self.assertEqual(old.writes, [])
         self.assertEqual(new.writes, [])
+
+    def test_failed_old_peer_readback_keeps_new_folder_paused(self):
+        old, new = Peer('old'), Peer('new')
+        original = old.call
+        def damaged(path, method='GET', body=None):
+            result = original(path, method, body)
+            if path == '/config/folders/skcapstone' and method == 'PATCH':
+                old.folders['skcapstone']['devices'] = [{'deviceID': 'new'}]
+            return result
+        old.call = damaged
+        with self.assertRaisesRegex(ValueError, 'old-sharing-readback-failed'):
+            configure(old, new)
+        self.assertTrue(new.folders['skcapstone']['paused'])
+
+    def test_detected_intervening_peer_change_is_not_overwritten(self):
+        old, new = Peer('old'), Peer('new')
+        original, reads = old.call, []
+        def changed(path, method='GET', body=None):
+            if path == '/config/folders/skcapstone' and method == 'GET':
+                reads.append(1)
+                if len(reads) == 2:
+                    old.folders['skcapstone']['devices'].append({'deviceID': 'other'})
+            return original(path, method, body)
+        old.call = changed
+        with self.assertRaisesRegex(ValueError, 'old-sharing-changed-during-setup'):
+            configure(old, new)
+        self.assertTrue(new.folders['skcapstone']['paused'])
+        self.assertNotIn('/config/folders/skcapstone', [row[0] for row in old.writes])
