@@ -155,6 +155,8 @@ record_for() {
   esac
 }
 ssh() {
+  # Real ssh consumes the program on stdin; avoid a fake pipefail/SIGPIPE.
+  cat >/dev/null
   local arg host=""
   for arg in "$@"; do
     case "$arg" in chiap01|chiap02|chiap03|chiap04) host=$arg ;; esac
