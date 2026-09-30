@@ -14,6 +14,38 @@ from test_fiber_admission import job, snapshot
 
 
 class ControlTest(unittest.TestCase):
+    def test_failed_worker_holds_before_another_queue_read(self):
+        with tempfile.TemporaryDirectory() as td, patch.object(control, 'STATE', Path(td)), \
+             patch.object(control, 'HOLD', Path(td) / 'HOLD'), \
+             patch.object(control.socket, 'gethostname', return_value='chiap08'), \
+             patch.object(control, 'reconcile', return_value=[{'card': '1234abcd', 'state': 'terminal', 'exit_code': 1}]), \
+             patch.object(control, 'cards') as cards:
+            self.assertEqual(control.cycle()['state'], 'admission-held')
+            cards.assert_not_called()
+
+    def test_three_failures_hold_without_resetting_claim_or_launch_history(self):
+        with tempfile.TemporaryDirectory() as td, patch.object(control, 'STATE', Path(td)), \
+             patch.object(control, 'HOLD', Path(td) / 'HOLD'):
+            task = dict(job(), card_fingerprint='a' * 64)
+            for n in range(1, 4):
+                self.assertEqual(control.record_attempt(task, 'remote-check-failed'), n)
+            self.assertTrue(control.HOLD.is_file())
+            self.assertIn('three', control.HOLD.read_text())
+
+    def test_capacity_waits_do_not_exhaust_fault_budget(self):
+        with tempfile.TemporaryDirectory() as td, patch.object(control, 'STATE', Path(td)), \
+             patch.object(control, 'HOLD', Path(td) / 'HOLD'):
+            for reason in ('estate-capacity', 'host-capacity', 'provider-capacity', 'actual-start-spacing', 'card-not-claimable'):
+                for _ in range(4):
+                    self.assertEqual(control.record_attempt(job(), reason), 0)
+            self.assertFalse(control.HOLD.exists())
+
+    def test_ambiguous_launch_holds_immediately_without_retry(self):
+        with tempfile.TemporaryDirectory() as td, patch.object(control, 'STATE', Path(td)), \
+             patch.object(control, 'HOLD', Path(td) / 'HOLD'):
+            control.record_attempt(job(), 'launch-unacknowledged')
+            self.assertTrue(control.HOLD.exists())
+
     def test_board_reads_only_requested_cards_and_direct_dependencies(self):
         rows = {'1234abcd': {'id': '1234abcd', 'owner': None, 'dependencies': ['1234abce']},
                 '1234abce': {'id': '1234abce', 'owner': None, 'status': 'done'}}

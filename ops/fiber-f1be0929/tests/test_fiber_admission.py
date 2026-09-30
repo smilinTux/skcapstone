@@ -28,8 +28,8 @@ def job(card='1234abcd'):
 
 
 class AdmissionTest(unittest.TestCase):
-    def test_trial_limit_is_twelve_not_provider_entitlement(self):
-        self.assertEqual(module.ESTATE_CAP, 12)
+    def test_current_instruction_limit_is_nine_not_provider_entitlement(self):
+        self.assertEqual(module.ESTATE_CAP, 9)
 
     def test_placement_spreads_work_and_counts_pending_reservations(self):
         truth = snapshot()

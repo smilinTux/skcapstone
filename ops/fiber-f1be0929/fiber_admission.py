@@ -16,7 +16,7 @@ import sqlite3
 import subprocess
 import uuid
 
-ESTATE_CAP = 12
+ESTATE_CAP = 9
 SPACING = 75
 PLACEMENT = {'implementation': ('chiap02', 2), 'review': ('chiap03', 1),
              'tests': ('chiap04', 1)}

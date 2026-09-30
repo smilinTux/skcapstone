@@ -87,7 +87,7 @@ def reconcile(directory, observe, *, clock=time.time):
                            (observation['invocation'], json.dumps(observation, sort_keys=True), run['card']))
                 db.execute('DELETE FROM reservations WHERE card=? AND token=?', (run['card'], run['token']))
                 db.commit()
-                results.append({'card': run['card'], 'state': 'terminal'})
+                results.append({'card': run['card'], 'state': 'terminal', 'exit_code': observation['exit_code']})
             else:
                 results.append({'card': run['card'], 'state': 'unknown'})
     return results
@@ -163,4 +163,7 @@ def dispatch_one(directory, job, collect, launch, observe, *, clock=time.time, h
                 db.execute('DELETE FROM reservations WHERE card=? AND token=?', (job['card'], receipt['token']))
             db.execute('INSERT OR REPLACE INTO clock VALUES (1, ?)', (clock(),))
             db.commit()
-        return {'card': job['card'], 'state': state, 'new_launch': True, 'unit': receipt['unit']}
+        answer = {'card': job['card'], 'state': state, 'new_launch': True, 'unit': receipt['unit']}
+        if terminal:
+            answer['exit_code'] = launched['exit_code']
+        return answer

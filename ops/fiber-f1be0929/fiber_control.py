@@ -10,6 +10,8 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+import sqlite3
+import hashlib
 
 from fiber_admission import ESTATE_CAP, STAGE_HOSTS, HOST_SLOTS, Refused, card_fingerprint, claim_for_worker, select_host
 from fiber_dispatch import authority, dispatch_one, reconcile
@@ -21,6 +23,32 @@ QUEUE = Path.home() / '.config/skfleet-fiber/jobs'
 HOLD = Path.home() / '.config/skfleet-fiber/HOLD'
 LIBRARY = '.local/lib/skfleet-fiber/fiber_worker.py'
 CAPS = {'deepseek': 3, 'codex': 2, 'zai': 5}
+
+
+def record_attempt(job, reason):
+    """Bound repeated preflight faults; never turn ambiguity into a retry."""
+    waits = {'estate-capacity', 'host-capacity', 'provider-capacity', 'actual-start-spacing',
+             'launch-spacing', 'card-not-claimable', 'authority-busy', 'admission-held'}
+    if not reason or reason in waits:
+        return 0
+    binding = json.dumps({k: v for k, v in job.items() if k != 'claimable'}, sort_keys=True)
+    key = hashlib.sha256(binding.encode()).hexdigest()
+    with authority(STATE):
+        db = sqlite3.connect(STATE / 'retry-budget.sqlite3')
+        try:
+            with db:
+                db.execute('CREATE TABLE IF NOT EXISTS faults (binding TEXT PRIMARY KEY, attempts INTEGER NOT NULL)')
+                db.execute('INSERT INTO faults VALUES (?, 1) ON CONFLICT(binding) DO UPDATE SET attempts=attempts+1', (key,))
+                attempts = db.execute('SELECT attempts FROM faults WHERE binding=?', (key,)).fetchone()[0]
+        finally:
+            db.close()
+        ambiguous = reason in {'unresolved-launch', 'orphan-reservation', 'launch-unacknowledged', 'launch-receipt-invalid', 'worker-failed'}
+        if (attempts >= 3 or ambiguous) and not HOLD.exists():
+            HOLD.parent.mkdir(parents=True, exist_ok=True)
+            with HOLD.open('x') as stream:
+                stream.write('Guarded admission stopped: ' + ('ambiguous launch' if ambiguous else 'three preflight faults')
+                             + '. Inspect card ' + job['card'] + ' before operator resumption. Existing work preserved.\n')
+        return attempts
 
 
 def cards(card_ids):
@@ -232,6 +260,10 @@ def cycle(check=False):
         return {'mode': 'check', 'observation': collect(), 'queued': len(list(QUEUE.glob('*.json')))}
     with authority(STATE):
         recovered = reconcile(STATE, observe)
+        if any(run.get('state') == 'terminal' and run.get('exit_code') != 0 for run in recovered) and not HOLD.exists():
+            HOLD.parent.mkdir(parents=True, exist_ok=True)
+            with HOLD.open('x') as stream:
+                stream.write('Guarded admission stopped after a failed worker. Inspect terminal receipts before resuming.\n')
         if HOLD.exists():
             return {'state': 'admission-held', 'reconciled': recovered}
     paths = sorted(QUEUE.glob('*.json'))
@@ -255,8 +287,11 @@ def cycle(check=False):
                 launch_claimed, observe, hold_file=HOLD, prepare=prepare_job)
         except Refused as exc:
             result = {'card': job['card'], 'state': 'waiting', 'reason': str(exc)}
+            result['fault_attempts'] = record_attempt(job, str(exc))
+        if result.get('state') == 'terminal' and result.get('new_launch') and result.get('exit_code') != 0:
+            record_attempt(job, 'worker-failed')
         results.append(result)
-        if result.get('new_launch') or result.get('reason') in {'estate-capacity', 'actual-start-spacing', 'unresolved-launch', 'authority-busy'}:
+        if HOLD.exists() or result.get('new_launch') or result.get('reason') in {'estate-capacity', 'actual-start-spacing', 'unresolved-launch', 'authority-busy'}:
             break
     return {'state': 'cycle-finished', 'jobs': results}
 
@@ -287,7 +322,11 @@ if __name__ == '__main__':
         value = set_hold() if args.hold else describe(args.describe_card, args.stage, args.family, producer_family=args.producer_family) if args.describe_card else cycle(check=not args.once)
         print(json.dumps(value, sort_keys=True))
     except Refused as exc:
+        if args.once:
+            record_attempt({'card': 'controller'}, str(exc))
         print(json.dumps({'state': 'waiting', 'reason': str(exc)}))
     except Exception as exc:
+        if args.once:
+            record_attempt({'card': 'controller'}, type(exc).__name__)
         print(json.dumps({'state': 'blocked', 'reason': type(exc).__name__}))
         raise SystemExit(70)

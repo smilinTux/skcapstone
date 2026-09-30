@@ -14,6 +14,8 @@ import time
 import urllib.parse
 
 from fiber_admission import Refused, card_fingerprint, read_claim, prepare_worktree, placement_allowed
+import fiber_sandbox
+from fiber_gateway_bridge import gateway_socket
 
 ROUTES = {'deepseek': ('skgw-deepseek', 'deepseek-flash'),
           'codex': ('skgw-codex', 'gpt-5.6-sol'), 'zai': ('skgw-zai', 'sk-zai-m')}
@@ -210,6 +212,7 @@ def start(request):
                '--setenv=PATH=' + WORKER_PATH,
                '--description', 'SKFleet fiber ' + job['card'] + ' ' + receipt['token'],
                '--property=RemainAfterExit=yes', '--property=KillMode=control-group',
+               '--property=NoNewPrivileges=yes', '--property=UMask=0077',
                '--property=CPUQuota=200%', '--property=MemoryMax=3G', '--property=MemorySwapMax=512M',
                '--property=TasksMax=256', '--property=RuntimeMaxSec=3600',
                str(Path.home() / '.skenv/bin/python'), str(Path(__file__).resolve()), 'run', str(path)]
@@ -239,6 +242,7 @@ def execute(request):
     check_catalog(job)
     row = verify_claim(request, wait_seconds=300)
     verify_resource_limits()
+    fiber_sandbox.probe()
     guard = Path.home() / '.skenv/bin/pi-cardstore-guard.mjs'
     pi = Path.home() / '.npm-global/bin/pi'
     if not guard.is_file() or not os.access(pi, os.X_OK):
@@ -264,36 +268,74 @@ def execute(request):
             git('-C', str(cache), 'remote', 'add', 'origin', job['repository'])
         verify_cache_origin(cache, job['repository'], git)
         ensure_commit(cache, job['base_revision'], git)
-        prepare_worktree(cache, workspace, 'work/fiber-' + job['card'] + '-' + receipt['token'][:8], job['base_revision'])
+        fiber_sandbox.private_clone(cache, workspace, 'work/fiber-' + job['card'] + '-' + receipt['token'][:8], job['base_revision'], git)
     runtime = workspace / '.fiber-runtime'
     runtime.mkdir()
-    (runtime / 'tmp').mkdir()
-    (runtime / 'output').mkdir()
-    env = {'HOME': str(Path.home()), 'PATH': WORKER_PATH,
-           'LANG': 'C.UTF-8', 'SKAGENT': job['owner'], 'SKCAPSTONE_AGENT': job['owner'],
-           'SKFLEET_CARD_ID': job['card'], 'SKFLEET_CLAIM_REVISION': row['meta']['_claim_revision'],
-           'SKFLEET_PROVIDER': job['provider'], 'SKFLEET_MODEL': job['model'],
-           'TMPDIR': str(runtime / 'tmp'), 'SKLEGAL_TEST_OUTPUT': str(runtime / 'output'),
-           'SKLEGAL_TEST_DB': str(runtime / 'test.sqlite3'), 'SKLEGAL_TEST_PORT': '0', 'SKLEGAL_SIMULATION': '1'}
+    git('-C', str(workspace), 'config', 'user.name', job['owner'])
+    git('-C', str(workspace), 'config', 'user.email', job['owner'] + '@source.invalid')
+    (workspace / '.git/info/exclude').write_text('.fiber-runtime/\n')
     prompt = (
         f"Work only card {job['card']} as {job['owner']}. The dispatcher already claimed it. "
-        f"Verify owner and exact revision {row['meta']['_claim_revision']} through mediated coord reads; do not re-claim or release another owner's claim. "
+        f"The trusted controller verified owner and exact revision {row['meta']['_claim_revision']}. "
+        "Read the immutable controller-provided card snapshot /run/fleet/card.json. "
         "Read AGENTS.md, the assigned TDD, current criteria and dependencies before task actions. "
         "If any binding or claim differs, STOP and report BLOCKED. "
         "After every file write run ls. After any authorized commit run git rev-parse HEAD and echo its hash. "
         "Stop immediately if tool output looks wrong. After the second compaction write .handoff.md, finish the current step and stop. "
         "No push, application deployment, external legal actions, or HammerTime Inbox access. Commit only if the card explicitly requests it. "
-        "Use only this isolated worktree. Tests must use task-owned databases and outputs, port 0 or an isolated dynamic port, and simulation mode. "
+        "Use only /work. You have no host privileges, SSH, Docker socket, direct provider access or coordination credentials. "
+        "Do not attempt to obtain them. If dependencies or tools are unavailable, report BLOCKED, not a workaround. "
+        "Tests must use task-owned databases and outputs, port 0 or an isolated dynamic port, and simulation mode. "
         "Use exact artifact paths in card links; never search the entire filesystem or unrelated workspaces. "
         "Never touch another task's processes, claims, workspaces, databases, or ports. "
         f"Write exact completion evidence to docs/evidence/agents/{job['card']}/COMPLETION-EVIDENCE.md. "
-        "Follow the assigned card's native completion contract using mediated coord commands, including evidence, verdict and board readback where required. "
+        "Board operations are performed only by the trusted controller outside the sandbox. "
+        "Write your proposed outcome and evidence in the worktree; the controller records execution, not acceptance. "
         "Never mark a producer card complete on its own review or fabricate checks. Report files, exact tests/results, limitations, and verified artifacts, then stop."
     )
-    command = [str(pi), '--no-approve', '--extension', str(guard), '--name', job['owner'],
+    command = ['/usr/bin/node', '/opt/pi/@earendil-works/pi-coding-agent/dist/bundle/cli.js',
+               '--no-approve', '--no-extensions', '--name', job['owner'],
                '--provider', job['pi_provider'], '--model', job['model'], '--thinking', 'off',
                '--no-context-files', '--no-skills', '--tools', 'read,bash,edit,write,grep,find,ls', '-p', prompt]
-    return subprocess.run(command, cwd=workspace, env=env).returncode
+    catalog = json.loads((Path.home() / '.pi/agent/models.json').read_text())
+    credential = catalog['providers'][job['pi_provider']].get('apiKey')
+    if isinstance(credential, str) and re.fullmatch('[A-Z_][A-Z0-9_]*', credential):
+        credential = os.environ.get(credential)
+    if not isinstance(credential, str) or not credential or credential.startswith('!'):
+        raise Refused('credential-reference-unavailable')
+    public = fiber_sandbox.public_catalog(catalog, job['pi_provider'], job['model'])
+    controls = STATE / 'controls'
+    controls.mkdir(parents=True, exist_ok=True, mode=0o700)
+    control = controls / receipt['token']
+    fiber_sandbox.prepare_control(control, workspace, row, public)
+    pi_root = Path.home() / '.npm-global/lib/node_modules'
+    wrapped = fiber_sandbox.command(workspace, control, pi_root,
+        ['/usr/bin/python3', '/opt/fiber_gateway_bridge.py', *command],
+        identity={'SKFLEET_CARD_ID': job['card'], 'SKFLEET_PROVIDER': job['provider'],
+                  'SKFLEET_MODEL': job['model'], 'SKAGENT': job['owner'], 'SKCAPSTONE_AGENT': job['owner']})
+    with gateway_socket(control / 'gateway.sock', endpoint=GATEWAY, credential=credential,
+                        family=job['provider'], model=job['model'],
+                        check_claim=lambda: verify_claim(request)) as bridge:
+        with (control / 'worker.log').open('x') as output:
+            result = subprocess.run(wrapped, env={'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'},
+                                    stdout=output, stderr=subprocess.STDOUT)
+        calls = bridge.requests
+    # No shell or repository-controlled Git command is executed by the host
+    # after model work. Even the Git config inside the task is now untrusted.
+    verify_claim(request)
+    proof = {'card': job['card'], 'claim_revision': row['meta']['_claim_revision'],
+             'token': receipt['token'], 'host': job['host'], 'workspace': str(workspace),
+             'base_revision': job['base_revision'], 'exit_code': result.returncode,
+             'gateway_requests': calls, 'accepted': False, 'state': 'awaiting-external-verification'}
+    evidence = control / 'execution.json'
+    with evidence.open('x') as stream:
+        json.dump(proof, stream, sort_keys=True)
+    linked = subprocess.run(['skcapstone', 'coord', 'link', job['card'], 'execution_record',
+                             str(evidence), '--agent', job['owner']],
+                            capture_output=True, text=True, timeout=30)
+    if linked.returncode or (verify_claim(request).get('links') or {}).get('execution_record') != str(evidence):
+        raise Refused('execution-evidence-readback-failed')
+    return result.returncode
 
 
 if __name__ == '__main__':
@@ -313,6 +355,7 @@ if __name__ == '__main__':
             if socket.gethostname().split('.')[0].lower() != job['host']:
                 raise Refused('wrong-execution-host')
             check_catalog(job)
+            fiber_sandbox.probe()
             if not (Path.home() / '.skenv/bin/pi-cardstore-guard.mjs').is_file() or not os.access(Path.home() / '.npm-global/bin/pi', os.X_OK):
                 raise Refused('worker-runtime-unqualified')
             runtime = subprocess.run([str(Path.home() / '.npm-global/bin/pi'), '--version'],
