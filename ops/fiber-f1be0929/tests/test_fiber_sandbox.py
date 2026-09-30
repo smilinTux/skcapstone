@@ -13,6 +13,13 @@ import fiber_gateway_bridge as bridge
 
 
 class SandboxTest(unittest.TestCase):
+    def test_transcript_growth_is_bounded(self):
+        with tempfile.TemporaryDirectory() as td:
+            log = Path(td) / 'log'
+            with self.assertRaisesRegex(ValueError, 'worker-transcript-limit'):
+                sandbox.run_logged([sys.executable, '-c', 'print("x" * 10000)'], log, limit=100)
+            self.assertEqual(log.stat().st_size, 100)
+
     def test_root_has_no_host_network_home_or_runtime_socket(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

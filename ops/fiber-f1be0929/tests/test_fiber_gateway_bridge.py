@@ -8,6 +8,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import fiber_gateway_bridge as bridge
@@ -68,6 +69,13 @@ class BridgeTest(unittest.TestCase):
                     self.assertEqual(len(forwarded), 1)
                     server.requests = bridge.MAX_REQUESTS
                     self.assertEqual(request()[0], 429)
+                    server.requests = 0
+                    server.check_claim = lambda: None
+                    with patch.object(bridge, 'MAX_RESPONSE', 8):
+                        status, headers, payload = request()
+                    self.assertEqual(status, 200)
+                    self.assertEqual(payload, b'')
+                    self.assertNotIn(b'HTTP/1', payload)
         finally:
             upstream.shutdown()
             upstream.server_close()

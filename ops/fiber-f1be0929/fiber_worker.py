@@ -316,16 +316,14 @@ def execute(request):
     with gateway_socket(control / 'gateway.sock', endpoint=GATEWAY, credential=credential,
                         family=job['provider'], model=job['model'],
                         check_claim=lambda: verify_claim(request)) as bridge:
-        with (control / 'worker.log').open('x') as output:
-            result = subprocess.run(wrapped, env={'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'},
-                                    stdout=output, stderr=subprocess.STDOUT)
+        exit_code = fiber_sandbox.run_logged(wrapped, control / 'worker.log')
         calls = bridge.requests
     # No shell or repository-controlled Git command is executed by the host
     # after model work. Even the Git config inside the task is now untrusted.
     verify_claim(request)
     proof = {'card': job['card'], 'claim_revision': row['meta']['_claim_revision'],
              'token': receipt['token'], 'host': job['host'], 'workspace': str(workspace),
-             'base_revision': job['base_revision'], 'exit_code': result.returncode,
+             'base_revision': job['base_revision'], 'exit_code': exit_code,
              'gateway_requests': calls, 'accepted': False, 'state': 'awaiting-external-verification'}
     evidence = control / 'execution.json'
     with evidence.open('x') as stream:
@@ -335,7 +333,7 @@ def execute(request):
                             capture_output=True, text=True, timeout=30)
     if linked.returncode or (verify_claim(request).get('links') or {}).get('execution_record') != str(evidence):
         raise Refused('execution-evidence-readback-failed')
-    return result.returncode
+    return exit_code
 
 
 if __name__ == '__main__':

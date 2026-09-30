@@ -90,3 +90,27 @@ def prepare_control(control, workspace, row, catalog):
     agent.mkdir(parents=True)
     (agent / 'models.json').write_text(json.dumps(catalog, sort_keys=True))
     (workspace / '.fiber-runtime/output').mkdir()
+
+
+def run_logged(argv, destination, *, limit=16 * 1024 * 1024):
+    """Bound host-side transcript growth and stop only this sandbox process."""
+    with destination.open('xb') as output, subprocess.Popen(argv,
+            env={'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'}, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT) as process:
+        total = 0
+        try:
+            while chunk := process.stdout.read1(65536):
+                remaining = limit - total
+                output.write(chunk[:remaining])
+                total += len(chunk)
+                if total > limit:
+                    raise Refused('worker-transcript-limit')
+            return process.wait()
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)

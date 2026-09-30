@@ -52,6 +52,7 @@ class QuietHandler(BaseHTTPRequestHandler):
     def setup(self):
         super().setup()
         self.connection.settimeout(150)
+        self.response_started = False
 
     def read_body(self):
         """Refuse ambiguous framing and oversized requests before allocation."""
@@ -72,6 +73,7 @@ class QuietHandler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', response.headers.get('Content-Type', 'application/json'))
         self.send_header('Connection', 'close')
         self.end_headers()
+        self.response_started = True
         total = 0
         while True:
             chunk = response.read1(65536)
@@ -110,10 +112,11 @@ class GatewayHandler(QuietHandler):
         except Exception:
             # No raw exception text: it may include tokens, URLs or prompt text.
             self.close_connection = True
-            try:
-                self.send_error(502, 'bounded-gateway-request-refused')
-            except OSError:
-                pass
+            if not self.response_started:
+                try:
+                    self.send_error(502, 'bounded-gateway-request-refused')
+                except OSError:
+                    pass
 
 
 @contextmanager
@@ -153,16 +156,24 @@ class PrivateBridge(QuietHandler):
             self.copy_response(connection.getresponse())
         except Exception:
             self.close_connection = True
-            try:
-                self.send_error(502, 'private-bridge-failed')
-            except OSError:
-                pass
+            if not self.response_started:
+                try:
+                    self.send_error(502, 'private-bridge-failed')
+                except OSError:
+                    pass
         finally:
             connection.close()
 
 
 def inside(argv):
     """Run only inside the private network namespace; stop with the model."""
+    status = Path('/proc/self/status').read_text()
+    interfaces = [line.split(':')[0].strip() for line in Path('/proc/net/dev').read_text().splitlines()[2:]]
+    mounts = [line.split() for line in Path('/proc/self/mountinfo').read_text().splitlines()]
+    readonly = {row[4] for row in mounts if 'ro' in row[5].split(',')}
+    if ('NoNewPrivs:\t1' not in status or 'CapEff:\t0000000000000000' not in status
+            or interfaces != ['lo'] or not {'/', '/run/fleet'}.issubset(readonly)):
+        raise RuntimeError('sandbox-kernel-boundary-unqualified')
     server = HTTPServer(('127.0.0.1', 18790), PrivateBridge)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
