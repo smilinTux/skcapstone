@@ -1,5 +1,9 @@
 # Fleet model lane routing
 
+Scope: legacy mode. For the 2026-10-01 production policy, use
+[the production Pi contract](production-pi-workers.md). Its gateway-derived
+model selection supersedes the static model and target table below.
+
 Status: live on chiap01, chiap02, chiap03, chiap08 since 2026-09-03.
 Regression tests: `tests/test_skfleet_glm_levels.py`.
 

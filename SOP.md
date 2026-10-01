@@ -546,7 +546,17 @@ See [`docs/MCP_TOPOLOGY.md`](./docs/MCP_TOPOLOGY.md).
 | `SKCOMMS_TURN_SECRET` | HMAC secret for coturn credentials |
 | `SKCAPSTONE_DESKTOP_NOTIFY` | opt-in (default off); when enabled, the loop fires a gated desktop notification on each generated response |
 
-**Fleet dispatcher gateway environment (`scripts/fleet/skfleet-rotate.py`).** The
+**Production Pi work cycle.** The
+[production runbook](docs/fleet/production-pi-workers.md) defines the approved
+consolidation under `9b230773`: card-derived requirements, gateway-derived
+model IDs, explicit Pi flags, node resource quotas, source custody and
+independent review. `SKFLEET_PRODUCTION_POLICY` selects validated shared
+host/resource configuration. It must not carry a second model table. The
+runbook identifies the rollout as pending until actual installation and the
+end-to-end trial are evidenced. It supersedes the legacy lane targets below
+only in explicit production mode.
+
+**Legacy dispatcher gateway environment (`scripts/fleet/skfleet-rotate.py`).** The
 rotate dispatcher that farms coord cards out to worker lanes is configured entirely
 by per-host environment. The canonical design docs are
 [`docs/fleet/lane-admission-health.md`](./docs/fleet/lane-admission-health.md) and
@@ -738,6 +748,8 @@ skcapstone coord parity --check         # re-verify (exit non-zero on any residu
 <!-- docs-evidence
 verified: 2026-09-18
 checks:
+  - name: production Pi contract remains linked from agent instructions
+    run: test -f docs/fleet/production-pi-workers.md && rg -q 'docs/fleet/production-pi-workers.md' AGENTS.md && rg -q 'SKFLEET_PRODUCTION_POLICY' src/skcapstone/fleet/production_dispatch.py
   - name: all six console scripts exist and there are still exactly six (section 3)
     run: test $(grep -cE '^[a-z-]+ = "skcapstone\.' pyproject.toml) -eq 6 && grep -qxF 'skcapstone = "skcapstone.cli:main"' pyproject.toml && grep -qxF 'skfleet = "skcapstone.fleet.cli:main"' pyproject.toml && grep -qxF 'skoperator = "skcapstone.operator_seat.cli:main"' pyproject.toml && grep -qxF 'skfleet-claim-expiry = "skcapstone.fleet.claim_expiry_cli:main"' pyproject.toml
   - name: the two disagreeing DEFAULT_PORT constants are still what section 5 describes
@@ -768,8 +780,8 @@ checks:
     run: grep -qF 'return candidates[0] if len(candidates) == 1 else None' src/skcapstone/__init__.py && ! grep -qF 'DEFAULT_AGENT = (os.environ.get("SK_DEFAULT_AGENT") or "lumina")' src/skcapstone/__init__.py
   - name: SKFLEET_GATEWAY_URL is required and the root-origin normalizer section 6 cites exists
     run: grep -qF '"SKFLEET_GATEWAY_URL is required"' scripts/fleet/skfleet-rotate.py && grep -qE '^def gateway_root\(' src/skcapstone/fleet_lane_health.py
-  - name: lane session targets are required or defaulted exactly as section 6 documents
-    run: grep -qxF 'TARGET=_required_lane_target("SKFLEET_TARGET")' scripts/fleet/skfleet-rotate.py && grep -qxF 'GLM_TARGET=_required_lane_target("SKFLEET_GLM_TARGET")' scripts/fleet/skfleet-rotate.py && grep -qF 'QWEN_TARGET=_required_lane_target("SKFLEET_QWEN_TARGET", default="6")' scripts/fleet/skfleet-rotate.py && grep -qF 'KIMI_TARGET=_required_lane_target("SKFLEET_KIMI_TARGET", default="0")' scripts/fleet/skfleet-rotate.py
+  - name: production budgets and legacy lane targets remain separate as section 6 documents
+    run: rg -qF 'TARGET=_SCAN_BUDGET if PRODUCTION_POLICY else _required_lane_target("SKFLEET_TARGET")' scripts/fleet/skfleet-rotate.py && rg -qF 'GLM_TARGET=_SCAN_BUDGET if PRODUCTION_POLICY else _required_lane_target("SKFLEET_GLM_TARGET")' scripts/fleet/skfleet-rotate.py && rg -qF 'QWEN_TARGET=_SCAN_BUDGET if PRODUCTION_POLICY else _required_lane_target("SKFLEET_QWEN_TARGET", default="6")' scripts/fleet/skfleet-rotate.py && rg -qF 'KIMI_TARGET=0 if PRODUCTION_POLICY else _required_lane_target("SKFLEET_KIMI_TARGET", default="0")' scripts/fleet/skfleet-rotate.py
   - name: the codex lane default model is still sk-codex-mid, per section 6
     run: grep -qF '"model":os.environ.get("SKFLEET_CODEX_LANE_MODEL","sk-codex-mid")' scripts/fleet/skfleet-rotate.py
   - name: glm size levels and kimi models are still what section 6 documents

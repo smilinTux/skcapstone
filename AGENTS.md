@@ -158,6 +158,28 @@ has no L-class provider admitted, so don't reach for it out of habit.
 skcapstone coord claim <task_id> --agent <your_name>
 ```
 
+## Production Pi worker contract
+
+For production dispatch, read [the Pi operating runbook](docs/fleet/production-pi-workers.md).
+The card owns capability, size, privacy and explicit route restrictions;
+fresh SKGateway metadata owns qualified routes and actual model IDs. Shared
+fleet configuration must not contain a second model table. Pi launches use
+explicit `--provider skgateway --model <resolved-model-id>`; Pi 0.84.4 does
+not support `--llm`. A local Pi catalog is a gateway-derived transport cache.
+
+Preserve node-qualified per-worker CPU/RAM/task/runtime quotas, exact claim
+ownership, source custody and independent review. SKGateway owns provider
+request concurrency and health; do not restore old fixed worker-count caps,
+75-second launch spacing or a separate orchestration failure HOLD. Kimi stays
+disabled while unsubscribed. Fiber is retired. A candidate or a dry run is
+not an installed, qualified production rollout.
+
+Every worker prompt requires `ls` after writes, `git rev-parse HEAD` after
+commits, and stopping on inconsistent tool output. After two compactions,
+write `.handoff.md`, finish the current step and stop for a fresh session.
+Bind completion to exact source, actual tests and independent review before
+cleanup. Never transfer an existing Jarvis claim by editing owner projections.
+
 ## Step 4: Do the Work
 
 Follow the project conventions:
