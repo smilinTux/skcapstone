@@ -220,8 +220,10 @@ def seal_plan(
     policy: dict,
     qualified_by: str,
     qualification_sha256: str,
+    *,
+    profile: dict | None = None,
 ) -> Path:
-    """Operator entrypoint only: seal the fixed profile after explicit qualification."""
+    """Seal an explicitly qualified legacy or reusable profile for one candidate."""
     check_binding(binding)
     source_state(workspace, binding)
     directory = home / "fleet/test-plans"
@@ -238,6 +240,13 @@ def seal_plan(
         "host": socket.gethostname().split(".")[0].lower(),
         "policy_sha256": production_builder.digest(policy),
     }
+    if profile is not None:
+        from .production_test_profile import recipe_checks, validate_profile
+
+        validate_profile(profile, {"card": binding["source_card"],
+                         "criteria_sha256": binding["criteria_sha256"]}, policy)
+        value["profile"] = profile
+        value["checks"] = recipe_checks(profile["recipe"])
     if (
         not qualified_by
         or not re.fullmatch(r"[0-9a-f]{64}", qualification_sha256)
@@ -269,12 +278,25 @@ def load_plan(home: Path, binding: dict) -> tuple[dict, Path, str]:
         "host",
         "policy_sha256",
     }
+    expected_checks = approved_checks()
+    if "profile" in plan:
+        from .production_test_profile import recipe_checks
+
+        required.add("profile")
+        profile = read_json(home / "fleet/test-profiles" / (binding["source_card"] + ".json"))
+        if (profile != plan["profile"] or profile.get("card") != binding["source_card"]
+                or profile.get("criteria_sha256") != binding["criteria_sha256"]
+                or any(profile.get(k) != plan.get(k) for k in (
+                    "qualified_by", "qualification_sha256", "python_sha256",
+                    "runtime_sha256", "policy_sha256", "host"))):
+            raise TestEvidenceError("candidate test profile changed")
+        expected_checks = recipe_checks(profile["recipe"])
     if (
         not isinstance(plan, dict)
         or set(plan) != required
         or plan["schema"] != "skfleet.native-test-plan/v1"
         or plan["binding"] != binding
-        or plan["checks"] != approved_checks()
+        or plan["checks"] != expected_checks
         or not isinstance(plan["qualified_by"], str)
         or not plan["qualified_by"]
         or any(
@@ -327,13 +349,16 @@ def run_directory(home: Path, plan_sha: str) -> Path:
     return home / "fleet/test-runs" / plan_sha
 
 
-def junit_counts(raw: bytes) -> dict:
+def junit_counts(raw: bytes, profile: dict | None = None) -> dict:
     """Recompute strict per-file coverage from raw JUnit, never reported totals alone."""
     if b"<!DOCTYPE" in raw or b"<!ENTITY" in raw:
         raise TestEvidenceError("JUnit entities are forbidden")
     root = ElementTree.fromstring(raw)
     cases = list(root.iter("testcase"))
-    counts = {name: 0 for name in TEST_FILES}
+    minima = (profile["recipe"]["pytest"] if profile else
+              {name: 11 if name.endswith("test_skfleet_terminal_review_skip.py") else 1
+               for name in TEST_FILES})
+    counts = {name: 0 for name in minima}
     identities = set()
     for case in cases:
         if any(case.find(tag) is not None for tag in ("failure", "error", "skipped")):
@@ -341,10 +366,10 @@ def junit_counts(raw: bytes) -> dict:
         classname = case.get("classname", "")
         matching = [
             name
-            for name in TEST_FILES
+            for name in minima
             if any(
                 classname == prefix or classname.startswith(prefix + ".")
-                for prefix in (Path(name).stem, "tests." + Path(name).stem)
+                for prefix in (name[:-3].replace("/", "."), Path(name).stem)
             )
         ]
         if len(matching) != 1:
@@ -360,9 +385,8 @@ def junit_counts(raw: bytes) -> dict:
         not suites
         or any(int(s.get(k, "-1")) != 0 for s in suites for k in ("failures", "errors", "skipped"))
         or sum(int(s.get("tests", "-1")) for s in suites) != len(cases)
-        or min(counts.values()) < 1
-        or len(cases) < 226
-        or counts["tests/test_skfleet_terminal_review_skip.py"] < 11
+        or any(counts[name] < minimum for name, minimum in minima.items())
+        or (profile is None and len(cases) < 226)
     ):
         raise TestEvidenceError("JUnit coverage does not meet the qualified plan")
     return {"total": len(cases), "per_file": counts, "failures": 0, "errors": 0, "skipped": 0}

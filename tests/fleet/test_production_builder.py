@@ -28,6 +28,23 @@ def test_production_family_exclusive_eligibility_preserves_legacy_and_host_exclu
 
 @pytest.fixture
 def production_setup(paths, operator, monkeypatch, tmp_path):
+    from skcapstone.fleet import production_test_plan as test_plan
+    from skcapstone.fleet import production_test_profile as test_profile
+
+    preflight = test_profile.preflight
+    monkeypatch.setattr(test_plan, "runtime_fingerprint", lambda: "a" * 64)
+
+    def qualify_fixture(home, core, labels, policy):
+        path = home / "fleet/test-profiles" / (core["id"] + ".json")
+        if not path.exists():
+            test_profile.qualify_profile(
+                home, core, policy,
+                {"pytest": {"tests/test_source.py": 1}, "compile": [], "lint": [],
+                 "changelog": False}, "fixture-operator", "b" * 64,
+            )
+        return preflight(home, core, labels, policy)
+
+    monkeypatch.setattr(test_profile, "preflight", qualify_fixture)
     value = {
         "schema": "skfleet.production/v1",
         "authority_host": "control",
@@ -111,6 +128,7 @@ def production_setup(paths, operator, monkeypatch, tmp_path):
         path=path,
         view=view,
         writer=store.Writer(role="scheduler", node="niobe", identity="niobe"),
+        profile_preflight=preflight,
     )
     builder._PROCESSES.clear()
 
@@ -150,6 +168,32 @@ def test_production_offers_above_old_count_cap_and_enforces_readiness(paths, pro
     )
 
 
+def test_unqualified_contract_never_creates_dispatch_request(paths, production_setup, monkeypatch):
+    from skcapstone.fleet import production_test_profile
+
+    monkeypatch.setattr(production_test_profile, "preflight", production_setup.profile_preflight)
+    with pytest.raises(builder.BuilderDispatchError, match="required-test-profile-unqualified"):
+        builder.offer(paths, _card(), ["source-only", "sk-m"], writer=production_setup.writer)
+    assert not list((paths.root / "dispatch").glob("*/*.json"))
+
+
+def test_changed_required_tests_never_claim_or_launch_remote_worker(
+    paths, production_setup, monkeypatch, tmp_path
+):
+    p = production_setup
+    request = builder.offer(paths, _card(), ["source-only", "sk-m"], writer=p.writer)
+    monkeypatch.setattr(production.socket, "gethostname", lambda: "worker")
+    changed = _folded(acceptance_criteria=["New unqualified required test contract."])
+    monkeypatch.setattr(builder.CardStore, "fold", lambda *args: changed)
+    calls = []
+    monkeypatch.setattr(builder.Board, "claim_task", lambda *args: calls.append("claim"))
+    builder.consume_one(
+        paths, tmp_path, "node-worker", launcher=lambda *args: calls.append("launch"),
+        materializer=lambda *args: calls.append("materialize"),
+    )
+    assert calls == []
+    state = builder._load(builder.status_path(paths, "node-worker", request["card_id"]))
+    assert state["state"] == "blocked" and "test qualification" in state["error"]
 def test_missing_node_quota_never_invents_a_limit(paths, production_setup):
     p = production_setup
     p.policy["node_quotas"].clear()

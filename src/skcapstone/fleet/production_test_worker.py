@@ -184,7 +184,7 @@ def execute(plan_path: Path, directory: Path) -> int:
         output.write(raw)
     receipt["junit_sha256"] = sha(raw)
     try:
-        receipt["counts"] = junit_counts(raw)
+        receipt["counts"] = junit_counts(raw, plan.get("profile"))
     except (ValueError, TestEvidenceError):
         receipt["counts"] = None
     write_once(directory / "receipt.json", receipt)

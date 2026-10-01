@@ -8644,6 +8644,11 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         break
     default_workspace=os.path.join(HOME,".skcapstone/fleet/workspaces",name)
     try:
+        if PRODUCTION_POLICY and _governed_review_metadata(
+                fresh_claimability["core"], fresh_claimability["labels"]) is None:
+            from skcapstone.fleet.production_test_profile import preflight as test_preflight
+            test_preflight(Path(HOME)/".skcapstone", dict(fresh_claimability["core"], id=cid),
+                           fresh_claimability["labels"], PRODUCTION_POLICY)
         _source_spec = _preclaim_worker_source(
             fresh_claimability["core"], fresh_claimability["labels"]
         )
@@ -8652,7 +8657,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             fresh_claimability["core"],
             fresh_claimability["labels"],
         )
-    except ValueError as exc:
+    except (OSError,ValueError) as exc:
         log(d,"WORKSPACE_BLOCKED|%s|%s|%s"%(HOST,cid,exc))
         # Yield the slot: without this the same card is re-picked every
         # cycle and the rest of the pool never gets a turn.
@@ -8677,6 +8682,15 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
                 process={"host":HOST,"workspace":workspace})
         except (FanoutBoundaryError, OSError, ValueError) as exc:
             log(d,"FANOUT_MATERIALIZE_RECEIPT_FAILED|%s|%s|%s"%(HOST,cid,exc))
+            continue
+    if PRODUCTION_POLICY and _governed_review_metadata(
+            fresh_claimability["core"], fresh_claimability["labels"]) is None:
+        try:
+            _test_current=authoritative_claimability(cid, fresh=True)
+            test_preflight(Path(HOME)/".skcapstone", dict(_test_current["core"], id=cid),
+                           _test_current["labels"], PRODUCTION_POLICY)
+        except (OSError,ValueError) as exc:
+            log(d,"PRECLAIM_DEFERRED|%s|%s|reason=test-profile-%s"%(HOST,cid,exc))
             continue
     claim=subprocess.run([SKC,"coord","claim",cid,"--agent",name],capture_output=True,text=True)
     claimed_owner,_claimed_at,claimed_revision=_current_claim_identity_fresh(cid)

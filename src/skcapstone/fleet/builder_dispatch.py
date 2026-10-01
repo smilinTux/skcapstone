@@ -178,7 +178,9 @@ def _source(core: dict) -> tuple[str, str, str]:
     return repository, base_ref, revision
 
 
-def _request_matches_current_card(coordination_home: Path, request: dict) -> None:
+def _request_matches_current_card(
+    coordination_home: Path, request: dict, *, retained_claim=False
+) -> None:
     """Reject an offered request after any source or eligibility amendment."""
     card = CardStore(coordination_home).fold(str(request.get("card_id") or ""))
     if card is None:
@@ -193,13 +195,28 @@ def _request_matches_current_card(coordination_home: Path, request: dict) -> Non
         or labels != expected_labels
     ):
         raise BuilderDispatchError("offered card changed after dispatch request")
+    if request.get("production") is not None and not retained_claim:
+        from .production_test_profile import contract, validate_profile
+
+        try:
+            validate_profile(
+                request.get("test_profile"),
+                contract(dict(core, acceptance_criteria=card.acceptance_criteria)),
+                production_builder.policy(), environment=False,
+            )
+        except (ValueError, TypeError) as exc:
+            raise BuilderDispatchError("offered test qualification changed") from exc
 
 
-def _ensure_request_matches_current_card(coordination_home: Path, request: dict) -> None:
+def _ensure_request_matches_current_card(
+    coordination_home: Path, request: dict, *, retained_claim=False
+) -> None:
     """Re-fold a request briefly before treating a mismatch as durable."""
     for check in range(MATCH_RETRY_LIMIT):
         try:
-            _request_matches_current_card(coordination_home, request)
+            _request_matches_current_card(
+                coordination_home, request, retained_claim=retained_claim
+            )
             return
         except BuilderDispatchError:
             if check == MATCH_RETRY_LIMIT - 1:
@@ -455,6 +472,14 @@ def _offer(paths, core, labels, *, writer, now=None):
         raise BuilderDispatchError("card must select exactly one logical route")
     ready = _ready_builders(paths)
     production = production_builder.policy()
+    test_profile = None
+    if production is not None:
+        from .production_test_profile import preflight
+
+        try:
+            test_profile = preflight(paths.root.parent, core, labels, production)
+        except (OSError, ValueError) as exc:
+            raise BuilderDispatchError("required-test-profile-unqualified") from exc
     selected_node = None
     for view in ready:
         existing = _load(request_path(paths, view.name, card_id))
@@ -539,6 +564,7 @@ def _offer(paths, core, labels, *, writer, now=None):
     }
     if binding is not None:
         request["production"] = binding
+        request["test_profile"] = test_profile
     path = request_path(paths, selected_node, card_id)
     existing = _load(path)
     if existing and existing.get("request_id") == request["request_id"]:
@@ -1225,7 +1251,9 @@ def _consume_available(
             if not store.actuation_allowed(paths):
                 return None
             try:
-                _ensure_request_matches_current_card(coordination_home, request)
+                _ensure_request_matches_current_card(
+                    coordination_home, request, retained_claim=retrying
+                )
             except BuilderDispatchError as exc:
                 if retrying:
                     continue
@@ -1267,7 +1295,9 @@ def _consume_available(
                     claim_released=False,
                 )
             try:
-                _ensure_request_matches_current_card(coordination_home, request)
+                _ensure_request_matches_current_card(
+                    coordination_home, request, retained_claim=retrying
+                )
             except BuilderDispatchError as exc:
                 if retrying:
                     continue
@@ -1340,7 +1370,9 @@ def _consume_available(
             if not card or card.owner != owner or not revision:
                 raise BuilderDispatchError("claimed generation is not authoritative")
             try:
-                _ensure_request_matches_current_card(coordination_home, request)
+                _ensure_request_matches_current_card(
+                    coordination_home, request, retained_claim=retrying
+                )
             except BuilderDispatchError as exc:
                 released = _release_exact(
                     coordination_home, request["card_id"], owner, revision, actor=owner

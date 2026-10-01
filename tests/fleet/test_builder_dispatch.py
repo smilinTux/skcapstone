@@ -40,6 +40,7 @@ def _node(paths, operator, noded41) -> None:
 def _card() -> dict:
     return {
         "id": "24b00003",
+        "acceptance_criteria": ["Run the required source regression."],
         "meta": {
             "repository": "https://github.com/smilinTux/skcapstone.git",
             "base_ref": "main",
@@ -56,6 +57,7 @@ def _folded(**values) -> SimpleNamespace:
         "labels": ["sk-m", "source-only"],
         "status": SimpleNamespace(value="doing"),
         "links": {},
+        "acceptance_criteria": list(_card()["acceptance_criteria"]),
     }
     defaults.update(values)
     return SimpleNamespace(**defaults)

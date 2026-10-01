@@ -294,6 +294,7 @@ def collect(home, policy, card, claim, *, process_check):
 
 def reconcile(home, policy, *, process_check):
     """Reconcile retained review exits with bounded per-card refusal isolation."""
+    from .production_test_profile import seal_candidate
     from .production_tests import run_or_read_tests
 
     home = Path(home)
@@ -331,6 +332,10 @@ def reconcile(home, policy, *, process_check):
                     ):
                         raise ReviewEvidenceError("native pair changed before trusted tests")
                 artifacts(context)
+                seal_candidate(
+                    home, context["test_binding"], Path(context["source_workspace"]),
+                    policy, context["source"]["repository"],
+                )
                 receipt = run_or_read_tests(
                     home, context["test_binding"], Path(context["source_workspace"]), policy
                 )

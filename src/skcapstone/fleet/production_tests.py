@@ -144,7 +144,7 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
         ):
             raise TestEvidenceError("native command or raw output mismatch")
     raw = read_private(directory / "pytest.xml")
-    counts = junit_counts(raw)
+    counts = junit_counts(raw, plan.get("profile"))
     if receipt.get("junit_sha256") != sha(raw) or receipt.get("counts") != counts:
         raise TestEvidenceError("native JUnit evidence mismatch")
     return {
