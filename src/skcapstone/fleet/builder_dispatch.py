@@ -741,10 +741,14 @@ def _frozen_claim_status(
     owner: str,
     revision: str,
     prior_attempt: int,
+    *,
+    preserve_claim: bool = False,
 ) -> dict | None:
     """Release an exact prelaunch claim when the human freeze has won."""
     if store.actuation_allowed(paths):
         return None
+    if preserve_claim:
+        return {"state": "awaiting-evidence", "claim_released": False}
     released = _release_exact(coordination_home, request["card_id"], owner, revision, actor=owner)
     return _write_status(
         paths,
@@ -1021,6 +1025,8 @@ def _consume_available(
     materializer: Callable[[dict, Path], Path],
 ) -> dict | None:
     """Refresh every active generation before admitting pending requests."""
+    from . import builder_retry
+
     spec = store.read_spec(paths, "node", node) or {}
     if spec.get("spec", {}).get("role") != ROLE or spec.get("spec", {}).get("actuate") is not True:
         return None
@@ -1077,6 +1083,13 @@ def _consume_available(
             if prior.get("request_id") != request.get("request_id"):
                 active_cards.add(request["card_id"])
                 continue
+            if builder_retry.pending(request, prior):
+                try:
+                    builder_retry.check_attempt(paths, coordination_home, request, prior)
+                except (ValueError, OSError):
+                    pass  # A newly arrived candidate still follows normal publication.
+                else:
+                    continue
             result = _reconcile_running(paths, coordination_home, node, request, prior)
             if result["state"] == "running":
                 active_cards.add(request["card_id"])
@@ -1093,6 +1106,12 @@ def _consume_available(
             prior = (
                 _validated_status(status_path(paths, node, request["card_id"]), paths, node) or {}
             )
+            retrying = builder_retry.pending(request, prior)
+            if retrying:
+                try:
+                    builder_retry.check_attempt(paths, coordination_home, request, prior)
+                except (ValueError, OSError):
+                    continue
             if request["card_id"] in reconciled_orphans:
                 continue
             if prior and prior.get("request_id") != request.get("request_id"):
@@ -1130,9 +1149,12 @@ def _consume_available(
             if prior.get("request_id") == request.get("request_id"):
                 if prior.get("state") == "running":
                     continue
-                if prior.get("state") not in {"failed", "frozen"} or (
-                    prior.get("state") == "failed"
-                    and int(prior.get("attempt") or 1) >= MAX_ATTEMPTS
+                if not retrying and (
+                    prior.get("state") not in {"failed", "frozen"}
+                    or (
+                        prior.get("state") == "failed"
+                        and int(prior.get("attempt") or 1) >= MAX_ATTEMPTS
+                    )
                 ):
                     continue
             try:
@@ -1142,6 +1164,8 @@ def _consume_available(
             except (KeyError, TypeError, ValueError):
                 expires = datetime.min.replace(tzinfo=timezone.utc)
             if _now() > expires:
+                if retrying:
+                    continue
                 result = _write_status(
                     paths,
                     node,
@@ -1157,6 +1181,8 @@ def _consume_available(
             except production_builder.production_routes.RouteUnavailableError:
                 continue
             except ValueError:
+                if retrying:
+                    continue
                 _write_status(
                     paths,
                     node,
@@ -1201,6 +1227,8 @@ def _consume_available(
             try:
                 _ensure_request_matches_current_card(coordination_home, request)
             except BuilderDispatchError as exc:
+                if retrying:
+                    continue
                 _write_status(
                     paths,
                     node,
@@ -1214,6 +1242,8 @@ def _consume_available(
             try:
                 materializer(request, workspace)
             except BuilderDispatchError as exc:
+                if retrying:
+                    continue
                 _write_status(
                     paths,
                     node,
@@ -1226,6 +1256,8 @@ def _consume_available(
                 )
                 continue
             if not store.actuation_allowed(paths):
+                if retrying:
+                    return None
                 return _write_status(
                     paths,
                     node,
@@ -1237,6 +1269,8 @@ def _consume_available(
             try:
                 _ensure_request_matches_current_card(coordination_home, request)
             except BuilderDispatchError as exc:
+                if retrying:
+                    continue
                 _write_status(
                     paths,
                     node,
@@ -1250,6 +1284,8 @@ def _consume_available(
             try:
                 assert_claim_permitted(coordination_home, request["card_id"], owner)
             except ClaimRefusedError as exc:
+                if retrying:
+                    continue
                 _write_status(
                     paths,
                     node,
@@ -1261,7 +1297,8 @@ def _consume_available(
                 )
                 continue
             try:
-                Board(coordination_home).claim_task(owner, request["card_id"])
+                if not retrying:
+                    Board(coordination_home).claim_task(owner, request["card_id"])
             except TaskUnclaimable as exc:
                 # ziowk01-wsl, 2026-09-18: card 59553966 was voided and replaced
                 # while it sat in this queue, claim_task raised, and the bare
@@ -1328,6 +1365,7 @@ def _consume_available(
                 owner,
                 revision,
                 int(prior.get("attempt") or 0),
+                preserve_claim=retrying,
             )
             if frozen is not None:
                 return frozen
@@ -1340,6 +1378,8 @@ def _consume_available(
                         request, attempt, command, workspace
                     )
                 except ValueError:
+                    if retrying:
+                        continue
                     released = _release_exact(
                         coordination_home, request["card_id"], owner, revision, actor=owner
                     )
@@ -1362,6 +1402,7 @@ def _consume_available(
                 owner,
                 revision,
                 int(prior.get("attempt") or 0),
+                preserve_claim=retrying,
             )
             if frozen is not None:
                 return frozen
@@ -1378,11 +1419,29 @@ def _consume_available(
                         owner,
                         revision,
                         int(prior.get("attempt") or 0),
+                        preserve_claim=retrying,
                     )
                     if frozen is not None:
                         return frozen
-                    process = run(command, workspace)
+                    if retrying:
+                        with builder_retry.consume(
+                            paths,
+                            coordination_home,
+                            request,
+                            prior,
+                            route_preflight=route_preflight,
+                        ):
+                            process = run(command, workspace)
+                    else:
+                        process = run(command, workspace)
             except Exception:
+                if retrying:
+                    # A spent authorization never releases custody or relaunches.
+                    # Its persisted unknown unit state requires operator recovery.
+                    logger.warning(
+                        "operator retry refused or launch uncertain: %s", request["card_id"]
+                    )
+                    return None
                 released = _release_exact(
                     coordination_home, request["card_id"], owner, revision, actor=owner
                 )
@@ -1409,6 +1468,8 @@ def _consume_available(
                     "invocation": None,
                     "route_preflight": route_preflight,
                 }
+            if retrying:
+                service["operator_retry_consumed"] = request["operator_retry"]["id"]
             result = _write_status(
                 paths,
                 node,

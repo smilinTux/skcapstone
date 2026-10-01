@@ -74,7 +74,7 @@ def _once(path: Path, raw: bytes) -> None:
 
 # This is operator-owned inspection code. Worker Git configuration can only
 # run inside a read-only namespace without host home, secrets or networking.
-_EXPORT = r"""
+_INSPECT_SETUP = r"""
 import base64, hashlib, json, os, resource, stat, subprocess, sys
 from pathlib import Path
 resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024,) * 2)
@@ -88,6 +88,9 @@ def git(*args):
     return subprocess.run(['/usr/bin/git','--no-replace-objects','--git-dir=/work/.git',
         '--work-tree=/work','-c','core.fsmonitor=false','-c','core.hooksPath=/dev/null',*args],
         check=True,capture_output=True,timeout=20).stdout
+"""
+
+_EXPORT = _INSPECT_SETUP + r"""
 assert git('rev-parse','HEAD^{commit}').decode().strip()==head
 assert git('rev-parse','HEAD^{tree}').decode().strip()==tree
 assert git('symbolic-ref','HEAD').decode().strip()==ref
@@ -114,6 +117,30 @@ print(json.dumps({'bundle_b64':base64.b64encode(bundle).decode(),
 
 def _export(workspace: Path, card: str, base: str, outcome: dict) -> dict:
     """Run bounded export without executing repository configuration on host."""
+    return _inspect(
+        workspace,
+        _EXPORT,
+        card,
+        base,
+        outcome["candidate_commit"],
+        outcome["candidate_tree"],
+        outcome["candidate_ref"],
+    )
+
+
+def inspect_clean_base(workspace: Path, base: str) -> dict:
+    """Prove an unchanged retry workspace in the existing read-only sandbox."""
+    program = _INSPECT_SETUP + """
+assert git('rev-parse','HEAD^{commit}').decode().strip()==base
+assert not git('status','--porcelain','--untracked-files=all')
+assert not git('ls-files','--others','--ignored','--exclude-standard')
+print(json.dumps({'head':base}))
+"""
+    return _inspect(workspace, program, "unused", base, base, "unused", "unused")
+
+
+def _inspect(workspace: Path, program: str, *arguments: str) -> dict:
+    """Run trusted inspection with no host home, networking or writable source."""
     if workspace.resolve() != workspace or not workspace.is_dir():
         raise SourceBundleError("source workspace is redirected")
     command = [
@@ -156,12 +183,8 @@ def _export(workspace: Path, card: str, base: str, outcome: dict) -> dict:
         "/usr/bin/python3",
         "-I",
         "-c",
-        _EXPORT,
-        card,
-        base,
-        outcome["candidate_commit"],
-        outcome["candidate_tree"],
-        outcome["candidate_ref"],
+        program,
+        *arguments,
     ]
     try:
         result = subprocess.run(command, capture_output=True, timeout=45)
