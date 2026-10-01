@@ -1,0 +1,1 @@
+- Card `b189af7e`: production handoff creates private evidence through directory descriptors, refuses symlink components and existing unsafe card directories, and removes the redundant evidence link while retaining required commit/branch metadata. Guarded CLI parity remains a separate prerequisite.

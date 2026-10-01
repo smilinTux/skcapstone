@@ -37,6 +37,35 @@ def production_completion_recipe(
         ' --candidate "$candidate" --commit "$head" --tree "$tree"'
         f' --ref "refs/heads/$branch" {guard}'
     )
+    # Directory descriptors keep staging inside the opened, non-symlink path.
+    stage = """import os,stat,sys,uuid
+from pathlib import Path
+card,head,evidence=sys.argv[1:]
+flags=os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW
+fd=os.open(os.environ['HOME'],flags)
+try:
+    for part in ('.skcapstone','evidence','work',card):
+        try: os.mkdir(part,0o700,dir_fd=fd)
+        except FileExistsError: pass
+        child=os.open(part,flags,dir_fd=fd)
+        os.close(fd)
+        fd=child
+    info=os.fstat(fd)
+    if info.st_uid!=os.getuid() or stat.S_IMODE(info.st_mode)!=0o700:
+        raise ValueError('card evidence directory must be owned and mode 0700')
+    name='completion-'+head+'.'+uuid.uuid4().hex+'.md'
+    output=os.open(name,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=fd)
+    with os.fdopen(output,'wb') as stream:
+        stream.write(Path(evidence).read_bytes())
+        stream.flush()
+        os.fsync(stream.fileno())
+    path=Path(os.environ['HOME'])/'.skcapstone/evidence/work'/card/name
+    if path.stat().st_ino!=os.stat(name,dir_fd=fd,follow_symlinks=False).st_ino:
+        raise ValueError('card evidence directory changed')
+    print(path)
+finally:
+    os.close(fd)
+"""
     return f"""set -euo pipefail
 test -d .git
 test ! -L .git
@@ -55,13 +84,9 @@ test -f "$evidence"
 test ! -L "$evidence"
 cmp -- "$evidence" <(git cat-file blob "HEAD:$evidence")
 skcapstone coord show {card_id} --json | python3 -c {shlex.quote(check)} {identity_args}
-directory="$HOME/.skcapstone/evidence/work/{card_id}"
-mkdir -p -- "$directory"
-candidate=$(mktemp "$directory/completion-$head.XXXXXX.md")
-cat -- "$evidence" > "$candidate"
+candidate=$(python3 -c {shlex.quote(stage)} {card_id} "$head" "$evidence")
 cmp -- "$evidence" "$candidate"
 ls -- "$candidate"
-skcapstone coord link {card_id} evidence "$evidence" {guard}
 skcapstone coord link {card_id} commit_sha "$head" {guard}
 skcapstone coord link {card_id} branch "$branch" {guard}
 {verdict}
