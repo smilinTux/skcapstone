@@ -189,6 +189,25 @@ def rig(tmp_path, monkeypatch):
     return locals()
 
 
+def test_qwen_terminal_producer_gets_one_different_family_review(rig):
+    from fiber_routes import ROUTES
+
+    r = rig
+    r['job'].update(provider='qwen', pi_provider=ROUTES['qwen'][0], model=ROUTES['qwen'][1])
+    r['receipt']['provider'] = 'qwen'
+    with connect(r['state'] / 'admission.sqlite3') as db:
+        db.execute('UPDATE runs SET binding=?, receipt=? WHERE card=?',
+                   (json.dumps(r['job']), json.dumps(r['receipt']), r['card']))
+    first = r['run']()
+    review = first['reviews'][0]['review']
+    receipt = json.loads((r['qualified'] / (review + '.json')).read_text())
+    assert receipt['job']['provider'] == 'deepseek'
+    assert receipt['job']['producer_provider'] == 'qwen'
+    assert receipt['job']['base_revision'] == r['packet']['commit']
+    assert r['run']()['reviews'] == first['reviews']
+    assert r['calls'] == ['collect', 'record', 'open']
+
+
 def test_real_native_handoff_prepares_one_opposite_provider_review(rig):
     r = rig
     first = r["run"]()

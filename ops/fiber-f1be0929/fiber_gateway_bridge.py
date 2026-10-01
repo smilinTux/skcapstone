@@ -200,6 +200,10 @@ class QuietHandler(BaseHTTPRequestHandler):
 class GatewayHandler(QuietHandler):
     def do_POST(self):
         """Use the controller's pinned endpoint, credential and claim check."""
+        # Only this host-side handler needs route metadata. The same script is
+        # mounted alone inside the sandbox for its credential-free private hop.
+        from fiber_routes import provider_matches
+
         try:
             raw = self.read_body()
             self.server.requests += 1
@@ -214,9 +218,6 @@ class GatewayHandler(QuietHandler):
                 },
             )
             with self.server.opener.open(request, timeout=GATEWAY_TIMEOUT) as response:
-                family = response.headers.get(
-                    "x-sk-provider", response.headers.get("x-sk-backend")
-                )
                 requested = response.headers.get("x-sk-model-requested")
                 served = response.headers.get("x-sk-model-served")
                 selected = (
@@ -225,7 +226,7 @@ class GatewayHandler(QuietHandler):
                     else self.server.model
                 )
                 if (
-                    family != self.server.family
+                    not provider_matches(self.server.family, self.server.model, response.headers)
                     or requested != self.server.model
                     or not selected
                     or served != selected

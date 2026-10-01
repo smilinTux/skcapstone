@@ -4,6 +4,7 @@ import http.client
 import io
 import json
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -19,7 +20,7 @@ import fiber_gateway_bridge as bridge
 
 
 @contextmanager
-def two_hop_gateway(reply):
+def two_hop_gateway(reply, *, family='deepseek', model='deepseek-flash'):
     """Real TCP client -> private HTTP -> Unix bridge -> synthetic gateway."""
     forwarded, claims, waits = [], [], []
 
@@ -40,7 +41,7 @@ def two_hop_gateway(reply):
             path = Path(td) / "gateway.sock"
             with bridge.gateway_socket(
                 path, endpoint=f"http://127.0.0.1:{upstream.server_port}/v1",
-                credential="SYNTHETIC-SECRET", family="deepseek", model="deepseek-flash",
+                credential="SYNTHETIC-SECRET", family=family, model=model,
                 check_claim=lambda: claims.append(True),
             ) as host:
                 def connect(connection):
@@ -55,7 +56,7 @@ def two_hop_gateway(reply):
                     worker.start()
                     try:
                         def request(**options):
-                            body = {"model": "deepseek-flash", "messages": [{"role": "user", "content": "OK"}]}
+                            body = {"model": model, "messages": [{"role": "user", "content": "OK"}]}
                             body.update(options)
                             connection = http.client.HTTPConnection("127.0.0.1", private.server_port, timeout=5)
                             connection.request("POST", "/v1/chat/completions", json.dumps(body))
@@ -85,6 +86,35 @@ def successful_reply(handler, *, family="deepseek"):
 
 
 class BridgeTest(unittest.TestCase):
+    def test_private_bridge_import_needs_no_unmounted_host_modules(self):
+        with tempfile.TemporaryDirectory() as directory:
+            isolated = Path(directory) / 'fiber_gateway_bridge.py'
+            isolated.write_bytes(Path(bridge.__file__).read_bytes())
+            result = subprocess.run([sys.executable, '-I', '-c',
+                'import runpy,sys; runpy.run_path(sys.argv[1], run_name="private_bridge")',
+                str(isolated)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_qwen_transport_preserves_exact_backend_and_model_binding(self):
+        from fiber_routes import QWEN_MODEL
+        for backend, served, expected in [('chiap08-qwen38', QWEN_MODEL, 200),
+                                         ('other-local', QWEN_MODEL, 502),
+                                         ('chiap08-qwen38', 'other-qwen', 502)]:
+            with self.subTest(backend=backend, served=served):
+                def reply(handler):
+                    handler.send_response(200)
+                    handler.send_header('Content-Type', 'application/json')
+                    handler.send_header('x-sk-provider', 'local')
+                    handler.send_header('x-sk-backend', backend)
+                    handler.send_header('x-sk-model-requested', QWEN_MODEL)
+                    handler.send_header('x-sk-model-served', served)
+                    handler.end_headers()
+                    handler.wfile.write(b'{"usage":{"total_tokens":1},"choices":[]}')
+                with two_hop_gateway(reply, family='qwen', model=QWEN_MODEL) as (request, host, forwarded, claims, waits):
+                    self.assertEqual(request()[0], expected)
+                    self.assertEqual(len(forwarded), 1)
+                    self.assertEqual(len(claims), 1)
+
     def test_gateway_backpressure_survives_both_hops_without_secrets_or_retries(self):
         responses = iter([
             (429, "17", "17"), (503, "Wed, 21 Oct 2026 07:28:00 GMT", "Wed, 21 Oct 2026 07:28:00 GMT"),

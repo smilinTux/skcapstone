@@ -21,6 +21,7 @@ from fiber_dispatch import _same_launch
 from fiber_finish import finish_pair
 from fiber_refill import SCHEMA, MAX_BYTES, _directory, _publish, _read, digest
 from fiber_selection import _policy
+from fiber_routes import ROUTES
 
 
 def _once(path, value):
@@ -84,7 +85,7 @@ def _producer(run, policy, board):
             or not re.fullmatch('[0-9a-f]{32}', str(run.get('invocation')))):
         raise Refused('lifecycle-run-identity')
     if (job.get('card') != run['card'] or job.get('host') != run['host']
-            or job.get('stage') != 'implementation' or job.get('provider') not in {'deepseek', 'zai'}
+            or job.get('stage') != 'implementation' or job.get('provider') not in ROUTES
             or job.get('repository') != policy['repository']
             or job.get('card_fingerprint') != policy['cards'].get(run['card'])
             or card_fingerprint(row) != job.get('card_fingerprint')):
