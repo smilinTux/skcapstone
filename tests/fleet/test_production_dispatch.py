@@ -99,6 +99,43 @@ def test_actual_launch_keeps_child_argv_and_enforces_node_quota(monkeypatch):
         assert "--property=" + expected in command
 
 
+def test_production_review_rails_preserve_candidate_and_truthful_checks():
+    ns = helpers("_production_worker_rails")
+    ns.update(
+        os=SimpleNamespace(environ={}),
+        _worker_search_instructions=lambda: "BOUNDED SEARCH\n",
+        _worker_mail_instructions=lambda routing: "MAIL ROUTING\n",
+        _worker_mail_routing=lambda env, originator: originator,
+    )
+    tree = ast.parse(ROTATE.read_text())
+    assignment = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Name)
+        and node.test.id == "PRODUCTION_POLICY"
+        and any(
+            isinstance(item, ast.Call)
+            and isinstance(item.func, ast.Name)
+            and item.func.id == "_production_worker_rails"
+            for item in ast.walk(node)
+        )
+    )
+    ns.update(PRODUCTION_POLICY=policy(), core={}, _RAILS="LEGACY PUSH REQUIREMENT")
+    exec(compile(ast.Module(body=[assignment], type_ignores=[]), str(ROTATE), "exec"), ns)
+    rails = ns["_RAILS"]
+    assert "LEGACY PUSH REQUIREMENT" not in rails
+    assert "Review requires no new source commit" in rails
+    assert "alter the candidate being reviewed" in rails
+    assert "never fabricate CI SUCCESS" in rails
+    assert "second auto-compaction" in rails
+    assert "BOUNDED SEARCH" in rails
+    assert "MAIL ROUTING" in rails
+    ns.update(PRODUCTION_POLICY=None, _RAILS="LEGACY PUSH REQUIREMENT")
+    exec(compile(ast.Module(body=[assignment], type_ignores=[]), str(ROTATE), "exec"), ns)
+    assert ns["_RAILS"] == "LEGACY PUSH REQUIREMENT"
+
+
 def test_gateway_capacity_does_not_subtract_existing_worker_count():
     lanes = [{"busy": list(range(1000)), "capacity_domains": ["zai"]}]
     routes = [

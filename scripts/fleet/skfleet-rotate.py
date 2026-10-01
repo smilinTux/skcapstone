@@ -1289,6 +1289,32 @@ def _worker_no_external_action_instructions(labels):
     )
 
 
+def _production_worker_rails(core):
+    """Shared production review/role constraints without source publication orders."""
+    return (
+        "PRODUCTION WORKER CONSTRAINTS:\n"
+        "Read workspace AGENTS.md and the exact card TDD before work; automatic "
+        "context and skills are disabled. Use only the card's authorized scope.\n"
+        "Use skcapstone coord for all board writes. Never modify CardStore files.\n"
+        "Use the existing isolated workspace. Do not create a nested worktree, "
+        "reset its source, or alter the candidate being reviewed.\n"
+        "Commit, push, or open a PR only when the exact card authorizes it. "
+        "Review requires no new source commit. Preserve source and evidence.\n"
+        "Do not merge, deploy, restart services, change credentials, write human "
+        "approval, or perform external actions outside an explicit card role.\n"
+        "Run ls after every file write and git rev-parse HEAD after every "
+        "authorized commit. Stop immediately on inconsistent tool output.\n"
+        "After the second auto-compaction write .handoff.md, finish the current "
+        "step and stop for a fresh session.\n"
+        "Verify the exact candidate and required tests. Record only observed "
+        "results; never fabricate CI SUCCESS, source hashes or approval. "
+        "A missing required check is BLOCKED, not permission to bypass it.\n"
+        "Retain workspace and claim custody for native completion verification.\n"
+        + _worker_search_instructions()
+        + _worker_mail_instructions(_worker_mail_routing(os.environ, core.get("originator")))
+    )
+
+
 def _worker_done_instructions(pr_required_now):
     """Build the DEFINITION OF DONE fragment for the worker launch brief.
 
@@ -8215,6 +8241,8 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
       "A SHA with no reachable bytes is not evidence. It is a promise that expired.\n"
       + _worker_done_instructions(pr_required(core, _labels))
       + _worker_no_external_action_instructions(_labels))
+    if PRODUCTION_POLICY:
+        _RAILS=_production_worker_rails(core)
     brief=_RAILS + ("Work only SKCapstone card %s. The fleet selector has already claimed it "
       "for your exact agent identity. Verify that ownership before working and never "
       "claim or substitute another card. If ownership is absent, or a dependency is "
