@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 from click.testing import CliRunner
@@ -27,7 +28,7 @@ def _write_gateway_capacity(
         {
             "schema_version": 1,
             "cycle_id": "diagnostic-test",
-            "observed_at": 2_000_000_000.0,
+            "observed_at": time.time(),
             "endpoint": "https://gateway",
             "error": None,
             "routes": [

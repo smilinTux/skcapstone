@@ -1732,7 +1732,6 @@ if ONLY_SEAT in {"", "link", "mero", "seraph"}:
         new_cycle_id(HOST,STAMP),
         occupancy=_review_route_occupancy,
         occupancy_ambiguous=_review_route_ambiguous,
-        physical_maximum=CODEX_PHYSICAL_LIMIT,
     )
 GLM_HOLD_PATH=os.path.join(HOME,".skcapstone/evidence/fleet-glm-dispatch-hold.json")
 glm_held=False

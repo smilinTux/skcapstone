@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import math
 import os
 import time
 import urllib.request
@@ -176,7 +177,6 @@ def acquire_review_route_snapshot(
         snapshot,
         occupancy or {},
         occupancy_ambiguous=occupancy_ambiguous,
-        physical_maximum=physical_maximum,
     )
     encoded = (json.dumps(snapshot, sort_keys=True, separators=(",", ":")) + "\n").encode()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -200,15 +200,16 @@ def seal_review_capacity_truth(
     physical_maximum: int | None = None,
 ) -> dict[str, Any]:
     """Bind route and occupancy observations into one revisioned truth."""
-    sealed = {key: value for key, value in snapshot.items() if key != "capacity_revision"}
+    # Keep the legacy argument callable while removing the retired scheduler cap
+    # before sealing new observations. Existing evidence is never rewritten.
+    sealed = {key: value for key, value in snapshot.items()
+              if key not in {"capacity_revision", "physical_maximum", "physical_free"}}
     sealed["occupancy"] = {
         str(domain): int(count)
         for domain, count in sorted(occupancy.items())
         if str(domain) and int(count) >= 0
     }
     sealed["occupancy_ambiguous"] = bool(occupancy_ambiguous)
-    if physical_maximum is not None:
-        sealed["physical_maximum"] = max(0, int(physical_maximum))
     material = json.dumps(sealed, sort_keys=True, separators=(",", ":")).encode()
     sealed["capacity_revision"] = hashlib.sha256(material).hexdigest()
     return sealed
@@ -280,7 +281,8 @@ def eligible_gateway_routes(
         if normalized & _LOCAL_POLICY and raw.get("policy_tier") != "local":
             continue
         domain = str(raw.get("capacity_domain") or "")
-        busy = max(int(raw.get("gateway_active", 0)), int(occupancy.get(domain, 0)))
+        # A live worker is not a live provider request. SKGateway owns capacity.
+        busy = int(raw.get("gateway_active", 0))
         free = int(raw.get("max", 0)) - busy
         if free > 0:
             routes.append({**raw, "free": free})
@@ -326,6 +328,7 @@ def evaluate_review_capacity(
     declared_seat: str | None = None,
     qualified_seats: set[str] | frozenset[str] = LOGICAL_REVIEWER_SEATS,
     physical_free: int | None = None,
+    now: float | None = None,
 ) -> dict[str, Any]:
     """Evaluate one reviewer from the exact sealed route-capacity revision."""
     revision = str(snapshot.get("capacity_revision") or "")
@@ -336,15 +339,15 @@ def evaluate_review_capacity(
     )
     routes: list[dict[str, Any]] = []
     logical_available = 0
-    physical_maximum = snapshot.get("physical_maximum")
-    if type(physical_maximum) is not int or physical_maximum < 0:
-        physical_maximum = None
+    observed = snapshot.get("observed_at")
+    current = time.time() if now is None else now
     if not _review_capacity_truth_is_current(snapshot) or not valid_occupancy:
         reason = "route-snapshot-ambiguity"
     elif snapshot.get("schema_version") != 1 or snapshot.get("error") is not None:
         reason = "route-snapshot-ambiguity"
-    elif snapshot.get("occupancy_ambiguous") is True:
-        reason = "occupancy-ambiguity"
+    elif (type(observed) not in {int, float} or not math.isfinite(observed)
+          or not 0 <= current - observed <= MAX_AGE_SECONDS):
+        reason = "route-snapshot-stale"
     else:
         routes = eligible_review_routes(
             snapshot,
@@ -359,32 +362,20 @@ def evaluate_review_capacity(
         logical_available = aggregate_review_capacity(
             routes, sum(int(route["free"]) for route in routes)
         )
-        if physical_free is None:
-            physical_free = (
-                logical_available
-                if physical_maximum is None
-                else max(0, physical_maximum - sum(occupancy.values()))
-            )
-        else:
-            physical_free = max(0, int(physical_free))
-        if physical_free <= 0:
-            reason = "physical-exhaustion"
-        elif routes:
+        if routes:
             reason = "eligible"
         elif eligible_gateway_routes(snapshot, required_size, (), occupancy):
             reason = "policy-incompatibility"
         else:
             reason = "route-exhaustion"
-    if physical_free is None:
-        physical_free = 0
-    available = min(logical_available, physical_free) if reason == "eligible" else 0
+    available = logical_available if reason == "eligible" else 0
     return {
         "capacity_revision": revision,
         "reason": reason,
         "routes": routes,
         "occupancy": dict(occupancy) if valid_occupancy else {},
-        "physical_maximum": physical_maximum,
-        "physical_free": physical_free,
+        "physical_maximum": None,
+        "physical_free": available,
         "logical_available": logical_available,
         "available": available,
     }
