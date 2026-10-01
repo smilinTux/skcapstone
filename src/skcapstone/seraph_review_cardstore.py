@@ -149,7 +149,9 @@ class LiveCardStoreGateway:
             if is_review
             else outcome.get("candidate_sha256") or _binding(card, "candidate_evidence_sha256")
         )
-        evidence_hash = _binding(card, "evidence_sha256", "reviewer_evidence_sha256")
+        evidence_hash = _binding(
+            card, "review_evidence_sha256", "evidence_sha256", "reviewer_evidence_sha256"
+        )
         evidence_path = card.links.get("evidence")
         if isinstance(evidence_path, str) and "#sha256=" in evidence_path:
             evidence_path, linked_hash = evidence_path.rsplit("#sha256=", 1)
