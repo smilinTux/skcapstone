@@ -158,11 +158,18 @@ def observe(run):
 
 
 def collect_candidate(run):
-    """Ask the same host for a fresh, sandboxed terminal candidate export."""
+    """Export terminal evidence only after its link reaches the authority."""
     job = json.loads(run['binding'])
     receipt = {key: run[key] for key in ['card', 'host', 'token', 'unit', 'invocation']}
     receipt['provider'] = job['provider']
-    return remote('candidate', {'job': job, 'receipt': receipt})
+    request = {'job': job, 'receipt': receipt}
+    validate(request)
+    proof = remote('candidate', request)
+    expected = str(STATE / 'controls' / receipt['token'] / 'execution.json')
+    row = cards([job['card']])[job['card']]
+    if (row.get('links') or {}).get('execution_record') != expected:
+        raise Refused('candidate-execution-link-not-authoritative')
+    return proof
 
 
 def stage_bundle(job):
