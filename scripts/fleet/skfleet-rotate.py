@@ -4572,6 +4572,52 @@ def terminal_review_verdict(cid, core=None):
     )
 
 
+def _reopened_after(cid, epoch):
+    """True when an explicit reopen event is newer than ``epoch``.
+
+    Reopen is the one operator action that clears terminality, and it must
+    outrank terminal evidence only when it is LATER than that evidence (the
+    same rule ``blocked_backoff`` applies to BLOCKED). A reopen that predates
+    the terminal outcome is history, not a revival.
+    """
+    if not epoch:
+        return False
+    return any(
+        event.get("action") == "reopen"
+        and _ts_epoch(event.get("ts")) > epoch
+        for event in event_rows(cid)
+    )
+
+
+def authoritatively_terminal(cid, core=None, lifecycle=None):
+    """True only when authoritative evidence already proves terminality.
+
+    This is exactly the disjunction POOL_V2 uses to make a card ineligible for
+    a terminal reason, so skipping the bounded admission fold for these cards
+    cannot change the eligible set:
+
+    * the CardStore lifecycle fold reached complete/void (``terminal_cardstore``);
+    * the ITIL projection state is terminal (``terminal_itil``);
+    * a hashed review outcome records PASS/FAIL (``selector_excluded``).
+
+    Reopened cards are preserved. A reopen event clears the lifecycle terminal
+    bit, so the lifecycle arm does not fire on an actively reopened card, and
+    the review-outcome arm additionally requires that no reopen is newer than
+    the recorded outcome. ``initial_labels`` and any pre-fold projection are
+    deliberately NOT consulted: only the authoritative fold above proves
+    terminality.
+    """
+    state = lifecycle if lifecycle is not None else lifecycle_state(cid)
+    if state in {"complete", "void"}:
+        return True
+    if itil_terminal(cid):
+        return True
+    if not terminal_review_verdict(cid, core):
+        return False
+    outcome_ts, _value = _load_outcomes().get(cid, (None, None))
+    return not _reopened_after(cid, _ts_epoch(outcome_ts))
+
+
 def outcome_lifecycle_bucket(lifecycle, historical_review):
     """Classify outcome accounting without hiding an ambiguous board fold."""
     if lifecycle == "open":
@@ -6757,6 +6803,7 @@ claimability_errors=[]
 sensitive_withheld=0
 historical_review_terminal=0
 historical_review_claimed=0
+_terminal_review_fold_skips=0
 structural_leaf=leaf_eligibility_counts(Path(HOME) / ".skcapstone").leaves
 human_gated=0
 ENG=("SKGW","SKCP","SKCOORD","SKHARNESS","SKMEM","CAPAUTH","FLEET","INC",
@@ -6769,16 +6816,29 @@ for cd in sorted(glob.glob(CARDS+"/*")):
         _structural_core = json.load(open(core_p))
     except Exception:
         _structural_core = {}
+    # The legacy selector already folds this card authoritatively. Run it FIRST
+    # so the structural review admission below can consult that fold instead of
+    # re-reading initial_labels as current authority.
+    legacy = _legacy_selector_decision(cid, core_p)
+    legacy_reason = legacy["reason"]
     if "review" in {
         str(label).strip().lower()
         for label in _structural_core.get("initial_labels", ())
     }:
-        _pool_v2_inputs.append((cid, _structural_core))
-        _pool_v2_input_ids.add(cid)
+        # POOL_V2 can safely re-admit a structurally labelled review card, but
+        # only when it is not already proven terminal. Re-folding a terminal
+        # review card through the bounded admission snapshot is pure cost: its
+        # terminal fact makes it ineligible in POOL_V2 either way, so the
+        # eligible set is identical with or without the fold. Measured on the
+        # production board, terminal_cardstore dominated the population
+        # (1518/1752) while only 21 cards were ready.
+        if authoritatively_terminal(cid, _structural_core):
+            _terminal_review_fold_skips += 1
+        else:
+            _pool_v2_inputs.append((cid, _structural_core))
+            _pool_v2_input_ids.add(cid)
     if lifecycle_state(cid) == "open":
         human_gated += int(_human_gate(cid))
-    legacy = _legacy_selector_decision(cid, core_p)
-    legacy_reason = legacy["reason"]
     if legacy_reason == "selector_excluded" and cid in _REVIEW_READBACK_BLOCKED:
         if DRY:
             log(d,"DRY_SELECTION|%s|%s|excluded=stale-review-readback"%(HOST,cid))
@@ -7358,6 +7418,12 @@ if PRODUCTION_POLICY:
         occupancy_ambiguous=_review_route_ambiguous,physical_maximum=None)
 
 _emit_shadow_pool_v2()
+# Bounded call-count evidence for the terminal review admission skip. The
+# counter is incremented once per structurally labelled review card that the
+# authoritative fold already proved terminal, so it measures exactly the
+# bounded admission folds avoided in this cycle.
+log(d,"POOL_V2_TERMINAL_SKIP|%s|structurally_review_terminal_skipped=%d|"
+      "pool_v2_inputs=%d"%(HOST,_terminal_review_fold_skips,len(_pool_v2_inputs)))
 
 # POOL_V2 alone supplies dispatch candidates. Reuse legacy rows where present,
 # then build missing rows only from the same admission snapshot. Any unknown or
