@@ -74,11 +74,15 @@ def test_controller_requires_current_policy_and_own_resource_quota(tmp_path):
     assert production_policy_from_environment({}, "controller") is None
 
 
-def test_actual_launch_keeps_child_argv_and_enforces_node_quota():
-    launch = helpers("_worker_launch_command", policy_value=policy())["_worker_launch_command"]
+def test_actual_launch_keeps_child_argv_and_enforces_node_quota(monkeypatch):
+    monkeypatch.setenv("SKFLEET_PRODUCTION_POLICY", "/private/production.json")
+    ns = helpers("_worker_launch_command", policy_value=policy())
+    ns["os"] = __import__("os")
+    launch = ns["_worker_launch_command"]
     argv = ["python", "wrapper.py", "--", "bash", "-lc", "printf '%s' '$HOME'"]
     command = launch("worker.service", "/workspace", argv)
     assert command[-len(argv) :] == argv
+    assert "--setenv=SKFLEET_PRODUCTION_POLICY=/private/production.json" in command
     for expected in (
         "CPUQuota=200%",
         "MemoryMax=3221225472",

@@ -7,6 +7,8 @@ import os
 import re
 import shutil
 import subprocess
+import sys
+from types import ModuleType
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -73,6 +75,41 @@ def _helpers() -> dict[str, object]:
         "_verify_source_workspace",
         "_materialize_worker_workspace",
     )
+
+
+def test_production_verified_unpublished_source_skips_remote_ref(monkeypatch):
+    ns = _load("_preclaim_worker_source")
+    ns["PRODUCTION_POLICY"] = {"enabled": True}
+    spec = ("https://example.test/repository.git", "refs/heads/unpublished", "a" * 40)
+    ns["_source_workspace_spec"] = lambda core, labels: spec
+    probes = []
+    ns["_preclaim_source_ref"] = lambda *args: probes.append(args)
+    module = ModuleType("skcapstone.fleet.source_bundle")
+    module.verify_review_source = lambda core, repository, head: True
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    assert ns["_preclaim_worker_source"]({"id": "deadbeef"}, []) == spec
+    assert probes == []
+    module.verify_review_source = lambda *args: False
+    assert ns["_preclaim_worker_source"]({"id": "deadbeef"}, []) == spec
+    assert probes == [spec]
+
+
+def test_production_bad_bundle_does_not_fall_back_to_another_revision(monkeypatch):
+    ns = _load("_preclaim_worker_source")
+    ns["PRODUCTION_POLICY"] = {"enabled": True}
+    ns["_source_workspace_spec"] = lambda *args: ("https://example.test/r.git", "main", "a" * 40)
+    probes = []
+    ns["_preclaim_source_ref"] = lambda *args: probes.append(args)
+    module = ModuleType("skcapstone.fleet.source_bundle")
+
+    def invalid(*args):
+        raise ValueError("candidate hash mismatch")
+
+    module.verify_review_source = invalid
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    with pytest.raises(ValueError, match="hash mismatch"):
+        ns["_preclaim_worker_source"]({}, [])
+    assert probes == []
 
 
 def _remote_listing(remotes: dict[str, str]) -> str:
@@ -603,7 +640,7 @@ def test_no_matching_remote_fails_closed() -> None:
 
 def test_materialization_precedes_claim_in_scheduler_source() -> None:
     source = ROTATE.read_text(encoding="utf-8")
-    preflight_at = source.index("_preclaim_source_ref(*_source_spec)")
+    preflight_at = source.index("_source_spec = _preclaim_worker_source(")
     materialize_at = source.index("_materialize_worker_workspace(", preflight_at)
     claim_at = source.index("claim=subprocess.run(", materialize_at)
     assert preflight_at < materialize_at < claim_at

@@ -55,6 +55,7 @@ from skcapstone.fleet.production_dispatch import (
 )
 from skcapstone.fleet.production_review import independent_review_routes
 from skcapstone.fleet.production_resources import local_worker_admission
+from skcapstone.fleet.pi_catalog import materialize_gateway_catalog
 
 SKFLEET_PRODUCTION_POLICY_V1 = True
 from skcapstone.fleet.review_capacity import (
@@ -674,11 +675,16 @@ def _worker_launch_command(unit, workspace, inner):
     # wrapper argv through shlex.join/split.  The child script contains shell
     # function declarations and must remain one argument to bash -lc.
     child_argv = ["bash", "-lc", inner] if isinstance(inner, str) else list(inner)
+    production_env=[]
+    if globals().get("PRODUCTION_POLICY"):
+        production_env=["--setenv=SKFLEET_PRODUCTION_POLICY="+
+            os.environ["SKFLEET_PRODUCTION_POLICY"]]
     return [
         "systemd-run", "--user", "--quiet", "--collect", "--service-type=exec",
         "--unit", unit, "--property=KillMode=control-group",
         *(worker_resource_properties(PRODUCTION_POLICY, HOST)
           if globals().get("PRODUCTION_POLICY") else []),
+        *production_env,
         "--working-directory", workspace, *child_argv,
     ]
 
@@ -1046,10 +1052,27 @@ def _preclaim_source_ref(repository, base_ref, base_revision, runner=subprocess.
         raise ValueError("reconstructability_blocked: base_ref is missing or ambiguous")
 
 
+def _preclaim_worker_source(core, labels):
+    """Verify transferred source before using the legacy remote-ref path."""
+    spec=_source_workspace_spec(core,labels)
+    if spec is None:
+        return None
+    if globals().get("PRODUCTION_POLICY"):
+        from skcapstone.fleet.source_bundle import verify_review_source
+        if verify_review_source(core,spec[0],spec[2]):
+            return spec
+    _preclaim_source_ref(*spec)
+    return spec
+
+
 def _materialize_worker_workspace(default, core, labels, runner=subprocess.run):
     """Materialize one source checkout atomically before a worker is claimed."""
     configured = os.environ.get("SKFLEET_WORKSPACE")
     spec = _source_workspace_spec(core, labels)
+    if spec is not None and globals().get("PRODUCTION_POLICY"):
+        from skcapstone.fleet.source_bundle import import_review_source
+        if import_review_source(core,spec[0],spec[2],Path(configured or default)):
+            return str(Path(configured or default))
     if configured:
         checkout = _resolve_workspace_root(configured)
         if spec is not None:
@@ -1768,6 +1791,7 @@ _GATEWAY_ENDPOINT=(os.environ.get("SKFLEET_GATEWAY_URL") or "").strip().rstrip("
 _review_route_snapshot=None
 _review_route_occupancy={}
 _review_route_ambiguous=False
+_production_catalog_revision=None
 if PRODUCTION_POLICY or ONLY_SEAT in {"", "link", "mero", "seraph"}:
     if not _GATEWAY_ENDPOINT:
         raise SystemExit("SKFLEET_GATEWAY_URL is required")
@@ -8514,6 +8538,13 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
     if PRODUCTION_POLICY and _route_preflight.provider != _selected_route["capacity_domain"]:
         log(d,"ROUTE_PREFLIGHT_BLOCKED|%s|%s|reason=backend-family-drift"%(HOST,cid))
         continue
+    if PRODUCTION_POLICY and _production_catalog_revision != _review_route_snapshot["capacity_revision"]:
+        try:
+            materialize_gateway_catalog(Path(HOME),PRODUCTION_POLICY,_review_route_snapshot)
+            _production_catalog_revision=_review_route_snapshot["capacity_revision"]
+        except (OSError,ValueError) as exc:
+            log(d,"PI_CATALOG_BLOCKED|%s|%s|%s"%(HOST,cid,type(exc).__name__))
+            continue
     if time.monotonic() >= _cycle_deadline:
         _deferred_ids,_deferred_omitted=_bounded_ids(
             candidate[1][2] for candidate in picks[_pick_index:])
@@ -8523,11 +8554,9 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         break
     default_workspace=os.path.join(HOME,".skcapstone/fleet/workspaces",name)
     try:
-        _source_spec = _source_workspace_spec(
+        _source_spec = _preclaim_worker_source(
             fresh_claimability["core"], fresh_claimability["labels"]
         )
-        if _source_spec is not None:
-            _preclaim_source_ref(*_source_spec)
         workspace=_materialize_worker_workspace(
             default_workspace,
             fresh_claimability["core"],
@@ -8684,6 +8713,8 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         sys.executable,wrapper,"--card",cid,"--owner",name,
         "--claim-revision",claimed_revision,"--host",HOST,"--lane",_LANE["name"],
         "--model",model,"--logical-route",_route_identity["logical_route"],
+        *(["--source-repository",_source_spec[0],"--source-base-revision",_source_spec[2]]
+          if PRODUCTION_POLICY and _source_spec is not None else []),
         "--provider",_route_identity["provider"],
         *[item for domain in _route_identity["capacity_domains"]
           for item in ("--capacity-domain",domain)],
