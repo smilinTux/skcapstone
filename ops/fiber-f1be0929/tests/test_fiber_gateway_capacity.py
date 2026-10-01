@@ -2,13 +2,47 @@
 from pathlib import Path
 import sys
 import tempfile
+import types
 import unittest
 import subprocess
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fiber_admission import Refused, reserve, select_host
+import fiber_control as control
 import fiber_lifecycle as lifecycle
+
+
+class _FakeNativeGate:
+    """Scoped stand-in for the installed-runtime native gate boundary.
+
+    Only the unavailable ``skcapstone.coord_gate_diagnostic`` import is faked;
+    ``fiber_control.eligible`` itself runs for real. The fake records whether
+    ``diagnose`` was reached so a test can prove the local dependency-verdict
+    refusal happens before native admission spends any work.
+    """
+
+    def __init__(self, decision=True):
+        self.decision = decision
+        self.calls = []
+
+    def __enter__(self):
+        self.module = types.ModuleType('skcapstone.coord_gate_diagnostic')
+        self.module.diagnose = self.diagnose
+        self._saved = sys.modules.get('skcapstone.coord_gate_diagnostic')
+        sys.modules['skcapstone.coord_gate_diagnostic'] = self.module
+        return self
+
+    def diagnose(self, home, card_id):
+        self.calls.append((str(home), card_id))
+        return {'eligible': self.decision, 'reasons': [] if self.decision else ['synthetic']}
+
+    def __exit__(self, *exc):
+        if self._saved is None:
+            sys.modules.pop('skcapstone.coord_gate_diagnostic', None)
+        else:
+            sys.modules['skcapstone.coord_gate_diagnostic'] = self._saved
+        return False
 
 
 class GatewayCapacityTest(unittest.TestCase):
@@ -98,6 +132,68 @@ class GatewayCapacityTest(unittest.TestCase):
             self.assertEqual(result['reviews'], [])
             self.assertEqual(result['waiting'][0]['reason'], type(failure).__name__)
             self.assertEqual(result['waiting'][1]['card'], '1234abce')
+
+
+class DependencyAdmissionTest(unittest.TestCase):
+    """Every direct dependency must be DONE with an exact PASS verdict."""
+
+    def row(self, dependencies=None, **overrides):
+        row = {'id': '9e26a7d1', 'status': 'ready',
+               'dependencies': list(dependencies or []), 'links': {}}
+        row.update(overrides)
+        return row
+
+    def test_missing_verdict_is_rejected_before_native_gate(self):
+        # Observed trial83b5ae19 mismatch: a DONE dependency whose links lack
+        # verdict=PASS. The source must be refused before native admission.
+        board = {'41a6039b': {'status': 'done', 'links': {}}}
+        with _FakeNativeGate() as gate:
+            self.assertFalse(control.eligible(self.row(['41a6039b']), board))
+            self.assertEqual(gate.calls, [])
+
+    def test_non_pass_verdicts_are_rejected_before_native_gate(self):
+        for verdict in ('FAIL', 'BLOCKED', 'pass', 'PASS_FOR_REVIEW', ''):
+            with self.subTest(verdict=verdict), _FakeNativeGate() as gate:
+                board = {'41a6039b': {'status': 'done', 'links': {'verdict': verdict}}}
+                self.assertFalse(control.eligible(self.row(['41a6039b']), board))
+                self.assertEqual(gate.calls, [])
+
+    def test_missing_or_non_done_dependency_rejected_even_with_pass(self):
+        missing = {}
+        with _FakeNativeGate() as gate:
+            self.assertFalse(control.eligible(self.row(['41a6039b']), missing))
+            self.assertEqual(gate.calls, [])
+        for status in ('doing', 'review', 'backlog', 'ready'):
+            with self.subTest(status=status), _FakeNativeGate() as gate:
+                board = {'41a6039b': {'status': status, 'links': {'verdict': 'PASS'}}}
+                self.assertFalse(control.eligible(self.row(['41a6039b']), board))
+                self.assertEqual(gate.calls, [])
+
+    def test_all_dependencies_done_pass_reach_native_gate_both_decisions(self):
+        board = {'41a6039b': {'status': 'done', 'links': {'verdict': 'PASS'}},
+                 '41a6039c': {'status': 'done', 'links': {'verdict': 'PASS'}}}
+        row = self.row(['41a6039b', '41a6039c'])
+        with _FakeNativeGate(decision=True) as gate:
+            self.assertTrue(control.eligible(row, board))
+            self.assertEqual(len(gate.calls), 1)
+        with _FakeNativeGate(decision=False) as gate:
+            self.assertFalse(control.eligible(row, board))
+            self.assertEqual(len(gate.calls), 1)
+
+    def test_rejected_source_does_not_block_separate_valid_source(self):
+        board = {'41a6039b': {'status': 'done', 'links': {}},
+                 '41a6039c': {'status': 'done', 'links': {'verdict': 'PASS'}}}
+        invalid = self.row(['41a6039b'], id='9e26a7d1')
+        valid = self.row(['41a6039c'], id='9e26a7d2')
+        with _FakeNativeGate() as gate:
+            self.assertFalse(control.eligible(invalid, board))
+            self.assertTrue(control.eligible(valid, board))
+            self.assertEqual(gate.calls, [(str(Path.home() / '.skcapstone'), '9e26a7d2')])
+
+    def test_no_dependency_source_still_reaches_native_gate(self):
+        with _FakeNativeGate() as gate:
+            self.assertTrue(control.eligible(self.row([]), {}))
+            self.assertEqual(gate.calls, [(str(Path.home() / '.skcapstone'), '9e26a7d1')])
 
 
 if __name__ == '__main__':

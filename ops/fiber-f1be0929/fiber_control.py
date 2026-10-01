@@ -96,7 +96,9 @@ def eligible(row, board):
     """Reject obvious holds locally; require the native gate for admission."""
     if row.get('owner') or row.get('archived') or row.get('status') not in {'backlog', 'ready', 'doing', 'review'}:
         return False
-    if any(board.get(cid, {}).get('status') != 'done' for cid in row.get('dependencies', [])):
+    if any(board.get(cid, {}).get('status') != 'done'
+           or (board.get(cid, {}).get('links') or {}).get('verdict') != 'PASS'
+           for cid in row.get('dependencies', [])):
         return False
     try:
         from skcapstone.coord_gate_diagnostic import diagnose
