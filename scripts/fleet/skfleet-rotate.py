@@ -5545,7 +5545,8 @@ def reap_dead_claims():
             continue
         if globals().get("PRODUCTION_POLICY"):
             from skcapstone.fleet.production_custody import retains_source_custody
-            if retains_source_custody(Path(HOME)/".skcapstone",cid,fresh_owner,fresh_revision):
+            if retains_source_custody(Path(HOME)/".skcapstone",cid,fresh_owner,fresh_revision,
+                                      fleet_paths=default_fleet_paths()):
                 log(d,"REAP_PRESERVED_PRODUCTION_CUSTODY|%s|%s|%s"%(HOST,cid,fresh_owner))
                 continue
         # Launch provenance is useful attribution, not a liveness gate. The old
@@ -5756,7 +5757,8 @@ def _expire_idle_claims(observations=None, runner=None, state=None,
             continue
         if globals().get("PRODUCTION_POLICY"):
             from skcapstone.fleet.production_custody import retains_source_custody
-            if retains_source_custody(Path(HOME)/".skcapstone",v.card_id,v.owner,v.claim_revision):
+            if retains_source_custody(Path(HOME)/".skcapstone",v.card_id,v.owner,v.claim_revision,
+                                      fleet_paths=default_fleet_paths()):
                 log(d,"TTL_PRESERVED_PRODUCTION_CUSTODY|%s|%s|%s"%(HOST,v.card_id,v.owner))
                 continue
         r = runner(_claim_ttl_release_cmd(v.card_id, v.owner, v.claim_revision))

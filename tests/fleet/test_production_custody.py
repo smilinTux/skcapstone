@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 from skcoord.card_store import CardCore, CardStore
 
+from skcapstone.fleet.paths import FleetPaths
 from skcapstone.fleet.production_receipts import persist_production_snapshot
 from skcapstone.seat_runtime import append_production_launch_receipt
 from tests.fleet.test_claim_expiry_reaper import _load, _observation
@@ -65,6 +66,7 @@ def test_absent_production_producer_is_not_declared_dead_or_released(tmp_path, c
         tmp_path, card_id=CARD, owner=OWNER, claim_revision=CLAIM, launch_revision=CLAIM
     )
     ns["PRODUCTION_POLICY"] = {"authority_host": "chiap08"}
+    ns["default_fleet_paths"] = lambda: FleetPaths(home / "fleet")
     assert ns["reap_dead_claims"]() == 0
     assert releases == []
     assert not list((tmp_path / "card_events").glob("*.jsonl"))
@@ -73,6 +75,7 @@ def test_absent_production_producer_is_not_declared_dead_or_released(tmp_path, c
 def test_ttl_cannot_release_exact_production_custody(tmp_path, custody):
     ns = _load(tmp_path)
     ns["PRODUCTION_POLICY"] = {"authority_host": "chiap08"}
+    ns["default_fleet_paths"] = lambda: FleetPaths(custody[0] / "fleet")
     obs = _observation(OWNER, cid=CARD)
     obs = type(obs)(CARD, OWNER, CLAIM, obs.last_owner_event_at)
     calls = []
@@ -91,11 +94,17 @@ def test_custody_guard_requires_native_exact_receipt_and_source(custody):
 
     home, store, event = custody
     assert event["source_binding"] == SOURCE
-    assert retains_source_custody(home, CARD, OWNER, CLAIM)
-    assert not retains_source_custody(home, CARD, OWNER, "f" * 32)
-    assert not retains_source_custody(home, CARD, "jarvis", CLAIM)
+    assert retains_source_custody(home, CARD, OWNER, CLAIM, fleet_paths=FleetPaths(home / "fleet"))
+    assert not retains_source_custody(
+        home, CARD, OWNER, "f" * 32, fleet_paths=FleetPaths(home / "fleet")
+    )
+    assert not retains_source_custody(
+        home, CARD, "jarvis", CLAIM, fleet_paths=FleetPaths(home / "fleet")
+    )
     store.append_event(CARD, "link", OWNER, link_key="base_revision", link_value="c" * 40)
-    assert not retains_source_custody(home, CARD, OWNER, CLAIM)
+    assert not retains_source_custody(
+        home, CARD, OWNER, CLAIM, fleet_paths=FleetPaths(home / "fleet")
+    )
 
 
 def test_missing_or_corrupt_receipt_never_infers_custody_from_owner_name(custody):
@@ -104,7 +113,9 @@ def test_missing_or_corrupt_receipt_never_infers_custody_from_owner_name(custody
     home, store, event = custody
     path = Path(event["route_identity"]["production_snapshot"]["path"])
     path.write_text("{}")
-    assert not retains_source_custody(home, CARD, OWNER, CLAIM)
+    assert not retains_source_custody(
+        home, CARD, OWNER, CLAIM, fleet_paths=FleetPaths(home / "fleet")
+    )
 
 
 @pytest.mark.parametrize(
@@ -134,10 +145,15 @@ def test_native_receipt_must_prove_exact_launch(custody, monkeypatch, mutation):
         return rows
 
     monkeypatch.setattr(CardStore, "_read_events", events)
-    assert not retains_source_custody(home, CARD, OWNER, CLAIM)
+    assert not retains_source_custody(
+        home, CARD, OWNER, CLAIM, fleet_paths=FleetPaths(home / "fleet")
+    )
 
 
-def test_remote_generation_protects_pending_evidence_without_local_launch_event(custody):
+@pytest.mark.parametrize("relocated", [False, True])
+def test_remote_generation_protects_pending_evidence_without_local_launch_event(
+    custody, relocated
+):
     from skcapstone.fleet.production_custody import retains_source_custody
 
     home, store, event = custody
@@ -171,13 +187,14 @@ def test_remote_generation_protects_pending_evidence_without_local_launch_event(
         "unit": f"skfleet-builder-{CARD}-{request_id}-1.service",
         "route_preflight": {"requested_identity": "gateway-current", "provider": "deepseek"},
     }
-    rp = home / "fleet/dispatch/node-chiap03" / f"{CARD}.json"
-    sp = home / "fleet/status/node-chiap03/dispatch" / f"{CARD}.json"
+    paths = FleetPaths(home.parent / "relocated-fleet" if relocated else home / "fleet")
+    rp = paths.root / "dispatch/node-chiap03" / f"{CARD}.json"
+    sp = paths.status_path("node-chiap03", "dispatch", CARD)
     for path, value in ((rp, request), (sp, status)):
         path.parent.mkdir(parents=True)
         path.write_text(json.dumps(value))
         path.chmod(0o600)
-    assert retains_source_custody(home, CARD, OWNER, CLAIM)
+    assert retains_source_custody(home, CARD, OWNER, CLAIM, fleet_paths=paths)
     status["request_id"] = "f" * 64
     sp.write_text(json.dumps(status))
-    assert not retains_source_custody(home, CARD, OWNER, CLAIM)
+    assert not retains_source_custody(home, CARD, OWNER, CLAIM, fleet_paths=paths)

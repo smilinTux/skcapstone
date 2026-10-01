@@ -29,8 +29,13 @@ Validation command:
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src ~/.skenv/bin/python -m pytest -p no:cacheprovider -q tests/fleet/test_production_custody.py tests/fleet/test_production_receipts.py tests/test_skfleet_reaper_provenance.py tests/fleet/test_claim_expiry_reaper.py tests/fleet/test_production_exit.py
 ```
 
-Actual result: 131 passed, zero skipped, 5.58 seconds. Ruff and git diff --check
-passed. External log: task evidence directory `TESTS.log`. The initial reproduced
+Actual result after the FleetPaths correction: 132 passed, zero skipped, 5.36
+seconds. Ruff and git diff --check passed. External log: task evidence directory
+`TESTS-FLEETPATHS.log`. The initial 131-test result remains in `TESTS.log`.
+The remote custody lookup uses the dispatcher's existing FleetPaths object so
+an explicitly relocated fleet root retains the same exact-generation protection.
+A regression reproduces the former relocated-root refusal and covers both roots.
+The initial reproduced
 failures remain in parent evidence `CUSTODY-REAPER-REPRO.log`.
 
 No runtime installation, activation, model-worker launch, source push or queue

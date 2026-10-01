@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 
 from skcoord.card_store import CardStore
 
+from .paths import FleetPaths
 from .production_receipts import load_production_snapshot
 from .source_bundle import MAX_EVIDENCE, _binding, _read
 
@@ -32,7 +33,9 @@ def source_binding(card) -> dict:
     return value
 
 
-def retains_source_custody(home: Path, card_id: str, owner: str, claim: str) -> bool:
+def retains_source_custody(
+    home: Path, card_id: str, owner: str, claim: str, *, fleet_paths: FleetPaths
+) -> bool:
     """Require current native ownership plus a real production launch generation.
 
     A missing proposal can mean delayed evidence publication. Once an exact
@@ -93,21 +96,21 @@ def retains_source_custody(home: Path, card_id: str, owner: str, claim: str) -> 
                     return True
             except (OSError, ValueError, KeyError, TypeError):
                 continue
-        return _remote_custody(home, card_id, owner, claim, binding)
+        return _remote_custody(fleet_paths, card_id, owner, claim, binding)
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return False
 
 
-def _remote_custody(home, card_id, owner, claim, binding):
+def _remote_custody(fleet_paths, card_id, owner, claim, binding):
     """Match selected native request/status contents, never just their filenames."""
-    paths = list((home / "fleet/dispatch").glob("*/" + card_id + ".json"))
+    paths = list((fleet_paths.root / "dispatch").glob("*/" + card_id + ".json"))
     if len(paths) > 32:
         return False
     for path in paths:
         try:
             node = path.parent.name
             request = json.loads(_read(path, MAX_EVIDENCE))
-            status_path = home / "fleet/status" / node / "dispatch" / path.name
+            status_path = fleet_paths.status_path(node, "dispatch", card_id)
             status = json.loads(_read(status_path, MAX_EVIDENCE))
             token = request.get("request_id")
             production = request.get("production")
