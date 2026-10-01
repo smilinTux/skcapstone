@@ -24,6 +24,14 @@ def production(tmp_path, monkeypatch):
                 "authority_host": host,
                 "capacity_authority": "skgateway",
                 "gateway_url": "http://gateway.test:18790",
+                "node_quotas": {
+                    host: {
+                        "cpu_quota_percent": 200,
+                        "memory_max_bytes": 3221225472,
+                        "tasks_max": 256,
+                        "runtime_max_seconds": 3600,
+                    }
+                },
                 "lanes": {
                     **{
                         lane: {"enabled": True, "provider": "skgateway"}
@@ -56,6 +64,17 @@ def test_missing_and_nonregular_policy_fail_closed(production, tmp_path):
     assert readiness.production_environment_error(environment, sys.executable)
     policy.symlink_to(tmp_path)
     assert readiness.production_environment_error(environment, sys.executable)
+
+
+def test_dispatcher_required_controller_quota_and_explicit_policy(production):
+    policy, environment = production
+    value = json.loads(policy.read_text())
+    del value["node_quotas"]
+    policy.write_text(json.dumps(value))
+    assert readiness.production_environment_error(environment, sys.executable)
+    assert readiness.production_environment_error(
+        {**environment, "SKFLEET_PRODUCTION_POLICY": ""}, sys.executable
+    )
 
 
 @pytest.mark.parametrize(

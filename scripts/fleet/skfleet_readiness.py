@@ -82,11 +82,12 @@ def required_env(source: str, *, production: bool = False) -> set[str]:
 def production_environment_error(environment: dict[str, str], python_bin: str) -> str | None:
     """Validate policy with the actual native interpreter; never execute dispatch."""
     code = (
-        "import socket,sys; from pathlib import Path; "
-        "from skcapstone.fleet.production_policy import load_production_policy; "
+        "import socket,sys; "
+        "from skcapstone.fleet.production_dispatch import production_policy_from_environment; "
         "host=socket.gethostname().split('.')[0].lower()\n"
         "if sys.argv[2] != host: raise ValueError('effective authority mismatch')\n"
-        "load_production_policy(Path(sys.argv[1]),host=host)"
+        "policy=production_policy_from_environment({'SKFLEET_PRODUCTION_POLICY':sys.argv[1]},host)\n"
+        "if not policy: raise ValueError('explicit production policy required')\n"
     )
     try:
         result = subprocess.run(

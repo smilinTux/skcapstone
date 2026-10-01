@@ -78,3 +78,10 @@ The combined readiness, legacy wiring, import, drift and manifest suite passed
 parser, including invalid Kimi enablement, wrong authority, missing/symlink
 policy, unavailable validation, genuine missing imports and unrelated required
 variables. The production readiness systemd template validates successfully.
+
+Root review found that the basic policy parser permits absent controller quotas,
+while the actual dispatch loader rejects them. The follow-up calls the exact
+`production_policy_from_environment` loader, rejects absent explicit policy,
+and adds a real subprocess regression for missing controller quotas. Final
+combined result: 93 passed, zero failed/skipped. The earlier Zai PASS for c998
+is retained as prior evidence and does not cover this correction.
