@@ -295,6 +295,11 @@ def append_production_launch_receipt(
     route = _launch_route_identity(home, route_identity)
     if "production_snapshot" not in route:
         raise BoundaryError("production launch requires a sealed snapshot")
+    source = {}
+    if "source-only" in card.labels:
+        from .fleet.production_custody import source_binding
+
+        source["source_binding"] = source_binding(card)
     return store.append_event(
         card_id,
         "production_assignment_launch",
@@ -305,6 +310,7 @@ def append_production_launch_receipt(
         claim_revision=claim_revision,
         launched=bool(launched),
         route_identity=route,
+        **source,
     )
 
 

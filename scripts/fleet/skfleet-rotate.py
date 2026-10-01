@@ -5543,6 +5543,11 @@ def reap_dead_claims():
             log(d, "REAP_GRACE|%s|%s|%s|fresh claim generation remains inside "
                    "grace; leaving it alone this tick" % (HOST, cid, fresh_owner))
             continue
+        if globals().get("PRODUCTION_POLICY"):
+            from skcapstone.fleet.production_custody import retains_source_custody
+            if retains_source_custody(Path(HOME)/".skcapstone",cid,fresh_owner,fresh_revision):
+                log(d,"REAP_PRESERVED_PRODUCTION_CUSTODY|%s|%s|%s"%(HOST,cid,fresh_owner))
+                continue
         # Launch provenance is useful attribution, not a liveness gate. The old
         # code handed every unproven dead worker to a "stale-claim path" that did
         # not exist. Quorum plus absence from every report is the proof required
@@ -5749,6 +5754,11 @@ def _expire_idle_claims(observations=None, runner=None, state=None,
                    "the absence path or by the owner" %
                 (HOST, v.card_id, v.owner))
             continue
+        if globals().get("PRODUCTION_POLICY"):
+            from skcapstone.fleet.production_custody import retains_source_custody
+            if retains_source_custody(Path(HOME)/".skcapstone",v.card_id,v.owner,v.claim_revision):
+                log(d,"TTL_PRESERVED_PRODUCTION_CUSTODY|%s|%s|%s"%(HOST,v.card_id,v.owner))
+                continue
         r = runner(_claim_ttl_release_cmd(v.card_id, v.owner, v.claim_revision))
         if getattr(r, "returncode", 0) != 0:
             # Expected and healthy when a worker re-claimed since the
