@@ -7,6 +7,9 @@ test adapter owns execution/receipt qualification tests, not this test double.
 
 import hashlib
 import json
+import multiprocessing
+import os
+import signal
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -212,6 +215,57 @@ def test_crash_after_successful_native_write_recovers_exactly_once(pair, lost):
     for role in ("source", "review"):
         events = store._read_events(context[role]["card"])
         assert len([e for e in events if e["action"] == "complete"]) == 1
+
+
+def test_sigkill_after_native_link_before_ack_resumes_in_fresh_controller(pair):
+    home, directory, context, store, _, _ = pair
+    finish.once(directory / "context.json", context)
+
+    def killed_controller():
+        def command(home, args):
+            result = finish.native_command(home, args)
+            if args[0] == "link":
+                os.kill(os.getpid(), signal.SIGKILL)
+            return result
+
+        finish.finish_pair(home, directory, finish.read_json(directory / "context.json"),
+                           guard=lambda: None, command=command)
+
+    first = multiprocessing.get_context("fork").Process(target=killed_controller)
+    first.start()
+    first.join(30)
+    if first.is_alive():
+        first.kill()
+        first.join(5)
+        pytest.fail("first controller did not reach deliberate crash boundary")
+    assert first.exitcode == -signal.SIGKILL
+    assert (directory / "step-00.intent.json").is_file()
+    assert not (directory / "step-00.ack.json").exists()
+    assert native_revision(home, context["review"]["card"]) != context["review"]["revision"]
+
+    def resumed_controller():
+        finish.finish_pair(home, directory, finish.read_json(directory / "context.json"),
+                           guard=lambda: None)
+
+    second = multiprocessing.get_context("fork").Process(target=resumed_controller)
+    second.start()
+    second.join(45)
+    if second.is_alive():
+        second.kill()
+        second.join(5)
+        pytest.fail("fresh controller did not reconcile durable native write")
+    assert second.exitcode == 0
+    assert finish.read_json(directory / "finished.json")["accepted"]
+    for role in ("source", "review"):
+        events = store._read_events(context[role]["card"])
+        assert len([event for event in events if event["action"] == "complete"]) == 1
+    review_events = store._read_events(context["review"]["card"])
+    links = [event for event in review_events if event.get("link_key") == "test_acceptance"]
+    assert len(links) == 1
+
+
+def native_revision(home, card):
+    return finish.native_state(home, card)["revision"]
 
 
 @pytest.mark.parametrize("change", ["source", "claim", "report", "decision", "FAIL", "tests"])

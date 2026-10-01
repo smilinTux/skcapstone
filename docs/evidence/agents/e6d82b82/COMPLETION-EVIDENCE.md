@@ -66,6 +66,17 @@ Ruff passed for changed modules, wrapper and tests. Python compilation, diff
 whitespace and changelog fragment checks passed. Earlier negative fixture and
 missing-test-filename attempts are retained privately rather than concealed.
 
+The independent runtime review's sole finding claimed lost-link acknowledgements
+could not recover. A further separate-process regression passed in 7.39 seconds:
+the first controller is SIGKILLed after an actual native link commits, with the
+durable step intent present, no acknowledgement, and an advanced native revision.
+A fresh controller process reads retained context and completes the pair exactly
+once. The existing intent branch deliberately skips the new-step precondition
+and reuses native transition idempotency. Runtime code remained unchanged. The
+original review FAIL and explicit finding disposition are retained; this result
+does not turn that historical review into a PASS. The new test log is
+`~/.skcapstone/evidence/work/e6d82b82/TEST-SIGKILL.log`.
+
 ## External authority dependency and composition
 
 `AUTHORITY-DEPENDENCY.json` pins the actual installed authority guarded CLI
