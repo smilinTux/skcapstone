@@ -1032,12 +1032,11 @@ def finalize_worker_exit(args: argparse.Namespace, child: subprocess.Popen | Non
     bounded retries), the exception propagates and the projection stays
     active for fenced reconciliation.
     """
-    from skcapstone.fleet.production_exit import disposition
+    from skcapstone.fleet.production_exit import retry_disposition
 
-    source = disposition(
+    source = retry_disposition(
         args,
-        terminal_proven="SKFLEET_PRODUCTION_POLICY" in os.environ
-        and terminal_local_evidence(child),
+        lambda: "SKFLEET_PRODUCTION_POLICY" in os.environ and terminal_local_evidence(child),
     )
     if source is not None:
         write_process_record(
@@ -1045,6 +1044,8 @@ def finalize_worker_exit(args: argparse.Namespace, child: subprocess.Popen | Non
             pid=child.pid if child is not None else os.getpid(),
             completion_state=source["state"] if source["process_terminal"] else "running",
         )
+        if source["claim_released"]:
+            idle_owner_projection(args.owner, args.card, args.claim_revision)
         return
     terminalized = False
     try:
@@ -1132,12 +1133,11 @@ def main() -> int:
                 result_code = 75
                 completion_failure = reason
         record_terminal_exit(args, stderr, result_code, completion_failure)
-        from skcapstone.fleet.production_exit import disposition
+        from skcapstone.fleet.production_exit import retry_disposition
 
-        source = disposition(
+        source = retry_disposition(
             args,
-            terminal_proven="SKFLEET_PRODUCTION_POLICY" in os.environ
-            and terminal_local_evidence(child),
+            lambda: "SKFLEET_PRODUCTION_POLICY" in os.environ and terminal_local_evidence(child),
         )
         if source is None:
             record_workspace_lifecycle_decision(args, "success" if result_code == 0 else "failure")

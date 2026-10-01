@@ -83,3 +83,25 @@ source bytes and native claim are preserved instead of replayed.
 Rollback restores exact installed module, wrapper, policy and forced-handler
 preimages under an idle maintenance window. Preserve native events, source
 workspaces, immutable bundles, existing keys and unfinished claims.
+# Production handoff integration corrections
+
+The final integration corrections reuse the private gateway catalog adapter
+without another models fetch, validate the selected route against that same
+snapshot, and use the shared source worker brief remotely. BLOCKED instructions
+require actual typed evidence and existing Git identities without authorizing a
+new commit. Exact native BLOCKED release uses the native board/card lock order
+and preserves source bytes and outcome history.
+
+Validation: the 17-file focused boundary suite passed 367 tests with zero skips
+in 12.97 seconds. Ruff and git diff --check passed. Tests include real private
+catalog metadata projection and real native claim/release events, plus stale
+claims, changed source binding/evidence, superseded outcomes, wrong owner,
+unproven process death, retry recovery and retry exhaustion.
+
+Local publication is bounded to three attempts, with 5 and 10 second delays.
+Exhaustion retains the claim and workspace as awaiting-evidence; this patch does
+not claim indefinite recovery of persistent infrastructure failures. Remote
+pending publication continues through the existing native consumer reconcile.
+No live deployment or restart occurred. Independent review and reviewed rollout
+remain necessary. Rollback is the prior source version; already appended native
+events and immutable artifacts remain preserved.

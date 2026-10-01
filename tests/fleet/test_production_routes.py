@@ -66,7 +66,58 @@ def qualification(monkeypatch, tmp_path):
         )
     )
     routes._PREFLIGHTS.clear()
+    routes._CATALOGS.clear()
+    monkeypatch.setattr(routes, "materialize_gateway_catalog", lambda *args: {})
     return value, snapshot, catalog
+
+
+def test_catalog_materializes_same_snapshot_once_before_probe(qualification, monkeypatch):
+    value, observed, _ = qualification
+    bound = production_builder.route_binding(value, "24b00001", "sk-xl", [])
+    calls = []
+    monkeypatch.setattr(
+        routes,
+        "materialize_gateway_catalog",
+        lambda home, policy, snap: calls.append((home, policy, snap)),
+    )
+    monkeypatch.setattr(
+        routes,
+        "resolve_and_preflight",
+        lambda *args: RoutePreflight("codex-exact", "served", "codex"),
+    )
+    routes.preflight(value, bound)
+    routes.preflight(value, bound)
+    assert len(calls) == 1 and calls[0] == (Path.home(), value, observed)
+    observed["routes"][0]["provider"] = "zai"
+    with pytest.raises(ValueError):
+        routes.preflight(value, bound)
+
+
+def test_real_catalog_adapter_projects_gateway_capabilities_before_launch(tmp_path, monkeypatch):
+    from skcapstone.fleet.pi_catalog import materialize_gateway_catalog
+    from tests.fleet.test_pi_catalog import existing, policy, snapshot
+
+    path, _ = existing(tmp_path)
+    observed = snapshot()
+    observed["routes"][0].update(policy_tier="cloud", max=4, gateway_active=0)
+    from skcapstone.fleet.review_capacity import seal_review_capacity_truth
+
+    observed = seal_review_capacity_truth(observed, {})
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(routes, "snapshot", lambda value: observed)
+    monkeypatch.setattr(routes, "materialize_gateway_catalog", materialize_gateway_catalog)
+    monkeypatch.setattr(
+        routes,
+        "resolve_and_preflight",
+        lambda *args: RoutePreflight("new-gateway-id", "served", "deepseek"),
+    )
+    routes._CATALOGS.clear()
+    routes._PREFLIGHTS.clear()
+    bound = production_builder.route_binding(policy(), "24b00001", "sk-m", [])
+    routes.preflight(policy(), bound)
+    model = json.loads(path.read_text())["providers"]["skgateway"]["models"][0]
+    assert model["id"] == "new-gateway-id"
+    assert model["contextWindow"] == 54321 and model["maxTokens"] == 12345
 
 
 def test_large_work_never_hashes_into_medium_family(qualification):

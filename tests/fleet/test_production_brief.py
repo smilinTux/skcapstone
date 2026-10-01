@@ -175,3 +175,6 @@ def test_small_fixed_prompt_preserves_card_authorization_and_criteria(source):
     assert "Local commit authorized; no push." in text
     assert "1. Actual required fixture checks pass" in text
     assert "git push" not in text and "coord complete" not in text
+    assert "Record a typed verdict, not only a verdict link" in text
+    assert "no new commit is required or authorized" in text
+    assert "actual existing HEAD tree" in text and "--candidate <private report path>" in text

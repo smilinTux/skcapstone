@@ -803,7 +803,22 @@ def _reconcile_running(
             or card.links.get("candidate_evidence_sha256"),
         }
     elif status.get("production") is not None:
+        from .production_exit import release_blocked
         from .source_bundle import SourceBundleError, publish_source
+
+        blocked = release_blocked(coordination_home, request, owner, revision)
+        if blocked is not None:
+            return _write_status(
+                paths,
+                node,
+                request,
+                "blocked",
+                **common,
+                exit_code=exit_code,
+                claim_released=True,
+                error=blocked["reason"],
+                outcome_event=blocked["outcome_event"],
+            )
 
         try:
             artifact = publish_source(
@@ -891,21 +906,20 @@ def worker_command(request: dict, owner: str, claim_revision: str, workspace: Pa
         "Use skcapstone coord and SKMail for all lifecycle updates."
     )
     if production is not None:
-        prompt += (
-            " Production source-only contract: read the exact current card, repository AGENTS.md "
-            "and the card-referenced engineering and acceptance documentation first. "
-            "Use this isolated clone; do not nest a git worktree inside it. "
-            "Create a local work branch and commit implementation, required tests and "
-            f"docs/evidence/agents/{request['card_id']}/COMPLETION-EVIDENCE.md. "
-            "Run ls after every write; git rev-parse HEAD after every commit; "
-            "stop on wrong tool output. "
-            "Copy the committed evidence bytes using install -m 600 into a private chmod 700 "
-            "~/.skcapstone/evidence/work/<card>/ directory. "
-            "Use native coord verdict PASS_FOR_REVIEW "
-            "with that candidate path and "
-            "machine-obtained commit/tree/ref, under your exact owner. Do not complete the card, "
-            "push source, release its claim or fabricate review/tests. Independent review and "
-            "test gates own completion. Your final commit must not contain its own hash."
+        from .production_brief import production_worker_brief
+
+        prompt = production_worker_brief(
+            card_id=request["card_id"],
+            owner=owner,
+            claim_revision=claim_revision,
+            workspace=str(workspace),
+            base_revision=request["base_revision"],
+            title="Exact claimed native card",
+            description=(
+                "Read the exact current card through skcapstone coord show --json; "
+                "its description and referenced TDD define the entire authorized task."
+            ),
+            acceptance_criteria=["Satisfy every exact current native card criterion."],
         )
     return [
         "/usr/bin/env",

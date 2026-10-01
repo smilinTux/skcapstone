@@ -121,8 +121,18 @@ clean workspace. It verifies committed evidence and copies identical bytes to
 shared storage before recording typed PASS_FOR_REVIEW. Do not complete your own
 card, self-review, clean up source, release the claim or mutate the candidate
 after handoff. The native independent review and completion gates act next.
-For BLOCKED, record a truthful blocked_on referent through coord and stop;
-retain artifacts and let the controller handle exact claim release after exit.
+For BLOCKED, preserve the workspace and write a private report under
+~/.skcapstone/evidence/work/{card_id}/ describing the actual unmet contract.
+Record a typed verdict, not only a verdict link: skcapstone coord verdict {card_id}
+'BLOCKED blocked_on=<category> referent=<precise referent> <actual reason>'
+--candidate <private report path> --commit <actual existing HEAD>
+--tree <actual existing HEAD tree> --ref <actual existing refs/heads/branch>
+--agent {owner}. Read the current owner/claim first as in the recipe below.
+Obtain those Git identities from Git; no new commit is required or authorized
+for BLOCKED. This report need not claim committed or passing implementation.
+If any required identity/evidence is unavailable, report that and retain custody.
+Stop after the typed verdict; the controller releases only the exact claim after
+verified process death. Never clean up or release it yourself.
 
 ```bash
 {recipe}```

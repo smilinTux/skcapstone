@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from skcapstone.fleet import production_exit
+from tests.fleet.test_source_bundle import source  # noqa: F401
 from tests.test_skfleet_worker_exit_evidence import _wrapper
 
 
@@ -13,6 +14,7 @@ from tests.test_skfleet_worker_exit_evidence import _wrapper
 def exit_case(monkeypatch, tmp_path):
     monkeypatch.setenv("SKFLEET_PRODUCTION_POLICY", "/operator/policy.json")
     monkeypatch.setattr(production_exit, "_authority", lambda: "control")
+    monkeypatch.setattr(production_exit, "release_blocked", lambda *args: None)
     row = SimpleNamespace(labels=["source-only"], title="Source", meta={}, links={})
     monkeypatch.setattr(
         production_exit, "CardStore", lambda home: SimpleNamespace(fold=lambda card: row)
@@ -25,6 +27,94 @@ def exit_case(monkeypatch, tmp_path):
         source_base_revision="b" * 40,
     )
     return args, row
+
+
+def test_local_retry_rechecks_death_and_is_bounded(exit_case, monkeypatch):
+    args, _ = exit_case
+    attempts, proofs, sleeps = [], [], []
+
+    def publish(*unused):
+        attempts.append(True)
+        if len(attempts) < 2:
+            raise ValueError("replica delayed")
+        return {"manifest_sha256": "c" * 64}
+
+    monkeypatch.setattr(production_exit, "publish_source", publish)
+    monkeypatch.setattr(production_exit.time, "sleep", sleeps.append)
+    result = production_exit.retry_disposition(args, lambda: proofs.append(True) or True)
+    assert result["state"] == "awaiting-review" and len(attempts) == 2
+    assert len(proofs) == 2 and sleeps == [5]
+    assert production_exit.retry_disposition(args, lambda: False) == result
+
+
+def test_local_retry_stops_on_unproven_death(exit_case, monkeypatch):
+    args, _ = exit_case
+    calls = []
+
+    def publish(*unused):
+        calls.append(True)
+        raise ValueError("pending")
+
+    monkeypatch.setattr(production_exit, "publish_source", publish)
+    monkeypatch.setattr(production_exit.time, "sleep", lambda value: None)
+    proof = iter([True, False])
+    result = production_exit.retry_disposition(args, lambda: next(proof))
+    assert not result["process_terminal"] and not result["claim_released"]
+    assert len(calls) == 1
+
+
+def test_local_retry_exhaustion_retains_claim_without_indefinite_wrapper(exit_case, monkeypatch):
+    args, _ = exit_case
+    calls, sleeps = [], []
+
+    def publish(*unused):
+        calls.append(True)
+        raise ValueError("not yet available")
+
+    monkeypatch.setattr(production_exit, "publish_source", publish)
+    monkeypatch.setattr(production_exit.time, "sleep", sleeps.append)
+    result = production_exit.retry_disposition(args, lambda: True)
+    assert result["state"] == "awaiting-evidence" and not result["claim_released"]
+    assert len(calls) == 3 and sleeps == [5, 10]
+    assert production_exit.retry_disposition(args, lambda: True) == result
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize(
+    "invalid", [None, "claim", "owner", "base", "evidence", "referent", "superseded"]
+)
+def test_blocked_exact_native_release_or_preserved_custody(source, invalid):  # noqa: F811
+    from skcoord.coordination import AgentFile, Board
+
+    Board(source["home"]).save_agent(
+        AgentFile(agent=source["owner"], claimed_tasks=[source["card"]])
+    )
+    outcome = {**source["outcome"], "verdict": "BLOCKED blocked_on=human referent=approval:test"}
+    if invalid == "referent":
+        outcome["verdict"] = "BLOCKED"
+    if invalid == "claim":
+        outcome["expected_claim_revision"] = "f" * 32
+    owner = "different-owner" if invalid == "owner" else source["owner"]
+    source["store"].append_event(source["card"], "verdict", owner, **outcome)
+    if invalid == "superseded":
+        source["store"].append_event(
+            source["card"], "link", owner, link_key="verdict", value="PASS"
+        )
+    if invalid == "evidence":
+        source["shared"].write_text("changed")
+    request = dict(source["request"])
+    if invalid == "base":
+        request["base_revision"] = "f" * 40
+    result = production_exit.release_blocked(
+        source["home"], request, source["owner"], source["claim"]
+    )
+    row = source["store"].fold(source["card"])
+    if invalid:
+        assert result is None and row.owner == source["owner"]
+    else:
+        assert result["state"] == "blocked" and result["claim_released"]
+        assert result["reason"] == outcome["verdict"] and row.owner is None
+        assert str(row.status) != "done" and source["workspace"].exists()
 
 
 def test_no_trusted_git_or_claim_release_without_exact_terminal_proof(exit_case, monkeypatch):

@@ -317,6 +317,44 @@ def test_production_exit_preserves_source_custody(
     assert result["owner"] == "source-owner"
 
 
+def test_stopped_remote_typed_blocked_does_not_replay_or_publish(
+    paths, production_setup, monkeypatch, tmp_path
+):
+    from skcapstone.fleet import production_exit, source_bundle
+
+    request = builder.offer(
+        paths, _card(), ["sk-m", "source-only"], writer=production_setup.writer
+    )
+    status = {
+        "owner": "source-owner",
+        "claim_revision": "a" * 32,
+        "attempt": 1,
+        "production": request["production"],
+    }
+    monkeypatch.setattr(builder, "_process_state", lambda status: (False, 0))
+    monkeypatch.setattr(builder.CardStore, "fold", lambda *args: _folded(owner="source-owner"))
+    calls = []
+
+    def blocked(home, actual, owner, claim):
+        calls.append((actual["card_id"], owner, claim))
+        return {
+            "reason": "BLOCKED blocked_on=human referent=approval:test",
+            "outcome_event": "typed-event",
+            "claim_released": True,
+        }
+
+    monkeypatch.setattr(production_exit, "release_blocked", blocked)
+    monkeypatch.setattr(
+        source_bundle, "publish_source", lambda *args, **kwargs: pytest.fail("blocked")
+    )
+    result = builder._reconcile_running(paths, tmp_path, "node-worker", request, status)
+    assert result["state"] == "blocked" and result["claim_released"]
+    assert calls == [(request["card_id"], "source-owner", "a" * 32)]
+    monkeypatch.setattr(builder, "_process_state", lambda status: (None, None))
+    result = builder._reconcile_running(paths, tmp_path, "node-worker", request, status)
+    assert result["state"] == "running" and len(calls) == 1
+
+
 def test_terminal_process_custody_survives_transient_unit_collection(
     paths, production_setup, monkeypatch, tmp_path
 ):

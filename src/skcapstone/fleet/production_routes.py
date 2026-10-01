@@ -7,11 +7,13 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from ..fleet_route_preflight import resolve_and_preflight
+from .pi_catalog import materialize_gateway_catalog
 from .production_dispatch import resolve_production_routes
 from .review_capacity import acquire_review_route_snapshot
 
 _SNAPSHOTS: dict = {}
 _PREFLIGHTS: dict = {}
+_CATALOGS: dict = {}
 FRESH_SECONDS = 30
 
 
@@ -32,9 +34,9 @@ def snapshot(value: dict) -> dict:
     return result
 
 
-def candidates(value: dict, route: str, labels: list[str]) -> list[dict]:
+def candidates(value: dict, route: str, labels: list[str], *, observed=None) -> list[dict]:
     """Require actual tools, reasoning, size, policy tier and exact family binding."""
-    observed = snapshot(value)
+    observed = snapshot(value) if observed is None else observed
     if (
         observed.get("error") is not None
         or not 0 <= time.time() - observed.get("observed_at", 0) <= FRESH_SECONDS
@@ -95,6 +97,15 @@ def catalog_preflight(value: dict, binding: dict) -> None:
 
 def preflight(value: dict, binding: dict) -> dict:
     """Probe exact gateway route once per short window before native claim mutation."""
+    observed = snapshot(value)
+    qualified = candidates(value, "sk-" + binding["size_class"].lower(), [], observed=observed)
+    if not any(all(binding.get(key) == item for key, item in row.items()) for row in qualified):
+        raise ValueError("production selected route no longer matches current gateway truth")
+    key = (str(Path.home()), value["gateway_url"])
+    revision = (observed.get("capacity_revision"), observed.get("observed_at"))
+    if _CATALOGS.get(key) != revision:
+        materialize_gateway_catalog(Path.home(), value, observed)
+        _CATALOGS[key] = revision
     catalog_preflight(value, binding)
     key = (value["gateway_url"], binding["model"], binding["gateway_backend"])
     prior = _PREFLIGHTS.get(key)
