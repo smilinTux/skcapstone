@@ -19,6 +19,7 @@ from fiber_probe import collect
 from fiber_refill import check_qualification, refill_queue
 from fiber_selection import select_requests
 from fiber_lifecycle import connect_reviews
+from fiber_test_cycle import ensure_tests
 import fiber_bundle
 from fiber_worker import GATEWAY, ROUTES, source_binding, validate, verify_source
 
@@ -355,6 +356,27 @@ def verify_refill_request(row, job):
             raise Refused('lifecycle-source-superseded')
 
 
+def run_required_tests(directory, producer, review, *, guard, clock):
+    """Use the sole dispatch cycle and preserve failures behind its existing HOLD."""
+    try:
+        return ensure_tests(directory, producer, review, state=STATE,
+            requirements_path=QUEUE.parent / 'test-requirements' / (producer['job']['card'] + '.json'),
+            stage_bundle=stage_bundle, guard=guard, clock=clock)
+    except (Refused, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        # An unknown launch or failed check must not be retried on a later tick.
+        if not HOLD.exists() and not HOLD.is_symlink():
+            HOLD.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with HOLD.open('x') as stream:
+                    stream.write('Test execution needs operator inspection for card '
+                                 + producer['job']['card'] + '. Existing work preserved.\n')
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            except FileExistsError:
+                pass
+        raise
+
+
 def cycle(check=False):
     if socket.gethostname().split('.')[0].lower() != 'chiap08':
         raise Refused('not-authority-host')
@@ -374,7 +396,7 @@ def cycle(check=False):
             collect_candidate=collect_candidate, snapshot_revision=native_revision,
             record_verdict=record_candidate, open_review=open_candidate_review,
             describe=describe, eligible=eligible, verify=verify_refill_request,
-            now=time.time(), observe=observe)
+            now=time.time(), observe=observe, tests=run_required_tests)
         selection = select_requests(STATE, QUEUE.parent / 'qualified',
                                     QUEUE.parent / 'selection.json', HOLD,
                                     read_cards=cards, describe=describe, eligible=eligible,

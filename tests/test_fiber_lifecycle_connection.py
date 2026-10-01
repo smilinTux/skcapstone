@@ -397,6 +397,28 @@ def terminal_review(r, verdict="PASS"):
 
 
 @pytest.mark.parametrize("verdict", ["PASS", "FAIL", "BLOCKED"])
+def test_test_plane_runs_only_after_independent_pass_before_completion(rig, verdict):
+    r = rig
+    finished = terminal_review(r, verdict)
+    calls = []
+
+    def tests(directory, producer, review, *, guard, clock):
+        guard()
+        assert producer["candidate"]["commit"] == r["packet"]["commit"]
+        assert review["proposal"]["verdict"] == "PASS"
+        assert clock() == 1000
+        calls.append("tests")
+
+    def finish(*args, **kwargs):
+        calls.append("finish")
+
+    r["run"](collect_candidate=finished["collect"], tests=tests, finish=finish,
+             observe=lambda run: json.loads(run["receipt"]))
+    assert calls == (["tests", "finish"] if verdict == "PASS" else [])
+    assert r["store"].fold(r["card"]).owner == r["owner"]
+
+
+@pytest.mark.parametrize("verdict", ["PASS", "FAIL", "BLOCKED"])
 def test_terminal_review_proposal_never_substitutes_for_required_test_acceptance(rig, verdict):
     r = rig
     finished = terminal_review(r, verdict)

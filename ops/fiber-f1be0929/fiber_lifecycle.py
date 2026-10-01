@@ -132,7 +132,8 @@ def _terminal_guard(guard, runs, intents, observe):
 
 
 def collect_review(state, directory, request, producer, *, home, read_cards,
-                   collect_candidate, snapshot_revision, verify, guard, finish, clock, observe):
+                   collect_candidate, snapshot_revision, verify, guard, finish, clock, observe,
+                   tests=None):
     """Retain one terminal independent proposal, with no acceptance mutation.
 
     A missing test-plane acceptance remains an explicit waiting state. Neither
@@ -208,6 +209,8 @@ def collect_review(state, directory, request, producer, *, home, read_cards,
     if intent['proposal']['verdict'] == 'PASS':
         terminal = _terminal_guard(guard, [_run(state, producer['job']['card']), run],
                                    [producer, intent], observe)
+        if tests is not None:
+            tests(directory, producer, intent, guard=terminal, clock=clock)
         accepted = finish(directory, producer, intent, home=home, guard=terminal, once=_once, clock=clock)
         if accepted is not None:
             return accepted
@@ -219,7 +222,7 @@ def collect_review(state, directory, request, producer, *, home, read_cards,
 def connect_reviews(state, qualified, policy_path, hold, *, home, data_root,
                     read_cards, collect_candidate, snapshot_revision, record_verdict,
                     open_review, describe, eligible, verify, now, clock=time.time,
-                    finish=finish_pair, observe=None):
+                    finish=finish_pair, observe=None, tests=None):
     """Prepare at most one exact review request per call; caller holds authority.
 
     Runtime adapters use mediated coord commands. Injected adapters let tests
@@ -318,7 +321,7 @@ def connect_reviews(state, qualified, policy_path, hold, *, home, data_root,
             result['reviews'].append(collect_review(state, directory, request, intent,
                 home=home, read_cards=read_cards, collect_candidate=collect_candidate,
                 snapshot_revision=snapshot_revision, verify=verify, guard=guard,
-                finish=finish, clock=clock, observe=observe))
+                finish=finish, clock=clock, observe=observe, tests=tests))
             continue
         if recovered_intent:
             # A lost acknowledgement is not permission to reuse a now-running,
