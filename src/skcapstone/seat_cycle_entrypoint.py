@@ -26,8 +26,9 @@ from skcoord.card_store import CardStore
 
 from .estate import host_lifecycle_claim
 from .fleet.deployment_manifest import DISPATCHER_RELATIVE_PATH, deployed_artifact_path
-from .fleet.production_dispatch import cycle_budget_seconds, production_lanes
+from .fleet.production_dispatch import cycle_budget_seconds
 from .fleet.production_policy import load_production_policy
+from .fleet.production_receipts import production_receipt_allowed
 from .fleet.rotation_lock import SERAPH_LOCK_WAIT_SECONDS
 from .lifecycle_seats import LIFECYCLE_SEATS
 from .link_cycle import recommend_one_reviewer
@@ -515,8 +516,8 @@ def verify_seraph_dispatch(
             )
         )
         if production_policy is not None:
-            model_allowed = model_allowed and _policy_launch_allowed(
-                production_policy, launch, route_identity
+            model_allowed = model_allowed and production_receipt_allowed(
+                home, production_policy, launch, card, receipts[0]
             )
         common_valid = (
             card is not None
@@ -723,29 +724,6 @@ def _run_seraph_dispatcher(
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
-def _policy_launch_allowed(policy: dict, launch: dict, route: dict | None = None) -> bool:
-    """Bind a production receipt to the configured model and backend family."""
-    lanes = {lane["name"]: lane for lane in production_lanes(policy, 1)}
-    lane = lanes.get(launch["lane"])
-    if (
-        lane is None
-        or not lane["target"]
-        or launch["host"] != policy["authority_host"]
-        or launch["model"] != lane["model"]
-    ):
-        return False
-    if route is None:
-        return True
-    domains = route.get("capacity_domains")
-    return (
-        route.get("provider") == "skgateway"
-        and route.get("model_or_bucket") == lane["model"]
-        and isinstance(domains, list)
-        and len(domains) == 1
-        and domains[0] in lane["capacity_domains"]
-    )
-
-
 def _production_seat_operation(home: Path, seat: str, dispatcher: Path) -> dict:
     """Use one qualified policy while retaining native receipt verification."""
     host = socket.gethostname().strip().lower()
@@ -931,9 +909,7 @@ def verify_role_dispatch(
 
     store = CardStore(home)
     accepted = (
-        {lane["model"] for lane in production_lanes(production_policy, 1) if lane["target"]}
-        if production_policy is not None
-        else set(accepted_models)
+        set(accepted_models)
         if accepted_models is not None
         else set(resolve_size_class_models().values())
     )
@@ -945,18 +921,30 @@ def verify_role_dispatch(
         events = store._read_events(launch["card"])
         labels = {str(label).strip().lower() for label in getattr(card, "labels", ())}
         seat_labels = {label for label in labels if label.startswith("seat-")}
+        production_receipts = [
+            event
+            for event in events
+            if event.get("action") == "production_assignment_launch"
+            and event.get("writer") == launch["owner"]
+            and event.get("claim_revision") == launch["revision"]
+        ]
+        production_valid = (
+            production_policy is not None
+            and len(production_receipts) == 1
+            and production_receipts[0].get("schema") == "skfleet.production-assignment-launch/v1"
+            and production_receipts[0].get("launched") is (launch["outcome"] == "LAUNCHED")
+            and production_receipt_allowed(
+                home, production_policy, launch, card, production_receipts[0]
+            )
+        )
         valid = (
             card is not None
             and launch["card"] not in seen_cards
             and launch["owner"].startswith(f"pi-{seat}-")
             and seat_labels == {f"seat-{seat}"}
             and "dispatch-approved" in labels
-            and (
-                _policy_launch_allowed(production_policy, launch)
-                if production_policy is not None
-                else launch["lane"] == "codex"
-            )
-            and launch["model"] in accepted
+            and (production_valid if production_policy is not None else launch["lane"] == "codex")
+            and (production_policy is not None or launch["model"] in accepted)
         )
         seen_cards.add(launch["card"])
         if not valid:

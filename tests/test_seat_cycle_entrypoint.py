@@ -125,13 +125,8 @@ def production_policy(tmp_path, monkeypatch, installed_dispatcher):
         "capacity_authority": "skgateway",
         "gateway_url": "http://chiap01:18790",
         "lanes": {
-            name: {"enabled": True, "provider": "skgateway", "model": model}
-            for name, model in {
-                "codex": "gpt-5.6-sol",
-                "glm": "sk-zai-m",
-                "deepseek": "deepseek-flash",
-                "qwen": "qwen3.8-27b-huihui-abliterated-q4_k_m",
-            }.items()
+            name: {"enabled": True, "provider": "skgateway"}
+            for name in ("codex", "glm", "deepseek", "qwen")
         },
         "cycle_budget_seconds": 250,
         "scan_budget": 32,
@@ -143,6 +138,47 @@ def production_policy(tmp_path, monkeypatch, installed_dispatcher):
     monkeypatch.setenv("SKFLEET_PRODUCTION_POLICY", str(path))
     monkeypatch.setattr(seat_entrypoint.socket, "gethostname", lambda: "chiap08")
     return policy
+
+
+def production_event(home, event, domain, model):
+    import datetime
+    import time
+
+    from skcapstone.fleet.production_receipts import persist_production_snapshot
+    from skcapstone.fleet.review_capacity import seal_review_capacity_truth
+
+    snapshot = seal_review_capacity_truth(
+        {
+            "schema_version": 1,
+            "cycle_id": "fixture",
+            "observed_at": time.time(),
+            "endpoint": "http://chiap01:18790",
+            "error": None,
+            "routes": [
+                {
+                    "logical_route": model,
+                    "model_or_bucket": model,
+                    "provider": domain,
+                    "capacity_domain": domain,
+                    "state": "healthy",
+                    "size_class": "L",
+                    "policy_tier": "local" if "qwen" in domain else "paid-cloud",
+                    "max": 1,
+                    "gateway_active": 0,
+                }
+            ],
+        },
+        {},
+    )
+    event["route_identity"].update(
+        provider="skgateway",
+        capacity_domains=[domain],
+        logical_route="sk-s",
+        production_snapshot=persist_production_snapshot(home, snapshot),
+    )
+    event["ts"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    event["writer"] = event.get("reviewer") or event["worker"]
+    return event
 
 
 @pytest.mark.parametrize("seat", ["atlas", "seraph"])
@@ -198,8 +234,9 @@ def test_production_seats_accept_exact_policy_route_receipts(
 ):
     card_id, revision = "a8100007", "revision-1"
     owner = f"pi-{seat}-chiap08-{card_id}"
-    model = production_policy["lanes"][family]["model"]
+    model = f"fresh-gateway-{family}-version"
     card = SimpleNamespace(
+        title="[S] Fixture contract",
         labels=[f"seat-{seat}", "dispatch-approved"] + (["review"] if seat == "seraph" else []),
         status=SimpleNamespace(value="doing"),
         owner=owner,
@@ -211,7 +248,16 @@ def test_production_seats_accept_exact_policy_route_receipts(
         links={"producer_identity": "independent-builder"},
     )
     events = review_events(owner, revision, author="independent-builder", model=model)
-    events[2]["route_identity"].update(provider="skgateway", capacity_domains=[domain])
+    production_event(tmp_path, events[2], domain, model)
+    if seat == "atlas":
+        events.append(
+            {
+                **events[2],
+                "action": "production_assignment_launch",
+                "schema": "skfleet.production-assignment-launch/v1",
+                "worker": owner,
+            }
+        )
 
     def run(command, **kwargs):
         if command[0] == "systemctl":
@@ -241,8 +287,9 @@ def test_production_seraph_rejects_mismatched_or_replayed_receipts(
 ):
     owner, revision, card_id = "pi-seraph-chiap08-a8100007", "revision-1", "a8100007"
     events = review_events(owner, revision, model="deepseek-flash")
-    events[2]["route_identity"].update(provider="skgateway", capacity_domains=["deepseek"])
+    production_event(tmp_path, events[2], "deepseek", "deepseek-flash")
     card = SimpleNamespace(
+        title="[S] Fixture contract",
         labels=["review", "seat-seraph"],
         status=SimpleNamespace(value="doing"),
         owner=owner,
@@ -316,7 +363,11 @@ def test_production_dispatch_timeout_reaps_child_process_group():
         )
     child = int(failure.value.stdout.strip())
     state = Path(f"/proc/{child}/stat")
-    assert not state.exists() or state.read_text().split()[2] == "Z"
+    try:
+        child_state = state.read_text().split()[2]
+    except (FileNotFoundError, ProcessLookupError):
+        child_state = None
+    assert child_state in {None, "Z"}
 
 
 def control(path: Path) -> None:

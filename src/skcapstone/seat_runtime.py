@@ -220,21 +220,7 @@ def append_review_launch_receipt(
         or card.meta.get("_claim_revision") != claim_revision
     ):
         raise BoundaryError("review launch receipt does not match the exact claim")
-    route = dict(route_identity or {})
-    if route:
-        required = {"logical_route", "provider", "capacity_domains", "model_or_bucket"}
-        domains = route.get("capacity_domains")
-        if (
-            set(route) != required
-            or any(
-                not isinstance(route[key], str) or not route[key]
-                for key in required - {"capacity_domains"}
-            )
-            or not isinstance(domains, list)
-            or not domains
-            or any(not isinstance(domain, str) or not domain for domain in domains)
-        ):
-            raise BoundaryError("review launch route identity is incomplete")
+    route = _launch_route_identity(home, route_identity)
     return store.append_event(
         handoff.card_id,
         "review_assignment_launch",
@@ -251,6 +237,74 @@ def append_review_launch_receipt(
         claim_revision=claim_revision,
         launched=bool(launched),
         route_identity=route or None,
+    )
+
+
+def _launch_route_identity(home: Path, route_identity) -> dict:
+    route = dict(route_identity or {})
+    if not route:
+        return route
+    required = {"logical_route", "provider", "capacity_domains", "model_or_bucket"}
+    domains = route.get("capacity_domains")
+    if (
+        set(route) not in (required, required | {"production_snapshot"})
+        or any(
+            not isinstance(route.get(key), str) or not route[key]
+            for key in required - {"capacity_domains"}
+        )
+        or not isinstance(domains, list)
+        or not domains
+        or any(not isinstance(domain, str) or not domain for domain in domains)
+    ):
+        raise BoundaryError("review launch route identity is incomplete")
+    if "production_snapshot" in route:
+        import time
+
+        from .fleet.production_receipts import load_production_snapshot
+        from .fleet_lane_health import MAX_AGE_SECONDS
+
+        try:
+            snapshot = load_production_snapshot(home, route["production_snapshot"])
+            if not 0 <= time.time() - snapshot["observed_at"] <= MAX_AGE_SECONDS:
+                raise ValueError("snapshot is stale")
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            raise BoundaryError("production launch snapshot is invalid") from exc
+    return route
+
+
+def append_production_launch_receipt(
+    home: Path,
+    card_id: str,
+    *,
+    actor: str,
+    claim_revision: str,
+    launched: bool,
+    route_identity: Mapping[str, object],
+) -> dict[str, object]:
+    """Record a native production launch only for its exact current claim."""
+    require_authority(actor, Action.LAUNCH, fenced_system_actors={actor.strip().lower()})
+    store = CardStore(home)
+    card = store.fold(card_id)
+    if (
+        not claim_revision.strip()
+        or card is None
+        or card.owner != actor
+        or card.meta.get("_claim_revision") != claim_revision
+    ):
+        raise BoundaryError("production launch receipt does not match the exact claim")
+    route = _launch_route_identity(home, route_identity)
+    if "production_snapshot" not in route:
+        raise BoundaryError("production launch requires a sealed snapshot")
+    return store.append_event(
+        card_id,
+        "production_assignment_launch",
+        actor,
+        transition_id=actor + "-production-" + claim_revision,
+        schema="skfleet.production-assignment-launch/v1",
+        worker=actor,
+        claim_revision=claim_revision,
+        launched=bool(launched),
+        route_identity=route,
     )
 
 
