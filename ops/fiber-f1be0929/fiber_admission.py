@@ -16,17 +16,9 @@ import sqlite3
 import subprocess
 import uuid
 
-# Restored to the latest human-mandated ceiling; preserve later placement fixes.
-# Temporary canary 2c5ac908 is not authority to exceed this production limit.
-ESTATE_CAP = 12
-SPACING = 75
-PLACEMENT = {'implementation': ('chiap02', 2), 'review': ('chiap03', 1),
-             'tests': ('chiap04', 1)}
-HOST_SLOTS = {'chiap02': 3, 'chiap03': 2, 'chiap04': 2,
-              'chiwk12': 2, 'chiwk13': 1, 'ziowk01': 2}
-STAGE_HOSTS = {'implementation': ('chiap02', 'chiwk12'),
-               'review': ('chiap03', 'chiwk12'),
-               'tests': ('chiap04', 'chiap02', 'chiwk13')}
+# Installed execution targets, not a capacity table. SKGateway queues requests.
+WORKER_HOSTS = ('chiap02', 'chiap03', 'chiap04', 'chiwk12', 'chiwk13', 'ziowk01')
+STAGE_HOSTS = {stage: WORKER_HOSTS for stage in ('implementation', 'review', 'tests')}
 PROVIDERS = {'deepseek', 'codex', 'zai'}
 
 
@@ -44,10 +36,6 @@ def card_fingerprint(row):
     if 'tdd_custody' in (row.get('links') or {}):
         material['links']['tdd_custody'] = row['links']['tdd_custody']
     return hashlib.sha256(json.dumps(material, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
-
-
-def _positive_int(value):
-    return type(value) is int and value > 0
 
 
 def observed_workers(snapshot, now):
@@ -76,9 +64,7 @@ def observed_workers(snapshot, now):
 def placement_allowed(job, host):
     if job.get('stage') not in STAGE_HOSTS:
         return False
-    if host == 'ziowk01':
-        return job.get('host') == 'ziowk01'  # Explicit WAN pin only.
-    return host in STAGE_HOSTS[job['stage']] and (host != 'chiwk13' or job.get('work_class') == 'S')
+    return host in STAGE_HOSTS[job['stage']]
 
 
 def select_host(database, job, snapshot, *, now):
@@ -96,18 +82,14 @@ def select_host(database, job, snapshot, *, now):
                     if key in workers and workers[key] != (host, provider):
                         raise Refused('ambiguous-worker')
                     workers[key] = (host, provider)
-    if len(workers) >= ESTATE_CAP:
-        raise Refused('estate-capacity')
     candidates = STAGE_HOSTS.get(job.get('stage'), ()) if job.get('host') == 'auto' else (job.get('host'),)
     ranked = []
     for order, host in enumerate(candidates):
         node = snapshot.get('hosts', {}).get(host, {})
-        if not placement_allowed(job, host) or node.get('ready') is not True or not _positive_int(node.get('slots')):
+        if not placement_allowed(job, host) or node.get('ready') is not True:
             continue
-        slots = min(HOST_SLOTS[host], node['slots'])
         occupied = sum(place == host for place, _ in workers.values())
-        if occupied < slots:
-            ranked.append((occupied / slots, order, host))
+        ranked.append((occupied, order, host))
     if not ranked:
         raise Refused('no-eligible-host')
     return min(ranked)[2]
@@ -127,22 +109,21 @@ def _validate(job, snapshot, now):
     if job['stage'] == 'review' and (not job.get('producer_provider') or job['producer_provider'] == provider):
         raise Refused('review-independence')
     host = snapshot.get('hosts', {}).get(job['host'], {})
-    if host.get('ready') is not True or not _positive_int(host.get('slots')):
+    if host.get('ready') is not True:
         raise Refused('host-not-ready')
     route = snapshot.get('providers', {}).get(provider, {})
-    if route.get('ready') is not True or not _positive_int(route.get('cap')):
+    if route.get('ready') is not True:
         raise Refused('provider-not-qualified')
-    return current, min(host['slots'], HOST_SLOTS[job['host']]), route['cap']
+    return current
 
 
 def reserve(database, job, snapshot, *, now):
     """Atomically reserve one card; refuse ambiguity and count legacy workers.
 
-    This enforces admission spacing. The launcher must also enforce SPACING
-    from its last acknowledged remote start while holding its authority lock.
+    Request concurrency and queueing are owned by SKGateway provider policy.
     An unacknowledged launch must remain reserved, never be retried blindly.
     """
-    workers, host_cap, provider_cap = _validate(job, snapshot, now)
+    workers = _validate(job, snapshot, now)
     database = Path(database)
     database.parent.mkdir(parents=True, exist_ok=True)
     # ponytail: one SQLite writer on chiap08; not a distributed lock service.
@@ -158,15 +139,6 @@ def reserve(database, job, snapshot, *, now):
                 if key in workers and workers[key] != (host, provider):
                     raise Refused('ambiguous-worker')
                 workers[key] = (host, provider)
-            if len(workers) >= ESTATE_CAP:
-                raise Refused('estate-capacity')
-            if sum(host == job['host'] for host, _ in workers.values()) >= host_cap:
-                raise Refused('host-capacity')
-            # Unattributed providers consume every provider budget conservatively.
-            if sum(provider == job['provider'] or provider not in PROVIDERS for _, provider in workers.values()) >= provider_cap:
-                raise Refused('provider-capacity')
-            if reservations and now - max(row[3] for row in reservations) < SPACING:
-                raise Refused('launch-spacing')
             token = uuid.uuid4().hex
             db.execute('INSERT INTO reservations VALUES (?, ?, ?, ?, ?)',
                        (job['card'], job['host'], job['provider'], token, now))

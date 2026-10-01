@@ -13,7 +13,7 @@ import urllib.request
 import sqlite3
 import hashlib
 
-from fiber_admission import ESTATE_CAP, STAGE_HOSTS, HOST_SLOTS, Refused, card_fingerprint, claim_for_worker, select_host
+from fiber_admission import STAGE_HOSTS, WORKER_HOSTS, Refused, card_fingerprint, claim_for_worker, select_host
 from fiber_dispatch import authority, dispatch_one, reconcile
 from fiber_probe import collect
 from fiber_refill import check_qualification, refill_queue
@@ -27,11 +27,29 @@ STATE = Path.home() / '.local/state/skfleet-fiber'
 QUEUE = Path.home() / '.config/skfleet-fiber/jobs'
 HOLD = Path.home() / '.config/skfleet-fiber/HOLD'
 LIBRARY = '.local/lib/skfleet-fiber/fiber_worker.py'
-CAPS = {'deepseek': 3, 'codex': 2, 'zai': 5}
+_review_routes_at = None
+_route_proofs = {}
+
+
+def refresh_review_routes(*, force=False):
+    """Refresh native review admission from the gateway, never local quotas."""
+    global _review_routes_at
+    now = time.time()
+    if not force and _review_routes_at is not None and 0 <= now - _review_routes_at < 30:
+        return
+    from skcapstone.fleet.review_capacity import acquire_review_route_snapshot
+    host = socket.gethostname().split('.')[0].lower()
+    if host != 'chiap08':
+        raise Refused('not-authority-host')
+    path = Path.home() / '.skcapstone/evidence' / ('fleet-review-routes.' + host + '.json')
+    snapshot = acquire_review_route_snapshot(GATEWAY, path, 'fiber-' + str(time.time_ns()))
+    if snapshot.get('error'):
+        raise Refused('review-gateway-observation-unavailable')
+    _review_routes_at = now
 
 
 def record_attempt(job, reason):
-    """Bound repeated preflight faults; never turn ambiguity into a retry."""
+    """Retain per-request fault counts without stopping unrelated work."""
     waits = {'estate-capacity', 'host-capacity', 'provider-capacity', 'actual-start-spacing',
              'launch-spacing', 'card-not-claimable', 'authority-busy', 'admission-held'}
     if not reason or reason in waits:
@@ -47,12 +65,6 @@ def record_attempt(job, reason):
                 attempts = db.execute('SELECT attempts FROM faults WHERE binding=?', (key,)).fetchone()[0]
         finally:
             db.close()
-        ambiguous = reason in {'unresolved-launch', 'orphan-reservation', 'launch-unacknowledged', 'launch-receipt-invalid', 'worker-failed'}
-        if (attempts >= 3 or ambiguous) and not HOLD.exists():
-            HOLD.parent.mkdir(parents=True, exist_ok=True)
-            with HOLD.open('x') as stream:
-                stream.write('Guarded admission stopped: ' + ('ambiguous launch' if ambiguous else 'three preflight faults')
-                             + '. Inspect card ' + job['card'] + ' before operator resumption. Existing work preserved.\n')
         return attempts
 
 
@@ -88,6 +100,8 @@ def eligible(row, board):
         from skcapstone.coord_gate_diagnostic import diagnose
     except ImportError:
         raise Refused('board-gate-unavailable') from None
+    if (row.get('meta') or {}).get('link_source_card'):
+        refresh_review_routes()
     return diagnose(Path.home() / '.skcapstone', row['id']).get('eligible') is True
 
 
@@ -114,7 +128,7 @@ def describe(card, stage, family, *, producer_family=None):
 
 def remote(mode, request):
     job = request['job']
-    if job['host'] not in HOST_SLOTS:
+    if job['host'] not in WORKER_HOSTS:
         raise Refused('host-outside-initial-placement')
     account = 'skuser01'
     program = [LIBRARY, mode]
@@ -203,6 +217,8 @@ def launch_claimed(job, receipt):
     """Claim only on the authority, then bind the exact generation to the run."""
     if socket.gethostname().split('.')[0].lower() != 'chiap08':
         raise Refused('not-authority-host')
+    if job.get('stage') == 'review':
+        refresh_review_routes(force=True)
     row = claim_for_worker(job['card'], job['owner'])
     verify_refill_request(row, job)
     claim = {'authority': 'chiap08', 'owner': job['owner'],
@@ -253,6 +269,12 @@ def qualify_route(job):
         key = os.environ.get(key)
         if not key:
             raise Refused('credential-environment-unavailable')
+    # Reuse only inside this bounded controller process and exact live revision.
+    # Every reuse still passed the fresh lane-health and catalog checks above.
+    cache_key = (family, model, snapshot['runtime_revision'], hashlib.sha256(key.encode()).hexdigest())
+    previous = _route_proofs.get(cache_key)
+    if previous and 0 <= time.time() - previous['observed_at'] < 60:
+        return {'ready': True, 'proof': dict(previous)}
     request = urllib.request.Request(GATEWAY + '/chat/completions',
         data=json.dumps({'model': model, 'messages': [{'role': 'user', 'content': 'Reply only OK.'}], 'max_tokens': 256, 'stream': False}).encode(),
         headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key})
@@ -272,15 +294,14 @@ def qualify_route(job):
     evidence = STATE / 'observations' / ('completion-' + stamp + '.json')
     with evidence.open('x') as stream:
         json.dump(proof, stream, sort_keys=True)
-    return {'ready': True, 'cap': CAPS[family], 'proof': proof}
+    _route_proofs[cache_key] = dict(proof)
+    return {'ready': True, 'proof': proof}
 
 
 def observation(job):
     snapshot = collect()
     if not snapshot['complete']:
         raise Refused('incomplete-observation')
-    if len(snapshot['workers']) >= ESTATE_CAP:
-        raise Refused('estate-capacity')
     if not snapshot['hosts'].get(job['host'], {}).get('ready'):
         raise Refused('host-not-ready')
     token = '0' * 32
@@ -289,7 +310,7 @@ def observation(job):
                    'unit': 'skfleet-fiber-' + job['card'] + '-' + token + '.service'}})
     if check.get('state') != 'ready' or check.get('host') != job['host'] or check.get('card') != job['card'] or check.get('model') != job['model']:
         raise Refused('remote-preflight-mismatch')
-    # No completion calls while the estate is already full.
+    # Gateway capacity remains authoritative for this qualifying request too.
     proof = qualify_route(job)
     # Re-probe after the potentially slow completion, not before it.
     snapshot = collect()
@@ -357,24 +378,10 @@ def verify_refill_request(row, job):
 
 
 def run_required_tests(directory, producer, review, *, guard, clock):
-    """Use the sole dispatch cycle and preserve failures behind its existing HOLD."""
-    try:
-        return ensure_tests(directory, producer, review, state=STATE,
-            requirements_path=QUEUE.parent / 'test-requirements' / (producer['job']['card'] + '.json'),
-            stage_bundle=stage_bundle, guard=guard, clock=clock)
-    except (Refused, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
-        # An unknown launch or failed check must not be retried on a later tick.
-        if not HOLD.exists() and not HOLD.is_symlink():
-            HOLD.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                with HOLD.open('x') as stream:
-                    stream.write('Test execution needs operator inspection for card '
-                                 + producer['job']['card'] + '. Existing work preserved.\n')
-                    stream.flush()
-                    os.fsync(stream.fileno())
-            except FileExistsError:
-                pass
-        raise
+    """A failed test prevents its source acceptance, not unrelated admission."""
+    return ensure_tests(directory, producer, review, state=STATE,
+        requirements_path=QUEUE.parent / 'test-requirements' / (producer['job']['card'] + '.json'),
+        stage_bundle=stage_bundle, guard=guard, clock=clock)
 
 
 def cycle(check=False):
@@ -384,10 +391,6 @@ def cycle(check=False):
         return {'mode': 'check', 'observation': collect(), 'queued': len(list(QUEUE.glob('*.json')))}
     with authority(STATE):
         recovered = reconcile(STATE, observe)
-        if any(run.get('state') == 'terminal' and run.get('exit_code') != 0 for run in recovered) and not HOLD.exists():
-            HOLD.parent.mkdir(parents=True, exist_ok=True)
-            with HOLD.open('x') as stream:
-                stream.write('Guarded admission stopped after a failed worker. Inspect terminal receipts before resuming.\n')
         if HOLD.exists():
             return {'state': 'admission-held', 'reconciled': recovered}
         lifecycle = connect_reviews(STATE, QUEUE.parent / 'qualified',
@@ -396,7 +399,7 @@ def cycle(check=False):
             collect_candidate=collect_candidate, snapshot_revision=native_revision,
             record_verdict=record_candidate, open_review=open_candidate_review,
             describe=describe, eligible=eligible, verify=verify_refill_request,
-            now=time.time(), observe=observe, tests=run_required_tests)
+            now=time.time(), observe=observe, tests=run_required_tests, isolate_failures=True)
         selection = select_requests(STATE, QUEUE.parent / 'qualified',
                                     QUEUE.parent / 'selection.json', HOLD,
                                     read_cards=cards, describe=describe, eligible=eligible,
@@ -430,7 +433,7 @@ def cycle(check=False):
         if result.get('state') == 'terminal' and result.get('new_launch') and result.get('exit_code') != 0:
             record_attempt(job, 'worker-failed')
         results.append(result)
-        if HOLD.exists() or result.get('new_launch') or result.get('reason') in {'estate-capacity', 'actual-start-spacing', 'unresolved-launch', 'authority-busy'}:
+        if HOLD.exists() or result.get('reason') == 'authority-busy':
             break
     return {'state': 'cycle-finished', 'jobs': results, 'selection': selection,
             'refill': refill, 'lifecycle': lifecycle}

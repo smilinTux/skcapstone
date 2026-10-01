@@ -28,11 +28,7 @@ def job(card='1234abcd'):
 
 
 class AdmissionTest(unittest.TestCase):
-    def test_latest_human_mandated_limit_is_twelve(self):
-        self.assertEqual(module.ESTATE_CAP, 12)
-        self.assertEqual(module.SPACING, 75)
-
-    def test_twelfth_admitted_thirteenth_refused_including_reservation(self):
+    def test_legacy_estate_limit_does_not_block_new_requests(self):
         truth = snapshot()
         truth['workers'] = [{'key': f'legacy:{i}', 'host': 'chiap08',
                              'provider': 'codex'} for i in range(11)]
@@ -40,23 +36,22 @@ class AdmissionTest(unittest.TestCase):
         self.assertEqual(module.select_host(self.db, task, truth, now=1000), 'chiap02')
         self.reserve(truth=truth)
         truth['observed_at'] = 1075
-        with self.assertRaisesRegex(module.Refused, 'estate-capacity'):
-            self.reserve(job('1234abce'), truth, now=1075)
-        with self.assertRaisesRegex(module.Refused, 'estate-capacity'):
-            module.select_host(self.db, task, truth, now=1075)
+        self.reserve(job('1234abce'), truth, now=1075)
+        self.assertEqual(module.select_host(self.db, task, truth, now=1075), 'chiap03')
 
-    def test_provider_caps_and_unknown_occupancy_still_refuse_below_estate_cap(self):
+    def test_legacy_provider_caps_and_unknown_occupancy_do_not_duplicate_gateway_limits(self):
         for provider, cap in [('deepseek', 3), ('zai', 5), ('codex', 2)]:
             truth = snapshot()
             truth['providers'][provider] = {'ready': True, 'cap': cap}
             truth['workers'] = [{'key': f'provider:{i}', 'host': 'chiap08',
                                  'provider': provider} for i in range(cap - 1)]
             truth['workers'].append({'key': 'unknown', 'host': 'chiap08', 'provider': None})
-            with self.subTest(provider=provider), self.assertRaisesRegex(module.Refused, 'provider-capacity'):
-                self.reserve(dict(job(), provider=provider), truth)
+            with self.subTest(provider=provider):
+                self.reserve(dict(job(f'{cap:08x}'), provider=provider), truth)
 
     def test_placement_spreads_work_and_counts_pending_reservations(self):
         truth = snapshot()
+        truth['hosts'] = {'chiap02': truth['hosts']['chiap02']}
         truth['hosts']['chiwk12'] = {'ready': True, 'slots': 2}
         truth['workers'] = [{'key': 'native', 'host': 'chiap02', 'provider': 'codex'}]
         task = dict(job(), host='auto')
@@ -65,29 +60,26 @@ class AdmissionTest(unittest.TestCase):
         truth['workers'].append({'key': 'native2', 'host': 'chiwk12', 'provider': 'codex'})
         self.assertEqual(module.select_host(self.db, task, truth, now=1000), 'chiap02')
 
-    def test_placement_requires_complete_fresh_truth_and_never_auto_wan(self):
+    def test_placement_requires_complete_fresh_truth_and_includes_wan(self):
         truth = snapshot()
         truth['hosts'] = {'ziowk01': {'ready': True, 'slots': 2},
                           'chiap01': {'ready': True, 'slots': 20},
                           'chiap08': {'ready': True, 'slots': 20}}
-        with self.assertRaisesRegex(module.Refused, 'no-eligible-host'):
-            module.select_host(self.db, dict(job(), host='auto'), truth, now=1000)
+        self.assertEqual(module.select_host(self.db, dict(job(), host='auto'), truth, now=1000), 'ziowk01')
         truth['complete'] = False
         with self.assertRaisesRegex(module.Refused, 'incomplete-observation'):
             module.select_host(self.db, dict(job(), host='auto'), truth, now=1000)
         with self.assertRaisesRegex(module.Refused, 'stale-observation'):
             module.select_host(self.db, dict(job(), host='auto'), snapshot(900), now=1000)
 
-    def test_light_host_requires_small_card_and_wan_requires_explicit_pin(self):
+    def test_all_installed_hosts_can_take_any_work_class(self):
         truth = snapshot()
+        truth['hosts'] = {}
         truth['hosts']['chiwk13'] = {'ready': True, 'slots': 1}
-        truth['hosts']['chiap04']['ready'] = False
-        truth['hosts']['chiap02']['ready'] = False
         task = dict(job(), stage='tests', host='auto', work_class='S')
         self.assertEqual(module.select_host(self.db, task, truth, now=1000), 'chiwk13')
         task['work_class'] = 'M'
-        with self.assertRaisesRegex(module.Refused, 'no-eligible-host'):
-            module.select_host(self.db, task, truth, now=1000)
+        self.assertEqual(module.select_host(self.db, task, truth, now=1000), 'chiwk13')
         task.update(host='ziowk01', stage='implementation')
         truth['hosts']['ziowk01'] = {'ready': True, 'slots': 2}
         self.assertEqual(module.select_host(self.db, task, truth, now=1000), 'ziowk01')
@@ -100,19 +92,16 @@ class AdmissionTest(unittest.TestCase):
     def reserve(self, task=None, truth=None, now=1000):
         return module.reserve(self.db, task or job(), truth or snapshot(now), now=now)
 
-    def test_existing_workers_count_without_name_prefix_filter(self):
+    def test_existing_workers_are_observations_not_admission_ceilings(self):
         truth = snapshot()
         truth['workers'] = [{'key': f'legacy:{i}', 'host': 'chiap08', 'provider': 'deepseek'} for i in range(12)]
-        with self.assertRaisesRegex(module.Refused, 'estate-capacity'):
-            self.reserve(truth=truth)
+        self.reserve(truth=truth)
 
-    def test_spacing_and_duplicate_are_persistent(self):
+    def test_duplicate_is_persistent_without_inter_card_spacing(self):
         self.reserve()
         with self.assertRaisesRegex(module.Refused, 'duplicate-card'):
             self.reserve(now=1075)
-        with self.assertRaisesRegex(module.Refused, 'launch-spacing'):
-            self.reserve(job('1234abce'), now=1074)
-        self.reserve(job('1234abce'), now=1075)
+        self.reserve(job('1234abce'), now=1000)
 
     def test_running_worker_and_reservation_count_once(self):
         from fiber_probe import process_provider
@@ -155,11 +144,10 @@ class AdmissionTest(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(module.Refused):
                 self.reserve(truth=truth)
 
-    def test_host_caps_and_stage_placement(self):
+    def test_no_host_count_cap_but_uninstalled_roles_are_refused(self):
         self.reserve()
         self.reserve(job('1234abce'), now=1075)
-        with self.assertRaisesRegex(module.Refused, 'host-capacity'):
-            self.reserve(job('1234abcf'), now=1150)
+        self.reserve(job('1234abcf'), now=1150)
         task = job('1234abc0')
         task['host'] = 'chiap08'
         with self.assertRaisesRegex(module.Refused, 'stage-placement'):

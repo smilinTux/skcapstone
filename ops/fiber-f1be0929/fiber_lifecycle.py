@@ -221,7 +221,7 @@ def collect_review(state, directory, request, producer, *, home, read_cards,
 def connect_reviews(state, qualified, policy_path, hold, *, home, data_root,
                     read_cards, collect_candidate, snapshot_revision, record_verdict,
                     open_review, describe, eligible, verify, now, clock=time.time,
-                    finish=finish_pair, observe=None, tests=None):
+                    finish=finish_pair, observe=None, tests=None, isolate_failures=False):
     """Prepare at most one exact review request per call; caller holds authority.
 
     Runtime adapters use mediated coord commands. Injected adapters let tests
@@ -245,131 +245,137 @@ def connect_reviews(state, qualified, policy_path, hold, *, home, data_root,
     _directory(state)
     _directory(qualified)
     for card in policy['cards']:
-        run = _run(state, card)
-        if run is None or run['state'] != 'terminal':
-            result['waiting'].append({'card': card, 'reason': 'producer-not-terminal'})
-            continue
-        if not re.fullmatch('[0-9a-f]{32}', str(run.get('token'))):
-            raise Refused('lifecycle-run-identity')
-        directory = state / 'lifecycle' / run['token']
-        finish_path = directory / 'finish-intent.json'
-        if finish_path.exists() or finish_path.is_symlink():
+        try:
+            run = _run(state, card)
+            if run is None or run['state'] != 'terminal':
+                result['waiting'].append({'card': card, 'reason': 'producer-not-terminal'})
+                continue
+            if not re.fullmatch('[0-9a-f]{32}', str(run.get('token'))):
+                raise Refused('lifecycle-run-identity')
+            directory = state / 'lifecycle' / run['token']
+            finish_path = directory / 'finish-intent.json'
+            if finish_path.exists() or finish_path.is_symlink():
+                _directory(directory.parent)
+                _directory(directory)
+                intent = _read(directory / 'candidate-intent.json')
+                if (intent['policy_sha256'] != digest(policy) or intent['job'] != json.loads(run['binding'])
+                        or intent['invocation'] != run['invocation']):
+                    raise Refused('lifecycle-finish-run-changed')
+                review = _read(directory / 'review-intent.json')
+                terminal = _terminal_guard(guard, [run, _run(state, review['job']['card'])],
+                                           [intent, review], observe)
+                result['reviews'].append(finish(directory, intent, review,
+                    home=home, guard=terminal, once=_once, clock=clock))
+                continue
+            board = read_cards([card])
+            job, row = _producer(run, policy, board)
+            verify(row, job)
+            directory.parent.mkdir(exist_ok=True, mode=0o700)
             _directory(directory.parent)
+            directory.mkdir(exist_ok=True, mode=0o700)
             _directory(directory)
-            intent = _read(directory / 'candidate-intent.json')
-            if (intent['policy_sha256'] != digest(policy) or intent['job'] != json.loads(run['binding'])
-                    or intent['invocation'] != run['invocation']):
-                raise Refused('lifecycle-finish-run-changed')
-            review = _read(directory / 'review-intent.json')
-            terminal = _terminal_guard(guard, [run, _run(state, review['job']['card'])],
-                                       [intent, review], observe)
-            result['reviews'].append(finish(directory, intent, review,
-                home=home, guard=terminal, once=_once, clock=clock))
-            continue
-        board = read_cards([card])
-        job, row = _producer(run, policy, board)
-        verify(row, job)
-        directory.parent.mkdir(exist_ok=True, mode=0o700)
-        _directory(directory.parent)
-        directory.mkdir(exist_ok=True, mode=0o700)
-        _directory(directory)
-        intent_path = directory / 'candidate-intent.json'
-        recovered_intent = intent_path.exists() or intent_path.is_symlink()
-        if recovered_intent:
-            intent = _read(intent_path)
-            if (intent.get('job') != job or intent.get('claim_revision') != row['meta']['_claim_revision']
-                    or intent.get('invocation') != run['invocation']
-                    or intent.get('policy_sha256') != digest(policy)):
-                raise Refused('lifecycle-intent-changed')
-        else:
-            proof = collect_candidate(run)
-            expected = {'schema': 'skfleet.candidate/v1', 'card': card, 'token': run['token'],
-                        'host': run['host'], 'unit': run['unit'], 'invocation': run['invocation'],
-                        'owner': job['owner'], 'claim_revision': row['meta']['_claim_revision'],
-                        'base_revision': job['base_revision'], 'accepted': False}
-            if (any(proof.get(key) != value for key, value in expected.items())
-                    or proof.get('accepted') is not False
-                    or not re.fullmatch('[0-9a-f]{64}', str(proof.get('execution_sha256')))):
-                raise Refused('lifecycle-candidate-binding')
-            packet = validate_packet(proof['candidate'], {'job': job, 'receipt': run}, include_bundle=True)
-            evidence = home / 'evidence/work' / card / ('fiber-' + run['token'] + '.md')
-            _evidence(evidence, base64.b64decode(packet['evidence_b64'], validate=True))
-            receive({'sha256': packet['bundle_sha256'], 'bundle_b64': packet['bundle_b64']}, data_root)
-            revision = snapshot_revision(card)
-            fresh_job, fresh_row = _producer(run, policy, read_cards([card]))
-            verify(fresh_row, fresh_job)
-            if fresh_job != job or snapshot_revision(card) != revision:
-                raise Refused('lifecycle-source-raced')
-            intent = {'job': job, 'claim_revision': proof['claim_revision'],
-                      'token': run['token'], 'unit': run['unit'],
-                      'invocation': run['invocation'], 'execution_sha256': proof['execution_sha256'],
-                      'policy_sha256': digest(policy), 'source_revision': revision,
-                      'candidate': {key: value for key, value in packet.items() if not key.endswith('_b64')},
-                      'evidence_path': str(evidence)}
-            intent['transition_id'] = digest(intent)
-            _once(intent_path, intent)  # Intent survives a lost native write acknowledgement.
-        read_blob(Path(intent['evidence_path']), intent['candidate']['evidence_sha256'])
-        completed = directory / 'review-request.json'
-        if completed.exists() or completed.is_symlink():
-            request = _read(completed)
-            if snapshot_revision(card) != request['source_revision']:
-                raise Refused('lifecycle-source-superseded')
+            intent_path = directory / 'candidate-intent.json'
+            recovered_intent = intent_path.exists() or intent_path.is_symlink()
+            if recovered_intent:
+                intent = _read(intent_path)
+                if (intent.get('job') != job or intent.get('claim_revision') != row['meta']['_claim_revision']
+                        or intent.get('invocation') != run['invocation']
+                        or intent.get('policy_sha256') != digest(policy)):
+                    raise Refused('lifecycle-intent-changed')
+            else:
+                proof = collect_candidate(run)
+                expected = {'schema': 'skfleet.candidate/v1', 'card': card, 'token': run['token'],
+                            'host': run['host'], 'unit': run['unit'], 'invocation': run['invocation'],
+                            'owner': job['owner'], 'claim_revision': row['meta']['_claim_revision'],
+                            'base_revision': job['base_revision'], 'accepted': False}
+                if (any(proof.get(key) != value for key, value in expected.items())
+                        or proof.get('accepted') is not False
+                        or not re.fullmatch('[0-9a-f]{64}', str(proof.get('execution_sha256')))):
+                    raise Refused('lifecycle-candidate-binding')
+                packet = validate_packet(proof['candidate'], {'job': job, 'receipt': run}, include_bundle=True)
+                evidence = home / 'evidence/work' / card / ('fiber-' + run['token'] + '.md')
+                _evidence(evidence, base64.b64decode(packet['evidence_b64'], validate=True))
+                receive({'sha256': packet['bundle_sha256'], 'bundle_b64': packet['bundle_b64']}, data_root)
+                revision = snapshot_revision(card)
+                fresh_job, fresh_row = _producer(run, policy, read_cards([card]))
+                verify(fresh_row, fresh_job)
+                if fresh_job != job or snapshot_revision(card) != revision:
+                    raise Refused('lifecycle-source-raced')
+                intent = {'job': job, 'claim_revision': proof['claim_revision'],
+                          'token': run['token'], 'unit': run['unit'],
+                          'invocation': run['invocation'], 'execution_sha256': proof['execution_sha256'],
+                          'policy_sha256': digest(policy), 'source_revision': revision,
+                          'candidate': {key: value for key, value in packet.items() if not key.endswith('_b64')},
+                          'evidence_path': str(evidence)}
+                intent['transition_id'] = digest(intent)
+                _once(intent_path, intent)  # Intent survives a lost native write acknowledgement.
+            read_blob(Path(intent['evidence_path']), intent['candidate']['evidence_sha256'])
+            completed = directory / 'review-request.json'
+            if completed.exists() or completed.is_symlink():
+                request = _read(completed)
+                if snapshot_revision(card) != request['source_revision']:
+                    raise Refused('lifecycle-source-superseded')
+                guard()
+                _once(qualified / (request['job']['card'] + '.json'),
+                      {key: value for key, value in request.items() if key != 'source_revision'})
+                result['reviews'].append(collect_review(state, directory, request, intent,
+                    home=home, read_cards=read_cards, collect_candidate=collect_candidate,
+                    snapshot_revision=snapshot_revision, verify=verify, guard=guard,
+                    finish=finish, clock=clock, observe=observe, tests=tests))
+                continue
+            if recovered_intent:
+                # A lost acknowledgement is not permission to reuse a now-running,
+                # replaced or edited terminal workspace for another board write.
+                proof = collect_candidate(run)
+                expected = {'schema': 'skfleet.candidate/v1', 'card': card, 'token': run['token'],
+                            'host': run['host'], 'unit': run['unit'], 'invocation': run['invocation'],
+                            'owner': job['owner'], 'claim_revision': intent['claim_revision'],
+                            'base_revision': job['base_revision'], 'execution_sha256': intent['execution_sha256']}
+                packet = validate_packet(proof['candidate'], {'job': job, 'receipt': run}, include_bundle=True)
+                if (any(proof.get(key) != value for key, value in expected.items())
+                        or proof.get('accepted') is not False
+                        or {key: value for key, value in packet.items() if not key.endswith('_b64')} != intent['candidate']):
+                    raise Refused('lifecycle-recovered-candidate-changed')
             guard()
-            _once(qualified / (request['job']['card'] + '.json'),
-                  {key: value for key, value in request.items() if key != 'source_revision'})
-            result['reviews'].append(collect_review(state, directory, request, intent,
-                home=home, read_cards=read_cards, collect_candidate=collect_candidate,
-                snapshot_revision=snapshot_revision, verify=verify, guard=guard,
-                finish=finish, clock=clock, observe=observe, tests=tests))
-            continue
-        if recovered_intent:
-            # A lost acknowledgement is not permission to reuse a now-running,
-            # replaced or edited terminal workspace for another board write.
-            proof = collect_candidate(run)
-            expected = {'schema': 'skfleet.candidate/v1', 'card': card, 'token': run['token'],
-                        'host': run['host'], 'unit': run['unit'], 'invocation': run['invocation'],
-                        'owner': job['owner'], 'claim_revision': intent['claim_revision'],
-                        'base_revision': job['base_revision'], 'execution_sha256': intent['execution_sha256']}
-            packet = validate_packet(proof['candidate'], {'job': job, 'receipt': run}, include_bundle=True)
-            if (any(proof.get(key) != value for key, value in expected.items())
-                    or proof.get('accepted') is not False
-                    or {key: value for key, value in packet.items() if not key.endswith('_b64')} != intent['candidate']):
-                raise Refused('lifecycle-recovered-candidate-changed')
-        guard()
-        record_verdict(intent)  # A guarded request for review, not acceptance of the work.
-        verdict_path = directory / 'provisional-recorded.json'
-        revision = snapshot_revision(card)
-        _once(verdict_path, {'source_revision': revision, 'transition_id': intent['transition_id']})
-        guard()
-        opened = open_review(intent, revision)
-        review = opened.get('review_card_id')
-        if (opened.get('source_card') != card or opened.get('head_revision') != intent['candidate']['commit']
-                or opened.get('launchable') is not True or not re.fullmatch('[0-9a-f]{8}', str(review))):
-            raise Refused('lifecycle-review-binding')
-        family = 'zai' if job['provider'] == 'deepseek' else 'deepseek'
-        request = describe(review, 'review', family, producer_family=job['provider'])
-        if (request.get('card') != review or request.get('stage') != 'review'
-                or request.get('provider') != family or request.get('producer_provider') != job['provider']
-                or request.get('repository') != job['repository']
-                or request.get('base_revision') != intent['candidate']['commit']):
-            raise Refused('lifecycle-review-request-changed')
-        request['source_bundle'] = {'sha256': intent['candidate']['bundle_sha256'],
-                                   'base_revision': job['base_revision'],
-                                   'tree': intent['candidate']['tree'], 'ref': intent['candidate']['ref']}
-        if 'test_environment' in job:
-            request['test_environment'] = job['test_environment']
-        current = read_cards([review])
-        review_row = current[review]
-        verify(review_row, request)
-        if not eligible(review_row, current) or snapshot_revision(card) != revision:
-            raise Refused('lifecycle-review-not-current')
-        receipt = {'schema': SCHEMA, 'job': request, 'job_sha256': digest(request),
-                   'card_links_sha256': digest(review_row.get('links') or {}),
-                   'qualified_at': policy['qualified_at'], 'expires_at': policy['expires_at'],
-                   'evidence_sha256': digest(intent)}
-        guard()
-        _once(qualified / (review + '.json'), receipt)
-        _once(completed, {'source_revision': revision, **receipt})
-        result['reviews'].append({'card': card, 'review': review, 'state': 'prepared'})
-        break
+            record_verdict(intent)  # A guarded request for review, not acceptance of the work.
+            verdict_path = directory / 'provisional-recorded.json'
+            revision = snapshot_revision(card)
+            _once(verdict_path, {'source_revision': revision, 'transition_id': intent['transition_id']})
+            guard()
+            opened = open_review(intent, revision)
+            review = opened.get('review_card_id')
+            if (opened.get('source_card') != card or opened.get('head_revision') != intent['candidate']['commit']
+                    or opened.get('launchable') is not True or not re.fullmatch('[0-9a-f]{8}', str(review))):
+                raise Refused('lifecycle-review-binding')
+            family = 'zai' if job['provider'] == 'deepseek' else 'deepseek'
+            request = describe(review, 'review', family, producer_family=job['provider'])
+            if (request.get('card') != review or request.get('stage') != 'review'
+                    or request.get('provider') != family or request.get('producer_provider') != job['provider']
+                    or request.get('repository') != job['repository']
+                    or request.get('base_revision') != intent['candidate']['commit']):
+                raise Refused('lifecycle-review-request-changed')
+            request['source_bundle'] = {'sha256': intent['candidate']['bundle_sha256'],
+                                       'base_revision': job['base_revision'],
+                                       'tree': intent['candidate']['tree'], 'ref': intent['candidate']['ref']}
+            if 'test_environment' in job:
+                request['test_environment'] = job['test_environment']
+            current = read_cards([review])
+            review_row = current[review]
+            verify(review_row, request)
+            if not eligible(review_row, current) or snapshot_revision(card) != revision:
+                raise Refused('lifecycle-review-not-current')
+            receipt = {'schema': SCHEMA, 'job': request, 'job_sha256': digest(request),
+                       'card_links_sha256': digest(review_row.get('links') or {}),
+                       'qualified_at': policy['qualified_at'], 'expires_at': policy['expires_at'],
+                       'evidence_sha256': digest(intent)}
+            guard()
+            _once(qualified / (review + '.json'), receipt)
+            _once(completed, {'source_revision': revision, **receipt})
+            result['reviews'].append({'card': card, 'review': review, 'state': 'prepared'})
+            break
+        except (Refused, OSError, ValueError, KeyError, TypeError) as exc:
+            if not isolate_failures:
+                raise
+            result['waiting'].append({'card': card, 'state': 'blocked',
+                'reason': str(exc) if isinstance(exc, Refused) else type(exc).__name__})
     return result

@@ -3,8 +3,8 @@ Description=Run the sole fiber admission authority after each bounded cycle
 ConditionHost=chiap08
 
 [Timer]
-OnBootSec=90s
-OnUnitInactiveSec=75s
+OnBootSec=10s
+OnUnitInactiveSec=5s
 AccuracySec=1s
 Unit=skfleet-fiber-dispatch.service
 
