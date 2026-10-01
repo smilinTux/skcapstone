@@ -55,3 +55,9 @@ This commit stages source only. The exact overlay plan must record transformed
 script hashes, original file bytes and modes, removed drop-ins and rollback
 before deployment. Node eligibility remains a separate native configuration
 step, with all gateway and coordinator roles preserved.
+
+The effective drop-in audit retained the advisory dependency preflight once at
+the canonical generation entrypoint and retained the existing exact-claim
+fenced wedge actuator on Niobe. The misleading worker-readiness drop-ins only
+set old timeouts and the wrong authority host; shared production settings
+replace those. Fixed lane targets/model aliases are intentionally superseded.

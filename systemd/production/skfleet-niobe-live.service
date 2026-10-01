@@ -10,6 +10,7 @@ Environment=SKCAPSTONE_AGENT=niobe
 Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=SKFLEET_PRODUCTION_POLICY=%h/.skcapstone/fleet/production.json
 Environment=SKFLEET_AUTHORITY_HOST=chiap08
+Environment=SKFLEET_WEDGE_MODE=enforce
 Environment=SKFLEET_BEAT_INTERVAL=60
 Environment=SKFLEET_MAIL_RECIPIENTS=jarvis
 Environment=SKFLEET_EXCLUDED_MAIL_RECIPIENTS=lumina

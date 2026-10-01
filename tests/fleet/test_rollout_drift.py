@@ -790,6 +790,16 @@ def test_unreadable_checkout_is_missing_not_silently_clean(home: Path, monkeypat
     assert rollout_drift._checkout_git_sha(tmp_path / "nope") is None
 
 
+def test_production_templates_retain_preflight_and_fenced_wedge_actuation():
+    templates = REPO_ROOT / "systemd/production"
+    cycle = (templates / "skfleet-seat-cycle.service").read_text()
+    niobe = (templates / "skfleet-niobe-live.service").read_text()
+    assert "ExecStartPre=-%h/.skenv/bin/skcapstone preflight" in cycle
+    assert "Environment=SKFLEET_WEDGE_MODE=enforce" in niobe
+    for name in ("skfleet-atlas.service", "skfleet-seraph.service", "skfleet-rotate.service"):
+        assert "SKFLEET_WEDGE_MODE" not in (templates / name).read_text()
+
+
 def test_the_three_surfaces_are_named_distinctly(home: Path, monkeypatch):
     """Desync all three at once: the report must name each one separately.
 

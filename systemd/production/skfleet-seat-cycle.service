@@ -7,6 +7,7 @@ Type=oneshot
 Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=SKFLEET_PRODUCTION_POLICY=%h/.skcapstone/fleet/production.json
 Environment=SKFLEET_AUTHORITY_HOST=chiap08
+ExecStartPre=-%h/.skenv/bin/skcapstone preflight
 ExecStart=%h/.skenv/bin/python3 -m skcapstone.fleet.seat_cycle_orchestrator
 TimeoutStartSec=660
 NoNewPrivileges=yes
