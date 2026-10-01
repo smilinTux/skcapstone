@@ -129,6 +129,13 @@ def test_provider_neutral_routes_tier_policy_and_shared_capacity(tmp_path):
     snapshot = acquire_review_route_snapshot(
         "https://gateway", tmp_path / "snapshot.json", "cycle-1", opener=opener, now=lambda: now
     )
+    exact_model = next(row for row in documents["/v1/models"]["data"] if row["id"] == "route-cloud-medium")
+    retained = next(row for row in snapshot["routes"] if row["logical_route"] == "route-cloud-medium")
+    assert retained["gateway_model"] == exact_model
+    assert review_capacity._review_capacity_truth_is_current(snapshot)
+    retained["gateway_model"]["card"]["context_length"] = 98765
+    assert not review_capacity._review_capacity_truth_is_current(snapshot)
+    del retained["gateway_model"]["card"]["context_length"]
     routes = eligible_review_routes(
         snapshot, "M", [], "producer", "pi-seraph-review", {"cloud-b": 1}
     )

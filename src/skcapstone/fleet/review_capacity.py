@@ -163,6 +163,7 @@ def acquire_review_route_snapshot(
                     "state": state.get("state"),
                     "max": int(queue_row["max"]),
                     "gateway_active": int(queue_row.get("active", 0)),
+                    "gateway_model": model,
                 }
             )
         snapshot = {
