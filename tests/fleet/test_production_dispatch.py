@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from skcapstone.fleet.production_dispatch import (
+    cycle_budget_seconds,
     production_lanes,
     production_policy_from_environment,
     routes_for_lane,
@@ -238,6 +239,7 @@ def test_builder_offers_are_bounded_and_do_not_stop_after_first_success():
         "owned": [(0, 0, str(i), {}, []) for i in range(5)],
         "PRODUCTION_POLICY": policy(),
         "_cycle_started": 0,
+        "_production_cycle_budget": 250,
         "time": type("Clock", (), {"monotonic": staticmethod(lambda: 1)}),
         "builder_dispatch": Builder(),
         "fleet_store": SimpleNamespace(Writer=lambda **kwargs: kwargs),
@@ -248,3 +250,14 @@ def test_builder_offers_are_bounded_and_do_not_stop_after_first_success():
     exec(compile(ast.Module(body=[block], type_ignores=[]), str(ROTATE), "exec"), ns)
     assert offers == ["0", "1", "2"]
     assert [row[2] for row in ns["owned"]] == ["3", "4"]
+
+
+def test_serial_seat_budgets_reserve_cleanup_inside_generation():
+    assert cycle_budget_seconds(policy(), "atlas") == 125
+    assert cycle_budget_seconds(policy(), "seraph") == 125
+    assert cycle_budget_seconds(policy(), "niobe") == 250
+    assert (
+        sum(cycle_budget_seconds(policy(), seat) + 25 for seat in ("atlas", "seraph", "niobe"))
+        < 600
+    )
+    assert cycle_budget_seconds({**policy(), "cycle_budget_seconds": 60}, "atlas") == 60

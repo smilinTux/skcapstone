@@ -49,6 +49,7 @@ from skcapstone.fleet.production_dispatch import (
     production_lanes,
     worker_resource_properties,
     routes_for_lane,
+    cycle_budget_seconds,
 )
 from skcapstone.fleet.production_review import independent_review_routes
 
@@ -561,6 +562,8 @@ MAX_CANDIDATE_SCAN=max(
 if PRODUCTION_POLICY:
     MAX_CANDIDATE_SCAN=_SCAN_BUDGET
 ONLY_SEAT=os.environ.get("SKFLEET_ONLY_SEAT","").strip().lower()
+_production_cycle_budget=(cycle_budget_seconds(PRODUCTION_POLICY,ONLY_SEAT)
+                          if PRODUCTION_POLICY else 250)
 
 
 def _dispatch_writer(env=None):
@@ -7358,7 +7361,7 @@ log(
 # authority and this scheduler never impersonates a remote worker.
 if not DRY and _is_niobe_builder_host(HOST):
     for _candidate in tuple(_builder_candidates)[:MAX_CANDIDATE_SCAN]:
-        if PRODUCTION_POLICY and time.monotonic() - _cycle_started >= PRODUCTION_POLICY.get("cycle_budget_seconds",250):
+        if PRODUCTION_POLICY and time.monotonic() - _cycle_started >= _production_cycle_budget:
             break
         _remote_core = dict(_candidate[3], id=_candidate[2])
         try:
@@ -7955,7 +7958,7 @@ logdir=os.path.join(HOME,".skcapstone/fleet/logs"); os.makedirs(logdir,exist_ok=
 #: 20 seconds for cleanup and the final CYCLE_RECEIPT before it fires.
 _CYCLE_DEADLINE_RESERVE_S = 20
 _cycle_deadline = (
-    _cycle_started + PRODUCTION_POLICY.get("cycle_budget_seconds",250)
+    _cycle_started + _production_cycle_budget
     if PRODUCTION_POLICY else time.monotonic() + 270 - _CYCLE_DEADLINE_RESERVE_S
 )
 #: Per-cycle cache: equivalent logical routes are resolved and prefilled exactly once.

@@ -63,3 +63,9 @@ def routes_for_lane(routes, lane):
         if route.get("capacity_domain") in lane["capacity_domains"]
         and route.get("logical_route") == lane["model"]
     ]
+
+
+def cycle_budget_seconds(policy, seat=""):
+    """Leave cleanup time inside the serialized 600-second seat generation."""
+    budget = policy.get("cycle_budget_seconds", 250)
+    return min(budget, 125) if seat in {"atlas", "seraph"} else budget
