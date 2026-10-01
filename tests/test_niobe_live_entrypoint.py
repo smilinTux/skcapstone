@@ -86,7 +86,10 @@ def test_live_wrapper_validates_then_runs_exact_dispatcher(tmp_path: Path, monke
     def run_dispatcher(command, capture_output, text, check, env, timeout):
         calls.append((command, capture_output, text, check, env, timeout))
         evidence = (
-            tmp_path / "home/evidence/fleet-rotation" / env["SKFLEET_ROTATION_ID"] / "actions.log"
+            tmp_path
+            / "home/evidence/fleet-rotation"
+            / ("chiap08-" + env["SKFLEET_ROTATION_ID"])
+            / "actions.log"
         )
         evidence.parent.mkdir(parents=True)
         evidence.write_text(
@@ -193,7 +196,9 @@ def test_live_wrapper_deduplicates_one_systemd_invocation(tmp_path: Path, monkey
     monkeypatch.setattr("skcapstone.niobe_live_entrypoint.poll_mail", lambda *a, **k: mailbox)
 
     def runner(*args, **kwargs):
-        evidence = tmp_path / "home/evidence/fleet-rotation" / ("1" * 32) / "actions.log"
+        evidence = (
+            tmp_path / "home/evidence/fleet-rotation" / ("chiap08-" + "1" * 32) / "actions.log"
+        )
         evidence.parent.mkdir(parents=True, exist_ok=True)
         evidence.write_text("NOOP_RECEIPT|chiap08|reason=rotation_overlap|seat=niobe\n")
         return SimpleNamespace(returncode=0)
@@ -256,7 +261,9 @@ def test_live_wrapper_rejects_unterminated_rotation_evidence(tmp_path: Path, mon
 
     def unterminated(*args, **kwargs):
         cycle_id = kwargs["env"]["SKFLEET_ROTATION_ID"]
-        evidence = tmp_path / "home/evidence/fleet-rotation" / cycle_id / "actions.log"
+        evidence = (
+            tmp_path / "home/evidence/fleet-rotation" / ("chiap08-" + cycle_id) / "actions.log"
+        )
         evidence.parent.mkdir(parents=True)
         evidence.write_text(
             "NOOP_RECEIPT|chiap08|reason=rotation_overlap|seat=niobe\n"

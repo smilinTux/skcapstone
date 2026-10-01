@@ -203,7 +203,7 @@ def run_live(
         else hashlib.sha256(f"{activation.card_revision}:{started_at}".encode()).hexdigest()[:32]
     )
     environment["SKFLEET_ROTATION_ID"] = cycle_id
-    evidence_path = home / "evidence" / "fleet-rotation" / cycle_id / "actions.log"
+    evidence_path = home / "evidence" / "fleet-rotation" / f"{host}-{cycle_id}" / "actions.log"
     command = [sys.executable, str(dispatcher), "--go"]
     try:
         completed = (

@@ -8570,6 +8570,17 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             "SKIPPED_LANE_HEALTH|%s|%s|%s|lane=%s|model=%s|reason=%s"%
             (HOST,sess,cid,_LANE["name"],model,health_reason))
         continue
+    # Reject unsupported tests before spending tokens on route qualification.
+    try:
+        if PRODUCTION_POLICY and _governed_review_metadata(
+                fresh_claimability["core"], fresh_claimability["labels"]) is None:
+            from skcapstone.fleet.production_test_profile import preflight as test_preflight
+            test_preflight(Path(HOME)/".skcapstone", dict(fresh_claimability["core"], id=cid),
+                           fresh_claimability["labels"], PRODUCTION_POLICY)
+    except (OSError,ValueError) as exc:
+        log(d,"TEST_PROFILE_BLOCKED|%s|%s|%s"%(HOST,cid,exc))
+        _record_workspace_cooldown(cid)
+        continue
     # Link's recommendation appends evidence. Compare the bounded admission
     # after lane health so no event mutates the card before the final preclaim.
     try:
@@ -8644,11 +8655,6 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         break
     default_workspace=os.path.join(HOME,".skcapstone/fleet/workspaces",name)
     try:
-        if PRODUCTION_POLICY and _governed_review_metadata(
-                fresh_claimability["core"], fresh_claimability["labels"]) is None:
-            from skcapstone.fleet.production_test_profile import preflight as test_preflight
-            test_preflight(Path(HOME)/".skcapstone", dict(fresh_claimability["core"], id=cid),
-                           fresh_claimability["labels"], PRODUCTION_POLICY)
         _source_spec = _preclaim_worker_source(
             fresh_claimability["core"], fresh_claimability["labels"]
         )
