@@ -137,15 +137,73 @@ def steps(context, acceptance):
     return result
 
 
+def _historical_acceptance(home, context, historical, inspect):
+    """Read immutable accepted proof anchored in both completed native cards."""
+    from .production_test_plan import check_binding, junit_counts, read_private, sha
+
+    acceptance = historical.get("test_receipt")
+    binding = context["test_binding"]
+    check_binding(binding)
+    if (historical.get("accepted") is not True or not isinstance(acceptance, dict)
+            or historical.get("context_sha256") != _digest(context)
+            or any(context["source"].get(key) != binding[field] for key, field in (
+                ("card", "source_card"), ("head", "source_head"), ("tree", "source_tree"),
+                ("owner", "source_owner"), ("claim", "source_claim_revision")))):
+        raise ReviewEvidenceError("historical acceptance context changed")
+    store = CardStore(home)
+    for role in ("source", "review"):
+        card = context[role]["card"]
+        state, row = inspect(home, card), store.fold(card)
+        if (state["revision"] != historical.get("revisions", {}).get(role)
+                or state["status"] != "done" or state["owner"] is not None
+                or state["claim_revision"] is not None or row is None
+                or json.loads(row.links.get("test_acceptance", "null")) != acceptance):
+            raise ReviewEvidenceError("historical acceptance lacks exact native completion")
+    plan_path = Path(home) / "fleet/test-plans" / (
+        binding["source_card"] + "-" + binding["source_head"] + ".json"
+    )
+    raw_plan = read_private(plan_path)
+    plan_sha = sha(raw_plan)
+    if acceptance.get("plan_sha256") != plan_sha:
+        raise ReviewEvidenceError("retained historical test plan changed")
+    plan = json.loads(raw_plan)
+    directory = Path(home) / "fleet/test-runs" / plan_sha
+    receipt_path = directory / "receipt.json"
+    raw_receipt = read_private(receipt_path)
+    receipt = json.loads(raw_receipt)
+    if (acceptance.get("receipt_path") != str(receipt_path)
+            or acceptance.get("receipt_sha256") != sha(raw_receipt)
+            or acceptance.get("source_head") != binding["source_head"]
+            or plan.get("binding") != binding or receipt.get("binding") != binding
+            or receipt.get("plan_sha256") != plan_sha
+            or receipt.get("checks") != acceptance.get("checks")):
+        raise ReviewEvidenceError("retained historical test proof changed")
+    for check in receipt["checks"]:
+        # IDs were accepted through fixed templates; never use a local path from history.
+        if (check.get("id") not in {"pytest", "compile", "lint", "changelog"}
+                or check.get("exit_code") != 0
+                or sha(read_private(directory / (check["id"] + ".log")))
+                != check.get("output_sha256")):
+            raise ReviewEvidenceError("historical raw test output changed")
+    raw_junit = read_private(directory / "pytest.xml")
+    counts = junit_counts(raw_junit, plan.get("profile"))
+    if (receipt.get("junit_sha256") != sha(raw_junit)
+            or receipt.get("counts") != counts or acceptance.get("counts") != counts):
+        raise ReviewEvidenceError("historical JUnit proof changed")
+    return acceptance
+
+
 def finish_pair(home, directory, context, *, guard, command=native_command, inspect=native_state):
     """Finish an exact tested pair idempotently, recovering even lost CLI replies."""
     from .production_tests import validate_test_receipt
 
     directory = Path(directory)
     artifacts(context)
-    acceptance = validate_test_receipt(
-        home, context["test_binding"], Path(context["source_workspace"])
-    )
+    finished = directory / "finished.json"
+    historical = read_json(finished) if finished.exists() else None
+    acceptance = (_historical_acceptance(home, context, historical, inspect)
+                  if historical is not None else validate_test_receipt(
+                      home, context["test_binding"], Path(context["source_workspace"])))
     binding = {
         "controller": context["controller"],
         "context_sha256": _digest(context),
@@ -153,15 +211,19 @@ def finish_pair(home, directory, context, *, guard, command=native_command, insp
     }
     initial = {name: context[name]["revision"] for name in ("source", "review")}
     intent = directory / "finish-intent.json"
-    finished = directory / "finished.json"
-    historical = read_json(finished) if finished.exists() else None
     if not intent.exists():
+        if historical is not None:
+            raise ReviewEvidenceError("historical acceptance intent missing")
         guard()
         if any(
             inspect(home, context[name]["card"])["revision"] != initial[name] for name in initial
         ):
             raise ReviewEvidenceError("acceptance generation changed")
-    once(intent, binding)
+    if historical is not None:
+        if read_json(intent) != binding:
+            raise ReviewEvidenceError("historical acceptance intent changed")
+    else:
+        once(intent, binding)
     expected = initial
     for index, (role, action, key, value) in enumerate(steps(context, acceptance)):
         item = context[role]
@@ -280,5 +342,9 @@ def finish_pair(home, directory, context, *, guard, command=native_command, insp
         "test_receipt": acceptance,
         "governed_pr_ci": False,
     }
-    once(finished, result)
+    if historical is not None:
+        if historical != result:
+            raise ReviewEvidenceError("historical acceptance result changed")
+    else:
+        once(finished, result)
     return result

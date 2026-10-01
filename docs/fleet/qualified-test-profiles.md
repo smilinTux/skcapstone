@@ -43,3 +43,11 @@ unrelated tests. Qualification does not authorize protected Matter access.
 Deployment changes only the reviewed runtime modules and dispatcher. Rollback
 restores their exact preimages. Retain profile, plan, request and receipt evidence;
 do not rewrite earlier candidates or release existing claims during rollout.
+
+Already accepted pairs use their retained historical proof after an upgrade.
+Both native cards must still be DONE and unowned at the recorded revisions, with
+the exact accepted test receipt in their native links. The controller rehashes
+the historical plan, receipt, raw logs and JUnit, and verifies the original
+context, intent and complete acknowledgement chain without any writes. It does
+not require the old plan to match today's runtime or regenerate old commands.
+New or unfinished pairs still require the current qualified runtime.

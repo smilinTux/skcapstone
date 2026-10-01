@@ -47,3 +47,22 @@ qualified runner and remains unsupported. No profiles were registered in the
 live fleet, no workers launched, no services changed and no source was pushed.
 Installation requires the exact independent review and coordinated final batch.
 Rollback restores changed modules/script, preserving profile and plan history.
+
+## Historical acceptance followup
+
+Root identified that completed pairs still revalidated the old plan against the
+current runtime before reading their finished record. The narrow followup reads
+historical proof only when finished evidence exists and both native cards remain
+DONE, unowned and at their recorded final revisions. Their native test_acceptance
+links must match the retained receipt. The historical plan, receipt, raw output
+and JUnit remain hashed, and the original context, intent and complete step/ack
+chain are checked. This branch performs no writes and cannot complete a new pair.
+Active and incomplete pairs keep full current-runtime validation.
+
+Seventy-seven affected tests pass with zero skips in 32.16 seconds. Sixteen new
+cases use real private test artifacts and explicit synthetic native completed
+card observations: accepted-after-upgrade with zero writes; changed plan,
+receipt, log, JUnit, report, context, native proof or generation; missing intent
+or ack history; and unfinished work still refusing a changed runtime. They do
+not fabricate production acceptance. The bounded delta review is retained
+separately in the private card evidence directory.
