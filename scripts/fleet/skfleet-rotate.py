@@ -681,7 +681,8 @@ def _worker_launch_command(unit, workspace, inner):
     production_env=[]
     if globals().get("PRODUCTION_POLICY"):
         production_env=["--setenv=SKFLEET_PRODUCTION_POLICY="+
-            os.environ["SKFLEET_PRODUCTION_POLICY"]]
+            os.environ["SKFLEET_PRODUCTION_POLICY"],
+            "--setenv=SKFLEET_AUTHORITY_HOST="+PRODUCTION_POLICY["authority_host"]]
     return [
         "systemd-run", "--user", "--quiet", "--collect", "--service-type=exec",
         "--unit", unit, "--property=KillMode=control-group",

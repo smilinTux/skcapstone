@@ -89,6 +89,7 @@ def test_actual_launch_keeps_child_argv_and_enforces_node_quota(monkeypatch):
     command = launch("worker.service", "/workspace", argv)
     assert command[-len(argv) :] == argv
     assert "--setenv=SKFLEET_PRODUCTION_POLICY=/private/production.json" in command
+    assert "--setenv=SKFLEET_AUTHORITY_HOST=controller" in command
     for expected in (
         "CPUQuota=200%",
         "MemoryMax=3221225472",

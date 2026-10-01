@@ -66,9 +66,20 @@ def test_exact_five_host_lane_targets_and_chiap08_dry_summary() -> None:
     )
 
     source = ROTATE.read_text(encoding="utf-8")
-    assert 'TARGET=_required_lane_target("SKFLEET_TARGET")' in source
-    assert 'GLM_TARGET=_required_lane_target("SKFLEET_GLM_TARGET")' in source
-    assert 'QWEN_TARGET=_required_lane_target("SKFLEET_QWEN_TARGET", default="6")' in source
+    assert (
+        'TARGET=_SCAN_BUDGET if PRODUCTION_POLICY else _required_lane_target("SKFLEET_TARGET")'
+        in source
+    )
+    assert (
+        'GLM_TARGET=_SCAN_BUDGET if PRODUCTION_POLICY else '
+        '_required_lane_target("SKFLEET_GLM_TARGET")'
+        in source
+    )
+    assert (
+        'QWEN_TARGET=_SCAN_BUDGET if PRODUCTION_POLICY else '
+        '_required_lane_target("SKFLEET_QWEN_TARGET", default="6")'
+        in source
+    )
     assert '"target":TARGET' in source
     assert '"target":0 if glm_held or not glm_catalog_ready else GLM_TARGET' in source
     assert '"target":QWEN_TARGET' in source
@@ -267,10 +278,14 @@ def test_existing_holds_reservations_capacity_and_cadence_remain() -> None:
     assert '_NOT_CLAIMABLE = {"not-claimable", "sprint-container", "do-not-claim"}' in rotate
     assert "if non_implementation(folded_core, labels):" in rotate
     assert "pin = host_pin(folded_core, labels)" in rotate
-    assert 'MAX_LAUNCH=int(os.environ.get("SKFLEET_MAX_LAUNCH","11"))' in rotate
+    assert (
+        'MAX_LAUNCH=_SCAN_BUDGET if PRODUCTION_POLICY else '
+        'int(os.environ.get("SKFLEET_MAX_LAUNCH","11"))'
+        in rotate
+    )
     assert 'remaining={lane["name"]:lane["free"] for lane in LANES}' in rotate
     assert "off = ROTATION_HOSTS.index(HOST) if HOST in ROTATION_HOSTS else 0" in rotate
-    assert '_LANE_RANK={"qwen":0,"glm":1,"codex":2,"kimi":3,"escalate":4}' in rotate
+    assert '_LANE_RANK={"qwen":0,"glm":1,"deepseek":2,"codex":3,"kimi":4,"escalate":5}' in rotate
     assert "chiap01 chiap02 chiap03 chiap04 chiap08" in watch
     assert "sleep 300" in watch
 
