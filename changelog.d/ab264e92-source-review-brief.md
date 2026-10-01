@@ -1,0 +1,1 @@
+- Card `ab264e92`: select a dedicated production source-only reviewer brief after claim, using the existing native applicability contract and reviewed private evidence staging. Derive source identities from Git, exclude hosted-CI/PR/self-completion instructions, retain legacy/hosted paths, and document external acceptance verification as a separate prerequisite.

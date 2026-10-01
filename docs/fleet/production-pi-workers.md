@@ -140,6 +140,44 @@ allows it. Do not bulk rename Jarvis-owned cards: audit each current claim,
 session and handoff evidence first. BLOCKED with a precise reason is valid;
 a worker exit or optimistic final message is not completion.
 
+### Source-only reviewer handoff
+
+The dedicated source-only reviewer brief correction is pending rollout under
+card `ab264e92`. It replaces contradictory hosted-CI instructions only for
+qualified production source-only reviews. Hosted PR reviews retain their
+protected-check requirements.
+
+- Use the existing native `source-only-applicability` receipt for an authorized
+  local source-only PASS. Bind its source head, reviewer and review-report digest
+  exactly, after recording the report/digest and actual verdict. Do not add PR,
+  hosted-check or fabricated CI links to satisfy a different contract.
+- Derive source HEAD and tree from Git. Commit only the authorized reviewer
+  report and decision, then record the evidence commit externally. Never put
+  the containing commit's hash into its own committed file. Keep the evidence
+  branch checked out and preserve all commits.
+- Decision schema `skfleet.source-review-decision/v1` carries exact card,
+  parent_card, source_head, source_tree, reviewer_identity, verdict and the
+  report_sha256 computed before the decision/evidence commit. Publish each
+  authority metadata link with source/claim revision guards and a transition ID;
+  carry its returned source revision into the next write. Missing guards refuse
+  handoff, with no unguarded fallback.
+- Test claims require observed commands and outputs. A local Python 3.12 test
+  run does not prove Python 3.11, secret scanning, hosted CI or unrelated checks.
+  Report failures and missing checks honestly; do not relabel them SUCCESS.
+- Reviewers never complete their own cards, release claims or send unsolicited
+  messages. Native lifecycle actions follow exact external evidence validation.
+- A prompt cannot guarantee truth. Deterministic external verification of the
+  committed decision's exact source binding, allowed evidence-only changes and
+  test evidence remains a prerequisite. The current native completion validator
+  does not inspect `REVIEW-DECISION.json`; its applicability receipt alone is not
+  independent artifact verification.
+- Preserve invalid review `3054d5f1` and its original artifacts as invalid
+  history. A corrected brief does not retrospectively approve that review or
+  source `89508f83`. The failed trial consumed 56 tool calls, six evidence
+  commits and 1,493,843 harness tokens (1,483,944 input and 9,899 output), recorded
+  in parent evidence `REVIEW-TRIAL-LEARNINGS-20261001.json`. Stop hash-pinning loops
+  and contradictory handoffs before another expensive session.
+
 ## Qualification and rollback
 
 Before wider admission, require the exact integrated candidate, independent
