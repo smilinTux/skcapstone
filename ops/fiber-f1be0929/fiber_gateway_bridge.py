@@ -10,12 +10,18 @@ import sys
 import threading
 import urllib.request
 from contextlib import contextmanager
+from datetime import timezone
+from email.utils import format_datetime, parsedate_to_datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 MAX_BODY = 4 * 1024 * 1024
 MAX_RESPONSE = 16 * 1024 * 1024
-MAX_REQUESTS = 64
+# Evidence memory is bounded independently of the number of model requests.
+MAX_FAILURES = 64
+# Gateway may queue 300s, execute 300s, and wait 30s for a provider retry.
+GATEWAY_TIMEOUT = 660
+PRIVATE_TIMEOUT = GATEWAY_TIMEOUT + 30
 
 
 class Usage:
@@ -113,11 +119,24 @@ def validate_payload(path, raw, model):
     if set(body) - allowed or body.get("n", 1) != 1 or body.get("store", False) is not False:
         raise ValueError("completion-options-refused")
     for field in ("max_tokens", "max_completion_tokens"):
-        if field in body and (type(body[field]) is not int or not 1 <= body[field] <= 8192):
+        if field in body and (type(body[field]) is not int or body[field] < 1):
             raise ValueError("completion-budget-refused")
-    if not any(field in body for field in ("max_tokens", "max_completion_tokens")):
-        raise ValueError("completion-budget-required")
     return body
+
+
+def retry_after(value):
+    """Relay only normalized HTTP retry timing, never arbitrary header text."""
+    if not isinstance(value, str) or len(value) > 64 or not value.isascii():
+        return None
+    if value.isdecimal() and len(value) <= 10:
+        return str(int(value))
+    if any(ord(char) < 32 or ord(char) == 127 for char in value):
+        return None
+    try:
+        date = parsedate_to_datetime(value)
+        return format_datetime(date.astimezone(timezone.utc), usegmt=True) if date.tzinfo else None
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -132,7 +151,7 @@ class QuietHandler(BaseHTTPRequestHandler):
 
     def setup(self):
         super().setup()
-        self.connection.settimeout(150)
+        self.connection.settimeout(PRIVATE_TIMEOUT)
         self.response_started = False
 
     def read_body(self):
@@ -152,6 +171,9 @@ class QuietHandler(BaseHTTPRequestHandler):
         """Stream bounded bytes without propagating upstream secret headers."""
         self.send_response(response.status)
         self.send_header("Content-Type", response.headers.get("Content-Type", "application/json"))
+        delay = retry_after(response.headers.get("Retry-After"))
+        if response.status in {402, 429, 503} and delay is not None:
+            self.send_header("Retry-After", delay)
         self.send_header("Connection", "close")
         self.end_headers()
         self.response_started = True
@@ -180,10 +202,6 @@ class GatewayHandler(QuietHandler):
         """Use the controller's pinned endpoint, credential and claim check."""
         try:
             raw = self.read_body()
-            if self.server.requests >= MAX_REQUESTS:
-                self.server.budget_refusals += 1
-                self.send_error(429, "task-request-budget-exhausted")
-                return
             self.server.requests += 1
             validate_payload(self.path, raw, self.server.model)
             self.server.check_claim()
@@ -195,7 +213,7 @@ class GatewayHandler(QuietHandler):
                     "Authorization": "Bearer " + self.server.credential,
                 },
             )
-            with self.server.opener.open(request, timeout=120) as response:
+            with self.server.opener.open(request, timeout=GATEWAY_TIMEOUT) as response:
                 family = response.headers.get(
                     "x-sk-provider", response.headers.get("x-sk-backend")
                 )
@@ -224,15 +242,28 @@ class GatewayHandler(QuietHandler):
                 "response-size",
             }:
                 failure["reason"] = str(exc)
-            if len(self.server.failures) < MAX_REQUESTS:
+            if len(self.server.failures) < MAX_FAILURES:
                 self.server.failures.append(failure)
             # No raw exception text: it may include tokens, URLs or prompt text.
             self.close_connection = True
             if not self.response_started:
                 try:
-                    self.send_error(502, "bounded-gateway-request-refused")
+                    status = exc.code if isinstance(exc, urllib.error.HTTPError) and 400 <= exc.code <= 599 else 502
+                    delay = retry_after(exc.headers.get("Retry-After")) if isinstance(exc, urllib.error.HTTPError) else None
+                    payload = json.dumps({"error": {"type": "gateway_request_refused", "status": status}}).encode()
+                    self.send_response(status)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.send_header("Connection", "close")
+                    if status in {402, 429, 503} and delay is not None:
+                        self.send_header("Retry-After", delay)
+                    self.end_headers()
+                    self.response_started = True
+                    self.wfile.write(payload)
                 except OSError:
                     pass
+            if isinstance(exc, urllib.error.HTTPError):
+                exc.close()
 
 
 @contextmanager
@@ -292,7 +323,7 @@ class UnixConnection(http.client.HTTPConnection):
 class PrivateBridge(QuietHandler):
     def do_POST(self):
         """Translate private-loopback HTTP to the fixed host-side socket."""
-        connection = UnixConnection("unused", timeout=150)
+        connection = UnixConnection("unused", timeout=PRIVATE_TIMEOUT)
         try:
             raw = self.read_body()
             connection.request(

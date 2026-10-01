@@ -1,0 +1,1 @@
+- Preserve sanitized SKGateway backpressure and retry timing through both Fiber bridge hops, remove duplicate request and output-token ceilings, and align transport waits with the live gateway contract while retaining private usage accounting.
