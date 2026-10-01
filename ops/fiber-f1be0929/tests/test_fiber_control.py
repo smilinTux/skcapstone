@@ -20,6 +20,7 @@ class ControlTest(unittest.TestCase):
             root = Path(td); queue = root / 'jobs'; queue.mkdir(mode=0o700)
             for cid in ('1234abcd', '1234abce'):
                 (queue / (cid + '.json')).write_text(json.dumps(job(cid)))
+                (queue / (cid + '.json')).chmod(0o600)
             rows = {cid: {'id': cid} for cid in ('1234abcd', '1234abce')}
             with patch.object(control, 'STATE', root / 'state'), patch.object(control, 'QUEUE', queue), \
                  patch.object(control, 'HOLD', root / 'HOLD'), \
@@ -390,8 +391,10 @@ class ControlTest(unittest.TestCase):
             control.QUEUE.mkdir(parents=True)
             for index in range(40):
                 (control.QUEUE / f'{index:08x}.json').write_text('not json, must not be read')
+                (control.QUEUE / f'{index:08x}.json').chmod(0o600)
             for index in range(40, 80):
                 (control.QUEUE / f'{index:08x}.json').write_text(json.dumps(job(f'{index:08x}')))
+                (control.QUEUE / f'{index:08x}.json').chmod(0o600)
             cards.return_value = {f'{index:08x}': {'id': f'{index:08x}'} for index in range(40, 80)}
             control.cycle()
             self.assertLessEqual(dispatch.call_count, control.MAX_INPUTS)
