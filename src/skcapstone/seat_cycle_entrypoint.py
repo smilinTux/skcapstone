@@ -26,12 +26,15 @@ from skcoord.card_store import CardStore
 
 from .estate import host_lifecycle_claim
 from .fleet.deployment_manifest import DISPATCHER_RELATIVE_PATH, deployed_artifact_path
+from .fleet.production_dispatch import cycle_budget_seconds, production_lanes
+from .fleet.production_policy import load_production_policy
 from .fleet.rotation_lock import SERAPH_LOCK_WAIT_SECONDS
 from .lifecycle_seats import LIFECYCLE_SEATS
 from .link_cycle import recommend_one_reviewer
 from .link_observation_feed import ObservationFeedError, load_observation_feed
 from .link_review_work import load_review_work, reconcile_review_work_batch
 from .mero_census import run_blocker_census
+from .niobe_live_entrypoint import _production_environment
 from .receipt_output import condense_dispatcher_output
 from .seat_boundaries import BoundaryError, canonical_principal
 from .seat_cycle_guard import CycleResult, SeatCycleGuard
@@ -416,6 +419,8 @@ def presence_operation() -> dict[str, int | str]:
 def verify_seraph_dispatch(
     home: Path,
     completed: subprocess.CompletedProcess[str],
+    *,
+    production_policy: dict | None = None,
 ) -> dict[str, int | str]:
     """Verify every selector result independently and report partial outcomes."""
 
@@ -509,6 +514,10 @@ def verify_seraph_dispatch(
                 for domain in route_identity.get("capacity_domains", [])
             )
         )
+        if production_policy is not None:
+            model_allowed = model_allowed and _policy_launch_allowed(
+                production_policy, launch, route_identity
+            )
         common_valid = (
             card is not None
             and launch["card"] not in seen_cards
@@ -668,11 +677,12 @@ def _resolve_seraph_dispatch_timeout_seconds() -> int:
 
 
 def _run_seraph_dispatcher(
-    command: list[str], *, environment: dict[str, str]
+    command: list[str], *, environment: dict[str, str], timeout: int | None = None
 ) -> subprocess.CompletedProcess[str]:
     """Run Seraph in an isolated process group and reap it on timeout."""
 
-    timeout = _resolve_seraph_dispatch_timeout_seconds()
+    if timeout is None:
+        timeout = _resolve_seraph_dispatch_timeout_seconds()
     if subprocess.run is not _SUBPROCESS_RUN:
         return subprocess.run(
             command,
@@ -713,6 +723,69 @@ def _run_seraph_dispatcher(
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
+def _policy_launch_allowed(policy: dict, launch: dict, route: dict | None = None) -> bool:
+    """Bind a production receipt to the configured model and backend family."""
+    lanes = {lane["name"]: lane for lane in production_lanes(policy, 1)}
+    lane = lanes.get(launch["lane"])
+    if (
+        lane is None
+        or not lane["target"]
+        or launch["host"] != policy["authority_host"]
+        or launch["model"] != lane["model"]
+    ):
+        return False
+    if route is None:
+        return True
+    domains = route.get("capacity_domains")
+    return (
+        route.get("provider") == "skgateway"
+        and route.get("model_or_bucket") == lane["model"]
+        and isinstance(domains, list)
+        and len(domains) == 1
+        and domains[0] in lane["capacity_domains"]
+    )
+
+
+def _production_seat_operation(home: Path, seat: str, dispatcher: Path) -> dict:
+    """Use one qualified policy while retaining native receipt verification."""
+    host = socket.gethostname().strip().lower()
+    environment = _production_environment(dispatcher, host=host)
+    policy = load_production_policy(Path(environment["SKFLEET_PRODUCTION_POLICY"]), host=host)
+    obsolete = {
+        "SKFLEET_SEAT_TARGET",
+        "SKFLEET_MAX_LAUNCH",
+        "SKFLEET_CODEX_PHYSICAL_LIMIT",
+        "SKFLEET_REVIEW_MAXIMUM",
+        "SKFLEET_SERAPH_BATCH_SIZE",
+        "SKFLEET_ATLAS_BATCH_SIZE",
+    }
+    for key in tuple(environment):
+        if key in obsolete or key.startswith(("SKFLEET_MODEL_", "SKFLEET_CODEX_MODEL_")):
+            del environment[key]
+    environment["SKFLEET_ONLY_SEAT"] = seat
+    environment["SKFLEET_AUTHORITY_HOST"] = policy["authority_host"]
+    # The dispatcher stops at the shared budget. The wrapper allows bounded
+    # cleanup before reaping its process group and the outer seat waits 310s.
+    timeout = cycle_budget_seconds(policy, seat) + 25
+    try:
+        completed = _run_seraph_dispatcher(
+            [str(dispatcher), "--go"], environment=environment, timeout=timeout
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "cards_examined": 0,
+            "recommendations": 0,
+            "suppressed": 1,
+            "dispatch_failed": 1,
+            "reason": f"{seat}_dispatch_timeout",
+            "exception_type": type(exc).__name__,
+            "cleanup": "process_group_reaped",
+        }
+    if seat == "seraph":
+        return verify_seraph_dispatch(home, completed, production_policy=policy)
+    return verify_role_dispatch(home, completed, seat, production_policy=policy)
+
+
 def seraph_operation(home: Path) -> dict[str, int | str]:
     """Launch one configurable, bounded Seraph review batch.
 
@@ -742,6 +815,8 @@ def seraph_operation(home: Path) -> dict[str, int | str]:
             "dispatch_failed": 1,
             "reason": "seraph_dispatcher_missing",
         }
+    if "SKFLEET_PRODUCTION_POLICY" in os.environ:
+        return _production_seat_operation(home, "seraph", dispatcher)
     try:
         batch_size = int(os.environ.get("SKFLEET_SERAPH_BATCH_SIZE", "2"))
     except ValueError:
@@ -797,6 +872,8 @@ def verify_role_dispatch(
     completed: subprocess.CompletedProcess[str],
     seat: str,
     accepted_models: Iterable[str] | None = None,
+    *,
+    production_policy: dict | None = None,
 ) -> dict[str, int | str]:
     """Verify a bounded ATLAS selector result.
 
@@ -854,7 +931,9 @@ def verify_role_dispatch(
 
     store = CardStore(home)
     accepted = (
-        set(accepted_models)
+        {lane["model"] for lane in production_lanes(production_policy, 1) if lane["target"]}
+        if production_policy is not None
+        else set(accepted_models)
         if accepted_models is not None
         else set(resolve_size_class_models().values())
     )
@@ -872,7 +951,11 @@ def verify_role_dispatch(
             and launch["owner"].startswith(f"pi-{seat}-")
             and seat_labels == {f"seat-{seat}"}
             and "dispatch-approved" in labels
-            and launch["lane"] == "codex"
+            and (
+                _policy_launch_allowed(production_policy, launch)
+                if production_policy is not None
+                else launch["lane"] == "codex"
+            )
             and launch["model"] in accepted
         )
         seen_cards.add(launch["card"])
@@ -906,7 +989,9 @@ def verify_role_dispatch(
     reason = (
         f"{seat}_dispatch_partial"
         if succeeded and suppressed
-        else f"{seat}_dispatch_complete" if succeeded else f"{seat}_dispatch_failed"
+        else f"{seat}_dispatch_complete"
+        if succeeded
+        else f"{seat}_dispatch_failed"
     )
     return {
         "cards_examined": len(launches),
@@ -975,6 +1060,8 @@ def role_dispatch_operation(home: Path, seat: str) -> dict[str, int | str]:
             "dispatch_failed": 1,
             "reason": f"{seat}_dispatcher_missing",
         }
+    if seat == "atlas" and "SKFLEET_PRODUCTION_POLICY" in os.environ:
+        return _production_seat_operation(home, seat, dispatcher)
     env_name = f"SKFLEET_{seat.upper()}_BATCH_SIZE"
     try:
         batch_size = int(os.environ.get(env_name, "2"))

@@ -117,6 +117,208 @@ def review_events(
     return events
 
 
+@pytest.fixture
+def production_policy(tmp_path, monkeypatch, installed_dispatcher):
+    policy = {
+        "schema": "skfleet.production/v1",
+        "authority_host": "chiap08",
+        "capacity_authority": "skgateway",
+        "gateway_url": "http://chiap01:18790",
+        "lanes": {
+            name: {"enabled": True, "provider": "skgateway", "model": model}
+            for name, model in {
+                "codex": "gpt-5.6-sol",
+                "glm": "sk-zai-m",
+                "deepseek": "deepseek-flash",
+                "qwen": "qwen3.8-27b-huihui-abliterated-q4_k_m",
+            }.items()
+        },
+        "cycle_budget_seconds": 250,
+        "scan_budget": 32,
+    }
+    policy["lanes"]["kimi"] = {"enabled": False}
+    path = tmp_path / "production.json"
+    path.write_text(json.dumps(policy))
+    installed_dispatcher.write_text("SKFLEET_PRODUCTION_POLICY_V1 = True\n")
+    monkeypatch.setenv("SKFLEET_PRODUCTION_POLICY", str(path))
+    monkeypatch.setattr(seat_entrypoint.socket, "gethostname", lambda: "chiap08")
+    return policy
+
+
+@pytest.mark.parametrize("seat", ["atlas", "seraph"])
+def test_production_seats_use_policy_without_legacy_batch_or_model_caps(
+    tmp_path, monkeypatch, production_policy, seat
+):
+    monkeypatch.setenv(f"SKFLEET_{seat.upper()}_BATCH_SIZE", "0")
+    monkeypatch.setenv("SKFLEET_MODEL_S", "obsolete-alias")
+    captured = {}
+
+    def run(command, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            returncode=0, stdout=f"NOOP_RECEIPT|chiap08|reason=no_eligible_work|seat={seat}\n"
+        )
+
+    monkeypatch.setattr(seat_entrypoint.subprocess, "run", run)
+    if seat == "seraph":
+        seraph_operation(tmp_path)
+    else:
+        role_dispatch_operation(tmp_path, seat)
+    assert captured["env"]["SKFLEET_ONLY_SEAT"] == seat
+    assert captured["env"]["SKFLEET_AUTHORITY_HOST"] == "chiap08"
+    assert captured["timeout"] == 150
+    assert not any(
+        key in captured["env"]
+        for key in (
+            "SKFLEET_TARGET",
+            "SKFLEET_SEAT_TARGET",
+            "SKFLEET_GLM_TARGET",
+            "SKFLEET_QWEN_TARGET",
+            "SKFLEET_KIMI_TARGET",
+            "SKFLEET_MAX_LAUNCH",
+            "SKFLEET_MODEL_S",
+            f"SKFLEET_{seat.upper()}_BATCH_SIZE",
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "family,domain",
+    [
+        ("codex", "codex"),
+        ("glm", "zai"),
+        ("deepseek", "deepseek"),
+        ("qwen", "chiap08-qwen38"),
+        ("qwen", "chiap01-qwen38"),
+    ],
+)
+@pytest.mark.parametrize("seat", ["atlas", "seraph"])
+def test_production_seats_accept_exact_policy_route_receipts(
+    tmp_path, monkeypatch, production_policy, family, domain, seat
+):
+    card_id, revision = "a8100007", "revision-1"
+    owner = f"pi-{seat}-chiap08-{card_id}"
+    model = production_policy["lanes"][family]["model"]
+    card = SimpleNamespace(
+        labels=[f"seat-{seat}", "dispatch-approved"] + (["review"] if seat == "seraph" else []),
+        status=SimpleNamespace(value="doing"),
+        owner=owner,
+        meta={
+            "_claim_revision": revision,
+            "link_source_card": "b8100007",
+            "link_head_revision": "a" * 40,
+        },
+        links={"producer_identity": "independent-builder"},
+    )
+    events = review_events(owner, revision, author="independent-builder", model=model)
+    events[2]["route_identity"].update(provider="skgateway", capacity_domains=[domain])
+
+    def run(command, **kwargs):
+        if command[0] == "systemctl":
+            assert command[-1] == f"skfleet-worker-{family}-{card_id}.service"
+            return SimpleNamespace(returncode=0)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=(
+                f"LAUNCHED|chiap08|{family}-auto-{card_id}|{card_id}|lane={family}|"
+                f"model={model}|owner={owner}|claim_revision={revision}\n"
+            ),
+        )
+
+    monkeypatch.setattr(seat_entrypoint.subprocess, "run", run)
+    monkeypatch.setattr(seat_entrypoint.CardStore, "fold", lambda *_: card)
+    monkeypatch.setattr(seat_entrypoint.CardStore, "_read_events", lambda *_: events)
+    result = (
+        seraph_operation(tmp_path) if seat == "seraph" else role_dispatch_operation(tmp_path, seat)
+    )
+    assert result["dispatch_succeeded"] == 1
+    assert result["dispatch_failed"] == 0
+
+
+@pytest.mark.parametrize("mutation", ["model", "domain", "provider", "claim", "duplicate", "host"])
+def test_production_seraph_rejects_mismatched_or_replayed_receipts(
+    tmp_path, monkeypatch, production_policy, mutation
+):
+    owner, revision, card_id = "pi-seraph-chiap08-a8100007", "revision-1", "a8100007"
+    events = review_events(owner, revision, model="deepseek-flash")
+    events[2]["route_identity"].update(provider="skgateway", capacity_domains=["deepseek"])
+    card = SimpleNamespace(
+        labels=["review", "seat-seraph"],
+        status=SimpleNamespace(value="doing"),
+        owner=owner,
+        meta={
+            "_claim_revision": revision,
+            "link_source_card": "b8100007",
+            "link_head_revision": "a" * 40,
+        },
+        links={"producer_identity": "builder"},
+    )
+    host, model = "chiap08", "deepseek-flash"
+    if mutation == "model":
+        model = "sk-codex-mid"
+    if mutation == "domain":
+        events[2]["route_identity"]["capacity_domains"] = ["codex"]
+    if mutation == "provider":
+        events[2]["route_identity"]["provider"] = "direct-upstream"
+    if mutation == "claim":
+        card.meta["_claim_revision"] = "newer-claim"
+    if mutation == "host":
+        host = "chiap01"
+    line = (
+        f"LAUNCHED|{host}|deepseek-auto-{card_id}|{card_id}|lane=deepseek|"
+        f"model={model}|owner={owner}|claim_revision={revision}\n"
+    )
+    if mutation == "duplicate":
+        line *= 2
+    monkeypatch.setattr(
+        seat_entrypoint.subprocess,
+        "run",
+        lambda *a, **kw: SimpleNamespace(returncode=0, stdout=line),
+    )
+    monkeypatch.setattr(seat_entrypoint.CardStore, "fold", lambda *_: card)
+    monkeypatch.setattr(seat_entrypoint.CardStore, "_read_events", lambda *_: events)
+    result = seraph_operation(tmp_path)
+    assert result["dispatch_failed"] >= 1
+    if mutation != "duplicate":
+        assert result["dispatch_succeeded"] == 0
+
+
+@pytest.mark.parametrize("invalid", ["wrong-authority", "legacy-ceiling", "old-dispatcher"])
+def test_production_seats_refuse_unqualified_configuration_before_execution(
+    tmp_path, monkeypatch, production_policy, installed_dispatcher, invalid
+):
+    if invalid == "wrong-authority":
+        monkeypatch.setattr(seat_entrypoint.socket, "gethostname", lambda: "chiap01")
+    elif invalid == "legacy-ceiling":
+        monkeypatch.setenv("SKFLEET_TARGET", "3")
+    else:
+        installed_dispatcher.write_text("print('legacy')\n")
+    monkeypatch.setattr(
+        seat_entrypoint.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("invalid production configuration dispatched"),
+    )
+    with pytest.raises(ValueError):
+        seraph_operation(tmp_path)
+
+
+def test_production_dispatch_timeout_reaps_child_process_group():
+    import subprocess
+    import sys
+
+    script = (
+        "import subprocess,time; child=subprocess.Popen(['sleep','30']);"
+        "print(child.pid,flush=True);time.sleep(30)"
+    )
+    with pytest.raises(subprocess.TimeoutExpired) as failure:
+        seat_entrypoint._run_seraph_dispatcher(
+            [sys.executable, "-c", script], environment=os.environ.copy(), timeout=0.2
+        )
+    child = int(failure.value.stdout.strip())
+    state = Path(f"/proc/{child}/stat")
+    assert not state.exists() or state.read_text().split()[2] == "Z"
+
+
 def control(path: Path) -> None:
     path.write_text(
         json.dumps(
