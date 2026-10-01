@@ -9,7 +9,7 @@ from fiber_admission import Refused
 from fiber_refill import MAX_TTL, _directory, _read
 from fiber_test_environment import select as select_environment
 
-TEST_HOSTS = {'chiap02', 'chiap04', 'chiwk13', 'ziowk01'}
+TEST_HOSTS = {'chiap02', 'chiap03', 'chiap04', 'chiwk12', 'chiwk13', 'ziowk01'}
 
 
 def _hex(value, size):

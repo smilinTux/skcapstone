@@ -12,6 +12,16 @@ from fiber_test_plane import qualified_plan, test_plan as make_plan
 
 
 class TestPlanePlan(unittest.TestCase):
+    def test_every_installed_worker_is_eligible_and_control_hosts_are_not(self):
+        for host in ['chiap02', 'chiap03', 'chiap04', 'chiwk12', 'chiwk13', 'ziowk01']:
+            with self.subTest(host=host):
+                self.requirements['host'] = host
+                self.assertEqual(make_plan(self.requirements, self.producer, 1050)['source_card'], '1234abcd')
+        for host in ['chiap01', 'chiap08', 'unknown']:
+            with self.subTest(host=host), self.assertRaises(Refused):
+                self.requirements['host'] = host
+                make_plan(self.requirements, self.producer, 1050)
+
     def setUp(self):
         self.producer = {'job': {'card': '1234abcd', 'card_fingerprint': 'a' * 64,
                                 'repository': 'https://example.invalid/repo.git'},

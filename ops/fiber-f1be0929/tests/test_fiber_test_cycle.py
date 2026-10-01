@@ -80,7 +80,7 @@ class TestCycle(unittest.TestCase):
         self.assertEqual(accepted['source_head'], self.producer['candidate']['commit'])
         self.assertEqual(self.calls, ['check', 'start', 'observe', 'collect', 'observe'])
         self.assertEqual(verified_tests(self.directory, self.producer, now=1000), accepted)
-        self.assertFalse((self.state / 'test-reservations' / 'chiap04.json').exists())
+        self.assertFalse((self.state / 'test-reservations' / '1234abcd.json').exists())
         before = list(self.calls)
         self.assertEqual(self.cycle(), accepted); self.assertEqual(self.calls, before)
 
@@ -139,17 +139,42 @@ class TestCycle(unittest.TestCase):
                 else:
                     self.assertIsNone(verified_tests(directory, self.producer, now=1000))
                 # Test fixture releases its own reservation only for next negative case.
-                (self.state / 'test-reservations' / 'chiap04.json').unlink()
+                (self.state / 'test-reservations' / '1234abcd.json').unlink()
 
-    def test_other_host_reservation_prevents_any_launch(self):
+    def test_legacy_host_reservation_is_retained_without_blocking_other_requests(self):
         root = self.state / 'test-reservations'; root.mkdir(mode=0o700)
         path = root / 'chiap04.json'; path.write_text('{"request_sha256":"other"}'); path.chmod(0o600)
-        self.assertIsNone(self.cycle()); self.assertEqual(self.calls, [])
-        self.assertFalse((self.directory / 'test-execution-intent.json').exists())
+        before = path.read_bytes()
+        self.assertIsNone(self.cycle()); self.assertEqual(self.calls, ['check', 'start'])
+        self.assertEqual(path.read_bytes(), before)
 
-    def test_capacity_wait_does_not_consume_launch_intent(self):
-        self.capacity = True
+    def test_distinct_cards_start_on_same_host_and_resume_exact_intents(self):
+        self.cycle()
+        original = copy.deepcopy((self.producer, self.requirements))
+        first = self.directory
+        first_intent = (first / 'test-execution-intent.json').read_bytes()
+        self.producer['job']['card'] = '1234abce'
+        self.requirements['source_card'] = '1234abce'; self.save_requirements()
+        self.directory = self.state / 'other-card'; self.directory.mkdir(mode=0o700)
         self.assertIsNone(self.cycle())
+        self.assertEqual(self.calls.count('start'), 2)
+        self.assertIsNone(self.cycle())
+        self.assertEqual(self.calls.count('start'), 2)
+        self.producer, self.requirements = original; self.save_requirements()
+        self.directory = first
+        self.assertIsNone(self.cycle())
+        self.assertEqual(self.calls.count('start'), 2)
+        self.assertEqual((first / 'test-execution-intent.json').read_bytes(), first_intent)
+
+    def test_same_card_cannot_get_a_second_request_in_another_directory(self):
+        self.cycle()
+        self.directory = self.state / 'duplicate'; self.directory.mkdir(mode=0o700)
+        with self.assertRaises(Refused): self.cycle()
+        self.assertEqual(self.calls.count('start'), 1)
+
+    def test_obsolete_capacity_response_refuses_without_consuming_launch_intent(self):
+        self.capacity = True
+        with self.assertRaisesRegex(Refused, 'test-preflight-unverified'): self.cycle()
         self.assertEqual(self.calls, ['check'])
         self.assertFalse((self.directory / 'test-execution-intent.json').exists())
         self.capacity = False
