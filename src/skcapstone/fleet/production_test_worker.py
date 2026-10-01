@@ -173,6 +173,8 @@ def execute(plan_path: Path, directory: Path) -> int:
         if code != 0:
             break
     receipt["source_after"] = source_state(workspace, binding)
+    # Recheck the qualified dependency bytes after every sandbox command completed.
+    load_plan(home, binding)
     # Sandbox-generated JUnit is copied to immutable host custody only after exit.
     raw = read_private(directory / "output/pytest.xml")
     fd = os.open(

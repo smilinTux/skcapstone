@@ -158,7 +158,12 @@ def receipt_fixture(setup, monkeypatch):
     terminal = {
         "unit": launch["unit"],
         "InvocationID": receipt["invocation"],
-        "ActiveState": "inactive",
+        "LoadState": "loaded",
+        "ActiveState": "active",
+        "SubState": "exited",
+        "MainPID": "0",
+        "ControlGroup": "",
+        "TasksCurrent": "[not set]",
         "ExecMainCode": "1",
         "ExecMainStatus": "0",
         "ExecMainPID": "123",
@@ -233,7 +238,11 @@ def test_receipt_rehashes_raw_output_and_terminal_custody(setup, monkeypatch):
         ("InvocationID", "e" * 32),
         ("ExecMainStatus", "1"),
         ("ExecMainCode", "2"),
-        ("ActiveState", "active"),
+        ("ActiveState", "inactive"),
+        ("SubState", "running"),
+        ("MainPID", "123"),
+        ("ControlGroup", "/user.slice/live"),
+        ("TasksCurrent", "unknown"),
         ("receipt_sha256", "0" * 64),
         ("unit", "other.service"),
     ],
@@ -420,7 +429,8 @@ def test_terminal_observation_checks_actual_invocation_and_pid(setup, monkeypatc
 
     def response(pid):
         return SimpleNamespace(
-            stdout="LoadState=loaded\nActiveState=inactive\n"
+            stdout="LoadState=loaded\nActiveState=active\nSubState=exited\n"
+            "MainPID=0\nControlGroup=\nTasksCurrent=[not set]\n"
             "InvocationID="
             + receipt["invocation"]
             + "\nExecMainPID="
