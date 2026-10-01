@@ -117,6 +117,23 @@ def test_lane_uses_qualified_family_not_a_static_model():
     assert routes_for_lane(rows, lane) == [exact, future]
 
 
+def test_pi_model_is_selected_from_current_card_routes_not_lane_defaults():
+    ns = helpers("_lane_model", policy_value=policy())
+    row = {"model_or_bucket": "gateway-qualified-new-id", "capacity_domain": "deepseek", "free": 1}
+    calls = []
+    ns["_production_card_routes"] = lambda core, labels, lane: calls.append(
+        (core, labels, lane)
+    ) or [row]
+    ns["choose_review_route"] = lambda rows, reservations: rows[0] if rows else None
+    ns["_review_route_reservations"] = {}
+    core = {"title": "[M] Implement bounded card"}
+    lane = {"name": "deepseek", "model": "obsolete-static-id"}
+    assert ns["_lane_model"](lane, core, ["deepseek-only"]) == row["model_or_bucket"]
+    assert calls == [(core, ["deepseek-only"], "deepseek")]
+    ns["_production_card_routes"] = lambda *args: []
+    assert ns["_lane_model"](lane, core, []) is None
+
+
 def test_actual_review_capacity_gate_requires_an_independent_family():
     ns = helpers("evaluate_review_capacity", policy_value=policy())
     rows = [

@@ -49,6 +49,7 @@ from skcapstone.fleet.production_dispatch import (
     production_lanes,
     worker_resource_properties,
     routes_for_lane,
+    resolve_production_routes,
     cycle_budget_seconds,
     authoritative_owner_state,
 )
@@ -65,6 +66,8 @@ from skcapstone.fleet.review_capacity import (
     load_route_occupancy,
     review_physical_free,
     aggregate_review_capacity,
+    _review_capacity_truth_is_current,
+    MAX_AGE_SECONDS as ROUTE_MAX_AGE_SECONDS,
 )
 from skcapstone.fleet.paths import default_paths as default_fleet_paths
 from skcapstone.fleet.rotation_lock import acquire_rotation_lock
@@ -1765,7 +1768,7 @@ _GATEWAY_ENDPOINT=(os.environ.get("SKFLEET_GATEWAY_URL") or "").strip().rstrip("
 _review_route_snapshot=None
 _review_route_occupancy={}
 _review_route_ambiguous=False
-if ONLY_SEAT in {"", "link", "mero", "seraph"}:
+if PRODUCTION_POLICY or ONLY_SEAT in {"", "link", "mero", "seraph"}:
     if not _GATEWAY_ENDPOINT:
         raise SystemExit("SKFLEET_GATEWAY_URL is required")
     _review_route_occupancy,_review_route_ambiguous=load_route_occupancy(
@@ -1965,10 +1968,23 @@ def _production_route_health(core, labels, health):
     """Withhold a lane whose exact model cannot satisfy this card's size/policy."""
     if not PRODUCTION_POLICY:
         return health
-    routes=_producer_routes_for(core,labels)
     return {lane["name"]:(
-        health[lane["name"]] if routes_for_lane(routes,lane)
+        (True,"gateway-qualified-card-route")
+        if _production_card_routes(core,labels,lane["name"])
         else (False,"no-qualified-route-for-card")) for lane in LANES}
+
+def _production_card_routes(core, labels, lane=None):
+    """Resolve current card requirements only against this fresh gateway snapshot."""
+    snapshot=_review_route_snapshot or {}
+    observed=snapshot.get("observed_at")
+    if (type(observed) not in {int,float}
+            or not 0 <= time.time()-observed <= ROUTE_MAX_AGE_SECONDS
+            or not _review_capacity_truth_is_current(snapshot)
+            or _review_route_ambiguous):
+        return []
+    return resolve_production_routes(
+        _producer_routes_for(core,labels),policy=PRODUCTION_POLICY,
+        required_size=_size_class_for(core,labels),labels=labels,lane=lane)
 if glm_held:
     log(d,"GLM_HOLD|%s|new GLM dispatch disabled by %s"%(HOST,GLM_HOLD_PATH))
 for _L in LANES:
@@ -7495,7 +7511,7 @@ def lane_compatibility(labels, escalation_required=False, qwen_allowed=True,
     ordinary=("qwen","glm","codex") if qwen_allowed else ("glm","codex")
     if globals().get("PRODUCTION_POLICY"):
         ordinary=tuple(name for name in ("qwen","glm","deepseek","codex")
-                       if name!="qwen" or qwen_allowed)
+                       )
     return ordinary,"ordinary"
 
 
@@ -7600,9 +7616,12 @@ def qwen_suitable(core, labels=None):
     return not _QWEN_UNSUITABLE.search(str((core or {}).get("title") or ""))
 
 
-def _lane_model(lane, core):
+def _lane_model(lane, core, labels=None):
     if globals().get("PRODUCTION_POLICY"):
-        return lane["model"]
+        route=choose_review_route(
+            _production_card_routes(core,labels or [],lane["name"]),
+            globals().get("_review_route_reservations",{}))
+        return route["model_or_bucket"] if route is not None else None
     if lane["name"]=="glm":
         return _glm_model_for(core) or lane["model"]
     if lane["name"]=="codex":
@@ -7616,10 +7635,10 @@ _LANE_HEALTH_PATH=os.environ.get(
     "SKFLEET_LANE_HEALTH_PATH",
     os.path.join(HOME,".skcapstone/evidence/fleet-lane-health.%s.json"%HOST))
 _health_lanes=list(LANES)
-for _glm_model in sorted(set(_GLM_LEVELS.values())):
+for _glm_model in ([] if PRODUCTION_POLICY else sorted(set(_GLM_LEVELS.values()))):
     if _glm_model!=next(lane for lane in LANES if lane["name"]=="glm")["model"]:
         _health_lanes.append({"name":"glm","model":_glm_model})
-for _codex_model in sorted(set(_SIZE_MODELS.values())):
+for _codex_model in ([] if PRODUCTION_POLICY else sorted(set(_SIZE_MODELS.values()))):
     if _codex_model!=next(lane for lane in LANES if lane["name"]=="codex")["model"]:
         _health_lanes.append({"name":"codex","model":_codex_model})
 # Guarded like the glm and codex expansions above: the base kimi lane already
@@ -7627,12 +7646,14 @@ for _codex_model in sorted(set(_SIZE_MODELS.values())):
 # sealed a duplicate (kimi, kimi-for-coding) row that lane_health() refused as
 # "unknown" on every cycle. Live on chi 2026-09-18 this held kimi at 0 workers
 # while the gateway reported the backend up.
-for _kimi_model in ("kimi-for-coding", "k3"):
+for _kimi_model in (() if PRODUCTION_POLICY else ("kimi-for-coding", "k3")):
     if all(lane["name"]!="kimi" or lane["model"]!=_kimi_model for lane in _health_lanes):
         _health_lanes.append({"name":"kimi","model":_kimi_model})
 _cycle_id=new_cycle_id(HOST,STAMP)
 if PRODUCTION_POLICY:
-    _health_lanes=[lane for lane in LANES if lane["target"] > 0]
+    _health_lanes=[{**lane,"model":route["model_or_bucket"]}
+        for lane in LANES for route in routes_for_lane(
+            (_review_route_snapshot or {}).get("routes",[]),lane)]
 _lane_health_snapshot=acquire_lane_snapshot(
     _GATEWAY_ENDPOINT,_health_lanes,_CAPACITY_DOMAINS,
     Path(_LANE_HEALTH_PATH),_cycle_id)
@@ -7759,7 +7780,7 @@ while _i<len(owned) and _i<len(_candidate_scan):
     _elastic_review = _POOL_V2_ADMISSIONS.get(_card[2], {}).get(
         "elastic_review_admitted") is True
     _card_lane_health={lane["name"]:_health_for(
-        lane["name"],_lane_model(lane,_card[3]))
+        lane["name"],_lane_model(lane,_card[3],_labels))
         for lane in LANES}
     if PRODUCTION_POLICY:
         _card_lane_health=_production_route_health(_card[3],_labels,_card_lane_health)
@@ -7994,7 +8015,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
     _elastic_review = _POOL_V2_ADMISSIONS.get(cid, {}).get("elastic_review_admitted") is True
     _attempt_escalation=needs_escalation(cid,core,_labels)
     _attempt_health={lane["name"]:_health_for(
-        lane["name"],_lane_model(lane,core)) for lane in LANES}
+        lane["name"],_lane_model(lane,core,_labels)) for lane in LANES}
     if PRODUCTION_POLICY:
         _attempt_health=_production_route_health(core,_labels,_attempt_health)
     if not PRODUCTION_POLICY and not _ONLY_SEAT and not _elastic_review:
@@ -8245,7 +8266,11 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         log(d,"SKIPPED_LOGICAL_ROUTE|%s|%s|reason=missing-or-ambiguous-size"%
             (HOST,cid))
         continue
-    model=_lane_model(_LANE,core) or _bucket
+    model=_lane_model(_LANE,core,_labels)
+    if PRODUCTION_POLICY and model is None:
+        log(d,"SKIPPED_PRODUCTION_ROUTE|%s|%s|reason=no-current-qualified-model"%(HOST,cid))
+        continue
+    model=model or _bucket
     pi_tools=pi_tool_allowlist(_labels)
     if DRY:
         log(d,"WOULD_LAUNCH|%s|%s|%s|lane=%s|model=%s|%s"%(HOST,sess,cid,_LANE["name"],model,str(core.get("title"))[:40]))
@@ -8302,7 +8327,11 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         continue
     # Same split as the launch site: the bucket stays the logical route in the
     # identity, and the lane resolves the model that is actually sent.
-    model=_lane_model(_LANE,fresh_claimability["core"]) or _bucket
+    model=_lane_model(_LANE,fresh_claimability["core"],fresh_claimability["labels"])
+    if PRODUCTION_POLICY and model is None:
+        log(d,"SKIPPED_PRODUCTION_ROUTE|%s|%s|reason=no-current-qualified-model"%(HOST,cid))
+        continue
+    model=model or _bucket
     _route_identity={
         "logical_route":_bucket,
         "provider":"skgateway",
@@ -8376,7 +8405,9 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         _routes=[route for route in _capacity["routes"]
                  if str(route.get("capacity_domain") or "") in _lane_domains]
         if PRODUCTION_POLICY:
-            _routes=routes_for_lane(_routes,_LANE)
+            _routes=resolve_production_routes(
+                _routes,policy=PRODUCTION_POLICY,required_size=_size,
+                labels=fresh_claimability["labels"],lane=_LANE["name"])
         _selected_route=choose_review_route(_routes,_review_route_reservations)
         if _selected_route is None:
             lane_drift += 1
@@ -8385,6 +8416,8 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             log(d,"SKIPPED_REVIEW_ROUTE|%s|%s|reason=%s|revision=%s"%
                 (HOST,cid,_reason,_capacity["capacity_revision"] or "missing"))
             continue
+        if PRODUCTION_POLICY:
+            model=_selected_route["model_or_bucket"]
         _route_identity={
             "logical_route":_bucket,
             "provider":"skgateway",
@@ -8400,13 +8433,15 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
                 str(label).strip().lower() for label in fresh_claimability["labels"]}
             else None)
         if PRODUCTION_POLICY:
-            _producer_routes=routes_for_lane(_producer_routes_for(
-                fresh_claimability["core"],fresh_claimability["labels"]),_LANE)
+            _producer_routes=_production_card_routes(
+                fresh_claimability["core"],fresh_claimability["labels"],_LANE["name"])
         _selected_route=choose_review_route(_producer_routes,_review_route_reservations)
         if _selected_route is None:
             lane_drift += 1
             log(d,"SKIPPED_PRODUCER_ROUTE|%s|%s|reason=no-eligible-route"%(HOST,cid))
             continue
+        if PRODUCTION_POLICY:
+            model=_selected_route["model_or_bucket"]
         _route_identity={
             "logical_route":_bucket,
             "provider":"skgateway",
@@ -8476,7 +8511,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         log(d,"ROUTE_PREFLIGHT_OK|%s|%s|requested=%s|served=%s|provider=%s"%
             (HOST,cid,_route_preflight.requested_identity,
              _route_preflight.served_identity,_route_preflight.provider or "unknown"))
-    if PRODUCTION_POLICY and _route_preflight.provider not in _LANE["capacity_domains"]:
+    if PRODUCTION_POLICY and _route_preflight.provider != _selected_route["capacity_domain"]:
         log(d,"ROUTE_PREFLIGHT_BLOCKED|%s|%s|reason=backend-family-drift"%(HOST,cid))
         continue
     if time.monotonic() >= _cycle_deadline:

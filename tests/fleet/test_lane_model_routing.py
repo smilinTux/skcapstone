@@ -169,7 +169,7 @@ def test_the_launch_site_actually_calls_lane_model():
     time the fleet was routing everything to qwen38.
     """
     src = _source()
-    assert "_lane_model(_LANE,core)" in src.replace(
+    assert "_lane_model(_LANE,core,_labels)" in src.replace(
         " ", ""
     ), "the launch site must resolve the model through _lane_model"
     assert "_lane_model(_LANE,fresh_claimability" in src.replace(
