@@ -61,3 +61,20 @@ the canonical generation entrypoint and retained the existing exact-claim
 fenced wedge actuator on Niobe. The misleading worker-readiness drop-ins only
 set old timeouts and the wrong authority host; shared production settings
 replace those. Fixed lane targets/model aliases are intentionally superseded.
+
+## Production readiness compatibility
+
+The canonical readiness service inspects the full native dispatcher and the
+effective seat-cycle environment, scoped by its canonical timer. After the
+native interpreter validates the actual shared policy and host authority, only
+legacy lane-count and gateway-environment requirements are replaced. Unknown
+required variables, dispatcher imports and service module imports still fail
+closed. Missing policy cannot fall back to legacy configuration for the
+canonical scheduler. The observer never launches work or invents installed
+generation metadata.
+
+The combined readiness, legacy wiring, import, drift and manifest suite passed
+92 tests with zero failures/skips. Eight new cases use the real native policy
+parser, including invalid Kimi enablement, wrong authority, missing/symlink
+policy, unavailable validation, genuine missing imports and unrelated required
+variables. The production readiness systemd template validates successfully.
