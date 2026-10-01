@@ -4,6 +4,45 @@ import subprocess
 from pathlib import Path
 
 
+def active_resource_units(home=None):
+    """Include native builders/tests and Pi workers in actual quota reservations."""
+    result = subprocess.run(
+        [
+            "/usr/bin/systemctl",
+            "--user",
+            "list-units",
+            "--type=service",
+            "--state=active,activating,deactivating",
+            "--no-legend",
+            "--plain",
+            "skfleet-worker-*.service",
+            "skfleet-builder-*.service",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=True,
+    )
+    units = {
+        line.split()[0]: {"unit": line.split()[0]}
+        for line in result.stdout.splitlines()
+        if line.strip()
+    }
+    # A durable launch intent reserves memory even before systemd acknowledges it.
+    from .production_tests import read_json
+
+    home = Path(home) if home is not None else Path.home() / ".skcapstone"
+    for path in (home / "fleet/test-runs").glob("*/launch.json"):
+        if (path.parent / "terminal.json").exists():
+            continue
+        launch = read_json(path)
+        unit = launch["unit"]
+        units.setdefault(unit, {"unit": unit})["reserved_memory_max"] = launch["production"][
+            "resources"
+        ]["memory_max_bytes"]
+    return list(units.values())
+
+
 def available_worker_memory(meminfo, units):
     """Reserve unfinished worker allowances without counting their memory twice."""
     memory = {}
@@ -32,6 +71,11 @@ def local_worker_admission(policy, host, worker_units, *, runner=subprocess.run)
         meminfo = Path("/proc/meminfo").read_text()
         units = []
         names = [row["unit"] for row in worker_units]
+        reservations = {
+            row["unit"]: row["reserved_memory_max"]
+            for row in worker_units
+            if "reserved_memory_max" in row
+        }
         if names:
             result = runner(
                 [
@@ -57,6 +101,10 @@ def local_worker_admission(policy, host, worker_units, *, runner=subprocess.run)
             for row in rows:
                 if row.get("ActiveState") in {"active", "activating"}:
                     units.append(row)
+                elif (
+                    row.get("ActiveState") in {"inactive", "failed"} and row["Id"] in reservations
+                ):
+                    units.append({"MemoryMax": reservations[row["Id"]], "MemoryCurrent": 0})
                 elif row.get("ActiveState") not in {"inactive", "failed"}:
                     raise ValueError("worker resource custody is uncertain")
         available = available_worker_memory(meminfo, units)
