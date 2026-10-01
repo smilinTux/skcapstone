@@ -34,3 +34,24 @@ composition. Configuration staging and measured seven-node quotas are retained
 under the card's private evidence directory. Rollback restores the exact
 node-local catalog preimage, preserving its original credential boundary; no
 backup containing credentials is transferred off that node.
+
+## Canonical production layout follow-up
+
+The production layout uses one full script under `.skenv/bin`, bound to the
+native interpreter, plus exact compatibility delegation under `.local/bin`.
+Shared byte helpers make installation and drift verification agree. Production
+drift checks use the checked-in production service templates and still inspect
+canonical scripts when the legacy rotation timer is disabled. Legacy behavior
+remains unchanged when no production policy marker exists.
+
+The new regression first failed in six cases. Final focused validation passed
+48 tests with no skips using `python -m pytest tests/fleet/test_rollout_drift.py
+tests/fleet/test_deployment_manifest.py -q`. Cases reject changed script bodies,
+wrong interpreters, duplicate full compatibility copies and absent shims. The
+eight production templates preserve activation authorization and delegate old
+rotation entrypoints to the serialized native cycle; no timer was enabled.
+
+This commit stages source only. The exact overlay plan must record transformed
+script hashes, original file bytes and modes, removed drop-ins and rollback
+before deployment. Node eligibility remains a separate native configuration
+step, with all gateway and coordinator roles preserved.

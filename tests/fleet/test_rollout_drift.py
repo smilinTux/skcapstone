@@ -167,6 +167,73 @@ def _matching_host(home: Path, git_sha: str = "deadbeef") -> None:
     _install_all_script_files(home)
 
 
+def _production_layout(home):
+    from skcapstone.fleet.deployment_manifest import production_compatibility_shim
+
+    _matching_host(home)
+    policy = home / ".skcapstone/fleet/production.json"
+    policy.parent.mkdir(parents=True)
+    policy.write_text('{"schema":"skfleet.production/v1"}')
+    for name in ("skfleet-rotate.py", "skfleet-worker-wrapper.py"):
+        (home / ".local/bin" / name).write_bytes(production_compatibility_shim(name, home))
+    for path in (REPO_ROOT / "systemd/production").glob("*.service"):
+        (home / ".config/systemd/user" / path.name).write_bytes(path.read_bytes())
+
+
+def test_production_observer_accepts_one_canonical_copy_and_exact_shims(home):
+    _production_layout(home)
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+    assert not [d for d in drifts if d.artifact.startswith(("dispatcher:", "compatibility:"))]
+    assert not [d for d in drifts if d.artifact == "unit:skfleet-atlas.service"]
+
+
+def test_production_canonical_script_is_checked_when_legacy_timer_disabled(home, monkeypatch):
+    _production_layout(home)
+    monkeypatch.setattr(
+        skfleet_readiness.subprocess,
+        "run",
+        _fake_systemctl(
+            {
+                ("skfleet-rotate.timer", "LoadState"): "loaded",
+                ("skfleet-rotate.timer", "ActiveState"): "inactive",
+                ("skfleet-rotate.timer", "UnitFileState"): "disabled",
+            }
+        ),
+    )
+    (home / ".skenv/bin/skfleet-rotate.py").unlink()
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+    assert any(
+        d.artifact == "dispatcher:skfleet-rotate.py" and d.kind == "missing" for d in drifts
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["canonical-body", "canonical-shebang", "full-copy-shim", "wrong-shim", "missing-shim"],
+)
+def test_production_observer_detects_wrong_canonical_or_compatibility_file(home, mutation):
+    _production_layout(home)
+    canonical = home / ".skenv/bin/skfleet-rotate.py"
+    shim = home / ".local/bin/skfleet-rotate.py"
+    if mutation == "canonical-body":
+        canonical.write_bytes(canonical.read_bytes() + b"\nchanged=True\n")
+    elif mutation == "canonical-shebang":
+        canonical.write_bytes(b"#!/usr/bin/python3\n" + canonical.read_bytes().split(b"\n", 1)[1])
+    elif mutation == "full-copy-shim":
+        shim.write_bytes((REPO_ROOT / "scripts/fleet/skfleet-rotate.py").read_bytes())
+    elif mutation == "wrong-shim":
+        shim.write_text('print("wrong target")\n')
+    else:
+        shim.unlink()
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+    wanted = (
+        "dispatcher:skfleet-rotate.py"
+        if mutation.startswith("canonical")
+        else "compatibility:skfleet-rotate.py"
+    )
+    assert any(d.artifact == wanted for d in drifts)
+
+
 def _in_scope_atlas_responses() -> dict:
     """skfleet-atlas.timer active and enabled: fully converged, in scope."""
     return {

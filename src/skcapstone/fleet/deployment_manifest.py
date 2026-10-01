@@ -89,6 +89,28 @@ PER_HOST_ARTIFACTS: tuple[Path, ...] = (
     Path("scripts") / "fleet" / "skwork-sweep.py",
 )
 
+PRODUCTION_CANONICAL_SCRIPTS = frozenset({"skfleet-rotate.py", "skfleet-worker-wrapper.py"})
+
+
+def production_script_bytes(source: bytes, home: Path | str) -> bytes:
+    """Bind the one production script to the existing native interpreter."""
+    body = source.split(b"\n", 1)[1] if source.startswith(b"#!") else source
+    return b"#!" + str(Path(home) / ".skenv/bin/python").encode() + b"\n" + body
+
+
+def production_compatibility_shim(name: str, home: Path | str) -> bytes:
+    """Exact small Python delegation, including callers using python shim.py."""
+    if name not in PRODUCTION_CANONICAL_SCRIPTS:
+        raise ValueError("unknown production script")
+    python = str(Path(home) / ".skenv/bin/python")
+    script = str(Path(home) / ".skenv/bin" / name)
+    return (
+        f"#!{python}\nimport os\nimport sys\n"
+        f"os.execv({json.dumps(python)}, [{json.dumps(python)}, "
+        f"{json.dumps(script)}, *sys.argv[1:]])\n"
+    ).encode()
+
+
 _MANIFEST_FIELDS = ("git_sha", "package_version", "required_env", "units")
 
 
