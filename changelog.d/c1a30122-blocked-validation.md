@@ -1,0 +1,1 @@
+- Card `c1a30122`: validate typed BLOCKED categories and referents before either native verdict write path, matching the controller contract and preventing an unusable terminal handoff.

@@ -1813,6 +1813,7 @@ def register_coord_commands(main: click.Group) -> None:
         link after the verdict, such as your own evidence or commit reference,
         is fine and does not disturb it.
         """
+        from ..blocked_verdict import validate_blocked_verdict
         from ..jarvis_emergency import authorize_coord_mutation
         from ..provisional_verdict import candidate_evidence, record_guarded_verdict
         from ..seat_boundaries import Action
@@ -1833,6 +1834,7 @@ def register_coord_commands(main: click.Group) -> None:
         from ..card_store import CardStore
 
         try:
+            validate_blocked_verdict("verdict", outcome)
             payload = candidate_evidence(candidate, commit, tree, ref)
             if (
                 expected_candidate_sha256 is not None
