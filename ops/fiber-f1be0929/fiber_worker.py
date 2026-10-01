@@ -318,7 +318,8 @@ def start(request):
     directory = STATE / 'requests'
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = directory / (receipt['token'] + '.json')
-    with path.open('x') as stream:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'w') as stream:
         json.dump(request, stream, sort_keys=True)
         stream.flush()
         os.fsync(stream.fileno())
