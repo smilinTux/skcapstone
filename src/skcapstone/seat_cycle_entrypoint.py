@@ -788,7 +788,11 @@ def seraph_operation(home: Path) -> dict[str, int | str]:
     reading.
     """
 
-    dispatcher = deployed_artifact_path(DISPATCHER_RELATIVE_PATH.name)
+    dispatcher = (
+        _production_dispatcher_path()
+        if "SKFLEET_PRODUCTION_POLICY" in os.environ
+        else deployed_artifact_path(DISPATCHER_RELATIVE_PATH.name)
+    )
     if not dispatcher.is_file() or not os.access(dispatcher, os.X_OK):
         return {
             "cards_examined": 0,
@@ -799,7 +803,7 @@ def seraph_operation(home: Path) -> dict[str, int | str]:
             "reason": "seraph_dispatcher_missing",
         }
     if "SKFLEET_PRODUCTION_POLICY" in os.environ:
-        return _production_seat_operation(home, "seraph", _production_dispatcher_path())
+        return _production_seat_operation(home, "seraph", dispatcher)
     try:
         batch_size = int(os.environ.get("SKFLEET_SERAPH_BATCH_SIZE", "2"))
     except ValueError:
@@ -1043,7 +1047,11 @@ def role_dispatch_operation(home: Path, seat: str) -> dict[str, int | str]:
     ``deployed_artifact_path``: this call site carried the identical defect.
     """
 
-    dispatcher = deployed_artifact_path(DISPATCHER_RELATIVE_PATH.name)
+    dispatcher = (
+        _production_dispatcher_path()
+        if seat == "atlas" and "SKFLEET_PRODUCTION_POLICY" in os.environ
+        else deployed_artifact_path(DISPATCHER_RELATIVE_PATH.name)
+    )
     if not dispatcher.is_file() or not os.access(dispatcher, os.X_OK):
         return {
             "cards_examined": 0,
@@ -1054,7 +1062,7 @@ def role_dispatch_operation(home: Path, seat: str) -> dict[str, int | str]:
             "reason": f"{seat}_dispatcher_missing",
         }
     if seat == "atlas" and "SKFLEET_PRODUCTION_POLICY" in os.environ:
-        return _production_seat_operation(home, seat, _production_dispatcher_path())
+        return _production_seat_operation(home, seat, dispatcher)
     env_name = f"SKFLEET_{seat.upper()}_BATCH_SIZE"
     try:
         batch_size = int(os.environ.get(env_name, "2"))
