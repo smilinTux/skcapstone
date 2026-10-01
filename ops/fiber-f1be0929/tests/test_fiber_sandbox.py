@@ -22,6 +22,9 @@ class SandboxTest(unittest.TestCase):
         for text in ('REVIEW-DECISION.json', 'skfleet.review-proposal/v1', 'a' * 40, 'b' * 32,
                      'git rev-parse HEAD', 'After every file write run ls', 'second compaction',
                      'no host privileges', 'No push', 'Do not modify source or tests',
+                     'must create a local review-evidence commit',
+                     'git status --porcelain', 'must be clean',
+                     'Keep source_head equal to the reviewed candidate',
                      'controller verification and native completion gates still apply'):
             self.assertIn(text, prompt)
 

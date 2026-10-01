@@ -80,6 +80,16 @@ def test_cli_opens_one_native_review_without_claim_or_completion(tmp_path):
     assert review.meta["source_revision"] == args[args.index("--expected-source-revision") + 1]
     for text in [str(artifact), COMMIT, TREE, REF, "Preserve the original contract."]:
         assert text in review.description
+    for text in (
+        "must create a local review-evidence commit",
+        f"docs/evidence/agents/{review.id}/",
+        "git status --porcelain",
+        "must be clean",
+        f"Keep source_head equal to the reviewed candidate {COMMIT}",
+        "do not modify source or tests",
+        "no push",
+    ):
+        assert text in review.description
     assert any("required tests" in item for item in review.acceptance_criteria)
     assert len(store.list_card_ids()) == 2
     events = store._read_events(review.id)
