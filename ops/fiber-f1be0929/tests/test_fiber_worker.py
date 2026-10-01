@@ -2,6 +2,8 @@
 from pathlib import Path
 import subprocess
 import os
+import json
+import stat
 import sys
 import tempfile
 import unittest
@@ -9,6 +11,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import fiber_worker as worker
+import fiber_candidate as candidate
 from fiber_admission import Refused
 
 
@@ -323,6 +326,58 @@ class WorkerTest(unittest.TestCase):
                       + str(Path.home() / '.npm-global/bin')
                       + ':' + str(Path.home() / '.local/bin')
                       + ':/usr/local/bin:/usr/bin:/bin', calls[0])
+
+    def test_start_request_is_private_before_launch_under_permissive_umask(self):
+        for mask in (0o000, 0o002):
+            with self.subTest(umask=mask), tempfile.TemporaryDirectory() as td, \
+                 patch.object(worker, 'STATE', Path(td)), \
+                 patch.object(worker.socket, 'gethostname', return_value='chiap02'), \
+                 patch.object(worker, 'check_catalog'), patch.object(worker, 'verify_claim'), \
+                 patch.object(worker, 'read_unit', return_value={'state': 'running'}):
+                item = request()
+                path = Path(td) / 'requests' / (item['receipt']['token'] + '.json')
+                def launch(argv, **kwargs):
+                    self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+                    self.assertEqual(candidate._record(path)[0], item)
+                    self.assertEqual(json.loads(path.read_text()), item)
+                    return subprocess.CompletedProcess(argv, 0, '', '')
+                previous = os.umask(mask)
+                try:
+                    with patch.object(worker.subprocess, 'run', side_effect=launch) as run:
+                        worker.start(item)
+                        run.assert_called_once()
+                finally:
+                    os.umask(previous)
+
+    def test_start_never_clobbers_existing_request_or_symlink(self):
+        for kind in ('file', 'symlink', 'dangling-symlink'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as td, \
+                 patch.object(worker, 'STATE', Path(td)), \
+                 patch.object(worker.socket, 'gethostname', return_value='chiap02'), \
+                 patch.object(worker, 'check_catalog'), patch.object(worker, 'verify_claim'), \
+                 patch.object(worker.subprocess, 'run') as run:
+                item = request()
+                directory = Path(td) / 'requests'
+                directory.mkdir(mode=0o700)
+                path = directory / (item['receipt']['token'] + '.json')
+                target = Path(td) / 'target'
+                if kind == 'file':
+                    path.write_bytes(b'original request')
+                else:
+                    if kind == 'symlink':
+                        target.write_bytes(b'original target')
+                    path.symlink_to(target)
+                before = path.lstat()
+                with self.assertRaises(FileExistsError):
+                    worker.start(item)
+                run.assert_not_called()
+                self.assertEqual(path.lstat(), before)
+                if kind == 'file':
+                    self.assertEqual(path.read_bytes(), b'original request')
+                elif kind == 'symlink':
+                    self.assertEqual(target.read_bytes(), b'original target')
+                else:
+                    self.assertFalse(target.exists())
 
     def test_service_receipt_requires_exact_description_and_exit(self):
         receipt = request()['receipt']
