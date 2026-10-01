@@ -2,6 +2,7 @@
 
 import ast
 import json
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,7 +18,12 @@ from skcapstone.fleet.production_dispatch import (
     worker_resource_properties,
 )
 from skcapstone.fleet.production_review import independent_review_routes
-from skcapstone.fleet.review_capacity import aggregate_review_capacity, review_physical_free
+from skcapstone.fleet.review_capacity import (
+    _review_capacity_truth_is_current,
+    aggregate_review_capacity,
+    review_physical_free,
+    seal_review_capacity_truth,
+)
 
 ROTATE = Path(__file__).parents[2] / "scripts/fleet/skfleet-rotate.py"
 
@@ -136,6 +142,41 @@ def test_pi_model_is_selected_from_current_card_routes_not_lane_defaults():
     assert calls == [(core, ["deepseek-only"], "deepseek")]
     ns["_production_card_routes"] = lambda *args: []
     assert ns["_lane_model"](lane, core, []) is None
+
+
+@pytest.mark.parametrize("invalid", [None, "stale", "tampered", "ambiguous"])
+def test_actual_producer_selection_requires_fresh_sealed_gateway_facts(invalid):
+    ns = helpers("_production_card_routes", policy_value=policy())
+    row = gateway_route()
+    snapshot = seal_review_capacity_truth(
+        {"schema_version": 1, "observed_at": time.time(), "routes": [row]},
+        occupancy={},
+        occupancy_ambiguous=False,
+        physical_maximum=None,
+    )
+    if invalid == "stale":
+        snapshot = seal_review_capacity_truth(
+            {**snapshot, "observed_at": time.time() - 121},
+            occupancy={},
+            occupancy_ambiguous=False,
+            physical_maximum=None,
+        )
+    if invalid == "tampered":
+        snapshot["routes"][0]["model_or_bucket"] = "unqualified-replacement"
+    ns.update(
+        {
+            "time": time,
+            "ROUTE_MAX_AGE_SECONDS": 120,
+            "_review_capacity_truth_is_current": _review_capacity_truth_is_current,
+            "_review_route_snapshot": snapshot,
+            "_review_route_ambiguous": invalid == "ambiguous",
+            "_producer_routes_for": lambda *args: snapshot["routes"],
+            "_size_class_for": lambda *args: "M",
+            "resolve_production_routes": resolve_production_routes,
+        }
+    )
+    result = ns["_production_card_routes"]({}, ["deepseek-only"], "deepseek")
+    assert bool(result) is (invalid is None)
 
 
 def test_actual_review_capacity_gate_requires_an_independent_family():
