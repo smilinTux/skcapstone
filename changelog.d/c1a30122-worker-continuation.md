@@ -1,0 +1,1 @@
+- Card `c1a30122`: preflight attributed worker Git identities before production launch and allow one evidence-bound continuation of a stopped staged workspace while retaining its exact claim, source offer, original outcome and private preservation archive.

@@ -809,6 +809,8 @@ def _reconcile_running(
         "pid_start_ticks": status.get("pid_start_ticks"),
         "attempt": int(status.get("attempt") or 1),
     }
+    if status.get("continuation_consumed"):
+        common["continuation_consumed"] = status["continuation_consumed"]
     if status.get("production") is not None:
         common.update(
             production=status["production"],
@@ -836,9 +838,16 @@ def _reconcile_running(
             or card.links.get("candidate_evidence_sha256"),
         }
     elif status.get("production") is not None:
+        from .builder_continue import original_outcome_pending
         from .production_exit import release_blocked
         from .source_bundle import SourceBundleError, publish_source
 
+        if original_outcome_pending(coordination_home, request, status):
+            return _write_status(
+                paths, node, request, "awaiting-evidence", **common,
+                exit_code=exit_code, claim_released=False,
+                error="continued generation has not recorded a new outcome",
+            )
         blocked = release_blocked(coordination_home, request, owner, revision)
         if blocked is not None:
             return _write_status(
@@ -954,6 +963,20 @@ def worker_command(request: dict, owner: str, claim_revision: str, workspace: Pa
             ),
             acceptance_criteria=["Satisfy every exact current native card criterion."],
         )
+        if request.get("_continuation"):
+            prompt = (
+                "PRESERVED SOURCE CONTINUATION\n"
+                "Continue the existing staged implementation in this workspace. Do not reset, "
+                "reimplement, release the claim or replace the source offer. Inspect the "
+                "preserved changes and actual evidence; finish only remaining validation, "
+                "correct any inaccurate test chronology in the draft evidence, "
+                "the already authorized commit and typed handoff. Original BLOCKED evidence "
+                "remains historical. Machine Git identity is assigned in this environment.\n\n"
+                + prompt
+            )
+    from .worker_git import identity
+
+    git_environment = identity(owner) if production is not None else {}
     return [
         "/usr/bin/env",
         "-i",
@@ -965,6 +988,7 @@ def worker_command(request: dict, owner: str, claim_revision: str, workspace: Pa
         f"SKCAPSTONE_HOME={sovereign_home}",
         f"SKFLEET_CARD_ID={request['card_id']}",
         f"SKFLEET_CLAIM_REVISION={claim_revision}",
+        *(f"{key}={value}" for key, value in git_environment.items()),
         worker,
         "--no-approve",
         "--extension",
@@ -1051,7 +1075,7 @@ def _consume_available(
     materializer: Callable[[dict, Path], Path],
 ) -> dict | None:
     """Refresh every active generation before admitting pending requests."""
-    from . import builder_retry
+    from . import builder_continue, builder_retry
 
     spec = store.read_spec(paths, "node", node) or {}
     if spec.get("spec", {}).get("role") != ROLE or spec.get("spec", {}).get("actuate") is not True:
@@ -1109,11 +1133,17 @@ def _consume_available(
             if prior.get("request_id") != request.get("request_id"):
                 active_cards.add(request["card_id"])
                 continue
-            if builder_retry.pending(request, prior):
+            try:
+                continuing = builder_continue.attach(coordination_home, request, prior)
+            except (ValueError, OSError):
+                continue
+            retry_handler = builder_continue if continuing else builder_retry
+            if continuing or builder_retry.pending(request, prior):
                 try:
-                    builder_retry.check_attempt(paths, coordination_home, request, prior)
+                    retry_handler.check_attempt(paths, coordination_home, request, prior)
                 except (ValueError, OSError):
-                    pass  # A newly arrived candidate still follows normal publication.
+                    if continuing:
+                        continue  # Preserve changed continuation custody for the operator.
                 else:
                     continue
             result = _reconcile_running(paths, coordination_home, node, request, prior)
@@ -1132,10 +1162,15 @@ def _consume_available(
             prior = (
                 _validated_status(status_path(paths, node, request["card_id"]), paths, node) or {}
             )
-            retrying = builder_retry.pending(request, prior)
+            try:
+                continuing = builder_continue.attach(coordination_home, request, prior)
+            except (ValueError, OSError):
+                continue
+            retry_handler = builder_continue if continuing else builder_retry
+            retrying = continuing or builder_retry.pending(request, prior)
             if retrying:
                 try:
-                    builder_retry.check_attempt(paths, coordination_home, request, prior)
+                    retry_handler.check_attempt(paths, coordination_home, request, prior)
                 except (ValueError, OSError):
                     continue
             if request["card_id"] in reconciled_orphans:
@@ -1185,7 +1220,8 @@ def _consume_available(
                     continue
             try:
                 expires = datetime.strptime(
-                    request["lease_expires_at"], "%Y-%m-%dT%H:%M:%SZ"
+                    request["_continuation"]["expires_at"] if continuing
+                    else request["lease_expires_at"], "%Y-%m-%dT%H:%M:%SZ"
                 ).replace(tzinfo=timezone.utc)
             except (KeyError, TypeError, ValueError):
                 expires = datetime.min.replace(tzinfo=timezone.utc)
@@ -1268,7 +1304,8 @@ def _consume_available(
                 )
                 continue
             try:
-                materializer(request, workspace)
+                if not continuing:
+                    materializer(request, workspace)
             except BuilderDispatchError as exc:
                 if retrying:
                     continue
@@ -1374,6 +1411,8 @@ def _consume_available(
                     coordination_home, request, retained_claim=retrying
                 )
             except BuilderDispatchError as exc:
+                if retrying:
+                    continue
                 released = _release_exact(
                     coordination_home, request["card_id"], owner, revision, actor=owner
                 )
@@ -1405,11 +1444,14 @@ def _consume_available(
             command = worker_command(request, owner, revision, workspace)
             if production is not None:
                 try:
+                    from .worker_git import preflight
+
+                    preflight(command, workspace, owner)
                     production_builder.validate_request(paths, node, request, local=True)
                     command = production_builder.service_command(
                         request, attempt, command, workspace
                     )
-                except ValueError:
+                except ValueError as exc:
                     if retrying:
                         continue
                     released = _release_exact(
@@ -1423,7 +1465,7 @@ def _consume_available(
                         owner=owner,
                         claim_revision=revision,
                         claim_released=released,
-                        error="production request changed before service launch",
+                        error=f"production launch preflight failed: {exc}",
                     )
                     continue
             frozen = _frozen_claim_status(
@@ -1456,7 +1498,7 @@ def _consume_available(
                     if frozen is not None:
                         return frozen
                     if retrying:
-                        with builder_retry.consume(
+                        with retry_handler.consume(
                             paths,
                             coordination_home,
                             request,
@@ -1501,7 +1543,9 @@ def _consume_available(
                     "route_preflight": route_preflight,
                 }
             if retrying:
-                service["operator_retry_consumed"] = request["operator_retry"]["id"]
+                key = "continuation_consumed" if continuing else "operator_retry_consumed"
+                grant = request["_continuation"] if continuing else request["operator_retry"]
+                service[key] = grant["id"]
             result = _write_status(
                 paths,
                 node,

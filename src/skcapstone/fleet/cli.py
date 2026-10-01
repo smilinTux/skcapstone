@@ -111,6 +111,30 @@ def builder_retry_cmd(
     click.echo(jsonlib.dumps(result, sort_keys=True))
 
 
+@fleet.command("builder-continue")
+@click.argument("card_id")
+@click.option("--node", required=True)
+@click.option("--request-id", required=True)
+@click.option("--claim", required=True)
+@click.option("--invocation", required=True)
+@click.option("--agent", required=True)
+@click.option("--reason", required=True)
+@click.option("--apply", is_flag=True, help="Authorize once; default checks only.")
+def builder_continue_cmd(card_id, node, request_id, claim, invocation, agent, reason, apply):
+    """Continue exact stopped staged work without releasing its source claim."""
+    from .builder_continue import authorize
+
+    try:
+        result = authorize(
+            default_paths(), Path.home() / ".skcapstone", node, card_id,
+            request_id=request_id, claim=claim, invocation=invocation,
+            actor=agent, reason=reason, apply=apply,
+        )
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(jsonlib.dumps(result, sort_keys=True))
+
+
 @fleet.command("builder-retire")
 @click.argument("card_id")
 @click.option("--node", required=True)

@@ -155,6 +155,8 @@ For BLOCKED, preserve the workspace and write a private report under
 ~/.skcapstone/evidence/work/{card_id}/ describing the actual unmet contract.
 Record a typed verdict, not only a verdict link: skcapstone coord verdict {card_id}
 'BLOCKED blocked_on=<category> referent=<precise referent> <actual reason>'
+Categories are dependency, card, human or capability. Missing Git identity is
+blocked_on=capability referent=git-author-identity followed by the actual reason.
 --candidate <private report path> --commit <actual existing HEAD>
 --tree <actual existing HEAD tree> --ref <actual existing refs/heads/branch>
 --agent {owner}. Read the current owner/claim first as in the recipe below.

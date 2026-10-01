@@ -220,3 +220,42 @@ delete recovery evidence to make health look green.
 | Held card appears eligible | Canonical CardStore owner and claim, not stale projection or raw event fold. |
 | Repeated retries spend tokens | Exact failure and per-card retry bound, gateway queue/health, prompt size and compaction count. |
 | Review PASS but card remains open | Required exact-candidate checks and native completion-gate readback; do not invent SUCCESS links. |
+
+## Continuing a stopped staged worker
+
+Card `c1a30122` adds `skcapstone fleet builder-continue CARD --node NODE
+--request-id REQUEST --claim CLAIM --invocation INVOCATION --agent OPERATOR
+--reason REASON`. The default only checks custody. `--apply` records one private
+continuation grant on the production authority; the existing native node loop
+performs launch admission. Install and independently qualify the exact candidate
+before using this command. This is not a new source offer or clean-base retry.
+
+The command requires a stopped production unit, the exact retained source claim,
+a producer BLOCKED outcome from that claim, a named branch at the authorized base,
+and preserved staged or untracked work. It archives the entire workspace,
+including Git metadata, ignored files and symlink entries, without reading their
+targets. The sidecar pins the immutable request, every status field except the
+routine heartbeat timestamp, native card revision, original outcome, Git index,
+source identities and full inventory. All material drift refuses continuation.
+The original request and outcome remain unchanged. Evidence directories must
+already be owned and private, with mode `0700`; private files use `0600`.
+
+Production author and committer names are the validated assigned worker owner.
+Both emails are that exact owner plus `@noreply.invalid`. This is explicit machine
+attribution and non-delivery metadata. It neither impersonates a human nor changes
+Git configuration. Both effective identities are checked with `git var` using the
+same `env -i` arguments as the worker before native service launch.
+
+The grant lasts one hour and can launch one fresh session through the same route,
+resource and native claim checks. Its prompt requires inspection of preserved
+work, correction of inaccurate evidence chronology, remaining validation, the
+already authorized commit and typed handoff. Exact candidate tests, independent
+review and completion remain required. The original BLOCKED event cannot release
+the continued generation before it supplies a new outcome.
+
+Consumption is durable before launch. A crash or lost launch response at that
+boundary leaves the grant spent and custody retained; it does not automatically
+replay or claim completion. Missing receipts likewise retain custody. An operator
+must diagnose the exact unit and preserve evidence before a separately authorized
+recovery. Do not delete sidecars, reset workspaces, release claims, or rewrite
+offers to force a retry. Existing clean-base `builder-retry` behavior is unchanged.

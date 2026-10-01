@@ -65,8 +65,8 @@ def pending(request, status):
     )
 
 
-def check_attempt(paths, home, request, status, *, local=True):
-    """Refuse changed custody, proposals, artifacts, workspaces or process identity."""
+def check_custody(home, request, status):
+    """Check the shared exact retained production claim and source contract."""
     card_id, node = request.get("card_id", ""), request.get("node", "")
     if (
         not re.fullmatch(r"[0-9a-f]{8}", card_id)
@@ -102,6 +102,13 @@ def check_attempt(paths, home, request, status, *, local=True):
         )
     ):
         raise ValueError("current source claim differs")
+    return native, card
+
+
+def check_attempt(paths, home, request, status, *, local=True):
+    """Refuse changed custody, proposals, artifacts, workspaces or process identity."""
+    native, card = check_custody(home, request, status)
+    card_id = request["card_id"]
     if (
         _latest_outcome(native, card_id)
         or status.get("source_artifact")
