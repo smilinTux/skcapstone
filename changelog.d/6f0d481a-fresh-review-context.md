@@ -1,0 +1,1 @@
+- Reuse the current review snapshot's history while validating replacement lineage, avoiding three duplicate legacy-history loads without caching across native reads.

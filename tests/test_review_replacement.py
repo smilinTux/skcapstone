@@ -349,6 +349,40 @@ def test_late_predecessor_writes_invalidate_current_attempt(tmp_path, invalid_re
         LiveCardStoreGateway(tmp_path).read_card(new)
 
 
+def test_snapshot_loads_history_once_and_refreshes_after_legacy_write(
+    tmp_path, invalid_review, monkeypatch
+):
+    """One read shares history; a later read must see legacy-only mutations."""
+    import skcoord.card_store as native
+    from skcoord.card import CardEvent, CardEventLog
+
+    _, _, old, request, _ = invalid_review
+    new = authorize(tmp_path, request)["review_card_id"]
+    original, reads = native.load_legacy_mutations, []
+
+    def load(home):
+        reads.append(home)
+        return original(home)
+
+    monkeypatch.setattr(native, "load_legacy_mutations", load)
+    gateway = LiveCardStoreGateway(tmp_path)
+    assert not gateway.read_card(new).unresolved_review
+    assert len(reads) == 1
+    CardEventLog(tmp_path).append(
+        CardEvent(
+            card_id=old,
+            action="link",
+            writer="late-operator",
+            link_key="late_custody_change",
+            link_value="changed after the first snapshot",
+        )
+    )
+    reads.clear()  # The native legacy writer performs its own separate validation.
+    with pytest.raises(ValueError, match="predecessor"):
+        gateway.read_card(new)
+    assert len(reads) == 1
+
+
 def test_arbitrary_attempt_cannot_bypass_native_authorization(tmp_path, invalid_review):
     store, source, old, request, props = invalid_review
     item = dict(

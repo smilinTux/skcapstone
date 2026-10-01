@@ -173,7 +173,7 @@ class LiveCardStoreGateway:
                 if card.meta.get("review_attempt"):
                     from .review_replacement import authorized_predecessor
 
-                    if authorized_predecessor(self.home, card, sibling):
+                    if authorized_predecessor(self.home, card, sibling, _store=store):
                         continue
                 if _candidate(sibling) != (repository, number, head):
                     continue

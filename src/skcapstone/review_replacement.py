@@ -170,7 +170,9 @@ def _terminal(home: Path, request: dict) -> dict:
     )
 
 
-def _validate(home: Path, request: dict, *, live_source: bool = True) -> tuple[dict, str]:
+def _validate(
+    home: Path, request: dict, *, live_source: bool = True, _store: CardStore | None = None
+) -> tuple[dict, str]:
     """Validate source and raw predecessor custody without legacy PR parsing."""
     from .blocked_verdict import is_blocked_verdict
     from .seraph_review_cardstore import _latest_outcome
@@ -181,6 +183,7 @@ def _validate(home: Path, request: dict, *, live_source: bool = True) -> tuple[d
         or not isinstance(request.get("launch_receipt"), dict)
     ):
         raise ValueError("replacement authorization malformed")
+    store = _store if _store is not None else CardStore(home)
     if live_source:
         binding, predecessor = _source(home, request["source_card"])
     else:
@@ -197,7 +200,7 @@ def _validate(home: Path, request: dict, *, live_source: bool = True) -> tuple[d
         )
         outcomes = [
             row
-            for row in _events(CardStore(home), request["source_card"])
+            for row in _events(store, request["source_card"])
             if _digest(row) == request["source_outcome_sha256"]
         ]
         if (
@@ -210,7 +213,6 @@ def _validate(home: Path, request: dict, *, live_source: bool = True) -> tuple[d
         raise ValueError("replacement source generation changed")
     if request.get("predecessor") != predecessor:
         raise ValueError("replacement predecessor is not canonical attempt zero")
-    store = CardStore(home)
     old = store.fold(predecessor)
     if (
         old is None
@@ -268,11 +270,13 @@ def replacement_binding(home: Path, source_card: str, head: str) -> dict:
     return _record_binding(home, predecessor)
 
 
-def _record_binding(home: Path, predecessor: str, *, live_source: bool = True) -> dict:
+def _record_binding(
+    home: Path, predecessor: str, *, live_source: bool = True, _store: CardStore | None = None
+) -> dict:
     """Validate stored lineage independently of a later completion snapshot."""
     from .link_review_work import review_card_id
 
-    store = CardStore(home)
+    store = _store if _store is not None else CardStore(home)
     authorizations = [r for r in _events(store, predecessor) if r.get("action") == ACTION]
     if not authorizations:
         return {"review_card_id": predecessor}
@@ -283,7 +287,7 @@ def _record_binding(home: Path, predecessor: str, *, live_source: bool = True) -
     digest = _digest(request)
     if event.get("writer") != "jarvis" or event.get("transition_id") != digest:
         raise ValueError("replacement authorization invalid")
-    binding, _ = _validate(home, request, live_source=live_source)
+    binding, _ = _validate(home, request, live_source=live_source, _store=store)
     current = review_card_id(
         binding["source_card"],
         binding["source_head"],
@@ -304,14 +308,17 @@ def current_review_attempt(home: Path, source_card: str, head: str) -> str:
     return replacement_binding(home, source_card, head)["review_card_id"]
 
 
-def authorized_predecessor(home: Path, review, sibling) -> bool:
+def authorized_predecessor(
+    home: Path, review, sibling, *, _store: CardStore | None = None
+) -> bool:
     """Exclude only the exact invalid predecessor of a validated replacement."""
     if (
         not review.meta.get("review_attempt")
         or review.meta.get("review_predecessor") != sibling.id
     ):
         return False
-    expected = _record_binding(home, sibling.id, live_source=False)
+    # Share only the caller's current snapshot; never retain a store across reads.
+    expected = _record_binding(home, sibling.id, live_source=False, _store=_store)
     if expected["review_card_id"] != review.id or any(
         review.meta.get(key) != value for key, value in expected.items() if key != "review_card_id"
     ):
