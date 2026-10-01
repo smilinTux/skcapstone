@@ -584,7 +584,8 @@ def _ensure_runtime_console_path(executable=sys.executable, environ=os.environ):
 # surface. Empty or incomplete evidence still publishes truthful zero metrics
 # and grants no assistance, reconciliation, or retirement authority.
 _ensure_runtime_console_path()
-run_production_cycle(agent=_dispatch_writer())
+if not DRY:
+    run_production_cycle(agent=_dispatch_writer())
 
 def sh(*a): return subprocess.run(a,capture_output=True,text=True).stdout
 
@@ -7289,7 +7290,7 @@ log(
 # Niobe may place one generic medium source card on a Ready builder standby.
 # The remote node claims the card itself, so the CardStore fence remains the
 # authority and this scheduler never impersonates a remote worker.
-if _is_niobe_builder_host(HOST):
+if not DRY and _is_niobe_builder_host(HOST):
     for _candidate in tuple(_builder_candidates):
         _remote_core = dict(_candidate[3], id=_candidate[2])
         try:

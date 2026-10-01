@@ -1,0 +1,1 @@
+- Card `568a08b9`: compose the exact installed production dispatcher dry-run guards and native gateway review-admission fixes on the production source baseline, preserving their behavioral regressions for coherent restoration.
