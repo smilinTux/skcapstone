@@ -128,7 +128,7 @@ def retry_after(value):
     """Relay only normalized HTTP retry timing, never arbitrary header text."""
     if not isinstance(value, str) or len(value) > 64 or not value.isascii():
         return None
-    if value.isdecimal() and len(value) <= 10:
+    if value.isdecimal():
         return str(int(value))
     if any(ord(char) < 32 or ord(char) == 127 for char in value):
         return None
