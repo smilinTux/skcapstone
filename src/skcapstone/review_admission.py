@@ -187,7 +187,7 @@ def reviewer_capacity_evaluation(
     try:
         observations = []
         for path in paths:
-            if not path.exists():
+            if not os.path.lexists(path):
                 continue
             fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             with os.fdopen(fd, "rb") as stream:

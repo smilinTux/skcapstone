@@ -60,18 +60,23 @@ def test_malformed_route_evidence_fails_closed(tmp_path, monkeypatch, invalid):
     assert result['reason'] == 'route-snapshot-ambiguity'
 
 
-@pytest.mark.parametrize('kind', ['fifo', 'symlink', 'directory'])
+@pytest.mark.parametrize('kind', ['fifo', 'symlink', 'dangling-symlink', 'directory'])
 @pytest.mark.parametrize('filename', ['fleet-review-routes.fixture.json', 'fleet-review-routes.json'])
 def test_route_evidence_requires_regular_nofollow_nonblocking_read(tmp_path, kind, filename):
     directory = tmp_path / 'evidence'
     directory.mkdir()
     path = directory / filename
+    other = ('fleet-review-routes.json' if filename.endswith('.fixture.json')
+             else 'fleet-review-routes.fixture.json')
+    (directory / other).write_text(json.dumps(snapshot()))
     if kind == 'fifo':
         os.mkfifo(path)
     elif kind == 'symlink':
         target = tmp_path / 'target.json'
         target.write_text(json.dumps(snapshot()))
         path.symlink_to(target)
+    elif kind == 'dangling-symlink':
+        path.symlink_to(tmp_path / 'absent-target.json')
     else:
         path.mkdir()
     # A separate bounded process proves FIFO reads cannot hang the authority.

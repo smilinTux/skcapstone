@@ -50,6 +50,14 @@ regressions cover FIFO, symlink and directory inputs at both existing paths.
 The full command above now passes **86 tests, zero skips, 14.89 seconds**.
 The old FAIL remains retained; this fix requires review of its new exact head.
 
+Independent Zai review of the follow-up identified a second real edge case:
+`exists()` skips a dangling symlink, allowing healthy alternate evidence to hide
+the unsafe entry. The reader now uses `lexists()` before its no-follow open.
+Both paths are tested with FIFO, valid symlink, dangling symlink and directory
+inputs while the alternate path contains healthy evidence. All eight cases
+refuse promptly. The full suite now passes **88 tests, zero skips, 15.55 seconds**.
+Earlier reviews remain retained and the new exact head requires re-review.
+
 A read-only live probe through the changed acquisition code queried the actual
 gateway, producing 15 qualified route entries, no probe error, and an eligible
 native result. The snapshot is retained separately under the operator evidence
