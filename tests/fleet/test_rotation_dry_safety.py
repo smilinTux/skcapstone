@@ -41,6 +41,8 @@ def check_builder(dry):
     exec(entrypoint("builder_dispatch.offer"), {
         "DRY": dry,
         "HOST": "chiap08",
+        "MAX_CANDIDATE_SCAN": 10,
+        "PRODUCTION_POLICY": None,
         "_is_niobe_builder_host": lambda host: True,
         "_builder_candidates": [(0, 0, "abcd1234", {}, ["source-only"])],
         "builder_dispatch": SimpleNamespace(offer=offer, BuilderDispatchError=ValueError,

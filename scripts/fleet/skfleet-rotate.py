@@ -7279,6 +7279,18 @@ def _emit_shadow_pool_v2():
         log(d, "SHADOW_ERROR|%s|%s:%s" % (HOST, type(exc).__name__, str(exc)[:160]))
 
 
+# The board fold can consume most of the route TTL. Refresh before constructing
+# admission fingerprints, so selection and the final claim compare one fresh
+# capacity revision instead of changing it underneath a selected review.
+if PRODUCTION_POLICY:
+    _review_route_occupancy,_review_route_ambiguous=load_route_occupancy(
+        Path(HOME)/".skcapstone")
+    _review_route_snapshot=acquire_review_route_snapshot(
+        _GATEWAY_ENDPOINT,
+        Path(HOME)/(".skcapstone/evidence/fleet-review-routes.%s.json"%HOST),
+        new_cycle_id(HOST,STAMP),occupancy=_review_route_occupancy,
+        occupancy_ambiguous=_review_route_ambiguous,physical_maximum=None)
+
 _emit_shadow_pool_v2()
 
 # POOL_V2 alone supplies dispatch candidates. Reuse legacy rows where present,
@@ -7902,6 +7914,9 @@ if _review_withheld:
 
 def _observe_assigned_reviews():
     """Have Mero record current state for reviews launched by this host."""
+    if globals().get("DRY"):
+        return
+    observation_deadline=(time.monotonic()+5 if globals().get("PRODUCTION_POLICY") else None)
     live_sessions = set(sh("tmux", "ls", "-F", "#{session_name}").split())
     live_units = active_worker_units()
     outcomes = _load_outcomes()
@@ -7915,6 +7930,9 @@ def _observe_assigned_reviews():
         }
     )
     for cid in review_ids:
+        if observation_deadline is not None and time.monotonic() >= observation_deadline:
+            log(d,"REVIEW_OBSERVATION_DEFERRED|%s|reason=cycle-observation-budget"%HOST)
+            break
         # POOL_V2 already folded every review candidate. Reuse that immutable
         # per-cycle index instead of probing all review streams a second time.
         rows = _claim_rows.get(cid)
@@ -7947,6 +7965,8 @@ def _observe_assigned_reviews():
             continue
         receipt = receipts[-1]
         prior = observations[-1]
+        if prior.get("state")=="complete" and str(prior.get("ts") or "") >= str(receipt.get("ts") or ""):
+            continue
         process = dict(prior["process"])
         if process.get("host") != HOST:
             continue
@@ -8567,6 +8587,11 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         # Yield the slot: without this the same card is re-picked every
         # cycle and the rest of the pool never gets a turn.
         _record_workspace_cooldown(cid)
+        continue
+    if PRODUCTION_POLICY and (time.monotonic() >= _cycle_deadline
+            or not _production_card_routes(fresh_claimability["core"],
+                                          fresh_claimability["labels"],_LANE["name"])):
+        log(d,"PRECLAIM_DEFERRED|%s|%s|reason=deadline-or-route-freshness"%(HOST,cid))
         continue
     if _fanout_request is not None:
         try:
