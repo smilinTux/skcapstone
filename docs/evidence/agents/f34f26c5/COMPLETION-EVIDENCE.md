@@ -41,6 +41,15 @@ atomic claim tests, independent reviewer/source checks, gateway exhaustion,
 tampered seals, stale/future/nonfinite timestamps, malformed evidence, and newer
 gateway-failure selection. `git diff --check` passed.
 
+Independent DeepSeek review of the initial `ff3f5f9b5b195431bbf2ed6c62b7e9e4a58839af`
+candidate returned FAIL. The reviewer identified a real regression: `exists()`
+followed by an ordinary open can block indefinitely on a FIFO. The follow-up
+opens both evidence paths with `O_NOFOLLOW | O_NONBLOCK` and rejects descriptors
+that are not regular files before reading. Six separate bounded subprocess
+regressions cover FIFO, symlink and directory inputs at both existing paths.
+The full command above now passes **86 tests, zero skips, 14.89 seconds**.
+The old FAIL remains retained; this fix requires review of its new exact head.
+
 A read-only live probe through the changed acquisition code queried the actual
 gateway, producing 15 qualified route entries, no probe error, and an eligible
 native result. The snapshot is retained separately under the operator evidence
@@ -50,7 +59,8 @@ This is historical source qualification, not installed gate or worker proof.
 
 ## Installation and rollback requirements
 
-This candidate has not been deployed or independently reviewed by its producer.
+This candidate has not been deployed; the producer does not supply its own
+independent verdict.
 The root operator must preserve exact preimages of the installed
 `skcapstone/review_admission.py` and `skcapstone/fleet/review_capacity.py`, install
 the reviewed bytes together, then acquire and atomically publish an actual fresh
