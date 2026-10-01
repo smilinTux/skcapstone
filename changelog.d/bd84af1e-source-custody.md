@@ -1,0 +1,1 @@
+- Preserve production source claims until independent review, transport exact unpublished candidate bundles through bounded native custody, and retain restricted SSH card-read semantics.
