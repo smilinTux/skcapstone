@@ -107,7 +107,7 @@ def retry_disposition(args, terminal_check) -> dict | None:
 
 
 def disposition(args, *, terminal_proven: bool) -> dict | None:
-    """Publish stopped production source only; leave reviewer/legacy exits alone."""
+    """Publish stopped source or retain its independent review; leave legacy alone."""
     if "SKFLEET_PRODUCTION_POLICY" not in os.environ:
         return None
     existing = getattr(args, "production_source_disposition", None)
@@ -127,7 +127,9 @@ def disposition(args, *, terminal_proven: bool) -> dict | None:
             or card.meta.get("link_source_card")
             or card.links.get("link_source_card")
         ):
-            return None
+            from .production_review_custody import retain_review_exit
+
+            return retain_review_exit(home, args, card, terminal_proven=terminal_proven)
         if not terminal_proven:
             state["reason"] = "exact-process-and-cgroup-death-unproven"
         else:

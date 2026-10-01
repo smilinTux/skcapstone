@@ -1034,6 +1034,8 @@ def finalize_worker_exit(args: argparse.Namespace, child: subprocess.Popen | Non
     """
     from skcapstone.fleet.production_exit import retry_disposition
 
+    if not hasattr(args, "production_child_exit_code"):
+        args.production_child_exit_code = getattr(child, "returncode", None)
     source = retry_disposition(
         args,
         lambda: "SKFLEET_PRODUCTION_POLICY" in os.environ and terminal_local_evidence(child),
@@ -1135,6 +1137,7 @@ def main() -> int:
         record_terminal_exit(args, stderr, result_code, completion_failure)
         from skcapstone.fleet.production_exit import retry_disposition
 
+        args.production_child_exit_code = result_code
         source = retry_disposition(
             args,
             lambda: "SKFLEET_PRODUCTION_POLICY" in os.environ and terminal_local_evidence(child),

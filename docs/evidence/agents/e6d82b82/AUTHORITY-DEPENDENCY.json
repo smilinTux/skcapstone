@@ -1,0 +1,39 @@
+{
+  "schema": "skfleet.authority-cli-dependency/v1",
+  "authority_provenance": "existing qualified506df5ab guarded authority overlay, external to source base4d2a00dc",
+  "source_base": "4d2a00dc08039c37a3cb00e5bd18fba757499617",
+  "modules": {
+    "skcapstone.cli.coord": {
+      "path": "/home/skuser01/.skenv/lib/python3.12/site-packages/skcapstone/cli/coord.py",
+      "sha256": "77970a42e7b35dab6b548ede243fd6d940ea355b442767891e01877a713c5dd8"
+    },
+    "skcapstone.coord_completion": {
+      "path": "/home/skuser01/.skenv/lib/python3.12/site-packages/skcapstone/coord_completion.py",
+      "sha256": "4b149b45b431fe0b6725e7acf3111ce6002231f8efa67827a59ea63f20ad88ee"
+    },
+    "skcapstone.guarded_coord_link": {
+      "path": "/home/skuser01/.skenv/lib/python3.12/site-packages/skcapstone/guarded_coord_link.py",
+      "sha256": "b71640332254392a992ae9f2aacbbfc5d141d5009698c11321c0c0f2e6cafd94"
+    },
+    "skcapstone.provisional_verdict": {
+      "path": "/home/skuser01/.skenv/lib/python3.12/site-packages/skcapstone/provisional_verdict.py",
+      "sha256": "97c4f90209bee94e64f649c81d3730571179aba727ec517db9826cc4929e4b92"
+    },
+    "skcapstone.review_verdict": {
+      "path": "/home/skuser01/.skenv/lib/python3.12/site-packages/skcapstone/review_verdict.py",
+      "sha256": "4ceb8ccf701954cea5bba085c80d0ca760b0d6b4c2839975e81b8bd7bfd746d7"
+    },
+    "skcapstone.seraph_review_cardstore": {
+      "path": "/home/skuser01/.skenv/lib/python3.12/site-packages/skcapstone/seraph_review_cardstore.py",
+      "sha256": "cc9f27ea3e7569a265415af46364d88ba68cdb8a2810494bb1833e64e792d4c5"
+    },
+    "skcoord.card_store": {
+      "path": "/home/skuser01/.skenv/lib/python3.12/site-packages/skcoord/card_store.py",
+      "sha256": "2817713783a3457b9570654c6d536da3dcb12e457c6f98eb7cbe1e9e7db84256"
+    },
+    "skcoord.coordination": {
+      "path": "/home/skuser01/.skenv/lib/python3.12/site-packages/skcoord/coordination.py",
+      "sha256": "bc8177088896a4dff40d887f1112100482a75fcca45c9e83089d8381d12b8bdf"
+    }
+  }
+}

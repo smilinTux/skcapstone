@@ -6478,6 +6478,10 @@ def close_reviewed_parents():
     outcomes = _load_outcomes()
     closed = 0
     for parent, reviews in _reviews_by_parent().items():
+        if globals().get("PRODUCTION_POLICY"):
+            source = CardStore(Path(CARDS).parent).fold(parent)
+            if source is not None and "source-only" in source.labels:
+                continue  # Guarded production acceptance owns this generation.
         if not os.path.isdir(os.path.join(CARDS, parent)): continue
         if lifecycle_state(parent) != "open": continue
         _pts, pval = outcomes.get(parent, (None, None))
@@ -6614,6 +6618,10 @@ def release_finished_review_claims():
         match = owner_pattern.fullmatch(str(owner or ""))
         if not match or match.group(1) != cid or not revision:
             continue
+        if globals().get("PRODUCTION_POLICY"):
+            review = CardStore(Path(CARDS).parent).fold(cid)
+            if review is not None and "source-only" in review.labels:
+                continue  # Completion removes custody; success is never backlog.
         verdict = _durable_review_outcome(cid)
         if verdict is None:
             continue
@@ -6716,6 +6724,13 @@ review_capacity = min(MAX_LAUNCH, sum(
     lane["free"] for lane in LANES if lane["name"] != "escalate"))
 open_provisional_reviews(review_capacity, dry_run=DRY)
 if not DRY:
+    if PRODUCTION_POLICY and HOST == AUTHORITY_HOST:
+        from skcapstone.fleet.production_acceptance import reconcile as reconcile_source_reviews
+
+        for _acceptance in reconcile_source_reviews(
+                Path(CARDS).parent, PRODUCTION_POLICY, process_check=_card_process_snapshot):
+            log(d, "SOURCE_REVIEW_ACCEPTANCE|%s|%s|%s|%s" % (
+                HOST, _acceptance["card"], _acceptance["state"], _acceptance.get("reason", "")))
     close_reviewed_parents()
     release_finished_review_claims()
 
@@ -8152,8 +8167,10 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         continue
     _LANE=next(lane for lane in LANES if lane["name"]==_attempt_lane_name)
     if PRODUCTION_POLICY and not DRY:
+        from skcapstone.fleet.production_resources import active_resource_units
+
         _resource_ready,_resource_reason=local_worker_admission(
-            PRODUCTION_POLICY,HOST,active_worker_units())
+            PRODUCTION_POLICY,HOST,active_resource_units())
         if not _resource_ready:
             log(d,"NODE_RESOURCES_DEFERRED|%s|%s|%s"%(HOST,cid,_resource_reason))
             break

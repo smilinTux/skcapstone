@@ -1,4 +1,4 @@
-"""Local production exit preserves source custody and the legacy review path."""
+"""Production exit retains source/review custody while preserving legacy exits."""
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -161,7 +161,9 @@ def test_reviewer_and_legacy_outcomes_never_publish_producer_source(exit_case, m
         production_exit, "publish_source", lambda *args, **kwargs: pytest.fail("not source")
     )
     row.labels.append("review")
-    assert production_exit.disposition(args, terminal_proven=True) is None
+    result = production_exit.disposition(args, terminal_proven=True)
+    assert result["state"] == "awaiting-review-acceptance"
+    assert result["claim_released"] is False
     monkeypatch.delenv("SKFLEET_PRODUCTION_POLICY")
     row.labels.remove("review")
     assert production_exit.disposition(args, terminal_proven=True) is None
@@ -186,7 +188,7 @@ def test_production_wrapper_bypasses_generic_release_for_pending_source(exit_cas
     assert records == [{"pid": 123, "completion_state": "awaiting-review"}]
 
 
-def test_production_reviewer_keeps_existing_independent_finalizer(exit_case, monkeypatch):
+def test_production_reviewer_retains_claim_instead_of_legacy_release(exit_case, monkeypatch):
     args, row = exit_case
     row.labels.append("review")
     wrapper = _wrapper()
@@ -200,8 +202,10 @@ def test_production_reviewer_keeps_existing_independent_finalizer(exit_case, mon
     monkeypatch.setattr(
         wrapper, "idle_owner_projection", lambda *args: calls.append("native-projection")
     )
-    wrapper.finalize_worker_exit(args, SimpleNamespace(pid=123))
-    assert calls == ["review-finalizer", "native-projection"]
+    monkeypatch.setattr(wrapper, "write_process_record", lambda *args, **kwargs: None)
+    wrapper.finalize_worker_exit(args, SimpleNamespace(pid=123, returncode=0))
+    assert calls == []
+    assert args.production_source_disposition["state"] == "awaiting-review-acceptance"
 
 
 def test_wrapper_exact_source_arguments_are_explicit(monkeypatch):
