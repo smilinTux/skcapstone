@@ -3,6 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -71,6 +72,49 @@ class RefillTest(unittest.TestCase):
                          dict(receipt['job'], _qualification=receipt))
         self.assertEqual(self.run_refill()['added'], [])
         self.assertTrue((self.ready / '1234abcd.json').exists())
+
+    def test_dispatch_and_refill_share_cursor_across_restart_without_replay(self):
+        import fiber_control as control
+        cards = ('1234abc1', '1234abc2', '1234abc3')
+        for cid in cards:
+            self.request(cid)
+        self.assertEqual(self.run_refill()['added'], list(cards[:2]))
+        self.assertEqual([job['card'] for job in control.queued_jobs(self.queue, self.state)], list(cards[:2]))
+        original = (self.queue / (cards[0] + '.json')).read_bytes()
+        for cid in cards[:2]:
+            self.db.execute('INSERT INTO runs VALUES (?, ?, ?)', (cid, 'running', 'c' * 32))
+        self.db.commit()
+        self.assertEqual(self.run_refill()['added'], [cards[2]])
+        program = ('import sys,json; from pathlib import Path; '
+                   'sys.path.insert(0,sys.argv[1]); import fiber_control; '
+                   'print(json.dumps(fiber_control.queued_jobs(Path(sys.argv[2]),Path(sys.argv[3]))))')
+        output = subprocess.check_output([sys.executable, '-c', program,
+            str(Path(control.__file__).parent), str(self.queue), str(self.state)], text=True)
+        self.assertEqual([job['card'] for job in json.loads(output)], [cards[2]])
+        self.assertEqual(self.run_refill()['added'], [])
+        self.assertEqual(set(refill._read_cursor(self.state)), {'queue', 'qualified', 'dispatch'})
+        self.assertEqual((self.queue / (cards[0] + '.json')).read_bytes(), original)
+
+    def test_noncard_input_name_does_not_poison_later_cursor_reads(self):
+        bad = self.ready / 'malformed.json'
+        bad.write_text('{')
+        bad.chmod(0o600)
+        self.assertEqual(self.run_refill()['skipped'][0]['file'], bad.name)
+        self.request()
+        self.assertEqual(self.run_refill()['added'], ['1234abcd'])
+        self.assertEqual(self.run_refill()['added'], [])
+        self.assertEqual(bad.read_text(), '{')
+
+    def test_dispatch_cursor_rejects_unsafe_names_and_unknown_scan_fields(self):
+        cursor = self.state / refill.CURSOR_NAME
+        for scan in ({'dispatch': '../escape.json'}, {'dispatch': '/absolute.json'},
+                     {'dispatch': 'nul\x00.json'}, {'dispatch': 'not-json'},
+                     {'dispatch': 3}, {'unrecognized': '1234abcd.json'}):
+            with self.subTest(scan=scan):
+                cursor.write_text(json.dumps({'schema': refill.CURSOR_SCHEMA, 'scan': scan}))
+                cursor.chmod(0o600)
+                with self.assertRaisesRegex(Refused, 'refill-invalid-cursor'):
+                    refill._read_cursor(self.state)
 
     def test_hold_precedes_all_reads_and_writes(self):
         self.request()

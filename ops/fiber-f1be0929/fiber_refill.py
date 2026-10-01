@@ -87,10 +87,13 @@ def _read_cursor(state):
     if set(value) - {'schema', 'scan'} or value.get('schema') not in (None, CURSOR_SCHEMA):
         raise Refused('refill-invalid-cursor')
     scan = value.get('scan') or {}
-    if not isinstance(scan, dict) or set(scan) - {'queue', 'qualified'}:
+    if not isinstance(scan, dict) or set(scan) - {'queue', 'qualified', 'dispatch'}:
         raise Refused('refill-invalid-cursor')
     for key, name in scan.items():
-        if not isinstance(name, str) or not re.fullmatch(r'[0-9a-f]{8}\.json', name):
+        # Hints describe scanned dirents, including malformed non-card names.
+        # They never authorize a card or become a filesystem lookup path.
+        if (not isinstance(name, str) or not name.endswith('.json')
+                or '/' in name or '\x00' in name or len(name) > 255):
             raise Refused('refill-invalid-cursor')
     return {key: name for key, name in scan.items() if name}
 
