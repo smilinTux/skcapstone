@@ -41,3 +41,34 @@ in that invocation. The corrected focused command above passed.
 Production latency is not measured or claimed fixed by these source tests.
 Root retains deployment, rollback and real trial qualification. Rollback is the
 exact prior dispatcher bytes; no data or service changes are included.
+
+## Measured follow-up delta
+
+The first installed fix still exhausted the unchanged Seraph cycle deadline.
+Root authorized this same-card follow-up: move the uncached parent source-only
+check after exact completed PASS/current-generation proof, immediately before
+join/completion. Release now uses its existing final fresh fold for both role
+and exact claim verification, after durable outcome and stopped-process proof.
+All freshness/custody checks remain; the role check is later and thus fresher.
+
+An AST-extracted private probe ran the exact cleanup functions and their read
+helpers against the native board without importing the dispatcher. A Python
+audit hook refused filesystem mutations and subprocess launches except exact
+read-only systemctl/tmux queries; mutation commands returned refusal. Actual
+delta runtime SHA256 was
+`1473574b4b58a499e9ef0481df0f818c9c7a4c2ff781497439286b8766a8072e`.
+Outcomes: 1.302s, 5514 entries. Review index: 0.140s, 1795 parents.
+Parent cleanup: 1.836s, one shared native store, 732 shared folds, zero fresh
+candidate stores. Release: 0.051s over 8004 cards, six fresh claim reads and
+six durable-outcome checks, zero native folds. No mutation attempts or read
+errors occurred. Full private receipt: card evidence READONLY-CLEANUP-TIMING.json.
+The a4dd baseline probe was stopped by root direction while parent cleanup was
+still running; no complete baseline timing or speedup ratio is claimed.
+
+The same focused command now passes 26 tests in 1.71s. Five added cases cover
+active provisional parents without a current completed review and unfinished
+or still-running claimed reviews, all without fresh native store creation.
+Production role-exclusion tests now reach the actual final mutation boundary.
+Initial fixture failures were missing capture groups in the test regex; the
+fixtures now preserve the production matcher contract. Ruff/black, dispatcher
+compilation and diff checks pass. Live end-to-end launch remains root's gate.

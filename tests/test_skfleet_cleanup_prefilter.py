@@ -4,6 +4,8 @@ import os
 import re
 from types import SimpleNamespace
 
+import pytest
+
 from tests.test_skfleet_review_claim_release import _load
 
 
@@ -19,7 +21,7 @@ def test_historical_parent_outcomes_need_no_native_or_lifecycle_folds():
             for index, card in enumerate(parents)
         },
         "_reviews_by_parent": lambda: parents,
-        "_PROVISIONAL_PASS_RE": re.compile(r"^PASS_FOR_REVIEW"),
+        "_PROVISIONAL_PASS_RE": re.compile(r"^(PASS_FOR_REVIEW)"),
     }
     # No filesystem, lifecycle, CardStore, or subprocess implementation is
     # supplied: any historical fold or attempted mutation must fail the test.
@@ -39,7 +41,7 @@ def test_closed_provisional_parents_skip_new_native_stores():
         "os": SimpleNamespace(path=SimpleNamespace(join=os.path.join, isdir=lambda _: True)),
         "_load_outcomes": lambda: {card: ("stamp", "PASS_FOR_REVIEW") for card in parents},
         "_reviews_by_parent": lambda: parents,
-        "_PROVISIONAL_PASS_RE": re.compile(r"^PASS_FOR_REVIEW"),
+        "_PROVISIONAL_PASS_RE": re.compile(r"^(PASS_FOR_REVIEW)"),
         "lifecycle_state": lambda card: reads.append(card) or "complete",
     }
     _load("close_reviewed_parents", namespace)
@@ -92,3 +94,54 @@ def test_stale_cached_local_owner_cannot_authorize_a_fresh_foreign_claim():
     _load("release_finished_review_claims", namespace)
     assert namespace["release_finished_review_claims"]() == 0
     assert reads == [card]
+
+
+@pytest.mark.parametrize(
+    "generation,review_state,names_generation",
+    [
+        (None, "complete", True),
+        (("generation",), "open", True),
+        (("generation",), "complete", False),
+    ],
+)
+def test_active_provisional_parent_without_exact_completed_review_needs_no_fresh_store(
+    generation, review_state, names_generation
+):
+    """Pending or obsolete review generations cannot reach native mutation reads."""
+    parent, review = "abcdef01", "abcdef02"
+    namespace = {
+        "HOST": "chiap08",
+        "AUTHORITY_HOST": "chiap08",
+        "PRODUCTION_POLICY": {"authority_host": "chiap08"},
+        "CARDS": "/cards",
+        "os": SimpleNamespace(path=SimpleNamespace(join=os.path.join, isdir=lambda _: True)),
+        "_load_outcomes": lambda: {
+            parent: ("stamp", "PASS_FOR_REVIEW"),
+            review: ("stamp", "PASS"),
+        },
+        "_reviews_by_parent": lambda: {parent: [review]},
+        "_PROVISIONAL_PASS_RE": re.compile(r"^(PASS_FOR_REVIEW)"),
+        "_PASS_ONLY_RE": re.compile(r"^PASS$"),
+        "lifecycle_state": lambda card: "open" if card == parent else review_state,
+        "_parent_review_generation": lambda *args: generation,
+        "_review_names_generation": lambda *args: names_generation,
+    }
+    _load("close_reviewed_parents", namespace)
+    assert namespace["close_reviewed_parents"]() == 0
+
+
+@pytest.mark.parametrize("verdict", [None, "PASS"])
+def test_unfinished_or_live_review_needs_no_native_fold(verdict):
+    """Only durable stopped review candidates pay for fresh native role checks."""
+    card = "abcdef01"
+    namespace = release_namespace([card])
+    namespace.update(
+        {
+            "_current_claim": lambda _: (f"pi-seraph-chiap08-{card}", 1),
+            "_current_claim_identity_fresh": lambda _: (f"pi-seraph-chiap08-{card}", 1, "claim"),
+            "_durable_review_outcome": lambda _: verdict,
+            "_card_process_snapshot": lambda _: {"sessions": ["live"], "units": []},
+        }
+    )
+    _load("release_finished_review_claims", namespace)
+    assert namespace["release_finished_review_claims"]() == 0

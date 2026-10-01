@@ -6484,11 +6484,6 @@ def close_reviewed_parents():
         if not match: continue
         if not os.path.isdir(os.path.join(CARDS, parent)): continue
         if lifecycle_state(parent) != "open": continue
-        if globals().get("PRODUCTION_POLICY"):
-            # Keep the uncached native check for actual completion candidates.
-            source = CardStore(Path(CARDS).parent).fold(parent)
-            if source is not None and "source-only" in source.labels:
-                continue  # Guarded production acceptance owns this generation.
         generation = _parent_review_generation(parent, _pts, match.group(1).upper())
         if not generation: continue
         generation_id = generation[0]
@@ -6507,6 +6502,11 @@ def close_reviewed_parents():
             join_value = _review_join_value(
                 parent, parent_event, generation_id, rev, review_event
             )
+            if globals().get("PRODUCTION_POLICY"):
+                # Fresh role check only after an exact completed review qualifies.
+                source = CardStore(Path(CARDS).parent).fold(parent)
+                if source is not None and "source-only" in source.labels:
+                    break  # Guarded production acceptance owns this generation.
             if not _has_review_join(parent, join_value):
                 r = subprocess.run(
                     [SKC, "coord", "link", parent, "review_join", join_value,
@@ -6625,10 +6625,6 @@ def release_finished_review_claims():
         match = owner_pattern.fullmatch(str(owner or ""))
         if not match or match.group(1) != cid or not revision:
             continue
-        if globals().get("PRODUCTION_POLICY"):
-            review = CardStore(Path(CARDS).parent).fold(cid)
-            if review is not None and "source-only" in review.labels:
-                continue  # Completion removes custody; success is never backlog.
         verdict = _durable_review_outcome(cid)
         if verdict is None:
             continue
@@ -6645,6 +6641,7 @@ def release_finished_review_claims():
             folded is None
             or folded.owner != owner
             or folded.meta.get("_claim_revision") != revision
+            or (globals().get("PRODUCTION_POLICY") and "source-only" in folded.labels)
         ):
             continue
         try:

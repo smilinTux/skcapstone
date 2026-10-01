@@ -25,14 +25,19 @@ def test_production_review_never_reaches_legacy_success_release(tmp_path):
         "re": re,
         "Path": Path,
         "CardStore": lambda home: SimpleNamespace(
-            fold=lambda card: SimpleNamespace(labels=["source-only", "review"])
+            fold=lambda card: SimpleNamespace(
+                labels=["source-only", "review"],
+                owner="pi-seraph-chiap08-" + card,
+                meta={"_claim_revision": "a" * 32},
+            )
         ),
         "_current_claim_identity_fresh": lambda card: ("pi-seraph-chiap08-" + card, 1, "a" * 32),
         "_current_claim": lambda card: ("pi-seraph-chiap08-" + card, 1),
+        "_durable_review_outcome": lambda card: "PASS",
+        "_card_process_snapshot": lambda card: {"sessions": [], "units": []},
     }
     _load("release_finished_review_claims", namespace)
-    # No subprocess or legacy-verdict helper exists in the namespace. Reaching
-    # either would fail instead of silently releasing the successful review.
+    # No subprocess exists: reaching a mutation would fail the test.
     assert namespace["release_finished_review_claims"]() == 0
 
 
@@ -50,10 +55,18 @@ def test_production_source_never_reaches_legacy_unguarded_parent_completion(tmp_
         "CardStore": lambda home: SimpleNamespace(
             fold=lambda card: SimpleNamespace(labels=["source-only"])
         ),
-        "_load_outcomes": lambda: {card: ("stamp", "PASS_FOR_REVIEW")},
+        "_load_outcomes": lambda: {
+            card: ("stamp", "PASS_FOR_REVIEW"),
+            "ab000002": ("stamp", "PASS"),
+        },
         "_reviews_by_parent": lambda: {card: ["ab000002"]},
-        "_PROVISIONAL_PASS_RE": re.compile(r"^PASS_FOR_REVIEW"),
-        "lifecycle_state": lambda card: "open",
+        "_PROVISIONAL_PASS_RE": re.compile(r"^(PASS_FOR_REVIEW)"),
+        "lifecycle_state": lambda cid: "open" if cid == card else "complete",
+        "_PASS_ONLY_RE": re.compile(r"^PASS$"),
+        "_parent_review_generation": lambda *args: ("generation",),
+        "_review_names_generation": lambda *args: True,
+        "_matching_outcome_events": lambda *args: [{}],
+        "_review_join_value": lambda *args: "join",
     }
     _load("close_reviewed_parents", namespace)
     assert namespace["close_reviewed_parents"]() == 0
