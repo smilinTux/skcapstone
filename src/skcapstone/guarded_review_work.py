@@ -14,7 +14,6 @@ from .link_review_work import (
     ReviewWorkResult,
     card_generation,
     reconcile_review_work,
-    review_card_id,
 )
 from .seraph_review_cardstore import LiveCardStoreGateway, _binding, _latest_outcome
 
@@ -93,12 +92,16 @@ def open_guarded_review(
         _candidate(home, card_id, outcome)
         generation = card_generation(source)
         digest = outcome["candidate_sha256"]
-        review_id = review_card_id(card_id, outcome["candidate_commit"], generation, digest)
+        from .review_replacement import replacement_binding
+
+        lineage = replacement_binding(home, card_id, outcome["candidate_commit"])
+        review_id = lineage.pop("review_card_id")
         binding = {
             "source_revision": expected_source_revision,
             "producer_identity": producer,
             "candidate_evidence_sha256": digest,
             **{key: outcome[key] for key in ("candidate_path", "candidate_tree", "candidate_ref")},
+            **lineage,
         }
         existing = store.fold(review_id)
         if existing is not None and any(
@@ -122,6 +125,11 @@ def open_guarded_review(
         if LiveCardStoreGateway(home).read_card(card_id).revision != expected_source_revision:
             raise ValueError("guarded review source changed during reconciliation")
         _candidate(home, card_id, outcome)
+        if (
+            replacement_binding(home, card_id, outcome["candidate_commit"]).get("review_card_id")
+            != review_id
+        ):
+            raise ValueError("guarded review replacement changed during reconciliation")
         if not result.launchable:
             raise ValueError("guarded review refused: " + result.reason)
         return result
