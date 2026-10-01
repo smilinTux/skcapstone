@@ -1,0 +1,1 @@
+- Card `c6d074c7`: add explicit shared gateway-owned production routing policy to Niobe, preserving activation authorization and rejecting legacy local concurrency targets in policy mode.
