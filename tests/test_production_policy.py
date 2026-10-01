@@ -22,13 +22,8 @@ def policy():
         "capacity_authority": "skgateway",
         "gateway_url": "http://chiap01:18790",
         "lanes": {
-            lane: {"enabled": True, "provider": "skgateway", "model": model}
-            for lane, model in {
-                "codex": "gpt-5.6-sol",
-                "glm": "sk-zai-m",
-                "deepseek": "deepseek-flash",
-                "qwen": "qwen3.8-27b-huihui-abliterated-q4_k_m",
-            }.items()
+            lane: {"enabled": True, "provider": "skgateway"}
+            for lane in ("codex", "glm", "deepseek", "qwen")
         }
         | {"kimi": {"enabled": False}},
         "node_quotas": {
@@ -49,9 +44,9 @@ def test_policy_fresh_read_and_independent_result(tmp_path, policy):
     path.write_text(json.dumps(policy))
     first = load_production_policy(path, host="chiap08")
     assert first == policy
-    first["lanes"]["codex"]["model"] = "caller-corruption"
+    first["lanes"]["codex"]["enabled"] = False
     assert load_production_policy(path, host="chiap08") == policy
-    policy["lanes"]["codex"]["model"] = "future-qualified-model"
+    policy["lanes"]["codex"]["enabled"] = False
     path.write_text(json.dumps(policy))
     assert load_production_policy(path, host="chiap08") == policy
 

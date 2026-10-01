@@ -12,13 +12,8 @@ def policy():
     return {
         "lanes": {
             **{
-                lane: {"enabled": True, "provider": "skgateway", "model": model}
-                for lane, model in {
-                    "codex": "gpt-5.6-sol",
-                    "glm": "sk-zai-m",
-                    "deepseek": "deepseek-flash",
-                    "qwen": "qwen-model",
-                }.items()
+                lane: {"enabled": True, "provider": "skgateway"}
+                for lane in ("codex", "glm", "deepseek", "qwen")
             },
             "kimi": {"enabled": False},
         }
@@ -99,8 +94,8 @@ def test_qwen_replica_change_is_not_provider_independence():
 @pytest.mark.parametrize(
     "change",
     [
-        {"model_or_bucket": "substituted"},
-        {"logical_route": "pool-alias"},
+        {"model_or_bucket": ""},
+        {"logical_route": None},
         {"capacity_domain": "codex"},
         {"provider": "codex"},
         {"provider": "skgateway"},
@@ -117,9 +112,9 @@ def test_exact_model_provider_and_domain_must_agree(change):
     )
 
 
-def test_ambiguous_configured_model_is_not_accepted():
+def test_disabled_family_is_not_accepted():
     p = policy()
-    p["lanes"]["glm"]["model"] = "deepseek-flash"
+    p["lanes"]["deepseek"]["enabled"] = False
     assert (
         independent_review_routes(
             [route("deepseek-flash", "deepseek")],
@@ -128,6 +123,13 @@ def test_ambiguous_configured_model_is_not_accepted():
         )
         == []
     )
+
+
+def test_new_gateway_model_and_logical_bucket_preserve_independence():
+    current = route("future-qualified-deepseek", "deepseek") | {"logical_route": "card-m-bucket"}
+    assert independent_review_routes(
+        [current], policy=policy(), producer_identity="pi-codex-author"
+    ) == [current]
 
 
 def test_result_does_not_mutate_or_alias_input_evidence():

@@ -21,7 +21,6 @@ LEGACY_CEILING_VARIABLES = frozenset(
     }
 )
 _HOST = re.compile(r"[a-z0-9][a-z0-9.-]{0,252}\Z")
-_MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}\Z")
 _MAX_BYTES = 1024 * 1024
 
 
@@ -94,11 +93,9 @@ def load_production_policy(path: Path, *, host: str) -> dict:
         row = lanes[lane]
         if (
             not isinstance(row, dict)
-            or set(row) != {"enabled", "provider", "model"}
-            or row["enabled"] is not True
+            or set(row) != {"enabled", "provider"}
+            or type(row["enabled"]) is not bool
             or row["provider"] != "skgateway"
-            or not isinstance(row["model"], str)
-            or not _MODEL.fullmatch(row["model"])
         ):
             raise ValueError("production policy route is invalid")
     if lanes["kimi"] != {"enabled": False} or lanes["kimi"].get("enabled") is not False:

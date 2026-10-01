@@ -12,6 +12,7 @@ from skcapstone.fleet.production_dispatch import (
     cycle_budget_seconds,
     production_lanes,
     production_policy_from_environment,
+    resolve_production_routes,
     routes_for_lane,
     worker_resource_properties,
 )
@@ -29,13 +30,8 @@ def policy():
         "gateway_url": "http://gateway:18790",
         "lanes": {
             **{
-                name: {"enabled": True, "provider": "skgateway", "model": model}
-                for name, model in {
-                    "codex": "gpt-test",
-                    "glm": "glm-test",
-                    "deepseek": "deepseek-test",
-                    "qwen": "qwen-test",
-                }.items()
+                name: {"enabled": True, "provider": "skgateway"}
+                for name in ("codex", "glm", "deepseek", "qwen")
             },
             "kimi": {"enabled": False},
         },
@@ -104,16 +100,21 @@ def test_gateway_capacity_does_not_subtract_existing_worker_count():
     assert review_physical_free(lanes, [], {}, None) == 0
 
 
-def test_route_evidence_must_match_model_and_backend():
+def test_lane_uses_qualified_family_not_a_static_model():
     lane = next(row for row in production_lanes(policy(), 100) if row["name"] == "deepseek")
-    exact = {"logical_route": "deepseek-test", "capacity_domain": "deepseek"}
+    exact = {
+        "logical_route": "deepseek-test",
+        "capacity_domain": "deepseek",
+        "provider": "deepseek",
+    }
+    future = {**exact, "logical_route": "future-qualified-deepseek"}
     rows = [
         exact,
         {"logical_route": "gpt-test", "capacity_domain": "codex"},
-        {"logical_route": "other-deepseek", "capacity_domain": "deepseek"},
+        future,
         {"logical_route": "deepseek-test", "capacity_domain": "codex"},
     ]
-    assert routes_for_lane(rows, lane) == [exact]
+    assert routes_for_lane(rows, lane) == [exact, future]
 
 
 def test_actual_review_capacity_gate_requires_an_independent_family():
@@ -183,11 +184,9 @@ def test_old_seat_pin_does_not_poison_other_production_seats(tmp_path):
     assert placement["seraph"] == ("controller",)
 
 
-def test_policy_routes_override_legacy_model_defaults_and_disable_kimi():
+def test_policy_has_no_model_table_and_disables_kimi():
     lanes = production_lanes(policy(), 100)
-    model_for = helpers("_lane_model", policy_value=policy())["_lane_model"]
-    for lane in lanes:
-        assert model_for(lane, {"title": "[M] Task"}) == lane["model"]
+    assert all("model" not in lane for lane in lanes)
     assert next(lane for lane in lanes if lane["name"] == "deepseek")["capacity_domains"] == (
         "deepseek",
     )
@@ -279,3 +278,98 @@ def test_native_claim_custody_overrides_stale_raw_overlay_state():
     assert state["status"] == "doing"
     assert state["claim_revision"] == "current-generation"
     assert raw["owner"] is None
+
+
+def gateway_route(model="catalog-version-one", provider="deepseek", size="M", **changes):
+    return {
+        "logical_route": model,
+        "model_or_bucket": model,
+        "provider": provider,
+        "capacity_domain": provider,
+        "size_class": size,
+        "policy_tier": "paid-cloud",
+        "state": "healthy",
+        "max": 20,
+        "gateway_active": 2,
+        **changes,
+    }
+
+
+def test_actual_fresh_gateway_ids_replace_old_ids_without_policy_change():
+    p = policy()
+    first = resolve_production_routes([gateway_route()], policy=p, required_size="M", labels=[])
+    next_rows = [gateway_route("catalog-version-two", gateway_model={"id": "catalog-version-two"})]
+    second = resolve_production_routes(next_rows, policy=p, required_size="M", labels=[])
+    assert first[0]["model_or_bucket"] == "catalog-version-one"
+    assert second[0]["model_or_bucket"] == "catalog-version-two"
+    assert second[0]["family"] == second[0]["lane"] == "deepseek"
+    assert second[0]["free"] == 18
+    second[0]["gateway_model"]["id"] = "poisoned"
+    assert next_rows[0]["gateway_model"]["id"] == "catalog-version-two"
+    assert all("model" not in row for row in p["lanes"].values())
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"state": "unavailable"},
+        {"size_class": "S"},
+        {"size_class": "unknown"},
+        {"max": 2},
+        {"max": True},
+        {"gateway_active": -1},
+        {"max": "20"},
+        {"provider": "skgateway"},
+        {"capacity_domain": "zai"},
+        {"logical_route": ""},
+        {"model_or_bucket": None},
+    ],
+)
+def test_unqualified_gateway_route_cannot_supply_card(change):
+    assert (
+        resolve_production_routes(
+            [gateway_route(**change)], policy=policy(), required_size="M", labels=[]
+        )
+        == []
+    )
+
+
+def test_size_privacy_and_family_constraints_share_existing_gateway_eligibility():
+    rows = [
+        gateway_route(),
+        gateway_route("local-l", "chiap08-qwen38", "L", policy_tier="local"),
+        gateway_route("cloud-xl", "codex", "XL"),
+    ]
+
+    def resolve(**kw):
+        return resolve_production_routes(rows, policy=policy(), **kw)
+
+    assert [row["size_class"] for row in resolve(required_size="L", labels=[])] == ["L", "XL"]
+    assert [row["lane"] for row in resolve(required_size="M", labels=["no-egress"])] == ["qwen"]
+    assert resolve(required_size="XL", labels=["local-only"]) == []
+    assert [row["lane"] for row in resolve(required_size="M", labels=["deepseek-only"])] == [
+        "deepseek"
+    ]
+    assert resolve(required_size="M", labels=["deepseek-only", "codex-only"]) == []
+    assert resolve(required_size="M", labels=["kimi-only"]) == []
+    assert resolve(required_size="M", labels=["deepseek-only"], lane="qwen") == []
+    assert resolve(required_size="unknown", labels=[]) == []
+
+
+def test_explicit_exact_pin_preserves_bucket_and_does_not_create_a_route():
+    row = gateway_route("served-id", "zai", logical_route="card-m-bucket")
+    result = resolve_production_routes(
+        [row], policy=policy(), required_size="M", labels=[], lane="glm", model_pin="served-id"
+    )
+    assert result[0]["logical_route"] == "card-m-bucket"
+    assert result[0]["model_or_bucket"] == "served-id"
+    assert result[0]["lane"] == "glm" and result[0]["family"] == "zai"
+    assert (
+        resolve_production_routes(
+            [row], policy=policy(), required_size="M", labels=[], model_pin="absent-id"
+        )
+        == []
+    )
+    p = policy()
+    p["lanes"]["glm"]["enabled"] = False
+    assert resolve_production_routes([row], policy=p, required_size="M", labels=[]) == []

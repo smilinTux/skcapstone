@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -61,7 +60,7 @@ def independent_review_routes(
     producer_identity: str,
     producer_provider: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Keep exact configured routes from different semantic provider families.
+    """Keep qualified gateway routes from different enabled provider families.
 
     ``routes`` must already pass the current sealed gateway health, capability,
     capacity and card policy gates. This filter neither creates qualification
@@ -69,24 +68,11 @@ def independent_review_routes(
     There is no automatic same-family fallback, even when all alternatives are
     busy or unavailable. Independent model hosts within Qwen remain one family.
     """
+    from .production_dispatch import enabled_family_routes
+
     source = producer_family(producer_identity, producer_provider)
-    models: dict[str, set[str]] = {}
-    for lane, row in policy["lanes"].items():
-        family = provider_family(lane)
-        if family and row.get("enabled") is True and row.get("provider") == "skgateway":
-            models.setdefault(row["model"], set()).add(family)
-    permitted = []
-    for route in routes:
-        model = route.get("model_or_bucket")
-        if not isinstance(model, str) or route.get("logical_route") != model:
-            continue
-        families = models.get(model, set())
-        if len(families) != 1:
-            continue
-        family = next(iter(families))
-        if family == source or provider_family(route.get("capacity_domain")) != family:
-            continue
-        if provider_family(route.get("provider")) != family:
-            continue
-        permitted.append(copy.deepcopy(dict(route)))
-    return permitted
+    return [
+        route
+        for route in enabled_family_routes(routes, policy=policy)
+        if provider_family(route["provider"]) != source
+    ]
