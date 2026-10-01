@@ -133,6 +133,11 @@ def test_large_work_never_hashes_into_medium_family(qualification):
         production_builder.route_binding(value, "24b00001", "sk-xl", [])
 
 
+def test_family_exclusive_eligibility_does_not_authorize_wrong_privacy_route(qualification):
+    value, _, _ = qualification
+    assert routes.candidates(value, "sk-m", ["codex-only", "local-only"]) == []
+
+
 def test_local_policy_uses_only_qualified_qwen_and_stale_snapshot_refuses(qualification):
     value, snapshot, _ = qualification
     bound = production_builder.route_binding(value, "24b00001", "sk-s", ["local-only"])

@@ -131,11 +131,14 @@ def logical_route(labels: list[str] | tuple[str, ...]) -> str | None:
 def eligible(core: dict, labels: list[str] | tuple[str, ...]) -> bool:
     """Return whether a card is a bounded provider-neutral source workload."""
     normalized = {str(label).strip().lower() for label in labels}
+    excluded = {"host-pin"}
+    if "SKFLEET_PRODUCTION_POLICY" not in os.environ:
+        excluded.update({"codex-only", "qwen-only", "glm-only"})
     return (
         logical_route(labels) is not None
         and "source-only" in normalized
         and not any(label.startswith("seat-") for label in normalized)
-        and not normalized.intersection({"host-pin", "codex-only", "qwen-only", "glm-only"})
+        and not normalized.intersection(excluded)
         and isinstance(core.get("id"), str)
     )
 

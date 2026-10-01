@@ -13,6 +13,19 @@ from skcapstone.fleet.node_controller import NodeView
 from tests.fleet.test_builder_dispatch import _card, _folded
 
 
+@pytest.mark.parametrize("label", ["codex-only", "glm-only", "qwen-only", "deepseek-only"])
+def test_production_family_exclusive_eligibility_preserves_legacy_and_host_exclusions(
+    monkeypatch, label
+):
+    labels = ["source-only", "sk-m", label]
+    monkeypatch.delenv("SKFLEET_PRODUCTION_POLICY", raising=False)
+    assert builder.eligible({"id": "24b00001"}, labels) is (label == "deepseek-only")
+    monkeypatch.setenv("SKFLEET_PRODUCTION_POLICY", "/reviewed/policy.json")
+    assert builder.eligible({"id": "24b00001"}, labels)
+    assert not builder.eligible({"id": "24b00001"}, labels + ["host-pin"])
+    assert not builder.eligible({"id": "24b00001"}, labels + ["seat-seraph"])
+
+
 @pytest.fixture
 def production_setup(paths, operator, monkeypatch, tmp_path):
     value = {
