@@ -316,6 +316,12 @@ board writes. Never mutate CardStore files. This card is a local source-only
 review, not hosted PR/CI approval: use the existing applicability contract below.
 Do not add PR, hosted_checks or ci_check_* links. Never invent SUCCESS, tests or
 approval. Run required tests and report exact commands/results, including failures.
+Inspect the bounded candidate diff and necessary surrounding context; expand reads
+to resolve findings. Batch independent reads. Identify every card-required test
+before running them once; combine overlapping selections only when all required
+coverage is preserved. Rerun only for changed code, failures or unresolved findings.
+All card-required tests remain mandatory. The controller separately runs the
+authoritative acceptance tests; review test results do not replace its receipt.
 Do not send unsolicited mail. Do not complete the card or release its claim.
 Do not push, merge, deploy, change runtime/configuration or alter producer source.
 Keep this isolated workspace; never reset or switch back to the source after the

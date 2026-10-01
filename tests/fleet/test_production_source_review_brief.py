@@ -201,6 +201,13 @@ def prepare(review):
 
 def test_actual_postclaim_review_brief_uses_existing_native_applicability(review):
     brief = prepare(review)
+    assert "Inspect the bounded candidate diff and necessary surrounding context" in brief
+    assert "Batch independent reads" in brief
+    assert "combine overlapping selections only when all required\ncoverage is preserved" in brief
+    assert "Rerun only for changed code, failures or unresolved findings" in brief
+    assert "All card-required tests remain mandatory" in brief
+    assert "review test results do not replace its receipt" in brief
+    assert review["core"]["acceptance_criteria"][0] in brief
     assert "LEGACY SIX CI" not in brief and "ci_check_docs SUCCESS" not in brief
     assert "coord complete" not in brief and "release-claim" not in brief
     assert "skmail" not in brief

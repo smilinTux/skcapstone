@@ -134,6 +134,8 @@ Required tests must pass on that exact candidate. A revised candidate needs
 fresh review evidence. Record verdicts and completion through the supported
 coordination API and verify canonical readback before cleanup.
 
+Reviewers inspect bounded diffs with necessary context, batch independent reads, run every card-required test once and rerun for changed code, failures or unresolved findings; controller acceptance tests remain a separate authoritative gate.
+
 Keep ownership while review or evidence custody is pending. Release only the
 exact owned claim after verified worker termination and the native lifecycle
 allows it. Do not bulk rename Jarvis-owned cards: audit each current claim,
