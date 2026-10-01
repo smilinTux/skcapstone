@@ -1,0 +1,1 @@
+- Card `672e37c2`: reject historical parent outcomes and nonlocal review owners using existing run caches before expensive live cleanup reads; preserve fresh native and exact claim checks for actual mutation candidates.

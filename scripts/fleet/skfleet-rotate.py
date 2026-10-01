@@ -6478,15 +6478,17 @@ def close_reviewed_parents():
     outcomes = _load_outcomes()
     closed = 0
     for parent, reviews in _reviews_by_parent().items():
-        if globals().get("PRODUCTION_POLICY"):
-            source = CardStore(Path(CARDS).parent).fold(parent)
-            if source is not None and "source-only" in source.labels:
-                continue  # Guarded production acceptance owns this generation.
-        if not os.path.isdir(os.path.join(CARDS, parent)): continue
-        if lifecycle_state(parent) != "open": continue
+        # Run-cache rejection only: historical outcomes cannot be close targets.
         _pts, pval = outcomes.get(parent, (None, None))
         match = _PROVISIONAL_PASS_RE.match(str(pval or ""))
         if not match: continue
+        if not os.path.isdir(os.path.join(CARDS, parent)): continue
+        if lifecycle_state(parent) != "open": continue
+        if globals().get("PRODUCTION_POLICY"):
+            # Keep the uncached native check for actual completion candidates.
+            source = CardStore(Path(CARDS).parent).fold(parent)
+            if source is not None and "source-only" in source.labels:
+                continue  # Guarded production acceptance owns this generation.
         generation = _parent_review_generation(parent, _pts, match.group(1).upper())
         if not generation: continue
         generation_id = generation[0]
@@ -6614,6 +6616,11 @@ def release_finished_review_claims():
     )
     for card_dir in sorted(glob.glob(os.path.join(CARDS, "*"))):
         cid = os.path.basename(card_dir)
+        # Cached exclusion can defer a new claim one cycle, never release it.
+        cached_owner, _cached_at = _current_claim(cid)
+        cached_match = owner_pattern.fullmatch(str(cached_owner or ""))
+        if not cached_match or cached_match.group(1) != cid:
+            continue
         owner, _claimed_at, revision = _current_claim_identity_fresh(cid)
         match = owner_pattern.fullmatch(str(owner or ""))
         if not match or match.group(1) != cid or not revision:
