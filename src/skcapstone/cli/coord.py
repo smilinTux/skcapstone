@@ -69,6 +69,9 @@ def register_coord_commands(main: click.Group) -> None:
         """
 
     from .coord_amend import register_coord_amend_commands
+    from .coord_historical_pr import register_historical_pr_command
+
+    register_historical_pr_command(coord)
     from .coord_mail_cmd import register_coord_mail_commands
     from .coord_review_work import register_coord_review_work
     from .portfolio_plan_cmd import register_portfolio_plan_command

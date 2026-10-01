@@ -1,0 +1,1 @@
+- Card `c1a30114`: add exact guarded native archival of a historical PR whose repository differs from the active repository. Preserve claims, candidate evidence, outcomes and all prior history; recover interrupted native event projections without weakening ordinary source validation.
