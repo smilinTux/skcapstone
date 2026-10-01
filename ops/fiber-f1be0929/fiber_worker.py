@@ -13,12 +13,13 @@ import sys
 import tempfile
 import time
 import urllib.parse
+import urllib.request
 
 from fiber_admission import Refused, card_fingerprint, read_claim, prepare_worktree, placement_allowed
 import fiber_sandbox
 import fiber_test_environment
 import fiber_bundle
-from fiber_gateway_bridge import gateway_socket
+from fiber_gateway_bridge import NoRedirect, gateway_socket
 from fiber_routes import ROUTES
 
 STATE = Path.home() / '.local/state/skfleet-fiber'
@@ -125,6 +126,29 @@ def check_catalog(job):
         raise Refused('gateway-catalog-mismatch')
     if job['model'] not in {model.get('id') for model in provider.get('models', [])}:
         raise Refused('model-not-in-agent-catalog')
+
+
+def gateway_generation_budget(catalog, provider, model, credential):
+    """Read exact gateway policy on the trusted host without redirects or proxies."""
+    if catalog.get('providers', {}).get(provider, {}).get('baseUrl', '').rstrip('/') != GATEWAY:
+        raise Refused('gateway-catalog-mismatch')
+    request = urllib.request.Request(GATEWAY + '/models', headers={'Authorization': 'Bearer ' + credential})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    try:
+        with opener.open(request, timeout=10) as response:
+            raw = response.read(1024 * 1024 + 1)
+        if len(raw) > 1024 * 1024:
+            raise Refused('gateway-generation-response-limit')
+        document = json.loads(raw)
+    except (OSError, ValueError):
+        raise Refused('gateway-generation-unavailable') from None
+    rows = document.get('data') if isinstance(document, dict) else None
+    matches = [row for row in rows if isinstance(row, dict) and row.get('id') == model] if isinstance(rows, list) else []
+    card = matches[0].get('card') if len(matches) == 1 else None
+    budget = card.get('generation_default_tokens') if isinstance(card, dict) else None
+    if type(budget) is not int or not 0 < budget <= 2**53 - 1:
+        raise Refused('gateway-generation-policy-invalid')
+    return budget
 
 
 def verify_claim(request, *, authority_only=False, wait_seconds=0):
@@ -358,6 +382,14 @@ def execute(request):
     # Qualify the optional environment before any claim read or workspace action.
     environment = environment_plan(job)
     row = verify_claim(request, wait_seconds=300)
+    catalog = json.loads((Path.home() / '.pi/agent/models.json').read_text())
+    credential = catalog['providers'][job['pi_provider']].get('apiKey')
+    if isinstance(credential, str) and re.fullmatch('[A-Z_][A-Z0-9_]*', credential):
+        credential = os.environ.get(credential)
+    if not isinstance(credential, str) or not credential or credential.startswith('!'):
+        raise Refused('credential-reference-unavailable')
+    budget = gateway_generation_budget(catalog, job['pi_provider'], job['model'], credential)
+    public = fiber_sandbox.public_catalog(catalog, job['pi_provider'], job['model'], budget)
     verify_resource_limits()
     fiber_sandbox.probe()
     guard = Path.home() / '.skenv/bin/pi-cardstore-guard.mjs'
@@ -399,13 +431,6 @@ def execute(request):
                '--no-approve', '--no-extensions', '--name', job['owner'],
                '--provider', job['pi_provider'], '--model', job['model'], '--thinking', 'off',
                '--no-context-files', '--no-skills', '--tools', 'read,bash,edit,write,grep,find,ls', '-p', prompt]
-    catalog = json.loads((Path.home() / '.pi/agent/models.json').read_text())
-    credential = catalog['providers'][job['pi_provider']].get('apiKey')
-    if isinstance(credential, str) and re.fullmatch('[A-Z_][A-Z0-9_]*', credential):
-        credential = os.environ.get(credential)
-    if not isinstance(credential, str) or not credential or credential.startswith('!'):
-        raise Refused('credential-reference-unavailable')
-    public = fiber_sandbox.public_catalog(catalog, job['pi_provider'], job['model'])
     controls = STATE / 'controls'
     controls.mkdir(parents=True, exist_ok=True, mode=0o700)
     control = controls / receipt['token']

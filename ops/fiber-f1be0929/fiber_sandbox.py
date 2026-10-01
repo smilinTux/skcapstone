@@ -37,8 +37,10 @@ def private_clone(cache, workspace, branch, revision, git):
         raise Refused('shared-git-metadata')
 
 
-def public_catalog(catalog, provider, model):
+def public_catalog(catalog, provider, model, generation_budget):
     """Retain qualified SDK compatibility settings, but no host auth or URLs."""
+    if type(generation_budget) is not int or not 0 < generation_budget <= 2**53 - 1:
+        raise Refused('gateway-generation-policy-invalid')
     entry = catalog.get('providers', {}).get(provider, {})
     matches = [row for row in entry.get('models', []) if row.get('id') == model]
     if entry.get('baseUrl', '').rstrip('/') != 'http://chiap01:18790/v1' or len(matches) != 1:
@@ -50,7 +52,7 @@ def public_catalog(catalog, provider, model):
         raise Refused('sandbox-api-unqualified')
     selected['api'] = api
     selected['compat'] = {**copy.deepcopy(entry.get('compat', {})), **selected.get('compat', {})}
-    selected['maxTokens'] = min(selected.get('maxTokens', 8192), 8192)
+    selected['maxTokens'] = generation_budget
     return {'providers': {provider: {'baseUrl': 'http://127.0.0.1:18790/v1',
                                      'api': api, 'apiKey': 'isolated-controller', 'models': [selected]}}}
 

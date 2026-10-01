@@ -9,6 +9,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import fiber_sandbox
+from fiber_worker import gateway_generation_budget
 from fiber_gateway_bridge import gateway_socket
 
 SCRIPT = '''
@@ -40,12 +41,13 @@ def main():
             key = os.environ[key]
         if not key or key.startswith('!'):
             raise ValueError('credential-reference-unavailable')
+        budget = gateway_generation_budget(catalog, provider, model, key)
         with tempfile.TemporaryDirectory(prefix='fiber-sdk-') as td:
             root = Path(td)
             work, control = root / 'work', root / 'control'
             work.mkdir()
             fiber_sandbox.prepare_control(control, work, {'scope': 'synthetic gateway probe, no task execution'},
-                                          fiber_sandbox.public_catalog(catalog, provider, model))
+                                          fiber_sandbox.public_catalog(catalog, provider, model, budget))
             (control / 'probe.mjs').write_text(SCRIPT)
             with gateway_socket(control / 'gateway.sock', endpoint='http://chiap01:18790/v1',
                                 credential=key, family=family, model=model, check_claim=lambda: None) as server:

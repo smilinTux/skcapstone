@@ -88,7 +88,7 @@ class SandboxTest(unittest.TestCase):
                   'apiKey': 'SECRET', 'headers': {'secret': 'SECRET'},
                   'models': [{'id': 'sk-zai-m', 'name': 'GLM', 'api': 'openai-completions',
                               'compat': {'thinkingLevelMap': {'off': 'low'}}}, {'id': 'unapproved'}]}}}
-        result = sandbox.public_catalog(source, 'skgw-zai', 'sk-zai-m')
+        result = sandbox.public_catalog(source, 'skgw-zai', 'sk-zai-m', 8192)
         self.assertNotIn('SECRET', json.dumps(result))
         provider = result['providers']['skgw-zai']
         self.assertEqual(provider['baseUrl'], 'http://127.0.0.1:18790/v1')
@@ -97,7 +97,7 @@ class SandboxTest(unittest.TestCase):
 
     def test_catalog_preserves_real_provider_api_and_thinking_map(self):
         source = json.loads((Path(__file__).resolve().parents[1] / 'approved-aliases.json').read_text())
-        model = sandbox.public_catalog(source, 'skgw-zai', 'sk-zai-m')['providers']['skgw-zai']['models'][0]
+        model = sandbox.public_catalog(source, 'skgw-zai', 'sk-zai-m', 8192)['providers']['skgw-zai']['models'][0]
         self.assertEqual(model['api'], 'openai-completions')
         self.assertEqual(model['thinkingLevelMap']['off'], 'low')
         self.assertFalse(model['compat']['supportsDeveloperRole'])
