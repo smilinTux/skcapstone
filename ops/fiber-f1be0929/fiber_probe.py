@@ -1,7 +1,7 @@
 """Read-only live worker and node observations for central fleet admission.
 
 Never logs command lines, prompts, auth files, or unfiltered environments.
-Uses existing SKCapstone headroom policy; inventory labels alone are not readiness.
+Memory and CPU remain observations, not worker concurrency ceilings.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -161,14 +161,6 @@ def probe_host(host):
     return value
 
 
-def host_slots(host, memory, cpus):
-    """Conservative headroom matches the actual 3 GiB / two-core worker unit."""
-    from fiber_admission import HOST_SLOTS
-    available = max(0, (memory.get('MemAvailable', 0) - 1048576) // 3145728) if memory else 0
-    cpu_slots = cpus // 2 if type(cpus) is int and cpus > 0 else 0
-    return min(HOST_SLOTS.get(host, 0), available, cpu_slots)
-
-
 def collect():
     from skcapstone.fleet.capacity import admit_headroom
     errors, hosts, workers, received = [], {}, [], []
@@ -182,8 +174,8 @@ def collect():
                 received.append(observed['received_at'])
                 headroom, reason, memory = admit_headroom(observed['meminfo'])
                 beat = observed['heartbeat_age']
-                ready = observed['service_active'] and observed['service_pid_live'] and observed['gateway_ok'] and beat is not None and 0 <= beat <= 180 and headroom
-                hosts[host] = {'ready': bool(ready), 'slots': host_slots(host, memory, observed.get('cpu_count')),
+                ready = observed['service_active'] and observed['service_pid_live'] and observed['gateway_ok'] and beat is not None and 0 <= beat <= 180
+                hosts[host] = {'ready': bool(ready),
                                'cpu_count': observed.get('cpu_count'),
                                'service_active': observed['service_active'], 'service_pid_live': observed['service_pid_live'],
                                'gateway_ok': observed['gateway_ok'], 'gateway_error': observed['gateway_error'],

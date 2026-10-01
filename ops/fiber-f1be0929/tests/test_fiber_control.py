@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import json
 import subprocess
+import io
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -14,6 +15,71 @@ from test_fiber_admission import job, snapshot
 
 
 class ControlTest(unittest.TestCase):
+    def test_one_cycle_launches_each_distinct_eligible_queued_job(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td); queue = root / 'jobs'; queue.mkdir(mode=0o700)
+            for cid in ('1234abcd', '1234abce'):
+                (queue / (cid + '.json')).write_text(json.dumps(job(cid)))
+            rows = {cid: {'id': cid} for cid in ('1234abcd', '1234abce')}
+            with patch.object(control, 'STATE', root / 'state'), patch.object(control, 'QUEUE', queue), \
+                 patch.object(control, 'HOLD', root / 'HOLD'), \
+                 patch.object(control.socket, 'gethostname', return_value='chiap08'), \
+                 patch.object(control, 'cards', return_value=rows), \
+                 patch.object(control, 'eligible', return_value=True), \
+                 patch.object(control, 'validate'), patch.object(control, 'verify_source'), \
+                 patch.object(control, 'dispatch_one', return_value={'state': 'running', 'new_launch': True}) as launch:
+                result = control.cycle()
+            self.assertEqual(len(result['jobs']), 2)
+            self.assertEqual([call.args[1]['card'] for call in launch.call_args_list], ['1234abcd', '1234abce'])
+
+    def test_review_gate_refreshes_actual_gateway_truth_and_claim_forces_refresh(self):
+        with patch.object(control, '_review_routes_at', None), \
+             patch.object(control.time, 'time', return_value=1000), \
+             patch.object(control.socket, 'gethostname', return_value='chiap08'), \
+             patch('skcapstone.fleet.review_capacity.acquire_review_route_snapshot', return_value={'error': None}) as acquire:
+            control.refresh_review_routes()
+            control.refresh_review_routes()
+            self.assertEqual(acquire.call_count, 1)
+            control.refresh_review_routes(force=True)
+            self.assertEqual(acquire.call_count, 2)
+            acquire.return_value = {'error': 'probe failed'}
+            with self.assertRaisesRegex(Refused, 'review-gateway-observation-unavailable'):
+                control.refresh_review_routes(force=True)
+
+    def test_route_probe_reuse_requires_fresh_health_same_revision_and_age(self):
+        class Response(io.BytesIO):
+            headers = {'x-sk-provider': 'deepseek', 'x-sk-model-requested': 'deepseek-flash',
+                       'x-sk-model-served': 'deepseek-flash'}
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td); catalog = root / '.pi/agent/models.json'
+            catalog.parent.mkdir(parents=True)
+            catalog.write_text(json.dumps({'providers': {'skgw-deepseek': {
+                'baseUrl': control.GATEWAY, 'models': [{'id': 'deepseek-flash'}],
+                'apiKey': 'fixture-key'}}}))
+            (root / 'observations').mkdir()
+            truth = {'runtime_revision': 'first'}
+            payload = json.dumps({'model': 'deepseek-flash', 'choices': [{'message': {'content': 'OK'}}]}).encode()
+            with patch.object(control.Path, 'home', return_value=root), \
+                 patch.object(control, 'STATE', root), patch.object(control, '_route_proofs', {}), \
+                 patch.object(control.time, 'time', return_value=1000) as clock, \
+                 patch('skcapstone.fleet_lane_health.acquire_lane_snapshot', return_value=truth), \
+                 patch('skcapstone.fleet_lane_health.lane_health', return_value=(True, 'ready')) as health, \
+                 patch.object(control.urllib.request, 'urlopen', side_effect=lambda *a, **kw: Response(payload)) as request:
+                task = dict(job(), model='deepseek-flash', pi_provider='skgw-deepseek')
+                control.qualify_route(task); control.qualify_route(task)
+                self.assertEqual(request.call_count, 1)
+                self.assertEqual(health.call_count, 2)
+                truth['runtime_revision'] = 'changed'
+                control.qualify_route(task)
+                self.assertEqual(request.call_count, 2)
+                clock.return_value = 1061
+                control.qualify_route(task)
+                self.assertEqual(request.call_count, 3)
+                health.return_value = (False, 'unavailable')
+                with self.assertRaisesRegex(Refused, 'lane-health:unavailable'):
+                    control.qualify_route(task)
+                self.assertEqual(request.call_count, 3)
+
     def test_describe_review_binds_candidate_and_worker_rechecks_same_source(self):
         row = {'id': '1234abcd', 'title': '[S][REVIEW] fixture', 'labels': ['source-only'],
                'meta': {'repository': 'https://example.invalid/repo.git', 'base_ref': 'main',
@@ -54,32 +120,35 @@ class ControlTest(unittest.TestCase):
             control.observe(run)
         self.assertEqual(remote.call_args.args[1]['receipt']['invocation'], 'b' * 32)
 
-    def test_stopped_unknown_exit_holds_new_admission(self):
+    def test_stopped_unknown_exit_does_not_stop_unrelated_admission(self):
         with tempfile.TemporaryDirectory() as td, patch.object(control, 'STATE', Path(td)), \
              patch.object(control, 'HOLD', Path(td) / 'HOLD'), \
+             patch.object(control, 'QUEUE', Path(td) / 'jobs'), \
              patch.object(control.socket, 'gethostname', return_value='chiap08'), \
              patch.object(control, 'reconcile', return_value=[{'card': '1234abcd', 'state': 'terminal', 'exit_code': None}]), \
              patch.object(control, 'cards') as cards:
-            self.assertEqual(control.cycle()['state'], 'admission-held')
+            self.assertEqual(control.cycle()['state'], 'waiting-for-reviewed-requests')
+            self.assertFalse(control.HOLD.exists())
             cards.assert_not_called()
 
-    def test_failed_worker_holds_before_another_queue_read(self):
+    def test_failed_worker_is_retained_without_a_global_hold(self):
         with tempfile.TemporaryDirectory() as td, patch.object(control, 'STATE', Path(td)), \
              patch.object(control, 'HOLD', Path(td) / 'HOLD'), \
+             patch.object(control, 'QUEUE', Path(td) / 'jobs'), \
              patch.object(control.socket, 'gethostname', return_value='chiap08'), \
              patch.object(control, 'reconcile', return_value=[{'card': '1234abcd', 'state': 'terminal', 'exit_code': 1}]), \
              patch.object(control, 'cards') as cards:
-            self.assertEqual(control.cycle()['state'], 'admission-held')
+            self.assertEqual(control.cycle()['state'], 'waiting-for-reviewed-requests')
+            self.assertFalse(control.HOLD.exists())
             cards.assert_not_called()
 
-    def test_three_failures_hold_without_resetting_claim_or_launch_history(self):
+    def test_repeated_failures_are_recorded_without_global_admission_hold(self):
         with tempfile.TemporaryDirectory() as td, patch.object(control, 'STATE', Path(td)), \
              patch.object(control, 'HOLD', Path(td) / 'HOLD'):
             task = dict(job(), card_fingerprint='a' * 64)
             for n in range(1, 4):
                 self.assertEqual(control.record_attempt(task, 'remote-check-failed'), n)
-            self.assertTrue(control.HOLD.is_file())
-            self.assertIn('three', control.HOLD.read_text())
+            self.assertFalse(control.HOLD.exists())
 
     def test_capacity_waits_do_not_exhaust_fault_budget(self):
         with tempfile.TemporaryDirectory() as td, patch.object(control, 'STATE', Path(td)), \
@@ -89,11 +158,11 @@ class ControlTest(unittest.TestCase):
                     self.assertEqual(control.record_attempt(job(), reason), 0)
             self.assertFalse(control.HOLD.exists())
 
-    def test_ambiguous_launch_holds_immediately_without_retry(self):
+    def test_ambiguous_launch_does_not_write_global_hold(self):
         with tempfile.TemporaryDirectory() as td, patch.object(control, 'STATE', Path(td)), \
              patch.object(control, 'HOLD', Path(td) / 'HOLD'):
             control.record_attempt(job(), 'launch-unacknowledged')
-            self.assertTrue(control.HOLD.exists())
+            self.assertFalse(control.HOLD.exists())
 
     def test_board_reads_only_requested_cards_and_direct_dependencies(self):
         rows = {'1234abcd': {'id': '1234abcd', 'owner': None, 'dependencies': ['1234abce']},
@@ -119,6 +188,7 @@ class ControlTest(unittest.TestCase):
 
     def test_automatic_placement_skips_unqualified_runtime_without_model_probe(self):
         truth = snapshot()
+        truth['hosts'] = {'chiap02': truth['hosts']['chiap02']}
         truth['hosts']['chiwk12'] = {'ready': True, 'slots': 2}
         task = dict(job(), host='auto', model='deepseek-flash')
         def remote(mode, request):
@@ -247,13 +317,15 @@ class ControlTest(unittest.TestCase):
             with self.assertRaisesRegex(Refused, 'transfer-unverified'):
                 control.stage_bundle(task)
 
-    def test_full_estate_does_not_probe_models(self):
+    def test_legacy_estate_size_does_not_block_gateway_qualification(self):
         truth = snapshot()
-        truth['workers'] = [{'key': str(i)} for i in range(control.ESTATE_CAP)]
-        with patch.object(control, 'collect', return_value=truth), patch.object(control, 'qualify_route') as probe:
-            with self.assertRaisesRegex(Refused, 'estate-capacity'):
-                control.observation(job())
-            probe.assert_not_called()
+        truth['workers'] = [{'key': str(i)} for i in range(100)]
+        task = dict(job(), model='deepseek-flash')
+        with patch.object(control, 'collect', return_value=truth), \
+             patch.object(control, 'remote', return_value={'state': 'ready', 'card': task['card'], 'host': task['host'], 'model': task['model']}), \
+             patch.object(control, 'qualify_route', return_value={'ready': True}) as probe:
+            self.assertTrue(control.observation(task)['providers']['deepseek']['ready'])
+            probe.assert_called_once()
 
     def test_recollect_after_model_probe(self):
         before, after = snapshot(1000), snapshot(1020)

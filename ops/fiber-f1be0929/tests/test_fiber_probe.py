@@ -140,14 +140,19 @@ class ProbeTest(unittest.TestCase):
         self.assertIn('skuser01@chiwk12', run.call_args.args[0])
         self.assertNotIn('mrarch@chiwk12', run.call_args.args[0])
 
-    def test_host_slots_match_worker_memory_and_cpu_budgets(self):
-        memory = {'MemAvailable': 10 * 1024 * 1024}
-        self.assertEqual(probe.host_slots('chiap02', memory, 8), 3)
-        self.assertEqual(probe.host_slots('chiwk12', memory, 8), 2)
-        self.assertEqual(probe.host_slots('chiap02', memory, 2), 1)
-        self.assertEqual(probe.host_slots('chiap01', memory, 64), 0)
-        self.assertEqual(probe.host_slots('chiap08', memory, 64), 0)
-        self.assertEqual(probe.host_slots('chiap02', {'MemAvailable': 3 * 1024 * 1024}, 8), 0)
+    def test_memory_headroom_remains_telemetry_not_an_admission_cap(self):
+        observed = {'received_at': 1000, 'service_active': True, 'service_pid_live': True,
+                    'gateway_ok': True, 'gateway_error': None, 'heartbeat_age': 1,
+                    'meminfo': 'MemAvailable: 1 kB\n', 'cpu_count': 1, 'workers': []}
+        agents = subprocess.CompletedProcess([], 0, '{"result":{"agents":[]}}', '')
+        with patch.object(probe, 'HOSTS', ('chiwk13',)), \
+             patch.object(probe, 'probe_host', return_value=observed), \
+             patch.object(probe.time, 'time', return_value=1000), \
+             patch.object(probe.subprocess, 'run', return_value=agents), \
+             patch('skcapstone.fleet.capacity.admit_headroom', return_value=(False, 'low', {'MemAvailable': 1})):
+            result = probe.collect()
+        self.assertTrue(result['hosts']['chiwk13']['ready'])
+        self.assertEqual(result['hosts']['chiwk13']['headroom'], 'low')
 
     def test_explicit_worker_route_matches_reservation_family(self):
         identity = {'SKFLEET_PROVIDER': 'deepseek', 'SKFLEET_MODEL': 'deepseek-flash'}

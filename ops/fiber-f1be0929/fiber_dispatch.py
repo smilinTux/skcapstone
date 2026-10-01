@@ -11,7 +11,7 @@ from pathlib import Path
 import sqlite3
 import time
 
-from fiber_admission import Refused, SPACING, reserve
+from fiber_admission import Refused, reserve
 
 
 @contextmanager
@@ -123,14 +123,6 @@ def dispatch_one(directory, job, collect, launch, observe, *, clock=time.time, h
                 if old['binding'] != binding:
                     raise Refused('request-binding-changed')
                 return {'card': job['card'], 'state': old['state'], 'new_launch': False}
-            if db.execute("SELECT 1 FROM runs WHERE state NOT IN ('running','terminal')").fetchone():
-                raise Refused('unresolved-launch')
-            has_reservations = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='reservations'").fetchone()
-            if has_reservations and db.execute('SELECT 1 FROM reservations r LEFT JOIN runs j USING(card) WHERE j.card IS NULL').fetchone():
-                raise Refused('orphan-reservation')
-            previous = db.execute('SELECT last_start FROM clock WHERE id=1').fetchone()
-            if previous and clock() - previous['last_start'] < SPACING:
-                raise Refused('actual-start-spacing')
         if job.get('claimable') is not True:
             raise Refused('card-not-claimable')
         if prepare is None:

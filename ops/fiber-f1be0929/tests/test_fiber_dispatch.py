@@ -140,22 +140,18 @@ class DispatchTest(unittest.TestCase):
         result = self.run_job()
         self.assertEqual(result['state'], 'launching')
         self.assertFalse(result['new_launch'])
-        with self.assertRaisesRegex(Refused, 'unresolved-launch'):
-            self.run_job(job('1234abce'))
-        self.assertEqual(self.starts, [])
+        self.assertTrue(self.run_job(job('1234abce'))['new_launch'])
+        self.assertEqual(self.starts, ['1234abce'])
+        self.assertFalse(self.run_job()['new_launch'])
 
-    def test_spacing_measured_after_slow_remote_start(self):
+    def test_slow_remote_start_does_not_delay_an_unrelated_card(self):
         def slow(task, receipt):
             self.now += 100
             return self.launch(task, receipt)
         self.run_job(launch=slow)
-        self.now += 74
-        with self.assertRaisesRegex(Refused, 'actual-start-spacing'):
-            self.run_job(job('1234abce'))
-        self.now += 1
         self.assertTrue(self.run_job(job('1234abce'))['new_launch'])
 
-    def test_terminal_receipt_releases_slot_not_history_or_spacing(self):
+    def test_terminal_receipt_releases_reservation_and_preserves_history(self):
         self.run_job()
         self.observed['1234abcd'].update(state='terminal', main_pid=0, exit_code=0)
         self.now += 10
@@ -165,8 +161,7 @@ class DispatchTest(unittest.TestCase):
         with sqlite3.connect(self.root / 'admission.sqlite3') as db:
             self.assertEqual(db.execute('SELECT COUNT(*) FROM reservations').fetchone()[0], 0)
             self.assertEqual(db.execute('SELECT COUNT(*) FROM runs').fetchone()[0], 1)
-        with self.assertRaisesRegex(Refused, 'actual-start-spacing'):
-            self.run_job(job('1234abce'))
+        self.assertTrue(self.run_job(job('1234abce'))['new_launch'])
 
     def test_wrong_invocation_and_live_pid_do_not_release(self):
         self.run_job()
