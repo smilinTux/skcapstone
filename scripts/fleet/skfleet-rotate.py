@@ -56,6 +56,7 @@ from skcapstone.fleet.production_dispatch import (
 from skcapstone.fleet.production_review import independent_review_routes
 from skcapstone.fleet.production_resources import local_worker_admission
 from skcapstone.fleet.pi_catalog import materialize_gateway_catalog
+from skcapstone.fleet.production_receipts import persist_production_snapshot
 
 SKFLEET_PRODUCTION_POLICY_V1 = True
 from skcapstone.fleet.review_capacity import (
@@ -99,6 +100,7 @@ from skcapstone.niobe_fanout import (
 from skcapstone.seat_runtime import (
     MeroObservation,
     append_review_launch_receipt,
+    append_production_launch_receipt,
     authorize_review_launch,
     recommend_reviewer,
     review_state_revision,
@@ -8593,6 +8595,13 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
                                           fresh_claimability["labels"],_LANE["name"])):
         log(d,"PRECLAIM_DEFERRED|%s|%s|reason=deadline-or-route-freshness"%(HOST,cid))
         continue
+    if PRODUCTION_POLICY:
+        try:
+            _route_identity["production_snapshot"]=persist_production_snapshot(
+                Path(HOME)/".skcapstone",_review_route_snapshot)
+        except (OSError,ValueError) as exc:
+            log(d,"PRECLAIM_DEFERRED|%s|%s|reason=route-proof-%s"%(HOST,cid,type(exc).__name__))
+            continue
     if _fanout_request is not None:
         try:
             append_fanout_receipt(
@@ -8797,6 +8806,13 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
                 })
         except (FanoutBoundaryError, OSError, ValueError) as exc:
             log(d,"FANOUT_LAUNCH_RECEIPT_FAILED|%s|%s|%s"%(HOST,cid,exc))
+    if PRODUCTION_POLICY and _review_recommendation is None:
+        try:
+            append_production_launch_receipt(
+                Path(HOME)/".skcapstone",cid,actor=name,
+                claim_revision=claimed_revision,launched=ok,route_identity=_route_identity)
+        except (BoundaryError,OSError,ValueError) as exc:
+            log(d,"PRODUCTION_LAUNCH_RECEIPT_FAILED|%s|%s|%s"%(HOST,cid,type(exc).__name__))
     if _review_recommendation is not None:
         _observation_evidence = hashlib.sha256(
             (launch_action + "\0" + cid + "\0" + name + "\0" + claimed_revision).encode()
