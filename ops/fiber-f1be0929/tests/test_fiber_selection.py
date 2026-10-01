@@ -48,9 +48,10 @@ class SelectionTest(unittest.TestCase):
 
     def run_selection(self, **kwargs):
         kwargs.setdefault('clock', lambda: 201)
+        kwargs.setdefault('read_cards', lambda ids: {self.row['id']: self.row})
+        kwargs.setdefault('describe', lambda *args: copy.deepcopy(self.job))
         return selection.select_requests(self.state, self.ready, self.policy, self.hold,
-            read_cards=lambda ids: {self.row['id']: self.row},
-            describe=lambda *args: copy.deepcopy(self.job), eligible=lambda row, board: True,
+            eligible=lambda row, board: True,
             verify=lambda row, job: None, promoter=self.promoter, now=200, **kwargs)
 
     def test_selects_exact_source_once_without_claiming(self):
@@ -154,7 +155,43 @@ class SelectionTest(unittest.TestCase):
         self.assertEqual(result['skipped'][0]['reason'], 'selection-native-gate')
         self.assertEqual(list(self.ready.iterdir()), [])
 
-    def test_two_pending_receipts_stop_new_selection(self):
+    def test_selection_adds_at_most_two_new_and_never_republishes(self):
+        # Two existing qualified receipts are historical depth, not a global
+        # limit. Selection adds at most two NEW pinned cards per pass and never
+        # overwrites an existing destination or a card with a ledger run.
+        rows, jobs = {}, {}
+        for cid in ('abcdef01', 'abcdef02', 'abcdef03'):
+            row = copy.deepcopy(self.row)
+            row['id'] = cid
+            rows[cid] = row
+            jobs[cid] = copy.deepcopy(self.job, )
+            jobs[cid]['card'] = cid
+            jobs[cid]['card_fingerprint'] = card_fingerprint(row)
+        self.config['cards'] = {cid: card_fingerprint(row) for cid, row in rows.items()}
+        self.save()
+        first = self.run_selection(read_cards=lambda ids: rows,
+                                   describe=lambda cid, *a, **k: copy.deepcopy(jobs[cid]))
+        self.assertEqual(first['added'], ['abcdef01', 'abcdef02'])
+        before = (self.ready / 'abcdef01.json').read_bytes()
+        second = self.run_selection(read_cards=lambda ids: rows,
+                                    describe=lambda cid, *a, **k: copy.deepcopy(jobs[cid]))
+        self.assertEqual(second['added'], ['abcdef03'])
+        self.assertEqual((self.ready / 'abcdef01.json').read_bytes(), before)
+        self.assertEqual(len(list(self.ready.glob('*.json'))), 3)
+
+    def test_selection_ignores_large_unrelated_qualification_history(self):
+        # 40 pre-existing qualified files for other cards neither consume the
+        # two-new-per-pass budget nor get decoded or requalified.
+        for index in range(40):
+            path = self.ready / f'{index:08x}.json'
+            path.write_text(json.dumps({'schema': 'skfleet.qualified-request/v1',
+                                        'job': {'card': f'{index:08x}'}, 'unrelated': True}))
+            path.chmod(0o600)
+        self.assertEqual(self.run_selection()['added'], ['1234abcd'])
+        self.assertEqual(len(list(self.ready.glob('*.json'))), 41)
+
+    def test_existing_destinations_are_not_republished_but_do_not_limit_new(self):
+        # Two historical receipts for other cards no longer stop selection.
         self.run_selection()
         receipt = json.loads((self.ready / '1234abcd.json').read_text())
         receipt['qualified_at'] = 100
@@ -164,7 +201,17 @@ class SelectionTest(unittest.TestCase):
             receipt['job_sha256'] = digest(receipt['job'])
             (self.ready / (cid + '.json')).write_text(json.dumps(receipt))
             (self.ready / (cid + '.json')).chmod(0o600)
-        self.assertEqual(self.run_selection()['added'], [])
+        # The pinned card's own destination was removed above, so it is a NEW
+        # addition; the two historical receipts are preserved untouched.
+        self.assertEqual(self.run_selection()['added'], ['1234abcd'])
+        self.assertEqual(len(list(self.ready.glob('*.json'))), 3)
+
+    def test_own_existing_destination_is_never_republished(self):
+        self.run_selection()
+        original = (self.ready / '1234abcd.json').read_bytes()
+        result = self.run_selection()
+        self.assertEqual(result['added'], [])
+        self.assertEqual((self.ready / '1234abcd.json').read_bytes(), original)
 
     def test_expiry_during_slow_checks_publishes_nothing(self):
         result = self.run_selection(clock=lambda: 1000)

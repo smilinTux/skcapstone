@@ -11,8 +11,10 @@ import time
 from types import SimpleNamespace
 
 from fiber_admission import Refused, card_fingerprint
-from fiber_refill import (MAX_INPUTS, MAX_PENDING, MAX_TTL, SCHEMA, _directory,
-                          _paths, _publish, _qualified, _read, _runs, digest)
+from fiber_refill import (MAX_INPUTS, MAX_TTL, SCHEMA, _directory, _publish, _read,
+                          _runs, digest)
+
+MAX_SELECT = 2  # New pinned qualifications added per pass, never a global depth.
 
 
 def load_promoter():
@@ -66,25 +68,14 @@ def select_requests(state, qualified, policy_path, hold, *, read_cards, describe
         return dict(result, state='disabled')
     policy = _policy(policy_path, now)
     _directory(qualified)
-    existing = _paths(qualified)
     runs = _runs(state)
-    pending = 0
-    for path in existing:
-        if path.stem in runs:
-            continue
-        try:
-            _qualified(path, now)
-        except Refused as exc:
-            if str(exc) != 'refill-stale-qualification':
-                raise
-            result['skipped'].append({'card': path.stem, 'reason': str(exc)})
-            continue  # Preserve expired evidence without consuming live depth.
-        pending += 1
-    if pending >= MAX_PENDING:
-        return result
+    # Selection adds at most two NEW pinned qualifications per pass. It never
+    # counts or decodes the historical qualified inbox: that global depth is
+    # not selection's concern, and refill alone owns the two UNLAUNCHED job
+    # buffer. Existing destinations and cards with ledger runs stay untouched.
     promoter = promoter or load_promoter()
     for cid, pin in policy['cards'].items():
-        if pending + len(result['added']) >= MAX_PENDING:
+        if len(result['added']) >= MAX_SELECT:
             break
         destination = qualified / (cid + '.json')
         if cid in runs or destination.exists() or destination.is_symlink():

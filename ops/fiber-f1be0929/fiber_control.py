@@ -16,7 +16,8 @@ import hashlib
 from fiber_admission import STAGE_HOSTS, WORKER_HOSTS, Refused, card_fingerprint, claim_for_worker, select_host
 from fiber_dispatch import authority, dispatch_one, reconcile
 from fiber_probe import collect
-from fiber_refill import check_qualification, refill_queue
+from fiber_refill import (MAX_INPUTS, _names, _page, _read, _read_cursor, _runs,
+                          _write_cursor, check_qualification, refill_queue)
 from fiber_selection import select_requests
 from fiber_lifecycle import connect_reviews
 from fiber_test_cycle import ensure_tests
@@ -388,6 +389,37 @@ def run_required_tests(directory, producer, review, *, guard, clock):
         stage_bundle=stage_bundle, guard=guard, clock=clock)
 
 
+def queued_jobs(queue, state):
+    """Decode at most one bounded fair page of unlaunched queue entries.
+
+    After reconciliation, names with a recorded run are skipped BEFORE any JSON
+    decode, so a large historical or running queue no longer forces the
+    controller to load every file. The persisted lexical cursor advances past
+    examined names and wraps, giving fair progress across restarts. A cursor is
+    only a scheduling hint; every downstream claim, source, qualification and
+    review gate still applies. Caller holds the existing authority lock.
+    """
+    queue, state = Path(queue), Path(state)
+    if not queue.exists():
+        return []
+    runs = _runs(state)
+    cursor = _read_cursor(state)
+    page, next_cursor = _page([name for name in _names(queue) if name[:-5] not in runs],
+                              cursor.get('dispatch'), MAX_INPUTS)
+    if next_cursor:
+        _write_cursor(state, {'dispatch': next_cursor})
+    jobs = []
+    for name in page:
+        path = queue / name
+        try:
+            value = _read(path)
+        except (OSError, ValueError):
+            continue
+        if isinstance(value.get('card'), str):
+            jobs.append(value)
+    return jobs
+
+
 def cycle(check=False):
     if socket.gethostname().split('.')[0].lower() != 'chiap08':
         raise Refused('not-authority-host')
@@ -411,11 +443,13 @@ def cycle(check=False):
         refill = refill_queue(STATE, QUEUE, QUEUE.parent / 'qualified', HOLD,
                               read_cards=cards, eligible=eligible,
                               verify=verify_refill_request, now=time.time())
-    paths = sorted(QUEUE.glob('*.json'))
-    if not paths:
+        # Bound the dispatch read to one fair page under the same lock that owns
+        # scan/cursor state changes. Names with recorded runs are skipped before
+        # any JSON decode; downstream dispatch_one keeps its own gates.
+        jobs = queued_jobs(QUEUE, STATE)
+    if not jobs:
         return {'state': 'waiting-for-reviewed-requests', 'reconciled': recovered,
                 'selection': selection, 'refill': refill, 'lifecycle': lifecycle}
-    jobs = [json.loads(path.read_text()) for path in paths]
     board = cards([job['card'] for job in jobs])
     results = []
     for job in jobs:

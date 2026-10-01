@@ -225,14 +225,126 @@ class RefillTest(unittest.TestCase):
         self.assertEqual(self.run_refill()['archived'], [])
         self.assertEqual(next((self.queue / 'terminal').iterdir()).read_bytes(), original)
 
-    def test_overfull_inbox_and_unsafe_directory_refuse(self):
+    def test_overfull_inbox_progresses_and_unsafe_directory_refuses(self):
+        # A large retained inbox is metadata, never capacity: >32 files must
+        # not refuse useful refill. Every old card already has a ledger run, so
+        # none is decoded for re-admission.
         for index in range(33):
             self.request(f'{index:08x}')
-        with self.assertRaisesRegex(Refused, 'too-many'):
-            self.run_refill()
+            self.db.execute('INSERT INTO runs VALUES (?, ?, ?)', (f'{index:08x}', 'terminal', 'c' * 32))
+        self.db.commit()
+        self.request('1234abcd')
+        self.assertEqual(self.run_refill()['added'], ['1234abcd'])
+        self.assertEqual(self.reads, [['1234abcd']])
+        # The unsafe-directory refusal assertion is retained unchanged.
         self.ready.chmod(0o777)
         with self.assertRaisesRegex(Refused, 'unsafe-directory'):
             self.run_refill()
+
+    def test_running_and_launching_entries_do_not_consume_buffer(self):
+        # Two retained RUNNING/LAUNCHING jobs are not unlaunched capacity and
+        # are never replayed. They must not block later eligible work.
+        for cid, run_state in (('1234aaa1', 'running'), ('1234aaa2', 'launching')):
+            self.request(cid)
+            self.run_refill()
+            self.db.execute('INSERT OR REPLACE INTO runs VALUES (?, ?, ?)', (cid, run_state, 'c' * 32))
+        self.db.commit()
+        exact = {cid: (self.queue / (cid + '.json')).read_bytes()
+                 for cid in ('1234aaa1', '1234aaa2')}
+        for cid in ('1234bbb1', '1234bbb2'):
+            self.request(cid)
+        result = self.run_refill()
+        self.assertEqual(result['added'], ['1234bbb1', '1234bbb2'])
+        self.assertEqual(result['archived'], [])
+        for cid, before in exact.items():
+            self.assertEqual((self.queue / (cid + '.json')).read_bytes(), before)
+
+    def test_two_genuinely_unlaunched_entries_still_fill_the_buffer(self):
+        for cid in ('1234abc1', '1234abc2', '1234abc3'):
+            self.request(cid)
+        self.assertEqual(self.run_refill()['added'], ['1234abc1', '1234abc2'])
+        self.assertEqual(self.run_refill()['added'], [])
+
+    def test_more_than_32_recorded_entries_do_not_block_and_are_not_decoded(self):
+        # 33 qualified names with retained runs are skipped by filename before
+        # decoding, so they neither consume a page slot nor get re-admitted.
+        for index in range(33):
+            cid = f'{index:08x}'
+            self.request(cid)
+            self.db.execute('INSERT INTO runs VALUES (?, ?, ?)', (cid, 'terminal', 'c' * 32))
+        self.db.commit()
+        self.request('1234abcd')
+        self.assertEqual(self.run_refill()['added'], ['1234abcd'])
+        self.assertEqual(self.reads, [['1234abcd']])
+
+    def test_cursor_advances_past_a_page_of_bad_names_across_fresh_invocations(self):
+        # 40 malformed names and 5 valid-but-ineligible stale receipts precede a
+        # single eligible card. Fresh invocations must eventually reach it with
+        # bounded JSON decodes and native reads per pass, and the cursor must
+        # wrap deterministically rather than stall.
+        for index in range(40):
+            (self.ready / f'{index:08x}.json').write_text('invalid JSON')
+        for index in range(40, 45):
+            receipt = self.request(f'{index:08x}')
+            receipt['expires_at'] = 199  # Valid JSON, stale: decoded and skipped.
+            self.save(f'{index:08x}', receipt)
+        self.request('ffffffff')
+        probes, native = [], []
+        for _ in range(10):
+            before, before_native = len(self.reads), len(self.reads)
+            result = self.run_refill()
+            probes.append(len(self.reads) - before)
+            native.append(sum(len(ids) for ids in self.reads[before_native:]))
+            if result['added']:
+                break
+        self.assertEqual(result['added'], ['ffffffff'])
+        self.assertTrue(all(count <= 1 for count in probes))
+        self.assertTrue(all(count <= refill.MAX_INPUTS for count in native))
+        cursor = json.loads((self.state / 'refill-cursor.json').read_text())
+        self.assertRegex(cursor['scan']['qualified'], r'[0-9a-f]{8}\.json')
+
+    def test_cursor_wraps_and_is_deterministic_on_repeat(self):
+        # With 33 non-run names, a single MAX_INPUTS page cannot cover them all;
+        # repeated fresh invocations must advance and then wrap the lexical
+        # cursor rather than stall on the same page.
+        for index in range(33):
+            (self.ready / f'{index:08x}.json').write_text('invalid JSON')
+        self.request('ffffffff')
+        self.run_refill()
+        first = json.loads((self.state / 'refill-cursor.json').read_text())['scan']['qualified']
+        self.run_refill()
+        second = json.loads((self.state / 'refill-cursor.json').read_text())['scan']['qualified']
+        self.assertNotEqual(first, second)
+        self.assertLess(second, first)  # 33 names wrap to a lexically earlier name.
+
+    def test_dry_run_does_not_write_a_cursor(self):
+        self.request()
+        self.assertEqual(self.run_refill(dry_run=True)['added'], ['1234abcd'])
+        self.assertFalse((self.state / 'refill-cursor.json').exists())
+
+    def test_unsafe_or_interrupted_cursor_inputs_are_rejected(self):
+        cursor = self.state / 'refill-cursor.json'
+        for content in ('{', json.dumps({'schema': 'other', 'scan': {}}),
+                        json.dumps({'schema': 'skfleet.refill-cursor/v1', 'scan': {'qualified': '../escape.json'}})):
+            cursor.write_text(content)
+            cursor.chmod(0o600)
+            with self.assertRaises(Refused):
+                self.run_refill()
+        cursor.unlink()
+        outside = self.root / 'outside-cursor.json'
+        outside.write_text(json.dumps({'schema': 'skfleet.refill-cursor/v1', 'scan': {}}))
+        cursor.symlink_to(outside)
+        with self.assertRaises(Refused):
+            self.run_refill()
+
+    def test_interrupted_cursor_publication_never_replays_work(self):
+        self.request()
+        with patch.object(refill.os, 'replace', side_effect=OSError('simulated crash')):
+            with self.assertRaises(OSError):
+                self.run_refill()
+        self.assertFalse((self.state / 'refill-cursor.json').exists())
+        self.assertEqual(self.run_refill()['added'], ['1234abcd'])
+        self.assertEqual(self.run_refill()['added'], [])
 
     def test_running_requests_remain_untouched(self):
         self.request()

@@ -365,6 +365,40 @@ class ControlTest(unittest.TestCase):
                 control.cycle(check=True)
             collect.assert_not_called()
 
+    def test_controller_decodes_only_a_bounded_fair_queue_page(self):
+        # 40 queued names with recorded runs are skipped before JSON decoding;
+        # 40 unlaunched names consume at most one MAX_INPUTS page. The rest are
+        # reached on later passes via the persisted wrap-around cursor.
+        import sqlite3
+        with tempfile.TemporaryDirectory() as td, patch.object(control, 'STATE', Path(td) / 'state'), \
+             patch.object(control, 'QUEUE', Path(td) / 'jobs'), \
+             patch.object(control.socket, 'gethostname', return_value='chiap08'), \
+             patch.object(control, 'reconcile', return_value=[]), \
+             patch.object(control, 'connect_reviews', return_value={}), \
+             patch.object(control, 'select_requests', return_value={}), \
+             patch.object(control, 'refill_queue', return_value={}), \
+             patch.object(control, 'cards') as cards, \
+             patch.object(control, 'validate'), \
+             patch.object(control, 'verify_source'), \
+             patch.object(control, 'eligible', return_value=True), \
+             patch.object(control, 'dispatch_one', return_value={'state': 'waiting', 'card': '0'}) as dispatch:
+            control.STATE.mkdir(parents=True)
+            with sqlite3.connect(control.STATE / 'admission.sqlite3') as db:
+                db.execute('CREATE TABLE runs (card TEXT PRIMARY KEY, state TEXT, token TEXT)')
+                for index in range(40):
+                    db.execute('INSERT INTO runs VALUES (?, ?, ?)', (f'{index:08x}', 'terminal', 'c' * 32))
+            control.QUEUE.mkdir(parents=True)
+            for index in range(40):
+                (control.QUEUE / f'{index:08x}.json').write_text('not json, must not be read')
+            for index in range(40, 80):
+                (control.QUEUE / f'{index:08x}.json').write_text(json.dumps(job(f'{index:08x}')))
+            cards.return_value = {f'{index:08x}': {'id': f'{index:08x}'} for index in range(40, 80)}
+            control.cycle()
+            self.assertLessEqual(dispatch.call_count, control.MAX_INPUTS)
+            self.assertEqual(cards.call_count, 1)
+            decoded = sorted(cards.call_args.args[0])
+            self.assertEqual(decoded, [f'{index:08x}' for index in range(40, 72)])
+
     def test_empty_queue_does_not_start_or_claim(self):
         with tempfile.TemporaryDirectory() as td, patch.object(control, 'STATE', Path(td) / 'state'), \
              patch.object(control, 'QUEUE', Path(td) / 'queue'), \
