@@ -1,0 +1,1 @@
+- Card `f34f26c5`: native review admission now uses fresh sealed SKGateway request capacity without the retired physical worker cap or local-session occupancy veto. A newer route observation supersedes an older host-specific file, while newer gateway failures, stale evidence, invalid seals, source requirements, and independent-review gates still refuse admission.

@@ -137,9 +137,9 @@ def test_provider_neutral_routes_tier_policy_and_shared_capacity(tmp_path):
         "route-cloud-medium",
         "route-local-large",
     ]
-    assert aggregate_review_capacity(routes, 8) == 2
+    assert aggregate_review_capacity(routes, 8) == 3
     first = choose_review_route(routes, {})
-    second = choose_review_route(routes, {first["capacity_domain"]: 1})
+    second = choose_review_route(routes, {first["capacity_domain"]: 2})
     assert first["capacity_domain"] == "cloud-b"
     assert second["capacity_domain"] == "local-a"
     assert (
@@ -280,13 +280,15 @@ def test_revisioned_capacity_truth_is_the_shared_admission_input(tmp_path):
         "producer",
         "pi-seraph-review",
         declared_seat="seraph",
+        now=now,
     )
 
     assert len(snapshot["capacity_revision"]) == 64
     assert evaluation["capacity_revision"] == snapshot["capacity_revision"]
     assert evaluation["reason"] == "eligible"
-    assert evaluation["physical_maximum"] == 3
-    assert evaluation["available"] == 2
+    assert "physical_maximum" not in snapshot
+    assert evaluation["physical_maximum"] is None
+    assert evaluation["available"] == 3
 
     tampered = json.loads(json.dumps(snapshot))
     tampered["routes"][0]["max"] = 99
@@ -329,12 +331,13 @@ def test_capacity_diagnostics_keep_distinct_failure_causes(tmp_path):
             "pi-seraph-review",
             declared_seat="seraph",
             physical_free=physical_free,
+            now=now,
         )["reason"]
 
     assert reason({**snapshot, "error": "TimeoutError"}) == "route-snapshot-ambiguity"
     assert (
         reason(seal_review_capacity_truth(snapshot, {}, occupancy_ambiguous=True))
-        == "occupancy-ambiguity"
+        == "eligible"
     )
     assert reason(snapshot, labels=("local-only",), physical_free=1) == "eligible"
 
@@ -348,7 +351,7 @@ def test_capacity_diagnostics_keep_distinct_failure_causes(tmp_path):
     assert reason(policy_snapshot, labels=("local-only",), physical_free=1) == (
         "policy-incompatibility"
     )
-    assert reason(snapshot, physical_free=0) == "physical-exhaustion"
+    assert reason(snapshot, physical_free=0) == "eligible"
     assert reason(snapshot, size="XL", physical_free=1) == "route-exhaustion"
 
 
@@ -477,7 +480,7 @@ def test_a_v1_suffixed_base_url_still_seals_real_routes(tmp_path):
         snapshot, "M", [], "producer", "pi-seraph-review", {"cloud-b": 1}
     )
     assert routes, "a /v1 base URL must still resolve real routes"
-    assert aggregate_review_capacity(routes, 8) == 2
+    assert aggregate_review_capacity(routes, 8) == 3
 
 
 def test_the_origin_form_is_unaffected(tmp_path):
@@ -493,7 +496,7 @@ def test_the_origin_form_is_unaffected(tmp_path):
     routes = eligible_review_routes(
         snapshot, "M", [], "producer", "pi-seraph-review", {"cloud-b": 1}
     )
-    assert aggregate_review_capacity(routes, 8) == 2
+    assert aggregate_review_capacity(routes, 8) == 3
 
 
 def test_the_strict_opener_really_does_404_a_doubled_prefix():
