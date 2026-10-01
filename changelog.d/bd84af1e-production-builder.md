@@ -1,0 +1,1 @@
+- Bind native remote workers to dynamically qualified gateway models and node resource reservations, enforce actual service quotas, and retain exact producer claims for review instead of replaying completed work.
