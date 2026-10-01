@@ -229,7 +229,7 @@ def _validate(home: Path, request: dict, *, live_source: bool = True) -> tuple[d
     if _digest(rows) != request.get("predecessor_events_sha256"):
         raise ValueError("replacement predecessor history changed")
     invalidation = request["invalidation"]
-    matches = [r for r in rows if r.get("event_id") == invalidation.get("event_id")]
+    matches = [r for r in rows if _digest(r) == invalidation.get("event_sha256")]
     if (
         len(matches) != 1
         or matches[0].get("writer") != "jarvis"

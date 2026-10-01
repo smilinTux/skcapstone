@@ -3,7 +3,7 @@
 Parent 9b230773. Base b7c0bea695729a7ea8a455d7eafada929fff4c5a is the
 qualified authority source, including its guarded CLI and evidence-commit
 review instructions. Native prerequisite 80f2c3a6 is exact SKCoord candidate
-55197e205ec15078409522597879c6262d1ae264.
+772de7212a803446a7f84806d11ff54fdbfce7ab.
 
 The new coord review-replace command validates a private operator authorization
 and exact source, claim, candidate, raw predecessor fold/history, attributable
@@ -50,3 +50,12 @@ or reused process evidence refuses. External deterministic review/test
 acceptance is a separate prerequisite. This does not revive Fiber or accept
 source89508f83 or invalid review3054d5f1. Independent review receipts are retained
 outside this immutable source candidate. No push or live mutation occurred.
+
+Real predecessor qualification exposed a legacy invalidation link without
+event_id. Both validators now bind its complete event_sha256. The application
+fixture uses the actual native CLI and asserts this legacy event shape; a
+wrong digest refuses. The complete suite passed again: 240 passed in 6.91
+seconds, zero skipped, in TESTS-LEGACY-DELTA.log. Read-only validation of the
+actual pending operator document passed without writing authorization or
+opening review work. Prior exact reviews remain retained; only this small
+compatibility delta receives an additional independent review.

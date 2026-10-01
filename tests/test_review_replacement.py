@@ -71,13 +71,26 @@ def invalid_review(tmp_path, monkeypatch):
             },
         },
     )
-    event = store.append_event(
-        old,
+    invalidated = _run(
+        tmp_path,
         "link",
+        old,
+        "operator_review_invalidation",
+        incident["path"] + " sha256=" + incident["sha256"],
+        "--agent",
         "jarvis",
-        link_key="operator_review_invalidation",
-        link_value=incident["path"] + " sha256=" + incident["sha256"],
     )
+    assert invalidated.exit_code == 0, invalidated.output
+    store = type(store)(tmp_path)
+    # Native CLI legacy projections may have no event_id. Bind their exact bytes.
+    matching = [
+        row
+        for row in replacement._events(store, old)
+        if row.get("link_key") == "operator_review_invalidation"
+    ]
+    assert len(matching) == 1
+    event = matching[0]
+    assert "event_id" not in event
     store.append_event(
         old,
         "link",
@@ -96,7 +109,7 @@ def invalid_review(tmp_path, monkeypatch):
         predecessor_claim=claim,
         predecessor_revision=replacement._fold_digest(store.fold(old)),
         predecessor_events_sha256=_digest(replacement._events(store, old)),
-        invalidation=dict(incident, event_id=event["event_id"]),
+        invalidation=dict(incident, event_sha256=_digest(event)),
         launch_receipt=launch,
         authority_host=socket.gethostname().split(".")[0],
     )
@@ -189,7 +202,17 @@ def test_one_replacement_preserves_source_claim_and_bad_history(tmp_path, invali
 
 @pytest.mark.parametrize(
     "kind",
-    ["claim", "source", "candidate", "old_event", "old_claim", "report", "decision", "outcome"],
+    [
+        "claim",
+        "source",
+        "candidate",
+        "old_event",
+        "old_claim",
+        "report",
+        "decision",
+        "outcome",
+        "invalidation_digest",
+    ],
 )
 def test_changed_custody_refuses_without_any_authorization(tmp_path, invalid_review, kind):
     store, source, old, request, props = invalid_review
@@ -226,6 +249,8 @@ def test_changed_custody_refuses_without_any_authorization(tmp_path, invalid_rev
             / "evidence/work/incident"
             / ("report.md" if kind == "report" else "decision.json")
         ).write_text("changed")
+    elif kind == "invalidation_digest":
+        request["invalidation"]["event_sha256"] = "0" * 64
     else:
         store.append_event(
             old, "link", request["predecessor_owner"], link_key="verdict", link_value="PASS"
