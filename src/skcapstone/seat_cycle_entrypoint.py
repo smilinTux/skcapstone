@@ -764,6 +764,11 @@ def _production_seat_operation(home: Path, seat: str, dispatcher: Path) -> dict:
     return verify_role_dispatch(home, completed, seat, production_policy=policy)
 
 
+def _production_dispatcher_path() -> Path:
+    """Production has one interpreter-bound script; local/bin is compatibility."""
+    return Path.home() / ".skenv/bin" / DISPATCHER_RELATIVE_PATH.name
+
+
 def seraph_operation(home: Path) -> dict[str, int | str]:
     """Launch one configurable, bounded Seraph review batch.
 
@@ -794,7 +799,7 @@ def seraph_operation(home: Path) -> dict[str, int | str]:
             "reason": "seraph_dispatcher_missing",
         }
     if "SKFLEET_PRODUCTION_POLICY" in os.environ:
-        return _production_seat_operation(home, "seraph", dispatcher)
+        return _production_seat_operation(home, "seraph", _production_dispatcher_path())
     try:
         batch_size = int(os.environ.get("SKFLEET_SERAPH_BATCH_SIZE", "2"))
     except ValueError:
@@ -1049,7 +1054,7 @@ def role_dispatch_operation(home: Path, seat: str) -> dict[str, int | str]:
             "reason": f"{seat}_dispatcher_missing",
         }
     if seat == "atlas" and "SKFLEET_PRODUCTION_POLICY" in os.environ:
-        return _production_seat_operation(home, seat, dispatcher)
+        return _production_seat_operation(home, seat, _production_dispatcher_path())
     env_name = f"SKFLEET_{seat.upper()}_BATCH_SIZE"
     try:
         batch_size = int(os.environ.get(env_name, "2"))
