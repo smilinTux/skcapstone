@@ -2,6 +2,10 @@
 
 import json
 import hashlib
+import os
+from pathlib import Path
+import subprocess
+import sys
 import time
 
 import pytest
@@ -54,6 +58,32 @@ def test_malformed_route_evidence_fails_closed(tmp_path, monkeypatch, invalid):
     result = reviewer_capacity_evaluation(tmp_path, {'title': '[S] review'}, [],
                                           'source', 'pi-seraph-review')
     assert result['reason'] == 'route-snapshot-ambiguity'
+
+
+@pytest.mark.parametrize('kind', ['fifo', 'symlink', 'directory'])
+@pytest.mark.parametrize('filename', ['fleet-review-routes.fixture.json', 'fleet-review-routes.json'])
+def test_route_evidence_requires_regular_nofollow_nonblocking_read(tmp_path, kind, filename):
+    directory = tmp_path / 'evidence'
+    directory.mkdir()
+    path = directory / filename
+    if kind == 'fifo':
+        os.mkfifo(path)
+    elif kind == 'symlink':
+        target = tmp_path / 'target.json'
+        target.write_text(json.dumps(snapshot()))
+        path.symlink_to(target)
+    else:
+        path.mkdir()
+    # A separate bounded process proves FIFO reads cannot hang the authority.
+    program = ('import json,sys; from pathlib import Path; '
+        'from skcapstone.review_admission import reviewer_capacity_evaluation; '
+        'print(json.dumps(reviewer_capacity_evaluation(Path(sys.argv[1]), '
+        '{"title":"[S] review"}, [], "source", "pi-seraph-review")))')
+    run = subprocess.run([sys.executable, '-c', program, str(tmp_path)],
+        env={**os.environ, 'SKFLEET_EVIDENCE_HOST': 'fixture',
+             'PYTHONPATH': str(Path(__file__).resolve().parents[2] / 'src')},
+        capture_output=True, text=True, timeout=3, check=True)
+    assert json.loads(run.stdout)['reason'] == 'route-snapshot-ambiguity'
 
 
 @pytest.mark.parametrize('age', [121, -1, float('nan')])

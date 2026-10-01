@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import stat
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -188,7 +189,11 @@ def reviewer_capacity_evaluation(
         for path in paths:
             if not path.exists():
                 continue
-            with path.open("rb") as stream:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode):
+                    raise ValueError("route evidence is not a regular file")
                 raw = stream.read(1_048_577)
             if len(raw) > 1_048_576:
                 raise ValueError("route evidence exceeds bound")
