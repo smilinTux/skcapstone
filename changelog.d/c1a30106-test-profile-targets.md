@@ -1,0 +1,1 @@
+- Allow safe hyphenated relative Python targets in qualified production test recipes while preserving fixed commands, bounded targets and sandbox enforcement.

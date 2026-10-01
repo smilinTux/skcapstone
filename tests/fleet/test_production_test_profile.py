@@ -63,6 +63,27 @@ def test_hosted_and_review_lanes_do_not_require_new_profile(qualified):
     assert profile.preflight(home, {}, ["source-only", "review"], policy) is None
 
 
+def test_hyphenated_targets_preserve_fixed_argv():
+    """Accept literal relative paths without changing the approved commands."""
+    recipe = {
+        "pytest": {"tests/fleet-checks/test_parser-case.py": 1},
+        "compile": ["scripts/fleet/skfleet-working.py"],
+        "lint": ["src/package-name/parser-check.py"],
+        "changelog": True,
+    }
+    python = str(plan.PREFIX / "bin/python")
+    assert profile.recipe_checks(recipe) == [
+        {"id": "pytest", "argv": [python, "-m", "pytest", "-q",
+         "-p", "no:cacheprovider", "--junitxml=/output/pytest.xml",
+         "tests/fleet-checks/test_parser-case.py"]},
+        {"id": "compile", "argv": [python, "-m", "py_compile",
+         "scripts/fleet/skfleet-working.py"]},
+        {"id": "lint", "argv": [python, "-m", "ruff", "check",
+         "src/package-name/parser-check.py"]},
+        {"id": "changelog", "argv": [python, "scripts/changelog_fragments.py", "--check"]},
+    ]
+
+
 @pytest.mark.parametrize("bad", ["../tests/a.py", "-p", "tests/a.py::test_a",
                                   "tests/a.py;curl", "/tmp/test_a.py"])
 def test_no_shell_options_or_model_command_syntax(qualified, bad):
@@ -70,6 +91,65 @@ def test_no_shell_options_or_model_command_syntax(qualified, bad):
     recipe["pytest"] = {bad: 1}
     with pytest.raises(plan.TestEvidenceError):
         profile.recipe_checks(recipe)
+
+
+@pytest.mark.parametrize("category", ["pytest", "compile", "lint"])
+@pytest.mark.parametrize("bad", [
+    "tests/../test-case.py", "tests/sub/../../test-case.py",
+    "other/test-case.py", "/tests/test-case.py", "--test-case.py",
+    "tests//test-case.py", "tests/test-case.py;id", "tests/$(id).py",
+    "tests/`id`.py", "tests/test case.py", "tests/test-case.py\n",
+    "tests/test-case*.py", "tests/test-case.py::test_one",
+    "tests/" + "a" * 232 + ".py", None, 17,
+])
+def test_hyphen_support_keeps_unsafe_targets_refused(qualified, category, bad):
+    """Every target category retains the same path and type boundaries."""
+    recipe = copy.deepcopy(qualified[3])
+    recipe[category] = {bad: 1} if category == "pytest" else [bad]
+    with pytest.raises(plan.TestEvidenceError):
+        profile.recipe_checks(recipe)
+
+
+@pytest.mark.parametrize("category", ["pytest", "compile", "lint"])
+def test_target_count_and_length_remain_bounded(qualified, category):
+    """Accept the existing limits and refuse one additional target or byte."""
+    recipe = copy.deepcopy(qualified[3])
+    paths = [f"tests/test-case-{index}.py" for index in range(63)]
+    paths.append("tests/" + "a" * 231 + ".py")
+    assert len(paths[-1]) == 240
+    recipe[category] = dict.fromkeys(paths, 1) if category == "pytest" else paths
+    profile.recipe_checks(recipe)
+    paths.append("tests/test-extra.py")
+    recipe[category] = dict.fromkeys(paths, 1) if category == "pytest" else paths
+    with pytest.raises(plan.TestEvidenceError):
+        profile.recipe_checks(recipe)
+
+
+@pytest.mark.parametrize("category", ["compile", "lint"])
+def test_duplicate_hyphenated_targets_are_refused(qualified, category):
+    """A valid path does not bypass the unique-target contract."""
+    recipe = copy.deepcopy(qualified[3])
+    recipe[category] = ["scripts/fleet/skfleet-working.py"] * 2
+    with pytest.raises(plan.TestEvidenceError):
+        profile.recipe_checks(recipe)
+
+
+@pytest.mark.parametrize("bad", [True, 0, 100001, "1", None])
+def test_hyphenated_test_targets_require_bounded_integer_coverage(qualified, bad):
+    """Coverage remains a positive bounded integer, never a coercion."""
+    recipe = copy.deepcopy(qualified[3])
+    recipe["pytest"] = {"tests/test-case.py": bad}
+    with pytest.raises(plan.TestEvidenceError):
+        profile.recipe_checks(recipe)
+
+
+def test_pytest_still_requires_the_tests_root(qualified):
+    """Compile and lint roots cannot become pytest targets."""
+    recipe = copy.deepcopy(qualified[3])
+    for root in ("scripts", "src"):
+        recipe["pytest"] = {f"{root}/test-case.py": 1}
+        with pytest.raises(plan.TestEvidenceError, match="explicit test files"):
+            profile.recipe_checks(recipe)
 
 
 def test_arbitrary_argv_and_empty_coverage_rejected(qualified):
@@ -110,19 +190,20 @@ def test_auto_seals_clean_exact_candidate_and_refuses_profile_drift(setup, monke
             "meta": {"repository": "https://example.org/public.git"},
             "acceptance_criteria": ["Run the parser checks."]}
     binding = dict(s.binding, criteria_sha256=profile.contract(core)["criteria_sha256"])
-    recipe = {"pytest": {"tests/test_parser.py": 1}, "compile": [],
-              "lint": [], "changelog": False}
+    recipe = {"pytest": {"tests/test_parser-case.py": 1},
+              "compile": ["scripts/fleet/skfleet-working.py"],
+              "lint": ["src/parser-case.py"], "changelog": False}
     path = profile.qualify_profile(s.home, core, s.policy, recipe, "operator", "b" * 64)
     profile.seal_candidate(s.home, binding, s.workspace, s.policy,
                            "https://example.org/public.git")
     sealed, plan_path, before = plan.load_plan(s.home, binding)
     assert sealed["binding"] == binding
-    assert sealed["checks"][0]["argv"][-1] == "tests/test_parser.py"
+    assert sealed["checks"] == profile.recipe_checks(recipe)
     profile.seal_candidate(s.home, binding, s.workspace, s.policy,
                            "https://example.org/public.git")
     assert plan.sha(plan_path.read_bytes()) == before
     value = json.loads(path.read_text())
-    value["recipe"]["pytest"]["tests/test_parser.py"] = 2
+    value["recipe"]["pytest"]["tests/test_parser-case.py"] = 2
     path.write_text(json.dumps(value))
     with pytest.raises(plan.TestEvidenceError, match="profile changed"):
         plan.load_plan(s.home, binding)

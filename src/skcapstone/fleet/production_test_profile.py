@@ -61,7 +61,7 @@ def recipe_checks(recipe: dict) -> list[dict]:
         raise plan.TestEvidenceError("invalid changelog selection")
     for path in [*tests, *recipe["compile"], *recipe["lint"]]:
         if (not isinstance(path, str) or len(path) > 240
-                or not re.fullmatch(r"(?:tests|src|scripts)/[A-Za-z0-9_/]+\.py", path)
+                or not re.fullmatch(r"(?:tests|src|scripts)/[A-Za-z0-9_/-]+\.py", path)
                 or "//" in path):
             raise plan.TestEvidenceError("unsafe test target")
     if any(not p.startswith("tests/") for p in tests):

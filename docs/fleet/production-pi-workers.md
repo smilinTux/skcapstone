@@ -134,6 +134,14 @@ Required tests must pass on that exact candidate. A revised candidate needs
 fresh review evidence. Record verdicts and completion through the supported
 coordination API and verify canonical readback before cleanup.
 
+Operator-qualified Python test recipes accept explicit relative `.py` paths
+under `tests/`, `src/`, or `scripts/`, including hyphenated names such as
+`scripts/fleet/skfleet-working.py`. Pytest targets must remain under `tests/`.
+The existing fixed command arguments, target counts, path length limits and
+unsafe-path refusals still apply. Supporting a path does not qualify a card:
+its exact contract and required checks still need operator qualification,
+independent review and exact-candidate test receipts before completion.
+
 Keep ownership while review or evidence custody is pending. Release only the
 exact owned claim after verified worker termination and the native lifecycle
 allows it. Do not bulk rename Jarvis-owned cards: audit each current claim,
