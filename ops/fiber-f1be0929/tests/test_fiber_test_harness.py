@@ -14,13 +14,15 @@ class HarnessTest(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
-        (root / 'test_fixture.py').write_text(code)
+        files = {'test_fixture.py': code} if isinstance(code, str) else code
+        for name, source in files.items():
+            (root / name).write_text(source)
         # Do not inherit an unrelated ancestor's pytest configuration in /tmp.
         (root / 'pytest.ini').write_text('[pytest]\n')
         output = root / 'report.json'
         if precreate:
             output.write_text('{"passed":999}')
-        argv = ['python3', '-m', framework, 'discover'] if framework == 'unittest' else ['python3', '-m', 'pytest', '-q', 'test_fixture.py']
+        argv = ['python3', '-m', framework, 'discover'] if framework == 'unittest' else ['python3', '-m', 'pytest', '-q', *sorted(files)]
         run = subprocess.run([sys.executable, str(HARNESS), str(output)], input=json.dumps(argv),
                              capture_output=True, text=True, cwd=root, timeout=20)
         return run, json.loads(output.read_text()) if output.exists() else None
@@ -67,6 +69,14 @@ class HarnessTest(unittest.TestCase):
         self.assertEqual(report['passed'], 1)
         self.assertEqual(report['failed'], 1)
         self.assertEqual(report['skipped'], ['test_fixture.py::test_skip'])
+
+    def test_pytest_module_collection_skip_remains_explicit(self):
+        files = {'test_fixture.py': 'def test_ok(): pass\n',
+                 'test_optional.py': 'import pytest\npytest.skip("optional fixture", allow_module_level=True)\n'}
+        run, report = self.execute(files, 'pytest')
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(report['passed'], 1)
+        self.assertEqual(report['skipped'], ['test_optional.py'])
 
 
 if __name__ == '__main__':

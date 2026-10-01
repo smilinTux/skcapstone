@@ -32,6 +32,8 @@ class PytestResult:
     def pytest_collectreport(self, report):
         if report.failed:
             self.errors.add(report.nodeid)
+        elif report.skipped:
+            self.skipped.add(report.nodeid)
 
     def pytest_runtest_logreport(self, report):
         if report.failed:
