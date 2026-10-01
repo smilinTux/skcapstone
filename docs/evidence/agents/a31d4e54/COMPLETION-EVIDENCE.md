@@ -166,13 +166,17 @@ Compile check (all six changed Python files): `python3 -m py_compile ...` → OK
 Authorized local candidate commit (not pushed, not deployed):
 
 ```text
-commit 10af898a24ca69ade6b91c9a88f0996f9cfa3d69
-tree   33da52d6361853f5e593f8294b13547489ad3a46
+commit 40f5f7a01cb0c52afc44951779675009dea66303
+tree   a120c30936bfb740ba2e06f271ab687718ea24f8
 ref    refs/heads/work/fiber-a31d4e54-855850ab
 parent 5f621b47bfe98efe4bdee59282cb06ba5c20bf7b
 ```
 
-The commit contains exactly the eight scoped paths above and nothing else;
-`git status` is clean after it. It is not pushed and not deployed. The
-external required test plane runs the prequalified refill command against this
-exact revision for independent cross-machine review.
+The candidate contains exactly the eight scoped paths above and nothing else.
+Because this evidence file names its own commit hash, the revision that first
+introduces the corrected hash is a follow-up evidence-only commit whose parent
+is the candidate above; the follow-up changes no source or test bytes, so the
+candidate tree `a120c309...` is the exact reviewed artifact. Nothing is pushed
+and nothing is deployed. The external required test plane runs the
+prequalified refill command against the candidate tree / follow-up revision
+for independent cross-machine review.
