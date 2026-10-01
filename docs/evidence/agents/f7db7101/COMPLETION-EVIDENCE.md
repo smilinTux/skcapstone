@@ -3,6 +3,12 @@
 Status: source candidate only. Independent review, installation and the real
 end-to-end work cycle are still required. No deployment or completion claimed.
 
+Independent Zai review of870a5e0 returned PASS with exact attribution. A second
+operator reproduction then found that subprocess transport failures escaped
+per-card isolation. This candidate adds SubprocessError to that boundary and
+tests actual TimeoutExpired and CalledProcessError exceptions; the original
+model PASS and separate blocking reproduction are retained without alteration.
+
 ## Behavior
 
 The user's continuation supersedes the old estate12, node-slot, provider3/5/2
@@ -59,6 +65,11 @@ Exact final command:
 Result:349passed,3existingconditional skips in28.28seconds. Two skips require
 the qualified local sandbox; one requires a remote resource check.
 git diff --check passed before the final run.
+
+After the independently reproduced transport-isolation repair,81affected
+gateway-capacity and native lifecycle connection/recovery/finish tests passed
+in22.20seconds with zero skips. The prior full349pass run is retained as the
+baseline; this focused rerun covers the added exception boundary and regressions.
 
 ## Rollout and limitations
 

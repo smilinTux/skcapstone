@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import subprocess
 import tempfile
 import time
 
@@ -373,7 +374,7 @@ def connect_reviews(state, qualified, policy_path, hold, *, home, data_root,
             _once(completed, {'source_revision': revision, **receipt})
             result['reviews'].append({'card': card, 'review': review, 'state': 'prepared'})
             break
-        except (Refused, OSError, ValueError, KeyError, TypeError) as exc:
+        except (Refused, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
             if not isolate_failures:
                 raise
             result['waiting'].append({'card': card, 'state': 'blocked',

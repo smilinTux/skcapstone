@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import subprocess
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -72,6 +73,31 @@ class GatewayCapacityTest(unittest.TestCase):
         self.assertEqual(result['reviews'], [])
         self.assertEqual(result['waiting'][0]['reason'], 'lifecycle-run-identity')
         self.assertEqual(result['waiting'][1]['card'], '1234abce')
+
+    def test_transport_failures_do_not_starve_unrelated_lifecycle_cards(self):
+        root = Path(self.directory.name)
+        state = root / 'state'; state.mkdir(mode=0o700)
+        qualified = root / 'qualified'; qualified.mkdir(mode=0o700)
+        policy = root / 'policy.json'; policy.touch(mode=0o600)
+        forbidden = lambda *a, **kw: self.fail('failed transport must not mutate native state')
+        for failure in (subprocess.TimeoutExpired(['ssh'], 40),
+                        subprocess.CalledProcessError(255, ['ssh'])):
+            with self.subTest(failure=type(failure).__name__), \
+                 patch.object(lifecycle, '_policy', return_value={'cards': {'1234abcd': 'a', '1234abce': 'b'}}), \
+                 patch.object(lifecycle, '_run', side_effect=[{'state': 'terminal', 'token': 'a' * 32}, None]) as read, \
+                 patch.object(lifecycle, '_producer', return_value=({}, {})), \
+                 patch.object(lifecycle, 'collect_review', side_effect=forbidden):
+                def collect(run):
+                    raise failure
+                result = lifecycle.connect_reviews(state, qualified, policy, root / 'HOLD',
+                    home=root, data_root=root, read_cards=lambda ids: {}, collect_candidate=collect,
+                    snapshot_revision=forbidden, record_verdict=forbidden, open_review=forbidden,
+                    describe=forbidden, eligible=forbidden, verify=lambda *a: None, now=1000,
+                    isolate_failures=True)
+            self.assertEqual(read.call_count, 2)
+            self.assertEqual(result['reviews'], [])
+            self.assertEqual(result['waiting'][0]['reason'], type(failure).__name__)
+            self.assertEqual(result['waiting'][1]['card'], '1234abce')
 
 
 if __name__ == '__main__':
