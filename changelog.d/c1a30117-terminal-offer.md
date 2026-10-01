@@ -1,0 +1,1 @@
+- Card `c1a30117`: add exact native terminal-offer retirement with process death, unclaimed card guards, and complete private workspace preservation before removing an active request pointer.

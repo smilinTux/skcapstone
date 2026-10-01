@@ -111,6 +111,39 @@ def builder_retry_cmd(
     click.echo(jsonlib.dumps(result, sort_keys=True))
 
 
+@fleet.command("builder-retire")
+@click.argument("card_id")
+@click.option("--node", required=True)
+@click.option("--request-sha256", required=True)
+@click.option("--status-sha256", required=True)
+@click.option("--card-sha256", required=True)
+@click.option("--agent", required=True)
+@click.option("--reason", required=True)
+@click.option("--apply", is_flag=True, help="Preserve source then retire; default checks only.")
+def builder_retire_cmd(
+    card_id, node, request_sha256, status_sha256, card_sha256, agent, reason, apply
+):
+    """Retire one exact stopped terminal offer on the production authority."""
+    from .builder_retire import retire
+
+    try:
+        result = retire(
+            default_paths(),
+            Path.home() / ".skcapstone",
+            node,
+            card_id,
+            request_sha256=request_sha256,
+            status_sha256=status_sha256,
+            card_sha256=card_sha256,
+            actor=agent,
+            reason=reason,
+            apply=apply,
+        )
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(jsonlib.dumps(result, sort_keys=True))
+
+
 @fleet.command("describe")
 @click.argument("kind")
 @click.argument("name")

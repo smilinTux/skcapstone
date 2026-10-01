@@ -254,10 +254,15 @@ def test_prelaunch_refusal_preserves_exact_status_and_claim(ready_retry, monkeyp
             lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("policy changed")),
         )
     elif refusal == "source":
+
+        def changed_source(coordination_home, request, *, retained_claim=False):
+            assert retained_claim is True
+            raise builder.BuilderDispatchError("source changed")
+
         monkeypatch.setattr(
             builder,
             "_ensure_request_matches_current_card",
-            lambda *args: (_ for _ in ()).throw(builder.BuilderDispatchError("source changed")),
+            changed_source,
         )
     path = builder.status_path(a.paths, "node-worker", a.request["card_id"])
     before = path.read_bytes()
