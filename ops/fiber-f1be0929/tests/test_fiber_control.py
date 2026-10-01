@@ -373,6 +373,7 @@ class ControlTest(unittest.TestCase):
         import sqlite3
         with tempfile.TemporaryDirectory() as td, patch.object(control, 'STATE', Path(td) / 'state'), \
              patch.object(control, 'QUEUE', Path(td) / 'jobs'), \
+             patch.object(control, 'HOLD', Path(td) / 'HOLD'), \
              patch.object(control.socket, 'gethostname', return_value='chiap08'), \
              patch.object(control, 'reconcile', return_value=[]), \
              patch.object(control, 'connect_reviews', return_value={}), \
