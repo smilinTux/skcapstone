@@ -257,6 +257,8 @@ class CandidateSandboxTest(unittest.TestCase):
                         'source_head': item['job']['base_revision'], 'verdict': 'PASS',
                         'evidence_sha256': hashlib.sha256(evidence).hexdigest()}
             (directory / 'REVIEW-DECISION.json').write_text(json.dumps(decision))
+            with self.assertRaisesRegex(Refused, 'inspection-failed'):
+                candidate.inspect_workspace(item, work, control)
             git('add', 'docs')
             git('commit', '-qm', 'synthetic independent evidence')
             packet = candidate.inspect_workspace(item, work, control)

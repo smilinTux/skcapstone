@@ -152,6 +152,12 @@ def review_prompt(job):
         '"evidence_sha256":"SHA256 of your COMPLETION-EVIDENCE.md bytes"}. '
         "Choose exactly one verdict. The report must explain findings and exact tests, including any omissions. "
         f"Do not modify source or tests: your only committed changes may be under docs/evidence/agents/{job['card']}/. "
+        "This review explicitly requests a commit: you must create a local review-evidence commit "
+        "containing COMPLETION-EVIDENCE.md and REVIEW-DECISION.json before handoff, for any verdict. "
+        "Run git rev-parse HEAD and report the resulting reviewer evidence commit separately; "
+        "it must be a new commit beyond the reviewed candidate. "
+        f"Keep source_head equal to the reviewed candidate {job['base_revision']}, not the reviewer evidence commit. "
+        "Run git status --porcelain: the worktree must be clean before handoff. "
         "The JSON is a proposal only; controller verification and native completion gates still apply."
     )
 
