@@ -50,8 +50,10 @@ from skcapstone.fleet.production_dispatch import (
     worker_resource_properties,
     routes_for_lane,
     cycle_budget_seconds,
+    authoritative_owner_state,
 )
 from skcapstone.fleet.production_review import independent_review_routes
+from skcapstone.fleet.production_resources import local_worker_admission
 
 SKFLEET_PRODUCTION_POLICY_V1 = True
 from skcapstone.fleet.review_capacity import (
@@ -2529,6 +2531,7 @@ _OVERLAY_ACTIONS = {
 _claim_rows = {}
 _legacy_claim_rows = None
 _legacy_projection_claims = None
+_production_native_store = None
 
 
 def _legacy_projection_owners(cid, fresh=False):
@@ -2905,6 +2908,7 @@ def _claimability_reason(core, state):
 
 def _authoritative_card_snapshot(cid, core=None, fresh=False):
     """Read and fold one card from one core and event snapshot."""
+    global _production_native_store
     if core is None:
         with open(os.path.join(CARDS, cid, "core.json"), encoding="utf-8") as fh:
             core = json.load(fh)
@@ -2915,6 +2919,10 @@ def _authoritative_card_snapshot(cid, core=None, fresh=False):
     rows.extend(_legacy_claimability_events(fresh=fresh).get(cid, []))
     legacy_owners = _legacy_projection_owners(cid, fresh=fresh)
     state = _fold_claimability(core, rows)
+    if globals().get("PRODUCTION_POLICY"):
+        if _production_native_store is None or fresh:
+            _production_native_store=CardStore(Path(HOME)/".skcapstone")
+        state=authoritative_owner_state(_production_native_store,cid,state)
     state["legacy_owners"] = legacy_owners
     source_revision = hashlib.sha256(json.dumps(
         {"core": core, "events": rows, "legacy_owners": legacy_owners},
@@ -8031,6 +8039,12 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             (HOST,cid,_attempt_defer))
         continue
     _LANE=next(lane for lane in LANES if lane["name"]==_attempt_lane_name)
+    if PRODUCTION_POLICY and not DRY:
+        _resource_ready,_resource_reason=local_worker_admission(
+            PRODUCTION_POLICY,HOST,active_worker_units())
+        if not _resource_ready:
+            log(d,"NODE_RESOURCES_DEFERRED|%s|%s|%s"%(HOST,cid,_resource_reason))
+            break
     try:
         unit=_worker_unit_name(_LANE["name"],cid)
     except ValueError as exc:

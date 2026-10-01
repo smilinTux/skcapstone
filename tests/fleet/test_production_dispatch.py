@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from skcapstone.fleet.production_dispatch import (
+    authoritative_owner_state,
     cycle_budget_seconds,
     production_lanes,
     production_policy_from_environment,
@@ -261,3 +262,20 @@ def test_serial_seat_budgets_reserve_cleanup_inside_generation():
         < 600
     )
     assert cycle_budget_seconds({**policy(), "cycle_budget_seconds": 60}, "atlas") == 60
+
+
+def test_native_claim_custody_overrides_stale_raw_overlay_state():
+    raw = {"owner": None, "status": "ready", "claim_revision": None, "labels": ["source-only"]}
+    card = SimpleNamespace(
+        id="deadbeef",
+        owner="jarvis",
+        status=SimpleNamespace(value="doing"),
+        meta={"_claim_revision": "current-generation"},
+        archived=False,
+    )
+    store = SimpleNamespace(fold=lambda card_id: card)
+    state = authoritative_owner_state(store, "deadbeef", raw)
+    assert state["owner"] == "jarvis"
+    assert state["status"] == "doing"
+    assert state["claim_revision"] == "current-generation"
+    assert raw["owner"] is None

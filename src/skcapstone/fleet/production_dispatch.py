@@ -69,3 +69,18 @@ def cycle_budget_seconds(policy, seat=""):
     """Leave cleanup time inside the serialized 600-second seat generation."""
     budget = policy.get("cycle_budget_seconds", 250)
     return min(budget, 125) if seat in {"atlas", "seraph"} else budget
+
+
+def authoritative_owner_state(store, card_id, state):
+    """Use the native validated fold for claim custody, never a second raw fold."""
+    card = store.fold(card_id)
+    if card is None or card.id != card_id:
+        raise ValueError("native production card is missing")
+    status = getattr(card.status, "value", card.status)
+    return {
+        **state,
+        "owner": card.owner,
+        "status": status,
+        "claim_revision": card.meta.get("_claim_revision"),
+        "archived": card.archived,
+    }
