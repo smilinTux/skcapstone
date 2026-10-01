@@ -408,6 +408,7 @@ def test_test_plane_runs_only_after_independent_pass_before_completion(rig, verd
         assert review["proposal"]["verdict"] == "PASS"
         assert clock() == 1000
         calls.append("tests")
+        return {"state": "accepted fixture"}
 
     def finish(*args, **kwargs):
         calls.append("finish")
@@ -416,6 +417,18 @@ def test_test_plane_runs_only_after_independent_pass_before_completion(rig, verd
              observe=lambda run: json.loads(run["receipt"]))
     assert calls == (["tests", "finish"] if verdict == "PASS" else [])
     assert r["store"].fold(r["card"]).owner == r["owner"]
+
+
+def test_waiting_test_executor_never_calls_finalizer(rig):
+    r = rig
+    finished = terminal_review(r)
+    calls = []
+    result = r["run"](collect_candidate=finished["collect"],
+                      tests=lambda *args, **kwargs: None,
+                      finish=lambda *args, **kwargs: calls.append("finish"),
+                      observe=lambda run: json.loads(run["receipt"]))
+    assert calls == []
+    assert result["reviews"][0]["state"] == "awaiting-required-tests"
 
 
 @pytest.mark.parametrize("verdict", ["PASS", "FAIL", "BLOCKED"])

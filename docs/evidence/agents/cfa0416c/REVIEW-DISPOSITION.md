@@ -44,3 +44,15 @@ The observer now records `pytest_collectreport.skipped` using its exact nodeid.
 The seven harness tests and the unchanged acceptance/updated recovery tests
 pass after the fix. This correction requires review of the revised candidate;
 no previous response is silently reused as approval.
+
+The automatic lifecycle hook was also made explicit: an enabled test executor
+must return acceptance before the finalizer is invoked. A waiting or unqualified
+executor skips finalization entirely. The existing default callback-free path
+and the finalizer's own receipt gate remain. This removes an unnecessary call
+while waiting and adds a direct regression for the integration ordering; it does
+not assert that the previous unchanged finalizer accepted missing evidence.
+
+A DeepSeek reasoning-enabled follow-up at max_tokens8192 returned HTTP502
+empty_upstream_response, retained at
+`~/.skcapstone/evidence/work/3ee76566/review-deepseek-1790816109198057290.json`.
+No verdict was inferred. Source review remains an open qualification gate.

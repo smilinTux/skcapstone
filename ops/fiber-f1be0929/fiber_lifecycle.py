@@ -209,11 +209,10 @@ def collect_review(state, directory, request, producer, *, home, read_cards,
     if intent['proposal']['verdict'] == 'PASS':
         terminal = _terminal_guard(guard, [_run(state, producer['job']['card']), run],
                                    [producer, intent], observe)
-        if tests is not None:
-            tests(directory, producer, intent, guard=terminal, clock=clock)
-        accepted = finish(directory, producer, intent, home=home, guard=terminal, once=_once, clock=clock)
-        if accepted is not None:
-            return accepted
+        if tests is None or tests(directory, producer, intent, guard=terminal, clock=clock) is not None:
+            accepted = finish(directory, producer, intent, home=home, guard=terminal, once=_once, clock=clock)
+            if accepted is not None:
+                return accepted
     return dict(result, state='awaiting-required-tests' if intent['proposal']['verdict'] == 'PASS'
                 else 'review-needs-disposition', proposed_verdict=intent['proposal']['verdict'],
                 accepted=False)
