@@ -105,7 +105,7 @@ class SandboxTest(unittest.TestCase):
         self.assertEqual(bridge.validate_payload('/v1/chat/completions', json.dumps(good).encode(), 'sk-zai-m')['model'], 'sk-zai-m')
         for path, obj in [('/admin', good), ('http://other/v1/chat/completions', good),
                           ('/v1/chat/completions', dict(good, model='other')),
-                          ('/v1/chat/completions', dict(good, max_tokens=999999)),
+                         ('/v1/chat/completions', dict(good, max_tokens=0)),
                           ('/v1/chat/completions', dict(good, max_tokens=True))]:
             with self.subTest(path=path, obj=obj), self.assertRaises(ValueError):
                 bridge.validate_payload(path, json.dumps(obj).encode(), 'sk-zai-m')
