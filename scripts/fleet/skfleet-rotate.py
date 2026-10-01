@@ -57,6 +57,7 @@ from skcapstone.fleet.production_review import independent_review_routes
 from skcapstone.fleet.production_resources import local_worker_admission
 from skcapstone.fleet.pi_catalog import materialize_gateway_catalog
 from skcapstone.fleet.production_receipts import persist_production_snapshot
+from skcapstone.fleet.production_brief import production_worker_brief
 
 SKFLEET_PRODUCTION_POLICY_V1 = True
 from skcapstone.fleet.review_capacity import (
@@ -8622,6 +8623,19 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         detail=_claim_failure_detail(claim.stdout, claim.stderr)[:140]
         log(d,"CLAIM_REFUSED|%s|%s|%s|owner=%s|%s"%(HOST,sess,cid,claimed_owner,detail))
         continue
+    if PRODUCTION_POLICY and _review_seat is None and _source_spec is not None:
+        brief=production_worker_brief(
+            card_id=cid,owner=name,claim_revision=claimed_revision,
+            workspace=workspace,base_revision=_source_spec[2],
+            title=str(fresh_claimability["core"].get("title") or ""),
+            description=str(fresh_claimability["core"].get("description") or ""),
+            acceptance_criteria=fresh_claimability["core"].get("acceptance_criteria") or [],
+            mail_instructions=_worker_mail_instructions(
+                _worker_mail_routing(os.environ,core.get("originator"))))
+        if _fanout_request is not None:
+            brief += "\nNIOBE FAN-OUT request=%s requester=%s allowed_route=%s\n"%_fanout_env
+        with open(bf,"w",encoding="utf-8") as _brief_handle:
+            _brief_handle.write(brief)
     # Atomic exact-card admission: a live holder for this card (another
     # authoritative owner, whatever lane or launcher generation created it)
     # refuses this launch BEFORE any worker process is created. The receipt
