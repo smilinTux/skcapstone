@@ -79,25 +79,26 @@ def required_env(source: str, *, production: bool = False) -> set[str]:
     return names
 
 
-def production_environment_error(environment: dict[str, str], python_bin: str) -> str | None:
+def production_environment_error(
+    environment: dict[str, str], python_bin: str, dispatcher: Path
+) -> str | None:
     """Validate policy with the actual native interpreter; never execute dispatch."""
     code = (
-        "import socket,sys; "
+        "import json,socket,sys; from pathlib import Path; "
         "from skcapstone.fleet.production_dispatch import production_policy_from_environment; "
+        "from skcapstone.niobe_live_entrypoint import _production_environment; "
+        "payload=json.load(sys.stdin); environment=payload['environment']; "
         "host=socket.gethostname().split('.')[0].lower()\n"
-        "if sys.argv[2] != host: raise ValueError('effective authority mismatch')\n"
-        "policy=production_policy_from_environment({'SKFLEET_PRODUCTION_POLICY':sys.argv[1]},host)\n"
+        "if environment.get('SKFLEET_AUTHORITY_HOST') != host: raise ValueError('effective authority mismatch')\n"
+        "if not environment.get('SKFLEET_PRODUCTION_POLICY'): raise ValueError('explicit policy required')\n"
+        "validated=_production_environment(Path(payload['dispatcher']),host=host,environment=environment)\n"
+        "policy=production_policy_from_environment(validated,host)\n"
         "if not policy: raise ValueError('explicit production policy required')\n"
     )
     try:
         result = subprocess.run(
-            [
-                python_bin,
-                "-c",
-                code,
-                environment.get("SKFLEET_PRODUCTION_POLICY", ""),
-                environment.get("SKFLEET_AUTHORITY_HOST", ""),
-            ],
+            [python_bin, "-c", code],
+            input=json.dumps({"environment": environment, "dispatcher": str(dispatcher)}),
             capture_output=True,
             text=True,
             timeout=15,
@@ -545,7 +546,9 @@ def _run(
                 "SKFLEET_PRODUCTION_POLICY" in env_snapshot
                 or env_from_systemd == "skfleet-seat-cycle.service"
             ):
-                policy_error = production_environment_error(env_snapshot, python_bin)
+                policy_error = production_environment_error(
+                    env_snapshot, python_bin, rotate_script
+                )
                 if policy_error:
                     ok = False
                     lines.append("FAIL production policy: " + policy_error)

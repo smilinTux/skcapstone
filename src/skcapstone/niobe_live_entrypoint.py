@@ -12,6 +12,7 @@ import signal
 import socket
 import subprocess
 import sys
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,9 +25,11 @@ _DISPATCH_TIMEOUT_SECONDS = 270
 _TERMINATE_GRACE_SECONDS = 5
 
 
-def _production_environment(dispatcher: Path, *, host: str) -> dict[str, str]:
+def _production_environment(
+    dispatcher: Path, *, host: str, environment: Mapping[str, str] | None = None
+) -> dict[str, str]:
     """Validate explicit policy mode without executing an unqualified dispatcher."""
-    environment = os.environ.copy()
+    environment = os.environ.copy() if environment is None else dict(environment)
     policy_path = environment.get("SKFLEET_PRODUCTION_POLICY")
     if policy_path is None:
         required = {

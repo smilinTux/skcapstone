@@ -85,3 +85,12 @@ while the actual dispatch loader rejects them. The follow-up calls the exact
 and adds a real subprocess regression for missing controller quotas. Final
 combined result: 93 passed, zero failed/skipped. The earlier Zai PASS for c998
 is retained as prior evidence and does not cover this correction.
+
+The final parity correction reuses Niobe's existing `_production_environment`
+with an optional explicit mapping. Default live behavior still copies process
+environment; explicit observation copies its input without mutation. Readiness
+passes the actual effective environment over private subprocess stdin, validates
+the exact dispatcher capability marker and rejects stale legacy ceiling keys,
+then applies the actual dispatcher quota loader. It retains the MAX_CLAIMS retry
+guard. The focused shared-validator, readiness and live Niobe suites pass 109
+tests with zero skips; fake secret fixture values are absent from process argv.
