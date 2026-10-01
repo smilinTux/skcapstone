@@ -1,0 +1,1 @@
+- Bind native production dispatch to one validated policy, add DeepSeek route identity, enforce node-qualified worker cgroups, and replace obsolete worker-count ceilings with bounded cycles and gateway request admission.

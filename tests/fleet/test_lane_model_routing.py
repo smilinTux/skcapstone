@@ -268,7 +268,7 @@ def test_a_producer_card_route_identity_is_unaffected():
     else_idx = source.rindex(
         '\n    else:\n        admitted,health_reason=_health_for(_LANE["name"],model)'
     )
-    window = source[else_idx : else_idx + 900]
+    window = source[else_idx : source.index("\n    if not admitted:", else_idx)]
     assert '"capacity_domains":[str(_selected_route["capacity_domain"])],' in window
     assert '"model_or_bucket":model,' in window
     assert "model=_bucket" not in window

@@ -57,5 +57,5 @@ def test_builder_cards_are_withheld_from_regular_lanes_while_the_builder_holds_t
         not in source
     )
     assert "if not DRY and _is_niobe_builder_host(HOST):" in source
-    assert "for _candidate in tuple(_builder_candidates):" in source
+    assert "for _candidate in tuple(_builder_candidates)[:MAX_CANDIDATE_SCAN]:" in source
     assert 'if _ONLY_SEAT == "niobe":' not in source

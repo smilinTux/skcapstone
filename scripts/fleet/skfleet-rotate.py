@@ -44,14 +44,24 @@ from skcapstone.fleet_lane_health import (
 )
 from skcapstone.fleet_route_preflight import resolve_and_preflight
 from skcapstone.fleet import builder_dispatch, store as fleet_store
+from skcapstone.fleet.production_dispatch import (
+    production_policy_from_environment,
+    production_lanes,
+    worker_resource_properties,
+    routes_for_lane,
+)
+from skcapstone.fleet.production_review import independent_review_routes
+
+SKFLEET_PRODUCTION_POLICY_V1 = True
 from skcapstone.fleet.review_capacity import (
     acquire_review_route_snapshot,
     choose_review_route,
     eligible_gateway_routes,
     eligible_review_launch_lanes,
-    evaluate_review_capacity,
+    evaluate_review_capacity as _evaluate_review_capacity,
     load_route_occupancy,
     review_physical_free,
+    aggregate_review_capacity,
 )
 from skcapstone.fleet.paths import default_paths as default_fleet_paths
 from skcapstone.fleet.rotation_lock import acquire_rotation_lock
@@ -98,6 +108,24 @@ def _required_lane_target(name, env=None, default=None):
             "BLOCKED|%s|missing or invalid non-negative integer" % name
         )
     return value
+
+
+def evaluate_review_capacity(snapshot, required_size, labels, producer, reviewer, **kwargs):
+    """Apply production family independence after the existing review gates."""
+    result=_evaluate_review_capacity(
+        snapshot,required_size,labels,producer,reviewer,**kwargs)
+    if not globals().get("PRODUCTION_POLICY") or result["reason"] != "eligible":
+        return result
+    try:
+        routes=independent_review_routes(
+            result["routes"],policy=PRODUCTION_POLICY,producer_identity=producer)
+        reason="eligible" if routes else "independent-provider-unavailable"
+    except ValueError:
+        routes=[]
+        reason="source-provider-evidence-required"
+    available=aggregate_review_capacity(routes,sum(int(route["free"]) for route in routes))
+    return {**result,"routes":routes,"reason":reason,"available":available,
+            "logical_available":available,"physical_free":available}
 
 
 def _estate_rotation_hosts(home=None):
@@ -499,6 +527,9 @@ if not _LIFECYCLE_OK:
     assess=None
 
 HOST=os.uname().nodename
+_cycle_started=time.monotonic()
+PRODUCTION_POLICY=production_policy_from_environment(os.environ, HOST)
+_SCAN_BUDGET=int((PRODUCTION_POLICY or {}).get("scan_budget", 256))
 os.environ["SKFLEET_EVIDENCE_HOST"]=HOST
 # The worker fleet is ESTATE configuration, not a property of this script. Card
 # ownership is partitioned by hashing across this tuple, so its membership and
@@ -512,17 +543,23 @@ ROTATION_HOSTS=_resolve_rotation_hosts(declared=_estate_rotation_hosts())
 # is declared the same way and resolved in the same order: authority_host in the
 # estate record, SKFLEET_AUTHORITY_HOST for a host bootstrapping ahead of it.
 AUTHORITY_HOST=_resolve_authority_host(declared=_estate_authority_host())
+if PRODUCTION_POLICY:
+    AUTHORITY_HOST=PRODUCTION_POLICY["authority_host"]
+    ROTATION_HOSTS=(AUTHORITY_HOST,)
+    os.environ["SKFLEET_GATEWAY_URL"]=PRODUCTION_POLICY["gateway_url"]
 SKC=os.path.expanduser("~/.skenv/bin/skcapstone")
-TARGET=_required_lane_target("SKFLEET_TARGET")
-GLM_TARGET=_required_lane_target("SKFLEET_GLM_TARGET")
-QWEN_TARGET=_required_lane_target("SKFLEET_QWEN_TARGET", default="6")
-KIMI_TARGET=_required_lane_target("SKFLEET_KIMI_TARGET", default="0")
-MAX_LAUNCH=int(os.environ.get("SKFLEET_MAX_LAUNCH","11"))
+TARGET=_SCAN_BUDGET if PRODUCTION_POLICY else _required_lane_target("SKFLEET_TARGET")
+GLM_TARGET=_SCAN_BUDGET if PRODUCTION_POLICY else _required_lane_target("SKFLEET_GLM_TARGET")
+QWEN_TARGET=_SCAN_BUDGET if PRODUCTION_POLICY else _required_lane_target("SKFLEET_QWEN_TARGET", default="6")
+KIMI_TARGET=0 if PRODUCTION_POLICY else _required_lane_target("SKFLEET_KIMI_TARGET", default="0")
+MAX_LAUNCH=_SCAN_BUDGET if PRODUCTION_POLICY else int(os.environ.get("SKFLEET_MAX_LAUNCH","11"))
 _MAX_CLAIMS=int(os.environ.get("SKFLEET_MAX_CLAIMS","5"))
 MAX_CANDIDATE_SCAN=max(
     MAX_LAUNCH,
     int(os.environ.get("SKFLEET_MAX_CANDIDATE_SCAN",str(MAX_LAUNCH*8))),
 )
+if PRODUCTION_POLICY:
+    MAX_CANDIDATE_SCAN=_SCAN_BUDGET
 ONLY_SEAT=os.environ.get("SKFLEET_ONLY_SEAT","").strip().lower()
 
 
@@ -546,10 +583,10 @@ def _dispatch_writer(env=None):
 
 
 DISPATCH_AGENT=_dispatch_writer()
-SEAT_TARGET=_required_lane_target("SKFLEET_SEAT_TARGET", default="0")
-CODEX_PHYSICAL_LIMIT=_required_lane_target(
+SEAT_TARGET=_SCAN_BUDGET if PRODUCTION_POLICY else _required_lane_target("SKFLEET_SEAT_TARGET", default="0")
+CODEX_PHYSICAL_LIMIT=None if PRODUCTION_POLICY else _required_lane_target(
     "SKFLEET_CODEX_PHYSICAL_LIMIT", default=str(TARGET))
-REVIEW_MAXIMUM=_required_lane_target("SKFLEET_REVIEW_MAXIMUM", default="2")
+REVIEW_MAXIMUM=_SCAN_BUDGET if PRODUCTION_POLICY else _required_lane_target("SKFLEET_REVIEW_MAXIMUM", default="2")
 _SEAT_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 DRY = "--go" not in sys.argv
 HOME=os.path.expanduser("~")
@@ -590,13 +627,13 @@ if not DRY:
 def sh(*a): return subprocess.run(a,capture_output=True,text=True).stdout
 
 _WORKER_UNIT_RE = re.compile(
-    r"^skfleet-worker-(codex|glm|qwen|kimi|escalate)-([0-9a-f]{8})\.service$"
+    r"^skfleet-worker-(codex|glm|deepseek|qwen|kimi|escalate)-([0-9a-f]{8})\.service$"
 )
 
 
 def _worker_unit_name(lane, cid):
     """Return the transient service name for one newly launched worker."""
-    if lane not in {"codex", "glm", "qwen", "kimi", "escalate"} or not re.fullmatch(
+    if lane not in {"codex", "glm", "deepseek", "qwen", "kimi", "escalate"} or not re.fullmatch(
         r"[0-9a-f]{8}", cid
     ):
         raise ValueError("invalid worker unit identity")
@@ -632,6 +669,8 @@ def _worker_launch_command(unit, workspace, inner):
     return [
         "systemd-run", "--user", "--quiet", "--collect", "--service-type=exec",
         "--unit", unit, "--property=KillMode=control-group",
+        *(worker_resource_properties(PRODUCTION_POLICY, HOST)
+          if globals().get("PRODUCTION_POLICY") else []),
         "--working-directory", workspace, *child_argv,
     ]
 
@@ -1743,6 +1782,9 @@ try:
 except (OSError,ValueError,TypeError):
     pass
 
+if PRODUCTION_POLICY:
+    glm_held=False
+
 def _prepare_pi_glm_catalog():
     """Sync Pi's SKGateway catalog to healthy advertised logical routes."""
     installed=Path(HOME)/".local/bin/skfleet-pi-model-catalog.py"
@@ -1824,6 +1866,13 @@ _CAPACITY_DOMAINS={
 }
 for _lane in LANES:
     _lane["capacity_domains"]=_CAPACITY_DOMAINS.get(_lane["name"],())
+if PRODUCTION_POLICY:
+    LANES=production_lanes(PRODUCTION_POLICY, _SCAN_BUDGET)
+    _CAPACITY_DOMAINS={lane["name"]:lane["capacity_domains"] for lane in LANES}
+    # Catalog failure affects admission to that route only. It never stops
+    # independent providers or changes authorization on a card.
+    if not glm_catalog_ready:
+        next(lane for lane in LANES if lane["name"]=="glm")["target"]=0
 _GLM_LEVEL_DEFAULTS={"S":"sk-glm-s","M":"sk-glm-m","L":"sk-glm-l","XL":"sk-glm-l"}
 _GLM_LEVELS={key:os.environ.get("SKFLEET_GLM_MODEL_"+key,value)
              for key,value in _GLM_LEVEL_DEFAULTS.items()}
@@ -1906,17 +1955,26 @@ def _producer_routes_for(core, labels, lane=None):
     return [route for route in routes if token in (
         str(route.get("provider") or "")+" "+str(route.get("logical_route") or "")
     ).lower()]
+
+def _production_route_health(core, labels, health):
+    """Withhold a lane whose exact model cannot satisfy this card's size/policy."""
+    if not PRODUCTION_POLICY:
+        return health
+    routes=_producer_routes_for(core,labels)
+    return {lane["name"]:(
+        health[lane["name"]] if routes_for_lane(routes,lane)
+        else (False,"no-qualified-route-for-card")) for lane in LANES}
 if glm_held:
     log(d,"GLM_HOLD|%s|new GLM dispatch disabled by %s"%(HOST,GLM_HOLD_PATH))
 for _L in LANES:
     _L["busy"]=_lane_busy(_L,sessions,worker_units)
-    _L["free"]=max(0,_L["target"]-len(_L["busy"]))
+    _L["free"]=_L["target"] if PRODUCTION_POLICY else max(0,_L["target"]-len(_L["busy"]))
 if ONLY_SEAT:
     if not _SEAT_RE.fullmatch(ONLY_SEAT) or SEAT_TARGET < 1:
         raise SystemExit("BLOCKED|SKFLEET_SEAT_TARGET|seat dispatch requires a positive target")
     _codex=next(lane for lane in LANES if lane["name"]=="codex")
     _busy_cards=_worker_cards(sessions,worker_units,[_codex])
-    if ONLY_SEAT not in {"link","mero","seraph"}:
+    if not PRODUCTION_POLICY and ONLY_SEAT not in {"link","mero","seraph"}:
         _codex["free"]=_seat_capacity(
             ONLY_SEAT,SEAT_TARGET,CODEX_PHYSICAL_LIMIT,_busy_cards,_last_claim_owner)
     _codex["target"]=SEAT_TARGET
@@ -3202,9 +3260,17 @@ def _load_seat_placement(path=None):
             # more than one host per seat.
             return {}, "manifest-hosts:%s" % seat
         hosts = tuple(str(host).strip().lower() for host in raw_hosts)
-        if len(set(hosts)) != len(hosts) or any(host not in ROTATION_HOSTS for host in hosts):
+        if len(set(hosts)) != len(hosts) or any(
+            not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,252}", host) for host in hosts
+        ):
             return {}, "manifest-hosts:%s" % seat
-        normalized[seat] = tuple(host for host in ROTATION_HOSTS if host in hosts)
+        if not globals().get("PRODUCTION_POLICY") and any(
+            host not in ROTATION_HOSTS for host in hosts
+        ):
+            return {}, "manifest-hosts:%s" % seat
+        # A preserved seat pin outside the sole scheduler remains withheld on
+        # this controller. It must not poison every unrelated lifecycle seat.
+        normalized[seat] = hosts
     return normalized, None
 
 
@@ -4859,7 +4925,7 @@ def _parse_worker_owner(owner, cid, expected_seat=None):
     if not re.fullmatch(r"[0-9a-f]{8}", cid):
         return None
     for host in ROTATION_HOSTS:
-        for lane in ("codex", "glm", "qwen", "kimi", "escalate"):
+        for lane in ("codex", "glm", "deepseek", "qwen", "kimi", "escalate"):
             if owner == "pi-%s-%s-%s" % (lane, host, cid):
                 return "lane", lane, host
         for lane in ("codex", "glm"):
@@ -7287,11 +7353,13 @@ log(
     ),
 )
 
-# Niobe may place one generic medium source card on a Ready builder standby.
+# Niobe offers source cards to Ready builders within the shared cycle budget.
 # The remote node claims the card itself, so the CardStore fence remains the
 # authority and this scheduler never impersonates a remote worker.
 if not DRY and _is_niobe_builder_host(HOST):
-    for _candidate in tuple(_builder_candidates):
+    for _candidate in tuple(_builder_candidates)[:MAX_CANDIDATE_SCAN]:
+        if PRODUCTION_POLICY and time.monotonic() - _cycle_started >= PRODUCTION_POLICY.get("cycle_budget_seconds",250):
+            break
         _remote_core = dict(_candidate[3], id=_candidate[2])
         try:
             _remote_request = builder_dispatch.offer(
@@ -7316,7 +7384,10 @@ if not DRY and _is_niobe_builder_host(HOST):
                     _remote_request["request_id"],
                 ),
             )
-            break
+            if not PRODUCTION_POLICY:
+                break
+            owned=[row for row in owned if row[2] != _candidate[2]]
+            continue
         try:
             _idle_reason = builder_dispatch.decline_reason(
                 default_fleet_paths(), _remote_core, _candidate[4]
@@ -7341,6 +7412,7 @@ _LANE_ONLY_LABELS={
     "codex-only":"codex",
     "qwen-only":"qwen",
     "glm-only":"glm",
+    "deepseek-only":"deepseek",
     "kimi-only":"kimi",
     "escalation-only":"escalate",
 }
@@ -7410,6 +7482,9 @@ def lane_compatibility(labels, escalation_required=False, qwen_allowed=True,
         lane=next(iter(required))
         return (lane,),"required-lane:%s"%lane
     ordinary=("qwen","glm","codex") if qwen_allowed else ("glm","codex")
+    if globals().get("PRODUCTION_POLICY"):
+        ordinary=tuple(name for name in ("qwen","glm","deepseek","codex")
+                       if name!="qwen" or qwen_allowed)
     return ordinary,"ordinary"
 
 
@@ -7426,6 +7501,10 @@ def select_compatible_lane(
     health=lane_health_by_name or {}
     healthy=[name for name in compatible
              if health.get(name,(True,"healthy"))[0]]
+    if globals().get("PRODUCTION_POLICY"):
+        # Spread new work across qualified families without a persistent cap.
+        lane_order=sorted(lane_order, key=lambda lane: -remaining.get(
+            lane["name"] if isinstance(lane,dict) else str(lane),0))
     for lane in lane_order:
         name=lane["name"] if isinstance(lane,dict) else str(lane)
         admitted=health.get(name,(True,"healthy"))[0]
@@ -7511,6 +7590,8 @@ def qwen_suitable(core, labels=None):
 
 
 def _lane_model(lane, core):
+    if globals().get("PRODUCTION_POLICY"):
+        return lane["model"]
     if lane["name"]=="glm":
         return _glm_model_for(core) or lane["model"]
     if lane["name"]=="codex":
@@ -7539,6 +7620,8 @@ for _kimi_model in ("kimi-for-coding", "k3"):
     if all(lane["name"]!="kimi" or lane["model"]!=_kimi_model for lane in _health_lanes):
         _health_lanes.append({"name":"kimi","model":_kimi_model})
 _cycle_id=new_cycle_id(HOST,STAMP)
+if PRODUCTION_POLICY:
+    _health_lanes=[lane for lane in LANES if lane["target"] > 0]
 _lane_health_snapshot=acquire_lane_snapshot(
     _GATEWAY_ENDPOINT,_health_lanes,_CAPACITY_DOMAINS,
     Path(_LANE_HEALTH_PATH),_cycle_id)
@@ -7624,7 +7707,7 @@ def _has_launchable_pick(picks, remaining, elastic_remaining, lane_order,
 picks=[]; _i=0
 _pick_admission={}
 remaining={lane["name"]:lane["free"] for lane in LANES}
-_LANE_RANK={"qwen":0,"glm":1,"codex":2,"kimi":3,"escalate":4}
+_LANE_RANK={"qwen":0,"glm":1,"deepseek":2,"codex":3,"kimi":4,"escalate":5}
 lane_order=sorted(LANES,key=lambda lane:_LANE_RANK.get(lane["name"],9))
 _esc_waiting=0
 _lane_deferred=collections.Counter()
@@ -7667,7 +7750,9 @@ while _i<len(owned) and _i<len(_candidate_scan):
     _card_lane_health={lane["name"]:_health_for(
         lane["name"],_lane_model(lane,_card[3]))
         for lane in LANES}
-    if not _ONLY_SEAT and not _elastic_review:
+    if PRODUCTION_POLICY:
+        _card_lane_health=_production_route_health(_card[3],_labels,_card_lane_health)
+    if not PRODUCTION_POLICY and not _ONLY_SEAT and not _elastic_review:
         _producer_routes=_producer_routes_for(
             _card[3],_labels,"codex" if "codex-only" in {
                 str(label).strip().lower() for label in _labels} else None)
@@ -7869,7 +7954,10 @@ logdir=os.path.join(HOME,".skcapstone/fleet/logs"); os.makedirs(logdir,exist_ok=
 #: Keep the launch budget inside the Niobe wrapper's 270-second deadline: reserve
 #: 20 seconds for cleanup and the final CYCLE_RECEIPT before it fires.
 _CYCLE_DEADLINE_RESERVE_S = 20
-_cycle_deadline = time.monotonic() + 270 - _CYCLE_DEADLINE_RESERVE_S
+_cycle_deadline = (
+    _cycle_started + PRODUCTION_POLICY.get("cycle_budget_seconds",250)
+    if PRODUCTION_POLICY else time.monotonic() + 270 - _CYCLE_DEADLINE_RESERVE_S
+)
 #: Per-cycle cache: equivalent logical routes are resolved and prefilled exactly once.
 _route_preflight_cache = {}
 for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
@@ -7896,7 +7984,9 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
     _attempt_escalation=needs_escalation(cid,core,_labels)
     _attempt_health={lane["name"]:_health_for(
         lane["name"],_lane_model(lane,core)) for lane in LANES}
-    if not _ONLY_SEAT and not _elastic_review:
+    if PRODUCTION_POLICY:
+        _attempt_health=_production_route_health(core,_labels,_attempt_health)
+    if not PRODUCTION_POLICY and not _ONLY_SEAT and not _elastic_review:
         _producer_routes=_producer_routes_for(
             core,_labels,"codex" if "codex-only" in {
                 str(label).strip().lower() for label in _labels} else None)
@@ -8268,6 +8358,8 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         _lane_domains={str(value) for value in _LANE.get("capacity_domains",())}
         _routes=[route for route in _capacity["routes"]
                  if str(route.get("capacity_domain") or "") in _lane_domains]
+        if PRODUCTION_POLICY:
+            _routes=routes_for_lane(_routes,_LANE)
         _selected_route=choose_review_route(_routes,_review_route_reservations)
         if _selected_route is None:
             lane_drift += 1
@@ -8290,6 +8382,9 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             _LANE["name"] if "%s-only"%_LANE["name"] in {
                 str(label).strip().lower() for label in fresh_claimability["labels"]}
             else None)
+        if PRODUCTION_POLICY:
+            _producer_routes=routes_for_lane(_producer_routes_for(
+                fresh_claimability["core"],fresh_claimability["labels"]),_LANE)
         _selected_route=choose_review_route(_producer_routes,_review_route_reservations)
         if _selected_route is None:
             lane_drift += 1
@@ -8364,6 +8459,9 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         log(d,"ROUTE_PREFLIGHT_OK|%s|%s|requested=%s|served=%s|provider=%s"%
             (HOST,cid,_route_preflight.requested_identity,
              _route_preflight.served_identity,_route_preflight.provider or "unknown"))
+    if PRODUCTION_POLICY and _route_preflight.provider not in _LANE["capacity_domains"]:
+        log(d,"ROUTE_PREFLIGHT_BLOCKED|%s|%s|reason=backend-family-drift"%(HOST,cid))
+        continue
     if time.monotonic() >= _cycle_deadline:
         _deferred_ids,_deferred_omitted=_bounded_ids(
             candidate[1][2] for candidate in picks[_pick_index:])
@@ -8637,7 +8735,8 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             _domain=_route_identity["capacity_domains"][0]
             _review_route_reservations[_domain]=(
                 _review_route_reservations.get(_domain,0)+1)
-    time.sleep(2)
+    if not PRODUCTION_POLICY:
+        time.sleep(2)
 
 # A selected Seraph candidate can be suppressed before claim, leaving no worker
 # attempt to emit the normal launch receipt. Preserve the diagnostics above, but

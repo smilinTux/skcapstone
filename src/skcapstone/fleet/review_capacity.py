@@ -410,9 +410,18 @@ def review_physical_free(
     lanes: Sequence[Mapping[str, Any]],
     _routes: Sequence[Mapping[str, Any]],
     reservations: Mapping[str, int],
-    physical_maximum: int,
+    physical_maximum: int | None,
 ) -> int:
     """Return global physical headroom without dropping exhausted domains."""
+    if physical_maximum is None:
+        # Production delegates request capacity to SKGateway. Count each
+        # advertised capacity domain once; existing worker count is irrelevant.
+        domains: dict[str, int] = {}
+        for route in _routes:
+            domain = str(route.get("capacity_domain") or "")
+            domains[domain] = max(domains.get(domain, 0), int(route.get("free", 0)))
+        return sum(max(0, free - int(reservations.get(domain, 0)))
+                   for domain, free in domains.items())
     busy = sum(
         len(lane.get("busy", ())) for lane in lanes if tuple(lane.get("capacity_domains", ()))
     )
