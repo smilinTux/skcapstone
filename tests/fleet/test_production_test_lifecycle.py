@@ -121,3 +121,28 @@ def test_runtime_fingerprint_detects_changed_metadata_and_module(tmp_path, monke
     assert second != first
     (site / "skcoord/__init__.py").write_text("changed = True\n")
     assert plan.runtime_fingerprint() != second
+
+
+@pytest.mark.parametrize("invocation_matches", [True, False])
+def test_stopped_loaded_unit_replay_requires_same_invocation(
+    setup, monkeypatch, invocation_matches
+):
+    _, terminal = receipt_fixture(setup, monkeypatch)
+    invocation = terminal["InvocationID"] if invocation_matches else "e" * 32
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        return SimpleNamespace(
+            stdout="LoadState=loaded\nActiveState=inactive\nSubState=dead\n"
+            "InvocationID=" + invocation + "\nMainPID=0\nControlGroup=\nTasksCurrent=[not set]\n"
+        )
+
+    monkeypatch.setattr(native.subprocess, "run", run)
+    if invocation_matches:
+        result = native.run_or_read_tests(setup.home, setup.binding, setup.workspace, setup.policy)
+        assert result["counts"]["total"] == 226
+    else:
+        with pytest.raises(native.TestEvidenceError, match="refusing stop"):
+            native.run_or_read_tests(setup.home, setup.binding, setup.workspace, setup.policy)
+    assert len(calls) == 1 and "show" in calls[0]

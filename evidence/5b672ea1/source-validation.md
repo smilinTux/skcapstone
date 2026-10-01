@@ -95,6 +95,22 @@ initial 61-test source run above. Final command added
 runtime modules and both test files; black left those six files unchanged;
 `git diff --check` exited 0.
 
+Independent Zai review of `1dbc0f05a6b3d5c40ba828889ae80f538b0322d3`
+passed the tests/docs scope and identified one runtime blocker: a repeat call
+rejected a successfully stopped unit that was still loaded inactive/dead.
+The original FAIL receipt is preserved in private card evidence. A narrow
+regression reproduced the failure before correction. The correction accepts
+only the same invocation, MainPID zero and exact empty-cgroup state as already
+stopped; a different invocation still fails closed without a stop call.
+An actual inert D-Bus RefUnit probe kept the stopped unit loaded to exercise
+this case: inactive/dead, invocation `770d7ac75c14449aa3806bd842774c26`, MainPID
+zero, empty ControlGroup and TasksCurrent `[not set]`. Replay succeeded and
+reaped the wait child; after UnrefUnit, collected-unit replay also succeeded.
+Final corrective source/test delta receives its own exact-commit review.
+The final four-file pytest invocation passed 78 tests in 21.28 seconds with
+zero failed/errors/skips. Six-file ruff/black and `git diff --check` passed.
+The inert probe unit list was empty after cleanup.
+
 No live plan was sealed, production test unit launched, candidate card accepted,
 runtime installed, protected data accessed or source pushed. The initial fixed
 profile only supports the approved twelve-file trial plus compile/lint/changelog;

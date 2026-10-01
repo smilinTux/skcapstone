@@ -206,19 +206,21 @@ def stop_retained(directory: Path, launch: dict) -> None:
             process.wait(timeout=5)
         return
     if (
-        values.get("InvocationID") != terminal["InvocationID"]
+        values.get("LoadState") != "loaded"
+        or values.get("InvocationID") != terminal["InvocationID"]
         or (values.get("ActiveState"), values.get("SubState"))
-        not in {("active", "exited"), ("failed", "failed")}
+        not in {("active", "exited"), ("failed", "failed"), ("inactive", "dead")}
         or not terminal_cgroup(values)
     ):
         raise TestEvidenceError("refusing stop without exact retained invocation")
-    subprocess.run(
-        ["/usr/bin/systemctl", "--user", "stop", launch["unit"]],
-        capture_output=True,
-        text=True,
-        timeout=5,
-        check=True,
-    )
+    if values.get("ActiveState") != "inactive":
+        subprocess.run(
+            ["/usr/bin/systemctl", "--user", "stop", launch["unit"]],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
     process = _SERVICE_PROCESSES.pop(launch["unit"], None)
     if process is not None:
         process.wait(timeout=5)

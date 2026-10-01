@@ -72,7 +72,10 @@ active/exited, MainPID zero, and have either a named cgroup with zero
 TasksCurrent or the observed removed cgroup state (empty ControlGroup and
 TasksCurrent `[not set]`). Missing or other unknown states fail closed. After
 fsyncing that immutable observation, the controller rechecks the same invocation,
-stops only that retained unit and reaps its owned systemd-run child. Failed
+stops only that retained unit and reaps its owned systemd-run child. A retry
+also recognizes the same invocation already loaded inactive/dead with the same
+empty-cgroup proof, or an already collected unit; it never stops a different
+invocation. Failed
 terminal services retain failure evidence and release their resource reservation
 without accepting the source. Receipt validation rehashes every raw log,
 JUnit and receipt; recomputes coverage and checks the actual source. Validation
