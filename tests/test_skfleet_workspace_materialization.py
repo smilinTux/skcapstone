@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import copy
 import os
 import re
 import shutil
@@ -13,6 +14,11 @@ from types import ModuleType
 from urllib.parse import urlsplit
 
 import pytest
+
+from tests.fleet.test_source_bundle import git, publish
+from tests.fleet.test_source_bundle import source as source_fixture
+
+source = source_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
@@ -70,6 +76,8 @@ def _helpers() -> dict[str, object]:
         "_resolve_workspace_root",
         "_complete_source_binding",
         "_source_workspace_spec",
+        "_preclaim_worker_source",
+        "_preclaim_source_ref",
         "_normalize_credential_free_https_remote",
         "_select_matching_source_remote",
         "_verify_source_workspace",
@@ -110,6 +118,63 @@ def test_production_bad_bundle_does_not_fall_back_to_another_revision(monkeypatc
     with pytest.raises(ValueError, match="hash mismatch"):
         ns["_preclaim_worker_source"]({}, [])
     assert probes == []
+
+
+@pytest.mark.parametrize("source", ["https"], indirect=True)
+def test_generated_review_imports_unpublished_head_not_producer_base(source, tmp_path):
+    """Exercise both launcher helpers against real typed source/bundle custody."""
+    from skcapstone.fleet import source_bundle
+
+    publish(source)
+    core = copy.deepcopy(source["core"])
+    # Generated review cards retain the producer's base alongside the reviewed head.
+    core["meta"].update(repository=source["remote"], base_ref="main", base_revision=source["base"])
+    before = copy.deepcopy(core)
+    ns = _helpers()
+    ns["PRODUCTION_POLICY"] = {"enabled": True}
+    ns["_preclaim_source_ref"] = lambda *args: pytest.fail("unpublished remote fallback")
+    labels = ["review", "source-only", "seat-seraph"]
+    target = tmp_path / "review-checkout"
+    assert ns["_preclaim_worker_source"](core, labels)[2] == source["head"]
+    assert ns["_materialize_worker_workspace"](str(target), core, labels) == str(target)
+    assert git(target, "rev-parse", "HEAD") == source["head"] != source["base"]
+    assert git(target, "rev-parse", "HEAD^{tree}") == source["tree"]
+    assert git(target, "status", "--porcelain") == ""
+    assert core == before
+    assert source["store"].fold(source["card"]).owner == source["owner"]
+    assert source_bundle.verify_review_source(core, source["remote"], source["head"])
+    producer = {
+        "meta": {
+            "repository": source["remote"],
+            "base_ref": "main",
+            "base_revision": source["base"],
+        }
+    }
+    assert ns["_source_workspace_spec"](producer, ["source-only"])[2] == source["base"]
+    ns["PRODUCTION_POLICY"] = None
+    assert ns["_source_workspace_spec"](core, labels)[2] == source["base"]
+
+
+@pytest.mark.parametrize("head", [None, "bad", "f" * 40])
+def test_production_review_head_missing_malformed_or_conflicting_refused(head):
+    from skcapstone.fleet.source_bundle import SourceBundleError
+
+    ns = _helpers()
+    ns["PRODUCTION_POLICY"] = {"enabled": True}
+    core = {
+        "meta": {
+            "repository": "https://example.invalid/source.git",
+            "base_ref": "main",
+            "base_revision": "a" * 40,
+            "link_source_card": "24b00001",
+        }
+    }
+    if head is not None:
+        core["meta"]["link_head_revision"] = head
+    if head == "f" * 40:
+        core["links"] = {"link_head_revision": "b" * 40}
+    with pytest.raises((ValueError, SourceBundleError), match="head|conflict"):
+        ns["_source_workspace_spec"](core, ["review", "source-only"])
 
 
 def _remote_listing(remotes: dict[str, str]) -> str:

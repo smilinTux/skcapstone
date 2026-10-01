@@ -17,7 +17,7 @@ def git(path, *args):
 
 
 @pytest.fixture
-def source(tmp_path, monkeypatch):
+def source(tmp_path, monkeypatch, request):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("SKCAPSTONE_HOME", str(home))
@@ -32,6 +32,12 @@ def source(tmp_path, monkeypatch):
     base = git(workspace, "rev-parse", "HEAD")
     remote = tmp_path / "remote.git"
     git(tmp_path, "clone", "--bare", str(workspace), str(remote))
+    repository = str(remote)
+    if getattr(request, "param", None) == "https":
+        repository = "https://example.invalid/source.git"
+        monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+        monkeypatch.setenv("GIT_CONFIG_KEY_0", f"url.{remote}.insteadOf")
+        monkeypatch.setenv("GIT_CONFIG_VALUE_0", repository)
     git(workspace, "checkout", "-qb", "work/source")
     card, owner = "24b00001", "pi-glm-builder-node-worker-24b00001"
     evidence = workspace / "docs/evidence/agents" / card / "COMPLETION-EVIDENCE.md"
@@ -56,7 +62,7 @@ def source(tmp_path, monkeypatch):
             title="[M] Source",
             created_by=owner,
             initial_labels=["source-only"],
-            meta={"repository": str(remote), "base_revision": base, "base_ref": "main"},
+            meta={"repository": repository, "base_revision": base, "base_ref": "main"},
         )
     )
     store.append_event(card, "claim", owner, owner=owner)
@@ -90,12 +96,12 @@ def source(tmp_path, monkeypatch):
         base=base,
         head=head,
         tree=tree,
-        remote=str(remote),
+        remote=repository,
         shared=shared,
         outcome=outcome,
         store=store,
         core=core,
-        request={"card_id": card, "repository": str(remote), "base_revision": base},
+        request={"card_id": card, "repository": repository, "base_revision": base},
     )
 
 

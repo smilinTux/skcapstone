@@ -812,6 +812,15 @@ def _source_workspace_spec(core, labels):
         raise ValueError("source card requires a bounded base_ref link")
     if not re.fullmatch(r"[0-9a-f]{40}", base_revision):
         raise ValueError("source card requires an exact 40-hex base_revision")
+    if globals().get("PRODUCTION_POLICY"):
+        from skcapstone.fleet.source_bundle import _binding
+
+        if _binding(core, "link_source_card") is not None:
+            # A review checks out its candidate; the producer base remains provenance.
+            head = _binding(core, "link_head_revision")
+            if not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}", head):
+                raise ValueError("review source head binding invalid")
+            return repository, base_ref, head
     return repository, base_ref, base_revision
 
 
