@@ -1876,7 +1876,7 @@ def _prepare_pi_glm_catalog():
     return True,(result.stdout or "catalog current").strip().splitlines()[0][:240]
 
 glm_catalog_ready=True
-if not DRY and GLM_TARGET > 0 and not glm_held:
+if not PRODUCTION_POLICY and not DRY and GLM_TARGET > 0 and not glm_held:
     glm_catalog_ready,glm_catalog_detail=_prepare_pi_glm_catalog()
     if not glm_catalog_ready:
         log(d,"GLM_CATALOG_BLOCKED|%s|%s"%(HOST,glm_catalog_detail))
@@ -1931,10 +1931,6 @@ for _lane in LANES:
 if PRODUCTION_POLICY:
     LANES=production_lanes(PRODUCTION_POLICY, _SCAN_BUDGET)
     _CAPACITY_DOMAINS={lane["name"]:lane["capacity_domains"] for lane in LANES}
-    # Catalog failure affects admission to that route only. It never stops
-    # independent providers or changes authorization on a card.
-    if not glm_catalog_ready:
-        next(lane for lane in LANES if lane["name"]=="glm")["target"]=0
 _GLM_LEVEL_DEFAULTS={"S":"sk-glm-s","M":"sk-glm-m","L":"sk-glm-l","XL":"sk-glm-l"}
 _GLM_LEVELS={key:os.environ.get("SKFLEET_GLM_MODEL_"+key,value)
              for key,value in _GLM_LEVEL_DEFAULTS.items()}

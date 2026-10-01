@@ -136,6 +136,47 @@ def test_production_review_rails_preserve_candidate_and_truthful_checks():
     assert ns["_RAILS"] == "LEGACY PUSH REQUIREMENT"
 
 
+def test_production_skips_legacy_catalog_writer_and_readiness_gate():
+    tree = ast.parse(ROTATE.read_text())
+
+    def branch_calling(name):
+        return next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.If)
+            and any(
+                isinstance(item, ast.Call)
+                and isinstance(item.func, ast.Name)
+                and item.func.id == name
+                for item in ast.walk(node)
+            )
+        )
+
+    calls = []
+    ns = {
+        "PRODUCTION_POLICY": policy(),
+        "DRY": False,
+        "GLM_TARGET": 12,
+        "glm_held": False,
+        "glm_catalog_ready": False,
+        "_prepare_pi_glm_catalog": lambda: (calls.append("legacy") or False, "missing"),
+        "production_lanes": production_lanes,
+        "_SCAN_BUDGET": 12,
+        "log": lambda *args: None,
+        "d": None,
+        "HOST": "controller",
+    }
+    legacy = branch_calling("_prepare_pi_glm_catalog")
+    production = branch_calling("production_lanes")
+    exec(compile(ast.Module(body=[legacy, production], type_ignores=[]), str(ROTATE), "exec"), ns)
+    assert calls == []
+    assert next(row for row in ns["LANES"] if row["name"] == "glm")["target"] == 12
+    ns["PRODUCTION_POLICY"] = None
+    exec(compile(ast.Module(body=[legacy], type_ignores=[]), str(ROTATE), "exec"), ns)
+    assert calls == ["legacy"]
+    assert ns["glm_catalog_ready"] is False
+
+
 def test_gateway_capacity_does_not_subtract_existing_worker_count():
     lanes = [{"busy": list(range(1000)), "capacity_domains": ["zai"]}]
     routes = [
