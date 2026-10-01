@@ -18,8 +18,10 @@ import urllib.request
 HOSTS = ('chiap01', 'chiap02', 'chiap03', 'chiap04', 'chiap08', 'chiwk12', 'chiwk13', 'ziowk01')
 SSH_ACCOUNT = {'chiwk12': 'skuser01@chiwk12'}
 GATEWAY = 'http://chiap01:18790'
+# This file is streamed to node Python over stdin, without installed modules.
 MODEL_FAMILY = {'deepseek-flash': 'deepseek', 'deepseek-v4-pro': 'deepseek',
-                'gpt-5.6-sol': 'codex', 'gpt-5.6-terra': 'codex', 'sk-zai-m': 'zai'}
+                'gpt-5.6-sol': 'codex', 'gpt-5.6-terra': 'codex', 'sk-zai-m': 'zai',
+                'qwen3.8-27b-huihui-abliterated-q4_k_m': 'qwen'}
 
 
 def process_provider(name, identity):
@@ -34,7 +36,8 @@ def footer_provider(text):
     lines = text.rstrip().splitlines()
     if lines and re.fullmatch(r'🔌 MCP: \d+ servers enabled', lines[-1].strip()):
         lines.pop()
-    match = re.search(r'\((skgateway|skgw-deepseek|skgw-codex|skgw-zai)\) ([a-z0-9.-]+) • [a-z]+\s*$', lines[-1]) if lines else None
+    providers = '|'.join(['skgateway', *('skgw-' + family for family in sorted(set(MODEL_FAMILY.values())))])
+    match = re.search(r'\((' + providers + r')\) ([a-z0-9._-]+) • [a-z]+\s*$', lines[-1]) if lines else None
     if not match:
         return None
     provider, model = match.groups()

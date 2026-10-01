@@ -19,9 +19,8 @@ import fiber_sandbox
 import fiber_test_environment
 import fiber_bundle
 from fiber_gateway_bridge import gateway_socket
+from fiber_routes import ROUTES
 
-ROUTES = {'deepseek': ('skgw-deepseek', 'deepseek-flash'),
-          'codex': ('skgw-codex', 'gpt-5.6-sol'), 'zai': ('skgw-zai', 'sk-zai-m')}
 STATE = Path.home() / '.local/state/skfleet-fiber'
 DATA = Path.home() / '.local/share/skfleet-fiber'
 GATEWAY = 'http://chiap01:18790/v1'

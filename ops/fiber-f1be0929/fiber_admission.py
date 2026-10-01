@@ -15,11 +15,12 @@ import re
 import sqlite3
 import subprocess
 import uuid
+from fiber_routes import ROUTES, independent
 
 # Installed execution targets, not a capacity table. SKGateway queues requests.
 WORKER_HOSTS = ('chiap02', 'chiap03', 'chiap04', 'chiwk12', 'chiwk13', 'ziowk01')
 STAGE_HOSTS = {stage: WORKER_HOSTS for stage in ('implementation', 'review', 'tests')}
-PROVIDERS = {'deepseek', 'codex', 'zai'}
+PROVIDERS = frozenset(ROUTES)
 
 
 class Refused(ValueError):
@@ -106,7 +107,7 @@ def _validate(job, snapshot, now):
     provider = job.get('provider')
     if provider not in PROVIDERS:
         raise Refused('provider-not-qualified')
-    if job['stage'] == 'review' and (not job.get('producer_provider') or job['producer_provider'] == provider):
+    if job['stage'] == 'review' and not independent(job.get('producer_provider'), provider):
         raise Refused('review-independence')
     host = snapshot.get('hosts', {}).get(job['host'], {})
     if host.get('ready') is not True:

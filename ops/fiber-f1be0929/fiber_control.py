@@ -22,6 +22,7 @@ from fiber_lifecycle import connect_reviews
 from fiber_test_cycle import ensure_tests
 import fiber_bundle
 from fiber_worker import GATEWAY, ROUTES, source_binding, validate, verify_source
+from fiber_routes import CAPACITY_DOMAINS, independent, provider_matches
 
 STATE = Path.home() / '.local/state/skfleet-fiber'
 QUEUE = Path.home() / '.config/skfleet-fiber/jobs'
@@ -114,7 +115,7 @@ def describe(card, stage, family, *, producer_family=None):
     sizes = re.findall(r'\[(S|M|L|XL)\]', row.get('title', ''))
     if len(sizes) != 1:
         raise Refused('work-class-required')
-    if stage == 'review' and (producer_family not in ROUTES or producer_family == family):
+    if stage == 'review' and not independent(producer_family, family):
         raise Refused('review-independence')
     task = {'card': card, 'owner': ('pi-seraph-fiber-' if stage == 'review' else 'pi-fiber-' + stage + '-') + card,
             'stage': stage, 'host': 'auto', 'work_class': sizes[0], 'provider': family,
@@ -237,7 +238,7 @@ def validate_completion(job, answer, headers):
     content = answer.get('choices', [{}])[0].get('message', {}).get('content')
     if not isinstance(content, str) or not content.strip():
         raise Refused('completion-empty')
-    if headers.get('x-sk-provider', headers.get('x-sk-backend')) != family or headers.get('x-sk-model-requested') != model:
+    if not provider_matches(family, model, headers) or headers.get('x-sk-model-requested') != model:
         raise Refused('completion-attribution-mismatch')
     expected = headers.get('x-sk-bucket-member') if model.startswith('sk-') else model
     if not expected or served != expected or headers.get('x-sk-model-served') != served:
@@ -249,13 +250,14 @@ def qualify_route(job):
     """One tiny completion through the configured SKGateway alias, no Matter data."""
     from skcapstone.fleet_lane_health import acquire_lane_snapshot, lane_health
     family, model = job['provider'], job['model']
+    domains = CAPACITY_DOMAINS[family]
     stamp = str(time.time_ns())
     path = STATE / 'observations' / ('lane-' + stamp + '.json')
     endpoint = GATEWAY.removesuffix('/v1')
     snapshot = acquire_lane_snapshot(endpoint, [{'name': family, 'model': model}],
-                                     {family: (family,)}, path, stamp)
+                                     {family: domains}, path, stamp)
     ok, reason = lane_health(snapshot, family, model, cycle_id=stamp, endpoint=endpoint,
-                             capacity_domains=(family,), active_revision=snapshot['runtime_revision'])
+                             capacity_domains=domains, active_revision=snapshot['runtime_revision'])
     if not ok:
         raise Refused('lane-health:' + reason)
     catalog = json.loads((Path.home() / '.pi/agent/models.json').read_text())
@@ -290,6 +292,8 @@ def qualify_route(job):
     served = validate_completion(job, answer, headers)
     proof = {'observed_at': time.time(), 'requested_model': model, 'served_model': served,
              'provider': family, 'gateway_revision': snapshot['runtime_revision'], 'nonempty': True,
+             'gateway_provider': headers.get('x-sk-provider', headers.get('x-sk-backend')),
+             'gateway_backend': headers.get('x-sk-backend'), 'capacity_domains': list(domains),
              'resolved_model': headers.get('x-sk-bucket-member', model)}
     evidence = STATE / 'observations' / ('completion-' + stamp + '.json')
     with evidence.open('x') as stream:

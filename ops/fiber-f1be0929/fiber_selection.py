@@ -116,7 +116,7 @@ def select_requests(state, qualified, policy_path, hold, *, read_cards, describe
                 raise Refused('selection-promoter:' + reason)
             if not eligible(row, board):
                 raise Refused('selection-native-gate')
-            family = 'zai' if 'glm-only' in labels else 'deepseek'
+            family = 'zai' if 'glm-only' in labels else 'qwen' if 'qwen-suitable' in labels else 'deepseek'
             job = describe(cid, 'implementation', family)
             if (job.get('card') != cid or job.get('stage') != 'implementation'
                     or job.get('provider') != family or job.get('host') != 'auto'

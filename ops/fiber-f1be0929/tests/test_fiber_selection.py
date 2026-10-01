@@ -61,6 +61,17 @@ class SelectionTest(unittest.TestCase):
         self.assertEqual(self.run_selection()['added'], [])
         self.assertIsNone(self.row['owner'])
 
+    def test_qwen_assignment_requires_explicit_pinned_suitability_label(self):
+        self.row['labels'].append('qwen-suitable')
+        fingerprint = card_fingerprint(self.row)
+        self.config['cards'][self.row['id']] = fingerprint
+        self.job.update(provider='qwen', card_fingerprint=fingerprint)
+        self.save()
+        self.assertEqual(self.run_selection()['added'], ['1234abcd'])
+        receipt = _qualified(self.ready / '1234abcd.json', 201)
+        self.assertEqual(receipt['job']['provider'], 'qwen')
+        self.assertEqual(receipt['job']['card_fingerprint'], fingerprint)
+
     def test_disabled_and_hold_are_noops(self):
         self.policy.unlink()
         self.assertEqual(self.run_selection()['state'], 'disabled')
