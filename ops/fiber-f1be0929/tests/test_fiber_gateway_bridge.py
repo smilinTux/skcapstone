@@ -88,7 +88,8 @@ class BridgeTest(unittest.TestCase):
     def test_gateway_backpressure_survives_both_hops_without_secrets_or_retries(self):
         responses = iter([
             (429, "17", "17"), (503, "Wed, 21 Oct 2026 07:28:00 GMT", "Wed, 21 Oct 2026 07:28:00 GMT"),
-            (402, "0", "0"), (429, "secret-token", None), (503, "-1", None),
+            (402, "0", "0"), (429, "0000000000001", "1"),
+            (429, "secret-token", None), (503, "-1", None),
             (429, "9" * 100, None), (401, None, None), (302, "1", None),
         ])
         current = []

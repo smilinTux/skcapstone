@@ -75,6 +75,19 @@ checks. Synthetic credentials are confined to local fixtures.
 
 ## Acceptance and rollback
 
+Independent DeepSeek review of `7abd26505cc32aedbc9d12b7db692c32a10ff9c5`
+returned FAIL. Its final demand to suppress valid `Retry-After: 0` contradicts
+the gateway-owned retry policy and is not adopted. Its numeric-header finding
+identified an unnecessary ten-character sub-bound: a valid leading-zero value
+such as `0000000000001` was dropped. The follow-up removes that sub-bound while
+retaining the 64-byte header boundary and adds an actual two-hop HTTP regression.
+The original provider judgment is retained under the card's operator evidence.
+The follow-up requires its own exact independent review before installation.
+After the numeric-header correction, the focused bridge/sandbox command above
+was rerun: **22 passed in 8.57s**. The broad 351-pass run applies to the prior
+candidate; the follow-up changes only numeric retry-header normalization and
+adds its real HTTP case to the same focused test.
+
 Gateway status and retry timing survive both real bridge hops; error bodies
 and credentials do not. Both duplicated throughput ceilings are removed while
 usage accounting and authorization boundaries retain passing coverage.
