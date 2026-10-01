@@ -1,0 +1,1 @@
+- Card `746626c9`: bind production reviewer routes to exact configured models and semantic provider families, refusing unknown or conflicting source provenance and same-family fallback.
