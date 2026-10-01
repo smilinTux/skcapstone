@@ -130,7 +130,9 @@ def ensure_tests(directory, producer, review, *, state, requirements_path, stage
     reservations = state / 'test-reservations'
     reservations.mkdir(mode=0o700, exist_ok=True)
     _directory(reservations)
-    reservation = reservations / (requirements['host'] + '.json')
+    # Reserve one card/request, not the machine. Legacy host pins remain audit
+    # evidence; they do not serialize unrelated test runs on that host.
+    reservation = reservations / (request['plan']['source_card'] + '.json')
     pin = identity(request)
     occupied = reservation.exists() or reservation.is_symlink()
     ack_path = directory / 'test-accepted.json'
@@ -148,14 +150,10 @@ def ensure_tests(directory, producer, review, *, state, requirements_path, stage
             _sync_directory(reservations)
         return accepted
     if occupied and _read(reservation) != pin:
-        if existing:
-            raise Refused('test-host-reservation-changed')
-        return None
+        raise Refused('test-card-reservation-conflict')
     launched = directory / 'test-launch-intent.json'
     if not (launched.exists() or launched.is_symlink()):
         readiness = transport('check', request)
-        if readiness == {'request_sha256': digest(request), 'state': 'capacity'}:
-            return None
         if readiness != {'request_sha256': digest(request), 'state': 'ready'}:
             raise Refused('test-preflight-unverified')
     _once(intent_path, request)

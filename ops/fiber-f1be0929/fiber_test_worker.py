@@ -125,15 +125,6 @@ def observe(request):
                 exit_code=int(status) if status.isdecimal() else None)
 
 
-def headroom():
-    from skcapstone.fleet.capacity import admit_headroom
-    admitted, _, memory = admit_headroom(Path('/proc/meminfo').read_text())
-    cpus = os.cpu_count() or 1
-    if (not admitted or memory['MemAvailable'] < 4 * 1024 * 1024 or cpus < 2
-            or os.getloadavg()[0] > max(1, cpus - 2)):
-        raise Refused('test-host-capacity')
-
-
 def start(request):
     validate(request)
     if socket.gethostname().split('.')[0].lower() != request['requirements']['host']:
@@ -146,7 +137,6 @@ def start(request):
         # An ambiguous earlier start is never repeated, even if no unit exists.
         return observe(request)
     authority_check(request)
-    headroom()
     _publish(path, request)
     command = ['systemd-run', '--user', '--quiet', '--service-type=exec', '--unit', request['unit'],
         '--description', 'SKFleet test ' + digest(request),
@@ -162,16 +152,10 @@ def start(request):
 
 
 def check(request):
-    """A normal capacity wait does not create a launch intent or a failed service."""
+    """Validate request placement without a second host scheduling authority."""
     validate(request)
     if socket.gethostname().split('.')[0].lower() != request['requirements']['host']:
         raise Refused('test-wrong-host')
-    try:
-        headroom()
-    except Refused as exc:
-        if str(exc) != 'test-host-capacity':
-            raise
-        return {'request_sha256': digest(request), 'state': 'capacity'}
     return {'request_sha256': digest(request), 'state': 'ready'}
 
 
@@ -245,13 +229,18 @@ def execute(request):
     if not _hex(invocation, 32):
         raise Refused('test-service-invocation-required')
     directory = paths(request)
-    # A host-wide lock independently bounds concurrent test services.
-    fd = os.open(directory.parent / 'execution.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    # Independent requests may run together. Fence only this exact execution.
+    fd = os.open(directory / 'execution.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, 'a') as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise Refused('test-host-reserved') from None
+            raise Refused('test-request-executing') from None
+        intent = directory / 'execution-intent.json'
+        if intent.exists() or intent.is_symlink():
+            raise Refused('test-execution-already-started')
+        # A terminated service or lost result must never rerun its test command.
+        _publish(intent, {**identity(request), 'invocation': invocation})
         workspace, environment = materialize(request)
         started = time.time()
         checks = []
