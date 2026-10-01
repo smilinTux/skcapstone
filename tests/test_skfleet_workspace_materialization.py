@@ -8,8 +8,8 @@ import re
 import shutil
 import subprocess
 import sys
-from types import ModuleType
 from pathlib import Path
+from types import ModuleType
 from urllib.parse import urlsplit
 
 import pytest
