@@ -6,6 +6,7 @@ import re
 import socket
 from pathlib import Path
 
+from . import production_test_node as node
 from . import production_test_plan as plan
 from .production_builder import digest
 
@@ -45,6 +46,8 @@ def contract(core: dict) -> dict:
 
 def recipe_checks(recipe: dict) -> list[dict]:
     """Compile bounded file lists into fixed argv templates for the existing sandbox."""
+    if isinstance(recipe, dict) and "vitest" in recipe:
+        return node.checks(recipe)
     if not isinstance(recipe, dict) or set(recipe) != {"pytest", "compile", "lint", "changelog"}:
         raise plan.TestEvidenceError("unsupported test recipe")
     tests = recipe["pytest"]
@@ -82,7 +85,10 @@ def recipe_checks(recipe: dict) -> list[dict]:
 
 def validate_profile(value: dict, expected: dict, policy: dict, *, environment=True) -> dict:
     """Validate authority qualification or its existing trusted dispatch copy."""
-    if (not isinstance(value, dict) or set(value) != FIELDS or value["schema"] != SCHEMA
+    node_profile = node.is_node(value)
+    fields = FIELDS | {"node_environment"} if node_profile else FIELDS
+    schema = node.SCHEMA if node_profile else SCHEMA
+    if (not isinstance(value, dict) or set(value) != fields or value["schema"] != schema
             or any(value.get(k) != v for k, v in expected.items())
             or not isinstance(value["qualified_by"], str) or not value["qualified_by"]
             or any(not isinstance(value[k], str) or not re.fullmatch(r"[0-9a-f]{64}", value[k])
@@ -92,6 +98,10 @@ def validate_profile(value: dict, expected: dict, policy: dict, *, environment=T
             or value["host"] != policy["authority_host"]):
         raise plan.TestEvidenceError("qualified test profile is missing, stale or conflicting")
     recipe_checks(value["recipe"])
+    if ("vitest" in value["recipe"]) != node_profile:
+        raise plan.TestEvidenceError("test recipe and profile variant disagree")
+    if node_profile and environment:
+        node.validate_environment(value["node_environment"])
     if environment and (
         value["host"] != socket.gethostname().split(".")[0].lower()
         or value["runtime_sha256"] != plan.runtime_fingerprint()
@@ -102,13 +112,16 @@ def validate_profile(value: dict, expected: dict, policy: dict, *, environment=T
 
 
 def qualify_profile(home: Path, core: dict, policy: dict, recipe: dict,
-                    qualified_by: str, qualification_sha256: str) -> Path:
+                    qualified_by: str, qualification_sha256: str, *,
+                    node_environment: dict | None = None) -> Path:
     """Operator API after actual recipe qualification; no worker calls this API."""
     value = {"schema": SCHEMA, **contract(core), "recipe": recipe,
              "qualified_by": qualified_by, "qualification_sha256": qualification_sha256,
              "python_sha256": plan.sha((plan.PREFIX / "bin/python").read_bytes()),
              "runtime_sha256": plan.runtime_fingerprint(), "policy_sha256": digest(policy),
              "host": socket.gethostname().split(".")[0].lower()}
+    if node_environment is not None:
+        value.update(schema=node.SCHEMA, node_environment=node_environment)
     validate_profile(value, contract(core), policy)
     directory = home / "fleet/test-profiles"
     plan.private_dir(directory, create=True)

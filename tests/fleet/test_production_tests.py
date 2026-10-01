@@ -422,6 +422,34 @@ def test_worker_records_all_actual_check_exits_and_junit(setup, monkeypatch, fai
     assert native.read_private(setup.directory / "pytest.xml") == junit()
 
 
+@pytest.mark.parametrize("failure", ["missing", "timeout", "overflow"])
+def test_worker_failure_preserves_typed_receipt(setup, monkeypatch, failure):
+    launch_fixture(setup, monkeypatch)
+    monkeypatch.setenv("INVOCATION_ID", "f" * 32)
+    monkeypatch.setattr(worker, "source_state", native.source_state)
+    monkeypatch.setattr(worker.resource, "setrlimit", lambda *args: None)
+
+    def capture(argv, path, timeout):
+        private_bytes(path, b"actual failure boundary fixture")
+        if failure != "missing":
+            raise native.TestEvidenceError("native check exceeded " + failure)
+        return 0
+
+    monkeypatch.setattr(worker, "capture", capture)
+    original_umask = os.umask(0o077)
+    try:
+        assert worker.execute(setup.plan_path, setup.directory) == 1
+    finally:
+        os.umask(original_umask)
+    receipt = native.read_json(setup.directory / "receipt.json")
+    assert receipt["failure"]["type"] == (
+        "FileNotFoundError" if failure == "missing" else "TestEvidenceError"
+    )
+    assert receipt["counts"] is None and receipt["junit_sha256"] is None
+    assert receipt["checks"][0]["output_sha256"]
+    assert receipt["invocation"] == "f" * 32
+
+
 def test_terminal_observation_checks_actual_invocation_and_pid(setup, monkeypatch):
     receipt, _ = receipt_fixture(setup, monkeypatch)
     (setup.directory / "terminal.json").unlink()

@@ -247,6 +247,9 @@ def seal_plan(
                          "criteria_sha256": binding["criteria_sha256"]}, policy)
         value["profile"] = profile
         value["checks"] = recipe_checks(profile["recipe"])
+        from . import production_test_node as node
+        if node.is_node(profile):
+            node.validate_environment(profile["node_environment"], workspace)
     if (
         not qualified_by
         or not re.fullmatch(r"[0-9a-f]{64}", qualification_sha256)
@@ -291,6 +294,9 @@ def load_plan(home: Path, binding: dict) -> tuple[dict, Path, str]:
                     "runtime_sha256", "policy_sha256", "host"))):
             raise TestEvidenceError("candidate test profile changed")
         expected_checks = recipe_checks(profile["recipe"])
+        from . import production_test_node as node
+        if node.is_node(profile):
+            node.validate_environment(profile["node_environment"])
     if (
         not isinstance(plan, dict)
         or set(plan) != required
@@ -351,6 +357,9 @@ def run_directory(home: Path, plan_sha: str) -> Path:
 
 def junit_counts(raw: bytes, profile: dict | None = None) -> dict:
     """Recompute strict per-file coverage from raw JUnit, never reported totals alone."""
+    from . import production_test_node as node
+    if node.is_node(profile):
+        return node.junit_counts(raw, profile)
     if b"<!DOCTYPE" in raw or b"<!ENTITY" in raw:
         raise TestEvidenceError("JUnit entities are forbidden")
     root = ElementTree.fromstring(raw)

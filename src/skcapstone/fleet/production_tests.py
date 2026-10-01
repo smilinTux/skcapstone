@@ -10,6 +10,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 from . import production_builder
+from . import production_test_node as node
 from .production_resources import active_resource_units, local_worker_admission
 from .production_test_plan import (
     BINDING_KEYS as BINDING_KEYS,
@@ -89,6 +90,8 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
     receipt = read_json(directory / "receipt.json")
     terminal = read_json(directory / "terminal.json")
     expected = source_state(workspace, binding)
+    if node.is_node(plan.get("profile")):
+        node.validate_environment(plan["profile"]["node_environment"], workspace)
     unit = production_builder.unit_name(launch, 1)
     policy = launch.get("policy", {})
     if (
@@ -114,6 +117,7 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
         or receipt.get("plan_sha256") != plan_sha
         or receipt.get("source_before") != expected
         or receipt.get("source_after") != expected
+        or receipt.get("failure") is not None
         or not re.fullmatch(r"[0-9a-f]{32}", str(receipt.get("invocation", "")))
         or terminal.get("unit") != unit
         or terminal.get("InvocationID") != receipt["invocation"]
@@ -133,7 +137,9 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
     from .production_test_worker import sandbox_command
 
     for check, result in zip(plan["checks"], results):
-        actual = sandbox_command(workspace, directory / "output", check["argv"])
+        actual = sandbox_command(
+            workspace, directory / "output", check["argv"], plan.get("profile")
+        )
         if (
             result.get("id") != check["id"]
             or result.get("argv") != check["argv"]
@@ -143,7 +149,8 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
             or result.get("output_sha256") != sha(read_private(directory / (check["id"] + ".log")))
         ):
             raise TestEvidenceError("native command or raw output mismatch")
-    raw = read_private(directory / "pytest.xml")
+    name = "vitest.xml" if node.is_node(plan.get("profile")) else "pytest.xml"
+    raw = read_private(directory / name)
     counts = junit_counts(raw, plan.get("profile"))
     if receipt.get("junit_sha256") != sha(raw) or receipt.get("counts") != counts:
         raise TestEvidenceError("native JUnit evidence mismatch")
