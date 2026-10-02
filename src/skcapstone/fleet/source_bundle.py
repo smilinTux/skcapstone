@@ -11,6 +11,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 
 MAX_BUNDLE = 8 * 1024 * 1024
@@ -186,13 +187,51 @@ def _inspect(workspace: Path, program: str, *arguments: str) -> dict:
         program,
         *arguments,
     ]
+    # The user manager starts bwrap before any PrivateTmp user namespace can
+    # stack the generic AppArmor capability denial. Bwrap owns isolation here.
+    unit = "skfleet-inspect-" + uuid.uuid4().hex + ".service"
+    command = "/usr/bin/systemd-run --user --quiet --wait --pipe --collect".split() + [
+        "--expand-environment=no",
+        "--unit=" + unit,
+        "--property=NoNewPrivileges=yes",
+        "--property=RuntimeMaxSec=40",
+        "--property=TimeoutStopSec=2",
+        "--property=KillMode=control-group",
+        "--property=CPUQuota=100%",
+        "--property=MemoryMax=512M",
+        "--property=TasksMax=64",
+        "--property=UMask=0077",
+        "--property=LimitFSIZE=" + str(2 * MAX_BUNDLE + 1),
+        "--",
+        *command,
+    ]
     try:
-        result = subprocess.run(command, capture_output=True, timeout=45)
-        if result.returncode or len(result.stdout) > 2 * MAX_BUNDLE:
+        with tempfile.TemporaryFile() as output:
+            result = subprocess.run(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=output,
+                stderr=subprocess.DEVNULL,
+                timeout=45,
+            )
+            output.seek(0)
+            raw = output.read(2 * MAX_BUNDLE + 1)
+        if result.returncode or len(raw) > 2 * MAX_BUNDLE:
             raise SourceBundleError("source candidate export refused")
-        return json.loads(result.stdout)
+        return json.loads(raw)
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         raise SourceBundleError("source candidate export refused") from exc
+    finally:
+        # Stop on cancellation too; already collected units need no action.
+        try:
+            subprocess.run(
+                ["/usr/bin/systemctl", "--user", "stop", unit],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise SourceBundleError("source inspection cleanup unavailable") from exc
 
 
 def publish_source(

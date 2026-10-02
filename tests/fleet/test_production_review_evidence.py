@@ -3,7 +3,12 @@
 import hashlib
 import json
 import os
+import shutil
 import subprocess
+import sys
+import tempfile
+import uuid
+from pathlib import Path
 
 import pytest
 
@@ -62,6 +67,58 @@ def test_real_git_review_commit_preserves_candidate_and_reads_committed_proposal
     assert result["decision_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
     assert git(workspace, "status", "--porcelain") == ""
     assert inspect_proposal(workspace, **binding) == result
+
+
+def test_review_inspection_through_hardened_coordinator_boundary(proposal):
+    workspace, binding, _, _ = proposal
+    source = Path(__file__).resolve().parents[2] / "src"
+    with tempfile.TemporaryDirectory(prefix="skfleet-review-test-", dir=Path.home()) as tmp:
+        # A worker checkout lives outside the coordinator's private /tmp.
+        retained = Path(tmp) / "review"
+        shutil.copytree(workspace, retained)
+        unit = "skfleet-inspection-test-" + uuid.uuid4().hex + ".service"
+        program = """
+import json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from skcapstone.fleet.production_review_evidence import inspect_proposal
+result=inspect_proposal(Path(sys.argv[2]), **json.loads(sys.argv[3]))
+assert 'NoNewPrivs:\\t1' in Path('/proc/self/status').read_text()
+print(json.dumps({'head':result['review_head'], 'verdict':result['proposal']['verdict']}))
+"""
+        try:
+            result = subprocess.run(
+                [
+                    "systemd-run",
+                    "--user",
+                    "--quiet",
+                    "--wait",
+                    "--pipe",
+                    "--collect",
+                    "--unit=" + unit,
+                    "--property=NoNewPrivileges=yes",
+                    "--property=PrivateTmp=yes",
+                    "--property=RuntimeMaxSec=50",
+                    "--property=KillMode=control-group",
+                    "--",
+                    sys.executable,
+                    "-c",
+                    program,
+                    str(source),
+                    str(retained),
+                    json.dumps(binding),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            assert result.returncode == 0, result.stderr
+            assert json.loads(result.stdout) == {
+                "head": git(workspace, "rev-parse", "HEAD"),
+                "verdict": "PASS",
+            }
+        finally:
+            subprocess.run(["systemctl", "--user", "stop", unit], capture_output=True, timeout=5)
 
 
 @pytest.mark.parametrize(

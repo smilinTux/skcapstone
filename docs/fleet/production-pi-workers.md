@@ -170,6 +170,19 @@ The authority overlay is a separately reviewed deployment dependency, pinned in
 bundle import, reviewer brief and acceptance must use that qualified composition;
 passing source-only unit tests does not qualify a different installation.
 
+Card `c1a30135` preserves inspection through the hardened authority service.
+The existing `_inspect` runs its unchanged bwrap argv through a unique native
+transient user service, with NoNewPrivileges, a 40-second runtime bound,
+two-second stop bound, whole-cgroup termination, one CPU, 512 MiB memory,
+64 tasks and bounded output. Bwrap still supplies private tmpfs, no host home
+or network, and read-only source. The coordinator retains PrivateTmp and
+NoNewPrivileges; global AppArmor and user-namespace policy remain unchanged.
+Missing user-manager access, sandbox failure or incomplete output refuses
+inspection without a direct-execution fallback. Qualification must exercise
+the actual hardened service, retained committed review, denial probes and
+terminal cgroup cleanup. A changed inspection module invalidates the runtime
+fingerprint and requires fresh test-profile calibration before admission.
+
 ### Source-only reviewer handoff
 
 The dedicated source-only reviewer brief correction is pending rollout under

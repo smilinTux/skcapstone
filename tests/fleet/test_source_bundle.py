@@ -2,6 +2,7 @@
 
 import hashlib
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -140,7 +141,7 @@ def test_export_refuses_changed_or_untrusted_source(source, kind):
             source["card"],
             "verdict",
             source["owner"],
-            **(source["outcome"] | {"candidate_tree": "a" * 40})
+            **(source["outcome"] | {"candidate_tree": "a" * 40}),
         )
     elif kind == "wrong-claim":
         source["claim"] = "b" * 32
@@ -149,7 +150,7 @@ def test_export_refuses_changed_or_untrusted_source(source, kind):
             source["card"],
             "verdict",
             source["owner"],
-            **(source["outcome"] | {"expected_claim_revision": "c" * 32})
+            **(source["outcome"] | {"expected_claim_revision": "c" * 32}),
         )
     elif kind == "evidence":
         source["shared"].write_text("changed")
@@ -222,3 +223,146 @@ def test_acknowledged_immutable_candidate_does_not_reexport_or_reupload(source, 
         acknowledged=result["manifest_sha256"],
     )
     assert retained == result
+
+
+def test_inspection_preserves_sandbox_and_native_service_bounds(tmp_path, monkeypatch):
+    calls = []
+    run = subprocess.run
+
+    def observed(command, **kwargs):
+        calls.append(command)
+        return run(command, **kwargs)
+
+    monkeypatch.setattr(bundle.subprocess, "run", observed)
+    marker = str(tmp_path / "host-only")
+    (tmp_path / "host-only").write_text("host data")
+    program = r"""
+import errno, json, os, socket, sys
+from pathlib import Path
+assert not Path('/home').exists() and not Path('/var/tmp').exists()
+assert not Path(sys.argv[1]).exists()
+assert os.environ['HOME'] == '/tmp' and 'INSPECTION_SECRET_TEST' not in os.environ
+try:
+    Path('/work/write').write_text('denied')
+except OSError as exc:
+    assert exc.errno == errno.EROFS
+else:
+    raise AssertionError('writable source')
+with socket.socket() as connection:
+    connection.settimeout(1)
+    try:
+        connection.connect(('192.0.2.1', 9))
+    except OSError as exc:
+        assert exc.errno == errno.ENETUNREACH
+    else:
+        raise AssertionError('network available')
+Path('/tmp/private').write_text('private tmpfs')
+assert 'NoNewPrivs:\t1' in Path('/proc/self/status').read_text()
+assert 'CapEff:\t0000000000000000' in Path('/proc/self/status').read_text()
+print(json.dumps({'isolated': True, 'argument': sys.argv[2]}))
+"""
+    monkeypatch.setenv("INSPECTION_SECRET_TEST", "synthetic marker")
+    literal = "$HOME ${USER} %n"
+    assert bundle._inspect(tmp_path, program, marker, literal) == {
+        "isolated": True,
+        "argument": literal,
+    }
+    command = calls[0]
+    assert command[:2] == ["/usr/bin/systemd-run", "--user"]
+    for flag in [
+        "--wait",
+        "--pipe",
+        "--collect",
+        "--expand-environment=no",
+        "--property=NoNewPrivileges=yes",
+        "--property=RuntimeMaxSec=40",
+        "--property=TimeoutStopSec=2",
+        "--property=KillMode=control-group",
+        "--property=CPUQuota=100%",
+        "--property=MemoryMax=512M",
+        "--property=TasksMax=64",
+        "--property=UMask=0077",
+        "--property=LimitFSIZE=" + str(2 * bundle.MAX_BUNDLE + 1),
+    ]:
+        assert flag in command
+    sandbox = command[command.index("--") + 1 :]
+    assert sandbox[:5] == [
+        "/usr/bin/bwrap",
+        "--unshare-all",
+        "--die-with-parent",
+        "--new-session",
+        "--ro-bind",
+    ]
+    assert sandbox[sandbox.index("--tmpfs") :][:2] == ["--tmpfs", "/tmp"]
+    assert ["--ro-bind", str(tmp_path), "/work"] == sandbox[sandbox.index(str(tmp_path)) - 1 :][:3]
+    unit = next(item.removeprefix("--unit=") for item in command if item.startswith("--unit="))
+    assert calls[-1] == ["/usr/bin/systemctl", "--user", "stop", unit]
+    assert not (tmp_path / "write").exists()
+
+
+@pytest.mark.parametrize(
+    "program", ["print('not JSON')", "raise SystemExit(7)", "print('x' * (16777216 + 1))"]
+)
+def test_inspection_refuses_malformed_failed_or_oversized_output(tmp_path, program):
+    with pytest.raises(bundle.SourceBundleError):
+        bundle._inspect(tmp_path, program)
+
+
+def test_inspection_lost_launcher_stops_exact_unit_and_descendants(tmp_path, monkeypatch):
+    run = subprocess.run
+    units = []
+
+    def interrupted(command, **kwargs):
+        if command[0] == "/usr/bin/systemd-run":
+            units.append(
+                next(
+                    item.removeprefix("--unit=") for item in command if item.startswith("--unit=")
+                )
+            )
+            kwargs["timeout"] = 0.5
+        return run(command, **kwargs)
+
+    monkeypatch.setattr(bundle.subprocess, "run", interrupted)
+    start = time.monotonic()
+    with pytest.raises(bundle.SourceBundleError):
+        bundle._inspect(
+            tmp_path,
+            "import os, signal, time; os.fork(); "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(120)",
+        )
+    assert time.monotonic() - start < 8
+    assert len(units) == 1
+    state = run(
+        [
+            "systemctl",
+            "--user",
+            "show",
+            units[0],
+            "-p",
+            "LoadState",
+            "-p",
+            "ActiveState",
+            "-p",
+            "ControlGroup",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert "LoadState=not-found" in state.stdout
+    assert "ActiveState=inactive" in state.stdout
+    assert "ControlGroup=\n" in state.stdout
+
+
+def test_inspection_missing_manager_fails_without_direct_fallback(tmp_path, monkeypatch):
+    calls = []
+
+    def unavailable(command, **kwargs):
+        calls.append(command)
+        if command[0] == "/usr/bin/systemd-run":
+            raise OSError("user manager unavailable")
+        return subprocess.CompletedProcess(command, 5)
+
+    monkeypatch.setattr(bundle.subprocess, "run", unavailable)
+    with pytest.raises(bundle.SourceBundleError):
+        bundle._inspect(tmp_path, "print('{}')")
+    assert [command[0] for command in calls] == ["/usr/bin/systemd-run", "/usr/bin/systemctl"]
