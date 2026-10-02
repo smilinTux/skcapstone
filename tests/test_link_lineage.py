@@ -161,14 +161,31 @@ def test_default_cli_loads_operator_exclusions(tmp_path, monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out)["coverage"]["excluded"] == 1
 
 
-def test_wrong_card_scope_blocks_all_records_before_mapping(tmp_path):
+@pytest.mark.parametrize("unscopable", [False, True])
+def test_disposition_failure_scope_preserves_unrelated_automation(tmp_path, unscopable):
+    """Stale exact PR pins block only that PR; unscopable input blocks all."""
     prs, cards, item = _operational_input()
-    prs.append({"repository": "zzz/repo", "number": 8, "headRefOid": "a" * 40})
-    item.update(repository="zzz/repo", pr=8)
-    out = mod.reconcile(prs, cards, tmp_path, {"card_dispositions": [item]})
-    assert out["records"] == {}
-    assert out["coverage"]["unresolved"] == 2
+    cards += [
+        {"id": "source02", "title": "Implement PR #8", "owner": "builder"},
+        {
+            "id": "review02",
+            "labels": ["review", "parent-source02"],
+            "status": "done",
+            "links": {"verdict": "PASS", "pr": "org/other#8", "commit": "a" * 40},
+        },
+    ]
+    prs.append({"repository": "org/other", "number": 8, "headRefOid": "a" * 40})
+    item["head_revision"] = "b" * 40
+    config = {"card_dispositions": [None if unscopable else item]}
+    out = mod.reconcile(prs, cards, tmp_path, config)
+    assert set(out["records"]) == (set() if unscopable else {"org/other#8"})
+    assert out["coverage"]["unresolved"] == (2 if unscopable else 1)
     assert out["disposition_errors"]
+    cards[-1]["status"] = "backlog"
+    out = mod.reconcile(prs, cards, tmp_path, config, reviewer_candidates=[_reviewer()])
+    assert [r["source_card"] for r in out["review_work_recommendations"]] == (
+        [] if unscopable else ["source02"]
+    )
 
 
 def test_complete_emits_producer_contract(tmp_path):

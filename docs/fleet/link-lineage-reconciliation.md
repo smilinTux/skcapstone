@@ -111,8 +111,13 @@ requires all seven fields and no extras, a nonempty reason, the current
 40-character PR head, and exact card generation. The card must belong to that
 PR's candidate set. Review cards can never be disposed. Duplicate records,
 conflicting whole-PR exclusions, stale pins, unknown cards, wrong scope, and
-malformed items block all mappings and review recommendations for that input.
-They remain visible in `disposition_errors` and unresolved diagnostics.
+malformed items block mappings and review recommendations for their explicitly
+identifiable repository/PR. Unrelated PRs keep their existing eligibility.
+Inputs without an identifiable repository and positive integer PR fail closed
+for the whole input. Errors remain visible in `disposition_errors`; affected
+observed PRs also retain them in unresolved diagnostics. An erroneous scope
+absent from the current inventory stays in the error evidence and authorizes
+no disposition.
 
 Successful dispositions remove only the explicitly named operational cards.
 Every remaining source candidate participates in the existing ambiguity check.

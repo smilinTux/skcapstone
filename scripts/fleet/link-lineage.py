@@ -249,7 +249,21 @@ def _dispositions(
                 {"reason": "stale, conflicting, or wrong-scope disposition", "input": item}
             )
         seen.add(key)
-    return ([] if errors else sorted(items, key=_json)), errors
+    for error in errors:
+        item = error.get("input")
+        if (
+            isinstance(item, dict)
+            and isinstance(item.get("repository"), str)
+            and item["repository"].strip()
+            and type(item.get("pr")) is int
+            and item["pr"] > 0
+        ):
+            error.update(repository=item["repository"], pr=item["pr"])
+    if any("repository" not in error for error in errors):
+        return [], errors
+    failed_scopes = {(error["repository"], error["pr"]) for error in errors}
+    valid = [item for item in items if (item["repository"], item["pr"]) not in failed_scopes]
+    return sorted(valid, key=_json), errors
 
 
 def _is_review(card: dict[str, Any]) -> bool:
@@ -331,11 +345,17 @@ def reconcile(
             raise ValueError("open PR missing repository")
         number = int(pr["number"])
         key = f"{repository}#{number}"
+        pr_errors = [
+            error
+            for error in disposition_errors
+            if "repository" not in error
+            or (error["repository"], error["pr"]) == (repository, number)
+        ]
         unique_number = sum(int(item["number"]) == number for item in open_prs) == 1
         exclusion = exclusions.get(key)
         if exclusion is None and unique_number and repository != SKGIT_REPOSITORY:
             exclusion = exclusions.get(str(number))
-        if exclusion is not None and not disposition_errors:
+        if exclusion is not None and not pr_errors:
             diagnostics.append(
                 {
                     "repository": repository,
@@ -373,7 +393,7 @@ def reconcile(
             for review in terminal_reviews
             if _review_is_bound_to_pr(review, repository, number, pr.get("headRefOid"))
         ]
-        if disposition_errors or len(sources) != 1:
+        if pr_errors or len(sources) != 1:
             classification = "unresolved"
         elif len(bound_terminal_reviews) != 1:
             classification = "unresolved"
@@ -426,10 +446,11 @@ def reconcile(
                 "terminal_review_cards": [c["id"] for c in terminal_reviews],
                 "head_bound_review_cards": [c["id"] for c in bound_terminal_reviews],
                 "operational_dispositions": applied,
+                "disposition_errors": pr_errors,
             }
         )
         if (
-            not disposition_errors
+            not pr_errors
             and len(sources) == 1
             and (not terminal_reviews or (terminal_reviews and not bound_terminal_reviews))
         ):

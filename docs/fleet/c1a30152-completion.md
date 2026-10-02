@@ -14,7 +14,9 @@ No newer installed behavior was discarded.
 
 The bounded implementation extends the existing operator JSON input, validates
 all dispositions before mapping any PR, and retains each applied or rejected
-record. It preserves the observation producer's existing mapping hash contract.
+record. Errors identifiable to one repository/PR block only that PR; malformed
+unscopable input blocks the whole input. It preserves the observation producer's
+existing mapping hash contract.
 The default CLI discovers the operator file; no additional worker or orchestration
 framework is introduced. The explicit file allowlist is retained despite the
 generic 500-line guidance: the existing tests already exceeded that guidance,
@@ -23,8 +25,11 @@ and splitting this change would add an unauthorized helper file.
 Validation: the initial red phase had 19 expected new failures and 26 existing
 passes. The final adjacent run passed 94 tests covering Link lineage, observation
 production, and review work. Subsequent compatibility changes are rechecked
-with the affected lineage tests and static checks, with exact results in private
-completion evidence.
+with the affected lineage tests and static checks. Root review then required
+per-PR error isolation: the added two-PR regression covers unrelated completed
+mappings and review work, plus global refusal for unscopable input. The final
+adjacent run and exact-candidate independent review supersede the initial
+candidate. All earlier receipts remain in private completion evidence.
 
 A read-only live PR28 replay at head
 `f62f5327e0dc1d3b00e72d7426790e078ec7aa15` used hypothetical explicit
