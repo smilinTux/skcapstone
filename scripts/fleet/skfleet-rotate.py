@@ -9020,6 +9020,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         "mkdir -p ~/.skcapstone/fleet/beats; "
         "echo '{\"owner\":\"%s\",\"card_id\":\"%s\",\"claim_revision\":\"%s\","
         "\"session_id\":\"%s\","
+        "\"pid\":'$PPID',\"invocation_id\":\"'${INVOCATION_ID:-}'\","
         "\"emitter\":\"wrapper\",\"disposition\":\"RUNNING\","
         "\"proves\":\"shell-liveness\","
         "\"beat_at\":'$(date +%%s)',\"elapsed_s\":'$SECONDS'}' "
