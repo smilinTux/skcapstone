@@ -77,6 +77,57 @@ reviews remain unresolved.
 
 ## Safety boundary
 
+### Explicit operational card dispositions (c1a30152)
+
+The default CLI reads the trusted operator file
+`<home>/config/link-lineage-exclusions.json` when present. `--exclude PATH`
+overrides that path. The default producer already invokes this CLI, so no
+timer, producer wrapper, or manually sliced feed is required. Only the
+operator installs or changes this input. Missing files preserve the empty
+exclusion policy. Invalid JSON or a non-object root stops reconciliation.
+
+Existing whole-PR reason mappings retain their meaning. An optional
+`card_dispositions` list classifies exact operational evidence cards:
+
+```json
+{
+  "org/repo#99": "Existing whole-PR exclusion reason",
+  "card_dispositions": [{
+    "repository": "org/repo",
+    "pr": 28,
+    "head_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "card_id": "01234567",
+    "card_generation": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "disposition": "operational-evidence",
+    "reason": "Exact operator determination: staging evidence, not source production"
+  }]
+}
+```
+
+Repository strings use the observed canonical forge scope. `card_generation`
+is the existing authoritative `link_review_work.card_generation` contract,
+computed from the current folded card, as for source mappings. Every item
+requires all seven fields and no extras, a nonempty reason, the current
+40-character PR head, and exact card generation. The card must belong to that
+PR's candidate set. Review cards can never be disposed. Duplicate records,
+conflicting whole-PR exclusions, stale pins, unknown cards, wrong scope, and
+malformed items block all mappings and review recommendations for that input.
+They remain visible in `disposition_errors` and unresolved diagnostics.
+
+Successful dispositions remove only the explicitly named operational cards.
+Every remaining source candidate participates in the existing ambiguity check.
+A unique source still requires a real terminal review bound to the exact PR
+and head. Pending reviews remain unresolved. No title, model, label, missing
+review, or source-age heuristic authorizes a disposition.
+
+Each unresolved diagnostic or completed mapping retains the applied
+`operational_dispositions`. Completed mappings add
+`disposition_evidence_sha256`, hashing that mapping including the dispositions
+before adding the new hash. The whole report's `evidence_hash` also covers
+these records and rejected inputs. The existing `mapping_evidence_sha256`
+contract remains unchanged for the observation producer. Removing the operator
+input restores the original ambiguity; rollback does not erase diagnostics.
+
 This reconciliation does not merge, close, label, assign, review, deploy, or
 change any GitHub object. It does not enable a producer or Link timer. An
 incomplete manifest preserves the last valid feed and writes only a bounded

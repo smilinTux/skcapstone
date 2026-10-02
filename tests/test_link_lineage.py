@@ -2,6 +2,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).parents[1] / "scripts/fleet/link-lineage.py"
 spec = importlib.util.spec_from_file_location("link_lineage", SCRIPT)
 mod = importlib.util.module_from_spec(spec)
@@ -40,6 +42,133 @@ def _reviewer():
         "fingerprint": "a" * 64,
         "eligible": True,
     }
+
+
+def _operational_input():
+    """Build ambiguous source and operational evidence for one exact PR."""
+    cards = _cards() + [{"id": "ops001", "title": "Stage PR #7", "status": "done"}]
+    prs = [{"repository": "org/repo", "number": 7, "headRefOid": "a" * 40}]
+    disposition = {
+        "repository": "org/repo",
+        "pr": 7,
+        "head_revision": "a" * 40,
+        "card_id": "ops001",
+        "card_generation": mod.card_generation(cards[-1]),
+        "disposition": "operational-evidence",
+        "reason": "Staging evidence only",
+    }
+    return prs, cards, disposition
+
+
+def test_operational_disposition_retains_mapping_evidence(tmp_path):
+    prs, cards, item = _operational_input()
+    before = mod.reconcile(prs, cards, tmp_path)
+    assert before["coverage"]["unresolved"] == 1
+    after = mod.reconcile(prs, cards, tmp_path, {"card_dispositions": [item]})
+    record = after["records"]["org/repo#7"]
+    assert record["source_card"] == "source01"
+    assert record["review_card_id"] == "review01"
+    assert record["operational_dispositions"] == [item]
+    changed = dict(item, reason="Distinct operator reason")
+    other = mod.reconcile(prs, cards, tmp_path, {"card_dispositions": [changed]})
+    assert (
+        record["disposition_evidence_sha256"]
+        != other["records"]["org/repo#7"]["disposition_evidence_sha256"]
+    )
+    assert (
+        record["mapping_evidence_sha256"]
+        == other["records"]["org/repo#7"]["mapping_evidence_sha256"]
+    )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"head_revision": "b" * 40},
+        {"card_generation": "b" * 64},
+        {"repository": "other/repo"},
+        {"pr": 8},
+        {"pr": True},
+        {"reason": " "},
+        {"disposition": "ignore"},
+        {"card_id": "absent"},
+        {"extra": "unrecognized"},
+        {"head_revision": None},
+        {"card_id": "review01"},
+    ],
+)
+def test_invalid_dispositions_preserve_blocked_diagnostics(tmp_path, change):
+    prs, cards, item = _operational_input()
+    item.update(change)
+    if item["card_id"] == "review01":
+        item["card_generation"] = mod.card_generation(cards[1])
+    out = mod.reconcile(prs, cards, tmp_path, {"card_dispositions": [item]})
+    assert out["records"] == {}
+    assert out["coverage"]["unresolved"] == 1
+    assert out["review_work_recommendations"] == []
+    assert out["disposition_errors"]
+    assert out["diagnostics"][0]["candidate_source_cards"] == ["source01", "ops001"]
+
+
+@pytest.mark.parametrize("value", [None, "bad", {}, [None]])
+def test_malformed_disposition_container_fails_closed(tmp_path, value):
+    prs, cards, _ = _operational_input()
+    out = mod.reconcile(prs, cards, tmp_path, {"card_dispositions": value})
+    assert out["records"] == {}
+    assert out["disposition_errors"]
+
+
+def test_conflicting_dispositions_and_whole_pr_exclusions_fail_closed(tmp_path):
+    prs, cards, item = _operational_input()
+    for config in (
+        {"card_dispositions": [item, dict(item, reason="other")]},
+        {"org/repo#7": "excluded", "card_dispositions": [item]},
+    ):
+        out = mod.reconcile(prs, cards, tmp_path, config)
+        assert out["records"] == {}
+        assert out["coverage"]["unresolved"] == 1
+        assert out["disposition_errors"]
+
+
+def test_disposition_does_not_hide_other_sources_or_pending_review(tmp_path):
+    prs, cards, item = _operational_input()
+    cards[1]["status"] = "backlog"
+    out = mod.reconcile(prs, cards, tmp_path, {"card_dispositions": [item]})
+    assert out["records"] == {}
+    assert out["diagnostics"][0]["candidate_source_cards"] == ["source01"]
+    assert out["diagnostics"][0]["operational_dispositions"] == [item]
+    assert out["diagnostics"][0]["candidate_review_cards"] == ["review01"]
+    cards.append({"id": "source02", "title": "Also implement PR #7"})
+    out = mod.reconcile(prs, cards, tmp_path, {"card_dispositions": [item]})
+    assert out["records"] == {}
+    assert out["diagnostics"][0]["candidate_source_cards"] == ["source01", "source02"]
+
+
+def test_default_cli_loads_operator_exclusions(tmp_path, monkeypatch, capsys):
+    """The producer's existing CLI call consumes the default trusted input."""
+    import sys
+
+    from skcoord.card_store import CardStore
+
+    prs, _, _ = _operational_input()
+    config = tmp_path / "config" / "link-lineage-exclusions.json"
+    config.parent.mkdir()
+    config.write_text(json.dumps({"org/repo#7": "operator excluded"}))
+    monkeypatch.setattr(CardStore, "list_cards", lambda *args, **kwargs: [])
+    monkeypatch.setattr(mod, "fetch_prs", lambda repo: prs)
+    monkeypatch.setattr(sys, "argv", ["link-lineage", "--home", str(tmp_path)])
+    assert mod.main() == 0
+    assert json.loads(capsys.readouterr().out)["coverage"]["excluded"] == 1
+
+
+def test_wrong_card_scope_blocks_all_records_before_mapping(tmp_path):
+    prs, cards, item = _operational_input()
+    prs.append({"repository": "zzz/repo", "number": 8, "headRefOid": "a" * 40})
+    item.update(repository="zzz/repo", pr=8)
+    out = mod.reconcile(prs, cards, tmp_path, {"card_dispositions": [item]})
+    assert out["records"] == {}
+    assert out["coverage"]["unresolved"] == 2
+    assert out["disposition_errors"]
 
 
 def test_complete_emits_producer_contract(tmp_path):

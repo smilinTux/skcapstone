@@ -203,14 +203,105 @@ def _mapping_hash(
     return hashlib.sha256(_json(value).encode()).hexdigest()
 
 
+def _dispositions(
+    exclusions: dict, prs: list[dict], cards: dict, candidates: dict
+) -> tuple[list, list]:
+    """Validate explicit operator dispositions against the complete live inventory."""
+    items = exclusions.get("card_dispositions", [])
+    if not isinstance(items, list):
+        return [], [{"reason": "card_dispositions must be a list"}]
+    errors, seen = [], set()
+    fields = {
+        "repository",
+        "pr",
+        "head_revision",
+        "card_id",
+        "card_generation",
+        "disposition",
+        "reason",
+    }
+    for item in items:
+        if (
+            not isinstance(item, dict)
+            or set(item) != fields
+            or any(not isinstance(item[k], str) or not item[k].strip() for k in fields - {"pr"})
+            or type(item.get("pr")) is not int
+        ):
+            errors.append({"reason": "malformed disposition", "input": item})
+            continue
+        key = (item["repository"], item["pr"], item["card_id"])
+        card = cards.get(item["card_id"])
+        matches = [p for p in prs if (p.get("repository"), p.get("number")) == key[:2]]
+        if (
+            key in seen
+            or len(matches) != 1
+            or card is None
+            or item["disposition"] != "operational-evidence"
+            or not re.fullmatch(r"[0-9a-f]{40}", item["head_revision"])
+            or item["head_revision"] != str(matches[0].get("headRefOid") or "")
+            or item["card_generation"] != card_generation(card)
+            or _is_review(card)
+            or card not in candidates.get(key[:2], [])
+            or f"{key[0]}#{key[1]}" in exclusions
+            or str(key[1]) in exclusions
+        ):
+            errors.append(
+                {"reason": "stale, conflicting, or wrong-scope disposition", "input": item}
+            )
+        seen.add(key)
+    return ([] if errors else sorted(items, key=_json)), errors
+
+
+def _is_review(card: dict[str, Any]) -> bool:
+    """Preserve the existing review classification for every disposition guard."""
+    labels = {str(label).lower() for label in (card.get("labels") or [])}
+    return (
+        "review" in labels
+        or "[REVIEW]" in str(card.get("title") or "").upper()
+        or any(label.endswith("-review") for label in labels)
+    )
+
+
+def _candidates(pr: dict, prs: list, cards: dict, by_pr: dict) -> list:
+    """Collect exact-scope candidates before validating any operator dispositions."""
+    repository, number = str(pr.get("repository") or ""), int(pr["number"])
+    if not repository:
+        raise ValueError("open PR missing repository")
+    unique_number = sum(int(item["number"]) == number for item in prs) == 1
+    pr_text = " ".join(str(pr.get(k, "")) for k in ("title", "body"))
+    referenced = [cards[card_id] for card_id in CARD_RE.findall(pr_text) if card_id in cards]
+    candidates = []
+    for card in by_pr.get(number, []) + referenced:
+        scopes, numbers, heads = (
+            _card_repositories(card),
+            _card_pr_numbers(card),
+            _card_heads(card),
+        )
+        if scopes and scopes != {repository} or numbers and numbers != {number}:
+            continue
+        if heads and heads != {str(pr.get("headRefOid") or "").strip()}:
+            continue
+        if (
+            not scopes
+            and card not in referenced
+            and (not unique_number or repository == SKGIT_REPOSITORY)
+        ):
+            continue
+        if card not in candidates:
+            candidates.append(card)
+    return candidates
+
+
 def reconcile(
     open_prs: list[dict[str, Any]],
     cards: list[dict[str, Any]],
     home: Path,
-    exclusions: dict[str, str] | None = None,
+    exclusions: dict[str, Any] | None = None,
     reviewer_candidates: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    exclusions = exclusions or {}
+    exclusions = {} if exclusions is None else exclusions
+    if not isinstance(exclusions, dict):
+        raise ValueError("operator exclusions must be an object")
     candidates_from_authority = _reviewer_candidates(home, reviewer_candidates)
     cards_by_id = {str(card.get("id")): card for card in cards if str(card.get("id") or "")}
     by_pr: dict[int, list[dict[str, Any]]] = {}
@@ -224,6 +315,13 @@ def reconcile(
             numbers.add(n)
         for n in numbers:
             by_pr.setdefault(n, []).append(card)
+    candidates_by_pr = {
+        (pr.get("repository"), int(pr["number"])): _candidates(pr, open_prs, cards_by_id, by_pr)
+        for pr in open_prs
+    }
+    dispositions, disposition_errors = _dispositions(
+        exclusions, open_prs, cards_by_id, candidates_by_pr
+    )
     records: dict[str, dict[str, Any]] = {}
     diagnostics = []
     review_work = []
@@ -237,7 +335,7 @@ def reconcile(
         exclusion = exclusions.get(key)
         if exclusion is None and unique_number and repository != SKGIT_REPOSITORY:
             exclusion = exclusions.get(str(number))
-        if exclusion is not None:
+        if exclusion is not None and not disposition_errors:
             diagnostics.append(
                 {
                     "repository": repository,
@@ -247,41 +345,10 @@ def reconcile(
                 }
             )
             continue
-        pr_text = " ".join(str(pr.get(k, "")) for k in ("title", "body"))
-        referenced = [
-            cards_by_id[card_id] for card_id in CARD_RE.findall(pr_text) if card_id in cards_by_id
-        ]
-        candidates = []
-        for candidate in by_pr.get(number, []) + referenced:
-            scopes = _card_repositories(candidate)
-            if scopes and scopes != {repository}:
-                continue
-            numbers = _card_pr_numbers(candidate)
-            if numbers and numbers != {number}:
-                continue
-            heads = _card_heads(candidate)
-            if heads and heads != {str(pr.get("headRefOid") or "").strip()}:
-                continue
-            if (
-                not scopes
-                and candidate not in referenced
-                and (not unique_number or repository == SKGIT_REPOSITORY)
-            ):
-                continue
-            if candidate not in candidates:
-                candidates.append(candidate)
+        candidates = candidates_by_pr[(repository, number)]
 
         def labels(card: dict[str, Any]) -> set[str]:
             return {str(label).lower() for label in (card.get("labels") or [])}
-
-        def is_review(card: dict[str, Any]) -> bool:
-            title = str(card.get("title") or "").upper()
-            card_labels = labels(card)
-            return (
-                "review" in card_labels
-                or "[REVIEW]" in title
-                or any(label.endswith("-review") for label in card_labels)
-            )
 
         def review_terminal(card: dict[str, Any]) -> bool:
             status = str(card.get("status") or "").lower().split(".")[-1]
@@ -289,11 +356,16 @@ def reconcile(
             verdict = str(links.get("verdict") or links.get("outcome") or "").strip().upper()
             return status == "done" and verdict in _TERMINAL_REVIEW
 
-        sources = [c for c in candidates if not is_review(c)]
+        applied = [d for d in dispositions if (d["repository"], d["pr"]) == (repository, number)]
+        sources = [
+            c
+            for c in candidates
+            if not _is_review(c) and c["id"] not in {d["card_id"] for d in applied}
+        ]
         reviews = [
             c
             for c in cards
-            if is_review(c) and len(sources) == 1 and f"parent-{sources[0]['id']}" in labels(c)
+            if _is_review(c) and len(sources) == 1 and f"parent-{sources[0]['id']}" in labels(c)
         ]
         terminal_reviews = [review for review in reviews if review_terminal(review)]
         bound_terminal_reviews = [
@@ -301,7 +373,7 @@ def reconcile(
             for review in terminal_reviews
             if _review_is_bound_to_pr(review, repository, number, pr.get("headRefOid"))
         ]
-        if len(sources) != 1:
+        if disposition_errors or len(sources) != 1:
             classification = "unresolved"
         elif len(bound_terminal_reviews) != 1:
             classification = "unresolved"
@@ -336,6 +408,11 @@ def reconcile(
                         review_verdict,
                     ),
                 }
+                if applied:
+                    records[key]["operational_dispositions"] = applied
+                    records[key]["disposition_evidence_sha256"] = hashlib.sha256(
+                        _json(records[key]).encode()
+                    ).hexdigest()
                 continue
         diagnostics.append(
             {
@@ -348,10 +425,13 @@ def reconcile(
                 "candidate_review_cards": [c["id"] for c in reviews],
                 "terminal_review_cards": [c["id"] for c in terminal_reviews],
                 "head_bound_review_cards": [c["id"] for c in bound_terminal_reviews],
+                "operational_dispositions": applied,
             }
         )
-        if len(sources) == 1 and (
-            not terminal_reviews or (terminal_reviews and not bound_terminal_reviews)
+        if (
+            not disposition_errors
+            and len(sources) == 1
+            and (not terminal_reviews or (terminal_reviews and not bound_terminal_reviews))
         ):
             source = sources[0]
             source_owner = str(
@@ -405,6 +485,7 @@ def reconcile(
         "review_work_recommendations": review_work,
         "reviewer_candidates": candidates_from_authority,
         "diagnostics": diagnostics,
+        "disposition_errors": disposition_errors,
     }
     body["evidence_hash"] = hashlib.sha256(_json(body).encode()).hexdigest()
     return body
@@ -439,7 +520,10 @@ def main() -> int:
     cards = [
         c.model_dump(mode="json") for c in CardStore(args.home).list_cards(include_archived=True)
     ]
-    exclusions = json.loads(args.exclude.read_text()) if args.exclude else {}
+    exclusion_path = args.exclude or args.home / "config" / "link-lineage-exclusions.json"
+    exclusions = (
+        json.loads(exclusion_path.read_text()) if args.exclude or exclusion_path.exists() else {}
+    )
     repositories = args.repo or ["smilinTux/skcapstone"]
     pull_requests = [row for repo in repositories for row in fetch_prs(repo)]
     report = reconcile(pull_requests, cards, args.home, exclusions)
