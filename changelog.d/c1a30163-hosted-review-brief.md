@@ -1,0 +1,1 @@
+- Card `c1a30163`: give governed production hosted reviewers a dedicated terminal review brief with only their repository's CI contract, guarded plain evidence paths and computed matching summary digests. Preserve producer and source-only briefs, source custody and native acceptance gates.

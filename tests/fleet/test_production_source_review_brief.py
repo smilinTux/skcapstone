@@ -11,8 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from skcapstone.fleet.production_brief import production_source_review_brief
-from skcapstone.review_verdict import validate_review_completion
+from skcapstone.fleet.production_brief import (
+    production_source_review_brief,
+    production_worker_brief,
+)
+from skcapstone.review_verdict import _REQUIRED_CI_LINK_KEYS, validate_review_completion
 
 CARD = "ab264e92"
 PARENT = "89508f83"
@@ -78,7 +81,10 @@ if args[:2]==['coord','show']:
     print((home/'cards'/args[2]/'core.json').read_text())
 else:
     assert args[:2]==['coord','link']
-    assert args[3] in ('evidence','review_evidence_sha256','verdict','applicability_receipt')
+    from skcapstone.review_verdict import _REQUIRED_CI_LINK_KEYS
+    assert args[3] in {'evidence','review_evidence','review_evidence_sha256',
+        'evidence_sha256','reviewer_evidence_sha256','verdict','applicability_receipt',
+        'hosted_checks'} | _REQUIRED_CI_LINK_KEYS
     if os.environ.get('TEST_MISSING_GUARDS'): raise SystemExit('No such option: --json')
     corepath=home/'cards'/args[2]/'core.json'; core=json.loads(corepath.read_text())
     assert '--json' in args and len(args[args.index('--transition-id')+1])==64
@@ -116,6 +122,8 @@ else:
 
 def selected(review, *, production=True, seat="seraph", labels=None):
     """Execute the exact post-claim if/elif and its actual brief-file write."""
+    from skcapstone.fleet.production_hosted_review_brief import production_hosted_review_brief
+
     tree = ast.parse(ROTATE.read_text())
     node = next(
         n
@@ -128,7 +136,6 @@ def selected(review, *, production=True, seat="seraph", labels=None):
             for x in ast.walk(n)
         )
     )
-    # The source selector is inside the dispatch loop, where refusal continues.
     loop = ast.For(
         target=ast.Name(id="_fixture", ctx=ast.Store()),
         iter=ast.List(elts=[ast.Constant(1)], ctx=ast.Load()),
@@ -150,7 +157,8 @@ def selected(review, *, production=True, seat="seraph", labels=None):
         bf=str(review["brief_path"]),
         brief="LEGACY SIX CI INSTRUCTIONS",
         production_source_review_brief=production_source_review_brief,
-        production_worker_brief=lambda **kwargs: "PRODUCER BRIEF",
+        production_worker_brief=production_worker_brief,
+        production_hosted_review_brief=production_hosted_review_brief,
         _fanout_request=None,
         _worker_mail_instructions=lambda _: "",
         _worker_mail_routing=lambda *_: "",
@@ -227,12 +235,11 @@ def test_actual_postclaim_review_brief_uses_existing_native_applicability(review
     "production,seat,labels,expected",
     [
         (False, "seraph", ["source-only", "review"], "LEGACY SIX CI INSTRUCTIONS"),
-        (True, "seraph", ["review"], "LEGACY SIX CI INSTRUCTIONS"),
-        (True, None, ["source-only"], "PRODUCER BRIEF"),
+        (True, None, ["source-only"], "PRODUCTION SOURCE WORKER"),
     ],
 )
 def test_actual_selection_preserves_other_contracts(review, production, seat, labels, expected):
-    assert selected(review, production=production, seat=seat, labels=labels) == expected
+    assert selected(review, production=production, seat=seat, labels=labels).startswith(expected)
 
 
 @pytest.mark.parametrize("problem", ["malformed-head", "conflict", "self-review", "hosted"])
@@ -334,3 +341,160 @@ def test_missing_authority_guard_support_has_no_legacy_write_fallback(review):
     result = run_script(review, script(brief, 1))
     assert result.returncode != 0
     assert not (review["native"] / "coordination/card_events").exists()
+
+
+def hosted(review, repository="https://github.com/smilinTux/sklegal"):
+    """Bind a hosted review and private evidence to real Git and native state."""
+    core = review["core"]
+    core["labels"] = core["initial_labels"] = ["review"]
+    core["description"] = "Review only. No commits or source changes."
+    core["meta"]["repository"] = repository
+    core["links"]["pr"] = repository + "/pull/28"
+    review["path"].write_text(json.dumps(core))
+    directory = review["native"] / "evidence/work" / CARD
+    directory.mkdir(parents=True, mode=0o700)
+    report = directory / "review summary.md"
+    report.write_text("Actual fixture review. Receipt and tests inspected separately.\n")
+    report.chmod(0o600)
+    review["env"]["REVIEW_EVIDENCE"] = str(report)
+    checks = (
+        {key: "SUCCESS" for key in _REQUIRED_CI_LINK_KEYS}
+        if repository.rstrip("/").removesuffix(".git") == "https://github.com/smilinTux/skcapstone"
+        else {"hosted_checks": f"4/4 SUCCESS at exact head {review['head']}"}
+    )
+    review["env"]["REVIEW_CHECKS_JSON"] = json.dumps(checks)
+    return selected(review), report
+
+
+@pytest.mark.parametrize(
+    "repository,has_tree",
+    [
+        ("https://github.com/smilinTux/sklegal", True),
+        ("https://github.com/smilinTux/sklegal", False),
+        ("https://github.com/smilinTux/skcapstone.git/", True),
+        ("https://skgit.skstack01.douno.it/smilinTux/skcapstone.git", True),
+    ],
+)
+def test_hosted_real_brief_binds_summary_and_applicable_ci(review, repository, has_tree):
+    from skcapstone.seraph_review_cardstore import LiveCardStoreGateway
+
+    brief, report = hosted(review, repository)
+    if not has_tree:
+        del review["core"]["meta"]["candidate_tree"]
+        review["path"].write_text(json.dumps(review["core"]))
+        brief = selected(review)
+    assert brief.startswith("PRODUCTION HOSTED INDEPENDENT REVIEW")
+    for forbidden in (
+        "PASS_FOR_REVIEW",
+        "coord complete",
+        "release-claim",
+        "git commit",
+        "anything you write after",
+        "LEGACY SIX CI",
+    ):
+        assert forbidden not in brief
+    expected_checks = json.loads(review["env"]["REVIEW_CHECKS_JSON"])
+    assert ("ci_check_docs" in brief) == ("ci_check_docs" in expected_checks)
+    assert ("hosted_checks" in brief) == ("hosted_checks" in expected_checks)
+    result = run_script(review, script(brief, 0))
+    assert result.returncode == 0, result.stderr
+    validate_review_completion(CARD, review["core"]["title"], review["native"])
+    LiveCardStoreGateway(review["native"]).read_card(CARD)
+    rows = [
+        json.loads(line)
+        for p in (review["native"] / "coordination/card_events").glob("*.jsonl")
+        for line in p.read_text().splitlines()
+    ]
+    links = {row["link_key"]: row["link_value"] for row in rows}
+    assert links["evidence"] == links["review_evidence"] == str(report)
+    assert {
+        links[key]
+        for key in ("review_evidence_sha256", "evidence_sha256", "reviewer_evidence_sha256")
+    } == {hashlib.sha256(report.read_bytes()).hexdigest()}
+    assert {
+        key: value
+        for key, value in links.items()
+        if key == "hosted_checks" or key.startswith("ci_check_")
+    } == expected_checks
+    assert rows[-1]["link_key"] == "verdict" and links["verdict"] == "PASS"
+    assert git(review["work"], "rev-parse", "HEAD") == review["head"]
+    assert not git(review["work"], "status", "--porcelain")
+
+
+@pytest.mark.parametrize(
+    "problem",
+    [
+        "missing-ci",
+        "stale-ci",
+        "partial-ci",
+        "wrong-ci",
+        "producer-verdict",
+        "bare-blocked",
+        "source-dirty",
+        "source-commit",
+        "claim",
+        "binding",
+        "mode",
+        "symlink",
+        "outside",
+    ],
+)
+def test_hosted_handoff_refuses_bad_inputs_before_native_writes(review, problem):
+    brief, report = hosted(review)
+    env = review["env"]
+    if problem in {"missing-ci", "stale-ci", "partial-ci", "wrong-ci"}:
+        checks = {"hosted_checks": f"4/4 SUCCESS at exact head {review['head']}"}
+        if problem == "missing-ci":
+            checks = {}
+        elif problem == "stale-ci":
+            checks["hosted_checks"] = "4/4 SUCCESS at exact head " + "f" * 40
+        elif problem == "partial-ci":
+            checks["hosted_checks"] = f"3/4 SUCCESS at exact head {review['head']}"
+        else:
+            checks = {key: "SUCCESS" for key in _REQUIRED_CI_LINK_KEYS}
+        env["REVIEW_CHECKS_JSON"] = json.dumps(checks)
+    elif problem in {"producer-verdict", "bare-blocked"}:
+        env["REVIEW_VERDICT"] = "PASS_FOR_REVIEW" if problem == "producer-verdict" else "BLOCKED"
+    elif problem.startswith("source-"):
+        (review["work"] / "source.py").write_text("value = 2\n")
+        if problem == "source-commit":
+            git(review["work"], "commit", "-am", "unauthorized source mutation")
+    elif problem in {"claim", "binding"}:
+        key = "_claim_revision" if problem == "claim" else "candidate_evidence_sha256"
+        review["core"]["meta"][key] = "b" * 64
+        review["path"].write_text(json.dumps(review["core"]))
+    elif problem == "mode":
+        report.chmod(0o644)
+    elif problem == "symlink":
+        alternate = report.with_name("alternate.md")
+        report.rename(alternate)
+        report.symlink_to(alternate)
+    else:
+        env["REVIEW_EVIDENCE"] = str(review["work"] / "source.py")
+    result = run_script(review, script(brief, 0))
+    assert result.returncode != 0
+    assert not (review["native"] / "coordination/card_events").exists()
+
+
+def test_hosted_blocked_needs_no_success_and_retains_source(review):
+    brief, _ = hosted(review)
+    review["env"]["REVIEW_VERDICT"] = "BLOCKED blocked_on=capability referent=ci:28 missing CI"
+    review["env"].pop("REVIEW_CHECKS_JSON")
+    result = run_script(review, script(brief, 0))
+    assert result.returncode == 0, result.stderr
+    validate_review_completion(CARD, review["core"]["title"], review["native"])
+    assert git(review["work"], "rev-parse", "HEAD") == review["head"]
+
+
+@pytest.mark.parametrize("race", ["claim", "source"])
+def test_hosted_guard_chain_stops_after_concurrent_change(review, race):
+    brief, _ = hosted(review)
+    review["env"]["TEST_RACE"] = race
+    result = run_script(review, script(brief, 0))
+    assert result.returncode != 0
+    rows = [
+        json.loads(line)
+        for p in (review["native"] / "coordination/card_events").glob("*.jsonl")
+        for line in p.read_text().splitlines()
+    ]
+    assert [row["link_key"] for row in rows] == ["evidence"]

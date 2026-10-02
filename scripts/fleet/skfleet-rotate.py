@@ -58,6 +58,7 @@ from skcapstone.fleet.production_resources import local_worker_admission
 from skcapstone.fleet.pi_catalog import materialize_gateway_catalog
 from skcapstone.fleet.production_receipts import persist_production_snapshot
 from skcapstone.fleet.production_brief import production_worker_brief, production_source_review_brief
+from skcapstone.fleet.production_hosted_review_brief import production_hosted_review_brief
 
 SKFLEET_PRODUCTION_POLICY_V1 = True
 from skcapstone.fleet.review_capacity import (
@@ -8902,10 +8903,12 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             brief += "\nNIOBE FAN-OUT request=%s requester=%s allowed_route=%s\n"%_fanout_env
         with open(bf,"w",encoding="utf-8") as _brief_handle:
             _brief_handle.write(brief)
-    elif (PRODUCTION_POLICY and _review_seat is not None and _source_spec is not None
-          and "source-only" in {str(label).lower() for label in fresh_claimability["labels"]}):
+    elif PRODUCTION_POLICY and _review_seat is not None and _source_spec is not None:
         try:
-            brief=production_source_review_brief(
+            _review_renderer=(production_source_review_brief
+                if "source-only" in {str(label).lower() for label in fresh_claimability["labels"]}
+                else production_hosted_review_brief)
+            brief=_review_renderer(
                 card_id=cid,owner=name,claim_revision=claimed_revision,
                 workspace=workspace,source_head=_source_spec[2],
                 core=fresh_claimability["core"],labels=fresh_claimability["labels"])
