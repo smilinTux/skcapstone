@@ -117,6 +117,33 @@ looks wrong. At the second compaction, write `.handoff.md`, finish the
 current step and stop for a fresh session. Commit/push authorization remains
 card-specific.
 
+The fleet `pi-cardstore-guard.mjs` enforces this at Pi's successful
+`session_compact` event, after the current tool batch. It persists trigger
+markers with `appendEntry` and reads `sessionManager.getEntries()` on
+`session_start`, so resuming or reloading does not reset the count. Threshold
+and overflow compactions count; failed compactions and recorded manual
+compactions do not. Historical entries without trigger markers count
+conservatively because Pi 0.84.4 does not store their trigger reason.
+
+At the limit the guard writes an owned `0600` `.handoff.md` in the card's
+owned `0700` `~/.skcapstone/evidence/work/<card>/` directory. It records card,
+claim, owner, workspace, session, count and the last Pi summary, explicitly
+marked as unverified. An existing handoff remains unchanged; another receipt
+gets a unique `.handoff.<uuid>.md` name. Unsafe evidence paths or write failures
+still stop the worker and report that the controller must recover the retained
+session. The guard never writes a board verdict or releases a claim.
+
+Pi 0.84.4's `ctx.shutdown()` is a no-op in the production `-p` mode, and
+`ctx.abort()` alone does not prevent an overflow continuation. The guard holds
+the compaction event pending and sends SIGTERM to its own Pi process. Pi's
+existing signal handler disposes the runtime, terminates tracked detached
+tools and exits 143. All later tool calls are denied while stopping. This is
+a handoff exit, never evidence of successful task completion. Qualify both
+threshold and overflow events, resumed history and evidence failure against
+the installed Pi runtime before rollout; retain the prior guard bytes for
+rollback. A fresh continuation requires controller custody and the exact
+retained claim, not a worker-created replacement claim.
+
 Transfer unpublished candidate commits and byte-exact completion evidence
 with a bounded verified source packet. Verify repository, base, head, tree,
 ref, candidate hash, owner and claim before publishing or importing. Import
