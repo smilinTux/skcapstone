@@ -13,6 +13,7 @@ from skcapstone.seat_runtime import append_production_launch_receipt
 from tests.fleet.test_claim_expiry_reaper import _load, _observation
 from tests.fleet.test_production_receipts import snapshot
 from tests.fleet.test_source_bundle import publish, source  # noqa: F401
+from tests.test_skfleet_provisional_opener import qualified_review_api  # noqa: F401
 from tests.test_skfleet_reaper_provenance import _reaper_fixture
 
 CARD = "a6397c0d"
@@ -111,7 +112,7 @@ def candidate_allowed(value, process=None):
 
 @pytest.mark.parametrize("source", ["https"], indirect=True)
 def test_exact_production_candidate_retains_claim_and_enters_existing_opener(
-    review_candidate, tmp_path
+    review_candidate, tmp_path, qualified_review_api  # noqa: F811
 ):
     from tests.test_skfleet_provisional_opener import OpenerHarness
 
@@ -134,7 +135,7 @@ def test_exact_production_candidate_retains_claim_and_enters_existing_opener(
     selected = harness.ns["_eligible_provisional_reviews"](1)
     assert len(selected) == 1
     assert selected[0][0] == value["card"]
-    assert selected[0][-3:] == (value["head"], value["tree"], value["outcome"]["candidate_ref"])
+    assert selected[0][8:11] == (value["head"], value["tree"], value["outcome"]["candidate_ref"])
     for state in ("complete", "void", "ambiguous"):
         harness.states[value["card"]] = state
         assert harness.ns["_eligible_provisional_reviews"](1) == []
@@ -145,10 +146,8 @@ def test_exact_production_candidate_retains_claim_and_enters_existing_opener(
     harness.ns["HOST"] = "other"
     assert harness.ns["_eligible_provisional_reviews"](1) == []
     harness.ns["HOST"] = "control"
-    harness.cards = value["home"] / "cards"
-    assert harness.open(1) == 1
-    assert harness.open(1) == 0
-    assert len(harness.calls) == 1
+    # Real canonical creation is exercised through the qualified native CLI in
+    # test_canonical_review_opener, not the legacy harness's coord-create double.
     # Existing active-review exclusion remains authoritative even for valid custody.
     harness.ns["_reviews_by_parent"] = lambda: {value["card"]: {"1234abcd"}}
     harness.states["1234abcd"] = "claimed"

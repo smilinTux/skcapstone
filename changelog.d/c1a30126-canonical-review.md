@@ -1,0 +1,1 @@
+- Card `c1a30126`: production provisional reviews now use the qualified guarded native review command and canonical source-bound identity. Verify exact workspace, candidate and acceptance lineage after creation, preserve voided legacy history, and refuse stale or incomplete readback before dispatch.

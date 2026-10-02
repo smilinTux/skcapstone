@@ -6,11 +6,16 @@ import ast
 import datetime
 import glob
 import hashlib
+import importlib.util
 import json
 import os
 import re
+import sys
+import sysconfig
 from dataclasses import dataclass
 from pathlib import Path
+
+import pytest
 
 from skcapstone.review_admission import (
     governed_review_gate_reasons,
@@ -20,6 +25,39 @@ from skcapstone.review_admission import (
 
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
+
+
+@pytest.fixture
+def qualified_review_api(monkeypatch):
+    """Use only the hash-pinned, separately reviewed authority API dependency."""
+    import skcapstone
+
+    dependency = json.loads(
+        (ROOT / "docs/evidence/agents/c1a30126/AUTHORITY-DEPENDENCY.json").read_text()
+    )
+    installed = Path(sysconfig.get_path("purelib")) / "skcapstone"
+    for name, digest in dependency["modules"].items():
+        assert (
+            hashlib.sha256((installed / name).read_bytes()).hexdigest() == digest
+        ), "qualified guarded review dependency changed; requalify exact source"
+    # Child CLI processes must load the pinned installation, while pytest keeps
+    # the candidate source on sys.path for the opener and custody implementation.
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    for name in (
+        "review_work_identity",
+        "link_review_work",
+        "seraph_review_cardstore",
+        "guarded_review_work",
+        "review_replacement",
+    ):
+        module_name = "skcapstone." + name
+        spec = importlib.util.spec_from_file_location(module_name, installed / (name + ".py"))
+        module = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, module_name, module)
+        monkeypatch.setattr(skcapstone, name, module, raising=False)
+        spec.loader.exec_module(module)
+    return Path(sys.executable).parent / "skcapstone"
+
 
 FUNCTIONS = {
     "_complete_governed_review",
@@ -40,6 +78,8 @@ FUNCTIONS = {
     "_provisional_candidate",
     "_outcome_scan_rows",
     "_eligible_provisional_reviews",
+    "_production_review_plan",
+    "_open_production_review",
     "_authoritative_review_readback",
     "open_provisional_reviews",
 }

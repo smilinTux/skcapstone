@@ -158,6 +158,18 @@ Ordinary claimed cards remain excluded. Source generation and duplicate-review
 checks still apply, and downstream provider independence, tests and acceptance
 remain required. Do not release a producer claim to make its candidate eligible.
 
+Card `c1a30126` binds the production opener to the qualified native
+`coord review-work` command. It resolves the current canonical review identity
+before checking existing directories, passes exact source and claim revisions,
+and verifies native source workspace, candidate and acceptance lineage after
+creation. A voided legacy card remains history; an active review still blocks
+another attempt. Missing guarded-CLI qualification, stale custody or incomplete
+readback withholds dispatch. Ordinary nonproduction review creation is unchanged.
+The authority overlay is a separately reviewed deployment dependency, pinned in
+`docs/evidence/agents/c1a30126/AUTHORITY-DEPENDENCY.json`. Production selection,
+bundle import, reviewer brief and acceptance must use that qualified composition;
+passing source-only unit tests does not qualify a different installation.
+
 ### Source-only reviewer handoff
 
 The dedicated source-only reviewer brief correction is pending rollout under

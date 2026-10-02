@@ -1,0 +1,12 @@
+{
+  "source_revision": "3b36c0333161e9e03c6d38695bf5ed388c9db6c1",
+  "qualification_card": "c1a30122",
+  "modules": {
+    "cli/coord.py": "182493e7cb990b62804cecfd423be20a13384edb25bbe69c9ab8151fb3170fc8",
+    "guarded_review_work.py": "523b62feceb2347e35ce318c7bf1e5cddf64482c68fcdb50158d279f1d634900",
+    "review_replacement.py": "94e543404135aedaf7991bda041ee5aee6012f91d3fbfc47e23899c2cf2857cd",
+    "review_work_identity.py": "1d2326b938b5d802580e2408ab71d3a0f925f065369c17a14c0f14d46819614f",
+    "link_review_work.py": "c869743d5d0913d104db5657ca86dfe14ce4d9cc7d6c9045c13b0008a700a423",
+    "seraph_review_cardstore.py": "20a7e63b33c93d35987b5a05054bb5403db01abb86f89a407cf31c06c90140fc"
+  }
+}

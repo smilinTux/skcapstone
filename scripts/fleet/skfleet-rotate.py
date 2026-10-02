@@ -6262,6 +6262,97 @@ def _provisional_candidate(parent, outcome_ts, token):
     return producer, verified[0][0], verified[0][1], commit, tree, ref
 
 
+def _production_review_plan(parent, outcome_ts, candidate):
+    """Bind the qualified native review identity to exact retained source custody."""
+    try:
+        from skcoord.card_store import CardStore
+        from skcapstone.fleet.production_custody import reviewable_source_candidate, source_binding
+        from skcapstone.link_review_work import card_generation
+        from skcapstone.review_replacement import replacement_binding
+        from skcapstone.seraph_review_cardstore import LiveCardStoreGateway
+
+        home = Path(CARDS).parent
+        gateway = LiveCardStoreGateway(home)
+        snapshot = gateway.read_card(parent)
+        if (HOST != PRODUCTION_POLICY["authority_host"] or
+                not reviewable_source_candidate(
+                    home, parent, outcome_ts, candidate,
+                    policy=PRODUCTION_POLICY, process_check=_card_process_snapshot)):
+            return None
+        source = CardStore(home).fold(parent)
+        producer, path, digest, commit, tree, ref = candidate
+        lineage = replacement_binding(home, parent, commit)
+        review_id = lineage.pop("review_card_id")
+        plan = {
+            "review_id": review_id,
+            "claim_revision": source.meta["_claim_revision"],
+            "source": source_binding(source),
+            "meta": {
+                "source_revision": snapshot.revision,
+                "link_source_card": parent, "link_head_revision": commit,
+                "link_card_generation": card_generation(source),
+                "link_evidence_sha256": digest, "link_review_class": "review",
+                "producer_identity": producer, "candidate_path": path,
+                "candidate_evidence_sha256": digest,
+                "candidate_tree": tree, "candidate_ref": ref, **lineage,
+            },
+        }
+        if gateway.read_card(parent).revision == snapshot.revision:
+            return plan
+    except (ImportError, OSError, ValueError, KeyError, TypeError, AttributeError):
+        pass
+    return None
+
+
+def _open_production_review(parent, outcome_ts, candidate, plan):
+    """Use the guarded native command and verify full source-bound readback."""
+    try:
+        from skcoord.card_store import CardStore
+
+        # Selection is not authority for a later write. Recheck terminal custody
+        # and the exact planned generation immediately before the guarded CLI.
+        if _production_review_plan(parent, outcome_ts, candidate) != plan:
+            return False
+        if any(lifecycle_state(cid) in {"open", "claimed"}
+               for cid in _reviews_by_parent().get(parent, ())):
+            return False
+        result = subprocess.run(
+            [SKC, "coord", "review-work", parent, "--producer", candidate[0],
+             "--expected-source-revision", plan["meta"]["source_revision"],
+             "--expected-claim-revision", plan["claim_revision"], "--agent", "link",
+             "--home", str(Path(CARDS).parent)],
+            capture_output=True, text=True, timeout=60,
+            env=dict(os.environ, SKCOORD_CARD_STORE="1"))
+        if result.returncode:
+            return False
+        receipt = json.loads(result.stdout)
+        review_id = plan["review_id"]
+        if (receipt.get("review_card_id") != review_id or
+                receipt.get("source_card") != parent or
+                receipt.get("head_revision") != candidate[3] or
+                receipt.get("launchable") is not True):
+            return False
+        _rows.pop(review_id, None)
+        review = CardStore(Path(CARDS).parent).fold(review_id)
+        from skcapstone.fleet.production_custody import source_binding
+
+        return bool(
+            review and not review.archived and not review.owner and
+            review.status.value == "review" and
+            {"source-only", "review", "seat-seraph"}.issubset(review.labels) and
+            not {"hold", "do-not-claim"}.intersection(review.labels) and
+            [label for label in review.labels if label.startswith("parent-")] ==
+            ["parent-" + parent] and
+            source_binding(review) == plan["source"] and
+            all(review.meta.get(key) == value for key, value in plan["meta"].items()) and
+            _production_review_plan(parent, outcome_ts, candidate) == plan and
+            {cid for cid in _reviews_by_parent().get(parent, set())
+             if lifecycle_state(cid) in {"open", "claimed"}} == {review_id})
+    except (ImportError, OSError, ValueError, KeyError, TypeError, AttributeError,
+            subprocess.SubprocessError):
+        return False
+
+
 def _eligible_provisional_reviews(capacity):
     """Return a deterministic prefix bounded by initial free review slots."""
     try:
@@ -6287,11 +6378,6 @@ def _eligible_provisional_reviews(capacity):
                for cid in reviews.get(parent, ())):
             continue
         token = match.group(1).upper()
-        review_id = _review_card_id(parent, str(outcome_ts or ""), token)
-        if os.path.isdir(os.path.join(CARDS, review_id)):
-            continue
-        if os.path.exists(os.path.join(_REVIEW_REFUSALS, review_id + ".json")):
-            continue
         generation = _parent_review_generation(parent, outcome_ts, token)
         if not generation:
             _log_once_per_hour(
@@ -6322,15 +6408,20 @@ def _eligible_provisional_reviews(capacity):
                 (HOST, parent, str(outcome_ts or ""), token),
             )
             continue
-        if parent_state == "claimed":
-            from skcapstone.fleet.production_custody import reviewable_source_candidate
-
-            if (HOST != PRODUCTION_POLICY["authority_host"] or
-                    not reviewable_source_candidate(
-                        Path(CARDS).parent, parent, str(outcome_ts or ""), generation[1:],
-                        policy=PRODUCTION_POLICY, process_check=_card_process_snapshot)):
+        plan = None
+        if globals().get("PRODUCTION_POLICY"):
+            plan = _production_review_plan(parent, str(outcome_ts or ""), generation[1:])
+            if not plan:
                 continue
-        selected.append((parent, str(outcome_ts or ""), token, review_id) + generation)
+            review_id = plan["review_id"]
+        else:
+            review_id = _review_card_id(parent, str(outcome_ts or ""), token)
+        if os.path.isdir(os.path.join(CARDS, review_id)):
+            continue
+        if os.path.exists(os.path.join(_REVIEW_REFUSALS, review_id + ".json")):
+            continue
+        row = (parent, str(outcome_ts or ""), token, review_id) + generation
+        selected.append(row + (plan,) if plan else row)
     return selected
 
 
@@ -6406,8 +6497,19 @@ def open_provisional_reviews(capacity, dry_run=False):
         return len(selected)
 
     opened = 0
-    for (parent, outcome_ts, token, review_id, generation, producer, path, digest,
-         commit, tree, ref) in selected:
+    for row in selected:
+        (parent, outcome_ts, token, review_id, generation, producer, path, digest,
+         commit, tree, ref) = row[:11]
+        if len(row) == 12:
+            if not _open_production_review(parent, outcome_ts, row[5:11], row[11]):
+                _REVIEW_READBACK_BLOCKED.add(review_id)
+                log(d, "OPEN_REVIEW_NATIVE_BLOCKED|%s|%s|review=%s" %
+                    (HOST, parent, review_id))
+                break
+            opened += 1
+            log(d, "OPENED_REVIEW|%s|%s|review=%s|%s|producer=%s|sha256=%s" %
+                (HOST, parent, review_id, token, producer, digest))
+            continue
         # Each attempted create consumes one unit of the initial capacity budget,
         # whether it succeeds or fails.  A transient failure stops the batch.
         description = (
