@@ -11,6 +11,7 @@ Fixes two defects found 03:50Z:
 import bisect,json,os,glob,subprocess,sys,time,fcntl,datetime,hashlib,collections,re,importlib.util,shlex
 import importlib.metadata
 import shutil
+import copy
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -2608,6 +2609,7 @@ _claim_rows = {}
 _legacy_claim_rows = None
 _legacy_projection_claims = None
 _production_native_store = None
+_selection_snapshots = None
 
 
 def _legacy_projection_owners(cid, fresh=False):
@@ -2985,6 +2987,11 @@ def _claimability_reason(core, state):
 def _authoritative_card_snapshot(cid, core=None, fresh=False):
     """Read and fold one card from one core and event snapshot."""
     global _production_native_store
+    snapshots = globals().get("_selection_snapshots")
+    if not fresh and snapshots is not None and cid in snapshots:
+        snapshot = snapshots[cid]
+        if core is None or core == snapshot[0]:
+            return copy.deepcopy(snapshot)
     if core is None:
         with open(os.path.join(CARDS, cid, "core.json"), encoding="utf-8") as fh:
             core = json.load(fh)
@@ -3004,7 +3011,10 @@ def _authoritative_card_snapshot(cid, core=None, fresh=False):
         {"core": core, "events": rows, "legacy_owners": legacy_owners},
         sort_keys=True, separators=(",", ":")
     ).encode()).hexdigest()
-    return core, state, source_revision
+    snapshot = core, state, source_revision
+    if not fresh and snapshots is not None:
+        snapshots[cid] = copy.deepcopy(snapshot)
+    return snapshot
 
 
 def _authoritative_card_state(cid, core=None, fresh=False):
@@ -6918,6 +6928,9 @@ sensitive_withheld=0
 historical_review_terminal=0
 historical_review_claimed=0
 _terminal_review_fold_skips=0
+# Reuse each validated fold only during this read-only selection pass. No
+# claim, review mutation or dispatch uses this cache; fresh=True also bypasses it.
+_selection_snapshots = {}
 structural_leaf=leaf_eligibility_counts(Path(HOME) / ".skcapstone").leaves
 human_gated=0
 ENG=("SKGW","SKCP","SKCOORD","SKHARNESS","SKMEM","CAPAUTH","FLEET","INC",
@@ -7532,6 +7545,7 @@ if PRODUCTION_POLICY:
         occupancy_ambiguous=_review_route_ambiguous,physical_maximum=None)
 
 _emit_shadow_pool_v2()
+_selection_snapshots = None
 # Bounded call-count evidence for the terminal review admission skip. The
 # counter is incremented once per structurally labelled review card that the
 # authoritative fold already proved terminal, so it measures exactly the

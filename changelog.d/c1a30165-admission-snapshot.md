@@ -1,0 +1,1 @@
+- Card `c1a30165`: reuse each validated card fold during the read-only fleet selection pass, then discard snapshots before preclaim and dispatch. Frozen native card replay preserves admission facts with fewer repeated native folds; fresh claim checks remain authoritative.
