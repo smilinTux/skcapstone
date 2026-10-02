@@ -800,6 +800,14 @@ def _reconcile_running(
         alive, exit_code = False, status["exit_code"]
     else:
         alive, exit_code = _process_state(status)
+    if alive is False and status.get("production") is not None:
+        from .builder_terminal import observe
+
+        try:
+            observe(coordination_home, status)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            # A missing receipt withholds collected-unit continuation only.
+            pass
     owner = str(status.get("owner") or "")
     revision = str(status.get("claim_revision") or "")
     common = {

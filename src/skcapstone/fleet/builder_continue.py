@@ -15,7 +15,7 @@ from skcoord.card_store import card_mutation_lock
 from ..seraph_review_cardstore import _latest_outcome, card_revision
 from . import builder_dispatch as builder
 from . import builder_retire as custody
-from . import builder_retry, source_bundle
+from . import builder_retry, builder_terminal, source_bundle
 from .paths import FleetPaths, default_paths, valid_name
 from .worker_git import identity
 
@@ -99,7 +99,7 @@ def source_proof(paths, request, status, target, *, apply=False):
     """Preserve every workspace byte and inspect Git only in the read-only sandbox."""
     if request["production"]["host"] != socket.gethostname().split(".")[0].lower():
         raise ValueError("continuation process belongs to another host")
-    custody.prove_dead(status)
+    builder_terminal.prove(paths.root.parent, status, apply=apply)
     workspace = paths.root / "workspaces" / status["owner"]
     source = source_bundle._inspect(
         workspace,
@@ -118,7 +118,7 @@ print(json.dumps({'head':base,'tree':git('rev-parse','HEAD^{tree}').decode().str
         "unused",
     )
     preserved = custody.preserve(workspace, target, apply=apply)
-    custody.prove_dead(status)
+    builder_terminal.prove(paths.root.parent, status, apply=apply)
     return {"source": source, **preserved}
 
 
