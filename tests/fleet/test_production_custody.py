@@ -12,6 +12,7 @@ from skcapstone.fleet.production_receipts import persist_production_snapshot
 from skcapstone.seat_runtime import append_production_launch_receipt
 from tests.fleet.test_claim_expiry_reaper import _load, _observation
 from tests.fleet.test_production_receipts import snapshot
+from tests.fleet.test_source_bundle import publish, source  # noqa: F401
 from tests.test_skfleet_reaper_provenance import _reaper_fixture
 
 CARD = "a6397c0d"
@@ -22,6 +23,231 @@ SOURCE = {
     "base_ref": "main",
     "base_revision": "b" * 40,
 }
+
+
+@pytest.fixture
+def review_candidate(source, monkeypatch):  # noqa: F811
+    """Real typed native claim and transferred Git bundle, stopped remote unit."""
+    from skcapstone.fleet import production_builder, production_review_custody
+    from skcapstone.fleet.production_review_finish import once
+
+    source["store"].append_event(source["card"], "add_label", "operator", label="sk-s")
+    source["store"].append_event(source["card"], "verdict", source["owner"], **source["outcome"])
+    manifest = publish(source)
+    policy = {"authority_host": "control"}
+    production = {
+        "host": "worker",
+        "authority": "control",
+        "family": "zai",
+        "model": "qualified-model",
+        "gateway_backend": "zai",
+        "policy_sha256": production_builder.digest(policy),
+    }
+    request = {
+        **source["request"],
+        "base_ref": "main",
+        "schema": "skfleet.builder-dispatch/v1",
+        "node": "node-worker",
+        "request_id": "d" * 64,
+        "production": production,
+        "labels": ["sk-s", "source-only"],
+    }
+    status = {
+        "schema": "skfleet.builder-dispatch-status/v1",
+        "node": "node-worker",
+        "card_id": source["card"],
+        "owner": source["owner"],
+        "claim_revision": source["claim"],
+        "state": "awaiting-review",
+        "exit_code": 0,
+        "claim_released": False,
+        "request_id": request["request_id"],
+        "attempt": 2,
+        "unit": production_builder.unit_name(request, 2),
+        "invocation": "e" * 32,
+        "production": production,
+        "source_artifact": manifest,
+        "writer": {"role": "sknoded", "node": "node-worker"},
+        "route_preflight": {"requested_identity": "qualified-model", "provider": "zai"},
+    }
+    root = source["home"] / "fleet"
+    request_path = root / "dispatch/node-worker" / (source["card"] + ".json")
+    status_path = root / "status/node-worker/dispatch" / (source["card"] + ".json")
+    once(request_path, request)
+    once(status_path, status)
+    monkeypatch.setattr(production_review_custody, "unit_terminal", lambda *a, **k: {})
+    source.update(
+        policy=policy,
+        status=status,
+        status_path=status_path,
+        dispatch=request,
+        request_path=request_path,
+    )
+    return source
+
+
+def candidate_allowed(value, process=None):
+    """Exercise the exact native eligibility helper used by the fleet opener."""
+    from skcapstone.fleet.production_custody import reviewable_source_candidate
+
+    events = value["store"]._read_events(value["card"])
+    outcome = next(row for row in reversed(events) if row.get("action") == "verdict")
+    return reviewable_source_candidate(
+        value["home"],
+        value["card"],
+        outcome["ts"],
+        (
+            value["owner"],
+            str(value["shared"]),
+            value["outcome"]["candidate_sha256"],
+            value["head"],
+            value["tree"],
+            value["outcome"]["candidate_ref"],
+        ),
+        policy=value["policy"],
+        process_check=process or (lambda card: {"sessions": [], "units": []}),
+    )
+
+
+@pytest.mark.parametrize("source", ["https"], indirect=True)
+def test_exact_production_candidate_retains_claim_and_enters_existing_opener(
+    review_candidate, tmp_path
+):
+    from tests.test_skfleet_provisional_opener import OpenerHarness
+
+    value = review_candidate
+    before = value["store"]._read_events(value["card"])
+    assert candidate_allowed(value)
+    harness = OpenerHarness(tmp_path / "opener")
+    harness.outcome(value["card"])
+    harness.states[value["card"]] = "claimed"
+    outcome = next(row for row in reversed(before) if row.get("action") == "verdict")
+    harness.events[value["card"]] = before
+    harness.outcomes[value["card"]] = (outcome["ts"], "PASS_FOR_REVIEW")
+    harness.ns.update(
+        CARDS=str(value["home"] / "cards"),
+        Path=Path,
+        PRODUCTION_POLICY=value["policy"],
+        HOST="control",
+        _card_process_snapshot=lambda card: {"sessions": [], "units": []},
+    )
+    selected = harness.ns["_eligible_provisional_reviews"](1)
+    assert len(selected) == 1
+    assert selected[0][0] == value["card"]
+    assert selected[0][-3:] == (value["head"], value["tree"], value["outcome"]["candidate_ref"])
+    for state in ("complete", "void", "ambiguous"):
+        harness.states[value["card"]] = state
+        assert harness.ns["_eligible_provisional_reviews"](1) == []
+    harness.states[value["card"]] = "claimed"
+    harness.ns["PRODUCTION_POLICY"] = None
+    assert harness.ns["_eligible_provisional_reviews"](1) == []
+    harness.ns["PRODUCTION_POLICY"] = value["policy"]
+    harness.ns["HOST"] = "other"
+    assert harness.ns["_eligible_provisional_reviews"](1) == []
+    harness.ns["HOST"] = "control"
+    harness.cards = value["home"] / "cards"
+    assert harness.open(1) == 1
+    assert harness.open(1) == 0
+    assert len(harness.calls) == 1
+    # Existing active-review exclusion remains authoritative even for valid custody.
+    harness.ns["_reviews_by_parent"] = lambda: {value["card"]: {"1234abcd"}}
+    harness.states["1234abcd"] = "claimed"
+    assert harness.ns["_eligible_provisional_reviews"](1) == []
+    assert value["store"]._read_events(value["card"]) == before
+
+
+@pytest.mark.parametrize("source", ["https"], indirect=True)
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "owner",
+        "claim",
+        "request",
+        "request-source",
+        "policy",
+        "running",
+        "unknown-process",
+        "live-process",
+        "unknown-unit",
+        "hold",
+        "done",
+        "archived",
+        "ordinary",
+        "outcome",
+        "stale-outcome",
+        "bundle",
+        "evidence",
+        "manifest-claim",
+        "manifest-tree",
+        "writer",
+        "request-labels",
+    ],
+)
+def test_production_opener_rejects_inexact_or_unavailable_custody(
+    review_candidate, monkeypatch, mutation
+):
+    from skcapstone.fleet import production_review_custody
+
+    value = review_candidate
+    store, card = value["store"], value["card"]
+    process = None
+    if mutation in {"owner", "claim", "request", "running", "writer"}:
+        key, replacement = {
+            "owner": ("owner", "other"),
+            "claim": ("claim_revision", "f" * 32),
+            "request": ("request_id", "f" * 64),
+            "running": ("state", "running"),
+            "writer": ("writer", {"role": "model", "node": "node-worker"}),
+        }[mutation]
+        value["status"][key] = replacement
+        value["status_path"].write_text(json.dumps(value["status"]))
+    elif mutation == "request-source":
+        value["dispatch"]["base_revision"] = "f" * 40
+        value["request_path"].write_text(json.dumps(value["dispatch"]))
+    elif mutation == "request-labels":
+        value["dispatch"]["labels"] = ["source-only"]
+        value["request_path"].write_text(json.dumps(value["dispatch"]))
+    elif mutation == "policy":
+        value["policy"]["authority_host"] = "other"
+    elif mutation in {"unknown-process", "live-process"}:
+
+        def process(card):
+            return {} if mutation == "unknown-process" else {"sessions": ["live"], "units": []}
+
+    elif mutation == "unknown-unit":
+
+        def unavailable(*args, **kwargs):
+            raise ValueError("exact managed worker death unproven")
+
+        monkeypatch.setattr(production_review_custody, "unit_terminal", unavailable)
+    elif mutation == "hold":
+        store.append_event(card, "add_label", "operator", label="hold")
+    elif mutation == "done":
+        store.append_event(card, "move", "operator", column="done")
+    elif mutation == "archived":
+        store.append_event(card, "archive", "operator")
+    elif mutation == "ordinary":
+        store.append_event(card, "remove_label", "operator", label="source-only")
+    elif mutation == "outcome":
+        store.append_event(card, "verdict", value["owner"], verdict="BLOCKED")
+    elif mutation == "stale-outcome":
+        store.append_event(card, "claim", value["owner"], owner=value["owner"])
+    else:
+        manifest_path = Path(value["status"]["source_artifact"]["manifest"])
+        manifest = json.loads(manifest_path.read_text())
+        if mutation in {"bundle", "evidence"}:
+            key, suffix = (
+                ("bundle_sha256", ".bundle")
+                if mutation == "bundle"
+                else ("evidence_sha256", ".md")
+            )
+            (manifest_path.parent / (manifest[key] + suffix)).write_bytes(b"changed")
+        else:
+            manifest["claim_revision" if mutation == "manifest-claim" else "tree"] = "f" * (
+                32 if mutation == "manifest-claim" else 40
+            )
+            manifest_path.write_text(json.dumps(manifest))
+    assert not candidate_allowed(value, process)
 
 
 @pytest.fixture

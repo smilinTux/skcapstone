@@ -6275,7 +6275,10 @@ def _eligible_provisional_reviews(capacity):
     for parent, (outcome_ts, raw_verdict) in sorted(_load_outcomes().items()):
         if len(selected) >= budget:
             break
-        if lifecycle_state(parent) != "open":
+        parent_state = lifecycle_state(parent)
+        if parent_state not in {"open", "claimed"}:
+            continue
+        if parent_state == "claimed" and not globals().get("PRODUCTION_POLICY"):
             continue
         match = _PROVISIONAL_PASS_RE.match(str(raw_verdict or ""))
         if not match:
@@ -6319,6 +6322,14 @@ def _eligible_provisional_reviews(capacity):
                 (HOST, parent, str(outcome_ts or ""), token),
             )
             continue
+        if parent_state == "claimed":
+            from skcapstone.fleet.production_custody import reviewable_source_candidate
+
+            if (HOST != PRODUCTION_POLICY["authority_host"] or
+                    not reviewable_source_candidate(
+                        Path(CARDS).parent, parent, str(outcome_ts or ""), generation[1:],
+                        policy=PRODUCTION_POLICY, process_check=_card_process_snapshot)):
+                continue
         selected.append((parent, str(outcome_ts or ""), token, review_id) + generation)
     return selected
 

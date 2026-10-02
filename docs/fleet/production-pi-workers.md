@@ -148,6 +148,16 @@ allows it. Do not bulk rename Jarvis-owned cards: audit each current claim,
 session and handoff evidence first. BLOCKED with a precise reason is valid;
 a worker exit or optimistic final message is not completion.
 
+Card `c1a30124` repairs review admission for retained production claims. After
+qualified installation, the existing opener may select a claimed source-only
+parent only on the production authority, with its current typed
+`PASS_FOR_REVIEW`, matching producer and claim, unchanged native request and
+policy, transferred hash-verified candidate, native successful terminal receipt,
+and a fresh stopped-unit check. Unknown process state withholds admission.
+Ordinary claimed cards remain excluded. Source generation and duplicate-review
+checks still apply, and downstream provider independence, tests and acceptance
+remain required. Do not release a producer claim to make its candidate eligible.
+
 ### Source-only reviewer handoff
 
 The dedicated source-only reviewer brief correction is pending rollout under

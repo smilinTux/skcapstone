@@ -2,6 +2,7 @@
 
 import json
 import re
+import subprocess
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -10,6 +11,98 @@ from skcoord.card_store import CardStore
 from .paths import FleetPaths
 from .production_receipts import load_production_snapshot
 from .source_bundle import MAX_EVIDENCE, _binding, _read
+
+
+def reviewable_source_candidate(
+    home: Path, card_id: str, outcome_ts: str, candidate: tuple, *, policy: dict, process_check
+) -> bool:
+    """Admit only an exact stopped production handoff, without releasing custody."""
+    from ..seraph_review_cardstore import LiveCardStoreGateway
+    from .builder_dispatch import _request_matches_current_card
+    from .production_acceptance import _current_outcome, _producer_terminal
+    from .production_builder import digest
+    from .production_review_custody import unit_terminal
+    from .production_review_finish import read_json
+    from .source_bundle import _root, _sha
+    from .source_transport import _packet
+
+    try:
+        producer, path, evidence_sha, head, tree, ref = candidate
+        store = CardStore(home)
+        card = store.fold(card_id)
+        if (
+            not policy
+            or card is None
+            or card.owner != producer
+            or card.meta.get("claim_conflicts")
+            or {"hold", "do-not-claim"}.intersection(card.labels)
+            or not retains_source_custody(
+                home,
+                card_id,
+                producer,
+                card.meta.get("_claim_revision"),
+                fleet_paths=FleetPaths(home / "fleet"),
+            )
+        ):
+            return False
+        gateway = LiveCardStoreGateway(home)
+        snapshot = gateway.read_card(card_id)
+        outcome = _current_outcome(store, card)
+        expected = {
+            "action": "verdict",
+            "verdict": "PASS_FOR_REVIEW",
+            "ts": outcome_ts,
+            "candidate_commit": head,
+            "candidate_tree": tree,
+            "candidate_ref": ref,
+            "candidate_path": path,
+            "candidate_sha256": evidence_sha,
+        }
+        if any(outcome.get(key) != value for key, value in expected.items()):
+            return False
+        if snapshot.verdict != "PASS_FOR_REVIEW" or snapshot.producer_identity != producer:
+            return False
+        binding = source_binding(card)
+        # Read already transferred bytes only; eligibility never initiates a transfer.
+        manifest = _packet(home, card_id, head)["manifest"]
+        expected = {
+            "schema": "skfleet.source-bundle/v1",
+            "card": card_id,
+            "owner": producer,
+            "claim_revision": card.meta["_claim_revision"],
+            "head": head,
+            "tree": tree,
+            "ref": ref,
+            "evidence_sha256": evidence_sha,
+            "repository": binding["repository"],
+            "base_revision": binding["base_revision"],
+        }
+        if any(manifest.get(key) != value for key, value in expected.items()):
+            return False
+        if (
+            _root(home, card_id).parent not in Path(path).parents
+            or _sha(_read(Path(path), MAX_EVIDENCE)) != evidence_sha
+        ):
+            return False
+        terminal = _producer_terminal(home, card, manifest)
+        request = read_json(home / "fleet/dispatch" / terminal["node"] / (card_id + ".json"))
+        _request_matches_current_card(home, request, retained_claim=True)
+        production = request["production"]
+        if (
+            request.get("schema") != "skfleet.builder-dispatch/v1"
+            or request.get("node") != terminal["node"]
+            or any(request.get(key) != value for key, value in binding.items())
+            or production.get("policy_sha256") != digest(policy)
+            or production.get("authority") != policy["authority_host"]
+        ):
+            return False
+        process = process_check(card_id)
+        if process.get("sessions") != [] or process.get("units") != []:
+            return False
+        unit_terminal(terminal["unit"], terminal["invocation"], host=terminal["host"])
+        return gateway.read_card(card_id).revision == snapshot.revision
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
+        return False
 
 
 def source_binding(card) -> dict:
