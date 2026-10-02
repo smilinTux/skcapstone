@@ -214,6 +214,7 @@ def test_handoff_write_failure_still_stops_without_following_symlink(tmp_path, u
         folder.symlink_to(elsewhere, target_is_directory=True)
     else:
         folder.mkdir(mode=0o755)
+        folder.chmod(0o755)
     result = _compaction_events(tmp_path, 'await compact("one"); await compact("two");')
     assert result["signals"] == ["SIGTERM"]
     assert result["blocked"]["terminate"] is True
