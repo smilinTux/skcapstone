@@ -109,6 +109,17 @@ def collect_observations(
             continue
         if not isinstance(beat, dict):
             continue
+        # Legacy beats cannot prove a process generation. Reject them before
+        # replaying CardStore's shared legacy log or looking up a reused unit.
+        pid = beat.get("pid")
+        invocation = beat.get("invocation_id")
+        if (
+            type(pid) is not int
+            or pid <= 0
+            or not isinstance(invocation, str)
+            or not re.fullmatch(r"[0-9a-f]{32}", invocation)
+        ):
+            continue
         card_id = str(beat.get("card_id") or "")
         if not re.fullmatch(r"[0-9a-f]{8}", card_id):
             continue
@@ -135,11 +146,6 @@ def collect_observations(
         if not UNIT.fullmatch(unit) or UNIT.fullmatch(unit).group(1) != card_id:
             continue
         properties = unit_properties(unit, runner)
-        try:
-            pid = int(beat.get("pid", 0))
-        except (ValueError, TypeError):
-            continue
-        invocation = str(beat.get("invocation_id") or "")
         if not matches_process(
             properties, card=card_id, owner=owner, claim=claim, pid=pid, invocation=invocation
         ):

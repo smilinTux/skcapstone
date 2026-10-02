@@ -254,6 +254,37 @@ def test_legacy_beat_missing_process_generation_is_not_adopted(tmp_path, field):
     assert runtime.collect_observations(tmp_path, runner=lambda _: result(properties())) == ()
 
 
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"pid": None},
+        {"pid": 0},
+        {"pid": -1},
+        {"pid": True},
+        {"pid": "123"},
+        {"pid": 123.5},
+        {"invocation_id": None},
+        {"invocation_id": ""},
+        {"invocation_id": "b" * 31},
+        {"invocation_id": "B" * 32},
+        {"invocation_id": 123},
+    ],
+)
+def test_unbound_beats_do_no_board_or_systemd_reads(tmp_path, monkeypatch, change):
+    """Old or malformed process identities must fail before costly authority reads."""
+    directory = tmp_path / "fleet/beats"
+    directory.mkdir(parents=True)
+    beat = dict(card_id=CARD, owner=OWNER, claim_revision=CLAIM, pid=123, invocation_id=INVOCATION)
+    beat.update(change)
+    (directory / "beat.json").write_text(json.dumps(beat))
+
+    def forbidden(*_):
+        pytest.fail("unbound beat reached board or systemd")
+
+    monkeypatch.setattr(runtime, "_claim_revision", forbidden)
+    assert runtime.collect_observations(tmp_path, runner=forbidden) == ()
+
+
 def test_real_generated_beat_records_wrapper_parent_and_invocation(tmp_path):
     """Execute the actual generated shell prefix, without Pi or a systemd unit."""
     source = Path(__file__).parents[1] / "scripts/fleet/skfleet-rotate.py"
