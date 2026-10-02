@@ -1,1 +1,2 @@
 - Card `c1a30163`: give governed production hosted reviewers a dedicated terminal review brief with only their repository's CI contract, guarded plain evidence paths and computed matching summary digests. Preserve producer and source-only briefs, source custody and native acceptance gates.
+- Accept the native exact-card elastic reviewer identity only through its governed qualified seat, preserving malformed-identity and producer-independence refusals.

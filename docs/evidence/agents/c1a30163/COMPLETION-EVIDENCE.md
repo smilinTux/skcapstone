@@ -73,3 +73,31 @@ Local candidate identity, bundle and private hashes are recorded externally afte
 the authorized commit to avoid self-referential committed evidence. Root retains
 independent review, installation, acceptance and completion authority. This fresh
 session has used zero compactions and preserved the prior helper handoff.
+
+## Installed-probe correction: native elastic reviewer identity
+
+Root's installed probe of the first candidate found that the native owner
+`pi-codex-review-chiap08-c1a30162` was refused because the renderer omitted the
+declared qualified seat used by native admission. Root reported exact rollback
+under the generation lock, with c162 held and no worker affected. The prior
+candidate and its independent PASS remain preserved as history, not acceptance
+of this correction.
+
+The correction applies the exact native elastic identity expression from
+`assert_governed_review_claim`, then uses `qualified_reviewer_seats`,
+`governed_review_seat` and `reviewer_candidate_reasons` without bypassing producer
+independence or accepting an arbitrary declared seat. Named Seraph behavior is
+unchanged. The two positive regression cases failed before the fix; afterward
+10 identity cases passed, including malformed/wrong-card names, missing or
+unqualified/multiple seats, exact producer and same-seat producer refusals.
+Positive cases execute the rendered handoff and native readback against the
+exact c162 owner with no typed candidate_tree.
+
+Final command adds `tests/fleet/test_production_hosted_review_identity.py` to the
+pytest command above: **195 passed in 41.87s**, no skips. Ruff and Black passed
+for all three changed Python module/test files; compileall and diff checks passed.
+A read-only render using the actual held c162 JSON and preserved source, with
+the real elastic owner and a synthetic claim, succeeded and produced 6,199 bytes.
+It derived the exact `07191d8da72209cf946507bfebfc97d8ff9c8827` tree without native
+card mutations. This new candidate still requires root-controlled independent
+review and installed qualification. No installed files were changed by this worker.

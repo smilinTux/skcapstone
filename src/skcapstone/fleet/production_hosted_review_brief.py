@@ -13,7 +13,11 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from ..review_admission import reviewer_candidate_reasons
+from ..review_admission import (
+    governed_review_seat,
+    qualified_reviewer_seats,
+    reviewer_candidate_reasons,
+)
 from ..review_verdict import _REQUIRED_CI_LINK_KEYS, _SKCAPSTONE_REPOSITORY, is_review_card
 from ..seraph_review_cardstore import LiveCardStoreGateway
 from .production_brief import _identity
@@ -47,6 +51,10 @@ def production_hosted_review_brief(
     if tree:
         bindings["candidate_tree"] = tree
     repository = bindings["repository"]
+    qualified_seats = qualified_reviewer_seats(core)
+    elastic = re.fullmatch(
+        rf"pi-codex-review-[a-z0-9][a-z0-9-]*-{re.escape(card_id)}", owner.strip().lower()
+    )
     if (
         core.get("id") != card_id
         or not is_review_card(core.get("title"))
@@ -63,7 +71,12 @@ def production_hosted_review_brief(
         or (tree is not None and not re.fullmatch(r"[0-9a-f]{40}", tree))
         or not re.fullmatch(r"[0-9a-f]{64}", bindings["candidate_evidence_sha256"])
         or not bindings["producer_identity"]
-        or reviewer_candidate_reasons(owner, producer=bindings["producer_identity"])
+        or reviewer_candidate_reasons(
+            owner,
+            producer=bindings["producer_identity"],
+            declared_seat=governed_review_seat(labels, qualified_seats) if elastic else None,
+            qualified_seats=qualified_seats,
+        )
     ):
         raise ValueError("invalid hosted review source, repository or reviewer binding")
     if tree is None:
