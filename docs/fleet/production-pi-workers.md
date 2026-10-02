@@ -183,6 +183,18 @@ the actual hardened service, retained committed review, denial probes and
 terminal cgroup cleanup. A changed inspection module invalidates the runtime
 fingerprint and requires fresh test-profile calibration before admission.
 
+Card `c1a30143` makes historical acceptance use the retained qualified test
+profile. It derives exact ordered checks from the existing fixed recipe
+templates and selects Python or Node JUnit using the existing profile type.
+Replay rehashes the plan, receipt, logs and JUnit and preserves exact native
+completion, source bindings, revisions, intents and acknowledgements. It does
+not rerun completed tests or require a historical profile to match a newer
+runtime. Missing, duplicate, reordered or extra checks still refuse acceptance.
+Unfinished work continues to require current runtime qualification. A runtime
+change still invalidates admission profiles; completed source claims must not
+be recreated to satisfy an older calibration script. Source verification and
+read-only replay do not establish an installed qualification.
+
 ### Source-only reviewer handoff
 
 The dedicated source-only reviewer brief correction is pending rollout under

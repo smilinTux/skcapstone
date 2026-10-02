@@ -19,6 +19,7 @@ from skcoord.card_store import CardCore
 
 from skcapstone.fleet import production_review_finish as finish
 from skcapstone.fleet.production_review_evidence import inspect_proposal
+from skcapstone.fleet.production_test_plan import PREFIX
 from tests.fleet.test_source_bundle import git, publish, source  # noqa: F401
 
 
@@ -26,11 +27,13 @@ from tests.fleet.test_source_bundle import git, publish, source  # noqa: F401
 def pair(source, monkeypatch, tmp_path):  # noqa: F811
     dependency = json.loads(
         (
-            Path(__file__).parents[2] / "docs/evidence/agents/e6d82b82/AUTHORITY-DEPENDENCY.json"
+            Path(__file__).parents[2] / "docs/evidence/agents/c1a30126/AUTHORITY-DEPENDENCY.json"
         ).read_text()
     )
-    for item in dependency["modules"].values():
-        assert hashlib.sha256(Path(item["path"]).read_bytes()).hexdigest() == item["sha256"], (
+    authority = (PREFIX / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}"
+                 / "site-packages/skcapstone")
+    for relative, expected in dependency["modules"].items():
+        assert hashlib.sha256((authority / relative).read_bytes()).hexdigest() == expected, (
             "authority guarded CLI dependency changed; requalify, do not claim base-only coverage"
         )
     home, store = source["home"], source["store"]

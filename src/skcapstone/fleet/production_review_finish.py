@@ -139,7 +139,15 @@ def steps(context, acceptance):
 
 def _historical_acceptance(home, context, historical, inspect):
     """Read immutable accepted proof anchored in both completed native cards."""
-    from .production_test_plan import check_binding, junit_counts, read_private, sha
+    from .production_test_node import is_node
+    from .production_test_plan import (
+        approved_checks,
+        check_binding,
+        junit_counts,
+        read_private,
+        sha,
+    )
+    from .production_test_profile import recipe_checks
 
     acceptance = historical.get("test_receipt")
     binding = context["test_binding"]
@@ -178,15 +186,22 @@ def _historical_acceptance(home, context, historical, inspect):
             or receipt.get("plan_sha256") != plan_sha
             or receipt.get("checks") != acceptance.get("checks")):
         raise ReviewEvidenceError("retained historical test proof changed")
-    for check in receipt["checks"]:
-        # IDs were accepted through fixed templates; never use a local path from history.
-        if (check.get("id") not in {"pytest", "compile", "lint", "changelog"}
-                or check.get("exit_code") != 0
+    profile = plan.get("profile")
+    expected = recipe_checks(profile["recipe"]) if profile is not None else approved_checks()
+    results = receipt.get("checks")
+    if (plan.get("checks") != expected or not isinstance(results, list)
+            or len(results) != len(expected)):
+        raise ReviewEvidenceError("historical required checks changed")
+    for required, check in zip(expected, results):
+        # Derive IDs from fixed templates, never a local path supplied by history.
+        if (check.get("id") != required["id"] or check.get("argv") != required["argv"]
+                or type(check.get("exit_code")) is not int or check["exit_code"] != 0
                 or sha(read_private(directory / (check["id"] + ".log")))
                 != check.get("output_sha256")):
             raise ReviewEvidenceError("historical raw test output changed")
-    raw_junit = read_private(directory / "pytest.xml")
-    counts = junit_counts(raw_junit, plan.get("profile"))
+    name = "vitest.xml" if is_node(profile) else "pytest.xml"
+    raw_junit = read_private(directory / name)
+    counts = junit_counts(raw_junit, profile)
     if (receipt.get("junit_sha256") != sha(raw_junit)
             or receipt.get("counts") != counts or acceptance.get("counts") != counts):
         raise ReviewEvidenceError("historical JUnit proof changed")
