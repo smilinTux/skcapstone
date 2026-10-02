@@ -35,7 +35,7 @@ def native_state(home, card):
         row = store.fold(card)
         if row is None:
             raise ReviewEvidenceError("native card disappeared")
-        snapshot = LiveCardStoreGateway(home).read_card(card)
+        snapshot = LiveCardStoreGateway(home).read_card(card, _store=store)
         after = row.model_copy(deep=True)
         after.status = type(row.status)("done")
         after.owner = None

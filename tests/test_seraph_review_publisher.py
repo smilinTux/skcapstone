@@ -422,6 +422,45 @@ def test_review_card_state_is_verified(tmp_path: Path, field: str, value: str, e
     assert connector.create_calls == 0
 
 
+@pytest.mark.parametrize("authorized", [False, True])
+def test_shared_inspection_keeps_sibling_and_predecessor_checks(tmp_path, monkeypatch, authorized):
+    """Reused stores preserve sibling conflicts and authorized predecessor checks."""
+    import skcapstone.review_replacement as replacement
+
+    home = tmp_path / "home"
+    home.mkdir()
+    store = CardStore(home)
+    for card in ("review01", "review02"):
+        store.create(CardCore(
+            id=card, title="[S] Source", created_by="controller",
+            meta={"repository": "smilinTux/skcapstone", "link_head_revision": HEAD},
+        ))
+        for label in ("review", "parent-source01"):
+            store.append_event(card, "add_label", "controller", label=label)
+    calls = []
+    fold = CardStore.fold
+
+    def replacement_fold(self, card_id):
+        row = fold(self, card_id)
+        if row is not None and card_id == "review01":
+            row.meta["review_attempt"] = 1
+        return row
+
+    def predecessor(path, current, sibling, *, _store):
+        calls.append(_store)
+        assert path == home and current.id == "review01" and sibling.id == "review02"
+        return authorized
+
+    monkeypatch.setattr(replacement, "authorized_predecessor", predecessor)
+    monkeypatch.setattr(CardStore, "fold", replacement_fold)
+    gateway = LiveCardStoreGateway(home)
+    shared = gateway.read_card("review01", _store=store)
+    assert calls == [store]
+    assert shared.unresolved_review is not authorized
+    assert gateway.read_card("review01") == shared
+    assert calls[-1] is not store
+
+
 def test_live_cardstore_native_candidate_and_mediated_receipt(tmp_path, monkeypatch):
     """Current native outcomes and suffix review titles work through the real CLI."""
     from types import SimpleNamespace

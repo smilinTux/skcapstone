@@ -23,6 +23,66 @@ from skcapstone.fleet.production_test_plan import PREFIX
 from tests.fleet.test_source_bundle import git, publish, source  # noqa: F401
 
 
+@pytest.mark.parametrize("legacy", [False, True])
+def test_native_state_reuses_only_current_locked_store(tmp_path, monkeypatch, legacy):
+    """Snapshots match separate-store reads and refresh after either event lane."""
+    from contextlib import contextmanager
+    from copy import deepcopy
+
+    import skcoord.card_store as cards
+
+    home, card = tmp_path / "home", "c1460001"
+    home.mkdir()
+    store = cards.CardStore(home)
+    store.create(CardCore(id=card, title="[M] Source", created_by="producer"))
+    store.append_event(card, "claim", "producer", owner="producer")
+    overlay, loads, locked = {}, [], []
+    load = cards.load_legacy_mutations
+    lock = finish.card_mutation_lock
+    read = finish.LiveCardStoreGateway.read_card
+
+    def load_current(path):
+        loads.append(path)
+        return {**load(path), **deepcopy(overlay)}
+
+    @contextmanager
+    def tracked_lock(*args):
+        with lock(*args):
+            locked.append(True)
+            try:
+                yield
+            finally:
+                locked.pop()
+
+    def checked_read(self, card_id, *, _store=None):
+        assert locked and _store is not None
+        return read(self, card_id, _store=_store)
+
+    monkeypatch.setattr(cards, "load_legacy_mutations", load_current)
+    monkeypatch.setattr(finish, "card_mutation_lock", tracked_lock)
+    monkeypatch.setattr(finish.LiveCardStoreGateway, "read_card", checked_read)
+    first = finish.native_state(home, card)
+    assert len(loads) == 1
+    if legacy:
+        overlay[card] = [{"action": "link", "link_key": "verdict", "link_value": "PASS",
+                          "writer": "producer", "seq": 1, "ts": "2099-01-01T00:00:00Z"}]
+    else:
+        store.append_event(card, "link", "producer", link_key="verdict", link_value="PASS")
+    loads.clear()
+    second = finish.native_state(home, card)
+    assert len(loads) == 1
+    assert second["revision"] != first["revision"]
+    assert second["completion_revision"] != first["completion_revision"]
+    assert second["owner"] == first["owner"] == "producer"
+    assert second["claim_revision"] == first["claim_revision"]
+    # Replay the old call boundary: the gateway constructs a second fresh store.
+    monkeypatch.setattr(finish.LiveCardStoreGateway, "read_card",
+                        lambda self, card_id, **kwargs: read(self, card_id))
+    loads.clear()
+    assert finish.native_state(home, card) == second
+    assert len(loads) == 2
+
+
 @pytest.fixture
 def pair(source, monkeypatch, tmp_path):  # noqa: F811
     dependency = json.loads(
