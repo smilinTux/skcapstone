@@ -45,10 +45,11 @@ def main():
     )
     failed = False
     for offset in range(0, len(files), args.batch_size):
+        number = offset // args.batch_size + 1
         batch = files[offset : offset + args.batch_size]
-        print(f"Batch {offset // args.batch_size + 1}: {batch[0]} through {batch[-1]}", flush=True)
+        print(f"Batch {number}: {batch[0]} through {batch[-1]}", flush=True)
         print(
-            f"::notice title=pytest batch {offset // args.batch_size + 1}::Starting {len(batch)} files",
+            f"::notice title=pytest batch {number}::Starting {len(batch)} files",
             flush=True,
         )
         coverage = ["--cov=skcapstone", "--cov-report="] if args.coverage else []
@@ -59,7 +60,7 @@ def main():
         )
         print(f"Batch completed with exit {result.returncode}", flush=True)
         print(
-            f"::notice title=pytest batch {offset // args.batch_size + 1}::Exit status {result.returncode}",
+            f"::notice title=pytest batch {number}::Exit status {result.returncode}",
             flush=True,
         )
         failed |= result.returncode != 0
