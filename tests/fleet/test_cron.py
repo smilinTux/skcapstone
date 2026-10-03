@@ -8,6 +8,20 @@ from skcapstone.fleet import cron
 from skcapstone.fleet.explain import explain
 
 
+@pytest.mark.parametrize("fraction", ["", ".5", ".555894"])
+def test_status_utc_timestamp_precision(fraction: str) -> None:
+    baseline = f"2026-10-03T10:15:31{fraction}Z"
+    assert cron.next_run("15m", baseline) == "2026-10-03T10:30:31Z"
+    assert not cron.is_missed("15m", baseline, "2026-10-03T10:31:31Z")
+    assert cron.is_missed("15m", baseline, "2026-10-03T10:31:32Z")
+
+
+@pytest.mark.parametrize("value", ["invalid", "2026-10-03", "2026-10-03T10:15:31.Z"])
+def test_invalid_status_timestamp_still_rejected(value: str) -> None:
+    with pytest.raises(ValueError):
+        cron.next_run("15m", value)
+
+
 def test_normalize_valid_spec_applies_defaults() -> None:
     spec = cron.normalize_cronjob_spec({"command": "echo hi", "schedule": "@daily"})
     assert spec == {
