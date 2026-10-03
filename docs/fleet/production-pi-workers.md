@@ -25,6 +25,10 @@ explicit production policy mode.
 | Provider request concurrency | SKGateway | Queue, health, backoff and per-backend request limits stay in the gateway. |
 | Node admission | Fresh node resources plus active/reserved work | Per-worker quotas and aggregate resource availability, not arbitrary worker counts. |
 
+The source candidate for [shared resource admission](resource-admission.md)
+separates short admission transactions from the lifecycle generation lock.
+Its coordinated adoption requirements apply before any installed path switches.
+
 Kimi is disabled while its subscription is inactive. Family names do not
 prove model capability. Do not embed model IDs in this runbook, in policy,
 or in prompts as routing defaults. Explicit card restrictions narrow gateway

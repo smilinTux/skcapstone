@@ -691,7 +691,7 @@ def _worker_launch_command(unit, workspace, inner):
         *(worker_resource_properties(PRODUCTION_POLICY, HOST)
           if globals().get("PRODUCTION_POLICY") else []),
         *production_env,
-        "--working-directory", workspace, *child_argv,
+        "--working-directory", workspace, "--", *child_argv,
     ]
 
 
@@ -9068,7 +9068,26 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         "--session",sess,"--worker-executable",PI,
         "--","bash","-lc",child,
     ]
-    r=subprocess.run(_worker_launch_command(unit,workspace,inner),capture_output=True,text=True)
+    _launch_argv=_worker_launch_command(unit,workspace,inner)
+    if PRODUCTION_POLICY:
+        from skcapstone.fleet.production_admission import (
+            AdmissionDeferredError, AdmissionError, reserve_launch)
+
+        try:
+            _launch_argv=reserve_launch(
+                Path(HOME)/".skcapstone",PRODUCTION_POLICY,HOST,unit,
+                {"card_id":cid,"owner":name,"claim_revision":claimed_revision},_launch_argv)
+        except AdmissionDeferredError:
+            # Exact prelaunch capacity refusal proves no intent and no spawn.
+            subprocess.run([SKC,"coord","release-claim",cid,"--owner",name,
+                            "--expected-claim-revision",claimed_revision,"--agent",name,
+                            "--abandon-reason","error"],capture_output=True,text=True)
+            log(d,"NODE_ADMISSION_DEFERRED|%s|%s"%(HOST,cid))
+            continue
+        except AdmissionError:
+            log(d,"NODE_ADMISSION_CUSTODY_REQUIRED|%s|%s"%(HOST,cid))
+            continue
+    r=subprocess.run(_launch_argv,capture_output=True,text=True)
     ok = r.returncode==0
     launch_identity=(
         _launch_claim_fields(name,claimed_revision,ok)
@@ -9156,10 +9175,13 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
     if not ok:
         # LAUNCH_FAILED above: the launch command itself returned nonzero,
         # so the claimed worker never came alive.
-        subprocess.run([SKC,"coord","release-claim",cid,"--owner",name,
-                        "--expected-claim-revision",claimed_revision,"--agent",name,
-                        "--abandon-reason","error"],
-                       capture_output=True,text=True)
+        if not globals().get("PRODUCTION_POLICY"):
+            subprocess.run([SKC,"coord","release-claim",cid,"--owner",name,
+                            "--expected-claim-revision",claimed_revision,"--agent",name,
+                            "--abandon-reason","error"],
+                           capture_output=True,text=True)
+        # Production keeps the exact claim and reservation: nonzero launcher
+        # exit alone never proves that the attempted spawn had no effect.
     else:
         launched+=1
         launch_remaining[_LANE["name"]]-=1

@@ -239,4 +239,5 @@ def test_exact_generation_claim_release_is_owned_by_the_wrapper() -> None:
     assert 'trap "stop_beat" EXIT' in source
     assert '"--claim-revision",claimed_revision' in source
     # Launches still flow through the single detached launch command.
-    assert "subprocess.run(_worker_launch_command(unit,workspace,inner)" in source
+    prepare = source.index("_launch_argv=_worker_launch_command(unit,workspace,inner)")
+    assert prepare < source.index("r=subprocess.run(_launch_argv,")

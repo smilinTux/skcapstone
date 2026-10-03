@@ -11,7 +11,7 @@ from xml.etree import ElementTree
 
 from . import production_builder
 from . import production_test_node as node
-from .production_resources import active_resource_units, local_worker_admission
+from .production_admission import AdmissionError, reserve_launch, reserved_command
 from .production_test_plan import (
     BINDING_KEYS as BINDING_KEYS,
 )
@@ -94,6 +94,15 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
         node.validate_environment(plan["profile"]["node_environment"], workspace)
     unit = production_builder.unit_name(launch, 1)
     policy = launch.get("policy", {})
+    expected_argv = service_argv(
+        launch, home / "fleet/test-plans"
+        / (binding["source_card"] + "-" + binding["source_head"] + ".json"),
+        directory, workspace,
+    )
+    if launch.get("admission_protocol") == 1:
+        expected_argv = reserved_command(
+            home, policy, plan["host"], unit, _admission_binding(binding, plan_sha), expected_argv,
+        )
     if (
         launch.get("binding") != binding
         or launch.get("request_id") != plan_sha
@@ -104,14 +113,7 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
         or launch.get("production")
         != {"resources": policy.get("node_quotas", {}).get(plan["host"])}
         or launch.get("service_argv")
-        != service_argv(
-            launch,
-            home
-            / "fleet/test-plans"
-            / (binding["source_card"] + "-" + binding["source_head"] + ".json"),
-            directory,
-            workspace,
-        )
+        != expected_argv
         or receipt.get("schema") != "skfleet.native-test-receipt/v1"
         or receipt.get("binding") != binding
         or receipt.get("plan_sha256") != plan_sha
@@ -301,7 +303,8 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
     root = home / "fleet/test-runs"
     private_dir(root, create=True)
     directory = run_directory(home, plan_sha)
-    lock_fd = os.open(root / ".admission.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    private_dir(directory, create=True)
+    lock_fd = os.open(directory / ".run.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     with os.fdopen(lock_fd, "r+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         private_dir(directory, create=True)
@@ -310,9 +313,6 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
             if (directory / "terminal.json").exists() or observe_terminal(directory, launch):
                 stop_retained(directory, launch)
                 return validate_test_receipt(home, binding, workspace)
-            return None
-        ready, _ = local_worker_admission(policy, plan["host"], active_resource_units(home))
-        if not ready:
             return None
         private_dir(directory / "output", create=True)
         request = {
@@ -326,7 +326,13 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
         }
         request["unit"] = production_builder.unit_name(request, 1)
         argv = service_argv(request, plan_path, directory, workspace)
+        try:
+            argv = reserve_launch(home, policy, plan["host"], request["unit"],
+                                  _admission_binding(binding, plan_sha), argv)
+        except AdmissionError:
+            return None
         request["service_argv"] = argv
+        request["admission_protocol"] = 1
         write_once(directory / "launch.json", request)
         # Persist before Popen: interruption or lost acknowledgement cannot replay launch.
         _SERVICE_PROCESSES[request["unit"]] = subprocess.Popen(
@@ -338,3 +344,9 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
             close_fds=True,
         )
         return None
+
+
+def _admission_binding(binding: dict, plan_sha: str) -> dict:
+    """Bind resource intent and receipt verification to the same exact source."""
+    return {"card_id": binding["source_card"], "owner": binding["source_owner"],
+            "claim_revision": binding["source_claim_revision"], "plan_sha256": plan_sha}

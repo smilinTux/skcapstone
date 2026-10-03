@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from skcapstone.fleet import builder_dispatch as builder
+from skcapstone.fleet import production_admission as admission
 from skcapstone.fleet import production_builder as production
 from skcapstone.fleet import store
 from skcapstone.fleet.node_controller import NodeView
@@ -126,6 +127,8 @@ def production_setup(paths, operator, monkeypatch, tmp_path):
         allocatable={"cores": 12, "ram_gb": 16},
     )
     monkeypatch.setattr(builder, "node_views", lambda _paths: [view])
+    monkeypatch.setattr(admission, "active_resource_units", lambda *args: [])
+    monkeypatch.setattr(admission, "local_worker_admission", lambda *args: (True, "fixture"))
     builder._PROCESSES.clear()
     yield SimpleNamespace(
         policy=value,
@@ -212,8 +215,9 @@ def test_local_content_requires_explicit_simple_qwen_policy(production_setup):
         production.route_binding(p, "24b00001", "sk-m", ["local-only"])
 
 
+@pytest.mark.parametrize("scenario", ["normal", "lost_ack", "capacity", "defer_after_intent"])
 def test_production_consumer_uses_real_resource_service_and_stable_claims(
-    paths, production_setup, monkeypatch, tmp_path
+    paths, production_setup, monkeypatch, tmp_path, scenario
 ):
     p = production_setup
     requests = [
@@ -237,19 +241,36 @@ def test_production_consumer_uses_real_resource_service_and_stable_claims(
     monkeypatch.setattr(builder, "startup_hello", lambda *args, **kwargs: None)
     monkeypatch.setattr(builder, "_proc_start_ticks", lambda pid: str(pid))
     launches = []
+    releases = []
+    if scenario == "capacity":
+        monkeypatch.setattr(admission, "local_worker_admission",
+                            lambda *args: (False, "memory_available=0 required=1073741824"))
+        monkeypatch.setattr(builder, "_release_exact",
+                            lambda *args, **kwargs: releases.append((args, kwargs)) or True)
 
     def launch(command, workspace):
         launches.append(command)
+        if scenario == "lost_ack":
+            raise OSError("synthetic lost spawn acknowledgement")
+        if scenario == "defer_after_intent":
+            raise admission.AdmissionDeferredError("late refusal after reservation")
         return SimpleNamespace(pid=100 + len(launches), poll=lambda: None)
 
-    builder.consume_one(
+    result = builder.consume_one(
         paths,
         tmp_path,
         "node-worker",
         launcher=launch,
         materializer=lambda request, workspace: workspace,
     )
-    assert len(launches) == 6
+    if scenario == "capacity":
+        assert launches == []
+        assert len(releases) == 1
+        assert releases[0][0][1:] == (requests[0]["card_id"], result["owner"], "a" * 32)
+        assert result["claim_released"] and result["retryable"] and result["attempt"] == 0
+        assert not list((tmp_path / "fleet/resource-admission").glob("*/*/intent.json"))
+        return
+    assert len(launches) == (6 if scenario == "normal" else 1)
     for command, request in zip(launches, requests):
         assert command[0] == "/usr/bin/systemd-run"
         assert "--property=CPUQuota=100%" in command
@@ -261,6 +282,9 @@ def test_production_consumer_uses_real_resource_service_and_stable_claims(
         assert status["unit"] == production.unit_name(request, 1)
         assert status["claim_revision"] == "a" * 32
         assert status["owner"].startswith("pi-" + request["production"]["family"] + "-builder-")
+        assert status["state"] == "running"
+        assert rows[request["card_id"]].owner == status["owner"]
+        assert any(arg.startswith("--setenv=SKFLEET_ADMISSION_ID=") for arg in command)
 
 
 @pytest.mark.parametrize("change", ["quota", "host", "route"])

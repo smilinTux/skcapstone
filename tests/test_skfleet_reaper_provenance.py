@@ -850,6 +850,19 @@ def test_launch_failure_releases_the_exact_claimed_revision() -> None:
         subprocess=SimpleNamespace(run=lambda command, **kwargs: commands.append(command)),
     )
     exec(compile(ast.Module(body=[branch], type_ignores=[]), "launch-failure", "exec"), namespace)
+    production_commands = []
+    production_namespace = dict(
+        namespace,
+        PRODUCTION_POLICY={"enabled": True},
+        subprocess=SimpleNamespace(
+            run=lambda command, **kwargs: production_commands.append(command)
+        ),
+    )
+    exec(
+        compile(ast.Module(body=[branch], type_ignores=[]), "launch-failure", "exec"),
+        production_namespace,
+    )
+    assert production_commands == []
     assert commands == [
         [
             "skcapstone",

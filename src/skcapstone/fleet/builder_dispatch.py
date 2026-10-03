@@ -1489,7 +1489,11 @@ def _consume_available(
             if frozen is not None:
                 return frozen
             run = launcher or (lambda argv, cwd: subprocess.Popen(argv, cwd=cwd))
+            from .production_admission import AdmissionDeferredError
+
             exclusion_acquired = False
+            admission_pending = False
+            admission_reserved = False
             try:
                 with store.actuation_exclusion(paths):
                     exclusion_acquired = True
@@ -1505,6 +1509,26 @@ def _consume_available(
                     )
                     if frozen is not None:
                         return frozen
+                    if production is not None:
+                        from .production_admission import reserve_launch
+
+                        # Unknown admission or spawn never grants claim release.
+                        admission_pending = True
+                        command = reserve_launch(
+                            coordination_home, policy, production["host"],
+                            production_builder.unit_name(request, attempt),
+                            {"card_id": request["card_id"], "owner": owner,
+                             "claim_revision": revision, "request_id": request["request_id"],
+                             "attempt": attempt}, command,
+                        )
+                        admission_reserved = True
+                        if not retrying:
+                            _write_status(
+                                paths, node, request, "running", owner=owner,
+                                claim_revision=revision, attempt=attempt, pid=None,
+                                unit=production_builder.unit_name(request, attempt),
+                                invocation=None, route_preflight=route_preflight,
+                            )
                     if retrying:
                         with retry_handler.consume(
                             paths,
@@ -1516,7 +1540,23 @@ def _consume_available(
                             process = run(command, workspace)
                     else:
                         process = run(command, workspace)
+            except AdmissionDeferredError:
+                if retrying or admission_reserved:
+                    return None
+                released = _release_exact(
+                    coordination_home, request["card_id"], owner, revision, actor=owner
+                )
+                return _write_status(
+                    paths, node, request, "failed" if released else "blocked",
+                    owner=owner, claim_revision=revision, claim_released=released,
+                    attempt=int(prior.get("attempt") or 0), retryable=released,
+                    error="node-resource-capacity-deferred",
+                )
             except Exception:
+                if admission_pending:
+                    logger.warning("production admission or launch requires custody: %s",
+                                   request["card_id"])
+                    return None
                 if retrying:
                     # A spent authorization never releases custody or relaunches.
                     # Its persisted unknown unit state requires operator recovery.

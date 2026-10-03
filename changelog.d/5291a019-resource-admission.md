@@ -1,0 +1,1 @@
+- Card `5291a019`: share short host-local RAM admission and durable pending reservations across production worker, builder, and test launches, with an operator adoption contract that preserves lifecycle generation ownership.

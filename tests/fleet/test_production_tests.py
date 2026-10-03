@@ -12,6 +12,7 @@ from xml.etree import ElementTree
 
 import pytest
 
+from skcapstone.fleet import production_admission as admission
 from skcapstone.fleet import production_resources as resources
 from skcapstone.fleet import production_test_worker as worker
 from skcapstone.fleet import production_tests as native
@@ -95,8 +96,8 @@ def setup(tmp_path, monkeypatch):
     }
     plan_path = native.seal_plan(home, binding, workspace, policy, "operator", "a" * 64)
     plan, _, digest = native.load_plan(home, binding)
-    monkeypatch.setattr(native, "active_resource_units", lambda *args: [])
-    monkeypatch.setattr(native, "local_worker_admission", lambda *args: (True, "fixture"))
+    monkeypatch.setattr(admission, "active_resource_units", lambda *args: [])
+    monkeypatch.setattr(admission, "local_worker_admission", lambda *args: (True, "fixture"))
     return SimpleNamespace(
         home=home,
         binding=binding,
@@ -310,7 +311,7 @@ def test_launch_failure_preserves_intent_and_does_not_relaunch(setup, monkeypatc
 
 
 def test_resource_defer_does_not_consume_attempt(setup, monkeypatch):
-    monkeypatch.setattr(native, "local_worker_admission", lambda *args: (False, "memory"))
+    monkeypatch.setattr(admission, "local_worker_admission", lambda *args: (False, "memory"))
     assert (
         native.run_or_read_tests(setup.home, setup.binding, setup.workspace, setup.policy) is None
     )

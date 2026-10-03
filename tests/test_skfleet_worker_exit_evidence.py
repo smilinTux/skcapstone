@@ -415,7 +415,8 @@ def test_launcher_routes_every_lane_through_exit_wrapper() -> None:
     assert 'wrapper=os.path.join(os.path.dirname(__file__),"skfleet-worker-wrapper.py")' in source
     assert '"--claim-revision",claimed_revision' in source
     assert "inner=[" in source
-    assert "subprocess.run(_worker_launch_command(unit,workspace,inner)" in source
+    prepare = source.index("_launch_argv=_worker_launch_command(unit,workspace,inner)")
+    assert prepare < source.index("r=subprocess.run(_launch_argv,")
 
 
 def test_detached_beat_cannot_strand_wrapper_after_immediate_child_exit(
