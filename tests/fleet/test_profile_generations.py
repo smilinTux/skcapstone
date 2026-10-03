@@ -149,13 +149,20 @@ def test_corrupt_chain_refuses_even_historical_pin(qualified, damage):
 def test_sealed_plan_keeps_old_pin_and_refuses_changed_runtime(setup, monkeypatch):  # noqa: F811
     s = setup
     s.plan_path.unlink()
+    # The shared admission fixture already owns its own immutable source claim.
     core = {
-        "id": s.binding["source_card"],
+        "id": "89508f84",
         "meta": {"repository": "https://example.org/public.git"},
         "acceptance_criteria": ["Run parser checks"],
     }
     custody(s.home, core)
-    binding = dict(s.binding, criteria_sha256=profile.contract(core)["criteria_sha256"])
+    binding = dict(
+        s.binding,
+        source_card=core["id"],
+        source_owner=CLAIM["owner"],
+        source_claim_revision=CLAIM["claim_revision"],
+        criteria_sha256=profile.contract(core)["criteria_sha256"],
+    )
     recipe = {"pytest": {"tests/test_parser.py": 1}, "compile": [], "lint": [], "changelog": False}
     original = profile.qualify_profile(s.home, core, s.policy, recipe, "operator", "b" * 64)
     profile.seal_candidate(s.home, binding, s.workspace, s.policy, core["meta"]["repository"])

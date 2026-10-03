@@ -1,7 +1,49 @@
 """Memory admission based on live node resources and actual worker cgroups."""
 
+import re
 import subprocess
 from pathlib import Path
+
+
+def successful_terminal_state(state):
+    """Recognize exact retained-success metadata without interpreting unknown memory."""
+    group, tasks = state.get("ControlGroup"), state.get("TasksCurrent")
+    return bool(
+        state.get("LoadState") == "loaded"
+        and (state.get("ActiveState"), state.get("SubState")) == ("active", "exited")
+        and re.fullmatch(r"[0-9a-f]{32}", state.get("InvocationID", ""))
+        and state.get("MainPID") == state.get("ControlPID") == "0"
+        and re.fullmatch(r"[1-9][0-9]*", state.get("ExecMainPID", ""))
+        and state.get("ExecMainCode") == "1"
+        and state.get("ExecMainStatus") == "0"
+        and state.get("Result") == "success"
+        and (
+            (group == "" and tasks == "[not set]")
+            or (
+                isinstance(group, str)
+                and group.startswith("/")
+                and ".." not in Path(group).parts
+                and Path(group).name == state.get("Id")
+                and tasks == "0"
+            )
+        )
+    )
+
+
+def successful_terminal_absent(state):
+    """Prove retained success has no process or populated owned cgroup."""
+    if not successful_terminal_state(state):
+        return False
+    if Path("/proc", state["ExecMainPID"]).exists():
+        return False
+    group = state["ControlGroup"]
+    if group == "":
+        return True
+    cgroup = Path("/sys/fs/cgroup") / group.lstrip("/")
+    return not cgroup.exists() or (
+        (cgroup / "cgroup.events").is_file()
+        and "populated 0" in (cgroup / "cgroup.events").read_text().splitlines()
+    )
 
 
 def active_resource_units(home=None):
@@ -77,14 +119,16 @@ def local_worker_admission(policy, host, worker_units, *, runner=subprocess.run)
             if "reserved_memory_max" in row
         }
         if names:
+            query = [
+                "systemctl",
+                "--user",
+                "show",
+                *names,
+                "--property=Id,LoadState,ActiveState,SubState,InvocationID,MemoryMax,MemoryCurrent,"
+                "MainPID,ControlPID,ExecMainPID,ExecMainCode,ExecMainStatus,Result,ControlGroup,TasksCurrent",
+            ]
             result = runner(
-                [
-                    "systemctl",
-                    "--user",
-                    "show",
-                    *names,
-                    "--property=Id,ActiveState,MemoryMax,MemoryCurrent",
-                ],
+                query,
                 capture_output=True,
                 text=True,
                 check=False,
@@ -99,7 +143,20 @@ def local_worker_admission(policy, host, worker_units, *, runner=subprocess.run)
             if {row.get("Id") for row in rows} != set(names):
                 raise ValueError("worker resource response incomplete")
             for row in rows:
-                if row.get("ActiveState") in {"active", "activating"}:
+                if (row.get("ActiveState"), row.get("SubState")) == ("active", "exited"):
+                    if not successful_terminal_absent(row):
+                        raise ValueError("retained terminal resource custody is uncertain")
+                    repeat = runner(query, capture_output=True, text=True, check=False, timeout=5)
+                    repeated = [
+                        dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
+                        for block in repeat.stdout.strip().split("\n\n")
+                    ]
+                    exact = [item for item in repeated if item.get("Id") == row["Id"]]
+                    if repeat.returncode or exact != [row]:
+                        raise ValueError("retained terminal invocation changed")
+                    if row["Id"] in reservations:
+                        units.append({"MemoryMax": reservations[row["Id"]], "MemoryCurrent": 0})
+                elif row.get("ActiveState") in {"active", "activating"}:
                     units.append(row)
                 elif (
                     row.get("ActiveState") in {"inactive", "failed"} and row["Id"] in reservations

@@ -1,0 +1,1 @@
+- Card `d11d2501`: Account retained successful native units using exact terminal process and cgroup evidence. Preserve consumed admission intents and claim custody, finalize fast successful test admissions before stopping their units, and keep product acceptance separate.
