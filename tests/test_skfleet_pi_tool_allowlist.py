@@ -72,7 +72,7 @@ def test_pi_denies_a_direct_mcp_tool_and_measures_schema_bytes(tmp_path: Path) -
                 const schemas = tools.map(({name, description, parameters}: any) =>
                   ({name, description, parameters}));
                 const directSchemas = schemas.filter(({name}: any) =>
-                  /^(skcapstone|skcomms|skmemory)_/.test(name));
+                  /^(skcapstone|skcomms|skmemory)_|^mcp(?:__|$|Script$)/.test(name));
                 writeFileSync(process.env.PI_TOOL_PROBE_OUT!, JSON.stringify({
                   names: tools.map((tool: any) => tool.name).sort(),
                   count: tools.length,
@@ -117,11 +117,17 @@ def test_pi_denies_a_direct_mcp_tool_and_measures_schema_bytes(tmp_path: Path) -
 
     baseline = measure(None)
     allowlisted = measure("read,bash,edit,write,grep,find,ls")
-    direct_tool = "skcapstone_coord_status"
-
-    assert direct_tool in baseline["names"]
-    assert direct_tool not in allowlisted["names"]
-    assert baseline["direct_count"] == 162
+    # Pi's installed MCP extension can expose individual tools or server proxies.
+    # Both surfaces must disappear, without pinning a machine's catalog count.
+    mcp_tools = {
+        name
+        for name in baseline["names"]
+        if name.startswith(("skcapstone_", "skcomms_", "skmemory_", "mcp__"))
+        or name in {"mcp", "mcpScript"}
+    }
+    assert mcp_tools
+    assert mcp_tools.isdisjoint(allowlisted["names"])
+    assert baseline["direct_count"] == len(mcp_tools)
     assert allowlisted["direct_count"] == 0
     assert allowlisted["names"] == ["bash", "edit", "find", "grep", "ls", "read", "write"]
     assert allowlisted["count"] == 7

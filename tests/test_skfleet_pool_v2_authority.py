@@ -449,9 +449,10 @@ def test_worker_runtime_contract_is_unchanged() -> None:
     # anything. This assertion pins the post-split shape; the seven below it are
     # the ones this test exists for and are unchanged.
     assert "_bucket=_logical_route_for(core,_labels)" in source
-    assert "model=_lane_model(_LANE,core) or _bucket" in source
+    assert "model=_lane_model(_LANE,core,_labels)" in source
+    assert "if PRODUCTION_POLICY and model is None:" in source
     assert '"provider":"skgateway"' in source
-    assert 'model=str(_selected_route["model_or_bucket"])' not in source
+    assert 'model=_selected_route["model_or_bucket"]' in source
     assert 'qwen_suitable(fresh_claimability["core"],fresh_claimability["labels"])' in source
     assert "SKFLEET_CARD_ID=%s SKFLEET_CLAIM_REVISION=%s SKFLEET_SESSION_ID=%s" in source
     assert '"--session",sess,"--worker-executable",PI,' in source

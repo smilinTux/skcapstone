@@ -23,6 +23,35 @@ def _observer(namespace: dict[str, object]):
     return namespace["_observe_assigned_reviews"]
 
 
+def test_dry_selection_never_writes_review_observations():
+    # No board/process helpers are available: dry mode must return before reads or writes.
+    _observer({"DRY": True})()
+
+
+def test_production_observation_respects_a_bounded_tail(tmp_path):
+    from types import SimpleNamespace
+
+    now = iter([100.0, 106.0])
+    reads = []
+    logs = []
+    namespace = {
+        "PRODUCTION_POLICY": {"enabled": True},
+        "time": SimpleNamespace(monotonic=lambda: next(now)),
+        "sh": lambda *args: "",
+        "active_worker_units": lambda: [],
+        "_load_outcomes": lambda: {},
+        "_POOL_V2_ADMISSIONS": {"deadbeef": {"labels": ["review"]}},
+        "_claim_rows": {},
+        "event_rows": lambda cid: reads.append(cid),
+        "log": lambda *args: logs.append(args[-1]),
+        "d": tmp_path,
+        "HOST": "controller",
+    }
+    _observer(namespace)()
+    assert reads == []
+    assert logs == ["REVIEW_OBSERVATION_DEFERRED|controller|reason=cycle-observation-budget"]
+
+
 def test_empty_selection_observes_only_immutable_review_snapshot_over_7000_cards(
     tmp_path: Path,
 ) -> None:

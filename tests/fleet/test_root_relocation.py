@@ -205,6 +205,22 @@ _SKCAPSTONE_PATH_EXEMPT = {
         "log observe() reads; that is coordination state, not fleet state under "
         "SKFLEET_ROOT, the CLI never writes, and --home overrides the default"
     ),
+    "production_brief.py": (
+        "instructs workers to retain exact candidates in coordination evidence/work, "
+        "which remains outside the relocatable fleet state tree"
+    ),
+    "production_exit.py": (
+        "reads canonical CardStore claims and publishes coordination evidence/work "
+        "under the coordination home, not SKFLEET_ROOT"
+    ),
+    "source_bundle.py": (
+        "defaults SKCAPSTONE_HOME for exact candidate coordination evidence; "
+        "the fleet root does not own source custody"
+    ),
+    "source_transport.py": (
+        "serves bounded card-specific source artifacts from coordination evidence, "
+        "which must not move when fleet state relocates"
+    ),
 }
 
 

@@ -13,8 +13,8 @@ not the seat label alone, because the label can be absent on older cards.
 - Title starts with `[REVIEW` (for example `[REVIEW][S] Review provisional
   outcome for <parent_id>`): you are the **reviewer**. Jump to
   "Reviewer (seat-seraph, `[REVIEW]` cards)" below. Steps 1 through 6 do not
-  apply to you; a review card is completed by a verdict link, not by doing
-  the work Step 4 describes.
+  apply to you. Publish a review verdict through the assigned review
+  contract. Production source-only completion belongs to the controller.
 - Anything else (a card whose writer identity in the event trail is `link`,
   `mero`, `niobe`, or `atlas` rather than a worker you claimed): see
   "Other lifecycle seats" below. These run as automated fleet-rotation
@@ -158,6 +158,28 @@ has no L-class provider admitted, so don't reach for it out of habit.
 skcapstone coord claim <task_id> --agent <your_name>
 ```
 
+## Production Pi worker contract
+
+For production dispatch, read [the Pi operating runbook](docs/fleet/production-pi-workers.md).
+The card owns capability, size, privacy and explicit route restrictions;
+fresh SKGateway metadata owns qualified routes and actual model IDs. Shared
+fleet configuration must not contain a second model table. Pi launches use
+explicit `--provider skgateway --model <resolved-model-id>`; Pi 0.84.4 does
+not support `--llm`. A local Pi catalog is a gateway-derived transport cache.
+
+Preserve node-qualified per-worker CPU/RAM/task/runtime quotas, exact claim
+ownership, source custody and independent review. SKGateway owns provider
+request concurrency and health; do not restore old fixed worker-count caps,
+75-second launch spacing or a separate orchestration failure HOLD. Kimi stays
+disabled while unsubscribed. Fiber is retired. A candidate or a dry run is
+not an installed, qualified production rollout.
+
+Every worker prompt requires `ls` after writes, `git rev-parse HEAD` after
+commits, and stopping on inconsistent tool output. After two compactions,
+write `.handoff.md`, finish the current step and stop for a fresh session.
+Bind completion to exact source, actual tests and independent review before
+cleanup. Never transfer an existing Jarvis claim by editing owner projections.
+
 ## Step 4: Do the Work
 
 Follow the project conventions:
@@ -272,6 +294,38 @@ is exactly the silence PR #241 was written to stop (see below).
 
 ### The verdict sequence that actually closes a review
 
+First distinguish the assigned review contract. A production card labeled
+`source-only` follows the production source review instructions below.
+The hosted PR sequence after that section applies only when an actual PR
+and its exact-head checks govern the card. A local branch is not a PR.
+
+### Production source-only review
+
+Use the exact generated production brief for your claimed card. Verify the
+transported candidate commit and tree, inspect the change independently,
+and report only checks you actually ran. Preserve the producer's source.
+Commit only the permitted evidence files. The report digest is calculated
+before writing the decision; do not invent a self-referential hash of the
+commit that will contain that report.
+
+The decision schema is `skfleet.source-review-decision/v1`, with `card`,
+`parent_card`, `source_head`, `source_tree`, `reviewer_identity`, `verdict`
+and `report_sha256`. Use the source commit and tree, not the evidence commit.
+Publish through the guarded native commands in the brief using the exact
+current claim and card revisions. Stop on a stale guard or inconsistent
+tool output; do not fall back to an unguarded write.
+
+Do not create PR or hosted-CI links for a source-only review. A PASS records
+the existing native applicability receipt as specified in the brief, then
+the worker exits while retaining custody. The qualified production
+controller verifies the committed decision, report, source, independent
+route, worker termination and actual required test receipts before
+completing review and producer. The reviewer does not self-complete,
+release the claim, clean the session, or assert controller acceptance.
+If that controller is not installed and qualified, the card stays pending.
+
+### Hosted PR review sequence
+
 This is not inferred from the code, it is read off real review cards that
 closed cleanly under the CURRENT completion gate
 (`src/skcapstone/review_verdict.py`, tightened by PR #567 and #690,
@@ -292,7 +346,7 @@ skcapstone coord link <review_id> finding "PASS exact head ... / base ..." --age
 # The verdict itself: byte-exact "PASS" or "FAIL", nothing else in this value.
 skcapstone coord link <review_id> verdict PASS --agent <your_name>
 
-# PASS on a skcapstone-repo card additionally needs all six of these,
+# PASS on a hosted skcapstone PR additionally needs all six of these,
 # each byte-exact "SUCCESS" (src/skcapstone/review_verdict.py:_REQUIRED_CI_LINK_KEYS):
 skcapstone coord link <review_id> ci_check_docs SUCCESS --agent <your_name>
 skcapstone coord link <review_id> ci_check_gitleaks SUCCESS --agent <your_name>
@@ -304,7 +358,7 @@ skcapstone coord link <review_id> ci_check_python312 SUCCESS --agent <your_name>
 skcapstone coord complete <review_id> --agent <your_name>
 ```
 
-For a PASS on a card whose `meta.repository` is a DIFFERENT repo
+For a hosted PR PASS on a card whose `meta.repository` is a DIFFERENT repo
 (skdashboard, skgateway, sklegal, skharness, skcoord, and so on), skip the
 six `ci_check_*` links and record one `hosted_checks` link instead, with
 the value matching this exact shape (verified on real closed cards

@@ -64,6 +64,7 @@ def test_releases_four_finished_claims_with_exact_cas_and_keeps_evidence(tmp_pat
             run=lambda argv, **_kwargs: calls.append(argv) or SimpleNamespace(returncode=0)
         ),
         "_current_claim_identity_fresh": lambda card: claims[card],
+        "_current_claim": lambda card: claims[card][:2],
         "_durable_review_outcome": lambda _card: "PASS",
         "_card_process_snapshot": lambda _card: {"sessions": [], "units": []},
         "_rows": {card: object() for card in cards},
@@ -162,6 +163,7 @@ def test_live_process_and_changed_generation_are_never_released(tmp_path: Path) 
         "re": re,
         "subprocess": SimpleNamespace(run=lambda argv, **_kwargs: calls.append(argv)),
         "_current_claim_identity_fresh": claim,
+        "_current_claim": lambda card: (f"pi-seraph-chiap08-{card}", 1.0),
         "_durable_review_outcome": lambda _card: "FAIL",
         "_card_process_snapshot": lambda card: {
             "sessions": ["live-aaaaaaaa"] if card == "aaaaaaaa" else [],
@@ -210,6 +212,7 @@ def test_incomplete_pass_records_rejection_without_release(tmp_path: Path) -> No
             run=lambda argv, **_kwargs: releases.append(argv) or SimpleNamespace(returncode=0)
         ),
         "_current_claim_identity_fresh": lambda _card: claims[card],
+        "_current_claim": lambda card: claims[card][:2],
         "_durable_review_outcome": lambda _card: "PASS",
         "_card_process_snapshot": lambda _card: {"sessions": [], "units": []},
         "_rows": rows,

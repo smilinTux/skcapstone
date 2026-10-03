@@ -1,5 +1,9 @@
 # Fleet lane admission health
 
+For production route ownership, explicit Pi invocation and node resource
+admission, also read [the production Pi contract](production-pi-workers.md).
+Gateway health qualification remains mandatory in that mode.
+
 `scripts/fleet/skfleet-rotate.py` creates one health snapshot before selecting
 work. It fetches the configured SKGateway `/health` and `/queue` endpoints once,
 resolves the exact Git revision of the process serving that endpoint port, and

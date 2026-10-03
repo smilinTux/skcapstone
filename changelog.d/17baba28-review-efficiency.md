@@ -1,0 +1,1 @@
+- Card `17baba28`: direct source reviewers to inspect bounded context, batch independent reads and avoid redundant overlapping test runs while preserving every required test, justified reruns and the controller's separate authoritative acceptance checks.

@@ -1,0 +1,1 @@
+- Card `5b672ea1`: add operator-qualified native sandbox test plans and raw, source-bound test receipt validation. Include native builder and test services in resource evidence. Installation and a real service qualification remain required.

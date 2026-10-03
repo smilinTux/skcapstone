@@ -124,6 +124,7 @@ def _prelaunch_producer_route_calls(order: tuple[str, str]) -> list[str]:
     }
     namespace = {
         "_ONLY_SEAT": "",
+        "PRODUCTION_POLICY": None,
         "_POOL_V2_ADMISSIONS": admissions,
         "_elastic_review": admissions[order[-1]]["elastic_review_admitted"],
         "_producer_routes_for": (lambda core, _labels, _lane: calls.append(str(core["id"])) or []),

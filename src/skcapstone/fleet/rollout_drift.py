@@ -51,6 +51,9 @@ from .deployment_manifest import (
     CANONICAL_SYSTEMD_RELATIVE_DIR,
     PER_HOST_ARTIFACTS,
     PER_HOST_BIN_RELATIVE_DIR,
+    PRODUCTION_CANONICAL_SCRIPTS,
+    production_compatibility_shim,
+    production_script_bytes,
 )
 from .paths import paths_for_home, self_node_name
 
@@ -448,6 +451,9 @@ def detect_drift(manifest: dict[str, Any], home: Path | str, repo_root: Path | s
     """
     home = Path(home)
     repo_root = Path(repo_root)
+    # This marker selects the installed layout only. Policy parsing and worker
+    # authorization remain with the native production admission path.
+    production = (home / ".skcapstone/fleet/production.json").exists()
     host = self_node_name()
     readiness = _load_readiness_module(repo_root)
 
@@ -466,6 +472,9 @@ def detect_drift(manifest: dict[str, Any], home: Path | str, repo_root: Path | s
             continue  # legitimate local state: this role does not apply here
 
         expected_path = repo_root / CANONICAL_SYSTEMD_RELATIVE_DIR / unit_name
+        production_unit = repo_root / CANONICAL_SYSTEMD_RELATIVE_DIR / "production" / unit_name
+        if production and production_unit.is_file():
+            expected_path = production_unit
         expected_digest = _sha256_file(expected_path)
         if expected_digest is None:
             continue  # manifest names a unit the repo no longer ships
@@ -506,8 +515,40 @@ def detect_drift(manifest: dict[str, Any], home: Path | str, repo_root: Path | s
     # placed by pip, which DOES rewrite the shebang, hence the different
     # digest helper there.)
     dispatcher_in_scope, _err, _checked = scope_of(DISPATCHER_UNIT_NAME)
-    if dispatcher_in_scope is not False:
+    if production or dispatcher_in_scope is not False:
         for relative_path in PER_HOST_ARTIFACTS:
+            if production and relative_path.name in PRODUCTION_CANONICAL_SCRIPTS:
+                source = repo_root / relative_path
+                if not source.is_file():
+                    continue
+                comparisons = (
+                    (
+                        f"dispatcher:{relative_path.name}",
+                        home / ".skenv/bin" / relative_path.name,
+                        production_script_bytes(source.read_bytes(), home),
+                    ),
+                    (
+                        f"compatibility:{relative_path.name}",
+                        home / PER_HOST_BIN_RELATIVE_DIR / relative_path.name,
+                        production_compatibility_shim(relative_path.name, home),
+                    ),
+                )
+                for artifact, path, expected in comparisons:
+                    expected_digest = hashlib.sha256(expected).hexdigest()
+                    found_digest = _sha256_file(path)
+                    if found_digest != expected_digest:
+                        drifts.append(
+                            Drift(
+                                artifact,
+                                "missing" if found_digest is None else "changed",
+                                expected_digest,
+                                found_digest,
+                                host,
+                            )
+                        )
+                continue
+            if dispatcher_in_scope is False:
+                continue
             expected_digest = _sha256_file(repo_root / relative_path)
             if expected_digest is None:
                 continue  # the repo no longer ships this artifact
