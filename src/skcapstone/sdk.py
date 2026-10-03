@@ -289,6 +289,10 @@ def register_service(
     health_url: Optional[str] = None,
     pid_file: Optional[str] = None,
     home: Optional[Path] = None,
+    *,
+    readiness: bool = False,
+    expected_json: Optional[dict] = None,
+    user_agent: Optional[str] = None,
 ) -> str:
     """Advertise a service to skcapstone's discovery registry.
 
@@ -303,10 +307,17 @@ def register_service(
         health_url: Optional HTTP URL whose 2xx response means "up".
         pid_file: Optional pid-file path used as a liveness fallback.
         home: Override skcapstone root (defaults to ~/.skcapstone).
+        readiness: Require observed 2xx, without redirects.
+        expected_json: Optional exact top-level scalar readiness assertions.
+        user_agent: Explicit readiness client identifier (never a credential).
 
     Returns:
         Path to the written registry entry, as a string.
     """
+    if type(readiness) is not bool or (
+        not readiness and (expected_json is not None or user_agent is not None)
+    ):
+        raise ValueError("readiness options require readiness=True")
     base = Path(home) if home else _shared_home()
     registry = base / "registry"
     registry.mkdir(parents=True, exist_ok=True)
@@ -318,6 +329,10 @@ def register_service(
         "registered_by": _agent_name(),
         "registered_at": datetime.now(timezone.utc).isoformat(),
     }
+    if readiness:
+        entry.update(
+            health_readiness=True, health_expected_json=expected_json, health_user_agent=user_agent
+        )
     final = registry / f"{name}.json"
     tmp = registry / f".{name}.json.{uuid.uuid4().hex[:8]}.tmp"
     tmp.write_text(json.dumps(entry, indent=2) + "\n", encoding="utf-8")
