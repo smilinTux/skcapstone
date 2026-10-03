@@ -560,11 +560,15 @@ if PRODUCTION_POLICY:
     ROTATION_HOSTS=(AUTHORITY_HOST,)
     os.environ["SKFLEET_GATEWAY_URL"]=PRODUCTION_POLICY["gateway_url"]
 SKC=os.path.expanduser("~/.skenv/bin/skcapstone")
-TARGET=_SCAN_BUDGET if PRODUCTION_POLICY else _required_lane_target("SKFLEET_TARGET")
-GLM_TARGET=_SCAN_BUDGET if PRODUCTION_POLICY else _required_lane_target("SKFLEET_GLM_TARGET")
-QWEN_TARGET=_SCAN_BUDGET if PRODUCTION_POLICY else _required_lane_target("SKFLEET_QWEN_TARGET", default="6")
-KIMI_TARGET=0 if PRODUCTION_POLICY else _required_lane_target("SKFLEET_KIMI_TARGET", default="0")
-MAX_LAUNCH=_SCAN_BUDGET if PRODUCTION_POLICY else int(os.environ.get("SKFLEET_MAX_LAUNCH","11"))
+if PRODUCTION_POLICY:
+    TARGET=GLM_TARGET=QWEN_TARGET=MAX_LAUNCH=_SCAN_BUDGET
+    KIMI_TARGET=0
+else:
+    TARGET=_required_lane_target("SKFLEET_TARGET")
+    GLM_TARGET=_required_lane_target("SKFLEET_GLM_TARGET")
+    QWEN_TARGET=_required_lane_target("SKFLEET_QWEN_TARGET", default="6")
+    KIMI_TARGET=_required_lane_target("SKFLEET_KIMI_TARGET", default="0")
+    MAX_LAUNCH=int(os.environ.get("SKFLEET_MAX_LAUNCH","11"))
 _MAX_CLAIMS=int(os.environ.get("SKFLEET_MAX_CLAIMS","5"))
 MAX_CANDIDATE_SCAN=max(
     MAX_LAUNCH,
