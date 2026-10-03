@@ -546,8 +546,22 @@ def consume_one(
             workspace = paths.root / "workspaces" / owner
             if not store.actuation_allowed(paths):
                 return None
-            _request_matches_current_card(coordination_home, request)
-            materializer(request, workspace)
+            try:
+                _request_matches_current_card(coordination_home, request)
+                materializer(request, workspace)
+            except BuilderDispatchError as exc:
+                # Record an unavailable exact source binding and continue
+                # with other eligible requests instead of crashing sknoded.
+                _write_status(
+                    paths,
+                    node,
+                    request,
+                    "failed",
+                    attempt=attempt,
+                    error=str(exc),
+                    claim_released=False,
+                )
+                continue
             if not store.actuation_allowed(paths):
                 return _write_status(
                     paths,

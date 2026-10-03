@@ -147,13 +147,17 @@ def test_post_offer_card_amendment_blocks_materialization_and_claim(
         "claim_task",
         lambda *_args: pytest.fail("amended card was claimed"),
     )
-    with pytest.raises(builder_dispatch.BuilderDispatchError, match="changed after dispatch"):
-        builder_dispatch.consume_one(
-            paths,
-            tmp_path,
-            "node-ziowk01",
-            materializer=lambda *_args: pytest.fail("amended source was materialized"),
-        )
+    assert builder_dispatch.consume_one(
+        paths,
+        tmp_path,
+        "node-ziowk01",
+        materializer=lambda *_args: pytest.fail("amended source was materialized"),
+    ) is None
+    status = builder_dispatch._load(
+        builder_dispatch.status_path(paths, "node-ziowk01", "24b00003")
+    )
+    assert status["state"] == "failed"
+    assert status["error"] == "offered card changed after dispatch request"
 
 
 def test_reoffer_after_source_amendment_mints_a_new_bound_request(
