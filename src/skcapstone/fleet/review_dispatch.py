@@ -19,8 +19,9 @@ from ..seat_runtime import (
     recommend_reviewer,
     review_state_revision,
 )
-from . import builder_dispatch as dispatch, production_builder as production, store
-from .paths import FleetPaths
+from . import builder_dispatch as dispatch
+from . import production_builder as production
+from . import store
 from .production_policy import require_destination, validate_execution_policy
 from .production_review import producer_family, provider_family
 from .production_review_finish import native_command, read_json
@@ -232,7 +233,10 @@ def offer_review(paths, home, card_id, *, writer):
         # Any generation, including expired or orphaned custody, suppresses
         # reassignment. An operator must resolve uncertain custody explicitly.
         existing = list((paths.root / "dispatch").glob("*/" + card_id + ".json"))
-        if existing:
+        offered = any(
+            e.get("action") == "remote_review_offer" for e in CardStore(home)._read_events(card_id)
+        )
+        if existing or offered or card_id in dispatch.held_card_ids(paths):
             return None
         rollout = policy["remote_review"]
         if rollout["card_ids"] is not None and card_id not in rollout["card_ids"]:
@@ -324,6 +328,13 @@ def validate_request(paths, home, node, request, *, claimed=False):
     if request["node"] != node or not _capable(paths, node):
         raise ValueError("destination consumer capability or node differs")
     production.validate_request(paths, node, request, local=True)
+    if not any(
+        view.name == node
+        for view in production.ready_nodes(
+            paths, dispatch._ready_builders(paths), policy, request["card_id"]
+        )
+    ):
+        raise ValueError("destination no longer ready or resource feasible")
     if not store.actuation_allowed(paths):
         raise ValueError("fleet actuation is frozen")
     _recorded(home, request)
@@ -431,8 +442,11 @@ def consume_review(paths, home, node, request, *, launcher=None):
 def reconcile_review(paths, home, request, status):
     """Retain every uncertain generation; exit alone never completes a review."""
     from .production_review_custody import read_exit, unit_terminal
-    from .source_bundle import export_review_packet
+    from .source_bundle import export_review_packet, retain_review_packet
 
+    process = dispatch._PROCESSES.get(request["request_id"])
+    if process is not None and hasattr(process, "poll") and process.poll() is not None:
+        dispatch._PROCESSES.pop(request["request_id"], None)
     if status.get("request_id") != request["request_id"]:
         raise ValueError("different review generation retains custody")
     if status.get("state") in {"awaiting-review-acceptance", "review-fail", "review-blocked"}:
@@ -447,11 +461,7 @@ def reconcile_review(paths, home, request, status):
     packet = export_review_packet(
         home, Path(terminal["workspace"]), proposal_binding(request), execution=execution
     )
-    from .production_review_evidence import inspect_proposal
-
-    verdict = inspect_proposal(Path(terminal["workspace"]), **proposal_binding(request))[
-        "proposal"
-    ]["verdict"]
+    verdict = packet["manifest"]["verdict"].split()[0]
     return dispatch._write_status(
         paths,
         request["node"],
@@ -463,7 +473,7 @@ def reconcile_review(paths, home, request, status):
         execution=execution,
         terminal=terminal,
         terminal_observation=proof,
-        review_packet=packet,
+        review_packet=retain_review_packet(home, packet),
         admission=status["admission"],
         route_snapshot=status["route_snapshot"],
         acknowledgment=status["acknowledgment"],
@@ -482,124 +492,8 @@ def proposal_binding(request):
     )
 
 
-def validate_execution(home, policy, launch, card, event, *, recorded=True):
-    """Verify native offer, recommendation, claim, admission and unit provenance."""
-    from .production_admission import MARKER, _digest, _intent, _reservation_id
-    from .source_bundle import _once
+def validate_execution(*args, **kwargs):
+    """Use the shared receipt validator before recording a native launch."""
+    from .production_receipts import validate_review_execution
 
-    execution = event["execution"]
-    node = execution["node"]
-    if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", node) or ".." in node:
-        raise ValueError("remote execution node invalid")
-    paths = FleetPaths(Path(home) / "fleet")
-    request = read_json(dispatch.request_path(paths, node, card.id))
-    validate_contract(request, policy, host=launch["host"], historical=True)
-    _recorded(home, request)
-    status = dispatch._validated_status(dispatch.status_path(paths, node, card.id), paths, node)
-    if status is None:
-        raise ValueError("native destination custody missing")
-    bound = production.node_binding(paths, node, request["policy"])
-    expected = dict(
-        request_id=request["request_id"],
-        request_sha256=production.digest(request),
-        authority=policy["authority_host"],
-        node=node,
-        host=bound["host"],
-        policy_sha256=request["production"]["policy_sha256"],
-        work_kind="review",
-        unit="skfleet-worker-" + request["production"]["family"] + "-" + card.id + ".service",
-    )
-    if (
-        event.get("schema") != "skfleet.review-assignment-launch/v3"
-        or event.get("action") != "review_assignment_launch"
-        or event.get("launched") is not True
-        or not {"review", "seat-seraph", "source-only"} <= set(card.labels)
-        or any(execution.get(k) != v for k, v in expected.items())
-        or execution != status.get("execution")
-        or launch["host"] != execution["host"]
-        or launch["owner"] != request["reviewer"]
-        or launch["owner"] != card.owner
-        or launch["revision"] != card.meta.get("_claim_revision")
-        or event.get("writer") != launch["owner"]
-        or event.get("reviewer") != launch["owner"]
-        or event.get("claim_revision") != launch["revision"]
-        or event.get("observed_state_revision") != request["review_revision"]
-        or status.get("request_id") != request["request_id"]
-        or status.get("owner") != launch["owner"]
-        or status.get("claim_revision") != launch["revision"]
-        or status.get("writer", {}).get("role") != "sknoded"
-        or status.get("writer", {}).get("node") != node
-        or not status.get("writer", {}).get("identity")
-        or _source(home, card) != request["source"]
-    ):
-        raise ValueError("remote execution provenance differs")
-    binding = dict(
-        card_id=card.id,
-        owner=launch["owner"],
-        claim_revision=launch["revision"],
-        request_id=request["request_id"],
-        request_sha256=production.digest(request),
-        policy_sha256=request["production"]["policy_sha256"],
-        work_kind="review",
-    )
-    intent = _intent(
-        request["policy"], execution["host"], execution["unit"], binding, status["command"]
-    )
-    ack = status["acknowledgment"]
-    if (
-        status["admission"] != intent
-        or execution["admission_id"] != _reservation_id(intent)
-        or execution["admission_sha256"] != _digest(intent)
-        or not re.fullmatch(r"[0-9a-f]{32}", execution["invocation"])
-        or ack.get("Id") != execution["unit"]
-        or ack.get("LoadState") != "loaded"
-        or ack.get("InvocationID") != execution["invocation"]
-        or ack.get(MARKER) != execution["admission_id"]
-        or int(ack.get("MemoryMax", "0")) != request["production"]["resources"]["memory_max_bytes"]
-    ):
-        raise ValueError("remote service acknowledgment or admission differs")
-    events = CardStore(home)._read_events(card.id)
-    recommendations = [
-        e
-        for e in events
-        if e.get("action") == "review_assignment_recommendation"
-        and e.get("recommendation_id") == event.get("recommendation_id")
-    ]
-    if (
-        len(recommendations) != 1
-        or recommendations[0].get("writer") != "link"
-        or recommendations[0].get("reviewer") != request["reviewer"]
-        or recommendations[0].get("author") != request["source"]["owner"]
-        or recommendations[0].get("evidence_sha256") != request["source"]["evidence_sha256"]
-        or recommendations[0].get("observed_state_revision") != request["review_revision"]
-    ):
-        raise ValueError("remote recommendation missing or replayed")
-    launches = [
-        e
-        for e in events
-        if e.get("action") == "review_assignment_launch"
-        and (
-            e.get("claim_revision") == launch["revision"]
-            or e.get("recommendation_id") == event.get("recommendation_id")
-        )
-    ]
-    if recorded and (len(launches) != 1 or launches[0] != event):
-        raise ValueError("one exact native remote launch required")
-    if not recorded and launches:
-        raise ValueError("remote recommendation already consumed")
-    # Replicate the immutable sealed route bytes through destination status,
-    # relocating only the local file reference, never its hash or contents.
-    snapshot = status["route_snapshot"]
-    raw = (json.dumps(snapshot, sort_keys=True, separators=(",", ":")) + "\n").encode()
-    reference = dict(event["route_identity"]["production_snapshot"])
-    from .source_bundle import _sha
-
-    if (
-        _sha(raw) != reference["sha256"]
-        or snapshot["capacity_revision"] != reference["capacity_revision"]
-    ):
-        raise ValueError("remote route snapshot differs")
-    path = Path(home) / "evidence/production-routes" / (reference["capacity_revision"] + ".json")
-    _once(path, raw)
-    reference["path"] = str(path)
-    return reference
+    return validate_review_execution(*args, **kwargs)
