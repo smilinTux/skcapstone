@@ -756,7 +756,7 @@ checks:
   - name: version stays setuptools-scm derived, no literal, and still no package.json
     run: grep -qxF 'dynamic = ["version"]' pyproject.toml && ! grep -qE '^version\s*=' pyproject.toml && ! test -f package.json
   - name: pytest.yml is still the real test gate and is not masked
-    run: grep -qF 'python scripts/ci/run-pytest-batches.py --coverage tests/' .github/workflows/pytest.yml && grep -qF 'not integration and not e2e' scripts/ci/run-pytest-batches.py && ! grep -vE '^\s*#' .github/workflows/pytest.yml | grep -qE '\|\| true|continue-on-error:\s*true'
+    run: grep -qF 'python -m pytest tests/' .github/workflows/pytest.yml && grep -qF 'not integration and not e2e' .github/workflows/pytest.yml && ! grep -vE '^\s*#' .github/workflows/pytest.yml | grep -qE '\|\| true|continue-on-error:\s*true'
   - name: ci.yml still runs NO tests, as section 4 warns
     run: ! grep -qE '^\s+run:.*pytest' .github/workflows/ci.yml
   - name: skcoord is still a hard dep and coordination is still a shim over it

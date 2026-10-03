@@ -27,7 +27,7 @@ def test_production_family_exclusive_eligibility_preserves_legacy_and_host_exclu
 
 
 @pytest.fixture
-def production_setup(paths, operator, monkeypatch, tmp_path):
+def production_setup(paths, operator, monkeypatch, tmp_path, qualified_runtime):
     value = {
         "schema": "skfleet.production/v1",
         "authority_host": "control",

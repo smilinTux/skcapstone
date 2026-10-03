@@ -55,4 +55,4 @@ done < <(git diff --name-only --diff-filter=ACMRT "$base" "$head" -- tests)
 mapfile -t tests < <(printf '%s\n' "${tests[@]}" | sort -u)
 printf 'Python 3.11 compatibility tests (%d files):\n' "${#tests[@]}"
 printf '  %s\n' "${tests[@]}"
-"$python_bin" scripts/ci/run-pytest-batches.py "${tests[@]}"
+"$python_bin" -m pytest "${tests[@]}" --strict-markers -m "not integration and not e2e"
