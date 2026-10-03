@@ -243,46 +243,6 @@ def register_coord_commands(main: click.Group) -> None:
 
         console.print(json.dumps(diagnose(Path(home).expanduser(), task_id), sort_keys=True))
 
-    @coord.command("request-help")
-    @click.argument("parent_id")
-    @click.option("--agent", required=True, help="Current parent owner.")
-    @click.option("--expected-claim-revision", required=True, help="Exact parent claim revision.")
-    @click.option(
-        "--packet", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path)
-    )
-    @click.option("--home", default=AGENT_HOME, type=click.Path())
-    @click.option(
-        "--dry-run", is_flag=True, help="Validate and show the helper without creating it."
-    )
-    def coord_request_help(parent_id, agent, expected_claim_revision, packet, home, dry_run):
-        """Request one bounded source helper while retaining parent ownership.
-
-        PACKET is JSON with request_id, title ([S] or [M]), objective,
-        criteria, allowed_paths, and verification_commands. Empty allowed_paths
-        means read-only source work. The exact request can be retried safely.
-        Helpers inherit source, dependencies, and restrictions; normal fleet
-        dispatch owns launch. Creating a helper never completes its parent.
-        """
-        from ..coord_helpers import load_packet, request_help
-        from ..jarvis_emergency import authorize_coord_mutation
-        from ..seat_boundaries import Action
-
-        validate_task_id(parent_id)
-        validate_agent_name(agent)
-        authorize_coord_mutation(agent, Action.CREATE_CARD, parent_id, None, None)
-        try:
-            report = request_help(
-                Path(home).expanduser(),
-                parent_id,
-                agent,
-                expected_claim_revision,
-                load_packet(packet),
-                dry_run=dry_run,
-            )
-        except (OSError, RuntimeError, ValueError) as exc:
-            raise click.ClickException(str(exc)) from None
-        click.echo(json.dumps(report, sort_keys=True, indent=2))
-
     @coord.command("slice-preflight")
     @click.argument("task_id")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
