@@ -71,6 +71,7 @@ def test_releases_four_finished_claims_with_exact_cas_and_keeps_evidence(tmp_pat
         "log": lambda *_args: None,
         "d": str(tmp_path),
     }
+    namespace["_current_claim"] = lambda card: (f"pi-seraph-chiap08-{card}", 1.0)
     _load("release_finished_review_claims", namespace)
 
     assert namespace["release_finished_review_claims"]() == 4
@@ -172,6 +173,7 @@ def test_live_process_and_changed_generation_are_never_released(tmp_path: Path) 
         "log": lambda *_args: None,
         "d": str(tmp_path),
     }
+    namespace["_current_claim"] = lambda card: (f"pi-seraph-chiap08-{card}", 1.0)
     _load("release_finished_review_claims", namespace)
 
     assert namespace["release_finished_review_claims"]() == 0
@@ -218,6 +220,7 @@ def test_incomplete_pass_records_rejection_without_release(tmp_path: Path) -> No
         "d": str(tmp_path),
     }
     _load("_record_review_completion_rejection", namespace)
+    namespace["_current_claim"] = lambda card: (f"pi-seraph-chiap08-{card}", 1.0)
     _load("release_finished_review_claims", namespace)
 
     assert namespace["release_finished_review_claims"]() == 0
