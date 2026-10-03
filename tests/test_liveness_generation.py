@@ -4,6 +4,7 @@ import ast
 import json
 import os
 import subprocess
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -317,7 +318,7 @@ def test_real_generated_beat_records_wrapper_parent_and_invocation(tmp_path):
 
 
 def test_repeated_stale_and_current_observations_do_not_break_guarded_handoff(tmp_path):
-    """Exercise installed native revision guards against the isolated fixture board."""
+    """Exercise candidate native revision guards against the isolated fixture board."""
     from skcapstone.seraph_review_cardstore import LiveCardStoreGateway
 
     store = create_card(tmp_path)
@@ -329,7 +330,9 @@ def test_repeated_stale_and_current_observations_do_not_break_guarded_handoff(tm
         assert not publish(tmp_path)
     assert gateway.read_card(CARD).revision == baseline
     command = [
-        str(Path.home() / ".skenv/bin/skcapstone"),
+        sys.executable,
+        "-m",
+        "skcapstone",
         "coord",
         "link",
         CARD,
@@ -346,7 +349,12 @@ def test_repeated_stale_and_current_observations_do_not_break_guarded_handoff(tm
         "--home",
         str(tmp_path),
     ]
-    environment = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = os.pathsep.join(
+        filter(
+            None, (str(Path(__file__).resolve().parents[1] / "src"), environment.get("PYTHONPATH"))
+        )
+    )
     started, stopped = threading.Event(), threading.Event()
 
     def observe_during_handoff():
