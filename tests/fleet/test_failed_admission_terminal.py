@@ -99,6 +99,7 @@ def test_exact_failed_spawn_finalizes_without_replay_or_claim_release(failed):
     assert not (failed.directory / "observed.json").exists()
     with pytest.raises(admission.AdmissionError, match="already reserved"):
         reserve(failed.home)
+    failed.card.meta["_claim_revision"] = "new"
     reserve(failed.home, dict(BINDING, claim_revision="new"))
 
 

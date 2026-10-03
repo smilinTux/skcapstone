@@ -2348,8 +2348,9 @@ def publish_live(sessions, units=()):
                        "worker remains live; bounded escalation recorded"
                     % (HOST, _cid, worker, path, int(age)))
     try:
-        os.makedirs(LIVE, exist_ok=True)
-        p = os.path.join(LIVE, HOST + ".json")
+        lane_directory = os.path.join(os.path.dirname(LIVE), "fleet-lanes")
+        os.makedirs(lane_directory, exist_ok=True)
+        p = os.path.join(lane_directory, HOST + ".json")
         tmp = p + ".new"
         workers = []
         for card in cards:
@@ -2390,7 +2391,9 @@ def reporting_capacity():
     """Return total free lanes advertised by each currently reporting host."""
     capacity = {}
     now = time.time()
-    for path in glob.glob(os.path.join(LIVE, "*.json")):
+    lane_directory = os.path.join(os.path.dirname(LIVE), "fleet-lanes")
+    for path in (glob.glob(os.path.join(LIVE, "*.json")) +
+                 glob.glob(os.path.join(lane_directory, "*.json"))):
         try:
             with open(path, encoding="utf-8") as fh:
                 snap = json.load(fh)
@@ -2437,6 +2440,11 @@ def live_report_health(expected_hosts=None, now=None):
         if age > LIVE_FRESH:
             faults.append({"host": host, "reason": "stale",
                            "age_seconds": int(age), "detail": ""})
+            continue
+        if snap.get("complete") is not True:
+            faults.append({"host": host, "reason": "incomplete",
+                           "age_seconds": int(age),
+                           "detail": "tmux and systemd completeness not established"})
             continue
         stamps.append(ts)
         reporting.add(host)
@@ -4266,6 +4274,8 @@ def _blocker_change_epoch(cid,verdict_ts,val):
         changes=[_human_resolution_epoch(cid,ref,threshold) for ref in referents]
         return max(changes) if changes and all(changes) else 0
     if category=="capability":
+        if referents==("git-author-identity",):
+            return _authored_change_epoch(cid,threshold)
         if not all(_AC_REFERENT_RE.match(ref) or ref=="free" for ref in referents):
             return 0
         return _authored_change_epoch(cid,threshold)
@@ -4479,6 +4489,11 @@ def blocked_backoff(cid):
         # Codex. After that stronger route has also returned capability, park the
         # card until authored state changes so the fleet does not loop forever.
         if reason[0]=="capability":
+            # Operational identity needs an authored correction, not a model
+            # escalation. Consume only one exact retry for that generation.
+            if reason[1]==("git-author-identity",):
+                change=_blocker_change_epoch(cid,ts,val)
+                return not (change and _wake_retry_available(cid,change))
             if not all(_AC_REFERENT_RE.match(ref) or ref=="free" for ref in reason[1]):
                 return True
             strong_at=_strong_launched_at.get(cid,0)
@@ -6273,6 +6288,35 @@ def _provisional_candidate(parent, outcome_ts, token):
     return producer, verified[0][0], verified[0][1], commit, tree, ref
 
 
+def _production_review_candidate_shape(parent, candidate):
+    """Reject impossible production handoffs before fresh custody validation.
+
+    This is an exclusion filter only. Surviving candidates still run every
+    native source, process, policy and exact-generation check in the plan.
+    """
+    _core, state = _authoritative_card_state(parent)
+    producer = candidate[0]
+    claim = state.get("claim_revision")
+    labels = state.get("labels", ())
+    if (state.get("owner") != producer or not claim or state.get("archived")
+            or state.get("status") not in {"ready", "doing", "review"}
+            or "source-only" not in labels or "review" in labels):
+        return False
+    local_launch = any(
+        event.get("action") == "production_assignment_launch"
+        and event.get("schema") == "skfleet.production-assignment-launch/v1"
+        and event.get("writer") == producer and event.get("worker") == producer
+        and event.get("claim_revision") == claim and event.get("launched") is True
+        for event in event_rows(parent)
+    )
+    # Native remote custody may be represented by request/status receipts
+    # instead of a local launch event. File presence only preserves a candidate;
+    # the unchanged full gate validates every byte of that alternate custody.
+    return local_launch or any(
+        (Path(CARDS).parent / "fleet" / "dispatch").glob("*/" + parent + ".json")
+    )
+
+
 def _production_review_plan(parent, outcome_ts, candidate):
     """Bind the qualified native review identity to exact retained source custody."""
     try:
@@ -6282,6 +6326,8 @@ def _production_review_plan(parent, outcome_ts, candidate):
         from skcapstone.review_replacement import replacement_binding
         from skcapstone.seraph_review_cardstore import LiveCardStoreGateway
 
+        if not _production_review_candidate_shape(parent, candidate):
+            return None
         home = Path(CARDS).parent
         gateway = LiveCardStoreGateway(home)
         snapshot = gateway.read_card(parent)
@@ -8433,6 +8479,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
       "  dependency  referent card:<id>      another card must complete first\n"
       "  human       referent approval:<what> only a person can supply this\n"
       "  capability  referent ac:<n> or free  the card is solvable, you could not do it\n"
+      "  capability  referent git-author-identity  missing effective Git identity; waits for authored correction\n"
       "  card        referent ac:<n>          a criterion is unsatisfiable AS WRITTEN\n"
       "Rules that make the value trustworthy:\n"
       "- Cite a referent that EXISTS. A dependency you name is checked against the\n"
@@ -9087,7 +9134,16 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         except AdmissionError:
             log(d,"NODE_ADMISSION_CUSTODY_REQUIRED|%s|%s"%(HOST,cid))
             continue
-    r=subprocess.run(_launch_argv,capture_output=True,text=True)
+    if PRODUCTION_POLICY:
+        from skcapstone.fleet.production_admission import start_reserved
+        try:
+            r=start_reserved(Path(HOME)/".skcapstone", HOST, _launch_argv,
+                lambda argv: subprocess.run(argv,capture_output=True,text=True))
+        except AdmissionError:
+            log(d,"NODE_START_CUSTODY_REQUIRED|%s|%s"%(HOST,cid))
+            continue
+    else:
+        r=subprocess.run(_launch_argv,capture_output=True,text=True)
     ok = r.returncode==0
     launch_identity=(
         _launch_claim_fields(name,claimed_revision,ok)

@@ -3,6 +3,7 @@
 import multiprocessing
 
 import pytest
+from skcoord.card_store import CardCore, CardStore
 
 from skcapstone.fleet import production_admission as admission
 
@@ -32,8 +33,11 @@ def command(unit=UNIT):
 
 @pytest.fixture
 def capacity(tmp_path, monkeypatch):
-    """One pending allowance fits; no real systemd or host state is accessed."""
+    """One pending allowance fits under a real native claim."""
     (tmp_path / "fleet").mkdir()
+    CardStore(tmp_path).create(CardCore(id=BINDING["card_id"], title="Synthetic resource test",
+                                      initial_owner=BINDING["owner"],
+                                      initial_claim_revision=BINDING["claim_revision"]))
     monkeypatch.setattr(admission.socket, "gethostname", lambda: HOST)
     monkeypatch.setattr(admission, "active_resource_units", lambda home: [])
     monkeypatch.setattr(
@@ -60,7 +64,7 @@ def test_crash_before_spawn_keeps_capacity_and_denies_replay(capacity):
     with pytest.raises(admission.AdmissionError, match="already reserved"):
         reserve(capacity)
     with pytest.raises(admission.AdmissionError, match="capacity"):
-        reserve(capacity, dict(BINDING, claim_revision="other"), "skfleet-builder-other.service")
+        reserve(capacity, dict(BINDING, attempt="other"), "skfleet-builder-other.service")
 
 
 def _contend(home, barrier, queue, number):
@@ -68,7 +72,7 @@ def _contend(home, barrier, queue, number):
     barrier.wait()
     try:
         reserve(
-            home, dict(BINDING, claim_revision=str(number)), f"skfleet-builder-{number}.service"
+            home, dict(BINDING, attempt=str(number)), f"skfleet-builder-{number}.service"
         )
         queue.put("reserved")
     except admission.AdmissionError:
@@ -142,20 +146,20 @@ def test_observed_service_transfers_charge_without_double_counting(capacity, mon
         lambda policy, host, rows: (snapshots.append(rows) or False, "capacity"),
     )
     with pytest.raises(admission.AdmissionError, match="capacity"):
-        reserve(capacity, dict(BINDING, claim_revision="other"), "skfleet-builder-other.service")
+        reserve(capacity, dict(BINDING, attempt="other"), "skfleet-builder-other.service")
     assert snapshots == [[{"unit": UNIT}]]
     directory = capacity / "fleet/resource-admission" / HOST / identity
     assert admission.read_json(directory / "observed.json")["invocation"] == "a" * 32
     # A crash after durable acknowledgment leaves the existing live cgroup charged.
     with pytest.raises(admission.AdmissionError, match="capacity"):
-        reserve(capacity, dict(BINDING, claim_revision="other"), "skfleet-builder-other.service")
+        reserve(capacity, dict(BINDING, attempt="other"), "skfleet-builder-other.service")
     assert snapshots[-1] == [{"unit": UNIT}]
     # Normal collected exit is no longer pending, but the same generation cannot replay.
     monkeypatch.setattr(admission, "active_resource_units", lambda home: [])
     monkeypatch.setattr(admission, "local_worker_admission", lambda *args: (True, "capacity"))
     with pytest.raises(admission.AdmissionError, match="already reserved"):
         reserve(capacity)
-    reserve(capacity, dict(BINDING, claim_revision="new-generation"))
+    reserve(capacity, dict(BINDING, attempt="new-generation"))
 
 
 @pytest.mark.parametrize(
@@ -174,7 +178,7 @@ def test_unknown_or_reused_service_never_releases_pending_charge(capacity, monke
     monkeypatch.setattr(admission, "active_resource_units", lambda home: [{"unit": UNIT}])
     monkeypatch.setattr(admission, "unit_state", lambda unit: live_state(unit, identity) | change)
     with pytest.raises(admission.AdmissionError):
-        reserve(capacity, dict(BINDING, claim_revision="other"), "skfleet-builder-other.service")
+        reserve(capacity, dict(BINDING, attempt="other"), "skfleet-builder-other.service")
     assert not list((capacity / "fleet/resource-admission").glob("*/*/observed.json"))
 
 
@@ -187,10 +191,10 @@ def test_crash_before_ack_is_reconciled_by_exact_live_observation(capacity, monk
         admission, "write_once", lambda *args: (_ for _ in ()).throw(OSError("crash"))
     )
     with pytest.raises(admission.AdmissionError):
-        reserve(capacity, dict(BINDING, claim_revision="other"), "skfleet-builder-other.service")
+        reserve(capacity, dict(BINDING, attempt="other"), "skfleet-builder-other.service")
     monkeypatch.setattr(admission, "write_once", original)
     monkeypatch.setattr(admission, "local_worker_admission", lambda *args: (True, "capacity"))
-    reserve(capacity, dict(BINDING, claim_revision="other"), "skfleet-builder-other.service")
+    reserve(capacity, dict(BINDING, attempt="other"), "skfleet-builder-other.service")
     assert (capacity / "fleet/resource-admission" / HOST / identity / "observed.json").exists()
 
 
@@ -207,7 +211,7 @@ def test_interrupted_intent_publication_denies_new_launches(capacity, monkeypatc
     with pytest.raises(admission.AdmissionError):
         reserve(capacity)
     with pytest.raises(admission.AdmissionError):
-        reserve(capacity, dict(BINDING, claim_revision="other"), "skfleet-builder-other.service")
+        reserve(capacity, dict(BINDING, attempt="other"), "skfleet-builder-other.service")
 
 
 @pytest.mark.parametrize(
