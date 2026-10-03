@@ -24,10 +24,17 @@ def qualified(tmp_path, monkeypatch):
     monkeypatch.setattr(plan, "PREFIX", prefix)
     monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "a" * 64)
     policy = {"authority_host": socket.gethostname().split(".")[0].lower()}
-    core = {"id": "abcd1234", "meta": {"repository": "https://example.org/public.git"},
-            "acceptance_criteria": ["Run both parser regression cases."]}
-    recipe = {"pytest": {"tests/fleet/test_parser.py": 2}, "compile": [],
-              "lint": [], "changelog": False}
+    core = {
+        "id": "abcd1234",
+        "meta": {"repository": "https://example.org/public.git"},
+        "acceptance_criteria": ["Run both parser regression cases."],
+    }
+    recipe = {
+        "pytest": {"tests/fleet/test_parser.py": 2},
+        "compile": [],
+        "lint": [],
+        "changelog": False,
+    }
     path = profile.qualify_profile(home, core, policy, recipe, "operator", "b" * 64)
     return home, core, policy, recipe, path
 
@@ -73,19 +80,34 @@ def test_hyphenated_targets_preserve_fixed_argv():
     }
     python = str(plan.PREFIX / "bin/python")
     assert profile.recipe_checks(recipe) == [
-        {"id": "pytest", "argv": [python, "-m", "pytest", "-q",
-         "-p", "no:cacheprovider", "--junitxml=/output/pytest.xml",
-         "tests/fleet-checks/test_parser-case.py"]},
-        {"id": "compile", "argv": [python, "-m", "py_compile",
-         "scripts/fleet/skfleet-working.py"]},
-        {"id": "lint", "argv": [python, "-m", "ruff", "check",
-         "src/package-name/parser-check.py"]},
+        {
+            "id": "pytest",
+            "argv": [
+                python,
+                "-m",
+                "pytest",
+                "-q",
+                "-p",
+                "no:cacheprovider",
+                "--junitxml=/output/pytest.xml",
+                "tests/fleet-checks/test_parser-case.py",
+            ],
+        },
+        {
+            "id": "compile",
+            "argv": [python, "-m", "py_compile", "scripts/fleet/skfleet-working.py"],
+        },
+        {
+            "id": "lint",
+            "argv": [python, "-m", "ruff", "check", "src/package-name/parser-check.py"],
+        },
         {"id": "changelog", "argv": [python, "scripts/changelog_fragments.py", "--check"]},
     ]
 
 
-@pytest.mark.parametrize("bad", ["../tests/a.py", "-p", "tests/a.py::test_a",
-                                  "tests/a.py;curl", "/tmp/test_a.py"])
+@pytest.mark.parametrize(
+    "bad", ["../tests/a.py", "-p", "tests/a.py::test_a", "tests/a.py;curl", "/tmp/test_a.py"]
+)
 def test_no_shell_options_or_model_command_syntax(qualified, bad):
     recipe = copy.deepcopy(qualified[3])
     recipe["pytest"] = {bad: 1}
@@ -94,14 +116,27 @@ def test_no_shell_options_or_model_command_syntax(qualified, bad):
 
 
 @pytest.mark.parametrize("category", ["pytest", "compile", "lint"])
-@pytest.mark.parametrize("bad", [
-    "tests/../test-case.py", "tests/sub/../../test-case.py",
-    "other/test-case.py", "/tests/test-case.py", "--test-case.py",
-    "tests//test-case.py", "tests/test-case.py;id", "tests/$(id).py",
-    "tests/`id`.py", "tests/test case.py", "tests/test-case.py\n",
-    "tests/test-case*.py", "tests/test-case.py::test_one",
-    "tests/" + "a" * 232 + ".py", None, 17,
-])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "tests/../test-case.py",
+        "tests/sub/../../test-case.py",
+        "other/test-case.py",
+        "/tests/test-case.py",
+        "--test-case.py",
+        "tests//test-case.py",
+        "tests/test-case.py;id",
+        "tests/$(id).py",
+        "tests/`id`.py",
+        "tests/test case.py",
+        "tests/test-case.py\n",
+        "tests/test-case*.py",
+        "tests/test-case.py::test_one",
+        "tests/" + "a" * 232 + ".py",
+        None,
+        17,
+    ],
+)
 def test_hyphen_support_keeps_unsafe_targets_refused(qualified, category, bad):
     """Every target category retains the same path and type boundaries."""
     recipe = copy.deepcopy(qualified[3])
@@ -167,11 +202,13 @@ def test_junit_requires_each_qualified_file_without_failures_or_skips(qualified)
     _, _, _, recipe, path = qualified
     value = json.loads(path.read_text())
     root = ElementTree.Element("testsuites")
-    suite = ElementTree.SubElement(root, "testsuite", tests="2", failures="0",
-                                   errors="0", skipped="0")
+    suite = ElementTree.SubElement(
+        root, "testsuite", tests="2", failures="0", errors="0", skipped="0"
+    )
     for index in range(2):
-        ElementTree.SubElement(suite, "testcase", classname="tests.fleet.test_parser",
-                               name=f"test_{index}")
+        ElementTree.SubElement(
+            suite, "testcase", classname="tests.fleet.test_parser", name=f"test_{index}"
+        )
     raw = ElementTree.tostring(root)
     assert plan.junit_counts(raw, value)["total"] == 2
     value["recipe"]["pytest"]["tests/fleet/test_other.py"] = 1
@@ -183,24 +220,33 @@ def test_junit_requires_each_qualified_file_without_failures_or_skips(qualified)
         plan.junit_counts(ElementTree.tostring(root), value)
 
 
-def test_auto_seals_clean_exact_candidate_and_refuses_profile_drift(setup, monkeypatch):  # noqa:F811
+def test_auto_seals_clean_exact_candidate_and_refuses_profile_drift(
+    setup, monkeypatch
+):  # noqa:F811
     s = setup
     s.plan_path.unlink()  # Fixture-only removal of the legacy one-candidate plan.
-    core = {"id": s.binding["source_card"],
-            "meta": {"repository": "https://example.org/public.git"},
-            "acceptance_criteria": ["Run the parser checks."]}
+    core = {
+        "id": s.binding["source_card"],
+        "meta": {"repository": "https://example.org/public.git"},
+        "acceptance_criteria": ["Run the parser checks."],
+    }
     binding = dict(s.binding, criteria_sha256=profile.contract(core)["criteria_sha256"])
-    recipe = {"pytest": {"tests/test_parser-case.py": 1},
-              "compile": ["scripts/fleet/skfleet-working.py"],
-              "lint": ["src/parser-case.py"], "changelog": False}
+    recipe = {
+        "pytest": {"tests/test_parser-case.py": 1},
+        "compile": ["scripts/fleet/skfleet-working.py"],
+        "lint": ["src/parser-case.py"],
+        "changelog": False,
+    }
     path = profile.qualify_profile(s.home, core, s.policy, recipe, "operator", "b" * 64)
-    profile.seal_candidate(s.home, binding, s.workspace, s.policy,
-                           "https://example.org/public.git")
+    profile.seal_candidate(
+        s.home, binding, s.workspace, s.policy, "https://example.org/public.git"
+    )
     sealed, plan_path, before = plan.load_plan(s.home, binding)
     assert sealed["binding"] == binding
     assert sealed["checks"] == profile.recipe_checks(recipe)
-    profile.seal_candidate(s.home, binding, s.workspace, s.policy,
-                           "https://example.org/public.git")
+    profile.seal_candidate(
+        s.home, binding, s.workspace, s.policy, "https://example.org/public.git"
+    )
     assert plan.sha(plan_path.read_bytes()) == before
     value = json.loads(path.read_text())
     value["recipe"]["pytest"]["tests/test_parser-case.py"] = 2
@@ -214,45 +260,75 @@ def test_actual_local_preclaim_block_reads_current_contract(qualified, changed):
     home, core, policy, _, _ = qualified
     script = Path(__file__).parents[2] / "scripts/fleet/skfleet-rotate.py"
     tree = ast.parse(script.read_text())
-    block = next(node for node in ast.walk(tree)
-                 if isinstance(node, ast.If) and "PRODUCTION_POLICY" in ast.unparse(node.test)
-                 and any(isinstance(n, ast.Name) and n.id == "_test_current"
-                         for n in ast.walk(node)))
+    block = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and "PRODUCTION_POLICY" in ast.unparse(node.test)
+        and any(isinstance(n, ast.Name) and n.id == "_test_current" for n in ast.walk(node))
+    )
     current = copy.deepcopy(core)
     if changed:
         current["acceptance_criteria"] = ["Amended while materializing workspace."]
     calls = []
     namespace = {
-        "PRODUCTION_POLICY": policy, "Path": Path, "HOME": str(home.parent),
-        "cid": core["id"], "HOST": "control", "d": None,
+        "PRODUCTION_POLICY": policy,
+        "Path": Path,
+        "HOME": str(home.parent),
+        "cid": core["id"],
+        "HOST": "control",
+        "d": None,
         "fresh_claimability": {"core": core, "labels": ["source-only"]},
         "_governed_review_metadata": lambda *args: None,
         "authoritative_claimability": lambda *args, **kw: {
-            "core": current, "labels": ["source-only"]},
-        "test_preflight": lambda ignored, value, labels, config:
-            profile.preflight(home, value, labels, config),
-        "log": lambda *args: calls.append("withheld"), "calls": calls,
+            "core": current,
+            "labels": ["source-only"],
+        },
+        "test_preflight": lambda ignored, value, labels, config: profile.preflight(
+            home, value, labels, config
+        ),
+        "log": lambda *args: calls.append("withheld"),
+        "calls": calls,
     }
-    loop = ast.For(target=ast.Name(id="item", ctx=ast.Store()),
-                   iter=ast.List(elts=[ast.Constant(1)], ctx=ast.Load()),
-                   body=[block, ast.parse("calls.append('claim')").body[0]], orelse=[])
-    exec(compile(ast.fix_missing_locations(ast.Module(body=[loop], type_ignores=[])),
-                 str(script), "exec"), namespace)
+    loop = ast.For(
+        target=ast.Name(id="item", ctx=ast.Store()),
+        iter=ast.List(elts=[ast.Constant(1)], ctx=ast.Load()),
+        body=[block, ast.parse("calls.append('claim')").body[0]],
+        orelse=[],
+    )
+    exec(
+        compile(
+            ast.fix_missing_locations(ast.Module(body=[loop], type_ignores=[])),
+            str(script),
+            "exec",
+        ),
+        namespace,
+    )
     assert calls == (["withheld"] if changed else ["claim"])
 
 
-def test_acceptance_hook_seals_before_tests_and_does_not_self_complete(setup, monkeypatch):  # noqa:F811
+def test_acceptance_hook_seals_before_tests_and_does_not_self_complete(
+    setup, monkeypatch
+):  # noqa:F811
     from skcapstone.fleet import production_acceptance as acceptance
     from skcapstone.fleet import production_tests
 
     s = setup
     s.plan_path.unlink()
-    core = {"id": s.binding["source_card"], "meta": {"repository": "https://example.org/a.git"},
-            "acceptance_criteria": ["Verify source regression."]}
+    core = {
+        "id": s.binding["source_card"],
+        "meta": {"repository": "https://example.org/a.git"},
+        "acceptance_criteria": ["Verify source regression."],
+    }
     binding = dict(s.binding, criteria_sha256=profile.contract(core)["criteria_sha256"])
-    profile.qualify_profile(s.home, core, s.policy,
+    profile.qualify_profile(
+        s.home,
+        core,
+        s.policy,
         {"pytest": {"tests/test_any.py": 1}, "compile": [], "lint": [], "changelog": False},
-        "operator", "b" * 64)
+        "operator",
+        "b" * 64,
+    )
     review, claim = "abcd9876", "d" * 32
     exits = s.home / "evidence/production-review-exits"
     exits.mkdir(parents=True)
@@ -260,18 +336,31 @@ def test_acceptance_hook_seals_before_tests_and_does_not_self_complete(setup, mo
     directory = acceptance.review_directory(s.home, review, claim)
     directory.mkdir(parents=True)
     (directory / "context.json").write_text("{}")
-    context = {"policy_sha256": acceptance.digest(s.policy), "test_binding": binding,
-               "source_workspace": str(s.workspace),
-               "source": {"card": core["id"], "revision": "source", "owner": "p",
-                          "claim": "pclaim", "repository": core["meta"]["repository"]},
-               "review": {"card": review, "revision": "review", "owner": "r", "claim": claim}}
+    context = {
+        "policy_sha256": acceptance.digest(s.policy),
+        "test_binding": binding,
+        "source_workspace": str(s.workspace),
+        "source": {
+            "card": core["id"],
+            "revision": "source",
+            "owner": "p",
+            "claim": "pclaim",
+            "repository": core["meta"]["repository"],
+        },
+        "review": {"card": review, "revision": "review", "owner": "r", "claim": claim},
+    }
     monkeypatch.setattr(acceptance, "read_json", lambda path: context)
     monkeypatch.setattr(acceptance, "terminal_guard", lambda *args: None)
     monkeypatch.setattr(acceptance, "artifacts", lambda *args: None)
-    monkeypatch.setattr(acceptance, "native_state", lambda home, card: {
-        "revision": "source" if card == core["id"] else "review",
-        "owner": "p" if card == core["id"] else "r",
-        "claim_revision": "pclaim" if card == core["id"] else claim})
+    monkeypatch.setattr(
+        acceptance,
+        "native_state",
+        lambda home, card: {
+            "revision": "source" if card == core["id"] else "review",
+            "owner": "p" if card == core["id"] else "r",
+            "claim_revision": "pclaim" if card == core["id"] else claim,
+        },
+    )
     observed = []
 
     def tests(home, actual_binding, workspace, policy):
@@ -280,8 +369,9 @@ def test_acceptance_hook_seals_before_tests_and_does_not_self_complete(setup, mo
         return None
 
     monkeypatch.setattr(production_tests, "run_or_read_tests", tests)
-    monkeypatch.setattr(acceptance, "finish_pair",
-                        lambda *args, **kw: pytest.fail("no test proof"))
+    monkeypatch.setattr(
+        acceptance, "finish_pair", lambda *args, **kw: pytest.fail("no test proof")
+    )
     result = acceptance.reconcile(s.home, s.policy, process_check=lambda *args: None)
     assert result == [{"card": review, "state": "awaiting-trusted-tests"}]
     assert observed == ["tests/test_any.py"]

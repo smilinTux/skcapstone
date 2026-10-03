@@ -147,8 +147,11 @@ def build_helper(parent, packet: dict, actor: str, claim_revision: str) -> Task:
         )
     route = "sk-" + re.search(r"\[(S|M)\]", packet["title"]).group(1).lower()
     # Keep inherited restrictions and lineage; replace only route-shaped labels.
-    labels = [label for label in parent.labels
-              if not re.fullmatch(r"sk-[a-z]+(?:-[a-z]+)?", label.strip().lower())]
+    labels = [
+        label
+        for label in parent.labels
+        if not re.fullmatch(r"sk-[a-z]+(?:-[a-z]+)?", label.strip().lower())
+    ]
     if any(label.lower() == "review" or label.lower().startswith("seat-") for label in labels):
         raise ValueError("governed seat or review parents cannot request source helpers")
     if re.search(r"\[(?:REVIEW|REREVIEW)\]", parent.title, re.I):

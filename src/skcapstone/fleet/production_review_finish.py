@@ -152,23 +152,39 @@ def _historical_acceptance(home, context, historical, inspect):
     acceptance = historical.get("test_receipt")
     binding = context["test_binding"]
     check_binding(binding)
-    if (historical.get("accepted") is not True or not isinstance(acceptance, dict)
-            or historical.get("context_sha256") != _digest(context)
-            or any(context["source"].get(key) != binding[field] for key, field in (
-                ("card", "source_card"), ("head", "source_head"), ("tree", "source_tree"),
-                ("owner", "source_owner"), ("claim", "source_claim_revision")))):
+    if (
+        historical.get("accepted") is not True
+        or not isinstance(acceptance, dict)
+        or historical.get("context_sha256") != _digest(context)
+        or any(
+            context["source"].get(key) != binding[field]
+            for key, field in (
+                ("card", "source_card"),
+                ("head", "source_head"),
+                ("tree", "source_tree"),
+                ("owner", "source_owner"),
+                ("claim", "source_claim_revision"),
+            )
+        )
+    ):
         raise ReviewEvidenceError("historical acceptance context changed")
     store = CardStore(home)
     for role in ("source", "review"):
         card = context[role]["card"]
         state, row = inspect(home, card), store.fold(card)
-        if (state["revision"] != historical.get("revisions", {}).get(role)
-                or state["status"] != "done" or state["owner"] is not None
-                or state["claim_revision"] is not None or row is None
-                or json.loads(row.links.get("test_acceptance", "null")) != acceptance):
+        if (
+            state["revision"] != historical.get("revisions", {}).get(role)
+            or state["status"] != "done"
+            or state["owner"] is not None
+            or state["claim_revision"] is not None
+            or row is None
+            or json.loads(row.links.get("test_acceptance", "null")) != acceptance
+        ):
             raise ReviewEvidenceError("historical acceptance lacks exact native completion")
-    plan_path = Path(home) / "fleet/test-plans" / (
-        binding["source_card"] + "-" + binding["source_head"] + ".json"
+    plan_path = (
+        Path(home)
+        / "fleet/test-plans"
+        / (binding["source_card"] + "-" + binding["source_head"] + ".json")
     )
     raw_plan = read_private(plan_path)
     plan_sha = sha(raw_plan)
@@ -179,31 +195,43 @@ def _historical_acceptance(home, context, historical, inspect):
     receipt_path = directory / "receipt.json"
     raw_receipt = read_private(receipt_path)
     receipt = json.loads(raw_receipt)
-    if (acceptance.get("receipt_path") != str(receipt_path)
-            or acceptance.get("receipt_sha256") != sha(raw_receipt)
-            or acceptance.get("source_head") != binding["source_head"]
-            or plan.get("binding") != binding or receipt.get("binding") != binding
-            or receipt.get("plan_sha256") != plan_sha
-            or receipt.get("checks") != acceptance.get("checks")):
+    if (
+        acceptance.get("receipt_path") != str(receipt_path)
+        or acceptance.get("receipt_sha256") != sha(raw_receipt)
+        or acceptance.get("source_head") != binding["source_head"]
+        or plan.get("binding") != binding
+        or receipt.get("binding") != binding
+        or receipt.get("plan_sha256") != plan_sha
+        or receipt.get("checks") != acceptance.get("checks")
+    ):
         raise ReviewEvidenceError("retained historical test proof changed")
     profile = plan.get("profile")
     expected = recipe_checks(profile["recipe"]) if profile is not None else approved_checks()
     results = receipt.get("checks")
-    if (plan.get("checks") != expected or not isinstance(results, list)
-            or len(results) != len(expected)):
+    if (
+        plan.get("checks") != expected
+        or not isinstance(results, list)
+        or len(results) != len(expected)
+    ):
         raise ReviewEvidenceError("historical required checks changed")
     for required, check in zip(expected, results):
         # Derive IDs from fixed templates, never a local path supplied by history.
-        if (check.get("id") != required["id"] or check.get("argv") != required["argv"]
-                or type(check.get("exit_code")) is not int or check["exit_code"] != 0
-                or sha(read_private(directory / (check["id"] + ".log")))
-                != check.get("output_sha256")):
+        if (
+            check.get("id") != required["id"]
+            or check.get("argv") != required["argv"]
+            or type(check.get("exit_code")) is not int
+            or check["exit_code"] != 0
+            or sha(read_private(directory / (check["id"] + ".log"))) != check.get("output_sha256")
+        ):
             raise ReviewEvidenceError("historical raw test output changed")
     name = "vitest.xml" if is_node(profile) else "pytest.xml"
     raw_junit = read_private(directory / name)
     counts = junit_counts(raw_junit, profile)
-    if (receipt.get("junit_sha256") != sha(raw_junit)
-            or receipt.get("counts") != counts or acceptance.get("counts") != counts):
+    if (
+        receipt.get("junit_sha256") != sha(raw_junit)
+        or receipt.get("counts") != counts
+        or acceptance.get("counts") != counts
+    ):
         raise ReviewEvidenceError("historical JUnit proof changed")
     return acceptance
 
@@ -216,9 +244,13 @@ def finish_pair(home, directory, context, *, guard, command=native_command, insp
     artifacts(context)
     finished = directory / "finished.json"
     historical = read_json(finished) if finished.exists() else None
-    acceptance = (_historical_acceptance(home, context, historical, inspect)
-                  if historical is not None else validate_test_receipt(
-                      home, context["test_binding"], Path(context["source_workspace"])))
+    acceptance = (
+        _historical_acceptance(home, context, historical, inspect)
+        if historical is not None
+        else validate_test_receipt(
+            home, context["test_binding"], Path(context["source_workspace"])
+        )
+    )
     binding = {
         "controller": context["controller"],
         "context_sha256": _digest(context),

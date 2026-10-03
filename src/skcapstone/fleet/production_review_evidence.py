@@ -16,9 +16,7 @@ class ReviewEvidenceError(ValueError):
     """Review or original source evidence is absent, changed, or unsafe."""
 
 
-_REVIEW_PROGRAM = (
-    _INSPECT_SETUP
-    + r"""
+_REVIEW_PROGRAM = _INSPECT_SETUP + r"""
 # Existing sandbox argument slots carry review card, parent, source head/tree,
 # and exact reviewer identity; the evidence commit is discovered independently.
 parent, owner = base, ref
@@ -68,7 +66,6 @@ print(json.dumps({'proposal':proposal,'review_head':review_head,'review_tree':re
     'report_b64':base64.b64encode(report).decode(),
     'decision_b64':base64.b64encode(raw).decode()}))
 """
-)
 
 
 def inspect_proposal(

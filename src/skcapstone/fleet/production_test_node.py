@@ -16,9 +16,14 @@ SCHEMA = "skfleet.qualified-node-test-profile/v1"
 NODE = Path("/usr/bin/node")
 # Node-local, outside Syncthing, which can normalize read-only directory modes.
 ARTIFACT_ROOT = Path.home() / ".local/share/skcapstone/test-dependencies"
-SOURCE_FILES = ("package.json", "package-lock.json", "apps/web/package.json",
-                "apps/web/vite.config.ts", "apps/web/tsconfig.json",
-                "apps/web/eslint.config.js")
+SOURCE_FILES = (
+    "package.json",
+    "package-lock.json",
+    "apps/web/package.json",
+    "apps/web/vite.config.ts",
+    "apps/web/tsconfig.json",
+    "apps/web/eslint.config.js",
+)
 
 
 def is_node(profile: dict | None) -> bool:
@@ -31,17 +36,35 @@ def checks(recipe: dict) -> list[dict]:
     if not isinstance(recipe, dict) or set(recipe) != {"vitest"}:
         raise plan.TestEvidenceError("unsupported Node recipe")
     tests = recipe["vitest"]
-    if (not isinstance(tests, dict) or not 1 <= len(tests) <= 256
-            or any(type(n) is not int or not 1 <= n <= 100000 for n in tests.values())
-            or any(not isinstance(p, str) or len(p) > 240 or not re.fullmatch(
-                r"src/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+\.test\.tsx?", p)
-                for p in tests)):
+    if (
+        not isinstance(tests, dict)
+        or not 1 <= len(tests) <= 256
+        or any(type(n) is not int or not 1 <= n <= 100000 for n in tests.values())
+        or any(
+            not isinstance(p, str)
+            or len(p) > 240
+            or not re.fullmatch(r"src/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+\.test\.tsx?", p)
+            for p in tests
+        )
+    ):
         raise plan.TestEvidenceError("invalid Node per-file coverage")
     base = "/work/node_modules/"
     return [
-        {"id": "vitest", "argv": [str(NODE), base + "vitest/vitest.mjs", "run",
-            "--configLoader", "runner", "--no-cache", "--maxWorkers", "1",
-            "--reporter=junit", "--outputFile=/output/vitest.xml"]},
+        {
+            "id": "vitest",
+            "argv": [
+                str(NODE),
+                base + "vitest/vitest.mjs",
+                "run",
+                "--configLoader",
+                "runner",
+                "--no-cache",
+                "--maxWorkers",
+                "1",
+                "--reporter=junit",
+                "--outputFile=/output/vitest.xml",
+            ],
+        },
         {"id": "typecheck", "argv": [str(NODE), base + "typescript/bin/tsc", "-b"]},
         {"id": "lint", "argv": [str(NODE), base + "eslint/bin/eslint.js", "."]},
     ]
@@ -100,14 +123,18 @@ def validate_environment(environment: dict, workspace: Path | None = None) -> No
 
 def _validate_environment(environment: dict, workspace: Path | None) -> None:
     """Validate one environment; normalize invalid inputs at the public boundary."""
-    if (not isinstance(environment, dict) or set(environment) != {
-            "node_sha256", "platform", "artifact_sha256", "source_sha256"}
-            or environment["platform"] != [platform.system(), platform.machine()]
-            or environment["node_sha256"] != plan.sha(NODE.read_bytes())
-            or not isinstance(environment["source_sha256"], dict)
-            or set(environment["source_sha256"]) != set(SOURCE_FILES)
-            or any(not isinstance(v, str) or not re.fullmatch(r"[0-9a-f]{64}", v)
-                   for v in environment["source_sha256"].values())):
+    if (
+        not isinstance(environment, dict)
+        or set(environment) != {"node_sha256", "platform", "artifact_sha256", "source_sha256"}
+        or environment["platform"] != [platform.system(), platform.machine()]
+        or environment["node_sha256"] != plan.sha(NODE.read_bytes())
+        or not isinstance(environment["source_sha256"], dict)
+        or set(environment["source_sha256"]) != set(SOURCE_FILES)
+        or any(
+            not isinstance(v, str) or not re.fullmatch(r"[0-9a-f]{64}", v)
+            for v in environment["source_sha256"].values()
+        )
+    ):
         raise plan.TestEvidenceError("qualified Node environment changed")
     artifact = artifact_path(environment)
     if artifact_digest(artifact) != environment["artifact_sha256"]:
@@ -119,14 +146,31 @@ def _validate_environment(environment: dict, workspace: Path | None) -> None:
         return
     for relative, expected in environment["source_sha256"].items():
         path = workspace / relative
-        if path.is_symlink() or not path.resolve().is_relative_to(workspace.resolve()) or (
-                plan.sha(path.read_bytes()) != expected):
+        if (
+            path.is_symlink()
+            or not path.resolve().is_relative_to(workspace.resolve())
+            or (plan.sha(path.read_bytes()) != expected)
+        ):
             raise plan.TestEvidenceError("Node package, lock or configuration changed")
     scripts = json.loads((workspace / "apps/web/package.json").read_bytes())["scripts"]
-    if (not isinstance(scripts, dict) or any(scripts.get(k) != v for k, v in {
-            "test": "vitest run", "typecheck": "tsc -b", "lint": "eslint ."}.items())
-            or any(k in scripts for k in ("pretest", "posttest", "pretypecheck",
-                                        "posttypecheck", "prelint", "postlint"))):
+    if (
+        not isinstance(scripts, dict)
+        or any(
+            scripts.get(k) != v
+            for k, v in {"test": "vitest run", "typecheck": "tsc -b", "lint": "eslint ."}.items()
+        )
+        or any(
+            k in scripts
+            for k in (
+                "pretest",
+                "posttest",
+                "pretypecheck",
+                "posttypecheck",
+                "prelint",
+                "postlint",
+            )
+        )
+    ):
         raise plan.TestEvidenceError("Node package scripts do not match qualified commands")
 
 
@@ -146,20 +190,25 @@ def junit_counts(raw: bytes, profile: dict) -> dict:
         for suite in root:
             name = suite.get("name", "")
             if name.startswith("/work/apps/web/"):
-                name = name[len("/work/apps/web/"):]
+                name = name[len("/work/apps/web/") :]
             if name not in minima or name in counts:
                 raise ValueError("unexpected or duplicate file")
             cases = list(suite.findall("testcase"))
-            if (any(c.tag not in {"testcase", "system-out", "system-err"} for c in suite)
-                    or any(int(suite.get(k, "-1")) != 0
-                           for k in ("failures", "errors", "skipped"))
-                    or int(suite.get("tests", "-1")) != len(cases)):
+            if (
+                any(c.tag not in {"testcase", "system-out", "system-err"} for c in suite)
+                or any(int(suite.get(k, "-1")) != 0 for k in ("failures", "errors", "skipped"))
+                or int(suite.get("tests", "-1")) != len(cases)
+            ):
                 raise ValueError("invalid suite totals or failure")
             for case in cases:
                 classname = case.get("classname", "").removeprefix("/work/apps/web/")
                 identity = (name, case.get("name"))
-                if (classname != name or not identity[1] or identity in identities
-                        or any(c.tag not in {"system-out", "system-err"} for c in case)):
+                if (
+                    classname != name
+                    or not identity[1]
+                    or identity in identities
+                    or any(c.tag not in {"system-out", "system-err"} for c in case)
+                ):
                     raise ValueError("invalid, duplicate, failed or skipped testcase")
                 identities.add(identity)
             counts[name] = len(cases)

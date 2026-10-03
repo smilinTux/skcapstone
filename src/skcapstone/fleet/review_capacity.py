@@ -203,8 +203,11 @@ def seal_review_capacity_truth(
     """Bind route and occupancy observations into one revisioned truth."""
     # Keep the legacy argument callable while removing the retired scheduler cap
     # before sealing new observations. Existing evidence is never rewritten.
-    sealed = {key: value for key, value in snapshot.items()
-              if key not in {"capacity_revision", "physical_maximum", "physical_free"}}
+    sealed = {
+        key: value
+        for key, value in snapshot.items()
+        if key not in {"capacity_revision", "physical_maximum", "physical_free"}
+    }
     sealed["occupancy"] = {
         str(domain): int(count)
         for domain, count in sorted(occupancy.items())
@@ -345,8 +348,11 @@ def evaluate_review_capacity(
         reason = "route-snapshot-ambiguity"
     elif snapshot.get("schema_version") != 1 or snapshot.get("error") is not None:
         reason = "route-snapshot-ambiguity"
-    elif (type(observed) not in {int, float} or not math.isfinite(observed)
-          or not 0 <= current - observed <= MAX_AGE_SECONDS):
+    elif (
+        type(observed) not in {int, float}
+        or not math.isfinite(observed)
+        or not 0 <= current - observed <= MAX_AGE_SECONDS
+    ):
         reason = "route-snapshot-stale"
     else:
         routes = eligible_review_routes(
@@ -420,8 +426,9 @@ def review_physical_free(
         for route in _routes:
             domain = str(route.get("capacity_domain") or "")
             domains[domain] = max(domains.get(domain, 0), int(route.get("free", 0)))
-        return sum(max(0, free - int(reservations.get(domain, 0)))
-                   for domain, free in domains.items())
+        return sum(
+            max(0, free - int(reservations.get(domain, 0))) for domain, free in domains.items()
+        )
     busy = sum(
         len(lane.get("busy", ())) for lane in lanes if tuple(lane.get("capacity_domains", ()))
     )

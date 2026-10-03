@@ -182,8 +182,10 @@ def reviewer_capacity_evaluation(
     host = (os.environ.get("SKFLEET_EVIDENCE_HOST") or os.uname().nodename).split(".")[0].lower()
     if not re.fullmatch(r"[a-z0-9-]+", host):
         host = os.uname().nodename.split(".")[0].lower()
-    paths = (home / "evidence" / f"fleet-review-routes.{host}.json",
-             home / "evidence" / "fleet-review-routes.json")
+    paths = (
+        home / "evidence" / f"fleet-review-routes.{host}.json",
+        home / "evidence" / "fleet-review-routes.json",
+    )
     try:
         observations = []
         for path in paths:

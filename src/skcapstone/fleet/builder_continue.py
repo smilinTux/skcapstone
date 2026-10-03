@@ -72,8 +72,12 @@ def binding(home, request, status):
     report = Path(str(outcome.get("candidate_path", "")))
     card_directory = source_bundle._root(home, request["card_id"]).parent
     info = card_directory.stat()
-    if (card_directory.resolve() != card_directory or not card_directory.is_dir()
-            or info.st_uid != os.getuid() or info.st_mode & 0o777 != 0o700):
+    if (
+        card_directory.resolve() != card_directory
+        or not card_directory.is_dir()
+        or info.st_uid != os.getuid()
+        or info.st_mode & 0o777 != 0o700
+    ):
         raise ValueError("private owned card evidence directory required")
     if card_directory not in report.parents:
         raise ValueError("blocked evidence custody differs")
@@ -184,7 +188,7 @@ def authorize(
     actor,
     reason,
     apply=False,
-    probe=remote_check
+    probe=remote_check,
 ):
     """Authorize one explicit fresh session while retaining the offer and claim."""
     policy = builder.production_builder.policy()

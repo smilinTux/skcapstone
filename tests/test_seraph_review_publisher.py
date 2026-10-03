@@ -431,10 +431,14 @@ def test_shared_inspection_keeps_sibling_and_predecessor_checks(tmp_path, monkey
     home.mkdir()
     store = CardStore(home)
     for card in ("review01", "review02"):
-        store.create(CardCore(
-            id=card, title="[S] Source", created_by="controller",
-            meta={"repository": "smilinTux/skcapstone", "link_head_revision": HEAD},
-        ))
+        store.create(
+            CardCore(
+                id=card,
+                title="[S] Source",
+                created_by="controller",
+                meta={"repository": "smilinTux/skcapstone", "link_head_revision": HEAD},
+            )
+        )
         for label in ("review", "parent-source01"):
             store.append_event(card, "add_label", "controller", label=label)
     calls = []

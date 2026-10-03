@@ -129,8 +129,12 @@ def test_provider_neutral_routes_tier_policy_and_shared_capacity(tmp_path):
     snapshot = acquire_review_route_snapshot(
         "https://gateway", tmp_path / "snapshot.json", "cycle-1", opener=opener, now=lambda: now
     )
-    exact_model = next(row for row in documents["/v1/models"]["data"] if row["id"] == "route-cloud-medium")
-    retained = next(row for row in snapshot["routes"] if row["logical_route"] == "route-cloud-medium")
+    exact_model = next(
+        row for row in documents["/v1/models"]["data"] if row["id"] == "route-cloud-medium"
+    )
+    retained = next(
+        row for row in snapshot["routes"] if row["logical_route"] == "route-cloud-medium"
+    )
     assert retained["gateway_model"] == exact_model
     assert review_capacity._review_capacity_truth_is_current(snapshot)
     retained["gateway_model"]["card"]["context_length"] = 98765
@@ -342,10 +346,7 @@ def test_capacity_diagnostics_keep_distinct_failure_causes(tmp_path):
         )["reason"]
 
     assert reason({**snapshot, "error": "TimeoutError"}) == "route-snapshot-ambiguity"
-    assert (
-        reason(seal_review_capacity_truth(snapshot, {}, occupancy_ambiguous=True))
-        == "eligible"
-    )
+    assert reason(seal_review_capacity_truth(snapshot, {}, occupancy_ambiguous=True)) == "eligible"
     assert reason(snapshot, labels=("local-only",), physical_free=1) == "eligible"
 
     policy_snapshot = seal_review_capacity_truth(

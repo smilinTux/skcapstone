@@ -202,7 +202,8 @@ def _request_matches_current_card(
             validate_profile(
                 request.get("test_profile"),
                 contract(dict(core, acceptance_criteria=card.acceptance_criteria)),
-                production_builder.policy(), environment=False,
+                production_builder.policy(),
+                environment=False,
             )
         except (ValueError, TypeError) as exc:
             raise BuilderDispatchError("offered test qualification changed") from exc
@@ -856,8 +857,13 @@ def _reconcile_running(
 
         if original_outcome_pending(coordination_home, request, status):
             return _write_status(
-                paths, node, request, "awaiting-evidence", **common,
-                exit_code=exit_code, claim_released=False,
+                paths,
+                node,
+                request,
+                "awaiting-evidence",
+                **common,
+                exit_code=exit_code,
+                claim_released=False,
                 error="continued generation has not recorded a new outcome",
             )
         blocked = release_blocked(coordination_home, request, owner, revision)
@@ -935,15 +941,20 @@ def _finalize_builder_admission(home: Path, request: dict, status: dict) -> None
 
     try:
         binding = {
-            "card_id": request["card_id"], "owner": status["owner"],
+            "card_id": request["card_id"],
+            "owner": status["owner"],
             "claim_revision": status["claim_revision"],
-            "request_id": request["request_id"], "attempt": status["attempt"],
+            "request_id": request["request_id"],
+            "attempt": status["attempt"],
         }
         unit = production_builder.unit_name(request, status["attempt"])
-        if (status["request_id"] != request["request_id"]
-                or status["card_id"] != request["card_id"]
-                or status.get("production") != request.get("production")
-                or status.get("unit") != unit or contract["binding"] != binding):
+        if (
+            status["request_id"] != request["request_id"]
+            or status["card_id"] != request["card_id"]
+            or status.get("production") != request.get("production")
+            or status.get("unit") != unit
+            or contract["binding"] != binding
+        ):
             return
         observed = admission.unit_state(unit, terminal=True)
         if observed.get("ActiveState") != "failed":
@@ -955,16 +966,22 @@ def _finalize_builder_admission(home: Path, request: dict, status: dict) -> None
         if policy is None:
             return
         proof = admission.finalize_failed_launch(
-            home, policy, request["production"]["host"], unit, binding,
-            contract["argv"], invocation=invocation,
+            home,
+            policy,
+            request["production"]["host"],
+            unit,
+            binding,
+            contract["argv"],
+            invocation=invocation,
             expected_card_revision=contract["card_revision"],
         )
         status["invocation"] = invocation
         status["admission_terminal"] = proof
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
         # Missing or ambiguous custody remains charged; no release or retry.
-        logger.warning("failed builder admission requires exact custody: %s",
-                       request.get("card_id"))
+        logger.warning(
+            "failed builder admission requires exact custody: %s", request.get("card_id")
+        )
 
 
 def _guard_path() -> str:
@@ -1273,8 +1290,12 @@ def _consume_available(
                     continue
             try:
                 expires = datetime.strptime(
-                    request["_continuation"]["expires_at"] if continuing
-                    else request["lease_expires_at"], "%Y-%m-%dT%H:%M:%SZ"
+                    (
+                        request["_continuation"]["expires_at"]
+                        if continuing
+                        else request["lease_expires_at"]
+                    ),
+                    "%Y-%m-%dT%H:%M:%SZ",
                 ).replace(tzinfo=timezone.utc)
             except (KeyError, TypeError, ValueError):
                 expires = datetime.min.replace(tzinfo=timezone.utc)
@@ -1562,23 +1583,36 @@ def _consume_available(
                         admission_pending = True
                         original_command = list(command)
                         admission_binding = {
-                            "card_id": request["card_id"], "owner": owner,
-                            "claim_revision": revision, "request_id": request["request_id"],
+                            "card_id": request["card_id"],
+                            "owner": owner,
+                            "claim_revision": revision,
+                            "request_id": request["request_id"],
                             "attempt": attempt,
                         }
                         command = reserve_launch(
-                            coordination_home, policy, production["host"],
+                            coordination_home,
+                            policy,
+                            production["host"],
                             production_builder.unit_name(request, attempt),
-                            admission_binding, command,
+                            admission_binding,
+                            command,
                         )
                         admission_reserved = True
                         if not retrying:
                             _write_status(
-                                paths, node, request, "running", owner=owner,
-                                claim_revision=revision, attempt=attempt, pid=None,
+                                paths,
+                                node,
+                                request,
+                                "running",
+                                owner=owner,
+                                claim_revision=revision,
+                                attempt=attempt,
+                                pid=None,
                                 unit=production_builder.unit_name(request, attempt),
-                                invocation=None, route_preflight=route_preflight,
+                                invocation=None,
+                                route_preflight=route_preflight,
                             )
+
                     def spawn():
                         nonlocal admission_contract
                         if production is not None:
@@ -1588,21 +1622,35 @@ def _consume_available(
                             if card is None:
                                 raise BuilderDispatchError("launch card unavailable")
                             admission_contract = {
-                                "binding": admission_binding, "argv": original_command,
+                                "binding": admission_binding,
+                                "argv": original_command,
                                 "card_revision": card_revision(card),
                             }
                             consumed = {}
                             if retrying:
-                                key = ("continuation_consumed" if continuing
-                                       else "operator_retry_consumed")
-                                grant = (request["_continuation"] if continuing
-                                         else request["operator_retry"])
+                                key = (
+                                    "continuation_consumed"
+                                    if continuing
+                                    else "operator_retry_consumed"
+                                )
+                                grant = (
+                                    request["_continuation"]
+                                    if continuing
+                                    else request["operator_retry"]
+                                )
                                 consumed[key] = grant["id"]
                             _write_status(
-                                paths, node, request, "running", owner=owner,
-                                claim_revision=revision, attempt=attempt, pid=None,
+                                paths,
+                                node,
+                                request,
+                                "running",
+                                owner=owner,
+                                claim_revision=revision,
+                                attempt=attempt,
+                                pid=None,
                                 unit=production_builder.unit_name(request, attempt),
-                                invocation=None, route_preflight=route_preflight,
+                                invocation=None,
+                                route_preflight=route_preflight,
                                 admission_contract=admission_contract,
                                 **consumed,
                             )
@@ -1626,15 +1674,22 @@ def _consume_available(
                     coordination_home, request["card_id"], owner, revision, actor=owner
                 )
                 return _write_status(
-                    paths, node, request, "failed" if released else "blocked",
-                    owner=owner, claim_revision=revision, claim_released=released,
-                    attempt=int(prior.get("attempt") or 0), retryable=released,
+                    paths,
+                    node,
+                    request,
+                    "failed" if released else "blocked",
+                    owner=owner,
+                    claim_revision=revision,
+                    claim_released=released,
+                    attempt=int(prior.get("attempt") or 0),
+                    retryable=released,
                     error="node-resource-capacity-deferred",
                 )
             except Exception:
                 if admission_pending:
-                    logger.warning("production admission or launch requires custody: %s",
-                                   request["card_id"])
+                    logger.warning(
+                        "production admission or launch requires custody: %s", request["card_id"]
+                    )
                     return None
                 if retrying:
                     # A spent authorization never releases custody or relaunches.

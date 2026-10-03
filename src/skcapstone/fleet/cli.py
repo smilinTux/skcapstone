@@ -126,9 +126,16 @@ def builder_continue_cmd(card_id, node, request_id, claim, invocation, agent, re
 
     try:
         result = authorize(
-            default_paths(), Path.home() / ".skcapstone", node, card_id,
-            request_id=request_id, claim=claim, invocation=invocation,
-            actor=agent, reason=reason, apply=apply,
+            default_paths(),
+            Path.home() / ".skcapstone",
+            node,
+            card_id,
+            request_id=request_id,
+            claim=claim,
+            invocation=invocation,
+            actor=agent,
+            reason=reason,
+            apply=apply,
         )
     except (ValueError, OSError, subprocess.SubprocessError) as exc:
         raise click.ClickException(str(exc)) from exc

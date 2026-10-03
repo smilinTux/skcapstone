@@ -95,13 +95,21 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
     unit = production_builder.unit_name(launch, 1)
     policy = launch.get("policy", {})
     expected_argv = service_argv(
-        launch, home / "fleet/test-plans"
+        launch,
+        home
+        / "fleet/test-plans"
         / (binding["source_card"] + "-" + binding["source_head"] + ".json"),
-        directory, workspace,
+        directory,
+        workspace,
     )
     if launch.get("admission_protocol") == 1:
         expected_argv = reserved_command(
-            home, policy, plan["host"], unit, _admission_binding(binding, plan_sha), expected_argv,
+            home,
+            policy,
+            plan["host"],
+            unit,
+            _admission_binding(binding, plan_sha),
+            expected_argv,
         )
     if (
         launch.get("binding") != binding
@@ -112,8 +120,7 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
         or production_builder.digest(policy) != plan["policy_sha256"]
         or launch.get("production")
         != {"resources": policy.get("node_quotas", {}).get(plan["host"])}
-        or launch.get("service_argv")
-        != expected_argv
+        or launch.get("service_argv") != expected_argv
         or receipt.get("schema") != "skfleet.native-test-receipt/v1"
         or receipt.get("binding") != binding
         or receipt.get("plan_sha256") != plan_sha
@@ -327,8 +334,14 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
         request["unit"] = production_builder.unit_name(request, 1)
         argv = service_argv(request, plan_path, directory, workspace)
         try:
-            argv = reserve_launch(home, policy, plan["host"], request["unit"],
-                                  _admission_binding(binding, plan_sha), argv)
+            argv = reserve_launch(
+                home,
+                policy,
+                plan["host"],
+                request["unit"],
+                _admission_binding(binding, plan_sha),
+                argv,
+            )
         except AdmissionError:
             return None
         request["service_argv"] = argv
@@ -348,5 +361,9 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
 
 def _admission_binding(binding: dict, plan_sha: str) -> dict:
     """Bind resource intent and receipt verification to the same exact source."""
-    return {"card_id": binding["source_card"], "owner": binding["source_owner"],
-            "claim_revision": binding["source_claim_revision"], "plan_sha256": plan_sha}
+    return {
+        "card_id": binding["source_card"],
+        "owner": binding["source_owner"],
+        "claim_revision": binding["source_claim_revision"],
+        "plan_sha256": plan_sha,
+    }

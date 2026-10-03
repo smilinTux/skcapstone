@@ -25,7 +25,10 @@ def prepared_review(home):
     store.append_event(source, "claim", producer, owner=producer, claim_revision="c" * 32)
     artifact = _candidate(home, source)
     store.append_event(
-        source, "verdict", producer, verdict="PASS_FOR_REVIEW",
+        source,
+        "verdict",
+        producer,
+        verdict="PASS_FOR_REVIEW",
         **candidate_evidence(artifact, COMMIT, TREE, REF),
     )
     store.create(

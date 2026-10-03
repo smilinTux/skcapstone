@@ -333,8 +333,11 @@ def reconcile(home, policy, *, process_check):
                         raise ReviewEvidenceError("native pair changed before trusted tests")
                 artifacts(context)
                 seal_candidate(
-                    home, context["test_binding"], Path(context["source_workspace"]),
-                    policy, context["source"]["repository"],
+                    home,
+                    context["test_binding"],
+                    Path(context["source_workspace"]),
+                    policy,
+                    context["source"]["repository"],
                 )
                 receipt = run_or_read_tests(
                     home, context["test_binding"], Path(context["source_workspace"]), policy

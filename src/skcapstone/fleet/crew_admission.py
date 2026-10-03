@@ -52,8 +52,11 @@ def validate_helper_generation(home: Path, card) -> None:
     else:
         if route not in {"sk-s", "sk-m"}:
             raise ValueError("owner-helper logical route is not bounded")
-        expected = {label for label in parent.labels
-                    if not re.fullmatch(r"sk-[a-z]+(?:-[a-z]+)?", label.strip().lower())}
+        expected = {
+            label
+            for label in parent.labels
+            if not re.fullmatch(r"sk-[a-z]+(?:-[a-z]+)?", label.strip().lower())
+        }
         expected.add(route)
     expected |= {"owner-helper", "source-only", f"parent-{parent_id}"}
     if labels != expected or set(card.dependencies) != set(parent.dependencies):

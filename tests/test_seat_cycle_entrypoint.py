@@ -135,8 +135,12 @@ def production_policy(tmp_path, monkeypatch, installed_dispatcher):
     path = tmp_path / "production.json"
     path.write_text(json.dumps(policy))
     installed_dispatcher.write_text("SKFLEET_PRODUCTION_POLICY_V1 = True\n")
-    monkeypatch.setattr(seat_entrypoint, "_production_dispatcher_path", lambda: installed_dispatcher)
-    monkeypatch.setattr(seat_entrypoint, "deployed_artifact_path", lambda *_: tmp_path / "legacy-shim")
+    monkeypatch.setattr(
+        seat_entrypoint, "_production_dispatcher_path", lambda: installed_dispatcher
+    )
+    monkeypatch.setattr(
+        seat_entrypoint, "deployed_artifact_path", lambda *_: tmp_path / "legacy-shim"
+    )
     monkeypatch.setenv("SKFLEET_PRODUCTION_POLICY", str(path))
     monkeypatch.setattr(seat_entrypoint.socket, "gethostname", lambda: "chiap08")
     return policy

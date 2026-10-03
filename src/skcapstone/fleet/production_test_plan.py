@@ -243,11 +243,15 @@ def seal_plan(
     if profile is not None:
         from .production_test_profile import recipe_checks, validate_profile
 
-        validate_profile(profile, {"card": binding["source_card"],
-                         "criteria_sha256": binding["criteria_sha256"]}, policy)
+        validate_profile(
+            profile,
+            {"card": binding["source_card"], "criteria_sha256": binding["criteria_sha256"]},
+            policy,
+        )
         value["profile"] = profile
         value["checks"] = recipe_checks(profile["recipe"])
         from . import production_test_node as node
+
         if node.is_node(profile):
             node.validate_environment(profile["node_environment"], workspace)
     if (
@@ -287,14 +291,26 @@ def load_plan(home: Path, binding: dict) -> tuple[dict, Path, str]:
 
         required.add("profile")
         profile = read_json(home / "fleet/test-profiles" / (binding["source_card"] + ".json"))
-        if (profile != plan["profile"] or profile.get("card") != binding["source_card"]
-                or profile.get("criteria_sha256") != binding["criteria_sha256"]
-                or any(profile.get(k) != plan.get(k) for k in (
-                    "qualified_by", "qualification_sha256", "python_sha256",
-                    "runtime_sha256", "policy_sha256", "host"))):
+        if (
+            profile != plan["profile"]
+            or profile.get("card") != binding["source_card"]
+            or profile.get("criteria_sha256") != binding["criteria_sha256"]
+            or any(
+                profile.get(k) != plan.get(k)
+                for k in (
+                    "qualified_by",
+                    "qualification_sha256",
+                    "python_sha256",
+                    "runtime_sha256",
+                    "policy_sha256",
+                    "host",
+                )
+            )
+        ):
             raise TestEvidenceError("candidate test profile changed")
         expected_checks = recipe_checks(profile["recipe"])
         from . import production_test_node as node
+
         if node.is_node(profile):
             node.validate_environment(profile["node_environment"])
     if (
@@ -358,15 +374,21 @@ def run_directory(home: Path, plan_sha: str) -> Path:
 def junit_counts(raw: bytes, profile: dict | None = None) -> dict:
     """Recompute strict per-file coverage from raw JUnit, never reported totals alone."""
     from . import production_test_node as node
+
     if node.is_node(profile):
         return node.junit_counts(raw, profile)
     if b"<!DOCTYPE" in raw or b"<!ENTITY" in raw:
         raise TestEvidenceError("JUnit entities are forbidden")
     root = ElementTree.fromstring(raw)
     cases = list(root.iter("testcase"))
-    minima = (profile["recipe"]["pytest"] if profile else
-              {name: 11 if name.endswith("test_skfleet_terminal_review_skip.py") else 1
-               for name in TEST_FILES})
+    minima = (
+        profile["recipe"]["pytest"]
+        if profile
+        else {
+            name: 11 if name.endswith("test_skfleet_terminal_review_skip.py") else 1
+            for name in TEST_FILES
+        }
+    )
     counts = {name: 0 for name in minima}
     identities = set()
     for case in cases:

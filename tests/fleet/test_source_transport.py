@@ -28,7 +28,7 @@ def authority_copy(source, tmp_path):
         source["card"],
         "verdict",
         source["owner"],
-        **(source["outcome"] | {"candidate_path": str(evidence)})
+        **(source["outcome"] | {"candidate_path": str(evidence)}),
     )
     return authority, evidence
 

@@ -16,22 +16,45 @@ def collected(attempt, monkeypatch):
     a = attempt
     a.status.update(pid=12345, pid_start_ticks="100")
     a.boot = "e" * 32
-    a.values = {"LoadState": "not-found", "ActiveState": "inactive", "MainPID": "0",
-                "InvocationID": "", "SubState": "dead"}
-    shared = {"_BOOT_ID": a.boot, "_UID": str(os.getuid()), "_PID": "99",
-              "_EXE": "/usr/lib/systemd/systemd",
-              "_SYSTEMD_CGROUP": f"/user.slice/user-{os.getuid()}.slice/"
-                                 f"user@{os.getuid()}.service/init.scope",
-              "USER_UNIT": a.status["unit"], "USER_INVOCATION_ID": a.status["invocation"]}
-    a.rows = [{**shared, "MESSAGE_ID": terminal.START_MESSAGE,
-               "JOB_TYPE": "start", "JOB_RESULT": "done", "__CURSOR": "start",
-               "__MONOTONIC_TIMESTAMP": "2000000"},
-              {**shared, "MESSAGE_ID": terminal.RESOURCE_MESSAGE,
-               "CODE_FILE": "src/core/unit.c", "CODE_FUNC": "unit_log_resources",
-               "__CURSOR": "terminal", "__MONOTONIC_TIMESTAMP": "3000000"}]
+    a.values = {
+        "LoadState": "not-found",
+        "ActiveState": "inactive",
+        "MainPID": "0",
+        "InvocationID": "",
+        "SubState": "dead",
+    }
+    shared = {
+        "_BOOT_ID": a.boot,
+        "_UID": str(os.getuid()),
+        "_PID": "99",
+        "_EXE": "/usr/lib/systemd/systemd",
+        "_SYSTEMD_CGROUP": f"/user.slice/user-{os.getuid()}.slice/"
+        f"user@{os.getuid()}.service/init.scope",
+        "USER_UNIT": a.status["unit"],
+        "USER_INVOCATION_ID": a.status["invocation"],
+    }
+    a.rows = [
+        {
+            **shared,
+            "MESSAGE_ID": terminal.START_MESSAGE,
+            "JOB_TYPE": "start",
+            "JOB_RESULT": "done",
+            "__CURSOR": "start",
+            "__MONOTONIC_TIMESTAMP": "2000000",
+        },
+        {
+            **shared,
+            "MESSAGE_ID": terminal.RESOURCE_MESSAGE,
+            "CODE_FILE": "src/core/unit.c",
+            "CODE_FUNC": "unit_log_resources",
+            "__CURSOR": "terminal",
+            "__MONOTONIC_TIMESTAMP": "3000000",
+        },
+    ]
     a.version = terminal.QUALIFICATION["version"]
-    monkeypatch.setattr(terminal.custody, "prove_dead",
-                        lambda *args: (_ for _ in ()).throw(ValueError("unknown")))
+    monkeypatch.setattr(
+        terminal.custody, "prove_dead", lambda *args: (_ for _ in ()).throw(ValueError("unknown"))
+    )
     monkeypatch.setattr(terminal, "boot_id", lambda: a.boot)
     monkeypatch.setattr(terminal, "absent", lambda status: None)
 
@@ -64,15 +87,43 @@ def test_journal_check_only_then_private_durable_exact_receipt(collected):
     assert target.read_bytes() == raw
 
 
-@pytest.mark.parametrize("change", ["boot", "uid", "exe", "cgroup", "unit", "invocation",
-                                  "message", "function", "cursor", "stale", "later", "empty",
-                                  "oversized", "ambiguous", "version", "live", "unknown", "birth"])
+@pytest.mark.parametrize(
+    "change",
+    [
+        "boot",
+        "uid",
+        "exe",
+        "cgroup",
+        "unit",
+        "invocation",
+        "message",
+        "function",
+        "cursor",
+        "stale",
+        "later",
+        "empty",
+        "oversized",
+        "ambiguous",
+        "version",
+        "live",
+        "unknown",
+        "birth",
+    ],
+)
 def test_spoof_stale_mismatch_later_live_unknown_refuse(collected, change):
     a = collected
     row = a.rows[-1]
-    field = {"boot": "_BOOT_ID", "uid": "_UID", "exe": "_EXE", "cgroup": "_SYSTEMD_CGROUP",
-             "unit": "USER_UNIT", "invocation": "USER_INVOCATION_ID",
-             "message": "MESSAGE_ID", "function": "CODE_FUNC", "cursor": "__CURSOR"}.get(change)
+    field = {
+        "boot": "_BOOT_ID",
+        "uid": "_UID",
+        "exe": "_EXE",
+        "cgroup": "_SYSTEMD_CGROUP",
+        "unit": "USER_UNIT",
+        "invocation": "USER_INVOCATION_ID",
+        "message": "MESSAGE_ID",
+        "function": "CODE_FUNC",
+        "cursor": "__CURSOR",
+    }.get(change)
     if field:
         row[field] = ""
     elif change == "stale":
@@ -80,8 +131,7 @@ def test_spoof_stale_mismatch_later_live_unknown_refuse(collected, change):
     elif change == "birth":
         a.status["pid_start_ticks"] = "9999999999"
     elif change == "later":
-        a.rows.append({**row, "USER_INVOCATION_ID": "f" * 32,
-                       "__MONOTONIC_TIMESTAMP": "4000000"})
+        a.rows.append({**row, "USER_INVOCATION_ID": "f" * 32, "__MONOTONIC_TIMESTAMP": "4000000"})
     elif change == "empty":
         a.rows.clear()
     elif change in {"oversized", "ambiguous"}:
@@ -115,8 +165,9 @@ def test_receipt_drift_rejected(collected, change):
         target.rename(moved)
         target.symlink_to(moved)
     else:
-        a.rows.append({**a.rows[-1], "USER_INVOCATION_ID": "f" * 32,
-                       "__MONOTONIC_TIMESTAMP": "4000000"})
+        a.rows.append(
+            {**a.rows[-1], "USER_INVOCATION_ID": "f" * 32, "__MONOTONIC_TIMESTAMP": "4000000"}
+        )
     with pytest.raises((ValueError, OSError)):
         terminal.prove(a.home, a.status)
 
@@ -196,8 +247,9 @@ def test_continuation_checks_terminal_custody_before_source_preservation(
     (workspace / "staged.txt").write_text("preserved source")
     monkeypatch.setattr(continuation.source_bundle, "_inspect", lambda *args: {"head": "b" * 40})
     if later:
-        a.rows.append({**a.rows[-1], "USER_INVOCATION_ID": "f" * 32,
-                       "__MONOTONIC_TIMESTAMP": "4000000"})
+        a.rows.append(
+            {**a.rows[-1], "USER_INVOCATION_ID": "f" * 32, "__MONOTONIC_TIMESTAMP": "4000000"}
+        )
         with pytest.raises(ValueError):
             continuation.source_proof(a.paths, a.request, a.status, a.home / "archive", apply=True)
         assert not (a.home / "archive").exists()

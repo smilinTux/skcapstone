@@ -27,8 +27,9 @@ from .production_tests import (
 )
 
 
-def sandbox_command(workspace: Path, output: Path, argv: list[str],
-                    profile: dict | None = None) -> list[str]:
+def sandbox_command(
+    workspace: Path, output: Path, argv: list[str], profile: dict | None = None
+) -> list[str]:
     """Expose only source/runtime read-only plus private tmp and one output directory."""
     command = [
         "/usr/bin/bwrap",
@@ -98,8 +99,7 @@ def sandbox_command(workspace: Path, output: Path, argv: list[str],
         # Clean candidates have no ignored node_modules directories. Build only
         # mountpoints privately, overlay every source entry read-only, then seal.
         mounts = ["--tmpfs", "/work"]
-        for relative, excluded in (("", {"apps", ".git"}), ("apps", {"web"}),
-                                   ("apps/web", set())):
+        for relative, excluded in (("", {"apps", ".git"}), ("apps", {"web"}), ("apps/web", set())):
             source = workspace / relative
             if source.is_symlink() or not source.is_dir():
                 raise TestEvidenceError("Node source mount parent is redirected")
@@ -111,18 +111,25 @@ def sandbox_command(workspace: Path, output: Path, argv: list[str],
                 if entry.is_symlink():
                     raise TestEvidenceError("Node source mount entry is redirected")
                 mounts.extend(["--ro-bind", str(entry), target + "/" + entry.name])
-        command[source_position:source_position + 3] = mounts
+        command[source_position : source_position + 3] = mounts
         position = command.index("--tmpfs")
         position = command.index("--tmpfs", position + 1)
         dependencies = [
-            "--ro-bind", str(artifact / "node_modules"), "/work/node_modules",
-            "--ro-bind", str(artifact / "apps/web/node_modules"), "/work/apps/web/node_modules",
+            "--ro-bind",
+            str(artifact / "node_modules"),
+            "/work/node_modules",
+            "--ro-bind",
+            str(artifact / "apps/web/node_modules"),
+            "/work/apps/web/node_modules",
         ]
         if argv == node.checks(profile["recipe"])[1]["argv"]:
-            dependencies.extend([
-                "--bind", str(output / "tsconfig.tsbuildinfo"),
-                "/work/apps/web/tsconfig.tsbuildinfo",
-            ])
+            dependencies.extend(
+                [
+                    "--bind",
+                    str(output / "tsconfig.tsbuildinfo"),
+                    "/work/apps/web/tsconfig.tsbuildinfo",
+                ]
+            )
         command[position:position] = [*dependencies, "--remount-ro", "/work"]
         command[command.index("--chdir") + 1] = "/work/apps/web"
     return command
@@ -205,8 +212,11 @@ def execute(plan_path: Path, directory: Path) -> int:
             if node.is_node(profile) and check["id"] == "typecheck":
                 # Earlier candidate tests cannot seed an incremental cache that
                 # suppresses the independent typecheck. Existing output fails closed.
-                fd = os.open(directory / "output/tsconfig.tsbuildinfo",
-                             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+                fd = os.open(
+                    directory / "output/tsconfig.tsbuildinfo",
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    0o600,
+                )
                 os.close(fd)
             argv = sandbox_command(workspace, directory / "output", check["argv"], profile)
             log = directory / (check["id"] + ".log")
@@ -234,7 +244,8 @@ def execute(plan_path: Path, directory: Path) -> int:
         receipt["failure"] = {"type": type(exc).__name__, "message": str(exc)[:1000]}
     write_once(directory / "receipt.json", receipt)
     return int(
-        receipt["failure"] is not None or receipt["counts"] is None
+        receipt["failure"] is not None
+        or receipt["counts"] is None
         or len(receipt["checks"]) != len(plan["checks"])
         or any(row["exit_code"] for row in receipt["checks"])
     )

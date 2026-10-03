@@ -28,8 +28,14 @@ def accepted(setup, monkeypatch, request):  # noqa: F811
             raw_junit = ElementTree.tostring(root)
             junit_name = "vitest.xml"
         else:
-            profile = {"recipe": {"pytest": dict.fromkeys(native.TEST_FILES, 1),
-                                  "compile": [], "lint": [], "changelog": False}}
+            profile = {
+                "recipe": {
+                    "pytest": dict.fromkeys(native.TEST_FILES, 1),
+                    "compile": [],
+                    "lint": [],
+                    "changelog": False,
+                }
+            }
             raw_junit = (s.directory / "pytest.xml").read_bytes()
             junit_name = "pytest.xml"
         s.plan.update(profile=profile, checks=recipe_checks(profile["recipe"]))
@@ -43,72 +49,124 @@ def accepted(setup, monkeypatch, request):  # noqa: F811
             path = s.directory / (check["id"] + ".log")
             path.write_bytes(raw)
             path.chmod(0o600)
-            receipt["checks"].append({**check, "exit_code": 0,
-                                      "output_sha256": plan.sha(raw)})
+            receipt["checks"].append({**check, "exit_code": 0, "output_sha256": plan.sha(raw)})
         path = s.directory / junit_name
         path.write_bytes(raw_junit)
         path.chmod(0o600)
-        receipt.update(junit_sha256=plan.sha(raw_junit),
-                       counts=plan.junit_counts(raw_junit, profile))
+        receipt.update(
+            junit_sha256=plan.sha(raw_junit), counts=plan.junit_counts(raw_junit, profile)
+        )
         native.write_once(s.directory / "receipt.json", receipt)
-        audit.update(plan_sha256=s.digest, receipt_path=str(s.directory / "receipt.json"),
-                     receipt_sha256=plan.sha((s.directory / "receipt.json").read_bytes()),
-                     checks=receipt["checks"], counts=receipt["counts"])
+        audit.update(
+            plan_sha256=s.digest,
+            receipt_path=str(s.directory / "receipt.json"),
+            receipt_sha256=plan.sha((s.directory / "receipt.json").read_bytes()),
+            checks=receipt["checks"],
+            counts=receipt["counts"],
+        )
     directory = s.home / "evidence/accepted-pair"
     directory.mkdir(parents=True, mode=0o700)
-    context = {"controller": "test-authority", "test_binding": s.binding,
-               "source_workspace": str(s.workspace)}
+    context = {
+        "controller": "test-authority",
+        "test_binding": s.binding,
+        "source_workspace": str(s.workspace),
+    }
     for role, card in (("source", s.binding["source_card"]), ("review", "abcd1234")):
         path = directory / (role + ".md")
         path.write_text(role)
         path.chmod(0o600)
-        context[role] = {"card": card, "owner": role + "-worker", "claim": role + "-claim",
-                         "revision": role + "-before", "evidence_path": str(path),
-                         "evidence_sha256": finish._sha(path.read_bytes())}
+        context[role] = {
+            "card": card,
+            "owner": role + "-worker",
+            "claim": role + "-claim",
+            "revision": role + "-before",
+            "evidence_path": str(path),
+            "evidence_sha256": finish._sha(path.read_bytes()),
+        }
     decision = directory / "decision.json"
     decision.write_text('{"verdict":"PASS"}')
     decision.chmod(0o600)
-    context["review"].update(decision_path=str(decision),
-        decision_sha256=finish._sha(decision.read_bytes()), proposal={"verdict": "PASS"})
-    context["source"].update(repository="https://example.org/public.git",
-                              ref="refs/heads/candidate", head=s.binding["source_head"],
-                              tree=s.binding["source_tree"], owner=s.binding["source_owner"],
-                              claim=s.binding["source_claim_revision"])
-    binding = {"controller": context["controller"], "context_sha256": finish._digest(context),
-               "test_receipt": audit}
+    context["review"].update(
+        decision_path=str(decision),
+        decision_sha256=finish._sha(decision.read_bytes()),
+        proposal={"verdict": "PASS"},
+    )
+    context["source"].update(
+        repository="https://example.org/public.git",
+        ref="refs/heads/candidate",
+        head=s.binding["source_head"],
+        tree=s.binding["source_tree"],
+        owner=s.binding["source_owner"],
+        claim=s.binding["source_claim_revision"],
+    )
+    binding = {
+        "controller": context["controller"],
+        "context_sha256": finish._digest(context),
+        "test_receipt": audit,
+    }
     finish.once(directory / "finish-intent.json", binding)
     expected = {role: context[role]["revision"] for role in ("source", "review")}
     for index, (role, action, key, value) in enumerate(finish.steps(context, audit)):
         item = context[role]
-        step = {"binding": finish._digest(binding), "index": index, "role": role,
-                "action": action, "key": key, "value": value, "before": expected,
-                "card": item["card"], "owner": item["owner"], "claim": item["claim"],
-                "native_before": {"fixture": True}}
+        step = {
+            "binding": finish._digest(binding),
+            "index": index,
+            "role": role,
+            "action": action,
+            "key": key,
+            "value": value,
+            "before": expected,
+            "card": item["card"],
+            "owner": item["owner"],
+            "claim": item["claim"],
+            "native_before": {"fixture": True},
+        }
         finish.once(directory / f"step-{index:02d}.intent.json", step)
         expected = dict(expected, **{role: f"accepted-{index}"})
-        finish.once(directory / f"step-{index:02d}.ack.json",
-                    {"step_sha256": finish._digest(step), "after": expected})
-    historical = {"schema": "skfleet.source-review-acceptance/v1",
-                  "controller": context["controller"], "context_sha256": finish._digest(context),
-                  "revisions": expected, "source_card": context["source"]["card"],
-                  "review_card": context["review"]["card"], "accepted": True,
-                  "test_receipt": audit, "governed_pr_ci": False}
+        finish.once(
+            directory / f"step-{index:02d}.ack.json",
+            {"step_sha256": finish._digest(step), "after": expected},
+        )
+    historical = {
+        "schema": "skfleet.source-review-acceptance/v1",
+        "controller": context["controller"],
+        "context_sha256": finish._digest(context),
+        "revisions": expected,
+        "source_card": context["source"]["card"],
+        "review_card": context["review"]["card"],
+        "accepted": True,
+        "test_receipt": audit,
+        "governed_pr_ci": False,
+    }
     finish.once(directory / "finished.json", historical)
-    states = {context[role]["card"]: {"revision": expected[role], "status": "done",
-                                     "owner": None, "claim_revision": None}
-              for role in ("source", "review")}
+    states = {
+        context[role]["card"]: {
+            "revision": expected[role],
+            "status": "done",
+            "owner": None,
+            "claim_revision": None,
+        }
+        for role in ("source", "review")
+    }
     rows = {card: SimpleNamespace(links={"test_acceptance": json.dumps(audit)}) for card in states}
     monkeypatch.setattr(finish, "CardStore", lambda home: SimpleNamespace(fold=rows.get))
-    return SimpleNamespace(s=s, directory=directory, context=context, historical=historical,
-                           states=states, rows=rows)
+    return SimpleNamespace(
+        s=s, directory=directory, context=context, historical=historical, states=states, rows=rows
+    )
 
 
 def replay(a):
     def forbidden(*args, **kwargs):
         pytest.fail("historical acceptance attempted a mutation or live execution guard")
 
-    return finish.finish_pair(a.s.home, a.directory, a.context, guard=forbidden,
-                              command=forbidden, inspect=lambda home, card: a.states[card])
+    return finish.finish_pair(
+        a.s.home,
+        a.directory,
+        a.context,
+        guard=forbidden,
+        command=forbidden,
+        inspect=lambda home, card: a.states[card],
+    )
 
 
 def test_accepted_pair_survives_runtime_upgrade_without_any_write(accepted, monkeypatch):
@@ -122,17 +180,34 @@ def test_accepted_pair_survives_runtime_upgrade_without_any_write(accepted, monk
     assert {p: p.read_bytes() for p in a.s.home.rglob("*") if p.is_file()} == before
 
 
-@pytest.mark.parametrize("target", ["plan", "receipt", "log", "junit", "report",
-                                    "intent", "ack", "native-proof", "native-revision",
-                                    "native-owner", "context"])
+@pytest.mark.parametrize(
+    "target",
+    [
+        "plan",
+        "receipt",
+        "log",
+        "junit",
+        "report",
+        "intent",
+        "ack",
+        "native-proof",
+        "native-revision",
+        "native-owner",
+        "context",
+    ],
+)
 def test_changed_historical_proof_never_accepts(accepted, target):
     a = accepted
     test_id = a.s.plan["checks"][0]["id"]
-    paths = {"plan": a.s.plan_path, "receipt": a.s.directory / "receipt.json",
-             "log": a.s.directory / (test_id + ".log"),
-             "junit": a.s.directory / (test_id + ".xml"),
-             "report": a.directory / "source.md", "intent": a.directory / "finish-intent.json",
-             "ack": a.directory / "step-00.ack.json"}
+    paths = {
+        "plan": a.s.plan_path,
+        "receipt": a.s.directory / "receipt.json",
+        "log": a.s.directory / (test_id + ".log"),
+        "junit": a.s.directory / (test_id + ".xml"),
+        "report": a.directory / "source.md",
+        "intent": a.directory / "finish-intent.json",
+        "ack": a.directory / "step-00.ack.json",
+    }
     if target in paths:
         paths[target].write_bytes(paths[target].read_bytes() + b" ")
         if target in {"intent", "ack"}:
@@ -150,8 +225,9 @@ def test_changed_historical_proof_never_accepts(accepted, target):
         replay(a)
 
 
-@pytest.mark.parametrize("missing", ["finish-intent.json", "step-00.intent.json",
-                                     "step-00.ack.json"])
+@pytest.mark.parametrize(
+    "missing", ["finish-intent.json", "step-00.intent.json", "step-00.ack.json"]
+)
 def test_incomplete_history_never_replays_a_native_write(accepted, missing):
     a = accepted
     (a.directory / missing).unlink()
@@ -167,8 +243,10 @@ def test_unfinished_pair_still_requires_current_runtime(accepted, monkeypatch):
         replay(a)
 
 
-@pytest.mark.parametrize("mutation", ["missing", "duplicate", "extra", "wrong", "order",
-                                     "argv", "exit", "binding", "counts"])
+@pytest.mark.parametrize(
+    "mutation",
+    ["missing", "duplicate", "extra", "wrong", "order", "argv", "exit", "binding", "counts"],
+)
 def test_historical_receipt_requires_exact_checks_and_binding(accepted, mutation):
     a = accepted
     path = a.s.directory / "receipt.json"
@@ -201,8 +279,9 @@ def test_historical_receipt_requires_exact_checks_and_binding(accepted, mutation
     for row in a.rows.values():
         row.links["test_acceptance"] = json.dumps(audit)
     with pytest.raises(ValueError):
-        finish._historical_acceptance(a.s.home, a.context, a.historical,
-                                     lambda home, card: a.states[card])
+        finish._historical_acceptance(
+            a.s.home, a.context, a.historical, lambda home, card: a.states[card]
+        )
 
 
 @pytest.mark.parametrize("tag", ["failure", "error", "skipped"])
@@ -221,5 +300,6 @@ def test_historical_junit_rejects_unsuccessful_cases_even_with_rehashed_proof(ac
     for row in a.rows.values():
         row.links["test_acceptance"] = json.dumps(audit)
     with pytest.raises(ValueError):
-        finish._historical_acceptance(a.s.home, a.context, a.historical,
-                                     lambda home, card: a.states[card])
+        finish._historical_acceptance(
+            a.s.home, a.context, a.historical, lambda home, card: a.states[card]
+        )

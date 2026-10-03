@@ -16,9 +16,22 @@ def test_claim_bound_producer_handoff_preserves_completion_links(tmp_path):
     store.append_event(card, "claim", owner, owner=owner, claim_revision=claim)
     for key, value in [("commit_sha", COMMIT), ("branch", "skcapstone:fix/candidate")]:
         revision = LiveCardStoreGateway(tmp_path).read_card(card).revision
-        result = _run(tmp_path, "link", card, key, value, "--agent", owner,
-            "--expected-source-revision", revision, "--expected-claim-revision", claim,
-            "--transition-id", hashlib.sha256(key.encode()).hexdigest(), "--json")
+        result = _run(
+            tmp_path,
+            "link",
+            card,
+            key,
+            value,
+            "--agent",
+            owner,
+            "--expected-source-revision",
+            revision,
+            "--expected-claim-revision",
+            claim,
+            "--transition-id",
+            hashlib.sha256(key.encode()).hexdigest(),
+            "--json",
+        )
         assert result.exit_code == 0, result.output
         receipt = json.loads(result.output)
         assert receipt["card_id"] == card
@@ -28,11 +41,30 @@ def test_claim_bound_producer_handoff_preserves_completion_links(tmp_path):
     candidate = _candidate(tmp_path, card)
     candidate.chmod(0o600)
     revision = LiveCardStoreGateway(tmp_path).read_card(card).revision
-    result = _run(tmp_path, "verdict", card, "PASS_FOR_REVIEW", "--candidate", str(candidate),
-        "--commit", COMMIT, "--tree", TREE, "--ref", REF, "--agent", owner,
-        "--expected-source-revision", revision, "--expected-claim-revision", claim,
-        "--expected-candidate-sha256", hashlib.sha256(candidate.read_bytes()).hexdigest(),
-        "--transition-id", "d" * 64)
+    result = _run(
+        tmp_path,
+        "verdict",
+        card,
+        "PASS_FOR_REVIEW",
+        "--candidate",
+        str(candidate),
+        "--commit",
+        COMMIT,
+        "--tree",
+        TREE,
+        "--ref",
+        REF,
+        "--agent",
+        owner,
+        "--expected-source-revision",
+        revision,
+        "--expected-claim-revision",
+        claim,
+        "--expected-candidate-sha256",
+        hashlib.sha256(candidate.read_bytes()).hexdigest(),
+        "--transition-id",
+        "d" * 64,
+    )
     assert result.exit_code == 0, result.output
     row = store.fold(card)
     assert row.owner == owner and row.meta["_claim_revision"] == claim

@@ -256,8 +256,11 @@ def test_service_environment_is_reduced_to_marker(monkeypatch):
 
 
 def test_measured_capacity_deferral_proves_no_intent_and_is_retryable(capacity, monkeypatch):
-    monkeypatch.setattr(admission, "local_worker_admission",
-                        lambda *args: (False, "memory_available=0 required=1024"))
+    monkeypatch.setattr(
+        admission,
+        "local_worker_admission",
+        lambda *args: (False, "memory_available=0 required=1024"),
+    )
     with pytest.raises(admission.AdmissionDeferredError):
         reserve(capacity)
     assert not list((capacity / "fleet/resource-admission").glob("*/*/intent.json"))

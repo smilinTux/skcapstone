@@ -14,12 +14,15 @@ from skcapstone.fleet import production_test_profile as profile
 
 def specimen():
     """Return a minimal real Vitest-shaped two-file report and contract."""
-    value = {"schema": node.SCHEMA,
-             "recipe": {"vitest": {"src/a.test.ts": 1, "src/b.test.tsx": 1}}}
+    value = {
+        "schema": node.SCHEMA,
+        "recipe": {"vitest": {"src/a.test.ts": 1, "src/b.test.tsx": 1}},
+    }
     root = ET.Element("testsuites", tests="2", failures="0", errors="0")
     for name in value["recipe"]["vitest"]:
-        suite = ET.SubElement(root, "testsuite", name=name, tests="1", errors="0",
-                              failures="0", skipped="0")
+        suite = ET.SubElement(
+            root, "testsuite", name=name, tests="1", errors="0", failures="0", skipped="0"
+        )
         ET.SubElement(suite, "testcase", classname=name, name="works")
     return value, root
 
@@ -33,9 +36,26 @@ def test_fixed_node_commands_and_exact_membership():
     assert plan.junit_counts(ET.tostring(root), value)["total"] == 2
 
 
-@pytest.mark.parametrize("mutation", ["missing", "duplicate", "unexpected", "skip", "fail",
-    "error", "undercount", "suite-failure", "root-total", "class", "identity", "nested",
-    "zero", "suite-total", "suite-missing-count"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing",
+        "duplicate",
+        "unexpected",
+        "skip",
+        "fail",
+        "error",
+        "undercount",
+        "suite-failure",
+        "root-total",
+        "class",
+        "identity",
+        "nested",
+        "zero",
+        "suite-total",
+        "suite-missing-count",
+    ],
+)
 def test_node_junit_negatives(mutation):
     value, root = specimen()
     suite, case = root[0], root[0][0]
@@ -77,8 +97,17 @@ def test_node_junit_bounded_and_parse_errors(raw):
         plan.junit_counts(raw, specimen()[0])
 
 
-@pytest.mark.parametrize("path", ["../a.test.ts", "src/a.test.ts;id", "/src/a.test.ts",
-                                  "src//a.test.ts", "src/../a.test.ts", "--help"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "../a.test.ts",
+        "src/a.test.ts;id",
+        "/src/a.test.ts",
+        "src//a.test.ts",
+        "src/../a.test.ts",
+        "--help",
+    ],
+)
 def test_node_recipe_never_accepts_arbitrary_commands(path):
     with pytest.raises(plan.TestEvidenceError):
         node.checks({"vitest": {path: 1}})
@@ -104,9 +133,12 @@ def test_dependency_artifact_and_runtime_drift(tmp_path, monkeypatch):
     executable = tmp_path / "node"
     executable.write_bytes(b"runtime")
     monkeypatch.setattr(node, "NODE", executable)
-    environment = {"node_sha256": plan.sha(b"runtime"), "artifact_sha256": digest,
-                   "platform": [platform.system(), platform.machine()],
-                   "source_sha256": dict.fromkeys(node.SOURCE_FILES, "a" * 64)}
+    environment = {
+        "node_sha256": plan.sha(b"runtime"),
+        "artifact_sha256": digest,
+        "platform": [platform.system(), platform.machine()],
+        "source_sha256": dict.fromkeys(node.SOURCE_FILES, "a" * 64),
+    }
     node.validate_environment(environment)
     executable.write_bytes(b"changed")
     with pytest.raises(plan.TestEvidenceError, match="environment"):
@@ -137,10 +169,12 @@ def test_source_config_scripts_and_lock_must_match(tmp_path, monkeypatch):
     package = tmp_path / "apps/web/package.json"
     scripts = {"test": "vitest run", "typecheck": "tsc -b", "lint": "eslint ."}
     package.write_text(json.dumps({"scripts": scripts}))
-    environment = {"node_sha256": plan.sha(node.NODE.read_bytes()), "artifact_sha256": "a" * 64,
-                   "platform": [platform.system(), platform.machine()],
-                   "source_sha256": {
-                       p: plan.sha((tmp_path / p).read_bytes()) for p in node.SOURCE_FILES}}
+    environment = {
+        "node_sha256": plan.sha(node.NODE.read_bytes()),
+        "artifact_sha256": "a" * 64,
+        "platform": [platform.system(), platform.machine()],
+        "source_sha256": {p: plan.sha((tmp_path / p).read_bytes()) for p in node.SOURCE_FILES},
+    }
     node.validate_environment(environment, tmp_path)
     (tmp_path / "package-lock.json").write_text("changed")
     with pytest.raises(plan.TestEvidenceError, match="configuration"):
@@ -166,17 +200,23 @@ def test_artifact_invalid_links_are_typed_failures(tmp_path, kind):
 @pytest.mark.parametrize("relative", ["outside", "apps", "apps/web", "apps/web/socket"])
 def test_source_scaffold_rejects_host_redirects(tmp_path, monkeypatch, relative):
     from skcapstone.fleet import production_test_worker as worker
+
     workspace = tmp_path / "source"
     (workspace / "apps/web").mkdir(parents=True)
     target = workspace / relative
     if target.is_dir():
         import shutil
+
         shutil.rmtree(target)
     target.symlink_to("/run/user/1000/private-socket")
     monkeypatch.setattr(node, "artifact_path", lambda value: tmp_path / "artifact")
     with pytest.raises(plan.TestEvidenceError, match="redirected"):
-        worker.sandbox_command(workspace, tmp_path / "output", ["node"],
-                               {"schema": node.SCHEMA, "node_environment": {}})
+        worker.sandbox_command(
+            workspace,
+            tmp_path / "output",
+            ["node"],
+            {"schema": node.SCHEMA, "node_environment": {}},
+        )
 
 
 def test_junit_encoded_entities_and_root_skips_are_rejected():
@@ -185,11 +225,12 @@ def test_junit_encoded_entities_and_root_skips_are_rejected():
     with pytest.raises(plan.TestEvidenceError):
         node.junit_counts(ET.tostring(root), value)
     with pytest.raises(plan.TestEvidenceError):
-        node.junit_counts('<!DOCTYPE x [<!ENTITY a "x">]><testsuites/>'.encode('utf-16'), value)
+        node.junit_counts('<!DOCTYPE x [<!ENTITY a "x">]><testsuites/>'.encode("utf-16"), value)
 
 
 def test_only_typecheck_gets_its_private_build_info_mount(tmp_path, monkeypatch):
     from skcapstone.fleet import production_test_worker as worker
+
     workspace = tmp_path / "source"
     (workspace / "apps/web").mkdir(parents=True)
     monkeypatch.setattr(node, "artifact_path", lambda value: tmp_path / "artifact")

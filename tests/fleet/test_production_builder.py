@@ -119,10 +119,17 @@ def production_setup(paths, operator, monkeypatch, tmp_path):
         path = home / "fleet/test-profiles" / (core["id"] + ".json")
         if not path.exists():
             profiles.qualify_profile(
-                home, core, policy,
-                {"pytest": {"tests/test_fixture.py": 1}, "compile": [],
-                 "lint": [], "changelog": False},
-                "synthetic-test-operator", "b" * 64,
+                home,
+                core,
+                policy,
+                {
+                    "pytest": {"tests/test_fixture.py": 1},
+                    "compile": [],
+                    "lint": [],
+                    "changelog": False,
+                },
+                "synthetic-test-operator",
+                "b" * 64,
             )
         return preflight(home, core, labels, policy)
 

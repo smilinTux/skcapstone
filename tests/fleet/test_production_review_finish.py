@@ -58,8 +58,16 @@ def test_native_state_reuses_only_current_locked_store(tmp_path, monkeypatch, le
     first = finish.native_state(home, card)
     assert len(loads) == 1
     if legacy:
-        overlay[card] = [{"action": "link", "link_key": "verdict", "link_value": "PASS",
-                          "writer": "producer", "seq": 1, "ts": "2099-01-01T00:00:00Z"}]
+        overlay[card] = [
+            {
+                "action": "link",
+                "link_key": "verdict",
+                "link_value": "PASS",
+                "writer": "producer",
+                "seq": 1,
+                "ts": "2099-01-01T00:00:00Z",
+            }
+        ]
     else:
         store.append_event(card, "link", "producer", link_key="verdict", link_value="PASS")
     loads.clear()
@@ -70,8 +78,11 @@ def test_native_state_reuses_only_current_locked_store(tmp_path, monkeypatch, le
     assert second["owner"] == first["owner"] == "producer"
     assert second["claim_revision"] == first["claim_revision"]
     # Replay the old call boundary: the gateway constructs a second fresh store.
-    monkeypatch.setattr(finish.LiveCardStoreGateway, "read_card",
-                        lambda self, card_id, **kwargs: read(self, card_id))
+    monkeypatch.setattr(
+        finish.LiveCardStoreGateway,
+        "read_card",
+        lambda self, card_id, **kwargs: read(self, card_id),
+    )
     loads.clear()
     assert finish.native_state(home, card) == second
     assert len(loads) == 2
@@ -207,7 +218,9 @@ def pair(source, monkeypatch, tmp_path):  # noqa: F811
     from tests.fleet.acceptance_proof_fixture import retained_proof
 
     binding, receipt = retained_proof(
-        home, source_item, source["workspace"],
+        home,
+        source_item,
+        source["workspace"],
         finish._digest(store.fold(source["card"]).acceptance_criteria),
     )
     context = dict(
@@ -292,8 +305,13 @@ def test_sigkill_after_native_link_before_ack_resumes_in_fresh_controller(pair):
                 os.kill(os.getpid(), signal.SIGKILL)
             return result
 
-        finish.finish_pair(home, directory, finish.read_json(directory / "context.json"),
-                           guard=lambda: None, command=command)
+        finish.finish_pair(
+            home,
+            directory,
+            finish.read_json(directory / "context.json"),
+            guard=lambda: None,
+            command=command,
+        )
 
     first = multiprocessing.get_context("fork").Process(target=killed_controller)
     first.start()
@@ -308,8 +326,9 @@ def test_sigkill_after_native_link_before_ack_resumes_in_fresh_controller(pair):
     assert native_revision(home, context["review"]["card"]) != context["review"]["revision"]
 
     def resumed_controller():
-        finish.finish_pair(home, directory, finish.read_json(directory / "context.json"),
-                           guard=lambda: None)
+        finish.finish_pair(
+            home, directory, finish.read_json(directory / "context.json"), guard=lambda: None
+        )
 
     second = multiprocessing.get_context("fork").Process(target=resumed_controller)
     second.start()
