@@ -4,7 +4,22 @@
 import argparse
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+
+def run_recorded(command, timeout):
+    # Descendants may inherit this file, but never the runner's log pipe.
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as output:
+        try:
+            code = subprocess.run(
+                command, stdout=output, stderr=subprocess.STDOUT, timeout=timeout
+            ).returncode
+        except subprocess.TimeoutExpired:
+            code = 124
+            output.write(f"\nCommand exceeded {timeout} seconds.\n")
+        output.seek(0)
+        return subprocess.CompletedProcess(command, code, stdout=output.read())
 
 
 def main():
@@ -30,25 +45,9 @@ def main():
         "-o",
         "addopts=",
     ]
-    try:
-        collected = subprocess.run(
-            collect_command,
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
-    except subprocess.TimeoutExpired as exc:
-        for output in (exc.stdout, exc.stderr):
-            if output:
-                print(
-                    output.decode(errors="replace") if isinstance(output, bytes) else output,
-                    flush=True,
-                )
-        print("Collection exceeded 180 seconds; refusing to omit tests.", flush=True)
-        return 124
+    collected = run_recorded(collect_command, timeout=180)
     if collected.returncode:
         print(collected.stdout, flush=True)
-        print(collected.stderr, file=sys.stderr, flush=True)
         return collected.returncode
     nodeids = [
         line
@@ -79,14 +78,18 @@ def main():
         coverage = ["--cov=skcapstone", "--cov-report="] if args.coverage else []
         if args.coverage and offset:
             coverage.append("--cov-append")
-        result = subprocess.run(
-            [*pytest, *batch, *common, *coverage, "-o", "faulthandler_timeout=120"]
+        result = run_recorded(
+            [*pytest, *batch, *common, *coverage, "-o", "faulthandler_timeout=120"],
+            timeout=600,
         )
+        print(result.stdout, end="", flush=True)
         print(f"Batch completed with exit {result.returncode}", flush=True)
         print(
             f"::notice title=pytest batch {number}::Exit status {result.returncode}",
             flush=True,
         )
+        if result.returncode == 124:
+            return 124
         failed |= result.returncode != 0
     if args.coverage:
         for report in ("xml", "report"):

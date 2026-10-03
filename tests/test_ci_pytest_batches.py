@@ -46,3 +46,38 @@ def test_collection_error_cannot_become_an_empty_success(tmp_path):
     assert result.returncode != 0
     assert "SyntaxError" in result.stdout
     assert "Batch completed" not in result.stdout
+
+
+def test_recorded_output_does_not_wait_for_descendant_log_handles():
+    import runpy
+    import signal
+
+    run_recorded = runpy.run_path(str(RUNNER))["run_recorded"]
+    result = run_recorded(
+        [
+            sys.executable,
+            "-c",
+            "import subprocess, sys; "
+            'child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"]); '
+            "print(child.pid, flush=True)",
+        ],
+        timeout=5,
+    )
+    child = int(result.stdout.strip())
+    try:
+        assert result.returncode == 0
+    finally:
+        os.kill(child, signal.SIGTERM)
+
+
+def test_recorded_timeout_preserves_output_and_failure():
+    import runpy
+
+    run_recorded = runpy.run_path(str(RUNNER))["run_recorded"]
+    result = run_recorded(
+        [sys.executable, "-c", 'import time; print("before timeout", flush=True); time.sleep(30)'],
+        timeout=0.5,
+    )
+    assert result.returncode == 124
+    assert "before timeout" in result.stdout
+    assert "Command exceeded" in result.stdout
