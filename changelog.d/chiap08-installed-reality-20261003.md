@@ -1,0 +1,1 @@
+- Reconcile captured chiap08 package and fleet runtime source, retain newer main safeguards and protected mail files, and preserve explicit forward adjustments and reverts for review. No deployment is performed.

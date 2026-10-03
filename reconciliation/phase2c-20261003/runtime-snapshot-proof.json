@@ -1,0 +1,20 @@
+{
+  "chiap08": {
+    "before": "3f556cb818568956fd2946448d2ba182fd7eae63",
+    "commit": "d0974223edfcf27198d3f1277d13354d176188eb",
+    "package_tree": "14919cad99165821864617f70ca2785f383f45f3",
+    "branch": "publish/installed-chiap08-20261003"
+  },
+  "chiap04": {
+    "before": "3d87fd7afdeb06e779b75dd7b2acc3bd522506af",
+    "commit": "4f17fa096a9f2c703b5d8c15584f0cb7531e7891",
+    "package_tree": "7df83fa34bc98655436bb2cffed0c608c24c47bd",
+    "branch": "publish/installed-chiap04-20261003"
+  },
+  "ziowk01": {
+    "before": "9f5dad798aa59238326e23066408a173073062ca",
+    "commit": "69e9ca55dc3150951f91f3762e2e5cd79ec8c62e",
+    "package_tree": "7c61dc765c62f8556d8d8707b3284cc26af3c267",
+    "branch": "publish/installed-ziowk01-20261003"
+  }
+}

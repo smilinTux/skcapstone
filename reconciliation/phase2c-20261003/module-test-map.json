@@ -1,0 +1,421 @@
+{
+  "cli/coord.py": [
+    "tests/test_coord_status_filters.py",
+    "tests/test_coord_completion_parity.py",
+    "tests/test_cli_coord_reopen.py",
+    "tests/test_cli_coord_score.py",
+    "tests/test_churn_breaker.py",
+    "tests/test_skfleet_pr_policy.py",
+    "tests/test_coord_slice_preflight.py",
+    "tests/test_cli_coord_describe.py",
+    "tests/test_coord_helpers.py",
+    "tests/test_cli_coord_show.py",
+    "tests/test_provisional_verdict_producer.py",
+    "tests/test_liveness_generation.py",
+    "tests/test_coord_release_reason.py",
+    "tests/test_skfleet_coord_write_guard.py",
+    "tests/test_cli_coord_deps.py",
+    "tests/test_coord_void.py",
+    "tests/test_cardstore_mutation_guards.py",
+    "tests/test_cli_coord_rehome.py",
+    "tests/test_coord_event_recovery.py",
+    "tests/test_coord_amend.py",
+    "tests/fleet/test_seat_capability_table.py",
+    "tests/fleet/test_mero_readonly_entrypoint.py"
+  ],
+  "cli/coord_historical_pr.py": [
+    "tests/test_historical_pr.py"
+  ],
+  "cli/coord_liveness.py": [
+    "tests/test_liveness_generation.py"
+  ],
+  "cli/coord_review_work.py": [
+    "tests/test_guarded_review_work.py",
+    "tests/test_review_replacement.py"
+  ],
+  "cli/daemon.py": [
+    "tests/test_multi_agent.py"
+  ],
+  "coord_completion.py": [
+    "tests/test_coord_completion_parity.py",
+    "tests/test_skfleet_pr_policy.py",
+    "tests/test_coord_commit_evidence.py",
+    "tests/test_skfleet_review_closer_generation.py",
+    "tests/test_guarded_completion.py",
+    "tests/test_coord_exit_gates.py"
+  ],
+  "coord_helpers.py": [
+    "tests/test_coord_helpers.py",
+    "tests/fleet/test_crew_contract.py",
+    "tests/fleet/test_crew_admission.py"
+  ],
+  "daemon.py": [
+    "tests/test_conversation_api.py",
+    "tests/test_cli_status.py",
+    "tests/test_log_config.py",
+    "tests/test_daemon.py",
+    "tests/test_headless_alerting.py",
+    "tests/test_version_cmd.py",
+    "tests/test_ws.py",
+    "tests/test_sync_pipeline.py",
+    "tests/test_daemon_shutdown.py",
+    "tests/test_health_loop.py",
+    "tests/test_multi_agent.py",
+    "tests/test_component_manager.py",
+    "tests/test_logs_cmd.py",
+    "tests/integration/test_consciousness_e2e.py"
+  ],
+  "fleet/builder_checkpoint.py": [
+    "tests/fleet/test_builder_checkpoint.py"
+  ],
+  "fleet/builder_continue.py": [
+    "tests/fleet/test_builder_terminal.py",
+    "tests/fleet/test_builder_continue.py"
+  ],
+  "fleet/builder_dispatch.py": [
+    "tests/fleet/test_production_builder.py",
+    "tests/fleet/test_builder_retry.py",
+    "tests/fleet/test_crew_admission.py",
+    "tests/fleet/test_builder_terminal.py",
+    "tests/fleet/test_builder_dispatch_voided_card.py",
+    "tests/fleet/test_builder_continue.py",
+    "tests/fleet/test_builder_dispatch.py",
+    "tests/fleet/test_builder_active_hold.py"
+  ],
+  "fleet/builder_execution.py": [
+    "tests/fleet/test_builder_execution.py"
+  ],
+  "fleet/builder_retire.py": [
+    "tests/fleet/test_builder_retire_terminal.py",
+    "tests/fleet/test_builder_retire.py",
+    "tests/fleet/test_builder_continue.py"
+  ],
+  "fleet/builder_retry.py": [
+    "tests/fleet/test_builder_retry.py"
+  ],
+  "fleet/builder_terminal.py": [
+    "tests/fleet/test_builder_retire_terminal.py",
+    "tests/fleet/test_builder_terminal.py"
+  ],
+  "fleet/cli.py": [
+    "tests/fleet/test_herdr_handoff_cli.py",
+    "tests/fleet/test_cli_node_drift.py",
+    "tests/fleet/test_cli_install.py",
+    "tests/fleet/test_builder_retry.py",
+    "tests/fleet/test_crew_controller.py",
+    "tests/fleet/test_cli_profiles.py",
+    "tests/fleet/test_cli_services.py",
+    "tests/fleet/test_cli_rollback.py",
+    "tests/fleet/test_node_role.py",
+    "tests/fleet/test_modelserver_controller.py",
+    "tests/fleet/test_endpoint_audit.py",
+    "tests/fleet/test_cli.py",
+    "tests/fleet/test_control_bus_audit.py",
+    "tests/fleet/test_cli_node_doctor.py",
+    "tests/fleet/test_drill.py",
+    "tests/fleet/test_builder_continue.py",
+    "tests/fleet/test_node_taint.py",
+    "tests/fleet/test_cli_rollout.py",
+    "tests/fleet/test_drain.py",
+    "tests/fleet/test_config_controller.py",
+    "tests/fleet/test_cli_node_stignore.py",
+    "tests/fleet/test_cli_placements.py",
+    "tests/fleet/test_cron_controller.py",
+    "tests/fleet/test_cli_node_manifest.py",
+    "tests/fleet/test_agent_controller.py"
+  ],
+  "fleet/crew_admission.py": [
+    "tests/fleet/test_crew_admission.py"
+  ],
+  "fleet/crew_cli.py": [
+    "tests/fleet/test_crew_controller.py"
+  ],
+  "fleet/crew_contract.py": [
+    "tests/fleet/test_crew_contract.py",
+    "tests/fleet/test_crew_requests.py"
+  ],
+  "fleet/crew_controller.py": [
+    "tests/fleet/test_crew_controller.py",
+    "tests/fleet/test_crew_progress.py"
+  ],
+  "fleet/crew_progress.py": [
+    "tests/fleet/test_crew_progress.py"
+  ],
+  "fleet/crew_requests.py": [
+    "tests/fleet/test_crew_controller.py",
+    "tests/fleet/test_crew_progress.py",
+    "tests/fleet/test_crew_requests.py"
+  ],
+  "fleet/crew_store.py": [
+    "tests/fleet/test_crew_controller.py",
+    "tests/fleet/test_crew_store.py",
+    "tests/fleet/test_crew_requests.py"
+  ],
+  "fleet/deployment_manifest.py": [
+    "tests/test_seraph_dispatcher_path.py",
+    "tests/fleet/test_cli_node_drift.py",
+    "tests/fleet/test_deployment_manifest.py",
+    "tests/fleet/test_rollout_drift.py",
+    "tests/fleet/test_staged_rollout.py",
+    "tests/fleet/test_cli_rollout.py",
+    "tests/fleet/test_deployed_artifact_path.py",
+    "tests/fleet/test_cli_node_manifest.py"
+  ],
+  "fleet/herdr_handoff.py": [
+    "tests/fleet/test_herdr_handoff_cli.py",
+    "tests/fleet/test_herdr_handoff.py"
+  ],
+  "fleet/herdr_handoff_cli.py": [
+    "tests/fleet/test_herdr_handoff_cli.py"
+  ],
+  "fleet/herdr_handoff_validation.py": [
+    "tests/fleet/test_herdr_handoff.py"
+  ],
+  "fleet/herdr_transport.py": [
+    "tests/fleet/test_herdr_handoff_cli.py",
+    "tests/fleet/test_herdr_transport.py"
+  ],
+  "fleet/liveness_publication.py": [
+    "tests/test_liveness_generation.py"
+  ],
+  "fleet/pi_catalog.py": [
+    "tests/fleet/test_production_routes.py",
+    "tests/fleet/test_pi_catalog.py"
+  ],
+  "fleet/production_acceptance.py": [
+    "tests/fleet/test_production_test_profile.py",
+    "tests/fleet/test_production_acceptance_hooks.py",
+    "tests/fleet/test_production_acceptance.py",
+    "tests/fleet/test_canonical_review_opener.py"
+  ],
+  "fleet/production_admission.py": [
+    "tests/fleet/test_production_admission.py",
+    "tests/fleet/test_production_tests.py"
+  ],
+  "fleet/production_brief.py": [
+    "tests/fleet/test_production_source_review_brief.py",
+    "tests/fleet/test_production_brief.py",
+    "tests/fleet/test_canonical_review_opener.py"
+  ],
+  "fleet/production_builder.py": [
+    "tests/fleet/test_production_builder.py",
+    "tests/fleet/test_production_custody.py",
+    "tests/fleet/test_production_routes.py",
+    "tests/fleet/test_production_acceptance.py"
+  ],
+  "fleet/production_custody.py": [
+    "tests/fleet/test_production_custody.py"
+  ],
+  "fleet/production_dispatch.py": [
+    "tests/fleet/test_production_dispatch.py"
+  ],
+  "fleet/production_exit.py": [
+    "tests/fleet/test_production_builder.py",
+    "tests/fleet/test_builder_retry.py",
+    "tests/fleet/test_production_exit.py"
+  ],
+  "fleet/production_hosted_review_brief.py": [
+    "tests/fleet/test_production_source_review_brief.py"
+  ],
+  "fleet/production_policy.py": [
+    "tests/test_production_policy.py"
+  ],
+  "fleet/production_receipts.py": [
+    "tests/test_seat_cycle_entrypoint.py",
+    "tests/fleet/test_production_custody.py",
+    "tests/fleet/test_production_receipts.py"
+  ],
+  "fleet/production_resources.py": [
+    "tests/fleet/test_production_resources.py",
+    "tests/fleet/test_production_tests.py"
+  ],
+  "fleet/production_review.py": [
+    "tests/fleet/test_production_review_finish.py",
+    "tests/fleet/test_production_custody.py",
+    "tests/fleet/test_production_dispatch.py",
+    "tests/fleet/test_production_review.py",
+    "tests/fleet/test_production_review_evidence.py",
+    "tests/fleet/test_production_acceptance.py",
+    "tests/fleet/test_production_review_custody.py",
+    "tests/fleet/test_canonical_review_opener.py"
+  ],
+  "fleet/production_review_custody.py": [
+    "tests/fleet/test_production_custody.py",
+    "tests/fleet/test_production_acceptance.py",
+    "tests/fleet/test_production_review_custody.py",
+    "tests/fleet/test_canonical_review_opener.py"
+  ],
+  "fleet/production_review_evidence.py": [
+    "tests/fleet/test_production_review_finish.py",
+    "tests/fleet/test_production_review_evidence.py"
+  ],
+  "fleet/production_review_finish.py": [
+    "tests/fleet/test_production_review_finish.py",
+    "tests/fleet/test_production_custody.py",
+    "tests/fleet/test_production_historical_acceptance.py",
+    "tests/fleet/test_production_acceptance.py",
+    "tests/fleet/test_canonical_review_opener.py"
+  ],
+  "fleet/production_routes.py": [
+    "tests/fleet/test_production_routes.py"
+  ],
+  "fleet/production_test_node.py": [
+    "tests/fleet/test_production_test_node.py"
+  ],
+  "fleet/production_test_plan.py": [
+    "tests/fleet/test_production_test_profile.py",
+    "tests/fleet/test_production_test_node.py",
+    "tests/fleet/test_production_historical_acceptance.py"
+  ],
+  "fleet/production_test_profile.py": [
+    "tests/fleet/test_production_test_profile.py",
+    "tests/fleet/test_production_test_node.py",
+    "tests/fleet/test_production_historical_acceptance.py"
+  ],
+  "fleet/production_test_worker.py": [
+    "tests/fleet/test_production_test_node.py",
+    "tests/fleet/test_production_tests.py"
+  ],
+  "fleet/production_tests.py": [
+    "tests/fleet/test_production_test_profile.py",
+    "tests/fleet/test_production_review_finish.py",
+    "tests/fleet/test_production_historical_acceptance.py",
+    "tests/fleet/test_production_acceptance.py",
+    "tests/fleet/test_production_tests.py"
+  ],
+  "fleet/review_capacity.py": [
+    "tests/test_seat_cycle_entrypoint.py",
+    "tests/test_coord_gate_diagnostic.py",
+    "tests/test_skfleet_lane_affinity.py",
+    "tests/fleet/test_review_capacity.py",
+    "tests/fleet/test_production_dispatch.py",
+    "tests/fleet/test_production_routes.py",
+    "tests/fleet/test_pi_catalog.py",
+    "tests/fleet/test_review_gateway_only.py",
+    "tests/fleet/test_production_receipts.py"
+  ],
+  "fleet/rollout_drift.py": [
+    "tests/fleet/test_cli_node_drift.py",
+    "tests/fleet/test_rollout_drift.py",
+    "tests/fleet/test_no_dangling_systemd_unit_references.py",
+    "tests/fleet/test_staged_rollout.py",
+    "tests/fleet/test_cli_rollout.py",
+    "tests/fleet/test_fleet_coherence.py"
+  ],
+  "fleet/source_access.py": [
+    "tests/fleet/test_source_access.py"
+  ],
+  "fleet/source_bundle.py": [
+    "tests/test_skfleet_workspace_materialization.py",
+    "tests/fleet/test_source_bundle.py",
+    "tests/fleet/test_production_builder.py",
+    "tests/fleet/test_builder_retry.py",
+    "tests/fleet/test_source_transport.py",
+    "tests/fleet/test_builder_continue.py",
+    "tests/fleet/test_canonical_review_opener.py"
+  ],
+  "fleet/source_transport.py": [
+    "tests/fleet/test_source_bundle.py",
+    "tests/fleet/test_source_transport.py"
+  ],
+  "fleet/worker_git.py": [
+    "tests/fleet/test_worker_git.py",
+    "tests/fleet/test_builder_continue.py"
+  ],
+  "fleet/worker_liveness.py": [
+    "tests/test_worker_liveness_runtime.py",
+    "tests/test_worker_liveness.py",
+    "tests/test_liveness_generation.py",
+    "tests/test_fleet_worker_liveness.py"
+  ],
+  "fleet/worker_liveness_runtime.py": [
+    "tests/test_worker_liveness_runtime.py",
+    "tests/test_liveness_generation.py"
+  ],
+  "guarded_coord_link.py": [
+    "tests/test_guarded_coord_link.py"
+  ],
+  "guarded_review_work.py": [
+    "tests/test_guarded_review_work.py"
+  ],
+  "historical_pr.py": [
+    "tests/test_historical_pr.py"
+  ],
+  "link_review_work.py": [
+    "tests/test_seat_cycle_entrypoint.py",
+    "tests/test_review_replacement.py",
+    "tests/test_link_review_work.py",
+    "tests/test_skfleet_seraph_selector_e2e.py"
+  ],
+  "niobe_live_entrypoint.py": [
+    "tests/test_skfleet_readiness.py",
+    "tests/test_rotation_lock_fairness.py",
+    "tests/test_niobe_live_entrypoint.py",
+    "tests/test_production_policy.py",
+    "tests/fleet/test_production_readiness.py"
+  ],
+  "projection_retirement.py": [
+    "tests/test_projection_retirement.py"
+  ],
+  "provisional_verdict.py": [
+    "tests/test_guarded_candidate_verdict.py",
+    "tests/test_guarded_review_work.py",
+    "tests/test_provisional_verdict_producer.py"
+  ],
+  "review_admission.py": [
+    "tests/test_dependency_blocker_claim_gate.py",
+    "tests/test_skfleet_pool_v2_authority.py",
+    "tests/test_skfleet_provisional_opener.py",
+    "tests/test_coord_gate_diagnostic.py",
+    "tests/test_skfleet_claimability.py",
+    "tests/test_scheduler_decision.py",
+    "tests/fleet/test_review_gateway_only.py"
+  ],
+  "review_replacement.py": [
+    "tests/test_seraph_review_publisher.py",
+    "tests/test_review_replacement.py",
+    "tests/fleet/test_canonical_review_opener.py"
+  ],
+  "review_work_identity.py": [
+    "tests/test_link_review_work.py",
+    "tests/test_guarded_review_work.py",
+    "tests/test_review_replacement.py"
+  ],
+  "seat_cycle_entrypoint.py": [
+    "tests/test_seat_cycle_entrypoint.py",
+    "tests/test_seat_size_class_models.py",
+    "tests/test_rotation_lock_fairness.py",
+    "tests/test_skfleet_seraph_selector_e2e.py",
+    "tests/test_estate_bootstrap.py",
+    "tests/test_link_observation_feed.py",
+    "tests/test_seraph_dispatcher_path.py",
+    "tests/fleet/test_deployed_artifact_path.py"
+  ],
+  "seat_runtime.py": [
+    "tests/test_skfleet_review_metadata.py",
+    "tests/test_scheduler_decision.py",
+    "tests/test_skfleet_seat_runtime_wiring.py",
+    "tests/fleet/test_production_custody.py",
+    "tests/fleet/test_seat_runtime.py",
+    "tests/fleet/test_production_receipts.py"
+  ],
+  "seraph_review_cardstore.py": [
+    "tests/test_seraph_review_publisher.py",
+    "tests/test_guarded_candidate_verdict.py",
+    "tests/test_guarded_coord_link.py",
+    "tests/test_review_replacement.py",
+    "tests/test_guarded_review_work.py",
+    "tests/test_liveness_generation.py",
+    "tests/test_historical_pr.py",
+    "tests/test_guarded_producer_cli.py",
+    "tests/test_seraph_forgejo.py",
+    "tests/test_guarded_completion.py",
+    "tests/test_guarded_source_completion.py",
+    "tests/fleet/test_production_source_review_brief.py",
+    "tests/fleet/test_canonical_review_opener.py",
+    "tests/fleet/test_production_hosted_review_identity.py"
+  ],
+  "daemon_pid.py": [
+    "tests/test_daemon_pid_identity.py"
+  ]
+}

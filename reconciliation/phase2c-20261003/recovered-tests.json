@@ -1,0 +1,463 @@
+{
+  "tests/fleet/test_pi_catalog.py": {
+    "source": "3208b234",
+    "modules": [
+      "fleet/pi_catalog.py"
+    ]
+  },
+  "tests/fleet/test_production_exit.py": {
+    "source": "3208b234",
+    "modules": [
+      "fleet/production_exit.py"
+    ]
+  },
+  "tests/fleet/test_production_receipts.py": {
+    "source": "3208b234",
+    "modules": [
+      "fleet/production_receipts.py"
+    ]
+  },
+  "tests/fleet/test_production_resources.py": {
+    "source": "3208b234",
+    "modules": [
+      "fleet/production_resources.py"
+    ]
+  },
+  "tests/fleet/test_production_review.py": {
+    "source": "3208b234",
+    "modules": [
+      "fleet/production_review.py"
+    ]
+  },
+  "tests/fleet/test_production_review_custody.py": {
+    "source": "3208b234",
+    "modules": [
+      "fleet/production_review.py",
+      "fleet/production_review_custody.py"
+    ]
+  },
+  "tests/fleet/test_production_review_evidence.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_production_review_evidence.py",
+    "blob": "06006350a1844479cc5963726c42d25b6c5fc6f2",
+    "modules": [
+      "fleet/production_review.py",
+      "fleet/production_review_evidence.py"
+    ]
+  },
+  "tests/fleet/test_production_review_finish.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_production_review_finish.py",
+    "blob": "5b0faca9a1666293e53ddb9db770dd16769844f3",
+    "modules": [
+      "fleet/production_review.py",
+      "fleet/production_review_evidence.py",
+      "fleet/production_review_finish.py",
+      "fleet/production_test_plan.py",
+      "fleet/production_tests.py"
+    ]
+  },
+  "tests/fleet/test_production_routes.py": {
+    "source": "3208b234",
+    "modules": [
+      "fleet/production_routes.py"
+    ]
+  },
+  "tests/fleet/test_review_capacity.py": {
+    "source": "3208b234",
+    "modules": [
+      "fleet/review_capacity.py"
+    ]
+  },
+  "tests/fleet/test_rollout_drift.py": {
+    "source": "3208b234",
+    "modules": [
+      "fleet/rollout_drift.py"
+    ]
+  },
+  "tests/fleet/test_source_access.py": {
+    "source": "3208b234",
+    "modules": [
+      "fleet/source_access.py"
+    ]
+  },
+  "tests/fleet/test_source_transport.py": {
+    "source": "3208b234",
+    "modules": [
+      "fleet/source_transport.py"
+    ]
+  },
+  "tests/test_production_policy.py": {
+    "source": "3208b234",
+    "modules": [
+      "fleet/production_policy.py"
+    ]
+  },
+  "tests/test_seat_cycle_entrypoint.py": {
+    "source": "3208b234",
+    "modules": [
+      "seat_cycle_entrypoint.py"
+    ]
+  },
+  "tests/fleet/test_production_acceptance.py": {
+    "source": "00064318",
+    "modules": [
+      "fleet/production_acceptance.py"
+    ]
+  },
+  "tests/fleet/test_production_acceptance_hooks.py": {
+    "source": "00064318",
+    "modules": [
+      "fleet/production_acceptance.py"
+    ]
+  },
+  "tests/fleet/test_production_builder.py": {
+    "source": "65115b5e",
+    "modules": [
+      "fleet/production_builder.py"
+    ]
+  },
+  "tests/fleet/test_production_dispatch.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_production_dispatch.py",
+    "blob": "56a1c2f227829b00f0adbb7fc1e19ff8b6751e99",
+    "modules": [
+      "fleet/production_review.py",
+      "fleet/review_capacity.py"
+    ]
+  },
+  "tests/test_niobe_live_entrypoint.py": {
+    "source": "5e4d2df3",
+    "modules": [
+      "niobe_live_entrypoint.py"
+    ]
+  },
+  "tests/fleet/test_builder_checkpoint.py": {
+    "source": "02880c90",
+    "modules": [
+      "fleet/builder_checkpoint.py"
+    ]
+  },
+  "tests/fleet/test_builder_execution.py": {
+    "source": "02880c90",
+    "modules": [
+      "fleet/builder_execution.py"
+    ]
+  },
+  "tests/fleet/test_crew_admission.py": {
+    "source": "02880c90",
+    "modules": [
+      "fleet/crew_admission.py"
+    ]
+  },
+  "tests/fleet/test_crew_contract.py": {
+    "source": "02880c90",
+    "modules": [
+      "fleet/crew_contract.py"
+    ]
+  },
+  "tests/fleet/test_crew_progress.py": {
+    "source": "02880c90",
+    "modules": [
+      "fleet/crew_progress.py"
+    ]
+  },
+  "tests/fleet/test_crew_store.py": {
+    "source": "02880c90",
+    "modules": [
+      "fleet/crew_store.py"
+    ]
+  },
+  "tests/fleet/test_herdr_handoff.py": {
+    "source": "02880c90",
+    "modules": [
+      "fleet/herdr_handoff.py"
+    ]
+  },
+  "tests/fleet/test_herdr_handoff_cli.py": {
+    "source": "02880c90",
+    "modules": [
+      "fleet/herdr_handoff.py",
+      "fleet/herdr_handoff_cli.py"
+    ]
+  },
+  "tests/fleet/test_herdr_transport.py": {
+    "source": "02880c90",
+    "modules": [
+      "fleet/herdr_transport.py"
+    ]
+  },
+  "tests/test_coord_helpers.py": {
+    "source": "02880c90",
+    "modules": [
+      "coord_helpers.py"
+    ]
+  },
+  "tests/guarded_producer_fixtures.py": {
+    "source": "8e125ba9",
+    "modules": []
+  },
+  "tests/test_guarded_candidate_verdict.py": {
+    "source": "8e125ba9",
+    "modules": []
+  },
+  "tests/test_guarded_completion.py": {
+    "source": "8e125ba9",
+    "modules": []
+  },
+  "tests/test_guarded_coord_link.py": {
+    "source": "/home/skuser01/work/skcapstone-c1a30122-verdict-validation/tests/test_guarded_coord_link.py",
+    "blob": "4354d81453ac54d4b93c42254f3dd0d55ff6d170",
+    "modules": [
+      "guarded_coord_link.py"
+    ]
+  },
+  "tests/test_guarded_producer_cli.py": {
+    "source": "8e125ba9",
+    "modules": []
+  },
+  "tests/test_guarded_source_completion.py": {
+    "source": "8e125ba9",
+    "modules": []
+  },
+  "tests/test_review_replacement.py": {
+    "source": "/home/skuser01/work/skcapstone-c1a30122-verdict-validation/tests/test_review_replacement.py",
+    "blob": "5d4e8a3a2fd514b3013b5e5c1a14d0c908899cd8",
+    "modules": [
+      "link_review_work.py",
+      "review_replacement.py"
+    ]
+  },
+  "tests/test_skfleet_pool_v2_authority.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/test_skfleet_pool_v2_authority.py",
+    "blob": "e0d8254b85f7acaa455b3b69da89f78c6e0d417a",
+    "modules": [
+      "review_admission.py"
+    ]
+  },
+  "tests/test_guarded_review_work.py": {
+    "source": "/home/skuser01/work/skcapstone-c1a30122-verdict-validation/tests/test_guarded_review_work.py",
+    "blob": "e4280093ed4b45dbbf42b38a9961600cc0e86683",
+    "modules": [
+      "guarded_review_work.py",
+      "provisional_verdict.py"
+    ]
+  },
+  "tests/test_skfleet_provisional_opener.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/test_skfleet_provisional_opener.py",
+    "blob": "3dbc51172934dcf3e6146b911a0fa9251ea8ae4e",
+    "modules": [
+      "review_admission.py"
+    ]
+  },
+  "tests/test_historical_pr.py": {
+    "source": "/home/skuser01/work/skcapstone-c1a30122-verdict-validation/tests/test_historical_pr.py",
+    "blob": "3cce32894f0e70356fee90460fa25346ef5badcc",
+    "modules": [
+      "historical_pr.py"
+    ]
+  },
+  "tests/test_coord_gate_diagnostic.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/test_coord_gate_diagnostic.py",
+    "blob": "ec318254ae83feead4de363993b5576c776470fd",
+    "modules": [
+      "fleet/review_capacity.py",
+      "review_admission.py"
+    ]
+  },
+  "tests/fleet/test_review_gateway_only.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_review_gateway_only.py",
+    "blob": "a762d449f87cb4b5ec10f8d219fc31077a602766",
+    "modules": [
+      "fleet/review_capacity.py",
+      "review_admission.py"
+    ]
+  },
+  "tests/test_seraph_review_publisher.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/test_seraph_review_publisher.py",
+    "blob": "1dc202d44e4db4043d5bd70a49f3d1be1c24d8d8",
+    "modules": [
+      "seraph_review_cardstore.py"
+    ]
+  },
+  "tests/test_skfleet_workspace_materialization.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/test_skfleet_workspace_materialization.py",
+    "blob": "d872c3956d4588c31f170f303267e27e84dc7237",
+    "modules": [
+      "fleet/source_bundle.py"
+    ]
+  },
+  "tests/fleet/test_production_test_profile.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_production_test_profile.py",
+    "blob": "8d22a771fa12198b484957bc8cef2e8b0715f1eb",
+    "modules": [
+      "fleet/production_test_profile.py"
+    ]
+  },
+  "tests/fleet/test_source_bundle.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_source_bundle.py",
+    "blob": "770a4133a489b497258c8973746687d88a356004",
+    "modules": [
+      "fleet/source_bundle.py"
+    ]
+  },
+  "tests/fleet/test_production_custody.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_production_custody.py",
+    "blob": "b88f4d9475edb022475704ad3622616f857889fe",
+    "modules": [
+      "fleet/production_custody.py",
+      "fleet/production_receipts.py",
+      "fleet/production_review.py",
+      "fleet/production_review_finish.py",
+      "seat_runtime.py"
+    ]
+  },
+  "tests/fleet/test_worker_git.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_worker_git.py",
+    "blob": "2e6d8cc649ae7fe6e3a7f0c9e8fb41e19cc62680",
+    "modules": [
+      "fleet/worker_git.py"
+    ]
+  },
+  "tests/fleet/test_production_source_review_brief.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_production_source_review_brief.py",
+    "blob": "9aa979dceecd1b1c8f6dbd42ffd3490d96aedb9d",
+    "modules": [
+      "fleet/production_brief.py",
+      "fleet/production_hosted_review_brief.py",
+      "seraph_review_cardstore.py"
+    ]
+  },
+  "tests/fleet/test_builder_retry.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_builder_retry.py",
+    "blob": "96426a646b8ca853b19a86bfdf24be1bf68c004e",
+    "modules": [
+      "fleet/builder_retry.py"
+    ]
+  },
+  "tests/fleet/test_production_readiness.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_production_readiness.py",
+    "blob": "02dda174179274474db2b32440fd3eecc0370d99",
+    "modules": [
+      "niobe_live_entrypoint.py"
+    ]
+  },
+  "tests/fleet/test_production_test_node.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_production_test_node.py",
+    "blob": "cb7db3678c011c32d925bbd5ffcb9d81116731ea",
+    "modules": [
+      "fleet/production_test_node.py"
+    ]
+  },
+  "tests/fleet/test_production_historical_acceptance.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_production_historical_acceptance.py",
+    "blob": "6a45c3093aad250de5fbb107c25efb2a9fd7d553",
+    "modules": [
+      "fleet/production_test_profile.py"
+    ]
+  },
+  "tests/fleet/test_production_brief.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_production_brief.py",
+    "blob": "6e37ab989bb9db3c4637f91e3b176a9f107772fd",
+    "modules": [
+      "fleet/production_brief.py"
+    ]
+  },
+  "tests/fleet/test_builder_terminal.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_builder_terminal.py",
+    "blob": "be5e91c113b5cb5a92c44b122b23ad932f494e55",
+    "modules": [
+      "fleet/builder_terminal.py"
+    ]
+  },
+  "tests/fleet/test_builder_continue.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_builder_continue.py",
+    "blob": "c75473efe1c0fe721caf5a2df6bfb80f12df96c0",
+    "modules": [
+      "fleet/builder_continue.py"
+    ]
+  },
+  "tests/fleet/test_canonical_review_opener.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_canonical_review_opener.py",
+    "blob": "feb28e9930363a39da5bd312152b00f455387795",
+    "modules": [
+      "fleet/production_brief.py",
+      "fleet/production_review.py",
+      "fleet/production_review_custody.py",
+      "fleet/production_review_finish.py",
+      "fleet/source_bundle.py",
+      "seraph_review_cardstore.py"
+    ]
+  },
+  "tests/fleet/test_production_hosted_review_identity.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_production_hosted_review_identity.py",
+    "blob": "aee62f1b2849e3f0bf1f66d8cbebf640cb5fccae",
+    "modules": [
+      "seraph_review_cardstore.py"
+    ]
+  },
+  "tests/test_worker_liveness_runtime.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/test_worker_liveness_runtime.py",
+    "blob": "7552c93a4c00803269ef8e223850aee4560fec39",
+    "modules": [
+      "fleet/worker_liveness.py",
+      "fleet/worker_liveness_runtime.py"
+    ]
+  },
+  "tests/test_worker_liveness.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/test_worker_liveness.py",
+    "blob": "9e33630336331b16424b8f873b521c547f6a67b1",
+    "modules": [
+      "fleet/worker_liveness.py"
+    ]
+  },
+  "tests/test_liveness_generation.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/test_liveness_generation.py",
+    "blob": "21fdd5085c59a5d5e7960eb6230e2c76ca389834",
+    "modules": [
+      "cli/coord_liveness.py",
+      "fleet/worker_liveness.py",
+      "seraph_review_cardstore.py"
+    ]
+  },
+  "tests/fleet/test_builder_retire_terminal.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_builder_retire_terminal.py",
+    "blob": "eccb5a1027906dd4981ef4cfa8f710e246eda1eb",
+    "modules": [
+      "fleet/builder_retire.py"
+    ]
+  },
+  "tests/fleet/test_builder_retire.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_builder_retire.py",
+    "blob": "918b2c4870cbbe4199e1e071622f69d24c2aea4e",
+    "modules": [
+      "fleet/builder_retire.py"
+    ]
+  },
+  "tests/fleet/test_production_admission.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_production_admission.py",
+    "blob": "d780acc07b60090d1ae17dbc82122048af99bd8a",
+    "modules": [
+      "fleet/production_admission.py"
+    ]
+  },
+  "tests/fleet/test_builder_dispatch.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_builder_dispatch.py",
+    "blob": "89862225e5225191a62f756fccba2ea9aa3977c9",
+    "modules": [
+      "fleet/builder_dispatch.py"
+    ]
+  },
+  "tests/fleet/test_production_tests.py": {
+    "source": "/home/skuser01/work/skcapstone-cd057f28-terminal-retirement/tests/fleet/test_production_tests.py",
+    "blob": "69ba002131aabd0b3beb35a5215558fb8775b53f",
+    "modules": [
+      "fleet/production_tests.py"
+    ]
+  },
+  "tests/fleet/test_crew_controller.py": {
+    "source": "02880c90",
+    "note": "closest preserved behavioral tests for installed overlay"
+  },
+  "tests/fleet/test_crew_requests.py": {
+    "source": "02880c90",
+    "note": "closest preserved behavioral tests for installed overlay"
+  }
+}

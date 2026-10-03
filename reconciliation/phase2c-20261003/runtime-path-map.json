@@ -1,0 +1,492 @@
+[
+  {
+    "snapshot_path": "bin/skfleet",
+    "blob": "1cfd8124630e5ba1e9892e1fb9250f7c79ceafa3",
+    "destinations": [],
+    "disposition": "generated console wrapper: snapshot only; pyproject entry point retained"
+  },
+  {
+    "snapshot_path": "bin/skfleet-claim-expiry",
+    "blob": "eafe81c956ab4a3d0760925ea3d16ae39d44c137",
+    "destinations": [],
+    "disposition": "generated console wrapper: snapshot only; pyproject entry point retained"
+  },
+  {
+    "snapshot_path": "bin/skfleet-link-producer.py",
+    "blob": "ef5f8ddd9bba52848a3caefd0ad016b18e5c1db7",
+    "destinations": [
+      "scripts/fleet/skfleet-link-producer.py"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "ef5f8ddd9bba52848a3caefd0ad016b18e5c1db7"
+  },
+  {
+    "snapshot_path": "bin/skfleet-pi-model-catalog.py",
+    "blob": "193cd98fddfa1408f70ddbdfbab3d1b51c76eac1",
+    "destinations": [
+      "scripts/fleet/skfleet-pi-model-catalog.py"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "193cd98fddfa1408f70ddbdfbab3d1b51c76eac1"
+  },
+  {
+    "snapshot_path": "bin/skfleet-projection-retire",
+    "blob": "487295a2aab0fa77d06e792ddbc5d14d5c116b76",
+    "destinations": [
+      "scripts/fleet/skfleet-projection-retire"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "1aea4b88382f817ce361fc164ef69babb6a2e85a",
+    "forward_exception": "newer main projection retirement safeguards retained"
+  },
+  {
+    "snapshot_path": "bin/skfleet-rotate.py",
+    "blob": "997b9795347bce62dff49a810f95bf929f822e96",
+    "destinations": [
+      "scripts/fleet/skfleet-rotate.py"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "997b9795347bce62dff49a810f95bf929f822e96"
+  },
+  {
+    "snapshot_path": "bin/skfleet-route-preflight.py",
+    "blob": "fc272f79a4c1f6405ed602f7fa2e5501aa15681c",
+    "destinations": [
+      "scripts/fleet/skfleet-route-preflight.py"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "fc272f79a4c1f6405ed602f7fa2e5501aa15681c"
+  },
+  {
+    "snapshot_path": "bin/skfleet-worker-wrapper.py",
+    "blob": "4df93aa9e2912db5abc2e5aee705a35760fc13c9",
+    "destinations": [
+      "scripts/fleet/skfleet-worker-wrapper.py"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "4df93aa9e2912db5abc2e5aee705a35760fc13c9"
+  },
+  {
+    "snapshot_path": "bin/skfleet-working.py",
+    "blob": "e7e4f153ac9a47756f72cc8bb5537968e16b2765",
+    "destinations": [
+      "scripts/fleet/skfleet-working.py"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "e7e4f153ac9a47756f72cc8bb5537968e16b2765"
+  },
+  {
+    "snapshot_path": "bin/skfleet_readiness.py",
+    "blob": "a8e85e07892e7610ab75a22f4e7dbeb725c17fd8",
+    "destinations": [
+      "scripts/fleet/skfleet_readiness.py"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "a8e85e07892e7610ab75a22f4e7dbeb725c17fd8"
+  },
+  {
+    "snapshot_path": "bin/skmail",
+    "blob": "520710d106eb11c7db206b22478e7a8e2655fd07",
+    "destinations": [],
+    "disposition": "protected main skmail wins"
+  },
+  {
+    "snapshot_path": "bin/skmail_work.py",
+    "blob": "af7bc05e55a1121d16532edc48a5696dcb2b5b97",
+    "destinations": [],
+    "disposition": "protected main skmail wins"
+  },
+  {
+    "snapshot_path": "bin/skmail_writer.py",
+    "blob": "94081ee54c64f0057a71384c03408ed0d352cc2f",
+    "destinations": [],
+    "disposition": "protected main skmail wins"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-atlas.service",
+    "blob": "5dae62d6070455a165dca762ed83653f0b768d8b",
+    "destinations": [
+      "systemd/production/skfleet-atlas.service"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "5dae62d6070455a165dca762ed83653f0b768d8b"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-atlas.timer",
+    "blob": "63326b64d36d0abe1d6ff1311f15d4436fd66db6",
+    "destinations": [
+      "systemd/skfleet-atlas.timer"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "63326b64d36d0abe1d6ff1311f15d4436fd66db6"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-estate-glm.service",
+    "blob": "33aac8e194044bc9a250f363bf31d5b6fc38601c",
+    "destinations": [
+      "systemd/production/skfleet-estate-glm.service"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "33aac8e194044bc9a250f363bf31d5b6fc38601c"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-estate-glm.timer",
+    "blob": "3ab58e789e8b7c38a92f86cd72ddb40b10886d75",
+    "destinations": [
+      "systemd/production/skfleet-estate-glm.timer"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "3ab58e789e8b7c38a92f86cd72ddb40b10886d75"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-fiber-dispatch.service",
+    "blob": "dc1dc0cde0f7dff7b7f7c9347fff75936d705cb8",
+    "destinations": [
+      "systemd/production/skfleet-fiber-dispatch.service"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "dc1dc0cde0f7dff7b7f7c9347fff75936d705cb8"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-fiber-dispatch.timer",
+    "blob": "dc1dc0cde0f7dff7b7f7c9347fff75936d705cb8",
+    "destinations": [
+      "systemd/production/skfleet-fiber-dispatch.timer"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "dc1dc0cde0f7dff7b7f7c9347fff75936d705cb8"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-install-audit.service",
+    "blob": "7d9a9a6b99bc4cb6d77d10f0da8d00a490c2b161",
+    "destinations": [
+      "systemd/production/skfleet-install-audit.service"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "7d9a9a6b99bc4cb6d77d10f0da8d00a490c2b161"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-install-audit.timer",
+    "blob": "319af58410eae3eebc54ddc4fd25f7d16ba3ea34",
+    "destinations": [
+      "systemd/production/skfleet-install-audit.timer"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "319af58410eae3eebc54ddc4fd25f7d16ba3ea34"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-link-producer.service",
+    "blob": "6d20aa7bf5c41449c12a046d7574255e4a05f037",
+    "destinations": [
+      "systemd/skfleet-link-producer.service"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "6d20aa7bf5c41449c12a046d7574255e4a05f037"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-link-producer.service.d/9173d235-scope.conf",
+    "blob": "3e03b424c90292f998e6ac32f6d0a70ca0f0546c",
+    "destinations": [
+      "systemd/production/skfleet-link-producer.service.d/9173d235-scope.conf"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "3e03b424c90292f998e6ac32f6d0a70ca0f0546c"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-link-producer.timer",
+    "blob": "2b46c16e6d836af036ac731111b23be6a56cd50d",
+    "destinations": [
+      "systemd/skfleet-link-producer.timer"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "2b46c16e6d836af036ac731111b23be6a56cd50d"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-link.service",
+    "blob": "b8b74882c1c22a0e652bb15973e5de9edb4040f8",
+    "destinations": [
+      "systemd/skfleet-link.service"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "b8b74882c1c22a0e652bb15973e5de9edb4040f8"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-link.timer",
+    "blob": "56f62f530a0c63b7cec27aa4362f4e332384a519",
+    "destinations": [
+      "systemd/skfleet-link.timer"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "56f62f530a0c63b7cec27aa4362f4e332384a519"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-live-publisher.service",
+    "blob": "5481cdf001e653a8808237b0a6675f594dd08459",
+    "destinations": [],
+    "disposition": "explicit newer main publisher files win"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-live-publisher.service.bak-20260913T054409Z-pre-ffbbe708",
+    "blob": "58d2909419716a730b5b7a3d92d74ffc4dd12581",
+    "destinations": [],
+    "disposition": "backup unit: snapshot only"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-live-publisher.timer",
+    "blob": "8a9349ffa81c8263210c5ca025d2663ddb2e462f",
+    "destinations": [],
+    "disposition": "explicit newer main publisher files win"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-mail-ack.service",
+    "blob": "5d1dbf1358510a731016e2f77ea76fde4cc848ea",
+    "destinations": [
+      "systemd/production/skfleet-mail-ack.service"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "5d1dbf1358510a731016e2f77ea76fde4cc848ea"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-mero.service",
+    "blob": "1403f7dadf314a04af56e8f86cf12bf34e899d64",
+    "destinations": [
+      "systemd/skfleet-mero.service"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "1403f7dadf314a04af56e8f86cf12bf34e899d64"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-mero.timer",
+    "blob": "6a87b6c7e58af53535b4c0a96d8f1c3cd911b268",
+    "destinations": [
+      "systemd/skfleet-mero.timer"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "6a87b6c7e58af53535b4c0a96d8f1c3cd911b268"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-niobe-live.service",
+    "blob": "dd730c9cd8d058df4134dc236e5e806ed4c332d0",
+    "destinations": [
+      "systemd/production/skfleet-niobe-live.service"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "dd730c9cd8d058df4134dc236e5e806ed4c332d0"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-niobe-live.timer",
+    "blob": "ff00429903f91d0d9f578983c2eae52511b28a6a",
+    "destinations": [
+      "systemd/skfleet-niobe-live.timer"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "ff00429903f91d0d9f578983c2eae52511b28a6a"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-niobe.service",
+    "blob": "6b0bb647bcbc103b891ca557babfaf330e811cfd",
+    "destinations": [
+      "systemd/skfleet-niobe.service"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "6b0bb647bcbc103b891ca557babfaf330e811cfd"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-niobe.timer",
+    "blob": "b5c8444e185b0e70f191802ed383d910e10c1f20",
+    "destinations": [
+      "systemd/skfleet-niobe.timer"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "b5c8444e185b0e70f191802ed383d910e10c1f20"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-projection-retire.service",
+    "blob": "3c317826a126aca6fb6aace62010e468443bf51b",
+    "destinations": [
+      "systemd/production/skfleet-projection-retire.service"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "3c317826a126aca6fb6aace62010e468443bf51b"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-projection-retire.timer",
+    "blob": "2d4dbca9744d4ece07b991b74f55e12fc2b6ea46",
+    "destinations": [
+      "systemd/production/skfleet-projection-retire.timer"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "2d4dbca9744d4ece07b991b74f55e12fc2b6ea46"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-pull-chiwk13.service",
+    "blob": "396d5c801ad831d0d691743173d5a15630183b5a",
+    "destinations": [
+      "systemd/production/skfleet-pull-chiwk13.service"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "396d5c801ad831d0d691743173d5a15630183b5a"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-pull-chiwk13.timer",
+    "blob": "da769f4006d588243f99d772e033430d0b5aa804",
+    "destinations": [
+      "systemd/production/skfleet-pull-chiwk13.timer"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "da769f4006d588243f99d772e033430d0b5aa804"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-readiness.service",
+    "blob": "639d64307d5aa17aea1e49e1e84a5784767ee3a3",
+    "destinations": [
+      "systemd/production/skfleet-readiness.service"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "639d64307d5aa17aea1e49e1e84a5784767ee3a3"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-readiness.timer",
+    "blob": "dd343d38d74bb6f93877ad0ffa40f7f3e402f0dc",
+    "destinations": [
+      "systemd/skfleet-readiness.timer"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "dd343d38d74bb6f93877ad0ffa40f7f3e402f0dc"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-rotate-alert.service",
+    "blob": "4b45ad5159f85926c02091ba040ccb073f2f7d97",
+    "destinations": [
+      "systemd/production/skfleet-rotate-alert.service"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "4b45ad5159f85926c02091ba040ccb073f2f7d97"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-rotate.service",
+    "blob": "75e049e412fe97e390681ff510d7c462a4bce6a8",
+    "destinations": [
+      "systemd/production/skfleet-rotate.service"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "75e049e412fe97e390681ff510d7c462a4bce6a8"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-rotate.service.bak-20260830-lanesat",
+    "blob": "20cb121c86590c4196c16f11504baa93efba262a",
+    "destinations": [],
+    "disposition": "backup unit: snapshot only"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-rotate.service.bak-20260830-onfailure",
+    "blob": "46f41e4d2392c1544129e60b6bbba29226c7f793",
+    "destinations": [],
+    "disposition": "backup unit: snapshot only"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-rotate.service.bak-20260919T080034Z",
+    "blob": "44a55e21503b593c8f85c119894f922800d5a851",
+    "destinations": [],
+    "disposition": "backup unit: snapshot only"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-rotate.timer",
+    "blob": "709bcdc45014e8108a7dce32001466547938802d",
+    "destinations": [
+      "systemd/production/skfleet-rotate.timer"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "709bcdc45014e8108a7dce32001466547938802d"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-rotate.timer.d/50-seraph-window.conf",
+    "blob": "7f4c020c4017d5a3437cba74caeae2676fc6089b",
+    "destinations": [
+      "systemd/production/skfleet-rotate.timer.d/50-seraph-window.conf"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "7f4c020c4017d5a3437cba74caeae2676fc6089b"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-seat-cycle.service",
+    "blob": "8da8c6287d474e44365a366df7472801f889bc1e",
+    "destinations": [
+      "systemd/production/skfleet-seat-cycle.service"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "8da8c6287d474e44365a366df7472801f889bc1e"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-seat-cycle.timer",
+    "blob": "ab494c5928ccda3be2333ef094d4171f78c6c377",
+    "destinations": [
+      "systemd/production/skfleet-seat-cycle.timer"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "ab494c5928ccda3be2333ef094d4171f78c6c377"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-seraph.service",
+    "blob": "a7090a4af64f1ca0bc1ad44cb017cdd9b4b899bb",
+    "destinations": [
+      "systemd/production/skfleet-seraph.service"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "a7090a4af64f1ca0bc1ad44cb017cdd9b4b899bb"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-seraph.timer",
+    "blob": "dac6a819911f1cfe0084156ed8e7e4fd58cf11cc",
+    "destinations": [
+      "systemd/skfleet-seraph.timer"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "dac6a819911f1cfe0084156ed8e7e4fd58cf11cc"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-seraph.timer.d/50-rotate-window.conf",
+    "blob": "0c17141920d1cd5f2ad78bf8ebf5f30e383a805e",
+    "destinations": [
+      "systemd/production/skfleet-seraph.timer.d/50-rotate-window.conf"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "0c17141920d1cd5f2ad78bf8ebf5f30e383a805e"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-ziowk01-cursor-auth-sync.service",
+    "blob": "660f8dc2b0551bb03aa27a795ea9584431e9d422",
+    "destinations": [
+      "systemd/production/skfleet-ziowk01-cursor-auth-sync.service"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "660f8dc2b0551bb03aa27a795ea9584431e9d422"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-ziowk01-cursor-auth-sync.timer",
+    "blob": "8a5c06c543b7cd4337201a2bcb773a9c1ba8b69f",
+    "destinations": [
+      "systemd/production/skfleet-ziowk01-cursor-auth-sync.timer"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "8a5c06c543b7cd4337201a2bcb773a9c1ba8b69f"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-ziowk01-kimi-auth-sync.service",
+    "blob": "eca4ed086a18514e29211f97270bfddaad2bb9eb",
+    "destinations": [
+      "systemd/production/skfleet-ziowk01-kimi-auth-sync.service"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "eca4ed086a18514e29211f97270bfddaad2bb9eb"
+  },
+  {
+    "snapshot_path": "systemd-user/skfleet-ziowk01-kimi-auth-sync.timer",
+    "blob": "80921ff68e68fcbb142ff9c3032d055bf3d23d7c",
+    "destinations": [
+      "systemd/production/skfleet-ziowk01-kimi-auth-sync.timer"
+    ],
+    "disposition": "deployed bytes",
+    "release_blob": "80921ff68e68fcbb142ff9c3032d055bf3d23d7c"
+  }
+]
