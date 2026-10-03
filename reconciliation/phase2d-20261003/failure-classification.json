@@ -2,9 +2,9 @@
   "phase2c_commit": "9bdc4cf8ff4b7c1623f1cd025845528aa2262890",
   "counts": {
     "D": 32,
-    "C": 35,
+    "C": 34,
     "A": 13,
-    "B": 3
+    "B": 4
   },
   "failures": [
     {
@@ -506,10 +506,10 @@
     },
     {
       "nodeid": "tests/test_skfleet_dispatch_integrity.py::test_exact_five_host_lane_targets_and_chiap08_dry_summary",
-      "bucket": "C",
-      "reason": "Text-based gate expects explicit legacy assignments. Expand equivalent conditional expressions into branches, with docs unchanged and policy behavior unchanged.",
+      "bucket": "B",
+      "reason": "Protected main SOP requires unconditional operator target assignments, not only equivalent legacy branches. Main docs win: enforce targets in every mode, retain production route qualification and scan budget.",
       "status": "passed in focused 51-test rerun",
-      "fix_commit": "f3b73cbd7e26e32cb7f55fb9fb6f38d14126c3ec"
+      "fix_commit": "4c9d6925479ee140e17d13a1e95511a53925f1db"
     },
     {
       "nodeid": "tests/test_skfleet_dispatch_integrity.py::test_existing_holds_reservations_capacity_and_cadence_remain",
