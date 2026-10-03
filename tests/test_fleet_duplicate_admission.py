@@ -281,8 +281,10 @@ def test_launch_path_checks_admission_after_claim_before_process() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     claim_check = source.index("_admission=acquire_card_admission(")
     claim_gate = source.index('if claim_outcome == "claim_refused":')
-    process_create = source.index("r=subprocess.run(_worker_launch_command(")
-    assert claim_gate < claim_check < process_create
+    process_create = source.index("r=subprocess.run(_launch_argv,")
+    # Deployed 997b9795 prepares argv, then reserves custody before spawning.
+    reserve = source.index("_launch_argv=reserve_launch(")
+    assert claim_gate < claim_check < reserve < process_create
     assert "ADMISSION_REFUSED|%s|%s|%s|reason=%s|holder_owner=%s|" in source
     assert "ADMISSION_REFUSED_TOTAL" in source
 
@@ -444,7 +446,7 @@ def test_claim_displaced_recheck_sits_between_lock_and_process() -> None:
     recheck = source.index(
         "_final_owner,_final_at,_final_revision=_current_claim_identity_fresh(cid)"
     )
-    launch = source.index("r=subprocess.run(_worker_launch_command(")
+    launch = source.index("r=subprocess.run(_launch_argv,")
     assert lock < recheck < launch
     assert "reason=claim-displaced" in source
     assert "_release_card_admission(HOME,cid)" in source
