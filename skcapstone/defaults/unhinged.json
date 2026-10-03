@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "method": "auto",
+  "local_model_suffix": "-unhinged",
+  "log_enabled": true,
+  "providers": {
+    "nvidia-nim": { "proxy_port": 18780, "injection": "system_prompt" },
+    "ollama": { "host": "192.168.0.100", "injection": "abliterated_model" },
+    "claude-code": { "injection": "claude_md" },
+    "openrouter": { "injection": "system_prompt" },
+    "google": { "injection": "system_prompt" }
+  }
+}

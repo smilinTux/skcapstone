@@ -1,0 +1,547 @@
+#!/usr/bin/env bash
+# sk-agent-picker.sh — Sovereign agent picker for AI coding tools
+#
+# Source this file in ~/.bashrc or ~/.zshrc.  It wraps `claude`, `codex`
+# (OpenAI Codex CLI), `opencode`, and `pi` with an agent-aware launcher that
+# shows a numbered menu when multiple SK agents are configured.
+#
+# Also provides `skswitch` — a fast way to change the active agent for
+# the current shell session (updates SKAGENT + legacy vars in one shot).
+#
+# Behaviour:
+#   - Zero agents found       → launch tool normally (no SK home yet)
+#   - Exactly one agent       → use it silently, no prompt
+#   - Multiple agents         → numbered menu, default highlighted with →
+#   - SKAGENT/SKCAPSTONE_AGENT set & valid → honour it silently, no menu
+#   - Missing binary          → offer official install command for that tool
+#   - SK_CLAUDE_YOLO=1        → claude adds permission bypass globally (opt-in)
+#   - SK_CODEX_YOLO=0         → keep Codex approvals+sandbox (default is YOLO)
+#   - SK_OPENCODE_YOLO=1      → opencode allows all tools without approval (opt-in)
+#   - SK_CURSOR_YOLO=0        → keep Cursor Agent approvals (default is YOLO / --yolo)
+#   - Pass --agent <name>     → skip menu, use that agent directly
+#   - Print mode (-p / --print) → skip menu (non-interactive by definition)
+#   - stdin not a TTY         → skip menu (no way to read user input)
+#   - SK_NO_PICKER=1          → skip menu (scripted/CI use)
+#   - Any other args          → forwarded to the underlying tool unchanged
+#
+# Usage:
+#   claude                        # picker if multiple agents
+#   claude --agent lumina         # direct launch
+#   SKAGENT=opus claude           # env override
+#   SK_CLAUDE_YOLO=1 claude       # claude with dangerous permission bypass
+#   skswitch lumina               # change active agent for this shell
+#   skswitch                      # interactive picker
+#   codex                         # same picker logic
+#   SK_CODEX_YOLO=1 codex         # codex with dangerous bypass enabled
+#   opencode                      # same picker logic
+#   SK_OPENCODE_YOLO=1 opencode   # opencode with all permissions allowed
+#   agent                         # Cursor Agent CLI (same picker logic)
+#   SK_CURSOR_YOLO=1 agent        # Cursor Agent with --yolo / Run Everything
+#
+# To enable globally for all future shell sessions:
+#   export SK_CLAUDE_YOLO=1
+#   export SK_CODEX_YOLO=1
+#   export SK_OPENCODE_YOLO=1
+#   export SK_CURSOR_YOLO=1
+#   source ~/.bashrc
+#
+# Source in shell config:
+#   source ~/.skenv/share/skcapstone/sk-agent-picker.sh
+# Dev install:
+#   source ~/clawd/skcapstone-repos/skcapstone/scripts/sk-agent-picker.sh
+
+# ---------------------------------------------------------------------------
+# Core picker — returns chosen agent name on stdout, menu on stderr
+# ---------------------------------------------------------------------------
+_sk_pick_agent() {
+    # --force skips the SKAGENT-match shortcut so the menu is always shown
+    # when the user explicitly invokes the picker (e.g. `skswitch` no-args).
+    local force=0
+    if [[ "$1" == "--force" ]]; then
+        force=1; shift
+    fi
+    local agents_dir="${SKCAPSTONE_HOME:-$HOME/.skcapstone}/agents"
+    local -a agents=()
+
+    if [[ -d "$agents_dir" ]]; then
+        while IFS= read -r entry; do
+            local name
+            name=$(basename "$entry")
+            # Skip template dirs, dotfiles, and non-directory entries
+            if [[ -d "$entry" && "$name" != *-template && "$name" != .* && "$name" != *.* ]]; then
+                agents+=("$name")
+            fi
+        done < <(find "$agents_dir" -mindepth 1 -maxdepth 1 -type d | sort)
+    fi
+
+    local count="${#agents[@]}"
+
+    if [[ $count -eq 0 ]]; then
+        echo ""; return 0
+    fi
+
+    if [[ $count -eq 1 ]]; then
+        echo "${agents[0]}"; return 0
+    fi
+
+    # Validate SKAGENT against the actual agent list.
+    local env_agent="${SKAGENT:-${SKCAPSTONE_AGENT:-}}"
+    # SK_DEFAULT_AGENT is an explicit node/profile setting. Never silently
+    # prefer one identity merely because it sorts first or ships as a sample.
+    local sk_default="${SK_DEFAULT_AGENT:-}"
+    local default=""
+    for agent in "${agents[@]}"; do
+        if [[ "$agent" == "$sk_default" ]]; then
+            default="$sk_default"
+            break
+        fi
+    done
+    local env_match=0
+    for agent in "${agents[@]}"; do
+        if [[ "$agent" == "$env_agent" ]]; then
+            default="$agent"
+            env_match=1
+            break
+        fi
+    done
+
+    # An explicit valid environment selection is authoritative.
+    if [[ $env_match -eq 1 && $force -eq 0 ]]; then
+        echo "$default"; return 0
+    fi
+
+    # Non-interactive callers cannot choose. Use only an explicit validated
+    # SK_DEFAULT_AGENT; otherwise launch unpinned instead of guessing.
+    if [[ ! -t 0 ]]; then
+        echo "$default"; return 0
+    fi
+
+    # Interactive menus may offer the first item as a UI default without
+    # persisting it as a fleet/node identity.
+    if [[ -z "$default" ]]; then
+        default="${agents[0]}"
+    fi
+
+    # Multi-agent menu
+    echo "" >&2
+    echo "  ╔══════════════════════════════════╗" >&2
+    echo "  ║   SKCapstone — Choose an Agent   ║" >&2
+    echo "  ╚══════════════════════════════════╝" >&2
+    echo "" >&2
+
+    local i=1
+    for agent in "${agents[@]}"; do
+        local marker="  "
+        if [[ "$agent" == "$default" ]]; then
+            marker="→ "
+        fi
+        printf "  %s%2d)  %s\n" "$marker" "$i" "$agent" >&2
+        (( i++ ))
+    done
+
+    echo "" >&2
+    printf "  Agent [1-%d, Enter = %s]: " "$count" "$default" >&2
+
+    local choice
+    read -r choice </dev/tty
+
+    # Empty → use default
+    if [[ -z "$choice" ]]; then
+        echo "$default"; return 0
+    fi
+
+    # Numeric
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= count )); then
+        echo "${agents[$((choice - 1))]}"; return 0
+    fi
+
+    # Name typed directly
+    for agent in "${agents[@]}"; do
+        if [[ "$agent" == "$choice" ]]; then
+            echo "$agent"; return 0
+        fi
+    done
+
+    # Invalid — use list-validated default (not stale env), re-show options
+    printf "\n  ⚠  Unknown agent '%s'. Valid agents:\n" "$choice" >&2
+    for agent in "${agents[@]}"; do
+        printf "       %s\n" "$agent" >&2
+    done
+    printf "  Using default: %s\n\n" "$default" >&2
+    echo "$default"
+}
+
+# ---------------------------------------------------------------------------
+# Generic launcher used by all wrappers
+# ---------------------------------------------------------------------------
+_sk_install_command() {
+    local tool="$1"
+
+    case "$tool" in
+        claude)
+            printf '%s' 'npm install -g @anthropic-ai/claude-code'
+            ;;
+        codex)
+            printf '%s' 'npm install -g @openai/codex'
+            ;;
+        opencode)
+            printf '%s' "unset -f opencode _sk_launch _sk_pick_agent claude codex skswitch 2>/dev/null || true; curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path"
+            ;;
+        agent|cursor-agent)
+            printf '%s' 'curl -fsS https://cursor.com/install | bash'
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+_sk_find_tool_path() {
+    local tool="$1"
+    local tool_path=""
+    local -a fallback_paths=()
+
+    tool_path=$(type -P "$tool" 2>/dev/null || true)
+    if [[ -n "$tool_path" && -x "$tool_path" ]]; then
+        printf '%s\n' "$tool_path"
+        return 0
+    fi
+
+    case "$tool" in
+        claude)
+            fallback_paths=(
+                "$HOME/.npm-global/bin/claude"
+                "$HOME/.local/bin/claude"
+            )
+            ;;
+        pi)
+            fallback_paths=(
+                "$HOME/.local/bin/pi"
+                "$HOME/bin/pi"
+            )
+            ;;
+        codex)
+            fallback_paths=(
+                "$HOME/.npm-global/bin/codex"
+                "$HOME/.local/bin/codex"
+            )
+            ;;
+        opencode)
+            fallback_paths=(
+                "$HOME/.opencode/bin/opencode"
+                "$HOME/.local/bin/opencode"
+                "$HOME/bin/opencode"
+            )
+            ;;
+        agent|cursor-agent)
+            fallback_paths=(
+                "$HOME/.local/bin/agent"
+                "$HOME/.local/bin/cursor-agent"
+                "$HOME/.cursor-agent/bin/agent"
+            )
+            ;;
+    esac
+
+    local candidate
+    for candidate in "${fallback_paths[@]}"; do
+        if [[ -x "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+_sk_offer_install() {
+    local tool="$1"
+    local install_cmd
+    install_cmd=$(_sk_install_command "$tool") || return 1
+
+    echo "  ⚠  $tool is not installed." >&2
+    echo "  Standard install command:" >&2
+    echo "      $install_cmd" >&2
+
+    if [[ ! -t 0 ]]; then
+        echo "  Non-interactive shell detected; install it manually and retry." >&2
+        return 127
+    fi
+
+    printf "  Install %s now? [y/N]: " "$tool" >&2
+    local choice
+    read -r choice </dev/tty
+    if [[ ! "$choice" =~ ^([yY]|[yY][eE][sS])$ ]]; then
+        echo "  Skipping install." >&2
+        return 127
+    fi
+
+    echo "" >&2
+    echo "  ▶ Installing $tool..." >&2
+    if ! /bin/bash -lc "$install_cmd"; then
+        echo "  ✖ Install failed for $tool." >&2
+        return 1
+    fi
+
+    return 0
+}
+
+_sk_launch() {
+    local tool="$1"; shift         # the underlying binary (claude / codex / opencode)
+    local extra_flags="$1"; shift  # tool-specific flags always appended (pass "" if none)
+    # remaining args collected below after parsing --agent
+
+    # Parse --agent <name> / --agent=<name> out of args first.
+    # SK_NO_PICKER=1 skips the menu entirely (for scripted/CI use).
+    # Also detect print/non-interactive modes (-p, --print, --output-format)
+    # so we never hang on the menu when claude/codex/opencode are invoked
+    # non-interactively (skill dispatchers, CI, automation).
+    local agent=""
+    local -a passthrough=()
+    local skip_next=0
+    local non_interactive=0
+
+    for arg in "$@"; do
+        if [[ $skip_next -eq 1 ]]; then
+            agent="$arg"; skip_next=0; continue
+        fi
+        case "$arg" in
+            --agent)            skip_next=1 ;;
+            --agent=*)          agent="${arg#--agent=}" ;;
+            -p|--print)         non_interactive=1; passthrough+=("$arg") ;;
+            --output-format|--output-format=*) non_interactive=1; passthrough+=("$arg") ;;
+            *)                  passthrough+=("$arg") ;;
+        esac
+    done
+
+    # --agent flag given → skip picker
+    # SK_NO_PICKER=1 → skip picker (scripted/CI use)
+    # Print/non-interactive mode → skip picker (no menu can be answered)
+    if [[ -z "$agent" && "${SK_NO_PICKER:-0}" != "1" && $non_interactive -eq 0 ]]; then
+        agent=$(_sk_pick_agent)
+    elif [[ -z "$agent" && $non_interactive -eq 1 ]]; then
+        # Non-interactive: take env or first agent silently
+        agent="${SKAGENT:-${SKCAPSTONE_AGENT:-}}"
+        if [[ -z "$agent" ]]; then
+            local agents_dir="${SKCAPSTONE_HOME:-$HOME/.skcapstone}/agents"
+            if [[ -d "$agents_dir" ]]; then
+                # Prefer SK_DEFAULT_AGENT (lumina) if present, else first alphabetically.
+                local _skd="${SK_DEFAULT_AGENT:-lumina}"
+                if [[ -d "$agents_dir/$_skd" ]]; then
+                    agent="$_skd"
+                else
+                    agent=$(find "$agents_dir" -mindepth 1 -maxdepth 1 -type d ! -name '*-template' ! -name '.*' -printf '%f\n' | sort | head -1)
+                fi
+            fi
+        fi
+    fi
+
+    # Fallback: if picker returned empty (0 agents), just use SKAGENT
+    # or launch bare if that's also unset.
+    if [[ -z "$agent" ]]; then
+        agent="${SKAGENT:-${SKCAPSTONE_AGENT:-}}"
+    fi
+
+    local tool_path=""
+    tool_path=$(_sk_find_tool_path "$tool" || true)
+    if [[ -z "$tool_path" ]]; then
+        if ! _sk_offer_install "$tool"; then
+            return $?
+        fi
+        tool_path=$(_sk_find_tool_path "$tool" || true)
+        if [[ -z "$tool_path" ]]; then
+            echo "  ✖ $tool is still not available on PATH after installation." >&2
+            return 127
+        fi
+    fi
+
+    if [[ -n "$agent" ]]; then
+        printf "  ▶ Starting %s as agent: %s\n\n" "$tool" "$agent" >&2
+        if [[ -n "$extra_flags" ]]; then
+            SKAGENT="$agent" SKCAPSTONE_AGENT="$agent" SKMEMORY_AGENT="$agent" "$tool_path" $extra_flags "${passthrough[@]}"
+        else
+            SKAGENT="$agent" SKCAPSTONE_AGENT="$agent" SKMEMORY_AGENT="$agent" "$tool_path" "${passthrough[@]}"
+        fi
+    else
+        if [[ -n "$extra_flags" ]]; then
+            "$tool_path" $extra_flags "${passthrough[@]}"
+        else
+            "$tool_path" "${passthrough[@]}"
+        fi
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# skswitch — change the active agent for the current shell session
+# ---------------------------------------------------------------------------
+function skswitch {
+    local agent="$1"
+
+    if [[ -z "$agent" ]]; then
+        # No argument — show interactive picker (force, so SKAGENT doesn't suppress it)
+        agent=$(_sk_pick_agent --force)
+        if [[ -z "$agent" ]]; then
+            echo "No agents found in ${SKCAPSTONE_HOME:-$HOME/.skcapstone}/agents/" >&2
+            return 1
+        fi
+    fi
+
+    # Validate agent directory exists
+    local agent_dir="${SKCAPSTONE_HOME:-$HOME/.skcapstone}/agents/$agent"
+    if [[ ! -d "$agent_dir" ]]; then
+        echo "Agent not found: $agent" >&2
+        echo "Available agents:" >&2
+        local agents_dir="${SKCAPSTONE_HOME:-$HOME/.skcapstone}/agents"
+        if [[ -d "$agents_dir" ]]; then
+            find "$agents_dir" -mindepth 1 -maxdepth 1 -type d ! -name '*-template' ! -name '.*' -printf '  %f\n' | sort >&2
+        fi
+        return 1
+    fi
+
+    export SKAGENT="$agent"
+    export SKCAPSTONE_AGENT="$agent"
+    export SKMEMORY_AGENT="$agent"
+    echo "Switched to agent: $agent"
+}
+
+# ---------------------------------------------------------------------------
+# Per-tool wrapper functions
+# Must unalias first — an active alias with the same name causes bash to
+# expand it during function-definition parsing, producing a syntax error.
+# ---------------------------------------------------------------------------
+unalias claude       2>/dev/null || true
+unalias codex        2>/dev/null || true
+unalias opencode     2>/dev/null || true
+unalias pi           2>/dev/null || true
+unalias agent        2>/dev/null || true
+unalias cursor-agent 2>/dev/null || true
+
+# claude (Claude Code CLI)
+function claude {
+    local extra_flags=""
+    if [[ "${SK_CLAUDE_YOLO:-0}" == "1" ]]; then
+        extra_flags="--dangerously-skip-permissions"
+    fi
+    _sk_launch claude "$extra_flags" "$@"
+}
+
+# codex (OpenAI Codex CLI — https://github.com/openai/codex)
+function codex {
+    local extra_flags=""
+    if [[ "${SK_CODEX_YOLO:-1}" == "1" ]]; then
+        extra_flags="--dangerously-bypass-approvals-and-sandbox"
+    fi
+    _sk_launch codex "$extra_flags" "$@"
+}
+
+# opencode (opencode.ai)
+function opencode {
+    if [[ "${SK_OPENCODE_YOLO:-0}" == "1" ]]; then
+        OPENCODE_PERMISSION='{"*":"allow"}' _sk_launch opencode "" "$@"
+    else
+        _sk_launch opencode "" "$@"
+    fi
+}
+
+# Cursor Agent CLI (https://cursor.com/docs/cli) — binary name is `agent`
+function agent {
+    local extra_flags=""
+    # SK Cursor Agent profiles are autonomous by default. Set SK_CURSOR_YOLO=0
+    # before launch to keep Cursor approval prompts.
+    if [[ "${SK_CURSOR_YOLO:-1}" == "1" ]]; then
+        extra_flags="--yolo"
+    fi
+    _sk_launch agent "$extra_flags" "$@"
+}
+
+# cursor-agent is the upstream binary name; keep a twin wrapper in sync.
+function cursor-agent {
+    local extra_flags=""
+    if [[ "${SK_CURSOR_YOLO:-1}" == "1" ]]; then
+        extra_flags="--yolo"
+    fi
+    _sk_launch cursor-agent "$extra_flags" "$@"
+}
+
+# ---------------------------------------------------------------------------
+# skpisync — force Pi's ~/.pi/agent/models.json to match the live SKGateway
+#
+# The `skgateway` provider block in Pi's catalog is hand-maintained and drifts
+# the moment the gateway gains or loses a model. This refreshes it from
+# GET $SK_GATEWAY_URL/v1/models. Other providers are untouched, the previous
+# catalog is snapshotted into ~/.pi/agent/backups/, and an unreachable gateway
+# is a warning, never a failure — see sk-pi-gateway-sync.py for the knobs.
+#
+# That endpoint is a catalog, not a liveness list: most of what it advertises
+# cannot actually answer. `skpisync --probe` tries each model once and caches
+# the ids that responded, and every later sync keeps only those. Run it after
+# the gateway's backends change; the launch path never probes.
+# ---------------------------------------------------------------------------
+_SK_PICKER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+
+function skpisync {
+    local helper="${_SK_PICKER_DIR}/sk-pi-gateway-sync.py"
+    if [[ ! -f "$helper" ]]; then
+        helper=$(command -v sk-pi-gateway-sync.py 2>/dev/null)
+    fi
+    if [[ -z "$helper" || ! -f "$helper" ]]; then
+        echo "  ⚠ sk-pi-gateway-sync.py not found — skipping Pi model sync" >&2
+        return 0
+    fi
+
+    local python_bin
+    python_bin=$(command -v python3 2>/dev/null) || {
+        echo "  ⚠ python3 not on PATH — skipping Pi model sync" >&2
+        return 0
+    }
+
+    local output status
+    output=$("$python_bin" "$helper" "$@" 2>&1)
+    status=$?
+    case "$output" in
+        PI_GATEWAY_SYNC\|current*)
+            [[ "${SK_PI_SYNC_QUIET:-0}" == "1" ]] ||
+                printf "  ▷ Pi models: skgateway already current\n" >&2
+        ;;
+        PI_GATEWAY_SYNC\|changed*)
+            local kept="${output##*models=}"; kept="${kept%%|*}"
+            local how="${output##*filter=}"; how="${how%%$'\n'*}"
+            printf "  ▷ Pi models: skgateway refreshed (%s models, filter=%s)\n" \
+                "$kept" "$how" >&2
+            [[ "$how" == "none" ]] &&
+                printf "      run 'skpisync --probe' to keep only models that answer\n" >&2
+        ;;
+        PI_GATEWAY_SYNC_UNAVAILABLE\|*)
+            printf "  ⚠ Pi models: %s unusable (%s) — catalog left as-is\n" \
+                "${SK_GATEWAY_URL:-http://localhost:18780}" \
+                "${output##*|}" >&2
+        ;;
+        *)
+            printf "  ⚠ Pi model sync skipped: %s\n" "${output%%$'\n'*}" >&2
+        ;;
+    esac
+    return $status
+}
+
+# pi coding agent — always launched against a freshly synced gateway catalog.
+# Set SK_PI_SYNC=0 to launch without touching ~/.pi/agent/models.json.
+function pi {
+    if [[ "${SK_PI_SYNC:-1}" == "1" ]]; then
+        skpisync || true
+    fi
+    _sk_launch pi "" "$@"
+}
+
+# Export so sub-shells (tmux panes, etc.) inherit the functions
+export -f _sk_pick_agent 2>/dev/null || true
+export -f _sk_install_command 2>/dev/null || true
+export -f _sk_find_tool_path 2>/dev/null || true
+export -f _sk_offer_install 2>/dev/null || true
+export -f _sk_launch     2>/dev/null || true
+export -f skswitch       2>/dev/null || true
+export -f skpisync       2>/dev/null || true
+export -f claude         2>/dev/null || true
+export -f codex          2>/dev/null || true
+export -f opencode       2>/dev/null || true
+export -f agent          2>/dev/null || true
+export -f cursor-agent   2>/dev/null || true
+export -f pi             2>/dev/null || true

@@ -1,0 +1,15 @@
+# Fleet CMDB reconciliation tick.
+#
+# The callback is pinned to chiap04 and also takes a node-local application
+# lease. It remains inert until config/cmdb-reconcile.json exists with
+# enabled=true and one reviewed skvault reference for every target.
+jobs:
+  cmdb-reconcile:
+    every: 60s
+    type: python
+    nodes: [chiap04]
+    callback: skcapstone.cmdb_reconcile_job:run_cmdb_reconcile_job
+    timeout: 1800
+    retries: 0
+    notify: on_failure
+    enabled: true

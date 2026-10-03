@@ -1,0 +1,448 @@
+"""Systemd service management for the SKCapstone daemon.
+
+Installs, manages, and queries the skcapstone systemd user service.
+Uses user-level systemd (systemctl --user) so no root is needed.
+
+The service unit runs `skcapstone daemon start --foreground` and
+restarts on failure. Security hardening restricts filesystem access
+to only the agent's data directories.
+
+Usage:
+    from skcapstone.systemd import install_service, service_status
+    install_service()            # copies unit + enables + starts
+    status = service_status()    # check if running
+"""
+
+from __future__ import annotations
+
+import logging
+import platform
+import shutil
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+logger = logging.getLogger("skcapstone.systemd")
+
+
+def _require_linux() -> None:
+    """Raise RuntimeError if not running on Linux."""
+    if platform.system() != "Linux":
+        raise RuntimeError("systemd is only available on Linux. Use launchd on macOS.")
+
+
+SERVICE_NAME = "skcapstone.service"
+TEMPLATE_NAME = "skcapstone@.service"
+# OnFailure= hook unit referenced by both the template and legacy service.
+# Copied alongside the main unit (not enabled/started directly - systemd
+# instantiates it on demand when a service enters the failed state).
+ALERT_TEMPLATE = "skcapstone-alert@.service"
+# Retired unit (card 36d11ec3). The old skcapstone-api.socket hardcoded
+# 127.0.0.1:7777 and matched no real service - the daemon binds its own
+# per-agent status-API port (see AGENT_PORTS) and never used systemd socket
+# activation. It is no longer installed (absent from ALL_UNITS), but is still
+# removed on uninstall so hosts that installed the old unit get cleaned up.
+SOCKET_NAME = "skcapstone-api.socket"
+HEARTBEAT_SERVICE = "skcomms-heartbeat.service"
+HEARTBEAT_TIMER = "skcomms-heartbeat.timer"
+QUEUE_DRAIN_SERVICE = "skcomms-queue-drain.service"
+QUEUE_DRAIN_TIMER = "skcomms-queue-drain.timer"
+# The readiness gate (scripts/fleet/skfleet_readiness.py's caller, task-3
+# rollout-observability). Scope-aware and cheap (runs every 15 minutes), and
+# -- unlike a seat unit such as skfleet-atlas.service -- it applies to every
+# host regardless of role, the same way HEARTBEAT and QUEUE_DRAIN do: it
+# degrades to SKIP on a host whose role never runs the dispatcher rather
+# than needing that host excluded up front. That is why it belongs in this
+# install path at all, and a seat unit does not.
+READINESS_GATE_SERVICE = "skfleet-readiness.service"
+READINESS_GATE_TIMER = "skfleet-readiness.timer"
+
+# ALL_UNITS is hand-maintained on purpose, not derived from a glob of
+# data/systemd/*. That directory also ships role-scoped seat units
+# (skfleet-atlas.service, skfleet-niobe*, skfleet-seraph*, backup/housekeep
+# timers, ...) that must NOT be installed on every host: those are staged
+# per host through an explicit, human-authorized execution card (see
+# docs/fleet/liveness-publisher-rollout.md for the pattern), because which
+# ones apply is a role question this list has no way to answer. Deriving
+# ALL_UNITS from the shipped tree would silently start auto-installing every
+# one of those role-scoped units everywhere -- trading one hand-maintained
+# list (which can go stale by omission, the bug this entry fixes) for a
+# wrong one (which actively misinstalls), which is a worse failure. So the
+# fix here is the narrow one: add the missing entry by hand. What ALL_UNITS
+# enumerates is deliberately small and universal (the core daemon, the two
+# comms timers, and now the readiness gate) -- every host runs all of it,
+# unconditionally, so a hand-maintained list of exactly those is the
+# correct shape for this particular job.
+ALL_UNITS = [
+    SERVICE_NAME,
+    HEARTBEAT_SERVICE,
+    HEARTBEAT_TIMER,
+    QUEUE_DRAIN_SERVICE,
+    QUEUE_DRAIN_TIMER,
+    READINESS_GATE_SERVICE,
+    READINESS_GATE_TIMER,
+]
+
+# Units no longer shipped but still cleaned up on uninstall (see SOCKET_NAME).
+RETIRED_UNITS = [SOCKET_NAME]
+
+TIMER_UNITS = [HEARTBEAT_TIMER, QUEUE_DRAIN_TIMER, READINESS_GATE_TIMER]
+
+SYSTEMD_USER_DIR = Path.home() / ".config" / "systemd" / "user"
+
+BUNDLED_DIR = Path(__file__).parent / "data" / "systemd"
+
+
+@dataclass
+class ServiceStatus:
+    """Status of the skcapstone systemd service.
+
+    Attributes:
+        installed: Whether the unit file exists.
+        enabled: Whether the service is enabled at boot.
+        active: Whether the service is currently running.
+        pid: PID of the running service (0 if not running).
+        uptime: How long the service has been running.
+        memory: Memory usage string from systemd.
+        exit_code: Last exit code if the service stopped.
+    """
+
+    installed: bool = False
+    enabled: bool = False
+    active: bool = False
+    pid: int = 0
+    uptime: str = ""
+    memory: str = ""
+    exit_code: str = ""
+
+
+def _run(cmd: list[str], check: bool = False) -> subprocess.CompletedProcess:
+    """Run a command and capture output.
+
+    Args:
+        cmd: Command and arguments.
+        check: Raise on non-zero exit.
+
+    Returns:
+        CompletedProcess with stdout/stderr.
+    """
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=check,
+    )
+
+
+def _systemctl(*args: str) -> subprocess.CompletedProcess:
+    """Run a systemctl --user command.
+
+    Args:
+        *args: Arguments to pass to systemctl.
+
+    Returns:
+        CompletedProcess result.
+
+    Raises:
+        RuntimeError: If not running on Linux.
+    """
+    _require_linux()
+    return _run(["systemctl", "--user", *args])
+
+
+def systemd_available() -> bool:
+    """Check if systemd user session is available.
+
+    Returns:
+        bool: True if systemctl --user works.
+    """
+    result = _run(["systemctl", "--user", "--version"])
+    return result.returncode == 0
+
+
+def install_service(
+    agent_name: Optional[str] = None,
+    unit_dir: Optional[Path] = None,
+    source_dir: Optional[Path] = None,
+    enable: bool = True,
+    start: bool = True,
+) -> dict:
+    """Install the skcapstone systemd user service for an agent.
+
+    When *agent_name* is provided, installs the template unit
+    ``skcapstone@.service`` and enables ``skcapstone@<agent>.service``.
+    This supports multiple agents running as independent services on
+    the same machine.
+
+    When *agent_name* is None, falls back to the single-agent
+    ``skcapstone.service`` unit for backwards compatibility.
+
+    Args:
+        agent_name: Agent name (e.g. "jarvis"). Uses template unit.
+        unit_dir: Target directory for unit files.
+        source_dir: Directory containing the .service/.socket files.
+        enable: Whether to enable the service at login.
+        start: Whether to start the service immediately.
+
+    Returns:
+        dict: Result with 'installed', 'enabled', 'started' bools
+              and 'service_name' for the installed unit.
+    """
+    _require_linux()
+    target = unit_dir or SYSTEMD_USER_DIR
+    source = source_dir or BUNDLED_DIR
+
+    target.mkdir(parents=True, exist_ok=True)
+
+    result = {
+        "installed": False,
+        "enabled": False,
+        "started": False,
+        "timers_enabled": False,
+        "service_name": "",
+    }
+
+    # Determine which unit to use
+    if agent_name:
+        # Multi-agent: use template unit skcapstone@.service
+        template_name = "skcapstone@.service"
+        instance_name = f"skcapstone@{agent_name}.service"
+        template_src = source / template_name
+        if not template_src.exists():
+            logger.error("Template unit not found: %s", template_src)
+            return result
+        shutil.copy2(template_src, target / template_name)
+        service_unit = instance_name
+        result["service_name"] = instance_name
+    else:
+        # Single-agent fallback
+        service_src = source / SERVICE_NAME
+        if not service_src.exists():
+            logger.error("Service unit not found: %s", service_src)
+            return result
+        shutil.copy2(service_src, target / SERVICE_NAME)
+        service_unit = SERVICE_NAME
+        result["service_name"] = SERVICE_NAME
+
+    # Copy ancillary units (socket, timers, etc.)
+    copied = 1  # already copied the main unit
+    for unit_name in ALL_UNITS:
+        if unit_name == SERVICE_NAME:
+            continue  # already handled above
+        src = source / unit_name
+        if src.exists():
+            shutil.copy2(src, target / unit_name)
+            copied += 1
+
+    # OnFailure= alert hook. Not enabled/started (systemd instantiates it on
+    # demand) but it must be present in the unit dir or the failure alert
+    # silently no-ops.
+    alert_src = source / ALERT_TEMPLATE
+    if alert_src.exists():
+        shutil.copy2(alert_src, target / ALERT_TEMPLATE)
+        copied += 1
+
+    _systemctl("daemon-reload")
+    result["installed"] = True
+    logger.info("Installed %d unit file(s) to %s (service: %s)", copied, target, service_unit)
+
+    if enable:
+        r = _systemctl("enable", service_unit)
+        result["enabled"] = r.returncode == 0
+
+        timers_ok = True
+        for timer in TIMER_UNITS:
+            if (target / timer).exists():
+                r = _systemctl("enable", timer)
+                if r.returncode != 0:
+                    timers_ok = False
+        result["timers_enabled"] = timers_ok
+
+    if start:
+        r = _systemctl("start", service_unit)
+        result["started"] = r.returncode == 0
+
+        for timer in TIMER_UNITS:
+            if (target / timer).exists():
+                _systemctl("start", timer)
+
+    return result
+
+
+def uninstall_service(unit_dir: Optional[Path] = None) -> dict:
+    """Uninstall the skcapstone systemd user service.
+
+    Stops, disables, and removes the unit files.
+
+    Args:
+        unit_dir: Directory containing the installed unit files.
+
+    Returns:
+        dict: Result with 'stopped', 'disabled', 'removed' bools.
+    """
+    _require_linux()
+    target = unit_dir or SYSTEMD_USER_DIR
+    result = {"stopped": False, "disabled": False, "removed": False}
+
+    for timer in TIMER_UNITS:
+        _systemctl("stop", timer)
+        _systemctl("disable", timer)
+    _systemctl("stop", SERVICE_NAME)
+    result["stopped"] = True
+
+    _systemctl("disable", SERVICE_NAME)
+    result["disabled"] = True
+
+    for name in [*ALL_UNITS, *RETIRED_UNITS, TEMPLATE_NAME, ALERT_TEMPLATE]:
+        unit_path = target / name
+        if unit_path.exists():
+            unit_path.unlink()
+
+    _systemctl("daemon-reload")
+    result["removed"] = True
+    logger.info("Uninstalled service from %s", target)
+
+    return result
+
+
+def service_status() -> ServiceStatus:
+    """Query the current status of the skcapstone service.
+
+    Returns:
+        ServiceStatus: Detailed status information.
+    """
+    _require_linux()
+    status = ServiceStatus()
+
+    unit_path = SYSTEMD_USER_DIR / SERVICE_NAME
+    status.installed = unit_path.exists()
+
+    if not status.installed:
+        return status
+
+    r = _systemctl("is-enabled", SERVICE_NAME)
+    status.enabled = r.stdout.strip() == "enabled"
+
+    r = _systemctl("is-active", SERVICE_NAME)
+    status.active = r.stdout.strip() == "active"
+
+    r = _systemctl(
+        "show",
+        SERVICE_NAME,
+        "--property=MainPID,ActiveEnterTimestamp,MemoryCurrent,ExecMainStatus",
+    )
+    for line in r.stdout.strip().splitlines():
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        if key == "MainPID":
+            try:
+                status.pid = int(value)
+            except ValueError:
+                pass
+        elif key == "ActiveEnterTimestamp":
+            status.uptime = value
+        elif key == "MemoryCurrent":
+            try:
+                mem_bytes = int(value)
+                if mem_bytes > 0:
+                    status.memory = f"{mem_bytes / 1024 / 1024:.1f} MB"
+            except (ValueError, ZeroDivisionError):
+                pass
+        elif key == "ExecMainStatus":
+            status.exit_code = value
+
+    return status
+
+
+def service_logs(lines: int = 50, follow: bool = False) -> str:
+    """Get recent journal logs for the skcapstone service.
+
+    Args:
+        lines: Number of recent lines to return.
+        follow: If True, returns only the command to run (can't stream).
+
+    Returns:
+        str: Log output or the follow command.
+    """
+    _require_linux()
+    if follow:
+        return f"journalctl --user -u {SERVICE_NAME} -f"
+
+    r = _run(["journalctl", "--user", "-u", SERVICE_NAME, "-n", str(lines), "--no-pager"])
+    return r.stdout
+
+
+def restart_service() -> bool:
+    """Restart the skcapstone service.
+
+    Returns:
+        bool: True if the restart command succeeded.
+    """
+    r = _systemctl("restart", SERVICE_NAME)
+    return r.returncode == 0
+
+
+def generate_unit_file(
+    python_path: Optional[str] = None,
+    extra_env: Optional[dict] = None,
+) -> str:
+    """Generate a customized systemd unit file as a string.
+
+    Useful for systems where the bundled unit needs adjustment.
+
+    Args:
+        python_path: Override the Python/skcapstone path.
+        extra_env: Additional environment variables.
+
+    Returns:
+        str: Complete unit file content.
+    """
+    exec_cmd = python_path or "skcapstone"
+    env_lines = ""
+    if extra_env:
+        for k, v in extra_env.items():
+            env_lines += f"Environment={k}={v}\n"
+
+    return f"""[Unit]
+Description=SKCapstone Sovereign Agent Daemon
+Documentation=https://github.com/smilinTux/skcapstone
+After=network-online.target syncthing.service
+Wants=network-online.target
+# Crash-loop guard: give up after StartLimitBurst failures inside the
+# interval instead of restarting forever (the .41 outage failure mode).
+StartLimitIntervalSec=1800
+StartLimitBurst=6
+# Page out-of-band when the daemon enters the failed state.
+OnFailure=skcapstone-alert@skcapstone.service
+
+[Service]
+Type=simple
+ExecStart={exec_cmd} daemon start --foreground
+ExecStop={exec_cmd} daemon stop
+Restart=on-failure
+RestartSec=10
+# Exponential restart backoff: 10s, 20s, 40s ... capped at 5 min (systemd >= 254).
+RestartSteps=5
+RestartMaxDelaySec=300
+# Memory caps in the unit, not host state. MemoryHigh throttles before the
+# 4G hard kill; 4G matches the fleet units with ~17x headroom over normal RSS.
+MemoryHigh=3G
+MemoryMax=4G
+WatchdogSec=120
+
+# Security hardening (relaxed - matches the canonical top-level units).
+# ProtectSystem=strict / ProtectHome=read-only were removed on purpose: they
+# fail-closed if any ReadWritePaths dir is missing on the host, which stops the
+# daemon from ever starting. Keep only the directives that are safe with the
+# %h/.skenv install layout.
+NoNewPrivileges=true
+PrivateTmp=true
+
+Environment=PYTHONUNBUFFERED=1
+{env_lines}
+[Install]
+WantedBy=default.target
+"""

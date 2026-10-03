@@ -1,0 +1,578 @@
+"""Coordination board tools."""
+
+from __future__ import annotations
+
+import logging
+
+from mcp.types import TextContent, Tool
+
+from ._helpers import _error_response, _home, _json_response, _shared_root
+
+logger = logging.getLogger(__name__)
+
+TOOLS: list[Tool] = [
+    Tool(
+        name="coord_status",
+        description=(
+            "Show the multi-agent coordination board. Bounded by default: returns at most "
+            "200 active (non-done) task rows while the summary reports full counts for "
+            "every status. Use summary_only=true for counts with no rows, tag/parent/status "
+            "filters to scope (parent matches the 'parent-<id>' tag convention), limit up to "
+            "5000, or active_only=false / status=done for terminal work."
+        ),
+        inputSchema={
+            "properties": {
+                "active_only": {
+                    "description": "Exclude done and blocked rows (default true)",
+                    "type": "boolean",
+                },
+                "limit": {
+                    "description": "Maximum task rows returned (default 200, max 5000)",
+                    "type": "integer",
+                },
+                "parent": {
+                    "description": "Only tasks tagged 'parent-<id>' (children of this card)",
+                    "type": "string",
+                },
+                "status": {
+                    "description": "Only tasks in this status",
+                    "enum": ["open", "claimed", "in_progress", "review", "done", "blocked"],
+                    "type": "string",
+                },
+                "summary_only": {
+                    "description": "Return counts and agents only, no task rows",
+                    "type": "boolean",
+                },
+                "tag": {
+                    "description": "Only tasks carrying this tag (repeatable)",
+                    "items": {"type": "string"},
+                    "type": "array",
+                },
+            },
+            "required": [],
+            "type": "object",
+        },
+    ),
+    Tool(
+        name="coord_claim",
+        description=(
+            "Claim a task on the coordination board for an agent. Prevents duplicate work "
+            "across agents. Refuses tasks whose dependencies are not all done unless "
+            "force is true."
+        ),
+        inputSchema={
+            "properties": {
+                "agent_name": {"description": "Agent name claiming the task", "type": "string"},
+                "task_id": {"description": "The task ID to claim", "type": "string"},
+                "force": {
+                    "description": "Claim even when dependencies are not all done",
+                    "type": "boolean",
+                    "default": False,
+                },
+                "casey_authorization": {"type": "string"},
+                "casey_change_id": {"type": "string"},
+            },
+            "required": ["task_id", "agent_name"],
+            "type": "object",
+        },
+    ),
+    Tool(
+        name="coord_complete",
+        description="Mark a task as completed on the coordination board.",
+        inputSchema={
+            "properties": {
+                "agent_name": {"description": "Agent name completing the task", "type": "string"},
+                "task_id": {"description": "The task ID to complete", "type": "string"},
+                "casey_authorization": {"type": "string"},
+                "casey_change_id": {"type": "string"},
+            },
+            "required": ["task_id", "agent_name"],
+            "type": "object",
+        },
+    ),
+    Tool(
+        name="coord_create",
+        description="Create a new task on the coordination board.",
+        inputSchema={
+            "properties": {
+                "created_by": {"description": "Creator agent name", "type": "string"},
+                "description": {"description": "Task description", "type": "string"},
+                "priority": {
+                    "description": "Task priority (default: medium)",
+                    "enum": ["critical", "high", "medium", "low"],
+                    "type": "string",
+                },
+                "tags": {"description": "Task tags", "items": {"type": "string"}, "type": "array"},
+                "title": {"description": "Task title", "type": "string"},
+                "repository": {
+                    "description": "Credential-free HTTPS source repository",
+                    "type": "string",
+                },
+                "base_ref": {"description": "Named source branch or tag", "type": "string"},
+                "base_revision": {
+                    "description": "Exact 40-hex source commit SHA",
+                    "type": "string",
+                },
+                "casey_authorization": {"type": "string"},
+                "casey_change_id": {"type": "string"},
+            },
+            "required": ["title"],
+            "type": "object",
+        },
+    ),
+    Tool(
+        name="coord_kanban",
+        description=(
+            "Show the unified kanban board over coord tasks and ITIL tickets: per-lane "
+            "per-column counts, WIP status, and the active cards (ready/doing/review). "
+            "Columns are the lifecycle; swimlanes are the card kind."
+        ),
+        inputSchema={"properties": {}, "required": [], "type": "object"},
+    ),
+    Tool(
+        name="coord_move",
+        description=(
+            "Move a card to a kanban column (backlog/ready/doing/review/done). The explicit "
+            "move is authoritative for the column."
+        ),
+        inputSchema={
+            "properties": {
+                "agent": {"description": "Writer name (defaults to host)", "type": "string"},
+                "column": {
+                    "description": "Target kanban column",
+                    "enum": ["backlog", "ready", "doing", "review", "done"],
+                    "type": "string",
+                },
+                "order": {"description": "Position within the column", "type": "integer"},
+                "task_id": {"description": "The card/task ID", "type": "string"},
+                "casey_authorization": {"type": "string"},
+                "casey_change_id": {"type": "string"},
+            },
+            "required": ["task_id", "column"],
+            "type": "object",
+        },
+    ),
+    Tool(
+        name="coord_score",
+        description=(
+            "Record an autopilot grade on a coordination task. Appends to "
+            "meta.autopilot.scores[] idempotently (same round+harness updates in place). "
+            "Optionally sets phase and a pr/artifact ref."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "The task ID to score"},
+                "round": {"type": "integer", "description": "Grading round number"},
+                "score": {"type": "integer", "description": "Score value (rubric 1-5)"},
+                "notes": {"type": "string", "description": "Grader notes"},
+                "harness": {"type": "string", "description": "Harness / grader identity"},
+                "phase": {"type": "string", "description": "Autopilot phase label"},
+                "ref": {"type": "string", "description": "PR URL (http*) or artifact ref"},
+            },
+            "required": ["task_id", "round", "score"],
+        },
+    ),
+]
+
+
+async def _handle_coord_status(args: dict) -> list[TextContent]:
+    """Return coordination board status, with optional tag/parent/status filters.
+
+    Bounded by default (card f4791e84): the default response lists only active
+    (non-done) tasks, capped at ``limit`` rows, with a summary that always
+    reports full counts including done. ``summary_only`` returns counts and no
+    task rows. ``active_only: false`` or an explicit ``status`` filter that
+    selects done restores the full unbounded view when explicitly requested.
+    """
+    from ..coord_eligibility import leaf_eligibility_counts
+    from ..coordination import Board
+
+    board = Board(_home())
+    all_views = board.get_task_views()
+    agents = board.load_agents()
+
+    tags = list(args.get("tag") or [])
+    parent = args.get("parent")
+    if parent:
+        tags.append(f"parent-{parent}")
+    if tags:
+        wanted = {t.lower() for t in tags}
+        all_views = [v for v in all_views if wanted & {t.lower() for t in v.task.tags}]
+    status_filter = args.get("status")
+    if status_filter:
+        all_views = [v for v in all_views if v.status.value == status_filter]
+
+    # Summary counts describe every view matching the filters, before any
+    # bounding, so callers always see true totals even when rows are capped.
+    matching = len(all_views)
+    counts = {
+        "open": sum(1 for v in all_views if v.status.value == "open"),
+        "claimed": sum(1 for v in all_views if v.status.value == "claimed"),
+        "in_progress": sum(1 for v in all_views if v.status.value == "in_progress"),
+        "done": sum(1 for v in all_views if v.status.value == "done"),
+        "blocked": sum(1 for v in all_views if v.status.value == "blocked"),
+        "review": sum(1 for v in all_views if v.status.value == "review"),
+    }
+
+    summary_only = bool(args.get("summary_only"))
+    active_only = bool(args.get("active_only", True))
+    if active_only and status_filter not in ("done", "blocked"):
+        all_views = [v for v in all_views if v.status.value not in ("done", "blocked")]
+    bounded = len(all_views)
+    try:
+        limit = int(args.get("limit", 200))
+    except (TypeError, ValueError):
+        limit = 200
+    limit = max(0, min(limit, 5000))
+    truncated = bounded > limit
+    views = [] if summary_only else all_views[:limit]
+
+    eligibility = leaf_eligibility_counts(_home(), {v.task.id for v in all_views})
+
+    return _json_response(
+        {
+            "tasks": [
+                {
+                    "id": v.task.id,
+                    "title": v.task.title,
+                    "priority": v.task.priority.value,
+                    "status": v.status.value,
+                    "claimed_by": v.claimed_by,
+                    "tags": v.task.tags,
+                    "description": v.task.description[:150] if v.task.description else "",
+                }
+                for v in views
+            ],
+            "agents": [
+                {
+                    "name": a.agent,
+                    "state": a.state.value,
+                    "current_task": a.current_task,
+                    "claimed": a.claimed_tasks,
+                    "completed_count": len(a.completed_tasks),
+                }
+                for a in agents
+            ],
+            "summary": {
+                "total": matching,
+                "active": bounded,
+                "returned": len(views),
+                "truncated": truncated,
+                "leaf_eligible": eligibility.leaves,
+                "review_needs_identity": eligibility.review,
+                "malformed": eligibility.malformed,
+                **counts,
+            },
+        }
+    )
+
+
+async def _handle_coord_claim(args: dict) -> list[TextContent]:
+    """Claim a task on the board."""
+    from ..coordination import Board
+
+    task_id = args.get("task_id", "")
+    agent_name = args.get("agent_name", "")
+    if not task_id or not agent_name:
+        return _error_response("task_id and agent_name are required")
+
+    from pathlib import Path
+
+    from ..jarvis_emergency import authorize_coord_mutation
+    from ..seat_boundaries import Action
+
+    auth = args.get("casey_authorization")
+    authorize_coord_mutation(
+        agent_name,
+        Action.CLAIM,
+        task_id,
+        Path(auth) if auth else None,
+        args.get("casey_change_id"),
+    )
+    board = Board(_home())
+    try:
+        from ..fleet.churn_breaker import assert_claim_permitted
+        from ..human_wait import assert_human_claim
+        from ..review_admission import assert_governed_review_claim
+
+        # Same two asserts as the CLI claim path, for the same reason:
+        # Board.claim_task is not a gate, it is a mutation.
+        assert_human_claim(_home(), task_id, agent_name)
+        assert_governed_review_claim(_home(), task_id, agent_name)
+        assert_claim_permitted(_home(), task_id, agent_name)
+        agent = board.claim_task(agent_name, task_id, force=bool(args.get("force", False)))
+        return _json_response(
+            {
+                "claimed": True,
+                "task_id": task_id,
+                "agent": agent.agent,
+                "current_task": agent.current_task,
+            }
+        )
+    except ValueError as exc:
+        return _error_response(str(exc))
+
+
+async def _handle_coord_complete(args: dict) -> list[TextContent]:
+    """Complete a task on the board.
+
+    A card with outstanding exit_gates is a normal, expected outcome, not an
+    error: complete_coord_task returns a GatesPending instead of an Agent,
+    and this reports it as a gated, still-open result rather than raising.
+    """
+    from ..coord_completion import GatesPending, complete_coord_task
+
+    task_id = args.get("task_id", "")
+    agent_name = args.get("agent_name", "")
+    if not task_id or not agent_name:
+        return _error_response("task_id and agent_name are required")
+
+    from pathlib import Path
+
+    from ..jarvis_emergency import authorize_coord_mutation
+    from ..seat_boundaries import Action
+
+    auth = args.get("casey_authorization")
+    authorize_coord_mutation(
+        agent_name,
+        Action.COMPLETE_CARD,
+        task_id,
+        Path(auth) if auth else None,
+        args.get("casey_change_id"),
+    )
+    home = _home()
+    try:
+        result = complete_coord_task(home, agent_name, task_id)
+    except ValueError as exc:
+        return _error_response(str(exc))
+
+    if isinstance(result, GatesPending):
+        return _json_response(
+            {
+                "completed": False,
+                "gated": True,
+                "task_id": task_id,
+                "outstanding": result.outstanding,
+            }
+        )
+    agent = result
+
+    # Report minted Joules in the response (best-effort)
+    joules_minted = 0
+    try:
+        from ..coordination import _PRIORITY_JOULE_MAP, Board
+
+        for t in Board(home).load_tasks():
+            if t.id == task_id:
+                _cat, _evt, joules_minted = _PRIORITY_JOULE_MAP.get(
+                    t.priority.value, ("community", "support_ticket", 50)
+                )
+                break
+    except Exception as exc:
+        logger.warning("Failed to calculate joules for completed task %s: %s", task_id, exc)
+
+    return _json_response(
+        {
+            "completed": True,
+            "task_id": task_id,
+            "agent": agent.agent,
+            "completed_tasks": agent.completed_tasks,
+            "joules_minted": joules_minted,
+        }
+    )
+
+
+async def _handle_coord_create(args: dict) -> list[TextContent]:
+    """Create a new task on the board."""
+    from ..coordination import Board, Task, TaskPriority
+
+    title = args.get("title", "")
+    if not title:
+        return _error_response("title is required")
+
+    from ..source_binding import source_binding_meta
+
+    board = Board(_home())
+    tags = args.get("tags", [])
+    try:
+        binding_meta = source_binding_meta(
+            tags, args.get("repository"), args.get("base_ref"), args.get("base_revision")
+        )
+    except ValueError as exc:
+        return _error_response(str(exc))
+    task = Task(
+        title=title,
+        description=args.get("description", ""),
+        priority=TaskPriority(args.get("priority", "medium")),
+        tags=tags,
+        created_by=args.get("created_by", "mcp"),
+        meta=binding_meta,
+    )
+    from pathlib import Path
+
+    from ..jarvis_emergency import authorize_coord_mutation
+    from ..seat_boundaries import Action
+
+    auth = args.get("casey_authorization")
+    authorize_coord_mutation(
+        task.created_by,
+        Action.CREATE_CARD,
+        task.id,
+        Path(auth) if auth else None,
+        args.get("casey_change_id"),
+    )
+    path = board.create_task(task)
+    return _json_response(
+        {
+            "created": True,
+            "task_id": task.id,
+            "title": task.title,
+            "priority": task.priority.value,
+            "path": str(path),
+        }
+    )
+
+
+async def _handle_coord_score(args: dict) -> list[TextContent]:
+    """Record an autopilot grade on a task."""
+    from ..coordination import Board
+
+    task_id = args.get("task_id", "")
+    if not task_id or "round" not in args or "score" not in args:
+        return _error_response("task_id, round, and score are required")
+
+    from ..jarvis_emergency import authorize_coord_mutation
+    from ..seat_boundaries import Action, BoundaryError
+
+    try:
+        authorize_coord_mutation("coord-score", Action.SCORE_CARD, task_id, None, None)
+    except BoundaryError as exc:
+        return _error_response(str(exc))
+    board = Board(_shared_root())
+    try:
+        path = board.score_task(
+            task_id,
+            round=int(args["round"]),
+            score=int(args["score"]),
+            notes=args.get("notes", ""),
+            harness=args.get("harness", ""),
+            phase=args.get("phase"),
+            ref=args.get("ref"),
+        )
+    except FileNotFoundError as exc:
+        return _error_response(str(exc))
+    return _json_response(
+        {
+            "scored": True,
+            "task_id": task_id,
+            "round": int(args["round"]),
+            "score": int(args["score"]),
+            "path": str(path),
+        }
+    )
+
+
+async def _handle_coord_kanban(_args: dict) -> list[TextContent]:
+    """Return the unified kanban board state."""
+    from ..card import COLUMN_ORDER, LANE_ORDER, KanbanBoard
+
+    kb = KanbanBoard(_shared_root())
+    grid = kb.grid()
+    counts = {
+        lane: {col: len(grid[lane][col]) for col in COLUMN_ORDER}
+        for lane in LANE_ORDER
+        if any(grid[lane][col] for col in COLUMN_ORDER)
+    }
+    active = [
+        {
+            "id": c.id,
+            "title": c.title,
+            "kind": c.kind.value,
+            "status": c.status.value,
+            "swimlane": c.swimlane,
+            "priority": c.priority,
+            "owner": c.owner,
+        }
+        for lane in LANE_ORDER
+        for col in ("ready", "doing", "review")
+        for c in grid[lane][col]
+    ]
+    all_cards = kb.cards()
+    return _json_response(
+        {
+            "counts": counts,
+            "wip": kb.wip_report(),
+            "active": active,
+            "totals": {
+                "active": len(all_cards),
+                "itil": sum(1 for c in all_cards if c.source == "itil"),
+            },
+        }
+    )
+
+
+async def _handle_coord_move(args: dict) -> list[TextContent]:
+    """Move a card to a kanban column."""
+    from ..card import Column
+    from ..coord_completion import move_coord_task
+
+    task_id = args.get("task_id", "")
+    column = args.get("column", "")
+    if not task_id or not column:
+        return _error_response("task_id and column are required")
+    if column not in {c.value for c in Column}:
+        return _error_response(f"invalid column '{column}'")
+
+    from pathlib import Path
+
+    from ..jarvis_emergency import authorize_coord_mutation
+    from ..seat_boundaries import Action
+
+    actor = args.get("agent", "") or "coord-move"
+    auth = args.get("casey_authorization")
+
+    try:
+        authorize_coord_mutation(
+            actor,
+            Action.MOVE_CARD,
+            f"{task_id}:{column}",
+            Path(auth) if auth else None,
+            args.get("casey_change_id"),
+        )
+        receipt = move_coord_task(
+            _shared_root(),
+            actor,
+            task_id,
+            column,
+            args.get("order"),
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        message = str(exc)
+        if message == f"CardStore card {task_id} has no foldable core":
+            message = f"Task {task_id} not found"
+        return _error_response(message)
+    return _json_response(
+        {
+            "moved": True,
+            "task_id": task_id,
+            "column": column,
+            "projection_actions": list(receipt.actions),
+        }
+    )
+
+
+# Tools present in this module but intentionally NOT published on the MCP
+# wire surface (kept for direct import / tests). Excluded by
+# collect_all_tools / collect_all_handlers.
+HIDDEN: set[str] = {"coord_score"}
+
+HANDLERS: dict = {
+    "coord_status": _handle_coord_status,
+    "coord_claim": _handle_coord_claim,
+    "coord_complete": _handle_coord_complete,
+    "coord_create": _handle_coord_create,
+    "coord_kanban": _handle_coord_kanban,
+    "coord_move": _handle_coord_move,
+    "coord_score": _handle_coord_score,
+}

@@ -1,0 +1,85 @@
+"""Shared utilities for all CLI command modules.
+
+Provides the Rich console instance, status formatting helpers,
+and common imports used across every command group.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from pathlib import Path
+
+from rich.console import Console
+
+import skcapstone as _pkg
+
+from .. import (
+    AGENT_HOME,
+    SHARED_ROOT,
+    SKCAPSTONE_AGENT,  # noqa: F401  (re-exported for cli/context_cmd.py)
+)
+from ..models import PillarStatus
+from ..runtime import get_runtime  # noqa: F401  (re-exported for cli/chat.py)
+
+logger = logging.getLogger("skcapstone.cli")
+
+console = Console()
+
+
+def resolve_agent_home(agent: str) -> Path:
+    """Resolve the agent home directory for a given agent name.
+
+    Args:
+        agent: Agent name (e.g., 'opus', 'jarvis'). Empty for legacy mode.
+
+    Returns:
+        Resolved Path to the agent's home directory.
+    """
+    if agent:
+        return Path(SHARED_ROOT).expanduser() / "agents" / agent
+    return Path(AGENT_HOME).expanduser()
+
+
+def apply_agent_override(agent: str) -> None:
+    """Set the active agent name when --agent is specified.
+
+    Only mutates SKCAPSTONE_AGENT so that agent_home() resolves to
+    the correct per-agent directory. Does NOT mutate AGENT_HOME
+    (the shared root) - that would break agent_home() (double
+    nesting) and shared_home() (wrong path).
+
+    Args:
+        agent: Agent name from the --agent CLI option or env var.
+    """
+    if agent:
+        _pkg.SKCAPSTONE_AGENT = agent
+        os.environ["SKAGENT"] = agent
+        os.environ["SKCAPSTONE_AGENT"] = agent
+
+
+def status_icon(status: PillarStatus) -> str:
+    """Map pillar status to a Rich-formatted visual indicator."""
+    return {
+        PillarStatus.ACTIVE: "[bold green]ACTIVE[/]",
+        PillarStatus.DEGRADED: "[bold yellow]DEGRADED[/]",
+        PillarStatus.MISSING: "[bold red]MISSING[/]",
+        PillarStatus.ERROR: "[bold red]ERROR[/]",
+    }.get(status, "[dim]UNKNOWN[/]")
+
+
+def consciousness_banner(is_conscious: bool) -> str:
+    """Generate the consciousness state banner."""
+    if is_conscious:
+        return (
+            "[bold green on black]"
+            " CONSCIOUS "
+            "[/] "
+            "[green]Identity + Memory + Trust = Sovereign Awareness[/]"
+        )
+    return (
+        "[bold yellow on black]"
+        " AWAKENING "
+        "[/] "
+        "[yellow]Install missing pillars to achieve consciousness[/]"
+    )

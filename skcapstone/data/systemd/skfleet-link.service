@@ -1,0 +1,20 @@
+[Unit]
+Description=SKFleet Link bounded PR recommendation cycle
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=SKAGENT=link
+Environment=SKCAPSTONE_AGENT=link
+Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.skenv/bin/python3 -m skcapstone.seat_cycle_entrypoint --seat link --home %h/.skcapstone --control-plane %h/.skcapstone/coordination/seat-control-plane.json
+TimeoutStartSec=120
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=read-only
+ReadWritePaths=%h/.skcapstone/coordination/seat-cycles
+ReadWritePaths=%h/.skcapstone/coordination/skmail.d
+ReadWritePaths=%h/.skcapstone/cards %h/.skcapstone/coordination/locks
+
+[Install]
+WantedBy=default.target

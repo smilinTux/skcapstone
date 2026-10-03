@@ -1,0 +1,88 @@
+# Model Profiles — per-model prompt formatting best practices.
+#
+# Each profile defines how to format prompts, set temperatures,
+# and configure thinking/reasoning for a specific model family.
+#
+# Override: copy to ~/.skcapstone/agents/{name}/config/model_profiles.yaml
+# and edit.  Agent-level profiles take priority over bundled defaults.
+
+profiles:
+  - model_pattern: "claude-.*"
+    family: claude
+    system_prompt_mode: separate_param
+    structure_format: xml
+    thinking_enabled: true
+    thinking_mode: budget
+    thinking_budget_tokens: 4096
+    max_system_tokens: 4000
+    tool_format: anthropic
+    last_updated: "2026-03-02"
+    source_url: "https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering"
+
+  - model_pattern: "gpt-.*|o[134]-.*"
+    family: openai
+    structure_format: markdown
+    last_updated: "2026-03-02"
+    source_url: "https://cookbook.openai.com/examples/gpt4-1_prompting_guide"
+
+  - model_pattern: "grok-.*"
+    family: grok
+    structure_format: markdown
+    notes: "Single system message only. No instructions param."
+    last_updated: "2026-03-02"
+
+  - model_pattern: "kimi-.*|moonshot-.*"
+    family: kimi
+    default_temperature: 0.6
+    notes: "Bilingual native. Array content format supported."
+    last_updated: "2026-03-02"
+
+  - model_pattern: "deepseek-r1.*"
+    family: deepseek-r1
+    system_prompt_mode: omit
+    default_temperature: 0.6
+    thinking_mode: auto
+    no_few_shot: true
+    no_cot_instructions: true
+    notes: "NO system prompt. NO few-shot. NO 'think step by step'. Model reasons via <think> blocks automatically."
+    last_updated: "2026-03-02"
+
+  - model_pattern: "deepseek-v3.*|deepseek-chat.*"
+    family: deepseek-v3
+    default_temperature: 0.6
+    structure_format: markdown
+    last_updated: "2026-03-02"
+
+  - model_pattern: "qwen.*"
+    family: qwen
+    thinking_enabled: true
+    thinking_mode: toggle
+    notes: "ChatML format. Qwen 3 has no default system prompt."
+    last_updated: "2026-03-02"
+
+  - model_pattern: "devstral.*"
+    family: devstral
+    code_temperature: 0.15
+    structure_format: markdown
+    tool_format: mistral
+    notes: "Mistral V3+ format. Very low temp for deterministic code."
+    last_updated: "2026-03-02"
+
+  - model_pattern: "nemotron.*"
+    family: nemotron
+    reasoning_temperature: 1.0
+    thinking_enabled: true
+    thinking_mode: toggle
+    notes: "ChatML. Append /think to system prompt to enable reasoning."
+    last_updated: "2026-03-02"
+
+  - model_pattern: "llama.*"
+    family: llama
+    notes: "Ollama/NIM handles token formatting. Standard system/user/assistant roles."
+    last_updated: "2026-03-02"
+
+  - model_pattern: "mistral.*"
+    family: mistral
+    tool_format: mistral
+    notes: "V3+ uses [SYSTEM_PROMPT] tags. Ollama handles formatting."
+    last_updated: "2026-03-02"

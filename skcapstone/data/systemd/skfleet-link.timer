@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the SKFleet Link cycle every five minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=skfleet-link.service
+
+[Install]
+WantedBy=timers.target

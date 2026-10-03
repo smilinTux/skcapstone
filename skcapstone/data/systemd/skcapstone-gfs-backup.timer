@@ -1,0 +1,11 @@
+[Unit]
+Description=SKCapstone GFS Backup Timer - daily sovereign agent backup with GFS rotation
+Documentation=https://github.com/smilinTux/skcapstone
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

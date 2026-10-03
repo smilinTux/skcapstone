@@ -1,0 +1,10 @@
+[Unit]
+Description=Run one bounded Seraph review batch every five minutes
+
+[Timer]
+OnCalendar=*-*-* *:05,15,25,35,45,55:00
+Persistent=false
+Unit=skfleet-seraph.service
+
+[Install]
+WantedBy=timers.target
