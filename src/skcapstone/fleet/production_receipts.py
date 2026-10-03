@@ -113,14 +113,20 @@ def production_receipt_allowed(home: Path, policy: dict, launch: dict, card, eve
     """Replay prelaunch selection, preserving correctness when capacity changes."""
     try:
         route = event["route_identity"]
-        snapshot = load_production_snapshot(home, route["production_snapshot"])
+        remote = event.get("schema") == "skfleet.review-assignment-launch/v3"
+        reference = route["production_snapshot"]
+        if remote:
+            from .review_dispatch import validate_execution
+
+            reference = validate_execution(home, policy, launch, card, event)
+        snapshot = load_production_snapshot(home, reference)
         stamp = datetime.datetime.fromisoformat(event["ts"].replace("Z", "+00:00"))
         size = card_required_size(card)
         if (
             stamp.tzinfo is None
             or not 0 <= stamp.timestamp() - snapshot["observed_at"] <= MAX_AGE_SECONDS
             or snapshot["endpoint"].rstrip("/") != policy["gateway_url"].rstrip("/")
-            or launch["host"] != policy["authority_host"]
+            or (not remote and launch["host"] != policy["authority_host"])
             or event.get("writer") != launch["owner"]
             or event.get("claim_revision") != launch["revision"]
             or route.get("provider") != "skgateway"
