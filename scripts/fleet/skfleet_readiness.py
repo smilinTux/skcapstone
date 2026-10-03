@@ -33,7 +33,7 @@ from pathlib import Path
 EXEC_START_MODULE_RE = re.compile(r"-m\s+([A-Za-z_][\w.]*)")
 
 
-def required_env(source: str, *, production: bool = False) -> set[str]:
+def required_env(source: str) -> set[str]:
     """Parse dispatcher source text and return mandatory env var names.
 
     A name is mandatory when either:
@@ -57,8 +57,6 @@ def required_env(source: str, *, production: bool = False) -> set[str]:
             func_name = func.id if isinstance(func, ast.Name) else None
             if func_name != "_required_lane_target":
                 continue
-            if production:
-                continue
             has_default = any(kw.arg == "default" for kw in node.keywords)
             if has_default:
                 continue
@@ -73,39 +71,7 @@ def required_env(source: str, *, production: bool = False) -> set[str]:
     for match in re.finditer(r"raise\s+SystemExit\(\s*'([^']+?)\s+is required'\s*\)", source):
         names.add(match.group(1))
 
-    if production:
-        names.discard("SKFLEET_GATEWAY_URL")
-        names.update({"SKFLEET_PRODUCTION_POLICY", "SKFLEET_AUTHORITY_HOST"})
     return names
-
-
-def production_environment_error(
-    environment: dict[str, str], python_bin: str, dispatcher: Path
-) -> str | None:
-    """Validate policy with the actual native interpreter; never execute dispatch."""
-    code = (
-        "import json,socket,sys; from pathlib import Path; "
-        "from skcapstone.fleet.production_dispatch import production_policy_from_environment; "
-        "from skcapstone.niobe_live_entrypoint import _production_environment; "
-        "payload=json.load(sys.stdin); environment=payload['environment']; "
-        "host=socket.gethostname().split('.')[0].lower()\n"
-        "if environment.get('SKFLEET_AUTHORITY_HOST') != host: raise ValueError('effective authority mismatch')\n"
-        "if not environment.get('SKFLEET_PRODUCTION_POLICY'): raise ValueError('explicit policy required')\n"
-        "validated=_production_environment(Path(payload['dispatcher']),host=host,environment=environment)\n"
-        "policy=production_policy_from_environment(validated,host)\n"
-        "if not policy: raise ValueError('explicit production policy required')\n"
-    )
-    try:
-        result = subprocess.run(
-            [python_bin, "-c", code],
-            input=json.dumps({"environment": environment, "dispatcher": str(dispatcher)}),
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return "native production policy validation unavailable"
-    return None if result.returncode == 0 else "invalid production policy or effective authority"
 
 
 def unit_modules(unit_text: str) -> list[str]:
@@ -382,9 +348,7 @@ def installed_git_sha():
     dist-info cannot be globbed is not thereby unready.
     """
     home = Path(os.path.expanduser("~"))
-    for dist_info in sorted(
-        home.glob(".skenv/lib/python3.*/site-packages/skcapstone-*.dist-info")
-    ):
+    for dist_info in sorted(home.glob(".skenv/lib/python3.*/site-packages/skcapstone-*.dist-info")):
         match = _DIST_INFO_GIT_SHA_RE.search(dist_info.name)
         if match:
             return match.group(1).lower()
@@ -542,21 +506,6 @@ def _run(
                     % name
                 )
         else:
-            if env_snapshot is not None and (
-                "SKFLEET_PRODUCTION_POLICY" in env_snapshot
-                or env_from_systemd == "skfleet-seat-cycle.service"
-            ):
-                policy_error = production_environment_error(
-                    env_snapshot, python_bin, rotate_script
-                )
-                if policy_error:
-                    ok = False
-                    lines.append("FAIL production policy: " + policy_error)
-                else:
-                    mandatory = required_env(dispatcher_source, production=True)
-                    lines.append(
-                        "OK production policy: native parser and effective authority validated"
-                    )
             if not mandatory:
                 lines.append("OK required env: dispatcher declares no mandatory env vars")
             for name in sorted(mandatory):
