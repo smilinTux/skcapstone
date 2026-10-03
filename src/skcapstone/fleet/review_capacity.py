@@ -281,7 +281,6 @@ def eligible_gateway_routes(
             continue
         if normalized & _LOCAL_POLICY and raw.get("policy_tier") != "local":
             continue
-        domain = str(raw.get("capacity_domain") or "")
         # A live worker is not a live provider request. SKGateway owns capacity.
         busy = int(raw.get("gateway_active", 0))
         free = int(raw.get("max", 0)) - busy
