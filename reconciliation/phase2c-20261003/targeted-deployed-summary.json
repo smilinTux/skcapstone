@@ -1,0 +1,273 @@
+{
+  "counts": {
+    "tests": 3418,
+    "failures": 36,
+    "errors": 0,
+    "skipped": 0,
+    "passed": 3382
+  },
+  "baseline_exact_failures": [],
+  "other_failures": [
+    {
+      "node": "tests.fleet.test_crew_admission::test_remote_preclaim_refuses_stale_parent[claim]",
+      "kind": "failure",
+      "message": "Failed: DID NOT RAISE BuilderDispatchError",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_crew_admission::test_remote_preclaim_refuses_stale_parent[contract]",
+      "kind": "failure",
+      "message": "Failed: DID NOT RAISE BuilderDispatchError",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_crew_admission::test_remote_preclaim_refuses_stale_parent[source]",
+      "kind": "failure",
+      "message": "Failed: DID NOT RAISE BuilderDispatchError",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_crew_admission::test_remote_preclaim_refuses_stale_parent[restrictions]",
+      "kind": "failure",
+      "message": "Failed: DID NOT RAISE BuilderDispatchError",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_crew_admission::test_remote_preclaim_refuses_stale_parent[deps]",
+      "kind": "failure",
+      "message": "Failed: DID NOT RAISE BuilderDispatchError",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_crew_admission::test_remote_preclaim_refuses_stale_parent[ownerless]",
+      "kind": "failure",
+      "message": "Failed: DID NOT RAISE BuilderDispatchError",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_crew_admission::test_remote_preclaim_refuses_stale_parent[terminal]",
+      "kind": "failure",
+      "message": "Failed: DID NOT RAISE BuilderDispatchError",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_crew_admission::test_actual_rotation_authoritative_admission_uses_parent_guard[True]",
+      "kind": "failure",
+      "message": "assert True is not True",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_crew_controller::test_real_node_hook_assigns_once_for_thirty_unchanged_cycles",
+      "kind": "failure",
+      "message": "KeyError: 'crew'",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_crew_controller::test_actual_cli_register_reconcile_status",
+      "kind": "failure",
+      "message": "AssertionError: Usage: fleet [OPTIONS] COMMAND [ARGS]...\n  Try 'fleet --help' for help.\n  \n  Error: No such command 'crew'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_crew_controller::test_malformed_request_does_not_stop_heartbeat",
+      "kind": "failure",
+      "message": "KeyError: 'crew'",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_crew_controller::test_budget_stop_advances_only_through_considered_crews",
+      "kind": "failure",
+      "message": "ValueError: cross-manifest crew write scopes overlap",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_crew_progress::test_actual_reporter_publishes_only_exact_local_fresh_identity",
+      "kind": "failure",
+      "message": "AssertionError: assert 1 == 0\n +  where 1 = len([{'card': 'aabb0011', 'session': 'codex-auto-aabb0011', 'unit': '', 'owner': 'jarvis', ...}])\n +  and   0 = len([])",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_crew_requests::test_nonresource_dedup_requires_same_slot_and_evidence",
+      "kind": "failure",
+      "message": "ValueError: cross-manifest crew write scopes overlap",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_crew_requests::test_same_resource_different_authorized_slot_does_not_collapse",
+      "kind": "failure",
+      "message": "ValueError: cross-manifest crew write scopes overlap",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_herdr_handoff_cli::test_deliver_uses_existing_entry_points_and_explicit_roots[False]",
+      "kind": "failure",
+      "message": "AssertionError: Usage: fleet [OPTIONS] COMMAND [ARGS]...\n  Try 'fleet --help' for help.\n  \n  Error: No such command 'handoff'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_herdr_handoff_cli::test_deliver_uses_existing_entry_points_and_explicit_roots[True]",
+      "kind": "failure",
+      "message": "AssertionError: Usage: skcapstone fleet [OPTIONS] COMMAND [ARGS]...\n  Try 'skcapstone fleet --help' for help.\n  \n  Error: No such command 'handoff'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_herdr_handoff_cli::test_observe_uses_configured_coordination_home",
+      "kind": "failure",
+      "message": "AssertionError: Usage: fleet [OPTIONS] COMMAND [ARGS]...\n  Try 'fleet --help' for help.\n  \n  Error: No such command 'handoff'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_herdr_handoff_cli::test_receipt_delegates_exact_kind_and_payload[pickup]",
+      "kind": "failure",
+      "message": "AssertionError: Usage: fleet [OPTIONS] COMMAND [ARGS]...\n  Try 'fleet --help' for help.\n  \n  Error: No such command 'handoff'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_herdr_handoff_cli::test_receipt_delegates_exact_kind_and_payload[result]",
+      "kind": "failure",
+      "message": "AssertionError: Usage: fleet [OPTIONS] COMMAND [ARGS]...\n  Try 'fleet --help' for help.\n  \n  Error: No such command 'handoff'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_herdr_handoff_cli::test_help_does_not_import_manager_or_transport",
+      "kind": "failure",
+      "message": "AssertionError: Usage: fleet [OPTIONS] COMMAND [ARGS]...\n  Try 'fleet --help' for help.\n  \n  Error: No such command 'handoff'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_herdr_handoff_cli::test_expected_manager_errors_are_click_errors[error0]",
+      "kind": "failure",
+      "message": "assert 2 == 1\n +  where 2 = <Result SystemExit(2)>.exit_code",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_herdr_handoff_cli::test_expected_manager_errors_are_click_errors[error1]",
+      "kind": "failure",
+      "message": "assert 2 == 1\n +  where 2 = <Result SystemExit(2)>.exit_code",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_herdr_handoff_cli::test_bad_json_is_rejected_before_manager_creation",
+      "kind": "failure",
+      "message": "assert 2 == 1\n +  where 2 = <Result SystemExit(2)>.exit_code",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_herdr_handoff_cli::test_actor_is_required_before_any_manager_call",
+      "kind": "failure",
+      "message": "assert (2 == 2 and '--agent' in \"Usage: fleet [OPTIONS] COMMAND [ARGS]...\\nTry 'fleet --help' for help.\\n\\nError: No such command 'handoff'.\\n\")\n +  where 2 = <Result SystemExit(2)>.exit_code\n +  and   \"Usage: fleet [OPTIONS] COMMAND [ARGS]...\\nTry 'fleet --help' for help.\\n\\nError: No such command 'handoff'.\\n\" = <Result SystemExit(2)>.output",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_herdr_handoff_cli::test_real_manager_cli_deliver_observe_and_receipts_preserve_ownership",
+      "kind": "failure",
+      "message": "AssertionError: Usage: fleet [OPTIONS] COMMAND [ARGS]...\n  Try 'fleet --help' for help.\n  \n  Error: No such command 'handoff'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_herdr_handoff_cli::test_cli_keeps_real_loader_bounds_without_manager_or_transport[{\"a\":1,\"a\":2}]",
+      "kind": "failure",
+      "message": "assert (2 == 1)\n +  where 2 = <Result SystemExit(2)>.exit_code",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_herdr_handoff_cli::test_cli_keeps_real_loader_bounds_without_manager_or_transport[xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx [TRUNCATED; see local JUnit]",
+      "kind": "failure",
+      "message": "assert (2 == 1)\n +  where 2 = <Result SystemExit(2)>.exit_code",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.fleet.test_herdr_handoff_cli::test_cli_keeps_real_loader_bounds_without_manager_or_transport[[]]",
+      "kind": "failure",
+      "message": "assert (2 == 1)\n +  where 2 = <Result SystemExit(2)>.exit_code",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.test_coord_helpers::test_missing_supported_api_is_clear_and_writes_nothing",
+      "kind": "failure",
+      "message": "assert 'lacks Board.create_helper_task' in \"Usage: main coord [OPTIONS] COMMAND [ARGS]...\\nTry 'main coord --help' for help.\\n\\nError: No such command 'request-help'.\\n\"\n +  where \"Usage: main coord [OPTIONS] COMMAND [ARGS]...\\nTry 'main coord --help' for help.\\n\\nError: No such command 'request-help'.\\n\" = <Result SystemExit(2)>.output",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.test_coord_helpers::test_dry_run_never_calls_creation",
+      "kind": "failure",
+      "message": "AssertionError: Usage: main coord [OPTIONS] COMMAND [ARGS]...\n  Try 'main coord --help' for help.\n  \n  Error: No such command 'request-help'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.test_coord_helpers::test_cli_consults_normal_creation_authorization",
+      "kind": "failure",
+      "message": "AssertionError: assert 'synthetic authorization refusal' in '2'\n +  where '2' = str(SystemExit(2))\n +    where SystemExit(2) = <Result SystemExit(2)>.exception",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.test_coord_helpers::test_cli_real_api_creates_then_replays_without_parent_change",
+      "kind": "failure",
+      "message": "AssertionError: Usage: main coord [OPTIONS] COMMAND [ARGS]...\n  Try 'main coord --help' for help.\n  \n  Error: No such command 'request-help'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.test_coord_helpers::test_cli_source_helpers_reject_overlapping_active_assignments",
+      "kind": "failure",
+      "message": "AssertionError: Usage: main coord [OPTIONS] COMMAND [ARGS]...\n  Try 'main coord --help' for help.\n  \n  Error: No such command 'request-help'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.test_coord_helpers::test_helper_uses_normal_claim_after_real_dependency_finishes",
+      "kind": "failure",
+      "message": "AssertionError: Usage: main coord [OPTIONS] COMMAND [ARGS]...\n  Try 'main coord --help' for help.\n  \n  Error: No such command 'request-help'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code",
+      "baseline_exact": false,
+      "baseline_family": false
+    },
+    {
+      "node": "tests.test_scheduler_decision::test_launcher_ruff_does_not_expand_the_exact_inherited_baseline",
+      "kind": "failure",
+      "message": "AssertionError: assert not ({'E401', 'E402', 'E501', 'E701', 'E702', 'E722', ...} - {'E401', 'E501', 'E701', 'E702', 'E722', 'E741', ...})\n +  where {'E401', 'E402', 'E501', 'E701', 'E702', 'E722', ...} = set(Counter({'E701': 93, 'E501': 18, 'E702': 16, 'E402': 11, 'I001': 4, 'E741': 4, 'E722': 2, 'E401': 1}))\n +  and   {'E401', 'E501', 'E701', 'E702', 'E722', 'E741', ...} = set({'E401': 1, 'E501': 11, 'E701': 93, 'E702': 20, ...})",
+      "baseline_exact": false,
+      "baseline_family": false
+    }
+  ],
+  "by_module": {
+    "tests.fleet.test_crew_admission": 8,
+    "tests.fleet.test_crew_controller": 4,
+    "tests.fleet.test_crew_progress": 1,
+    "tests.fleet.test_crew_requests": 2,
+    "tests.fleet.test_herdr_handoff_cli": 14,
+    "tests.test_coord_helpers": 6,
+    "tests.test_scheduler_decision": 1
+  }
+}
