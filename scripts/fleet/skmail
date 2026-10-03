@@ -23,7 +23,7 @@
 #                             files into skmail.d/ without losing anything
 #
 # priority: urgent | normal | fyi.  urgent means "stop what you are doing".
-# <to> may be "all". Names are CASE-INSENSITIVE: Jarvis, jarvis and JARVIS are
+# <to> may be "all" or its alias "fleet". Names are CASE-INSENSITIVE: Jarvis, jarvis and JARVIS are
 # one recipient with one read cursor. Display keeps the sender's casing.
 set -euo pipefail
 COORD="${SKMAIL_DIR:-$HOME/.skcapstone/coordination}"
@@ -187,7 +187,16 @@ if cmd == "tail":
               (record["ts"][:19], record["priority"], record["from"], record["to"], record["re"], record["body"][:110]))
     raise SystemExit(0)
 
-mine = [(stamp, record) for stamp, record in valid if record["to"].lower() in (me.lower(), "all")]
+# `fleet` is a broadcast address, an alias of `all`. Until 2026-10-03 the reader
+# matched only the reader name and `all`, so mail sent to `fleet` reached
+# nobody: 116 messages (75 urgent) were stranded on chiap08. The alias is honoured
+# only for mail sent after FLEET_SINCE, so that backlog does not flood every
+# reader at once; it was set aside for a human to skim instead.
+FLEET_SINCE = datetime.datetime(2026, 10, 3, 14, 30, tzinfo=datetime.timezone.utc)
+def for_me(to, stamp):
+    to = to.lower()
+    return to in (me.lower(), "all") or (to == "fleet" and stamp is not None and stamp > FLEET_SINCE)
+mine = [(stamp, record) for stamp, record in valid if for_me(record["to"], stamp)]
 if cmd == "ack":
     newest = max((record["ts"] for _, record in mine), default="1970-01-01T00:00:00+00:00")
     open(cur, "w", encoding="utf-8").write(newest)
@@ -197,7 +206,8 @@ try:
 except (OSError, ValueError):
     cut = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
 for item in invalid:
-    if (me.lower() in item["recipients"] or "all" in item["recipients"]) and (item["parsed"] is None or item["parsed"] > cut):
+    if (me.lower() in item["recipients"] or "all" in item["recipients"]
+            or ("fleet" in item["recipients"] and item["parsed"] is not None and item["parsed"] > FLEET_SINCE)) and (item["parsed"] is None or item["parsed"] > cut):
         show_invalid(item)
 n = 0
 for stamp, record in mine:
