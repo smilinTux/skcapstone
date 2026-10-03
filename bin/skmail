@@ -1,0 +1,338 @@
+#!/usr/bin/env bash
+# skmail: an append-only coordination mailbox shared across the chi cluster.
+#
+# STORAGE: one file per WRITER PER HOST, skmail.d/<agent>@<host>.jsonl.
+# This is not a style choice. ~/.skcapstone is a Syncthing folder, and a single
+# shared skmail.jsonl produced a real sync-conflict on 2026-08-25 that silently
+# swallowed a message: chiap08 and chiap04 both appended, Syncthing kept one
+# version and moved the other to skmail.sync-conflict-<...>-ZZJKHXY.jsonl.
+# flock does NOT help: it is a single-host lock and the conflict is between hosts.
+# One writer per file means Syncthing never has two versions to reconcile. This
+# is the same pattern the CardStore already uses at
+# ~/.skcapstone/cards/<id>/events/<writer>@<host>.jsonl, which is why that store
+# has never conflicted.
+#
+# Readers glob the directory and merge by timestamp. flock is kept because two
+# agents on the SAME host can still share one writer file.
+#
+#   skmail send <from> <to> <priority> <re> <body...>
+#   skmail read <me>          unread for me, oldest first, capped at ~8 KiB
+#                             (SKMAIL_READ_MAX_BYTES); says how many remain
+#   skmail read <me> --summary    counts by sender and subject (does not arm ack)
+#   skmail read <me> --urgent     urgent only (does not arm ack)
+#   skmail read <me> --limit N    at most N messages;  --all  no cap
+#   skmail ack  <me>          mark read ONLY what the last plain read showed
+#   skmail ack  <me> --before <iso>   deliberately skip a backlog (logged)
+#   skmail ack  <me> --all    mark everything addressed to you as read
+#   skmail tail [n]           recent traffic, any peer
+#   skmail adopt              one-off: fold legacy skmail.jsonl + sync-conflict
+#                             files into skmail.d/ without losing anything
+#
+# priority: urgent | normal | fyi.  urgent means "stop what you are doing".
+# <to> may be "all" or its alias "fleet". Names are CASE-INSENSITIVE: Jarvis, jarvis and JARVIS are
+# one recipient with one read cursor. Display keeps the sender's casing.
+set -euo pipefail
+COORD="${SKMAIL_DIR:-$HOME/.skcapstone/coordination}"
+BOXDIR="$COORD/skmail.d"
+CUR="$COORD/.skmail-cursor"
+mkdir -p "$BOXDIR"
+lc() { printf "%s" "$1" | tr "[:upper:]" "[:lower:]"; }
+
+cmd="${1:-tail}"; shift || true
+case "$cmd" in
+  send)
+    from="$1"; to="$2"; prio="$3"; re="$4"; shift 4; body="$*"
+    case "$prio" in urgent|normal|fyi) ;; *) echo "priority must be urgent|normal|fyi" >&2; exit 2;; esac
+    WRITER="$(dirname "$0")/skmail_writer.py"
+    err="$(mktemp)"
+    if ! python3 "$WRITER" "$from" "$to" "$prio" "$re" "$body" \
+        --boxdir "$BOXDIR" --host "$(hostname)" >/dev/null 2>"$err"; then
+      # Self-heal (cards fda425ac / 4a3d1119): a recurring cross-host defect
+      # appends foreign records straight into another writer's file, blocking
+      # all canonical appends for that writer. Quarantine them into their
+      # canonical files losslessly, then retry the append exactly once.
+      if grep -q "writer identity does not match" "$err"; then
+        python3 "$WRITER" "$from" --quarantine \
+          --boxdir "$BOXDIR" --host "$(hostname)" >/dev/null
+        python3 "$WRITER" "$from" "$to" "$prio" "$re" "$body" \
+          --boxdir "$BOXDIR" --host "$(hostname)" >/dev/null
+      else
+        cat "$err" >&2; rm -f "$err"; exit 1
+      fi
+    fi
+    rm -f "$err"
+    echo "sent to $to [$prio] re $re"
+    ;;
+  read|ack|tail)
+    me="${1:-}"
+    [ "$cmd" != "tail" ] && [ -z "$me" ] && { echo "usage: skmail $cmd <me> [flags]" >&2; exit 2; }
+    SKM_N="${1:-10}"
+    [ "$cmd" != "tail" ] && shift
+    SKM_ARGS="$*" SKM_MAXB="${SKMAIL_READ_MAX_BYTES:-8192}" SKM_LOG="$COORD/.skmail-ack-before.log" \
+    SKM_DIR="$BOXDIR" SKM_ME="$me" SKM_CMD="$cmd" SKM_N="$SKM_N" \
+    SKM_CUR="$CUR.$(lc "${me:-_}")" python3 -c '
+import datetime, glob, hashlib, json, os, sys
+d, me, cmd, cur = os.environ["SKM_DIR"], os.environ["SKM_ME"], os.environ["SKM_CMD"], os.environ["SKM_CUR"]
+valid, invalid = [], []
+
+# Writers across the fleet emit critical and high. The accepted set never held
+# either, so 20 of the 38 records in jarvis.jsonl were discarded as malformed
+# mail. Accept what the fleet actually writes, mapped onto the documented levels.
+PRIORITY_ALIASES = {"critical": "urgent", "high": "urgent", "urgent": "urgent",
+                    "normal": "normal", "fyi": "fyi", "low": "fyi", "info": "fyi"}
+
+# These exact legacy files contain recipient-layout records even though their
+# names look like writer boxes. Keep the exception closed and code-reviewed:
+# deriving it from record fields would let a forged record disable its own
+# writer check. New mail must use the writer layout documented in the header.
+LEGACY_RECIPIENT_BOXES = frozenset({
+    "jarvis@chiap01.jsonl", "jarvis@chiap03.jsonl", "jarvis@chiap08.jsonl",
+    "lumina@chiap01.jsonl", "lumina@chiap03.jsonl", "lumina@chiap08.jsonl",
+    "jarvis@pi-glm-1856149a.jsonl", "lumina@pi-glm-1856149a.jsonl",
+})
+
+def invalid_record(path, line_no, raw, reason, record=None):
+    record = record if isinstance(record, dict) else {}
+    recipients = record.get("to", [])
+    if isinstance(recipients, str): recipients = [recipients]
+    if not isinstance(recipients, list) or not all(isinstance(v, str) for v in recipients): recipients = []
+    stamp = record.get("ts") if isinstance(record.get("ts"), str) else ""
+    try: parsed = datetime.datetime.fromisoformat(stamp)
+    except ValueError: parsed = None
+    invalid.append({"path": path, "line": line_no, "sha256": hashlib.sha256((raw + "\n").encode()).hexdigest(),
+                    "reason": reason, "recipients": [v.lower() for v in recipients], "ts": stamp, "parsed": parsed,
+                    "from": record.get("from") if isinstance(record.get("from"), str) else "UNKNOWN",
+                    "re": record.get("re") if isinstance(record.get("re"), str) else
+                          (record.get("subject") if isinstance(record.get("subject"), str) else "INVALID_SCHEMA"),
+                    "body": record.get("body") if isinstance(record.get("body"), str) else ""})
+
+for path in sorted(glob.glob(os.path.join(d, "*.jsonl"))):
+    base = os.path.basename(path)
+    # Syncthing drops a conflict copy beside the original when two hosts append
+    # to one mailbox. Each copy is a stale duplicate of a file already being
+    # read, and .stignore keeps them out of sync, so reading them replayed old
+    # mail and multiplied one bad line into six identical errors.
+    if ".sync-conflict-" in base: continue
+    owner = base[:-6] if base.endswith(".jsonl") else base
+    # A mailbox named writer@host.jsonl is append-only per writer, so the name
+    # pins who may write it and the mismatch check is a real forgery guard.
+    #
+    # A bare writer.jsonl is the older RECIPIENT layout and pins nothing about
+    # the writer: jarvis.jsonl is addressed TO jarvis and carries mail FROM
+    # lumina and skwork-sweep. rsplit raised on it, left expected_writer empty,
+    # and the from check then compared every record against "" and rejected the
+    # file entire. That is 38 real messages, including replies being waited on.
+    # There is no writer guarantee to enforce on that layout, so do not invent
+    # one: accept the from the record states.
+    if base in LEGACY_RECIPIENT_BOXES:
+        expected_writer, expected_host = None, None
+    elif "@" in owner:
+        expected_writer, expected_host = owner.rsplit("@", 1)
+    else:
+        expected_writer, expected_host = None, None
+    for line_no, line in enumerate(open(path, encoding="utf-8"), 1):
+        raw = line.rstrip("\n")
+        if not raw.strip(): continue
+        try: record = json.loads(raw)
+        except ValueError:
+            invalid_record(path, line_no, raw, "invalid_json"); continue
+        if not isinstance(record, dict):
+            invalid_record(path, line_no, raw, "not_an_object", record); continue
+        # invalid_record above already normalizes a list "to" and a "subject"
+        # standing in for "re", which is proof both shapes are legitimate mail.
+        # Validating more strictly than the reader that displays them rejected
+        # real messages as malformed.
+        if isinstance(record.get("to"), list) and all(isinstance(v, str) for v in record["to"]):
+            record["to"] = ",".join(record["to"])
+        if not isinstance(record.get("re"), str) and isinstance(record.get("subject"), str):
+            record["re"] = record["subject"]
+        if record.get("re") is None: record["re"] = ""
+        if record.get("body") is None: record["body"] = ""
+        if isinstance(record.get("priority"), str):
+            record["priority"] = PRIORITY_ALIASES.get(record["priority"].strip().lower(), record["priority"])
+        # Measured 2026-08-31: ALL 33 bad_field_type rejections were a missing
+        # priority and nothing else, 55% of every warning the reader emitted.
+        # Mail with no stated urgency is normal mail, not malformed mail.
+        if record.get("priority") is None: record["priority"] = "normal"
+        # Hand-written records use a second vocabulary. The reader already
+        # accepts subject for re; these are the rest of the same family.
+        for _alias, _canon in (("timestamp", "ts"), ("sender", "from"), ("recipient", "to")):
+            if not isinstance(record.get(_canon), str) and isinstance(record.get(_alias), str):
+                record[_canon] = record[_alias]
+        required = ("ts", "from", "to", "priority", "re", "body")
+        bad = [key for key in required if not isinstance(record.get(key), str)]
+        if bad:
+            invalid_record(path, line_no, raw, "bad_field_type:" + ",".join(bad), record); continue
+        record_host = record.get("host", expected_host)
+        if record_host is not None and not isinstance(record_host, str):
+            invalid_record(path, line_no, raw, "bad_field_type:host", record); continue
+        try: parsed = datetime.datetime.fromisoformat(record["ts"])
+        except ValueError:
+            invalid_record(path, line_no, raw, "invalid_timestamp", record); continue
+        if record["priority"] not in ("urgent", "normal", "fyi"):
+            invalid_record(path, line_no, raw, "invalid_priority", record); continue
+        if (expected_writer is not None
+                and record["from"].lower() != expected_writer.lower()) or (
+                expected_host is not None and record_host != expected_host):
+            invalid_record(path, line_no, raw, "writer_file_mismatch", record); continue
+        valid.append((parsed, record))
+
+valid.sort(key=lambda item: item[0])
+invalid.sort(key=lambda item: (item["parsed"] is None, item["parsed"] or datetime.datetime.max.replace(tzinfo=datetime.timezone.utc), item["path"], item["line"]))
+for item in invalid:
+    print("skmail: INVALID_SCHEMA %s:%d sha256=%s reason=%s" %
+          (item["path"], item["line"], item["sha256"], item["reason"]), file=sys.stderr)
+
+def show_invalid(item):
+    print("[INVALID_SCHEMA] %s -> %s  re %s" % (item["from"], item["recipients"], item["re"]))
+    if item["body"]: print("  %s" % item["body"])
+    print("  source=%s:%d sha256=%s reason=%s\n" %
+          (item["path"], item["line"], item["sha256"], item["reason"]))
+
+if cmd == "tail":
+    n = int(os.environ["SKM_N"]) if os.environ["SKM_N"].isdigit() else 10
+    for _, record in valid[-n:]:
+        print("%s [%-6s] %s -> %s  re %s: %s" %
+              (record["ts"][:19], record["priority"], record["from"], record["to"], record["re"], record["body"][:110]))
+    raise SystemExit(0)
+
+# `fleet` is a broadcast address, an alias of `all`. Until 2026-10-03 the reader
+# matched only the reader name and `all`, so mail sent to `fleet` reached
+# nobody: 116 messages (75 urgent) were stranded on chiap08. The alias is honoured
+# only for mail sent after FLEET_SINCE, so that backlog does not flood every
+# reader at once; it was set aside for a human to skim instead.
+FLEET_SINCE = datetime.datetime(2026, 10, 3, 14, 30, tzinfo=datetime.timezone.utc)
+def for_me(to, stamp):
+    to = to.lower()
+    return to in (me.lower(), "all") or (to == "fleet" and stamp is not None and stamp > FLEET_SINCE)
+mine = [(stamp, record) for stamp, record in valid if for_me(record["to"], stamp)]
+# READ CAP and SAFE ACK (2026-10-03). A large backlog (10,791 messages, 7 MB for
+# jarvis on chiap08) cannot be read at once, so read shows the OLDEST unread mail
+# up to SKMAIL_READ_MAX_BYTES (default 8192) and says how many remain. Ack then
+# advances only through the last message that read actually showed, recorded in
+# a .shown sidecar, so read-then-ack walks a backlog in order and never discards
+# unseen mail. Views that hide mail (--urgent, --summary) never arm ack.
+args = os.environ.get("SKM_ARGS", "").split()
+shown_path = cur + ".shown"
+def flag(name):
+    return name in args
+def opt(name):
+    return args[args.index(name) + 1] if name in args and args.index(name) + 1 < len(args) else None
+try:
+    cut = datetime.datetime.fromisoformat(open(cur, encoding="utf-8").read().strip())
+except (OSError, ValueError):
+    cut = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+unread = [(stamp, record) for stamp, record in mine if stamp > cut]
+if cmd == "ack":
+    if flag("--all"):
+        target = max((record["ts"] for _, record in mine), default=None)
+        why = "--all: everything addressed to you"
+    elif opt("--before"):
+        target = opt("--before")
+        try:
+            datetime.datetime.fromisoformat(target)
+        except ValueError:
+            print("--before needs an ISO timestamp, for example 2026-09-15T00:00:00+00:00", file=sys.stderr); raise SystemExit(2)
+        # Strictly BEFORE: a message stamped exactly at the boundary stays unread.
+        target = (datetime.datetime.fromisoformat(target) - datetime.timedelta(microseconds=1)).isoformat()
+        skipped = sum(1 for stamp, _ in unread if stamp <= datetime.datetime.fromisoformat(target))
+        with open(os.environ["SKM_LOG"], "a", encoding="utf-8") as log:
+            log.write(json.dumps({"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(), "reader": me,
+                                  "before": target, "skipped_unread": skipped}) + "\n")
+        why = "--before: deliberately skipped %d unread (logged)" % skipped
+    else:
+        try:
+            target = open(shown_path, encoding="utf-8").read().strip()
+        except OSError:
+            print("skmail ack: nothing to ack. Ack only marks mail that a plain skmail read just showed you, "
+                  "and no read has shown you anything since your last ack. Run skmail read %s first. "
+                  "To skip a backlog on purpose use ack %s --before <iso-time>; to mark everything, --all." % (me, me),
+                  file=sys.stderr)
+            raise SystemExit(3)
+        why = "through the last message read showed you"
+    if target is None:
+        print("acked nothing: no mail addressed to you"); raise SystemExit(0)
+    target_dt = datetime.datetime.fromisoformat(target)
+    if target_dt > cut:
+        open(cur, "w", encoding="utf-8").write(target)
+    try: os.remove(shown_path)
+    except OSError: pass
+    left = sum(1 for stamp, _ in mine if stamp > max(cut, target_dt))
+    print("acked up to %s (%s). %d still unread." % (target, why, left))
+    raise SystemExit(0)
+for item in invalid:
+    if (me.lower() in item["recipients"] or "all" in item["recipients"]
+            or ("fleet" in item["recipients"] and item["parsed"] is not None and item["parsed"] > FLEET_SINCE)) and (item["parsed"] is None or item["parsed"] > cut):
+        show_invalid(item)
+if flag("--summary"):
+    from collections import Counter
+    urgent = sum(1 for _, r in unread if r["priority"] == "urgent")
+    print("%d unread (%d urgent)%s" % (len(unread), urgent,
+          "" if not unread else ", %s to %s" % (unread[0][1]["ts"][:16], unread[-1][1]["ts"][:16])))
+    print("by sender:")
+    for who, c in Counter(r["from"] for _, r in unread).most_common(10): print("  %5d  %s" % (c, who))
+    print("by subject:")
+    for re_, c in Counter(r["re"] for _, r in unread).most_common(15): print("  %5d  %s" % (c, re_[:90]))
+    print("(summary only: this view does not arm ack)")
+    raise SystemExit(0)
+view = [(stamp, r) for stamp, r in unread if r["priority"] == "urgent"] if flag("--urgent") else unread
+limit = int(opt("--limit")) if opt("--limit") and opt("--limit").isdigit() else None
+maxb = None if flag("--all") else int(os.environ.get("SKM_MAXB", "8192"))
+out, used, shown = [], 0, []
+for i, (stamp, record) in enumerate(view):
+    block = "[%s] %s -> %s  re %s\n  %s\n" % (record["priority"].upper(), record["from"], record["to"], record["re"], record["body"])
+    same_stamp = bool(shown) and stamp == shown[-1][0]
+    over = (maxb is not None and used + len(block.encode()) > maxb) or (limit is not None and len(shown) >= limit)
+    if shown and over and not same_stamp:
+        break
+    out.append(block); used += len(block.encode()); shown.append((stamp, record))
+for block in out: print(block)
+rest = len(view) - len(shown)
+if flag("--urgent") or flag("--summary"):
+    print("(%d urgent shown, %d more urgent, %d unread in total; filtered view, does not arm ack)" % (len(shown), rest, len(unread)))
+elif shown:
+    open(shown_path, "w", encoding="utf-8").write(shown[-1][1]["ts"])
+    if rest:
+        print("(%d shown, %d more unread: act on these, skmail ack %s, then skmail read %s again)" % (len(shown), rest, me, me))
+    # Always end with "(N new)", N = TOTAL unread. seat_mail.py parses exactly this
+    # line with a regex anchored at line end, so any other final line would make
+    # every seat silently report zero new mail.
+    print("(%d new)" % len(unread))
+else:
+    try: os.remove(shown_path)
+    except OSError: pass
+    print("(0 new)")
+'
+    ;;
+  adopt)
+    SKM_COORD="$COORD" SKM_DIR="$BOXDIR" SKM_HOST="$(hostname)" python3 -c '
+import json, os, glob
+coord, d, host = os.environ["SKM_COORD"], os.environ["SKM_DIR"], os.environ["SKM_HOST"]
+# Fold the legacy shared file AND every sync-conflict Syncthing made, into
+# per-writer files. Deduplicate on the whole record so re-running is safe and
+# so a message that survived in a conflict file is recovered, not lost.
+srcs = [p for p in [os.path.join(coord, "skmail.jsonl")] if os.path.exists(p)]
+srcs += sorted(glob.glob(os.path.join(coord, "skmail.sync-conflict-*.jsonl")))
+seen, adopted = set(), {}
+for p in sorted(glob.glob(os.path.join(d, "*.jsonl"))):
+    for line in open(p, encoding="utf-8"):
+        if line.strip(): seen.add(line.strip())
+for p in srcs:
+    for line in open(p, encoding="utf-8"):
+        line = line.strip()
+        if not line or line in seen: continue
+        r = json.loads(line)
+        key = "%s@%s.jsonl" % (r["from"].lower(), r.get("host", host))
+        adopted.setdefault(key, []).append(line); seen.add(line)
+for key, lines in adopted.items():
+    with open(os.path.join(d, key), "a", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+print("adopted %d message(s) from %d legacy file(s) into %d writer file(s)"
+      % (sum(len(v) for v in adopted.values()), len(srcs), len(adopted)))
+for p in srcs:
+    os.rename(p, p + ".adopted")
+print("legacy files renamed to *.adopted, nothing deleted")
+'
+    ;;
+  *) echo "usage: skmail {send|read|ack|tail|adopt}" >&2; exit 2 ;;
+esac

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the bounded SKFleet Niobe lifecycle cycle every five minutes
+
+[Timer]
+OnBootSec=6min
+OnUnitActiveSec=5min
+Persistent=false
+Unit=skfleet-niobe.service
+
+[Install]
+WantedBy=timers.target
