@@ -1,0 +1,1 @@
+- Card `fa8a7b65`: append qualified test profile successors with exact predecessor and source claim custody, preserving original profiles and sealed candidate pins.
