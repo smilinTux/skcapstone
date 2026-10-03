@@ -1,0 +1,12 @@
+[Unit]
+Description=SKComms Heartbeat Timer — periodic liveness announcements
+Documentation=https://github.com/smilinTux/skcomms
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=300s
+RandomizedDelaySec=10s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

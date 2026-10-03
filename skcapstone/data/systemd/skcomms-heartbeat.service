@@ -1,0 +1,21 @@
+[Unit]
+Description=SKComms Heartbeat Emission
+Documentation=https://github.com/smilinTux/skcomms
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.skenv/bin/skcomms heartbeat --no-emit
+ExecStart=%h/.skenv/bin/skcomms heartbeat
+Nice=19
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.skcapstone %h/.skcomms
+PrivateTmp=true
+
+Environment=PYTHONUNBUFFERED=1
+Environment=SKAGENT=lumina
+Environment=SKCAPSTONE_AGENT=lumina
+Environment=PATH=%h/.skenv/bin:/usr/local/bin:/usr/bin:/bin

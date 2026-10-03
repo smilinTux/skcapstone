@@ -1,0 +1,18 @@
+[Unit]
+Description=SKCapstone Memory Compression — weekly LLM synthesis of aged long-term memories
+Documentation=https://github.com/smilinTux/skcapstone
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=skcapstone memory compress
+Nice=15
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.skcapstone %h/.skmemory
+PrivateTmp=true
+
+Environment=PYTHONUNBUFFERED=1
+Environment=OLLAMA_KEEP_ALIVE=5m

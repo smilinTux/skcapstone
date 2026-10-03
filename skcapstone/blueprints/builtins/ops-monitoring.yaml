@@ -1,0 +1,67 @@
+name: "Ops Monitoring"
+slug: "ops-monitoring"
+version: "1.0.0"
+description: "24/7 infrastructure watch — alerting, auto-remediation, and incident response."
+icon: "🔬"
+author: "smilinTux"
+
+agents:
+  ops-lead:
+    role: manager
+    model: fast
+    model_name: "kimi-k2.5"
+    description: "Incident triage, escalation decisions, runbook coordination."
+    vm_type: container
+    resources:
+      memory: "2g"
+      cores: 2
+      disk: "15g"
+    soul_blueprint: "souls/ops-lead.yaml"
+    skills: [incident-response, triage, escalation, coordination]
+
+  watchdog:
+    role: ops
+    model: local
+    model_name: "llama3.1:8b"
+    description: "Lightweight 24/7 health checks — uptime, disk, CPU, memory, services."
+    vm_type: container
+    resources:
+      memory: "512m"
+      cores: 1
+      disk: "5g"
+    skills: [monitoring, health-check, uptime, alerting]
+    count: 2
+
+  remediation:
+    role: coder
+    model: code
+    model_name: "minimax-m2.1"
+    description: "Auto-fix common issues — restart services, clear disk, rotate logs."
+    vm_type: container
+    resources:
+      memory: "2g"
+      cores: 1
+      disk: "10g"
+    soul_blueprint: "souls/remediation.yaml"
+    skills: [bash, systemd, docker, auto-remediation]
+    depends_on: [ops-lead]
+
+default_provider: local
+estimated_cost: "$0 (local) / ~$8/mo (cloud)"
+
+network:
+  mesh_vpn: tailscale
+  discovery: skref_registry
+
+storage:
+  skref_vault: "team-ops-monitoring"
+  memory_backend: filesystem
+  memory_sync: true
+
+coordination:
+  queen: lumina
+  pattern: supervisor
+  heartbeat: "5m"
+  escalation: chef
+
+tags: [ops, monitoring, alerting, incident-response, 24x7]

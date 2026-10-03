@@ -1,0 +1,15 @@
+// SQLite index is local-only — rebuilt from flat JSON files (the source of truth)
+index.db
+index.db-wal
+index.db-shm
+index.db-journal
+
+// Syncthing internal temp files
+.syncthing.*.tmp
+
+// Session checkpoint state (per-machine)
+.last_checkpoint
+
+// Conflict debris (safe to delete)
+*.sync-conflict-*
+.sync-conflict-*

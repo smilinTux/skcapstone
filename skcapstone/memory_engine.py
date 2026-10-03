@@ -1,0 +1,695 @@
+"""
+Memory Engine - the sovereign agent's persistent mind.
+
+Store, search, recall, and manage memories across sessions and platforms.
+Every memory is a JSON file in ~/.skcapstone/memory/<layer>/. Memories
+promote from short-term to mid-term to long-term based on access
+patterns and importance scores.
+
+Architecture:
+    memory/
+    ├── short-term/   # Ephemeral - auto-expire after 72h if unused
+    ├── mid-term/     # Promoted - accessed 3+ times or importance >= 0.7
+    ├── long-term/    # Permanent - accessed 10+ times or importance >= 0.9
+    └── index.json    # Full-text search index
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+from . import active_agent_name
+from .models import MemoryEntry, MemoryLayer, MemoryState, PillarStatus
+
+logger = logging.getLogger("skcapstone.memory")
+
+SHORT_TERM_TTL_HOURS = 72
+
+# Sidecar JSON files that live inside a memory tier dir but are NOT MemoryEntry
+# objects (e.g. the render-rating rollup written by skchat.rating). They share
+# the tier directory for sync convenience but must be skipped by the loader so
+# they don't spam "Failed to load memory" warnings every cycle.
+_NON_MEMORY_SIDECARS = frozenset({"render_scores.json"})
+
+
+def _get_unified():
+    """Lazy accessor for the unified skmemory backend.
+
+    Returns the MemoryStore singleton or None if unavailable.
+    """
+    try:
+        from .memory_adapter import get_unified
+
+        return get_unified()
+    except Exception as exc:
+        logger.debug("Unified memory backend unavailable: %s", exc)
+        return None
+
+
+def _memory_dir(home: Path) -> Path:
+    """Resolve the memory directory, creating it if needed."""
+    # Accept either the shared root (~/.skcapstone) or an agent home
+    # (~/.skcapstone/agents/<agent>) and resolve to the active memory dir.
+    agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name()
+    if home.parent.name == "agents":
+        mem = home / "memory"
+    elif agent_name:
+        mem = home / "agents" / agent_name / "memory"
+    else:
+        mem = home / "memory"
+    mem.mkdir(parents=True, exist_ok=True)
+    for layer in MemoryLayer:
+        (mem / layer.value).mkdir(parents=True, exist_ok=True)
+    return mem
+
+
+def _require_memory_id(value: object) -> str:
+    """Return a normalized memory ID or fail before a filesystem mutation."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("memory_id must be a non-empty string")
+    return value.strip()
+
+
+def _entry_path(home: Path, entry: MemoryEntry) -> Path:
+    """File path for a memory entry."""
+    memory_id = _require_memory_id(entry.memory_id)
+    return _memory_dir(home) / entry.layer.value / f"{memory_id}.json"
+
+
+def _load_entry(path: Path) -> Optional[MemoryEntry]:
+    """Load a MemoryEntry from a JSON file.
+
+    Args:
+        path: Path to the memory JSON file.
+
+    Returns:
+        MemoryEntry or None if the file is invalid.
+    """
+    # Known non-memory sidecars (e.g. render_scores.json) live in the tier dir
+    # but aren't MemoryEntry objects - skip them silently.
+    if path.name in _NON_MEMORY_SIDECARS:
+        return None
+    # Empty/truncated files (0 bytes) carry no recoverable memory - skip quietly
+    # at debug level rather than warning on every load cycle.
+    try:
+        if path.stat().st_size == 0:
+            logger.debug("Skipping empty memory file %s", path)
+            return None
+    except OSError:
+        pass
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        # The active tiers are shared with the unified SKMemory backend. Its
+        # canonical schema uses ``id`` rather than the legacy engine's
+        # ``memory_id``. Treat those records as owned by SKMemory instead of
+        # constructing a legacy entry with the old model's blank default; the
+        # latter used to feed thousands of valid unified records into the
+        # legacy promoter as the unsafe ``.json`` candidate.
+        if isinstance(data, dict) and "id" in data and "memory_id" not in data:
+            logger.debug("Skipping unified SKMemory record in legacy loader: %s", path)
+            return None
+        entry = MemoryEntry(**data)
+        _require_memory_id(entry.memory_id)
+        return entry
+    except (json.JSONDecodeError, Exception) as exc:
+        logger.warning("Failed to load memory %s: %s", path, exc)
+        return None
+
+
+def _save_entry(home: Path, entry: MemoryEntry) -> Path:
+    """Persist a MemoryEntry to disk.
+
+    Args:
+        home: Agent home directory.
+        entry: The memory to save.
+
+    Returns:
+        Path where the entry was written.
+    """
+    path = _entry_path(home, entry)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(entry.model_dump_json(indent=2), encoding="utf-8")
+    return path
+
+
+def _detect_active_soul(home: Path) -> Optional[str]:
+    """Read the active soul name from disk if available.
+
+    Args:
+        home: Agent home directory.
+
+    Returns:
+        Active soul slug name, or None if at base.
+    """
+    active_path = home / "soul" / "active.json"
+    if not active_path.exists():
+        return None
+    try:
+        data = json.loads(active_path.read_text(encoding="utf-8"))
+        return data.get("active_soul")
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.debug("Cannot read active soul: %s", exc)
+        return None
+
+
+def store(
+    home: Path,
+    content: str,
+    tags: Optional[list[str]] = None,
+    source: str = "cli",
+    importance: float = 0.5,
+    layer: Optional[MemoryLayer] = None,
+    metadata: Optional[dict] = None,
+    soul_context: Optional[str] = None,
+) -> MemoryEntry:
+    """Store a new memory.
+
+    Args:
+        home: Agent home directory.
+        content: The memory content (free-text).
+        tags: Optional tags for categorization.
+        source: Where this memory came from (cli, cursor, api, etc.).
+        importance: Importance score 0.0-1.0 (higher = more important).
+        layer: Force a specific layer. Defaults to SHORT_TERM.
+        metadata: Arbitrary key-value metadata.
+        soul_context: Which soul overlay was active. Auto-detected
+            from active.json if not provided.
+
+    Returns:
+        The created MemoryEntry.
+    """
+    _memory_dir(home)
+
+    if soul_context is None:
+        soul_context = _detect_active_soul(home)
+
+    entry = MemoryEntry(
+        memory_id=uuid.uuid4().hex[:12],
+        content=content,
+        tags=tags or [],
+        source=source,
+        importance=max(0.0, min(1.0, importance)),
+        layer=layer or MemoryLayer.SHORT_TERM,
+        metadata=metadata or {},
+        soul_context=soul_context,
+    )
+
+    # Reason: high-importance memories skip straight to mid-term, but only
+    # after clearing the truth-check gate (fail-open when unavailable). A
+    # blocked candidate stays in short-term (tagged conflicting by the gate).
+    if entry.importance >= 0.7 and entry.layer == MemoryLayer.SHORT_TERM:
+        from .memory_verifier import verify_before_promotion
+
+        if verify_before_promotion(home, entry).should_promote:
+            entry.layer = MemoryLayer.MID_TERM
+
+    _save_entry(home, entry)
+    _update_index(home, entry)
+
+    # Dual-write to unified backend (skmemory) if available
+    unified = _get_unified()
+    if unified:
+        try:
+            from .memory_adapter import entry_to_memory
+
+            memory = entry_to_memory(entry)
+            unified.primary.save(memory)
+            if unified.vector:
+                try:
+                    unified.vector.save(memory)
+                except Exception as exc:
+                    logger.debug("Vector dual-write failed (non-fatal): %s", exc)
+            if unified.graph:
+                try:
+                    unified.graph.index_memory(memory)
+                except Exception as exc:
+                    logger.debug("Graph dual-write failed (non-fatal): %s", exc)
+            logger.debug("Dual-write to unified backend for %s", entry.memory_id)
+        except Exception as e:
+            logger.debug("Unified dual-write failed (non-fatal): %s", e)
+
+    logger.info("Stored memory %s in %s", entry.memory_id, entry.layer.value)
+    return entry
+
+
+def recall(home: Path, memory_id: str) -> Optional[MemoryEntry]:
+    """Recall a specific memory by ID, updating access stats.
+
+    Tries unified backend first for faster recall, falls back to JSON files.
+
+    Args:
+        home: Agent home directory.
+        memory_id: The memory's unique ID.
+
+    Returns:
+        The MemoryEntry, or None if not found.
+    """
+    entry = _find_by_id(home, memory_id)
+    if entry is None:
+        return None
+
+    old_path = _entry_path(home, entry)
+    entry.accessed_at = datetime.now(timezone.utc)
+    entry.access_count += 1
+
+    if entry.should_promote:
+        _promote(home, entry, old_path)
+    else:
+        _save_entry(home, entry)
+
+    return entry
+
+
+def search(
+    home: Path,
+    query: str,
+    layer: Optional[MemoryLayer] = None,
+    tags: Optional[list[str]] = None,
+    limit: int = 20,
+    soul_context: Optional[str] = None,
+) -> list[MemoryEntry]:
+    """Search memories by content and/or tags.
+
+    Uses unified backend (semantic search via SKVector) if available,
+    falls back to regex matching on JSON files.
+
+    Args:
+        home: Agent home directory.
+        query: Search query string.
+        layer: Restrict to a specific layer.
+        tags: Filter to entries containing ALL of these tags.
+        limit: Maximum number of results.
+        soul_context: Filter to memories formed under a specific soul.
+
+    Returns:
+        List of matching MemoryEntry objects, ranked by relevance.
+    """
+    # Try unified backend first (semantic search), but only when home matches
+    # the global agent home so tests with temporary directories stay isolated.
+    from . import AGENT_HOME
+
+    _agent_home_resolved = Path(AGENT_HOME).expanduser().resolve()
+    _search_home_resolved = Path(home).resolve()
+    unified = _get_unified() if _search_home_resolved == _agent_home_resolved else None
+    if unified:
+        try:
+            from .memory_adapter import memory_to_entry
+
+            results_unified = unified.search(query, limit=limit)
+            if results_unified:
+                entries = [memory_to_entry(m) for m in results_unified]
+                # Apply local filters that unified may not support
+                if layer:
+                    entries = [e for e in entries if e.layer == layer]
+                if tags:
+                    entries = [e for e in entries if all(t in e.tags for t in tags)]
+                if soul_context is not None:
+                    entries = [e for e in entries if e.soul_context == soul_context]
+                if entries:
+                    logger.debug("Search via unified backend returned %d results", len(entries))
+                    return entries[:limit]
+        except Exception as e:
+            logger.debug("Unified search failed (falling back to regex): %s", e)
+
+    # Fallback: regex search on JSON files
+    results: list[tuple[float, MemoryEntry]] = []
+    pattern = re.compile(re.escape(query), re.IGNORECASE)
+    layers = [layer] if layer else list(MemoryLayer)
+
+    for lyr in layers:
+        layer_dir = _memory_dir(home) / lyr.value
+        if not layer_dir.exists():
+            continue
+        for f in layer_dir.glob("*.json"):
+            entry = _load_entry(f)
+            if entry is None:
+                continue
+
+            if tags and not all(t in entry.tags for t in tags):
+                continue
+
+            if soul_context is not None and entry.soul_context != soul_context:
+                continue
+
+            content_matches = len(pattern.findall(entry.content))
+            tag_matches = sum(1 for t in entry.tags if pattern.search(t))
+            total_matches = content_matches + tag_matches
+
+            if total_matches == 0:
+                continue
+
+            # Reason: rank by (matches * importance), boost long-term memories
+            layer_boost = {MemoryLayer.LONG_TERM: 1.5, MemoryLayer.MID_TERM: 1.2}.get(
+                entry.layer, 1.0
+            )
+            score = total_matches * entry.importance * layer_boost
+            results.append((score, entry))
+
+    results.sort(key=lambda r: r[0], reverse=True)
+    return [entry for _, entry in results[:limit]]
+
+
+def list_memories(
+    home: Path,
+    layer: Optional[MemoryLayer] = None,
+    tags: Optional[list[str]] = None,
+    limit: int = 50,
+) -> list[MemoryEntry]:
+    """List memories, optionally filtered by layer and tags.
+
+    Args:
+        home: Agent home directory.
+        layer: Restrict to a specific layer.
+        tags: Filter to entries containing ALL of these tags.
+        limit: Maximum number of results.
+
+    Returns:
+        List of MemoryEntry objects, newest first.
+    """
+    entries: list[MemoryEntry] = []
+    layers = [layer] if layer else list(MemoryLayer)
+
+    for lyr in layers:
+        layer_dir = _memory_dir(home) / lyr.value
+        if not layer_dir.exists():
+            continue
+        for f in layer_dir.glob("*.json"):
+            entry = _load_entry(f)
+            if entry is None:
+                continue
+            if tags and not all(t in entry.tags for t in tags):
+                continue
+            entries.append(entry)
+
+    entries.sort(key=lambda e: e.created_at, reverse=True)
+    return entries[:limit]
+
+
+def delete(home: Path, memory_id: str) -> bool:
+    """Delete a memory by ID.
+
+    Args:
+        home: Agent home directory.
+        memory_id: The memory's unique ID.
+
+    Returns:
+        True if deleted, False if not found.
+    """
+    entry = _find_by_id(home, memory_id)
+    if entry is None:
+        return False
+
+    path = _entry_path(home, entry)
+    if path.exists():
+        path.unlink()
+    _remove_from_index(home, memory_id)
+
+    # Also remove from unified backend
+    unified = _get_unified()
+    if unified:
+        try:
+            unified.forget(memory_id)
+            logger.debug("Removed %s from unified backend", memory_id)
+        except Exception as e:
+            logger.debug("Unified delete failed (non-fatal): %s", e)
+
+    logger.info("Deleted memory %s", memory_id)
+    return True
+
+
+def get_stats(home: Path) -> MemoryState:
+    """Get memory statistics across all layers.
+
+    Args:
+        home: Agent home directory.
+
+    Returns:
+        MemoryState with counts per layer.
+    """
+    mem_dir = _memory_dir(home)
+    counts = {}
+    total = 0
+    for lyr in MemoryLayer:
+        layer_dir = mem_dir / lyr.value
+        count = sum(1 for f in layer_dir.glob("*.json")) if layer_dir.exists() else 0
+        counts[lyr] = count
+        total += count
+
+    return MemoryState(
+        total_memories=total,
+        short_term=counts.get(MemoryLayer.SHORT_TERM, 0),
+        mid_term=counts.get(MemoryLayer.MID_TERM, 0),
+        long_term=counts.get(MemoryLayer.LONG_TERM, 0),
+        store_path=mem_dir,
+        status=PillarStatus.ACTIVE if total > 0 else PillarStatus.DEGRADED,
+    )
+
+
+def gc_expired(home: Path) -> int:
+    """Garbage-collect expired short-term memories.
+
+    Removes short-term entries older than SHORT_TERM_TTL_HOURS that
+    haven't been accessed.
+
+    Args:
+        home: Agent home directory.
+
+    Returns:
+        Number of memories removed.
+    """
+    removed = 0
+    short_dir = _memory_dir(home) / MemoryLayer.SHORT_TERM.value
+    if not short_dir.exists():
+        return 0
+
+    for f in short_dir.glob("*.json"):
+        entry = _load_entry(f)
+        if entry is None:
+            continue
+        if entry.age_hours > SHORT_TERM_TTL_HOURS and entry.access_count == 0:
+            f.unlink()
+            _remove_from_index(home, entry.memory_id)
+            removed += 1
+            logger.info("GC expired memory %s (%.1fh old)", entry.memory_id, entry.age_hours)
+
+    return removed
+
+
+def export_for_seed(home: Path, max_entries: int = 50) -> list[dict]:
+    """Export memory summaries for inclusion in a sync seed.
+
+    Prioritizes long-term and high-importance memories.
+
+    Args:
+        home: Agent home directory.
+        max_entries: Maximum entries to include.
+
+    Returns:
+        List of dicts suitable for JSON serialization.
+    """
+    all_entries = list_memories(home, limit=500)
+    all_entries.sort(
+        key=lambda e: (
+            {MemoryLayer.LONG_TERM: 3, MemoryLayer.MID_TERM: 2, MemoryLayer.SHORT_TERM: 1}[
+                e.layer
+            ],
+            e.importance,
+            e.access_count,
+        ),
+        reverse=True,
+    )
+
+    return [
+        {
+            "memory_id": e.memory_id,
+            "content": e.content[:500],
+            "tags": e.tags,
+            "layer": e.layer.value,
+            "importance": e.importance,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+            "source": e.source,
+        }
+        for e in all_entries[:max_entries]
+    ]
+
+
+def import_from_seed(home: Path, seed_memories: list[dict]) -> int:
+    """Import memories from a sync seed, skipping duplicates.
+
+    Args:
+        home: Agent home directory.
+        seed_memories: List of memory dicts from a seed file.
+
+    Returns:
+        Number of new memories imported.
+    """
+    imported = 0
+    existing_ids = _load_index_ids(home)
+
+    for mem_data in seed_memories:
+        mid = mem_data.get("memory_id", "")
+        if mid in existing_ids:
+            continue
+        try:
+            layer = MemoryLayer(mem_data.get("layer", "short-term"))
+            store(
+                home=home,
+                content=mem_data["content"],
+                tags=mem_data.get("tags", []),
+                source=mem_data.get("source", "seed-import"),
+                importance=mem_data.get("importance", 0.5),
+                layer=layer,
+            )
+            imported += 1
+        except (KeyError, ValueError) as exc:
+            logger.warning("Skipping invalid seed memory: %s", exc)
+
+    return imported
+
+
+# --- Internal helpers ---
+
+
+def _find_by_id(home: Path, memory_id: str) -> Optional[MemoryEntry]:
+    """Find a memory entry by ID across all layers."""
+    try:
+        memory_id = _require_memory_id(memory_id)
+    except ValueError:
+        return None
+    for lyr in MemoryLayer:
+        path = _memory_dir(home) / lyr.value / f"{memory_id}.json"
+        if path.exists():
+            return _load_entry(path)
+    return None
+
+
+def _promote(home: Path, entry: MemoryEntry, old_path: Path) -> bool:
+    """Promote a memory to the next tier.
+
+    SHORT_TERM -> MID_TERM transitions pass through the truth-check gate
+    (``memory_verifier.verify_before_promotion``). When the gate blocks the
+    promotion the entry stays in short-term (the verifier tags it as
+    conflicting) and this returns False. The gate is fail-open: when the
+    truth-check backend is unavailable it allows promotion, preserving the
+    prior behavior.
+
+    Returns:
+        True if the memory advanced a tier, False otherwise.
+    """
+    _require_memory_id(entry.memory_id)
+    if entry.layer == MemoryLayer.SHORT_TERM:
+        # Local import so tests can patch memory_verifier.verify_before_promotion.
+        from .memory_verifier import verify_before_promotion
+
+        if not verify_before_promotion(home, entry).should_promote:
+            return False
+        entry.layer = MemoryLayer.MID_TERM
+    elif entry.layer == MemoryLayer.MID_TERM:
+        entry.layer = MemoryLayer.LONG_TERM
+    else:
+        _save_entry(home, entry)
+        return False
+
+    if old_path.exists():
+        old_path.unlink()
+    _save_entry(home, entry)
+    _update_index(home, entry)
+    logger.info("Promoted memory %s to %s", entry.memory_id, entry.layer.value)
+    return True
+
+
+def _update_index(home: Path, entry: MemoryEntry) -> None:
+    """Add or update an entry in the search index."""
+    _require_memory_id(entry.memory_id)
+    index = _load_index(home)
+    index[entry.memory_id] = {
+        "content_preview": entry.content[:200],
+        "tags": entry.tags,
+        "layer": entry.layer.value,
+        "importance": entry.importance,
+        "created_at": entry.created_at.isoformat() if entry.created_at else None,
+    }
+    _save_index(home, index)
+
+
+def _remove_from_index(home: Path, memory_id: str) -> None:
+    """Remove an entry from both search indexes.
+
+    Removes the entry from the plain-JSON ``index.json`` used by this engine and
+    from skmemory's SQLite ``index.db`` when present. Keeping index.db in step is
+    what prevents "skmemory drift": archiving a memory moves its flat file out of
+    the active tiers, so a lingering SQLite row would be reported as a phantom
+    orphan by ``skmemory health``/drift checks. Best-effort - a missing db, a
+    missing table, or a lock never blocks archival (the flat file is truth).
+    """
+    index = _load_index(home)
+    index.pop(memory_id, None)
+    _save_index(home, index)
+    _remove_from_sqlite_index(home, memory_id)
+
+
+def _remove_from_sqlite_index(home: Path, memory_id: str) -> None:
+    """Delete a memory's row from skmemory's SQLite index.db, if it exists."""
+    db_path = _memory_dir(home) / "index.db"
+    if not db_path.exists():
+        return
+    try:
+        import sqlite3
+
+        conn = sqlite3.connect(str(db_path), timeout=8)
+        try:
+            conn.execute("PRAGMA busy_timeout=8000;")
+            conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:  # pragma: no cover - defensive, never blocks archival
+        logger.debug("index.db prune skipped for %s: %s", memory_id, exc)
+
+
+def _load_index(home: Path) -> dict:
+    """Load the memory index from disk, normalized to a ``{memory_id: {...}}`` dict.
+
+    This engine owns the index as a dict keyed by ``memory_id``, but sibling repair
+    paths (``self_healing._check_memory_index``, external per-node reconcilers) may
+    rewrite ``index.json`` as a ``[{"memory_id": ...}, ...]`` list. Loading that list
+    verbatim used to crash every :func:`store` at ``index[entry.memory_id] = ...``
+    (``TypeError: list indices must be integers or slices, not str``) - which is what
+    silently killed dream-insight persistence. Normalizing either shape here keeps
+    stores working and, via :func:`_save_index`, converts the file back to the dict
+    form the rest of the engine (and ``doctor``) expects.
+    """
+    index_path = _memory_dir(home) / "index.json"
+    if not index_path.exists():
+        return {}
+    try:
+        data = json.loads(index_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    if isinstance(data, dict):
+        return data
+    if isinstance(data, list):
+        normalized: dict = {}
+        for item in data:
+            if isinstance(item, dict) and item.get("memory_id"):
+                normalized[item["memory_id"]] = {k: v for k, v in item.items() if k != "memory_id"}
+        return normalized
+    return {}
+
+
+def _save_index(home: Path, index: dict) -> None:
+    """Persist the memory index to disk."""
+    index_path = _memory_dir(home) / "index.json"
+    index_path.write_text(json.dumps(index, indent=2), encoding="utf-8")
+
+
+def _load_index_ids(home: Path) -> set[str]:
+    """Get the set of all memory IDs from the index."""
+    return set(_load_index(home).keys())

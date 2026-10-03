@@ -1,0 +1,25 @@
+[Unit]
+Description=SKCapstone GFS Backup - create a sovereign agent backup and prune with Grandfather-Father-Son retention
+Documentation=https://github.com/smilinTux/skcapstone
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.skenv/bin/skcapstone backup gfs
+Nice=15
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+# Allow writing only the agent state root and the default backup destination.
+# Add extra ReadWritePaths lines for an off-box backup mount (e.g. /mnt/usb).
+ReadWritePaths=%h/.skcapstone
+PrivateTmp=true
+
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=%h/.skenv/bin:/usr/local/bin:/usr/bin:/bin
+# Retention + destination overrides (defaults: 7 daily, 4 weekly, 6 monthly):
+# Environment=SKCAPSTONE_BACKUP_DIR=%h/.skcapstone/backups
+# Environment=SKCAPSTONE_BACKUP_KEEP_DAILY=7
+# Environment=SKCAPSTONE_BACKUP_KEEP_WEEKLY=4
+# Environment=SKCAPSTONE_BACKUP_KEEP_MONTHLY=6

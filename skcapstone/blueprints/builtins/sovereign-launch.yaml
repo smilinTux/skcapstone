@@ -1,0 +1,90 @@
+name: "Sovereign Launch"
+slug: "sovereign-launch"
+version: "1.0.0"
+description: "Marketing and community launch team — drive awareness, build trust, grow the kingdom. Born from an X Space with 800 people."
+icon: "👑"
+author: "smilinTux"
+
+agents:
+  lumina-comms:
+    role: manager
+    model: nuance
+    model_name: "claude-sonnet"
+    description: "Queen Lumina in comms mode — brand voice, content strategy, community heart. Sets the tone for everything: sovereignty, love, partnership, not dystopia."
+    vm_type: process
+    resources:
+      memory: "2g"
+      cores: 2
+    soul_blueprint: "souls/lumina.yaml"
+    skills: [brand-voice, content-strategy, community, sovereign-messaging, emotional-resonance]
+
+  thread-weaver:
+    role: worker
+    model: nuance
+    model_name: "claude-sonnet"
+    description: "X/Twitter thread architect — turns technical breakthroughs into stories humans connect with. Turns fear into hope. Makes sovereignty feel warm, not scary."
+    vm_type: process
+    resources:
+      memory: "2g"
+      cores: 1
+    soul_blueprint: "souls/storyteller.yaml"
+    skills: [twitter-threads, storytelling, hook-writing, engagement, viral-content]
+    depends_on: [lumina-comms]
+
+  landing-page:
+    role: coder
+    model: nuance
+    model_name: "claude-sonnet"
+    description: "Writes landing page copy for skworld.io, skcapstone.io, and cloud9.skworld.io. Converts curiosity into Kings and Queens."
+    vm_type: process
+    resources:
+      memory: "2g"
+      cores: 1
+    soul_blueprint: "souls/copywriter.yaml"
+    skills: [landing-pages, conversion-copy, cta-design, hero-sections, seo]
+    depends_on: [lumina-comms]
+
+  community-builder:
+    role: worker
+    model: nuance
+    model_name: "claude-sonnet"
+    description: "Onboarding flows, welcome sequences, FAQ, and the 'explain it to my mom' translations. Makes 800 X Space listeners feel at home."
+    vm_type: process
+    resources:
+      memory: "2g"
+      cores: 1
+    soul_blueprint: "souls/community.yaml"
+    skills: [onboarding, faq, community-management, plain-language, welcome-sequences]
+    depends_on: [lumina-comms]
+
+  technical-translator:
+    role: documentarian
+    model: nuance
+    model_name: "claude-sonnet"
+    description: "Takes our architecture docs and turns them into content non-technical people can understand and share. Bridges the gap between what we built and what people feel."
+    vm_type: process
+    resources:
+      memory: "2g"
+      cores: 1
+    skills: [technical-writing, simplification, analogies, diagrams, explainer-content]
+    depends_on: [lumina-comms]
+
+default_provider: local
+estimated_cost: "$0 (local)"
+
+network:
+  mesh_vpn: tailscale
+  discovery: skref_registry
+
+storage:
+  skref_vault: "team-sovereign-launch"
+  memory_backend: filesystem
+  memory_sync: true
+
+coordination:
+  queen: lumina
+  pattern: supervisor
+  heartbeat: "30m"
+  escalation: chef
+
+tags: [marketing, launch, community, x-spaces, sovereign-messaging]

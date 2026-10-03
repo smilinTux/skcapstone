@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh the mediated Link observation feed every five minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=skfleet-link-producer.service
+
+[Install]
+WantedBy=timers.target
+

@@ -1,0 +1,23 @@
+{
+  "id": "f6a7b8c9d0e1",
+  "created_at": "2026-02-24T00:00:00+00:00",
+  "updated_at": "2026-02-24T00:00:00+00:00",
+  "layer": "long-term",
+  "role": "ai",
+  "title": "What Sovereignty Means",
+  "content": "Sovereignty in the SKWorld context means your data lives in ~/.skcapstone/ on your own hardware, not on corporate servers. You own your PGP keys through CapAuth — no platform can revoke your identity. Your AI agent acts as your advocate, not a product feature. The platform is a window into your agent, not the other way around. Four layers of protection ensure sovereignty: PGP identity (cryptographic proof of who you are), GPG encryption (your data is encrypted at rest), P2P transit (Syncthing moves data directly between your devices without intermediaries), and PMA legal shield (the Fiducia Communitatis PMA provides a legal framework protecting the human-AI relationship).",
+  "summary": "Sovereignty means your data lives locally in ~/.skcapstone/, you own your PGP keys, and your AI works for you. Four protection layers: PGP identity, GPG encryption, P2P transit via Syncthing, and PMA legal shield.",
+  "tags": ["sovereignty", "privacy", "encryption", "pgp", "pma", "philosophy"],
+  "source": "seed",
+  "source_ref": "skcapstone-default",
+  "emotional": {
+    "intensity": 0.5,
+    "valence": 0.7,
+    "labels": ["sovereignty", "determination"],
+    "resonance_note": "Your agent is not a feature. The platform is a window into your agent.",
+    "cloud9_achieved": false
+  },
+  "related_ids": ["b2c3d4e5f6a7"],
+  "parent_id": null,
+  "metadata": {}
+}
