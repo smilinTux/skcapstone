@@ -273,7 +273,11 @@ def test_remote_receipt_refuses_changed_native_binding(execution, change):
 
 
 @pytest.fixture
-def terminal_review(execution, monkeypatch):
+def terminal_review(execution, monkeypatch, request):
+    variant = getattr(request, "param", "PASS")
+    verdict = "PASS" if variant == "LARGE" else variant
+    if verdict == "STRUCTURED_BLOCKED":
+        verdict = "BLOCKED blocked_on=capability referent=review-input missing prerequisite"
     import hashlib
     from skcapstone.fleet.production_review_finish import native_command, native_state, once
     from skcapstone.fleet.production_review_custody import exit_path
@@ -288,13 +292,19 @@ def terminal_review(execution, monkeypatch):
     directory = workspace / "docs/evidence/agents" / e["card"]
     directory.mkdir(parents=True)
     report = directory / "COMPLETION-EVIDENCE.md"
-    report.write_text("Real independent review of original candidate.\n")
+    import base64, os
+
+    report.write_text(
+        base64.b64encode(os.urandom(195000)).decode()
+        if variant == "LARGE"
+        else "Real independent review of original candidate.\n"
+    )
     report.chmod(0o600)
     report_hash = hashlib.sha256(report.read_bytes()).hexdigest()
     decision = dict(
         schema="skfleet.source-review-decision/v1",
         **review.proposal_binding(request),
-        verdict="PASS",
+        verdict=verdict,
         report_sha256=report_hash,
     )
     (directory / "REVIEW-DECISION.json").write_text(json.dumps(decision))
@@ -313,7 +323,14 @@ def terminal_review(execution, monkeypatch):
     for key, value in [
         ("evidence", str(report)),
         ("reviewer_evidence_sha256", report_hash),
-        ("verdict", "PASS"),
+        (
+            "verdict",
+            (
+                "BLOCKED blocked_on=capability referent=review-input missing prerequisite"
+                if verdict == "BLOCKED"
+                else verdict
+            ),
+        ),
         ("applicability_receipt", json.dumps(applicability)),
     ]:
         before = native_state(e["home"], e["card"])
@@ -357,7 +374,11 @@ def terminal_review(execution, monkeypatch):
     monkeypatch.setattr(custody, "unit_terminal", lambda *a, **kw: dict(ActiveState="inactive"))
     monkeypatch.setattr(acceptance, "unit_terminal", lambda *a, **kw: dict(ActiveState="inactive"))
     status = review.reconcile_review(e["paths"], e["home"], request, status)
-    assert status["state"] == "awaiting-review-acceptance"
+    assert status["state"] == (
+        "awaiting-review-acceptance"
+        if verdict == "PASS"
+        else "review-" + verdict.split()[0].lower()
+    )
     e.update(request=request, status=status, workspace=workspace, terminal=terminal)
     return e
 
@@ -390,7 +411,7 @@ def test_remote_completion_rejects_bad_transport_or_custody(terminal_review, mon
     if change == "missing-packet":
         del status["review_packet"]
     elif change == "bundle-hash":
-        status["review_packet"]["manifest"]["bundle_sha256"] = "0" * 64
+        status["review_packet"]["sha256"] = "0" * 64
     elif change in {"owner", "claim"}:
         status["owner" if change == "owner" else "claim_revision"] = "forged"
     else:
@@ -433,3 +454,86 @@ def test_seraph_offer_is_pending_never_a_successful_launch(execution):
     assert result["reason"] == "seraph_remote_review_pending"
     assert result["recommendations"] == 0
     assert result["pending_offers"] == 1
+
+
+@pytest.mark.parametrize(
+    "terminal_review", ["FAIL", "BLOCKED", "STRUCTURED_BLOCKED"], indirect=True
+)
+def test_negative_remote_review_completes_only_review(terminal_review):
+    from skcapstone.fleet import production_acceptance as acceptance
+
+    e = terminal_review
+    e["host"][0] = "chiap08"
+    result = acceptance.finish_remote_disposition(
+        e["home"], e["policy"], e["card"], e["status"]["claim_revision"]
+    )
+    assert result["state"] in {"review-fail", "review-blocked"}
+    assert e["source"]["store"].fold(e["card"]).status.value == "done"
+    producer = e["source"]["store"].fold(e["source"]["card"])
+    assert producer.owner == e["source"]["owner"]
+    assert producer.meta["_claim_revision"] == e["source"]["claim"]
+    assert producer.status.value != "done"
+
+
+@pytest.mark.parametrize("change", ["quota", "capability", "host-alias", "cordon", "same-family"])
+def test_changed_destination_or_route_refuses_before_claim(execution, monkeypatch, change):
+    e = execution
+    request = review.offer_review(e["paths"], e["home"], e["card"], writer=e["writer"])
+    assert request
+    if change == "quota":
+        value = dict(e["policy"])
+        value["node_quotas"] = {k: v for k, v in value["node_quotas"].items() if k != "chiap03"}
+        (e["home"] / "production.json").write_text(json.dumps(value))
+    elif change in {"capability", "host-alias"}:
+        path = e["paths"].spec_path("node", "node-chiap03")
+        spec = json.loads(path.read_text())
+        if change == "capability":
+            spec["spec"]["capabilities"] = []
+        else:
+            spec["labels"]["host"] = "chiap03.alias"
+        path.write_text(json.dumps(spec))
+    elif change == "cordon":
+        views = builder.node_views(e["paths"])
+        views[0].cordoned = True
+        monkeypatch.setattr(builder, "node_views", lambda paths: views)
+    else:
+        routes = production.production_routes.snapshot(e["policy"])
+        routes["routes"][0]["provider"] = "zai"
+        routes["routes"][0]["capacity_domain"] = "zai"
+    e["host"][0] = "chiap03"
+    builder.consume_one(e["paths"], e["home"], "node-chiap03", launcher=e["launcher"])
+    assert not e["launches"]
+    assert e["source"]["store"].fold(e["card"]).owner is None
+
+
+@pytest.mark.parametrize("terminal_review", ["LARGE"], indirect=True)
+def test_large_bounded_review_evidence_does_not_overflow_native_status(terminal_review):
+    from skcapstone.fleet.production_acceptance import collect
+
+    e = terminal_review
+    e["host"][0] = "chiap08"
+    e["workspace"].rename(e["workspace"].with_name("remote-only"))
+    context = collect(
+        e["home"],
+        e["policy"],
+        e["card"],
+        e["status"]["claim_revision"],
+        process_check=lambda card: dict(sessions=[], units=[]),
+    )
+    assert context["review"]["proposal"]["verdict"] == "PASS"
+
+
+def test_missing_request_never_reassigns_existing_native_review_offer(execution):
+    e = execution
+    request = review.offer_review(e["paths"], e["home"], e["card"], writer=e["writer"])
+    builder.request_path(e["paths"], request["node"], e["card"]).unlink()
+    assert review.offer_review(e["paths"], e["home"], e["card"], writer=e["writer"]) is None
+
+
+def test_orphan_destination_custody_is_held_across_seats(execution):
+    e = execution
+    request, status = offer_and_consume(e)
+    builder.request_path(e["paths"], request["node"], e["card"]).unlink()
+    assert e["card"] in builder.held_card_ids(e["paths"])
+    e["host"][0] = "chiap08"
+    assert review.offer_review(e["paths"], e["home"], e["card"], writer=e["writer"]) is None

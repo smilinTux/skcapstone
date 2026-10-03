@@ -56,8 +56,8 @@ def retain_review_exit(home, args, card, *, terminal_proven):
         }
         request_id = os.environ.get("SKFLEET_REVIEW_REQUEST")
         if request_id:
-            from .paths import FleetPaths
             from . import builder_dispatch
+            from .paths import FleetPaths
 
             node = os.environ.get("SKFLEET_REVIEW_NODE", "")
             if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", node) or ".." in node:
@@ -151,6 +151,7 @@ def read_exit(home, card, claim):
 def import_remote_exits(home, policy):
     """Retain only exact destination terminal evidence validated by authority."""
     from skcoord.card_store import CardStore
+
     from .production_receipts import production_receipt_allowed
 
     for path in (Path(home) / "fleet/status").glob("*/dispatch/*.json"):

@@ -219,7 +219,7 @@ def launch_review(paths, home, request, card, handoff, workspace, *, launcher=No
 
     from ..seat_runtime import append_review_launch_receipt
     from . import builder_dispatch, review_dispatch
-    from .production_admission import MARKER, _digest, _reservation_id, reserve_launch, unit_state
+    from .production_admission import MARKER, _digest, reserve_launch, unit_state
     from .production_brief import production_source_review_brief
     from .production_receipts import persist_production_snapshot
     from .production_review_finish import read_json
@@ -338,7 +338,7 @@ def launch_review(paths, home, request, card, handoff, workspace, *, launcher=No
         work_kind="review",
     )
     review_dispatch.validate_request(paths, home, request["node"], request, claimed=True)
-    if CardStore_for_review(home, card.id).meta.get("_claim_revision") != claim:
+    if _review_card(home, card.id).meta.get("_claim_revision") != claim:
         raise ValueError("review claim changed before reservation")
     production_routes.preflight(request["policy"], bound)
     argv = reserve_launch(home, request["policy"], host, unit, binding, command)
@@ -384,6 +384,7 @@ def launch_review(paths, home, request, card, handoff, workspace, *, launcher=No
         )
     else:
         process = launcher(argv, workspace)
+    builder_dispatch._PROCESSES[request["request_id"]] = process
     # A successful Popen is not a service acknowledgment.
     for _ in range(20):
         state = unit_state(unit)
@@ -416,7 +417,7 @@ def launch_review(paths, home, request, card, handoff, workspace, *, launcher=No
     return status
 
 
-def CardStore_for_review(home, card):
+def _review_card(home, card):
     """Read exact final claim through the native fold."""
     from skcoord.card_store import CardStore
 

@@ -103,8 +103,9 @@ def command(unit):
     ]
 
 
-def reserve(home, policy, host, token):
-    unit = "skfleet-worker-deepseek-" + token + ".service"
+def reserve(home, policy, host, token, kind="review"):
+    prefix = "skfleet-worker-deepseek-" if kind == "review" else "skfleet-builder-" + kind + "-"
+    unit = prefix + token + ".service"
     return admission.reserve_launch(
         home,
         policy,
@@ -125,20 +126,31 @@ def capacity(tmp_path, monkeypatch):
     return tmp_path
 
 
-def _race(home, policy, token, start, results):
+def _race(home, policy, token, start, results, kind):
     start.wait()
     try:
-        reserve(home, policy, "chiap08", token)
+        reserve(home, policy, "chiap08", token, kind)
         results.put("admitted")
     except admission.AdmissionError:
         results.put("held")
 
 
-def test_real_lock_cap_race_and_pending_custody(capacity, remote_policy):
+@pytest.mark.parametrize("kind", ["review", "source", "test"])
+def test_real_lock_cap_race_and_pending_custody(capacity, remote_policy, kind):
     ctx = multiprocessing.get_context("fork")
     start, results = ctx.Event(), ctx.Queue()
     workers = [
-        ctx.Process(target=_race, args=(capacity, remote_policy, "%08x" % n, start, results))
+        ctx.Process(
+            target=_race,
+            args=(
+                capacity,
+                remote_policy,
+                "%08x" % n,
+                start,
+                results,
+                kind if n % 2 else "review",
+            ),
+        )
         for n in range(4)
     ]
     for process in workers:
@@ -198,3 +210,31 @@ def test_protected_identity_mismatch_holds(capacity, remote_policy, monkeypatch)
     )
     with pytest.raises(admission.AdmissionError):
         reserve(capacity, remote_policy, "chiap08", "b4594faa")
+
+
+def test_proven_terminal_service_frees_slot_without_replaying_intent(
+    capacity, remote_policy, monkeypatch
+):
+    reserve(capacity, remote_policy, "chiap08", "12345678")
+    path = next((capacity / "fleet/resource-admission/chiap08").glob("*/intent.json"))
+    intent = json.loads(path.read_text())
+    state = dict(
+        Id=intent["unit"],
+        LoadState="loaded",
+        ActiveState="inactive",
+        SubState="dead",
+        InvocationID="a" * 32,
+        SKFLEET_ADMISSION_ID=path.parent.name,
+        MemoryMax=str(3 * GIB),
+        MainPID="0",
+        ControlPID="0",
+        TasksCurrent="[not set]",
+        ControlGroup="",
+        ExecMainCode="1",
+        ExecMainStatus="0",
+        Result="success",
+    )
+    monkeypatch.setattr(admission, "unit_state", lambda *a, **kw: state)
+    reserve(capacity, remote_policy, "chiap08", "87654321")
+    with pytest.raises(admission.AdmissionError):
+        reserve(capacity, remote_policy, "chiap08", "12345678")
