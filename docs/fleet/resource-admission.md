@@ -18,7 +18,7 @@ worker and builder paths could check capacity without the same transaction.
    the real worker, builder, and native test spawn boundaries. Preserve all
    existing source, policy, claim, retry, and lifecycle checks.
 3. Verify the changed boundaries, preserve a local commit and private bundle,
-   and independently review before a separately authorized installation.
+   and hand off for independent review and the root's authorized integration.
 
 The generation lock and its recovery behavior are unchanged. The new lock at
 `fleet/resource-admission/<host>/.lock` covers fresh occupancy, outstanding
@@ -84,14 +84,14 @@ decide that a Work Product or task is complete.
 The ledger scan is linear in retained reservations. No automatic expiry or
 cleanup is added. Future compaction must retain replay and crash custody proof.
 
-## Adoption and rollback
+## Adoption and forward repair
 
 Do not switch only an operator helper to the new lock. Before activation:
 
 1. Independently review the exact candidate and inventory every installed
    worker, builder, native test, and operator launch path on the host. Private
    pilot/install helpers are deployment inputs, not edited by this source card.
-2. Establish an authorized boundary with no old launcher inside admission or
+2. Establish a transition boundary with no old launcher inside admission or
    spawn. Preserve existing workers, claims, source custody, and the generation
    fence. Do not kill a waiting process or unlink a live lock to achieve this.
 3. Install and qualify all paths against the same module and canonical local
@@ -112,10 +112,11 @@ Do not switch only an operator helper to the new lock. Before activation:
 
 No matter data migration is involved. Existing native test receipts retain
 their original command verification; new receipts additionally verify their
-exact durable reservation. Never discard the new ledger during rollback.
-Rollback requires a separately authorized coordinated stop of new admission,
-exact disposition of every pending reservation, and consistent restoration of
-all launch paths. Preserve the generation ownership fence throughout.
+exact durable reservation. Preserve the ledger and generation ownership fence
+through adoption and forward repairs. Repair an uncertain launch through its
+exact custody disposition, then advance all launch paths to a consistent source
+revision. The root's rollout is already authorized; this worker's source-only
+boundary does not add another permission gate.
 
 ## Source validation
 
