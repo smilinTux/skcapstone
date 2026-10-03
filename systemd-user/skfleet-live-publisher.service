@@ -1,0 +1,19 @@
+[Unit]
+Description=Publish host-local SKFleet worker liveness
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=SKFLEET_TMUX_SOCKET=/tmp/tmux-%U/default
+Environment=SKFLEET_ALLOW_ABSENT_DEFAULT_TMUX=1
+Environment=SKFLEET_AUDIT_TMUX_SERVERS=1
+RuntimeDirectory=skfleet
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+ExecStart=%h/.skenv/bin/python3 -m skcapstone.fleet_live_publisher --home %h/.skcapstone
+TimeoutStartSec=30
+NoNewPrivileges=yes
+PrivateTmp=no
+
+[Install]
+WantedBy=default.target

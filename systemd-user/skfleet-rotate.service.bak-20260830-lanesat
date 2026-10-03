@@ -1,0 +1,12 @@
+[Unit]
+Description=SKWorld fleet rotation (chiap04: also runs the ChatGPT desktop client, moderate target)
+
+[Service]
+Type=oneshot
+Environment=SKFLEET_TARGET=4
+Environment=SKFLEET_QWEN_TARGET=6
+Environment=SKFLEET_QWEN_MODEL=qwen3.8-chiap08
+Environment=SKFLEET_GLM_TARGET=0
+Environment=SKFLEET_GLM_TARGET=0
+Environment=SKFLEET_MAX_LAUNCH=2
+ExecStart=/usr/bin/python3 %h/.local/bin/skfleet-rotate.py --go

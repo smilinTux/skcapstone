@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the SKFleet install hygiene audit daily
+
+[Timer]
+# Daily is the right cadence: the failure it catches (an agent leaving an
+# editable install pointing at its scratch worktree) accumulates over days, and
+# the consequence lands at the next reboot or the 30-day tmpfiles sweep.
+OnCalendar=daily
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,19 @@
+[Unit]
+Description=SKFleet readiness gate: mandatory dispatcher env and unit imports actually work here
+Documentation=https://github.com/smilinTux/skcapstone/blob/main/docs/superpowers/specs/2026-09-16-nimble-factory-design.md
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.skenv/bin/python3 %h/.skenv/bin/skfleet_readiness.py --rotate-script %h/.skenv/bin/skfleet-rotate.py --units-dir %h/.config/systemd/user --python-bin %h/.skenv/bin/python3 --env-from-systemd skfleet-rotate.service --verdict-path %h/.skcapstone/fleet/status/node-%H/readiness/verdict.json
+TimeoutStartSec=120
+Nice=15
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.skcapstone/fleet
+
+[Install]
+WantedBy=default.target
