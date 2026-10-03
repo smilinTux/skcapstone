@@ -1158,8 +1158,10 @@ def _worker_mail_instructions(recipients):
         "  Read your own mail with:  skmail read <you>     recent traffic:  skmail tail\n"
         "HOW TO CHAT OR GET HELP. SKMail is asynchronous worker chat. Ask %s for\n"
         "coordination, review, evidence, or help. Check for replies with skmail read\n"
-        "\"$SKAGENT\" and skmail tail 20, then run skmail ack \"$SKAGENT\" after\n"
-        "processing the reply.\n"
+        "\"$SKAGENT\". It shows your oldest unread mail, about 8 KiB at a time, and\n"
+        "ends with (N new). Act on what it showed, then skmail ack \"$SKAGENT\": ack\n"
+        "marks read only what read just showed, so repeat read, act, ack. Do not use\n"
+        "skmail tail as your inbox; it hides anything that scrolled past.\n"
         % (allowed, allowed, review_contact)
     )
 
@@ -2207,8 +2209,9 @@ def publish_live(sessions, units=()):
                        "worker remains live; bounded escalation recorded"
                     % (HOST, _cid, worker, path, int(age)))
     try:
-        os.makedirs(LIVE, exist_ok=True)
-        p = os.path.join(LIVE, HOST + ".json")
+        lane_directory = os.path.join(os.path.dirname(LIVE), "fleet-lanes")
+        os.makedirs(lane_directory, exist_ok=True)
+        p = os.path.join(lane_directory, HOST + ".json")
         tmp = p + ".new"
         workers = []
         for card in cards:
@@ -2249,7 +2252,9 @@ def reporting_capacity():
     """Return total free lanes advertised by each currently reporting host."""
     capacity = {}
     now = time.time()
-    for path in glob.glob(os.path.join(LIVE, "*.json")):
+    lane_directory = os.path.join(os.path.dirname(LIVE), "fleet-lanes")
+    for path in (glob.glob(os.path.join(LIVE, "*.json")) +
+                 glob.glob(os.path.join(lane_directory, "*.json"))):
         try:
             with open(path, encoding="utf-8") as fh:
                 snap = json.load(fh)
@@ -2296,6 +2301,11 @@ def live_report_health(expected_hosts=None, now=None):
         if age > LIVE_FRESH:
             faults.append({"host": host, "reason": "stale",
                            "age_seconds": int(age), "detail": ""})
+            continue
+        if snap.get("complete") is not True:
+            faults.append({"host": host, "reason": "incomplete",
+                           "age_seconds": int(age),
+                           "detail": "tmux and systemd completeness not established"})
             continue
         stamps.append(ts)
         reporting.add(host)

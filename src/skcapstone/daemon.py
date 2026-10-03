@@ -3111,15 +3111,15 @@ class DaemonService:
 
     def _write_pid(self) -> None:
         """Write the PID file."""
-        pid_path = self.config.home / PID_FILE
-        pid_path.parent.mkdir(parents=True, exist_ok=True)
-        pid_path.write_text(str(os.getpid()), encoding="utf-8")
+        from .daemon_pid import write_daemon_pid
+
+        write_daemon_pid(self.config.home)
 
     def _remove_pid(self) -> None:
         """Remove the PID file."""
-        pid_path = self.config.home / PID_FILE
-        if pid_path.exists():
-            pid_path.unlink()
+        from .daemon_pid import remove_daemon_pid
+
+        remove_daemon_pid(self.config.home)
 
 
 def read_pid(home: Optional[Path] = None) -> Optional[int]:
@@ -3136,30 +3136,9 @@ def read_pid(home: Optional[Path] = None) -> Optional[int]:
     Returns:
         PID as int, or None if not running.
     """
-    home = (home or Path(AGENT_HOME)).expanduser()
-    shared_root = Path(AGENT_HOME).expanduser()
+    from .daemon_pid import read_daemon_pid
 
-    # 2026-08-04: named agents each get their own home + PID file so they can
-    # run simultaneously (see cli/daemon.py::daemon_start docstring). This
-    # used to also fall back to the shared root's PID file whenever the
-    # agent-specific one was absent (e.g. after a clean shutdown removed it),
-    # which meant a live *bare* `skcapstone.service` (no --agent) made every
-    # named agent's is_running()/read_pid() report a false positive and
-    # refuse to start. Only consult the shared root when the caller is
-    # actually asking about it (home == shared_root); a named agent's check
-    # is home-scoped only - no fallback.
-    candidates = (home,) if home != shared_root else (shared_root,)
-    for candidate in candidates:
-        pid_path = candidate / PID_FILE
-        if not pid_path.exists():
-            continue
-        try:
-            pid = int(pid_path.read_text(encoding="utf-8").strip())
-            os.kill(pid, 0)
-            return pid
-        except (ValueError, ProcessLookupError, PermissionError):
-            pid_path.unlink(missing_ok=True)
-    return None
+    return read_daemon_pid((home or Path(AGENT_HOME)).expanduser())
 
 
 def is_running(home: Optional[Path] = None) -> bool:
