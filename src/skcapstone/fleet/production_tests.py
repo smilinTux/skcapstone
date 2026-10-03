@@ -348,13 +348,20 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
         request["admission_protocol"] = 1
         write_once(directory / "launch.json", request)
         # Persist before Popen: interruption or lost acknowledgement cannot replay launch.
-        _SERVICE_PROCESSES[request["unit"]] = subprocess.Popen(
+        from .production_admission import start_reserved
+
+        _SERVICE_PROCESSES[request["unit"]] = start_reserved(
+            home,
+            plan["host"],
             argv,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-            close_fds=True,
+            lambda command: subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+                close_fds=True,
+            ),
         )
         return None
 

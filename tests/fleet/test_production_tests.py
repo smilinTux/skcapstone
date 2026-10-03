@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from xml.etree import ElementTree
 
 import pytest
+from skcoord.card_store import CardCore, CardStore
 
 from skcapstone.fleet import production_admission as admission
 from skcapstone.fleet import production_resources as resources
@@ -82,6 +83,14 @@ def setup(tmp_path, monkeypatch, qualified_runtime):
     }
     home = tmp_path / "home"
     (home / "fleet").mkdir(parents=True)
+    CardStore(home).create(
+        CardCore(
+            id=binding["source_card"],
+            title="Synthetic native test producer",
+            initial_owner=binding["source_owner"],
+            initial_claim_revision=binding["source_claim_revision"],
+        )
+    )
     host = socket.gethostname().split(".")[0].lower()
     policy = {
         "authority_host": host,
@@ -301,7 +310,7 @@ def test_launch_failure_preserves_intent_and_does_not_relaunch(setup, monkeypatc
         raise OSError("lost acknowledgement")
 
     monkeypatch.setattr(native.subprocess, "Popen", fail)
-    with pytest.raises(OSError, match="acknowledgement"):
+    with pytest.raises(admission.AdmissionError, match="launch custody unavailable"):
         native.run_or_read_tests(setup.home, setup.binding, setup.workspace, setup.policy)
     assert (setup.directory / "launch.json").exists()
     monkeypatch.setattr(native, "observe_terminal", lambda *args: False)

@@ -247,7 +247,7 @@ def finalize_failed_launch(
     identity = _reservation_id(intent)
     if not re.fullmatch(r"[0-9a-f]{8}", str(binding.get("card_id", ""))):
         raise AdmissionError("failed launch card identity invalid")
-    with _transaction(home, host) as root, card_mutation_lock(home, binding["card_id"]):
+    with card_mutation_lock(home, binding["card_id"]), _transaction(home, host) as root:
         directory = root / identity
         if read_json(directory / "intent.json") != intent:
             raise AdmissionError("failed launch source or command binding changed")
@@ -309,10 +309,9 @@ def reserve_launch(
 ) -> list[str]:
     """Reserve before spawning and return an argv bearing the exact intent marker.
 
-    Callers validate the current claim before this call and retain custody on
-    every exception after it. Spawn and lifecycle waits happen after the lock
-    has closed. No caller may replay an existing intent. Operators use this same
-    API only after all installed launch paths qualify for the shared protocol.
+    Validate the current claim atomically with intent publication. Callers retain
+    custody on every exception after reservation and use start_reserved for spawn.
+    No caller may replay an existing intent.
     """
     try:
         if (
@@ -381,7 +380,8 @@ def reserve_launch(
             raise AdmissionError("launch must use the local user service manager")
         intent = _intent(policy, host, unit, binding, argv)
         identity = _reservation_id(intent)
-        with _transaction(home, host) as root:
+        with card_mutation_lock(home, binding["card_id"]), _transaction(home, host) as root:
+            _require_claim(home, binding)
             directory = root / identity
             if directory.exists():
                 raise AdmissionError("launch already reserved; exact custody required")
@@ -395,8 +395,87 @@ def reserve_launch(
                 raise AdmissionError(reason)
             private_dir(directory, create=True)
             write_once(directory / "intent.json", intent)
+            write_once(
+                directory / "fenced-start-required.json",
+                {
+                    "reservation_id": identity,
+                    "claim_fenced": True,
+                },
+            )
         return [argv[0], "--setenv=" + MARKER + "=" + identity, *argv[1:]]
     except AdmissionError:
         raise
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         raise AdmissionError("node-resource-evidence-unavailable") from exc
+
+
+def _require_claim(home: Path, binding: dict) -> None:
+    """Call only under the native claim mutation lock, including during spawn."""
+    card = CardStore(home).fold(binding["card_id"])
+    if (
+        card is None
+        or card.archived
+        or card.meta.get("claim_conflicts")
+        or card.status.value != "doing"
+        or card.owner != binding["owner"]
+        or card.meta.get("_claim_revision") != binding["claim_revision"]
+    ):
+        raise AdmissionError("launch native claim changed")
+
+
+def start_reserved(home: Path, host: str, argv: list[str], spawn):
+    """Consume one immutable reservation and fence claim changes across spawn.
+
+    The callback only starts the process; it must not wait for worker completion.
+    Failed or uncertain spawn retains the intent and consumed receipt for native
+    reconciliation. No claim is released here.
+    """
+    try:
+        prefix = "--setenv=" + MARKER + "="
+        identity = argv[1].removeprefix(prefix)
+        if not argv[1].startswith(prefix) or not re.fullmatch(r"[0-9a-f]{64}", identity):
+            raise AdmissionError("launch reservation marker invalid")
+        directory = Path(home) / "fleet/resource-admission" / host / identity
+        private_dir(directory.parent.parent)
+        private_dir(directory.parent)
+        private_dir(directory)
+        intent = read_json(directory / "intent.json")
+        original = [argv[0], *argv[2:]]
+        if (
+            intent["host"] != host
+            or host != socket.gethostname().split(".")[0].lower()
+            or _reservation_id(intent) != identity
+            or intent["argv_sha256"] != hashlib.sha256(json.dumps(original).encode()).hexdigest()
+        ):
+            raise AdmissionError("launch reservation command changed")
+        binding = intent["binding"]
+        with card_mutation_lock(home, binding["card_id"]):
+            _require_claim(home, binding)
+            if read_json(directory / "intent.json") != intent:
+                raise AdmissionError("launch reservation changed")
+            if read_json(directory / "fenced-start-required.json") != {
+                "reservation_id": identity,
+                "claim_fenced": True,
+            }:
+                raise AdmissionError("launch reservation lacks fenced-start proof")
+            write_once(
+                directory / "start.json",
+                {
+                    "schema": "skfleet.resource-start/v1",
+                    "reservation_id": identity,
+                    "binding": binding,
+                    "argv_sha256": intent["argv_sha256"],
+                },
+            )
+            return spawn(argv)
+    except AdmissionError:
+        raise
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        IndexError,
+        TypeError,
+        subprocess.SubprocessError,
+    ) as exc:
+        raise AdmissionError("launch custody unavailable") from exc

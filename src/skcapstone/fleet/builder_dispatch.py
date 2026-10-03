@@ -1654,6 +1654,15 @@ def _consume_available(
                                 admission_contract=admission_contract,
                                 **consumed,
                             )
+                        if production is not None:
+                            from .production_admission import start_reserved
+
+                            return start_reserved(
+                                coordination_home,
+                                production["host"],
+                                command,
+                                lambda argv: run(argv, workspace),
+                            )
                         return run(command, workspace)
 
                     if retrying:
