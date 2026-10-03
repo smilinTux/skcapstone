@@ -79,6 +79,9 @@ def test_native_state_reuses_only_current_locked_store(tmp_path, monkeypatch, le
 
 @pytest.fixture
 def pair(source, monkeypatch, tmp_path):  # noqa: F811
+    import socket
+
+    monkeypatch.setattr(socket, "gethostname", lambda: "control")
     candidate_src = Path(__file__).resolve().parents[2] / "src"
     monkeypatch.setenv("PYTHONPATH", str(candidate_src))
     # Verify the child interpreter resolves the candidate before testing writes.
@@ -92,6 +95,9 @@ def pair(source, monkeypatch, tmp_path):  # noqa: F811
     home, store = source["home"], source["store"]
     card, owner = "24b00002", "pi-seraph-control-24b00002"
     artifact = publish(source)
+    from skcapstone.review_replacement import current_review_attempt
+
+    card = current_review_attempt(home, source["card"], source["head"])
     source_revision = finish.native_state(home, source["card"])["revision"]
     meta = {
         **source["core"]["meta"],
@@ -182,6 +188,7 @@ def pair(source, monkeypatch, tmp_path):  # noqa: F811
         revision=source_revision,
         repository=source["remote"],
         head=source["head"],
+        tree=source["tree"],
         ref=artifact["ref"],
         evidence_path=str(source["shared"]),
         evidence_sha256=artifact["evidence_sha256"],
@@ -197,18 +204,19 @@ def pair(source, monkeypatch, tmp_path):  # noqa: F811
         decision_sha256=inspected["decision_sha256"],
         proposal=proposal,
     )
+    from tests.fleet.acceptance_proof_fixture import retained_proof
+
+    binding, receipt = retained_proof(
+        home, source_item, source["workspace"],
+        finish._digest(store.fold(source["card"]).acceptance_criteria),
+    )
     context = dict(
         source=source_item,
         review=review_item,
         controller="fleet-review-closer@control",
-        test_binding={"source_head": source["head"]},
+        test_binding=binding,
         source_workspace=str(source["workspace"]),
     )
-    receipt = {
-        "receipt_sha256": "c" * 64,
-        "source_head": source["head"],
-        "test_double": "execution independently covered by production_tests tests",
-    }
     calls = []
 
     def validate(*args):

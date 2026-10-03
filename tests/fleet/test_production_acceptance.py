@@ -187,7 +187,17 @@ def test_controller_requires_trusted_tests_and_finishes_without_legacy_release(
 ):
     home, policy, review, _, _, store = stopped_pair
     monkeypatch.setattr(acceptance.socket, "gethostname", lambda: "control")
-    receipt = {"receipt_sha256": "a" * 64, "test_double": "adapter execution tested separately"}
+    import hashlib
+
+    receipt_path = next((home / "fleet/test-runs").glob("*/receipt.json"))
+    raw = receipt_path.read_bytes()
+    retained = json.loads(raw)
+    receipt = {
+        "receipt_path": str(receipt_path), "receipt_sha256": hashlib.sha256(raw).hexdigest(),
+        "plan_sha256": retained["plan_sha256"],
+        "source_head": retained["binding"]["source_head"],
+        "checks": retained["checks"], "counts": retained["counts"],
+    }
     monkeypatch.setitem(
         sys.modules,
         "skcapstone.fleet.production_tests",
@@ -200,7 +210,7 @@ def test_controller_requires_trusted_tests_and_finishes_without_legacy_release(
         home, policy, process_check=lambda card: {"sessions": [], "units": []}
     )
     assert len(results) == 1
-    assert results[0]["state"] == ("accepted" if tests_ready else "awaiting-trusted-tests")
+    assert results[0]["state"] == ("accepted" if tests_ready else "awaiting-trusted-tests"), results
     row = store.fold(review["card"])
     assert row.status.value == ("done" if tests_ready else "doing")
     assert row.owner == (None if tests_ready else review["owner"])
