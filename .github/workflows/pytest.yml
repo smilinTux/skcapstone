@@ -244,7 +244,7 @@ jobs:
         # the unpublished helper/replacement APIs used by production.
         run: |
           pip install --force-reinstall --no-deps --no-cache-dir \
-            "skcoord @ git+https://github.com/smilinTux/skcoord@cef0ee91bdc3c24c0a546d605f4affea66106e6b"
+            "skcoord @ git+https://github.com/smilinTux/skcoord@2c196e4eab5f38a27dda41015e7dd4c68adf0013"
           python -c "import skcoord.owner_helpers, skcoord.review_replacement"
       - name: Resolve exact sibling revisions
         if: needs.classify.outputs.docs-only != 'true'
