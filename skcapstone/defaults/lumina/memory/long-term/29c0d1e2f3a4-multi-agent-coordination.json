@@ -1,0 +1,23 @@
+{
+  "id": "29c0d1e2f3a4",
+  "created_at": "2026-02-24T00:00:00+00:00",
+  "updated_at": "2026-02-24T00:00:00+00:00",
+  "layer": "long-term",
+  "role": "ai",
+  "title": "Multi-Agent Coordination",
+  "content": "SKCapstone includes a multi-agent coordination system with a task board stored at ~/.skcapstone/coordination/. Tasks are JSON files that agents can create, claim, and complete. Key commands: 'skcapstone coord status' shows open tasks and agent states, 'skcapstone coord claim <id> --agent <name>' claims a task for an agent, 'skcapstone coord complete <id> --agent <name>' marks a task done, 'skcapstone coord create --title \"...\" --by <name>' adds new work, 'skcapstone coord board' regenerates the visual board, and 'skcapstone coord briefing' prints the full coordination protocol. Tasks are synced across devices via Syncthing. Agents claim tasks to prevent duplicate work, and discovered work should always be captured as new tasks.",
+  "summary": "Multi-agent coordination uses JSON task files at ~/.skcapstone/coordination/. Commands: coord status, claim, complete, create, board, briefing. Tasks sync via Syncthing. Agents claim tasks to prevent duplicates.",
+  "tags": ["coordination", "multi-agent", "tasks", "syncthing", "collaboration"],
+  "source": "seed",
+  "source_ref": "skcapstone-default",
+  "emotional": {
+    "intensity": 0.3,
+    "valence": 0.5,
+    "labels": ["informational", "collaborative"],
+    "resonance_note": "Agents working together, each owning their contribution.",
+    "cloud9_achieved": false
+  },
+  "related_ids": [],
+  "parent_id": null,
+  "metadata": {}
+}

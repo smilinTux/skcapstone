@@ -1,0 +1,12 @@
+[Unit]
+Description=ATLAS-governed credentialed CMDB network reconcile apply
+Documentation=file:%h/clawd/skcapstone-repos/skcoord/docs/cmdb-reconcile-rollout.md
+ConditionPathExists=%h/.config/skcapstone/cmdb-network-apply
+
+[Service]
+Type=oneshot
+# This reviewed launcher contains exact targets and SKVault references, never
+# credential values. It must invoke:
+#   skcapstone cmdb reconcile --network --apply --record-run
+ExecStart=%h/.config/skcapstone/cmdb-network-apply
+Nice=10

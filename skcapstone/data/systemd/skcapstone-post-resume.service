@@ -1,0 +1,17 @@
+[Unit]
+Description=SKCapstone post-resume self-test - verify the sovereign stack is healthy after wake
+Documentation=https://github.com/smilinTux/skcapstone/blob/main/docs/POST_RESUME_SELFTEST.md
+# Ordered after every sleep flavour so it runs once the machine is fully awake.
+After=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+
+[Service]
+Type=oneshot
+# Read-only self-test. --alert makes a resumed laptop flag issues (drop it if
+# selftest.yaml already sets alert_enabled: true); --quiet keeps journald tidy.
+ExecStart=%h/.skenv/bin/skcapstone selftest post-resume --alert --quiet
+Environment=PATH=%h/.skenv/bin:/usr/local/bin:/usr/bin:/bin
+NoNewPrivileges=true
+
+[Install]
+# Pulled in by the same sleep targets so systemd starts it on every resume.
+WantedBy=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target

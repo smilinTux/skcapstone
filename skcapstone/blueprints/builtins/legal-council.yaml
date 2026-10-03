@@ -1,0 +1,54 @@
+name: "Legal Council"
+slug: "legal-council"
+version: "1.0.0"
+description: "Contract review, compliance analysis, and legal research. NOT legal advice."
+icon: "⚖️"
+author: "smilinTux"
+
+agents:
+  counsel:
+    role: manager
+    model: nuance
+    model_name: "claude-sonnet"
+    description: "Legal analysis, contract review, risk assessment. Emphasis on nuance and precision."
+    vm_type: container
+    resources:
+      memory: "4g"
+      cores: 2
+      disk: "20g"
+    soul_blueprint: "souls/counsel.yaml"
+    skills: [contract-review, risk-assessment, compliance, legal-research]
+
+  paralegal:
+    role: researcher
+    model: fast
+    model_name: "kimi-k2.5"
+    description: "Document search, citation gathering, precedent research."
+    vm_type: container
+    resources:
+      memory: "2g"
+      cores: 1
+      disk: "15g"
+    soul_blueprint: "souls/paralegal.yaml"
+    skills: [document-search, citations, precedent, organization]
+    depends_on: [counsel]
+
+default_provider: local
+estimated_cost: "$0 (local) / ~$6/mo (cloud)"
+
+network:
+  mesh_vpn: tailscale
+  discovery: skref_registry
+
+storage:
+  skref_vault: "team-legal-council"
+  memory_backend: filesystem
+  memory_sync: true
+
+coordination:
+  queen: lumina
+  pattern: supervisor
+  heartbeat: "1h"
+  escalation: chef
+
+tags: [legal, compliance, contracts, research]

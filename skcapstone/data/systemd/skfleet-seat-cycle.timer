@@ -1,0 +1,11 @@
+[Unit]
+Description=Run one serialized SKFleet seat generation after the prior generation rests
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=5min
+Persistent=false
+Unit=skfleet-seat-cycle.service
+
+[Install]
+WantedBy=timers.target

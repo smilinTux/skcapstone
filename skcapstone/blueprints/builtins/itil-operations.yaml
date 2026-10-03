@@ -1,0 +1,40 @@
+name: "ITIL Operations"
+slug: "itil-operations"
+version: "1.0.0"
+description: "ITIL service management — incident, problem, and change lifecycle with SLA monitoring and continuous improvement."
+icon: "🔄"
+author: "smilinTux"
+
+agents:
+  deming:
+    role: ops
+    model: reason
+    model_name: "deepseek-r1:32b"
+    description: "ITIL expert — incident triage, problem analysis, change management, SLA monitoring, and blameless postmortems."
+    vm_type: container
+    resources:
+      memory: "4g"
+      cores: 2
+      disk: "20g"
+    soul_blueprint: "souls/deming.yaml"
+    skills: [incident-management, problem-analysis, change-management, kedb, sla-monitoring, root-cause-analysis]
+
+default_provider: local
+estimated_cost: "$0 (local)"
+
+network:
+  mesh_vpn: tailscale
+  discovery: skref_registry
+
+storage:
+  skref_vault: "team-itil-ops"
+  memory_backend: filesystem
+  memory_sync: true
+
+coordination:
+  queen: lumina
+  pattern: supervisor
+  heartbeat: "5m"
+  escalation: chef
+
+tags: [ops, itil, incident-management, problem-analysis, change-management, sla-monitoring, continuous-improvement]

@@ -1,0 +1,28 @@
+[Unit]
+Description=skmeter: per-node GPU energy counter
+After=network.target
+
+[Service]
+Type=simple
+# REACHABILITY: skgateway reads this meter over HTTP, and on this fleet the
+# gateway does NOT run on the GPU node. The daemon binds 127.0.0.1 by default,
+# which means a remote gateway gets nothing and every energy row silently falls
+# back to imputation while the config looks wired. If the gateway is remote,
+# widen the bind here, on purpose:
+#
+#   Environment=SKMETER_BIND=192.168.0.100
+#
+# Binding beyond loopback publishes this node's power telemetry to whoever can
+# reach the port, so it stays a deliberate deployment decision and never a
+# default. Bind to the specific fleet address, not 0.0.0.0, and keep the meter
+# URL in the gateway's energy.meters block pointed at the same address.
+ExecStart=/home/cbrd21/.skenv/bin/python -m skcapstone.fleet.skmeter
+Restart=always
+RestartSec=10
+# StartLimitIntervalSec must exceed RestartSec x (Burst - 1), or the limiter
+# never trips. See the .100 13h outage.
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Install]
+WantedBy=default.target

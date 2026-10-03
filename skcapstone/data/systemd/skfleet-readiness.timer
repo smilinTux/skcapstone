@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the SKFleet readiness gate every fifteen minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+AccuracySec=30s
+Persistent=false
+Unit=skfleet-readiness.service
+
+[Install]
+WantedBy=timers.target

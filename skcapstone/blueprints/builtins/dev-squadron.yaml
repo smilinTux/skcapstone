@@ -1,0 +1,95 @@
+name: "Dev Squadron"
+slug: "dev-squadron"
+version: "1.0.0"
+description: "Rapid feature development team — architect, coders, reviewer, and docs."
+icon: "🚀"
+author: "smilinTux"
+
+agents:
+  architect:
+    role: manager
+    model: reason
+    model_name: "deepseek-r1:32b"
+    description: "System design, API architecture, task decomposition."
+    vm_type: lxc
+    resources:
+      memory: "8g"
+      cores: 4
+      disk: "30g"
+    soul_blueprint: "souls/architect.yaml"
+    skills: [system-design, api-design, task-planning, code-review]
+
+  coder-alpha:
+    role: coder
+    model: code
+    model_name: "minimax-m2.1"
+    description: "Backend development — APIs, business logic, database layers."
+    vm_type: lxc
+    resources:
+      memory: "4g"
+      cores: 2
+      disk: "20g"
+    soul_blueprint: "souls/coder.yaml"
+    skills: [python, fastapi, sqlalchemy, pydantic]
+    depends_on: [architect]
+
+  coder-beta:
+    role: coder
+    model: code
+    model_name: "minimax-m2.1"
+    description: "Frontend and integration — UIs, webhooks, third-party APIs."
+    vm_type: lxc
+    resources:
+      memory: "4g"
+      cores: 2
+      disk: "20g"
+    soul_blueprint: "souls/coder.yaml"
+    skills: [typescript, react, tailwind, api-integration]
+    depends_on: [architect]
+
+  reviewer:
+    role: reviewer
+    model: nuance
+    model_name: "claude-sonnet"
+    description: "Code review, security audit, architecture validation."
+    vm_type: container
+    resources:
+      memory: "2g"
+      cores: 1
+      disk: "10g"
+    soul_blueprint: "souls/reviewer.yaml"
+    skills: [code-review, security, testing, best-practices]
+    depends_on: [coder-alpha, coder-beta]
+
+  scribe:
+    role: documentarian
+    model: fast
+    model_name: "kimi-k2.5"
+    description: "API docs, changelogs, README updates, inline docs."
+    vm_type: container
+    resources:
+      memory: "1g"
+      cores: 1
+      disk: "10g"
+    soul_blueprint: "souls/scribe.yaml"
+    skills: [docs, markdown, openapi, changelog]
+
+default_provider: local
+estimated_cost: "$0 (local) / ~$20/mo (cloud)"
+
+network:
+  mesh_vpn: tailscale
+  discovery: skref_registry
+
+storage:
+  skref_vault: "team-dev-squadron"
+  memory_backend: filesystem
+  memory_sync: true
+
+coordination:
+  queen: lumina
+  pattern: hierarchical
+  heartbeat: "30m"
+  escalation: chef
+
+tags: [development, coding, architecture, full-stack]

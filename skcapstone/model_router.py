@@ -1,0 +1,425 @@
+"""
+Model Router - automatic model selection based on task requirements.
+
+Reads a TaskSignal (description, tags, privacy flags, token estimate) and
+returns a RouteDecision that identifies the optimal model tier and a concrete
+model name to use for the task.
+
+Decision precedence:
+    1. privacy_sensitive=True  → LOCAL tier (never leaves the node)
+    2. requires_localhost=True → LOCAL tier on the originating node
+    3. Tag-rule matching       → highest-priority matching TagRule wins
+    4. Token-based fallback    → estimated_tokens > 16 000 → REASON, else FAST
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import yaml
+from pydantic import BaseModel, Field
+
+from skcapstone.blueprints.schema import ModelTier
+
+# ---------------------------------------------------------------------------
+# Registry-backed resolution (CR-5.1: skmodels registry roles are the source)
+# ---------------------------------------------------------------------------
+#
+# model_router's job is to classify a task into a TIER. The CONCRETE model for a
+# tier is NOT owned here: it is a skmodels registry ROLE (``sk-default``,
+# ``sk-code``, …), the SAME registry the gateway routes from. So this module is a
+# thin resolver over ``skos.models``: there is no second model table to drift.
+#
+# The tier -> role map below is the single knob. Every tier currently unifies on
+# ``sk-default`` (the SKGateway auto-router role that reaches ornith-big/35B via
+# SKC_LOCAL_OPENAI_URL -> :18780, with 3-box failover), matching the live
+# 2026-08-01 behaviour; per-request DIFFICULTY tiering is done fleet-side by the
+# registry ``sk-auto`` role in the gateway. Point a tier at a different role here
+# (or in the registry) to fold real per-tier routing back in (one edit, no new
+# table). ``_LOCAL_FALLBACK`` is a genuinely-pulled Ollama model appended after
+# the role so a role that cannot resolve still cascades to something servable.
+
+_TIER_ROLE: Dict[str, str] = {
+    ModelTier.FAST.value: "sk-default",
+    ModelTier.CODE.value: "sk-default",
+    ModelTier.REASON.value: "sk-default",
+    ModelTier.NUANCE.value: "sk-default",
+    ModelTier.LOCAL.value: "sk-default",
+}
+
+_LOCAL_FALLBACK = "gemma3:1b"
+
+
+def resolve_role(
+    role: Optional[str] = None,
+    *,
+    context: Optional[str] = None,
+    path: Optional[str] = None,
+) -> Optional[str]:
+    """Resolve a registry ROLE (or an ``agent:<name>`` context) to a concrete
+    backend model via ``skos.models`` (the single source of truth the gateway
+    also routes from).
+
+    This is the thin resolver the CR-5.1 fold leaves in place of a private model
+    table. It NEVER raises:
+
+    - ``skos.models`` not importable / registry unreadable -> ``None``;
+    - an unknown role safe-degrades to the registry default role (``skos.models``
+      already does this) and the ``sk-auto`` marker degrades to ``sk-default``
+      for direct callers, so a Python caller never gets the un-routable ``auto``.
+
+    Args:
+        role: A registry role name (e.g. ``"sk-default"``, ``"sk-code"``).
+        context: A context key (e.g. ``"agent:lumina"``); wins over *role*.
+        path: Optional registry path override (tests).
+
+    Returns:
+        The concrete model id (e.g. ``"ornith-1.0-35b"``) or ``None``.
+    """
+    try:
+        import skos.models as _skm
+    except Exception:
+        return None
+    try:
+        backend = _skm.resolve(role=role, context=context, path=path)
+    except Exception:
+        return None
+    return getattr(backend, "model", None) or None
+
+
+# ---------------------------------------------------------------------------
+# Supporting models
+# ---------------------------------------------------------------------------
+
+
+class TagRule(BaseModel):
+    """Maps a set of keywords to a model tier with a priority weight.
+
+    When any keyword in *keywords* matches a tag in the incoming
+    :class:`TaskSignal`, this rule is considered a candidate.  Among all
+    candidates, the one with the highest *priority* wins.
+    """
+
+    keywords: List[str] = Field(description="Keywords that trigger this rule")
+    tier: ModelTier = Field(description="Target tier when the rule fires")
+    priority: int = Field(default=0, description="Higher value wins on conflict")
+
+
+class TaskSignal(BaseModel):
+    """Describes the nature of a task so the router can pick the right model.
+
+    Args:
+        description: Human-readable summary of what the task involves.
+        tags: Free-form labels (e.g. ["code", "refactor"]).
+        requires_localhost: If True, the task must run on the originating node.
+        privacy_sensitive: If True, forces LOCAL tier regardless of other signals.
+        estimated_tokens: Rough token budget hint (context + expected output).
+    """
+
+    description: str = Field(description="What the task is about")
+    tags: List[str] = Field(default_factory=list, description="Classification tags")
+    requires_localhost: bool = Field(default=False, description="Must run on the originating node")
+    privacy_sensitive: bool = Field(default=False, description="Forces LOCAL tier")
+    estimated_tokens: int = Field(default=0, description="Estimated token usage hint")
+
+
+class RouteDecision(BaseModel):
+    """The output of the router describing which model/tier to use.
+
+    Args:
+        tier: Selected model tier.
+        model_name: Specific model identifier within that tier.
+        reasoning: Human-readable explanation of why this decision was made.
+        preferred_node: Optional node hostname if a specific node is required.
+    """
+
+    tier: ModelTier
+    model_name: str
+    reasoning: str
+    preferred_node: Optional[str] = Field(default=None, description="Specific node if required")
+
+
+class ModelRouterConfig(BaseModel):
+    """Configuration for the :class:`ModelRouter`.
+
+    Args:
+        tier_models: Maps tier name (e.g. ``"code"``) to an ordered list of
+            model names.  The first entry is the preferred model for that tier.
+        tag_rules: Ordered list of keyword-to-tier mappings.
+    """
+
+    tier_models: Dict[str, List[str]] = Field(
+        default_factory=dict,
+        description="Maps tier name to list of model names (first = preferred)",
+    )
+    tag_rules: List[TagRule] = Field(
+        default_factory=list,
+        description="Keyword→tier rules evaluated against task tags",
+    )
+
+    @classmethod
+    def default(cls) -> "ModelRouterConfig":
+        """Return the default configuration with real, backend-resolvable models.
+
+        Every tier's preferred (first) model is a model that actually exists on
+        a configured backend, verified against the live fleet on 2026-07-24:
+
+        - Ollama-routed names (``qwen``/``llama``/``deepseek``/``devstral``/
+          ``mistral``/``nemotron``/``codestral`` patterns; see
+          :data:`skcapstone.consciousness_loop._OLLAMA_MODEL_PATTERNS`) must be
+          actually pulled. The local Ollama daemons (localhost and .100:11434)
+          only serve ``qwen3.5:4b``, ``gemma3:1b`` and ``gemma3:270m`` today,
+          so those are the only Ollama-routed names used here. The previous
+          defaults referenced ``devstral``, ``qwen3-coder``, ``deepseek-r1:8b``
+          and ``llama3.1`` - none of which are pulled - so every request on the
+          CODE, REASON and LOCAL tiers hit a 404 from Ollama.
+        - Cloud-routed names resolve to real provider model ids: Anthropic
+          (``claude-sonnet-4-6``, ``claude-haiku-4-5``, ``claude-opus-4-8`` -
+          all served by SKGateway :18780), xAI (``grok-3``) and Moonshot
+          (``kimi-k2.5``, ``moonshot-v1-128k``).
+
+        Returns:
+            ModelRouterConfig: Sensible defaults covering all five tiers and
+            the four primary tag-rule groups.
+        """
+        return cls(
+            # CR-5.1: tier -> model is folded onto the skmodels registry ROLES
+            # (``_TIER_ROLE``, the single knob), NOT a private table here. Every
+            # tier resolves through its registry role, then falls back to a local
+            # ``gemma3:1b`` only if the role/gateway is unreachable. The role name
+            # is emitted verbatim (not pre-resolved) so it reaches SKGateway via
+            # the _local_callback OpenAI path (SKC_LOCAL_OPENAI_URL -> :18780),
+            # where ``sk-auto`` does per-request difficulty tiering fleet-side;
+            # "sk-default" is in _OLLAMA_MODEL_PATTERNS so it routes there.
+            tier_models={
+                tier: [_TIER_ROLE[tier], _LOCAL_FALLBACK]
+                for tier in (
+                    ModelTier.FAST.value,
+                    ModelTier.CODE.value,
+                    ModelTier.REASON.value,
+                    ModelTier.NUANCE.value,
+                    ModelTier.LOCAL.value,
+                )
+            },
+            tag_rules=[
+                TagRule(
+                    keywords=["code", "refactor", "debug", "test", "implement"],
+                    tier=ModelTier.CODE,
+                    priority=10,
+                ),
+                TagRule(
+                    keywords=[
+                        "architecture",
+                        "design",
+                        "analyze",
+                        "research",
+                        "plan",
+                    ],
+                    tier=ModelTier.REASON,
+                    priority=10,
+                ),
+                TagRule(
+                    keywords=[
+                        "marketing",
+                        "creative",
+                        "email",
+                        "copy",
+                        "comms",
+                        "writing",
+                    ],
+                    tier=ModelTier.NUANCE,
+                    priority=10,
+                ),
+                TagRule(
+                    keywords=[
+                        "format",
+                        "rename",
+                        "lint",
+                        "simple",
+                        "trivial",
+                        # Real-caller alignment (2026-07-09 model-router audit):
+                        # these are the exact tags emotion_tracker.py,
+                        # context_window.py, conversation_summarizer.py, and
+                        # memory_compressor.py pass today. All four are cheap
+                        # background/housekeeping calls (sentiment
+                        # classification, context compression, conversation
+                        # summarization, memory compression) that belong on
+                        # the cheapest tier - this rule previously never fired
+                        # for any of them, silently falling through to the
+                        # token-count fallback instead.
+                        "fast",
+                        "classification",
+                        "summary",
+                        "context",
+                        "conversation",
+                        "compression",
+                        "memory",
+                    ],
+                    tier=ModelTier.FAST,
+                    priority=10,
+                ),
+            ],
+        )
+
+
+# ---------------------------------------------------------------------------
+# Router
+# ---------------------------------------------------------------------------
+
+_LARGE_TOKEN_THRESHOLD = 16_000
+
+
+class ModelRouter:
+    """Routes a :class:`TaskSignal` to the most appropriate model tier and name.
+
+    Args:
+        config: Router configuration containing tier-to-model mappings and
+            tag rules.  Defaults to :meth:`ModelRouterConfig.default`.
+    """
+
+    def __init__(self, config: Optional[ModelRouterConfig] = None) -> None:
+        self.config: ModelRouterConfig = config or ModelRouterConfig.default()
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def route(self, signal: TaskSignal) -> RouteDecision:
+        """Select the optimal model tier and name for *signal*.
+
+        Decision precedence (first match wins):
+            1. ``privacy_sensitive=True`` → LOCAL
+            2. ``requires_localhost=True`` → LOCAL (pinned to originating node)
+            3. Tag-rule matching (highest-priority rule wins)
+            4. Token fallback: > 16 000 → REASON, otherwise FAST
+
+        Args:
+            signal: Describes the task to be routed.
+
+        Returns:
+            RouteDecision: Tier, concrete model name, reasoning, and optional
+            preferred node.
+        """
+        # --- Privacy gate ---------------------------------------------------
+        if signal.privacy_sensitive:
+            return self._decide(
+                tier=ModelTier.LOCAL,
+                reasoning="Task marked privacy_sensitive; forced to LOCAL tier.",
+                preferred_node=None,
+            )
+
+        # --- Localhost gate --------------------------------------------------
+        if signal.requires_localhost:
+            return self._decide(
+                tier=ModelTier.LOCAL,
+                reasoning="Task requires localhost execution; forced to LOCAL tier.",
+                preferred_node="localhost",
+            )
+
+        # --- Tag-rule matching -----------------------------------------------
+        best_rule = self._best_tag_rule(signal.tags)
+        if best_rule is not None:
+            return self._decide(
+                tier=best_rule.tier,
+                reasoning=(
+                    f"Tag rule matched (keywords={best_rule.keywords}, "
+                    f"priority={best_rule.priority})."
+                ),
+                preferred_node=None,
+            )
+
+        # --- Token-based fallback -------------------------------------------
+        if signal.estimated_tokens > _LARGE_TOKEN_THRESHOLD:
+            return self._decide(
+                tier=ModelTier.REASON,
+                reasoning=(
+                    f"No tag rule matched; estimated_tokens={signal.estimated_tokens} "
+                    f"exceeds {_LARGE_TOKEN_THRESHOLD}, using REASON tier."
+                ),
+                preferred_node=None,
+            )
+
+        return self._decide(
+            tier=ModelTier.FAST,
+            reasoning=("No tag rule matched and token budget is small; defaulting to FAST tier."),
+            preferred_node=None,
+        )
+
+    @classmethod
+    def from_config(cls, path: Path) -> "ModelRouter":
+        """Load a :class:`ModelRouter` from a YAML configuration file.
+
+        The YAML file should serialise a :class:`ModelRouterConfig` dict, e.g.:
+
+        .. code-block:: yaml
+
+            tier_models:
+              fast: [qwen3.5:4b]
+              code: [claude-sonnet-4-6]
+            tag_rules:
+              - keywords: [code]
+                tier: code
+                priority: 10
+
+        Args:
+            path: Filesystem path to the YAML configuration file.
+
+        Returns:
+            ModelRouter: Initialised router using the loaded configuration.
+
+        Raises:
+            FileNotFoundError: If *path* does not exist.
+            ValueError: If the YAML content cannot be parsed into a valid config.
+        """
+        raw: Any = yaml.safe_load(path.read_text(encoding="utf-8"))
+        config = ModelRouterConfig.model_validate(raw)
+        return cls(config=config)
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _best_tag_rule(self, tags: List[str]) -> Optional[TagRule]:
+        """Return the highest-priority rule whose keywords overlap with *tags*.
+
+        Args:
+            tags: List of tags from the incoming :class:`TaskSignal`.
+
+        Returns:
+            The matching :class:`TagRule` with the highest priority, or ``None``
+            if no rule matches.
+        """
+        normalised = {t.lower() for t in tags}
+        best: Optional[TagRule] = None
+        for rule in self.config.tag_rules:
+            rule_keywords = {kw.lower() for kw in rule.keywords}
+            if rule_keywords & normalised:  # any intersection
+                if best is None or rule.priority > best.priority:
+                    best = rule
+        return best
+
+    def _decide(
+        self,
+        tier: ModelTier,
+        reasoning: str,
+        preferred_node: Optional[str],
+    ) -> RouteDecision:
+        """Build a :class:`RouteDecision` for *tier*, picking the first known model.
+
+        Args:
+            tier: The selected model tier.
+            reasoning: Human-readable explanation.
+            preferred_node: Optional node constraint.
+
+        Returns:
+            RouteDecision: Fully populated routing decision.
+        """
+        models = self.config.tier_models.get(tier.value, [])
+        model_name = models[0] if models else f"unknown-{tier.value}"
+        return RouteDecision(
+            tier=tier,
+            model_name=model_name,
+            reasoning=reasoning,
+            preferred_node=preferred_node,
+        )

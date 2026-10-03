@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "revision": "lifecycle-five-seat-v1",
+  "active_host": "",
+  "seats": {
+    "link": [],
+    "mero": [],
+    "seraph": [],
+    "niobe": [],
+    "atlas": []
+  }
+}
