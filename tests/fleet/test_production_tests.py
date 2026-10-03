@@ -180,6 +180,32 @@ def receipt_fixture(setup, monkeypatch):
     return receipt, terminal
 
 
+def test_fast_success_accounts_admission_before_stop_and_revalidates_product(setup, monkeypatch):
+    """Fast success discharges the consumed intent before retained-unit removal."""
+    _, terminal = receipt_fixture(setup, monkeypatch)
+    launch = native.read_json(setup.directory / "launch.json")
+    identity = launch["service_argv"][1].split("=", 2)[2]
+    directory = setup.home / "fleet/resource-admission" / setup.plan["host"] / identity
+    state = dict(terminal, Id=launch["unit"], ControlPID="0", Result="success",
+                 MemoryMax=str(launch["production"]["resources"]["memory_max_bytes"]),
+                 MemoryCurrent="[not set]", SKFLEET_ADMISSION_ID=identity)
+    monkeypatch.setattr(admission, "unit_state", lambda *a, **kw: dict(state))
+    exists = Path.exists
+    monkeypatch.setattr(Path, "exists", lambda p: False if str(p) == "/proc/123" else exists(p))
+    calls = []
+    def stop(*args):
+        assert (directory / "success-terminal.json").exists()
+        calls.append("stop")
+    monkeypatch.setattr(native, "stop_retained", stop)
+    # A valid resource receipt never bypasses separate product evidence checks.
+    private_bytes(setup.directory / "pytest.xml", b"invalid product evidence")
+    with pytest.raises(native.TestEvidenceError):
+        native.run_or_read_tests(setup.home, setup.binding, setup.workspace, setup.policy)
+    assert calls == ["stop"]
+    assert (directory / "intent.json").exists()
+    assert not (directory / "observed.json").exists()
+
+
 def test_real_git_preserves_source_and_rejects_dirty_or_stale(setup):
     before = native.source_state(setup.workspace, setup.binding)
     assert before["head"] == setup.binding["source_head"]

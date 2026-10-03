@@ -22,7 +22,12 @@ from pathlib import Path
 from skcoord.card_store import CardStore, card_mutation_lock
 
 from ..seraph_review_cardstore import card_revision
-from .production_resources import active_resource_units, local_worker_admission
+from .production_resources import (
+    active_resource_units,
+    local_worker_admission,
+    successful_terminal_absent,
+    successful_terminal_state,
+)
 from .production_test_plan import private_dir, read_json, write_once
 
 MARKER = "SKFLEET_ADMISSION_ID"
@@ -44,7 +49,7 @@ def unit_state(unit: str, *, terminal: bool = False) -> dict:
             "--user",
             "show",
             unit,
-            "--property=Id,LoadState,ActiveState,InvocationID,Environment,MemoryMax,MemoryCurrent"
+            "--property=Id,LoadState,ActiveState,SubState,InvocationID,Environment,MemoryMax,MemoryCurrent"
             + (
                 ",SubState,MainPID,ControlPID,ExecMainPID,ExecMainCode,ExecMainStatus,ControlGroup,TasksCurrent,Result"
                 if terminal
@@ -133,6 +138,11 @@ def _occupancy(root: Path, home: Path) -> list[dict]:
         if _reservation_id(intent) != directory.name:
             raise AdmissionError("reservation identity is inconsistent")
         unit, maximum = intent["unit"], intent["resources"]["memory_max_bytes"]
+        if (directory / "success-terminal.json").exists():
+            proof = read_json(directory / "success-terminal.json")
+            if not _valid_success_receipt(proof, intent):
+                raise AdmissionError("successful launch terminal receipt is inconsistent")
+            continue
         if (directory / "failed-terminal.json").exists():
             proof = read_json(directory / "failed-terminal.json")
             if not _valid_failed_receipt(proof, intent):
@@ -156,13 +166,17 @@ def _occupancy(root: Path, home: Path) -> list[dict]:
             if state.get("ActiveState") in {"inactive", "failed"}:
                 units[unit]["reserved_memory_max"] = maximum
                 continue
+            if state.get("SubState") == "exited":
+                # Only the explicit claim-fenced finalizer discharges this intent.
+                units[unit]["reserved_memory_max"] = maximum
+                continue
             if (
                 state.get("Id") != unit
                 or state.get("LoadState") != "loaded"
                 or state.get("ActiveState") not in {"active", "activating"}
                 or state.get(MARKER) != directory.name
                 or int(state.get("MemoryMax", "0")) != maximum
-                or int(state.get("MemoryCurrent", "-1")) < 0
+                or not re.fullmatch(r"[0-9]+", state.get("MemoryCurrent", ""))
                 or not re.fullmatch(r"[0-9a-f]{32}", state.get("InvocationID", ""))
             ):
                 raise AdmissionError("pending service identity or quota is uncertain")
@@ -212,17 +226,19 @@ def _failed_state(state: dict, intent: dict, invocation: str) -> bool:
     )
 
 
-def _valid_failed_receipt(proof: dict, intent: dict) -> bool:
+def _valid_failed_receipt(proof: dict, intent: dict, *, successful: bool = False) -> bool:
     """Bind durable terminal evidence to every original source and command byte."""
+    kind = "success" if successful else "failed"
+    valid_state = _success_state if successful else _failed_state
     return (
-        proof.get("schema") == "skfleet.failed-admission-terminal/v1"
+        proof.get("schema") == "skfleet." + kind + "-admission-terminal/v1"
         and proof.get("intent_sha256") == _digest(intent)
         and proof.get("reservation_id") == _reservation_id(intent)
         and bool(re.fullmatch(r"[0-9a-f]{64}", str(proof.get("card_revision", ""))))
         and proof.get("process_absent") is True
         and proof.get("cgroup_empty") is True
         and isinstance(proof.get("state"), dict)
-        and _failed_state(proof["state"], intent, proof["state"].get("InvocationID", ""))
+        and valid_state(proof["state"], intent, proof["state"].get("InvocationID", ""))
     )
 
 
@@ -236,6 +252,41 @@ def finalize_failed_launch(
     *,
     invocation: str,
     expected_card_revision: str,
+) -> dict:
+    """Finalize exact retained failure, preserving its original public contract."""
+    return _finalize_launch(home, policy, host, unit, binding, argv,
+                            invocation=invocation, expected_card_revision=expected_card_revision)
+
+
+def finalize_successful_launch(
+    home: Path, policy: dict, host: str, unit: str, binding: dict, argv: list[str], *,
+    invocation: str, expected_card_revision: str,
+) -> dict:
+    """Discharge exact terminal resource custody, never accept product results."""
+    return _finalize_launch(home, policy, host, unit, binding, argv,
+                            invocation=invocation, expected_card_revision=expected_card_revision,
+                            successful=True)
+
+
+def _success_state(state: dict, intent: dict, invocation: str) -> bool:
+    """Bind retained successful metadata to the immutable admitted invocation."""
+    return (
+        state.get("Id") == intent["unit"]
+        and state.get("InvocationID") == invocation
+        and state.get(MARKER) == _reservation_id(intent)
+        and state.get("MemoryMax") == str(intent["resources"]["memory_max_bytes"])
+        and successful_terminal_state(state)
+    )
+
+
+def _valid_success_receipt(proof: dict, intent: dict) -> bool:
+    """Validate historical proof without reinterpreting a later process lifetime."""
+    return _valid_failed_receipt(proof, intent, successful=True)
+
+
+def _finalize_launch(
+    home: Path, policy: dict, host: str, unit: str, binding: dict, argv: list[str], *,
+    invocation: str, expected_card_revision: str, successful: bool = False,
 ) -> dict:
     """Finalize only a retained failed invocation under unchanged native custody.
 
@@ -262,21 +313,37 @@ def finalize_failed_launch(
             or card_revision(card) != expected_card_revision
         ):
             raise AdmissionError("failed launch native custody changed")
-        path = directory / "failed-terminal.json"
+        validate = _valid_success_receipt if successful else _valid_failed_receipt
+        valid_state = _success_state if successful else _failed_state
+        kind = "success" if successful else "failed"
+        path = directory / (kind + "-terminal.json")
+        if successful and read_json(directory / "start.json") != {
+            "schema": "skfleet.resource-start/v1", "reservation_id": identity,
+            "binding": binding, "argv_sha256": intent["argv_sha256"],
+        }:
+            raise AdmissionError("successful launch lacks exact consumed start")
         if path.exists():
             proof = read_json(path)
             if (
-                not _valid_failed_receipt(proof, intent)
+                not validate(proof, intent)
                 or proof["state"]["InvocationID"] != invocation
                 or proof["card_revision"] != expected_card_revision
             ):
                 raise AdmissionError("failed launch receipt changed")
             return proof
         if (directory / "observed.json").exists():
-            raise AdmissionError("launch already observed; normal lifecycle owns termination")
+            if not successful:
+                raise AdmissionError("launch already observed; normal lifecycle owns termination")
+            if read_json(directory / "observed.json") != {
+                "reservation_id": identity, "unit": unit, "invocation": invocation,
+                "memory_max_bytes": intent["resources"]["memory_max_bytes"],
+            }:
+                raise AdmissionError("successful launch observed invocation changed")
         before = unit_state(unit, terminal=True)
-        if not _failed_state(before, intent, invocation):
+        if not valid_state(before, intent, invocation):
             raise AdmissionError("exact retained failed invocation unavailable")
+        if successful and not successful_terminal_absent(before):
+            raise AdmissionError("successful launch process or cgroup is not absent")
         if Path("/proc", before["ExecMainPID"]).exists():
             raise AdmissionError("failed launch process still exists")
         group = before["ControlGroup"]
@@ -290,7 +357,7 @@ def finalize_failed_launch(
         if unit_state(unit, terminal=True) != before:
             raise AdmissionError("failed launch invocation changed during observation")
         proof = dict(
-            schema="skfleet.failed-admission-terminal/v1",
+            schema="skfleet." + kind + "-admission-terminal/v1",
             reservation_id=identity,
             intent_sha256=_digest(intent),
             card_revision=expected_card_revision,
@@ -298,7 +365,7 @@ def finalize_failed_launch(
             process_absent=True,
             cgroup_empty=True,
         )
-        if not _valid_failed_receipt(proof, intent):
+        if not validate(proof, intent):
             raise AdmissionError("failed launch terminal proof is invalid")
         write_once(path, proof)
         return proof

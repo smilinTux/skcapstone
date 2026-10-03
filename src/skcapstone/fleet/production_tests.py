@@ -11,7 +11,12 @@ from xml.etree import ElementTree
 
 from . import production_builder
 from . import production_test_node as node
-from .production_admission import AdmissionError, reserve_launch, reserved_command
+from .production_admission import (
+    AdmissionError,
+    finalize_successful_launch,
+    reserve_launch,
+    reserved_command,
+)
 from .production_test_plan import (
     BINDING_KEYS as BINDING_KEYS,
 )
@@ -311,6 +316,22 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
         if (directory / "launch.json").exists():
             launch = read_json(directory / "launch.json")
             if (directory / "terminal.json").exists() or observe_terminal(directory, launch):
+                terminal = read_json(directory / "terminal.json")
+                if terminal.get("ExecMainStatus") == "0":
+                    from skcoord.card_store import CardStore
+
+                    from ..seraph_review_cardstore import card_revision
+
+                    card = CardStore(home).fold(binding["source_card"])
+                    if card is None:
+                        raise TestEvidenceError("test source claim is unavailable")
+                    finalize_successful_launch(
+                        home, policy, plan["host"], launch["unit"],
+                        _admission_binding(binding, plan_sha),
+                        service_argv(launch, plan_path, directory, workspace),
+                        invocation=terminal["InvocationID"],
+                        expected_card_revision=card_revision(card),
+                    )
                 stop_retained(directory, launch)
                 return validate_test_receipt(home, binding, workspace)
             return None
