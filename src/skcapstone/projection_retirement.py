@@ -89,7 +89,7 @@ def retire_projection(
     expected_projection_sha256: str,
     actor: str,
 ) -> RetirementReceipt:
-    """Quarantine one stale projection bound to one ownerless voided card."""
+    """Quarantine one stale projection bound to one ownerless done or voided card."""
     root = Path(home)
     source = _projection_path(root, projection_agent)
     quarantine = root / "agents-quarantine"
@@ -105,8 +105,8 @@ def retire_projection(
             raise ValueError("card hash conflict")
         if card.owner is not None:
             raise ValueError("card must be ownerless")
-        if not is_voided(root, task_id):
-            raise ValueError("card must be voided")
+        if card.status != "done" and not is_voided(root, task_id):
+            raise ValueError("card must be done or voided")
         if not source.is_file() or source.is_symlink():
             raise ValueError("projection is missing or ambiguous")
         if _sha256(source) != expected_projection_sha256:
@@ -125,6 +125,11 @@ def retire_projection(
         age = (datetime.now(timezone.utc) - observed).total_seconds()
         if age < _STALE_SECONDS:
             raise ValueError("projection is live or has future liveness")
+        claims = payload.get("claimed_tasks", [])
+        if not isinstance(claims, list) or any(claim != task_id for claim in claims):
+            raise ValueError("projection has other claimed tasks or malformed claims")
+        if payload.get("itil_claims"):
+            raise ValueError("projection has other claimed tasks in ITIL")
         if destination.exists():
             raise ValueError("quarantine destination exists")
 
