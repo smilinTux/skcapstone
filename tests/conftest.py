@@ -17,6 +17,7 @@ from __future__ import annotations
 import functools
 import ipaddress
 import json
+import runpy
 import shutil
 import socket
 import subprocess
@@ -27,6 +28,14 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _packaging_install_boundary(request):
+    """Build subprocesses must use the same safe environment as test installers."""
+    if request.path.name in {"test_package_data.py", "test_python311_compat_boundary.py"}:
+        guard = Path(__file__).resolve().parents[1] / "scripts/ci/test_environment.py"
+        runpy.run_path(str(guard))["check_environment"]()
 
 
 @pytest.fixture(autouse=True)

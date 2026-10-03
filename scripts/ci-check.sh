@@ -1,9 +1,12 @@
-#!/usr/bin/env bash
+#!/usr/bin/env -S -u BASH_ENV bash
 # ci-check.sh — Run the same checks as GitHub Actions CI locally.
 # Usage: bash scripts/ci-check.sh
 # Run this before committing/pushing to catch failures early.
 
 set -euo pipefail
+
+python "$(dirname "$0")/ci/test_environment.py"
+unset BASH_ENV ENV
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'

@@ -29,6 +29,12 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -p -e -o pipefail {0}
+env:
+  BASH_ENV: ""
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -44,7 +50,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install lint tools
-        run: pip install "black==26.5.1" "ruff==0.15.4"
+        run: |
+          python scripts/ci/test_environment.py
+          python -m pip install "black==26.5.1" "ruff==0.15.4"
       - name: Check formatting
         run: black --check src/ tests/
       - name: Lint
@@ -96,9 +104,11 @@ jobs:
           python-version: "3.12"
       - name: Build wheel and sdist
         run: |
-          pip install build
+          python scripts/ci/test_environment.py
+          python -m pip install build
           python -m build
       - name: Check dist
         run: |
-          pip install twine
+          python scripts/ci/test_environment.py
+          python -m pip install twine
           twine check dist/*

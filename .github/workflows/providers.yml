@@ -27,6 +27,12 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -p -e -o pipefail {0}
+env:
+  BASH_ENV: ""
+
 jobs:
   providers:
     name: provider tests (${{ matrix.extra }})
@@ -60,8 +66,10 @@ jobs:
 
       - name: Install package with the ${{ matrix.extra }} extra + dev tools
         run: |
+          python scripts/ci/test_environment.py
           python -m pip install --upgrade pip
-          pip install -e ".[${{ matrix.extra }},dev]"
+          python scripts/ci/test_environment.py
+          python -m pip install -e ".[${{ matrix.extra }},dev]"
 
       - name: Run ${{ matrix.extra }} provider tests (SDKs mocked, no creds)
         run: |
