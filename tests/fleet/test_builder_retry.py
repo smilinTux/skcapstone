@@ -213,6 +213,7 @@ def ready_retry(paths, production_setup, monkeypatch, tmp_path):
     grant["id"] = hashlib.sha256(retry.encoded(grant)).hexdigest()
     request["operator_retry"] = grant
     builder.request_path(paths, "node-worker", request["card_id"]).write_text(json.dumps(request))
+    (paths.root / "workspaces" / status["owner"]).mkdir(parents=True, exist_ok=True)
     return SimpleNamespace(paths=paths, home=tmp_path, request=request, status=status, card=card)
 
 

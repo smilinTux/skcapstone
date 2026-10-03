@@ -49,7 +49,7 @@ def _card() -> dict:
     }
 
 
-def _folded(**values) -> SimpleNamespace:
+def _folded(**values):
     defaults = {
         "id": "24b00003",
         "owner": None,
@@ -60,7 +60,10 @@ def _folded(**values) -> SimpleNamespace:
         "acceptance_criteria": list(_card()["acceptance_criteria"]),
     }
     defaults.update(values)
-    return SimpleNamespace(**defaults)
+    from skcapstone.card import Card
+
+    defaults["status"] = getattr(defaults["status"], "value", defaults["status"])
+    return Card(title="[M] Synthetic dispatch card", kind="task", swimlane="feature", **defaults)
 
 
 def test_niobe_places_one_generic_medium_card(paths, operator, noded41) -> None:
