@@ -415,7 +415,11 @@ def test_launcher_routes_every_lane_through_exit_wrapper() -> None:
     assert 'wrapper=os.path.join(os.path.dirname(__file__),"skfleet-worker-wrapper.py")' in source
     assert '"--claim-revision",claimed_revision' in source
     assert "inner=[" in source
-    assert "subprocess.run(_worker_launch_command(unit,workspace,inner)" in source
+    # Captured dispatcher 997b9795 reserves production custody before spawning.
+    prepared = source.index("_launch_argv=_worker_launch_command(unit,workspace,inner)")
+    reserved = source.index("_launch_argv=reserve_launch(", prepared)
+    spawned = source.index("r=subprocess.run(_launch_argv,", reserved)
+    assert prepared < reserved < spawned
 
 
 def test_detached_beat_cannot_strand_wrapper_after_immediate_child_exit(

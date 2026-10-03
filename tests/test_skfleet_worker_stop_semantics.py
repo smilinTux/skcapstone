@@ -239,4 +239,8 @@ def test_exact_generation_claim_release_is_owned_by_the_wrapper() -> None:
     assert 'trap "stop_beat" EXIT' in source
     assert '"--claim-revision",claimed_revision' in source
     # Launches still flow through the single detached launch command.
-    assert "subprocess.run(_worker_launch_command(unit,workspace,inner)" in source
+    # Captured dispatcher 997b9795 reserves production custody before spawning.
+    prepared = source.index("_launch_argv=_worker_launch_command(unit,workspace,inner)")
+    reserved = source.index("_launch_argv=reserve_launch(", prepared)
+    spawned = source.index("r=subprocess.run(_launch_argv,", reserved)
+    assert prepared < reserved < spawned

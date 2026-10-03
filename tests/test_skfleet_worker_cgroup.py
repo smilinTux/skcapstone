@@ -126,5 +126,9 @@ def test_launch_delegates_exact_claim_release_to_wrapper() -> None:
     assert 'trap "stop_beat" EXIT' in source
     assert '"--claim-revision",claimed_revision' in source
     assert '"--live-snapshot",os.path.join(LIVE, HOST + ".json")' in source
-    assert "subprocess.run(_worker_launch_command(unit,workspace,inner)" in source
+    # Captured dispatcher 997b9795 reserves production custody before spawning.
+    prepared = source.index("_launch_argv=_worker_launch_command(unit,workspace,inner)")
+    reserved = source.index("_launch_argv=reserve_launch(", prepared)
+    spawned = source.index("r=subprocess.run(_launch_argv,", reserved)
+    assert prepared < reserved < spawned
     assert '["tmux","new-session"' not in source
