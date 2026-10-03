@@ -162,6 +162,7 @@ def test_rotator_codex_size_aliases_have_exact_health_admission(
     )
     end = next(i for i in range(start + 1, len(tree.body)) if isinstance(tree.body[i], ast.Assign))
     namespace = {
+        "PRODUCTION_POLICY": None,
         "os": os,
         "re": re,
         "LANES": [{"name": "codex", "model": "sk-codex-mid"}, {"name": "glm", "model": "glm-4.6"}],
@@ -639,6 +640,7 @@ def test_rotator_health_lanes_carry_no_duplicate_bindings() -> None:
     )
     end = next(i for i in range(start + 1, len(tree.body)) if isinstance(tree.body[i], ast.Assign))
     namespace = {
+        "PRODUCTION_POLICY": None,
         "LANES": [
             {"name": "codex", "model": "sk-codex-mid"},
             {"name": "glm", "model": "sk-glm-s"},
