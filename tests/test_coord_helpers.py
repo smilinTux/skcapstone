@@ -100,7 +100,9 @@ def test_build_preserves_parent_and_inherits_exact_contract(tmp_path):
     assert parent.model_dump() == before
     assert helper.dependencies == ["deaf1234"]
     assert PARENT not in helper.dependencies
-    assert helper.tags == ["source-only", "no-external-action", "owner-helper", f"parent-{PARENT}"]
+    assert helper.tags == ["source-only", "no-external-action", "parent-dead1234",
+                           "owner-helper", f"parent-{PARENT}", "sk-s"]
+    assert helper.meta["logical_route"] == "sk-s"
     assert {key: helper.meta[key] for key in SOURCE} == SOURCE
     assert helper.meta["helper_parent_claim_revision"] == REVISION
     assert helper.meta["helper_allowed_paths"] == []

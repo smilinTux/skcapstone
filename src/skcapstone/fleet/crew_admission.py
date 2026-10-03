@@ -45,7 +45,16 @@ def validate_helper_generation(home: Path, card) -> None:
         or card.meta.get("helper_parent_contract_sha256") != parent_contract_digest(parent)
     ):
         raise ValueError("owner-helper parent generation changed")
-    expected = {label for label in parent.labels if not label.lower().startswith("parent-")}
+    route = card.meta.get("logical_route")
+    if route is None:
+        # Preserve admission for helpers created before explicit route metadata.
+        expected = {label for label in parent.labels if not label.lower().startswith("parent-")}
+    else:
+        if route not in {"sk-s", "sk-m"}:
+            raise ValueError("owner-helper logical route is not bounded")
+        expected = {label for label in parent.labels
+                    if not re.fullmatch(r"sk-[a-z]+(?:-[a-z]+)?", label.strip().lower())}
+        expected.add(route)
     expected |= {"owner-helper", "source-only", f"parent-{parent_id}"}
     if labels != expected or set(card.dependencies) != set(parent.dependencies):
         raise ValueError("owner-helper parent restrictions changed")

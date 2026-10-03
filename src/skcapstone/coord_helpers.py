@@ -145,12 +145,15 @@ def build_helper(parent, packet: dict, actor: str, claim_revision: str) -> Task:
         raise ValueError(
             "helpers cannot recursively request helpers; return scope growth to the parent owner"
         )
-    labels = [label for label in parent.labels if not label.lower().startswith("parent-")]
+    route = "sk-" + re.search(r"\[(S|M)\]", packet["title"]).group(1).lower()
+    # Keep inherited restrictions and lineage; replace only route-shaped labels.
+    labels = [label for label in parent.labels
+              if not re.fullmatch(r"sk-[a-z]+(?:-[a-z]+)?", label.strip().lower())]
     if any(label.lower() == "review" or label.lower().startswith("seat-") for label in labels):
         raise ValueError("governed seat or review parents cannot request source helpers")
     if re.search(r"\[(?:REVIEW|REREVIEW)\]", parent.title, re.I):
         raise ValueError("review parents must use their existing independent review contract")
-    for label in ("source-only", "owner-helper", f"parent-{parent.id}"):
+    for label in ("source-only", "owner-helper", f"parent-{parent.id}", route):
         if label not in labels:
             labels.append(label)
     helper_id = hashlib.sha256(f"{parent.id}:{packet['request_id']}".encode()).hexdigest()[:8]
@@ -177,6 +180,7 @@ def build_helper(parent, packet: dict, actor: str, claim_revision: str) -> Task:
         dependencies=list(parent.dependencies),
         meta={
             **source,
+            "logical_route": route,
             "helper_request_id": packet["request_id"],
             "helper_parent_id": parent.id,
             "helper_parent_claim_revision": claim_revision,
