@@ -284,9 +284,11 @@ jobs:
           needs.classify.outputs.docs-only != 'true' &&
           ((github.event_name != 'pull_request' && github.event_name != 'merge_group') ||
            matrix.python-version == '3.12')
+        env:
+          PYTHONUNBUFFERED: "1"
         run: |
           set -o pipefail
-          timeout --kill-after=10s 24m python -u -m pytest tests/ \
+          timeout --kill-after=10s 24m python -m pytest tests/ \
             --strict-markers \
             -m "not integration and not e2e" \
             --durations=40 -o faulthandler_timeout=60 \
