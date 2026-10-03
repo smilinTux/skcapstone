@@ -123,6 +123,7 @@ def _prelaunch_producer_route_calls(order: tuple[str, str]) -> list[str]:
         "elastic": {"elastic_review_admitted": True},
     }
     namespace = {
+        "PRODUCTION_POLICY": None,
         "_ONLY_SEAT": "",
         "_POOL_V2_ADMISSIONS": admissions,
         "_elastic_review": admissions[order[-1]]["elastic_review_admitted"],
