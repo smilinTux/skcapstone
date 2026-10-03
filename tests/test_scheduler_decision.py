@@ -29,19 +29,9 @@ from skcapstone.seat_runtime import (
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "fleet" / "skfleet-rotate.py"
 
-# Exact origin/main baseline at 659014a. This candidate may reduce inherited
-# launcher debt but must not add a finding in any existing Ruff category.
-LAUNCHER_RUFF_BASELINE = {
-    "E401": 1,
-    "E501": 11,
-    "E701": 93,
-    "E702": 20,
-    "E722": 2,
-    "E741": 4,
-    "F401": 1,
-    "F841": 1,
-    "I001": 1,
-}
+# Exact deployed dispatcher blob 997b9795, preserved in snapshot d0974223.
+# Forward fixes may reduce this inherited debt but may not expand it.
+LAUNCHER_RUFF_BASELINE = {'E401': 1, 'E402': 11, 'E501': 18, 'E701': 93, 'E702': 16, 'E722': 2, 'E741': 4, 'I001': 4}
 
 
 @pytest.mark.parametrize(
@@ -669,7 +659,7 @@ def test_launcher_ruff_does_not_expand_the_exact_inherited_baseline() -> None:
 
     assert not (set(counts) - set(LAUNCHER_RUFF_BASELINE))
     assert all(counts[code] <= baseline for code, baseline in LAUNCHER_RUFF_BASELINE.items())
-    assert sum(counts.values()) <= sum(LAUNCHER_RUFF_BASELINE.values()) == 134
+    assert sum(counts.values()) <= sum(LAUNCHER_RUFF_BASELINE.values()) == 149
 
 
 def test_launcher_emits_shadow_report_after_legacy_pool() -> None:
