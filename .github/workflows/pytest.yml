@@ -154,13 +154,21 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: pyproject.toml
-      - name: Install system deps (libfuse)
+      - name: Install system deps and isolated-test sandbox support
         if: needs.classify.outputs.docs-only != 'true'
         run: |
           sudo apt-get update \
             -o Dir::Etc::sourcelist="sources.list.d/ubuntu.sources" \
             -o Dir::Etc::sourceparts="-"
-          sudo apt-get install -y libfuse-dev
+          sudo apt-get install -y libfuse-dev bubblewrap dbus-user-session
+          # The deployed source-inspection tests exercise real sandbox and
+          # descendant cleanup guarantees. Provision their user manager on the
+          # disposable runner; never substitute successful sandbox results.
+          sudo loginctl enable-linger "$(id -un)"
+          sudo systemctl start "user@$(id -u).service"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+          systemctl --user show-environment > /dev/null
       - name: Install package with all extras and dev tools
         if: needs.classify.outputs.docs-only != 'true'
         run: |
