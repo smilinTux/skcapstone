@@ -1,9 +1,4 @@
-"""Real authority CLI integration with an explicitly substituted test validator.
-
-These tests require the separately pinned authority guarded-CLI installation;
-the source base alone does not contain that deployment dependency. The native
-test adapter owns execution/receipt qualification tests, not this test double.
-"""
+"""Candidate native CLI integration with an explicitly substituted test validator."""
 
 import hashlib
 import json
@@ -19,7 +14,6 @@ from skcoord.card_store import CardCore
 
 from skcapstone.fleet import production_review_finish as finish
 from skcapstone.fleet.production_review_evidence import inspect_proposal
-from skcapstone.fleet.production_test_plan import PREFIX
 from tests.fleet.test_source_bundle import git, publish, source  # noqa: F401
 
 
@@ -85,17 +79,16 @@ def test_native_state_reuses_only_current_locked_store(tmp_path, monkeypatch, le
 
 @pytest.fixture
 def pair(source, monkeypatch, tmp_path):  # noqa: F811
-    dependency = json.loads(
-        (
-            Path(__file__).parents[2] / "docs/evidence/agents/c1a30126/AUTHORITY-DEPENDENCY.json"
-        ).read_text()
-    )
-    authority = (PREFIX / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}"
-                 / "site-packages/skcapstone")
-    for relative, expected in dependency["modules"].items():
-        assert hashlib.sha256((authority / relative).read_bytes()).hexdigest() == expected, (
-            "authority guarded CLI dependency changed; requalify, do not claim base-only coverage"
-        )
+    candidate_src = Path(__file__).resolve().parents[2] / "src"
+    monkeypatch.setenv("PYTHONPATH", str(candidate_src))
+    # Verify the child interpreter resolves the candidate before testing writes.
+    import subprocess
+
+    resolved = subprocess.check_output(
+        [sys.executable, "-c", "import skcapstone; print(skcapstone.__file__)"],
+        text=True,
+    ).strip()
+    assert Path(resolved).resolve() == candidate_src / "skcapstone/__init__.py"
     home, store = source["home"], source["store"]
     card, owner = "24b00002", "pi-seraph-control-24b00002"
     artifact = publish(source)

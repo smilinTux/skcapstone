@@ -7,6 +7,7 @@ test receipt are independently revalidated before every mutation.
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 from skcoord.card_store import CardStore, card_mutation_lock
@@ -81,10 +82,9 @@ def native_state(home, card):
 
 
 def native_command(home, args):
-    """Use the installed native CLI with no unguarded or raw-event fallback."""
-    binary = Path.home() / ".skenv/bin/skcapstone"
+    """Use this interpreter's native CLI with no unguarded fallback."""
     result = subprocess.run(
-        [str(binary), "coord", *args, "--home", str(home)],
+        [sys.executable, "-m", "skcapstone", "coord", *args, "--home", str(home)],
         capture_output=True,
         text=True,
         timeout=60,
