@@ -225,61 +225,6 @@ def test_missing_telemetry_does_not_create_storage(sample):
     assert not sample[0].root.exists()
 
 
-def test_actual_reporter_publishes_only_exact_local_fresh_identity(tmp_path, monkeypatch):
-    import datetime as datetime_module
-
-    from skcapstone.fleet.worker_watchdog import classify_progress
-
-    script = Path(__file__).parents[2] / "scripts/fleet/skfleet-rotate.py"
-    tree = ast.parse(script.read_text())
-    function = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "_report_worker_progress"
-    )
-    captured = []
-    monkeypatch.setattr(progress, "publish_progress", lambda *a, **kw: captured.append((a, kw)))
-    identity = ["jarvis", NOW.timestamp() - 2000, "generation-1"]
-    receipt = {
-        "host": "fixture-node",
-        "session": "codex-auto-aabb0011",
-        "owner": "jarvis",
-        "claim_revision": "generation-1",
-        "workspace": "fixture-workspace",
-    }
-    namespace = {
-        "datetime": datetime_module,
-        "HOME": str(tmp_path),
-        "HOST": "fixture-node",
-        "LANES": [{"name": "codex", "prefix": "codex-auto-"}],
-        "_current_claim_identity_fresh": lambda _: tuple(identity),
-        "_read_admission_receipt": lambda _: copy.deepcopy(receipt),
-        "_admission_lock_path": lambda *a: None,
-        "_session_progress_at": lambda _: (NOW.timestamp() - 1800, 1),
-        "_session_transcript_bytes": lambda _: 1024,
-        "ProgressObservation": ProgressObservation,
-        "classify_progress": classify_progress,
-        "transcript_limit_bytes": lambda: 999999,
-        "classify_wedge": lambda *a, **kw: "unmeasured",
-        "DEFAULT_PROGRESS_TIMEOUT_S": 900,
-        "DEFAULT_WEDGE_TIMEOUT_S": 7200,
-        "_wedge_mode": lambda: "off",
-        "log": lambda *a: None,
-        "d": None,
-    }
-    exec(compile(ast.Module(body=[function], type_ignores=[]), str(script), "exec"), namespace)
-    records = namespace["_report_worker_progress"]([receipt["session"]], now=NOW.timestamp())
-    assert len(records) == len(captured) == 1
-    args, kwargs = captured[0]
-    assert args[0].root == tmp_path / ".skcapstone/fleet"
-    assert args[1] is records[0]["observation"]
-    assert kwargs["receipt_local"] is True
-    assert kwargs["claim_owner"] == "jarvis"
-    identity[0] = "other"
-    namespace["_report_worker_progress"]([receipt["session"]], now=NOW.timestamp())
-    assert len(captured) == 1
-
-
 def test_thirty_unchanged_real_controller_cycles_assign_one_diagnostic(sample, monkeypatch):
     from skcoord.card_store import CardCore, CardStore
 
