@@ -105,7 +105,8 @@ def test_registry_dispatches_explicit_readiness(monkeypatch, endpoint):
         lambda: [
             {
                 "name": "asserted-app",
-                "health_url": endpoint[0],
+                "health_url": None,
+                "health_readiness_url": endpoint[0],
                 "health_readiness": True,
                 "health_expected_json": {"maintenance": False},
                 "health_user_agent": "SKCapstone-Test/1",
@@ -142,6 +143,9 @@ def test_sdk_preserves_legacy_and_explicit_options(tmp_path):
     )
     entry = json.loads(__import__("pathlib").Path(path).read_text())
     assert entry["health_readiness"] is True
+    assert entry["health_url"] is None
+    assert entry["pid_file"] is None
+    assert entry["health_readiness_url"] == "https://example.test/ready"
     assert entry["health_expected_json"] == {"maintenance": False}
     assert entry["health_user_agent"] == "SKCapstone-Test/1"
 

@@ -330,8 +330,14 @@ def register_service(
         "registered_at": datetime.now(timezone.utc).isoformat(),
     }
     if readiness:
+        # Older daemons must report unknown, never downgrade readiness to reachability/PID.
         entry.update(
-            health_readiness=True, health_expected_json=expected_json, health_user_agent=user_agent
+            health_url=None,
+            pid_file=None,
+            health_readiness=True,
+            health_readiness_url=health_url,
+            health_expected_json=expected_json,
+            health_user_agent=user_agent,
         )
     final = registry / f"{name}.json"
     tmp = registry / f".{name}.json.{uuid.uuid4().hex[:8]}.tmp"

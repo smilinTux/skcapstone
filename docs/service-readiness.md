@@ -4,7 +4,7 @@ The existing service-health registry and scheduled health task support opt-in
 readiness. Legacy entries retain their reachability semantics. Register through
 `skcapstone.sdk.register_service(name, health_url, readiness=True,
 expected_json={"maintenance": False}, user_agent="SKCapstone-Readiness/1.0")`.
-The last two arguments are optional. The persisted fields are `health_readiness`,
+The last two arguments are optional. The persisted fields are `health_readiness_url`, `health_readiness`,
 `health_expected_json`, and `health_user_agent`.
 
 Use a documented vendor readiness endpoint, not a login page. A check requires
@@ -25,3 +25,7 @@ The scheduler's existing cadence and incident authority are unchanged. This
 feature does not create another collector or enable a recurring task by itself.
 `tests/test_service_readiness.py` uses a local HTTP fixture for healthy, missing,
 malformed, maintenance, policy-denial, redirect and oversized-response controls.
+
+Readiness registrations leave legacy `health_url` and `pid_file` empty. Older
+daemons therefore report unknown instead of silently weakening the readiness
+contract to a reachability or PID check during mixed-version rollout.

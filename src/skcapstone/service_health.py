@@ -484,18 +484,33 @@ def check_all_services() -> list[dict[str, Any]]:
         name = entry.get("name")
         if not name or name in known:
             continue
-        health_url = entry.get("health_url")
-        pid_file = entry.get("pid_file")
-        if health_url and str(health_url).lower() != "disabled":
-            readiness_options = any(
-                key in entry
-                for key in ("health_readiness", "health_expected_json", "health_user_agent")
+        readiness_options = any(
+            key in entry
+            for key in (
+                "health_readiness",
+                "health_readiness_url",
+                "health_expected_json",
+                "health_user_agent",
             )
-            if readiness_options and entry.get("health_readiness") is not True:
+        )
+        if readiness_options:
+            from .service_readiness import check_http_readiness
+
+            if entry.get("health_readiness") is True:
+                results.append(
+                    check_http_readiness(
+                        name,
+                        entry.get("health_readiness_url"),
+                        expected_json=entry.get("health_expected_json"),
+                        user_agent=entry.get("health_user_agent"),
+                        timeout=CHECK_TIMEOUT,
+                    )
+                )
+            else:
                 results.append(
                     {
                         "name": name,
-                        "url": str(health_url),
+                        "url": entry.get("health_readiness_url"),
                         "status": "unknown",
                         "latency_ms": None,
                         "version": None,
@@ -503,20 +518,12 @@ def check_all_services() -> list[dict[str, Any]]:
                         "error_class": "invalid_config",
                     }
                 )
-            elif entry.get("health_readiness") is True:
-                from .service_readiness import check_http_readiness
-
-                results.append(
-                    check_http_readiness(
-                        name,
-                        str(health_url),
-                        expected_json=entry.get("health_expected_json"),
-                        user_agent=entry.get("health_user_agent"),
-                        timeout=CHECK_TIMEOUT,
-                    )
-                )
-            else:
-                results.append(_http_check(name, str(health_url).rstrip("/")))
+            known.add(name)
+            continue
+        health_url = entry.get("health_url")
+        pid_file = entry.get("pid_file")
+        if health_url and str(health_url).lower() != "disabled":
+            results.append(_http_check(name, str(health_url).rstrip("/")))
         elif pid_file:
             results.append(_pid_check(name, Path(pid_file).expanduser()))
         else:
