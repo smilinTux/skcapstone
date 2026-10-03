@@ -281,8 +281,11 @@ def finalize_failed_launch(
             raise AdmissionError("failed launch process still exists")
         group = before["ControlGroup"]
         if group:
-            events = Path("/sys/fs/cgroup") / group.lstrip("/") / "cgroup.events"
-            if events.exists() and "populated 0" not in events.read_text().splitlines():
+            cgroup = Path("/sys/fs/cgroup") / group.lstrip("/")
+            events = cgroup / "cgroup.events"
+            if cgroup.exists() and (
+                not events.is_file() or "populated 0" not in events.read_text().splitlines()
+            ):
                 raise AdmissionError("failed launch cgroup is not empty")
         if unit_state(unit, terminal=True) != before:
             raise AdmissionError("failed launch invocation changed during observation")

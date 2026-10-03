@@ -172,9 +172,26 @@ def test_process_or_cgroup_population_refuses(failed, monkeypatch):
     monkeypatch.setattr(Path, "exists", original)
     failed.state.update(ControlGroup="/user.slice/" + UNIT, TasksCurrent="0")
     monkeypatch.setattr(
-        Path, "exists", lambda path: True if path.name == "cgroup.events" else original(path)
+        Path,
+        "exists",
+        lambda path: True if str(path).startswith("/sys/fs/cgroup/") else original(path),
     )
+    monkeypatch.setattr(Path, "is_file", lambda path: path.name == "cgroup.events")
     monkeypatch.setattr(Path, "read_text", lambda path: "populated 1\n")
+    with pytest.raises(admission.AdmissionError, match="cgroup"):
+        finish(failed)
+    assert not (failed.directory / "failed-terminal.json").exists()
+
+
+def test_existing_cgroup_without_readable_events_is_not_terminal(failed, monkeypatch):
+    original = Path.exists
+    failed.state.update(ControlGroup="/user.slice/" + UNIT, TasksCurrent="0")
+    monkeypatch.setattr(
+        Path,
+        "exists",
+        lambda path: True if str(path).startswith("/sys/fs/cgroup/") else original(path),
+    )
+    monkeypatch.setattr(Path, "is_file", lambda path: False)
     with pytest.raises(admission.AdmissionError, match="cgroup"):
         finish(failed)
     assert not (failed.directory / "failed-terminal.json").exists()
