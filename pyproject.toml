@@ -131,6 +131,10 @@ all = [
     "docker>=7.0",
 ]
 dev = [
+    # Packaging tests build offline using the declared build backend.
+    "setuptools>=68.0",
+    "wheel",
+    "setuptools_scm>=8",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-asyncio>=0.23",

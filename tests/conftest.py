@@ -15,13 +15,77 @@ Coverage audit (task 945325c8, 2026-03-02):
 from __future__ import annotations
 
 import functools
+import ipaddress
 import json
 import shutil
+import socket
 import subprocess
 import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _no_external_network(monkeypatch, request):
+    """Fail at the socket boundary if a unit test misses an endpoint stub.
+
+    Loopback remains available for in-process HTTP server contract tests.
+    A pytest failure cannot be swallowed by production's network-error fallback.
+    """
+    if any(request.node.get_closest_marker(mark) for mark in ("integration", "e2e")):
+        return
+    resolve = socket.getaddrinfo
+    connect = socket.socket.connect
+
+    def check(host):
+        if isinstance(host, bytes):
+            host = host.decode("ascii")
+        if host in (None, "", "localhost", "0.0.0.0", "::"):
+            return
+        try:
+            if ipaddress.ip_address(host).is_loopback:
+                return
+        except ValueError:
+            pass
+        pytest.fail(f"Unit test attempted a real endpoint: {host}; stub its transport")
+
+    def resolve_local(host, *args, **kwargs):
+        check(host)
+        return resolve(host, *args, **kwargs)
+
+    def connect_local(connection, address):
+        if connection.family in (socket.AF_INET, socket.AF_INET6):
+            check(address[0])
+        return connect(connection, address)
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve_local)
+    monkeypatch.setattr(socket.socket, "connect", connect_local)
+
+
+@pytest.fixture(autouse=True)
+def _offline_unit_services(monkeypatch, request):
+    """Default discovery to offline services; HTTP contract tests supply responses.
+
+    Context generation probes the skills registry with a 30-second timeout;
+    doctor probes PyPI once per package. Neither may consult the real services
+    during a unit test. Tests patching urlopen in their body override this stub.
+    """
+    if any(request.node.get_closest_marker(mark) for mark in ("integration", "e2e")):
+        return
+    original = urllib.request.urlopen
+
+    def offline_services(url, *args, **kwargs):
+        address = url.full_url if isinstance(url, urllib.request.Request) else url
+        if urllib.parse.urlsplit(address).hostname in {"skskills.skworld.io", "pypi.org"}:
+            raise urllib.error.URLError("synthetic offline service in unit fixture")
+        return original(url, *args, **kwargs)
+
+    monkeypatch.setattr(urllib.request, "urlopen", offline_services)
+
 
 # ---------------------------------------------------------------------------
 # Token signing fixtures
