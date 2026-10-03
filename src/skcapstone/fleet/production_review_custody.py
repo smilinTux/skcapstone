@@ -54,6 +54,27 @@ def retain_review_exit(home, args, card, *, terminal_proven):
             "source_head": args.source_base_revision,
             "exit_code": args.production_child_exit_code,
         }
+        request_id = os.environ.get("SKFLEET_REVIEW_REQUEST")
+        if request_id:
+            from . import builder_dispatch
+            from .paths import FleetPaths
+
+            node = os.environ.get("SKFLEET_REVIEW_NODE", "")
+            if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", node) or ".." in node:
+                raise ReviewEvidenceError("remote review node missing")
+            paths = FleetPaths(Path(home) / "fleet")
+            status = read_json(builder_dispatch.status_path(paths, node, args.card))
+            execution = status.get("execution", {})
+            if (
+                status.get("request_id") != request_id
+                or status.get("owner") != args.owner
+                or status.get("claim_revision") != args.claim_revision
+                or execution.get("invocation") != invocation
+                or execution.get("unit") != unit
+                or execution.get("host") != args.host
+            ):
+                raise ReviewEvidenceError("remote review execution acknowledgment pending")
+            receipt["execution"] = execution
         path = exit_path(home, args.card, args.claim_revision)
         once(path, receipt)
         state["terminal_receipt"] = str(path)
@@ -125,3 +146,52 @@ def read_exit(home, card, claim):
     ):
         raise ReviewEvidenceError("review exit did not succeed")
     return value
+
+
+def import_remote_exits(home, policy):
+    """Retain only exact destination terminal evidence validated by authority."""
+    from skcoord.card_store import CardStore
+
+    from .production_receipts import production_receipt_allowed
+
+    for path in (Path(home) / "fleet/status").glob("*/dispatch/*.json"):
+        try:
+            status = read_json(path)
+            if (
+                status.get("work_kind") != "review"
+                or status.get("state")
+                not in {"awaiting-review-acceptance", "review-fail", "review-blocked"}
+                or status.get("node") != path.parent.parent.name
+            ):
+                continue
+            terminal, execution = status["terminal"], status["execution"]
+            card = CardStore(home).fold(status["card_id"])
+            events = [
+                event
+                for event in CardStore(home)._read_events(card.id)
+                if event.get("action") == "review_assignment_launch"
+                and event.get("claim_revision") == status["claim_revision"]
+            ]
+            launch = dict(
+                host=execution["host"],
+                owner=status["owner"],
+                revision=status["claim_revision"],
+                lane=terminal["lane"],
+                model=terminal["model"],
+            )
+            if (
+                len(events) != 1
+                or terminal.get("execution") != execution
+                or terminal.get("card") != card.id
+                or terminal.get("owner") != card.owner
+                or terminal.get("claim_revision") != launch["revision"]
+                or any(
+                    terminal.get(key) != execution[key] for key in ("host", "unit", "invocation")
+                )
+                or not production_receipt_allowed(home, policy, launch, card, events[0])
+            ):
+                continue
+            unit_terminal(execution["unit"], execution["invocation"], host=execution["host"])
+            once(exit_path(home, card.id, launch["revision"]), terminal)
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            continue  # Missing or delayed sync retains existing custody.

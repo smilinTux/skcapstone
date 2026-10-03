@@ -215,8 +215,37 @@ def collect(home, policy, card, claim, *, process_check):
     source_terminal = _producer_terminal(home, source, manifest)
     if producer_family(source.owner, source_terminal["family"]) == provider_family(domain):
         raise ReviewEvidenceError("review family is not independent")
+    review_workspace = Path(terminal["workspace"])
+    if launches[0].get("schema") == "skfleet.review-assignment-launch/v3":
+        from .builder_dispatch import request_path, status_path
+        from .paths import FleetPaths
+        from .review_dispatch import proposal_binding
+        from .source_bundle import import_review_packet, load_review_packet
+
+        paths = FleetPaths(home / "fleet")
+        execution = launches[0]["execution"]
+        status = read_json(status_path(paths, execution["node"], card))
+        request = read_json(request_path(paths, execution["node"], card))
+        if (
+            status.get("state") != "awaiting-review-acceptance"
+            or status.get("terminal") != terminal
+            or terminal.get("execution") != execution
+        ):
+            raise ReviewEvidenceError("remote terminal custody differs")
+        unit_terminal(execution["unit"], execution["invocation"], host=execution["host"])
+        review_workspace = directory / "imported-review"
+        if not review_workspace.exists():
+            if not import_review_source(core, repository, head, review_workspace):
+                raise ReviewEvidenceError("remote review source import unavailable")
+        import_review_packet(
+            home,
+            load_review_packet(home, status["review_packet"], card),
+            review_workspace,
+            proposal_binding(request),
+            execution=execution,
+        )
     proposal = inspect_proposal(
-        Path(terminal["workspace"]),
+        review_workspace,
         card=card,
         parent_card=parent,
         source_head=head,
@@ -300,6 +329,9 @@ def reconcile(home, policy, *, process_check):
     home = Path(home)
     if policy["authority_host"] != socket.gethostname().split(".")[0].lower():
         raise ReviewEvidenceError("source acceptance is authority-only")
+    from .production_review_custody import import_remote_exits
+
+    import_remote_exits(home, policy)
     results = []
     for path in sorted((home / "evidence/production-review-exits").glob("*.json")):
         match = re.fullmatch(r"([0-9a-f]{8})-([0-9a-f]{32})\.json", path.name)
@@ -308,6 +340,16 @@ def reconcile(home, policy, *, process_check):
         card, claim = match.groups()
         directory = review_directory(home, card, claim)
         try:
+            negative_path = directory / "negative-disposition.json"
+            if negative_path.exists():
+                results.append(read_json(negative_path))
+                continue
+            from ..review_verdict import recorded_verdict
+
+            verdict = recorded_verdict(card, home)
+            if verdict == "FAIL" or str(verdict).startswith("BLOCKED "):
+                results.append(finish_remote_disposition(home, policy, card, claim))
+                continue
             context_path = directory / "context.json"
             context = (
                 read_json(context_path)
@@ -350,3 +392,105 @@ def reconcile(home, policy, *, process_check):
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
             results.append({"card": card, "state": "pending", "reason": str(exc)[:200]})
     return results
+
+
+def finish_remote_disposition(home, policy, card_id, claim):
+    """Accept real negative review evidence without completing its producer."""
+    from ..review_verdict import recorded_verdict
+    from .builder_dispatch import request_path, status_path
+    from .paths import FleetPaths
+    from .production_review_finish import native_command
+    from .review_dispatch import proposal_binding
+    from .source_bundle import import_review_packet, inspect_remote_review, load_review_packet
+
+    home = Path(home)
+    if socket.gethostname().split(".")[0].lower() != policy["authority_host"]:
+        raise ReviewEvidenceError("review disposition is authority-only")
+    cards = CardStore(home)
+    card = cards.fold(card_id)
+    terminal = read_exit(home, card_id, claim)
+    events = [
+        e
+        for e in cards._read_events(card_id)
+        if e.get("action") == "review_assignment_launch"
+        and e.get("claim_revision") == claim
+        and e.get("launched") is True
+    ]
+    launch = dict(
+        host=terminal["host"],
+        owner=terminal["owner"],
+        revision=claim,
+        model=terminal["model"],
+        lane=terminal["lane"],
+    )
+    if (
+        len(events) != 1
+        or events[0].get("schema") != "skfleet.review-assignment-launch/v3"
+        or not production_receipt_allowed(home, policy, launch, card, events[0])
+    ):
+        raise ReviewEvidenceError("negative review launch provenance unavailable")
+    execution = events[0]["execution"]
+    paths = FleetPaths(home / "fleet")
+    request = read_json(request_path(paths, execution["node"], card_id))
+    status = read_json(status_path(paths, execution["node"], card_id))
+    if (
+        status.get("state") not in {"review-fail", "review-blocked"}
+        or status.get("terminal") != terminal
+        or terminal.get("execution") != execution
+        or card.archived
+        or {"hold", "do-not-claim"}.intersection(card.labels)
+    ):
+        raise ReviewEvidenceError("negative review terminal custody unavailable")
+    unit_terminal(execution["unit"], execution["invocation"], host=execution["host"])
+    directory = review_directory(home, card_id, claim)
+    workspace = directory / "imported-review"
+    if not workspace.exists() and not import_review_source(
+        card.model_dump(mode="json"), request["repository"], request["source"]["head"], workspace
+    ):
+        raise ReviewEvidenceError("negative review candidate unavailable")
+    import_review_packet(
+        home,
+        load_review_packet(home, status["review_packet"], card_id),
+        workspace,
+        proposal_binding(request),
+        execution=execution,
+    )
+    proposal = inspect_remote_review(workspace, **proposal_binding(request))
+    verdict = recorded_verdict(card_id, home)
+    expected = proposal["proposal"]["verdict"].split()[0]
+    _current_outcome(cards, card)
+    if (
+        expected not in {"FAIL", "BLOCKED"}
+        or not verdict
+        or (verdict != "FAIL" if expected == "FAIL" else not verdict.startswith("BLOCKED "))
+        or card.links.get("reviewer_evidence_sha256") != proposal["report_sha256"]
+    ):
+        raise ReviewEvidenceError("negative native verdict differs from committed evidence")
+    source_before = native_state(home, request["source"]["card"])
+    before = native_state(home, card_id)
+    # Existing native completion validates FAIL/structured BLOCKED. No link or
+    # completion command is issued against the producer in this branch.
+    native_command(
+        home,
+        [
+            "complete",
+            card_id,
+            "--agent",
+            card.owner,
+            "--expected-source-revision",
+            before["revision"],
+            "--expected-claim-revision",
+            claim,
+        ],
+    )
+    if native_state(home, request["source"]["card"]) != source_before:
+        raise ReviewEvidenceError("producer changed during negative review acceptance")
+    result = dict(
+        card=card_id,
+        state="review-" + expected.lower(),
+        source_revision=source_before["revision"],
+        execution=execution,
+        report_sha256=proposal["report_sha256"],
+    )
+    once(directory / "negative-disposition.json", result)
+    return result
