@@ -288,6 +288,7 @@ jobs:
           python -m pytest tests/ \
             --strict-markers \
             -m "not integration and not e2e" \
+            --durations=40 -o faulthandler_timeout=60 \
             --cov=skcapstone --cov-report=xml --cov-report=term-missing
       - name: Build and run Python 3.11 compatibility lane
         if: >-
