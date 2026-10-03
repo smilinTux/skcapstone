@@ -270,7 +270,13 @@ def test_existing_holds_reservations_capacity_and_cadence_remain() -> None:
     assert 'MAX_LAUNCH=int(os.environ.get("SKFLEET_MAX_LAUNCH","11"))' in rotate
     assert 'remaining={lane["name"]:lane["free"] for lane in LANES}' in rotate
     assert "off = ROTATION_HOSTS.index(HOST) if HOST in ROTATION_HOSTS else 0" in rotate
-    assert '_LANE_RANK={"qwen":0,"glm":1,"codex":2,"kimi":3,"escalate":4}' in rotate
+    # Deployed 997b9795 adds deepseek while retaining the relative legacy order.
+    rank_node = next(
+        node for node in ast.parse(rotate).body if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "_LANE_RANK" for t in node.targets)
+    )
+    ranks = ast.literal_eval(rank_node.value)
+    assert sorted(ranks, key=ranks.get) == ["qwen", "glm", "deepseek", "codex", "kimi", "escalate"]
     assert "chiap01 chiap02 chiap03 chiap04 chiap08" in watch
     assert "sleep 300" in watch
 
