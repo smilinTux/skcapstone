@@ -105,3 +105,14 @@ def test_small_mailbox_reads_whole_and_acks_clean(tmp_path: Path) -> None:
     assert len(_shown(out)) == 3 and "more unread" not in out
     _run(tmp_path, "ack", "worker7")
     assert "(0 new)" in _run(tmp_path, "read", "worker7").stdout
+
+
+def test_last_line_still_parses_as_total_unread_for_seats(tmp_path: Path) -> None:
+    """seat_mail.py parses r"\\((\\d+) new\\)\\s*$". It must see the TOTAL unread,
+    not zero and not just the shown batch."""
+    import re
+
+    _box(tmp_path, 200)
+    out = _run(tmp_path, "read", "worker7").stdout
+    match = re.compile(r"\((\d+) new\)\s*$", re.MULTILINE).search(out)
+    assert match is not None and int(match.group(1)) == 200

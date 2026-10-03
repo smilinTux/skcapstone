@@ -293,9 +293,11 @@ if flag("--urgent") or flag("--summary"):
 elif shown:
     open(shown_path, "w", encoding="utf-8").write(shown[-1][1]["ts"])
     if rest:
-        print("(%d new shown, %d more unread: act on these, skmail ack %s, then skmail read %s again)" % (len(shown), rest, me, me))
-    else:
-        print("(%d new)" % len(shown))
+        print("(%d shown, %d more unread: act on these, skmail ack %s, then skmail read %s again)" % (len(shown), rest, me, me))
+    # Always end with "(N new)", N = TOTAL unread. seat_mail.py parses exactly this
+    # line with a regex anchored at line end, so any other final line would make
+    # every seat silently report zero new mail.
+    print("(%d new)" % len(unread))
 else:
     try: os.remove(shown_path)
     except OSError: pass
