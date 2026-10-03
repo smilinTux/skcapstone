@@ -7,7 +7,8 @@ Before=skfleet-link.service
 Type=oneshot
 Environment=SKAGENT=link-producer
 Environment=SKCAPSTONE_AGENT=link-producer
-Environment=SKFLEET_LINK_REPOSITORIES=smilinTux/skcapstone,smilinTux/skdashboard,smilinTux/skworld,smilinTux/sk-standards
+Environment=SKFLEET_LINK_REPOSITORIES=smilinTux/skcapstone,smilinTux/skdashboard,smilinTux/skworld,smilinTux/sk-standards,https://skgit.skstack01.douno.it/smilinTux/sklegal
+EnvironmentFile=-%h/api-keys/link-skgit.env
 Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/.skenv/bin/python3 %h/.skenv/bin/skfleet-link-producer.py
 TimeoutStartSec=180
