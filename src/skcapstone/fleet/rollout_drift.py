@@ -453,7 +453,7 @@ def detect_drift(manifest: dict[str, Any], home: Path | str, repo_root: Path | s
     repo_root = Path(repo_root)
     # This marker selects the installed layout only. Policy parsing and worker
     # authorization remain with the native production admission path.
-    production = (home / ".skcapstone/fleet/production.json").exists()
+    production = (paths_for_home(home).root / "production.json").exists()
     host = self_node_name()
     readiness = _load_readiness_module(repo_root)
 
