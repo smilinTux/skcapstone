@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Mapping
 
 from skcapstone.card_store import CardStore
+from skcapstone.fleet.liveness_publication import matches_process, unit_properties
 from skcapstone.fleet.paths import default_paths
 from skcapstone.fleet.worker_liveness import (
     AssistanceRequest,
@@ -37,7 +38,7 @@ def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
 def _claim_revision(home: Path, card_id: str) -> str | None:
     """Read the authoritative current CardStore claim generation."""
     card = CardStore(home).fold(card_id)
-    if card is None or card.status not in {"claimed", "doing", "ready"}:
+    if card is None or card.status not in {"claimed", "doing", "ready", "review"}:
         return None
     return str(getattr(card, "claim_revision", "") or card.meta.get("_claim_revision") or "")
 
@@ -106,7 +107,27 @@ def collect_observations(
             beat = json.loads(beat_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
+        if not isinstance(beat, dict):
+            continue
+        # Legacy beats cannot prove a process generation. Reject them before
+        # replaying CardStore's shared legacy log or looking up a reused unit.
+        pid = beat.get("pid")
+        invocation = beat.get("invocation_id")
+        if (
+            type(pid) is not int
+            or pid <= 0
+            or not isinstance(invocation, str)
+            or not re.fullmatch(r"[0-9a-f]{32}", invocation)
+        ):
+            continue
         card_id = str(beat.get("card_id") or "")
+        if not re.fullmatch(r"[0-9a-f]{8}", card_id):
+            continue
+        owner = str(beat.get("agent") or beat.get("owner") or "")
+        claim = str(beat.get("claim_revision") or "")
+        current_claim = _claim_revision(home, card_id) if card_id else None
+        if not claim or claim != current_claim:
+            continue
         unit = str(beat.get("unit") or "")
         if not unit and re.fullmatch(r"[0-9a-f]{8}", card_id):
             listed = runner(
@@ -124,26 +145,11 @@ def collect_observations(
             unit = candidates[0] if len(candidates) == 1 else ""
         if not UNIT.fullmatch(unit) or UNIT.fullmatch(unit).group(1) != card_id:
             continue
-        show = runner(
-            [
-                "systemctl",
-                "--user",
-                "show",
-                unit,
-                "--property=ExecMainPID,ControlGroup,ActiveState,WorkingDirectory",
-            ]
-        )
-        properties = (
-            dict(line.split("=", 1) for line in show.stdout.splitlines() if "=" in line)
-            if show.returncode == 0
-            else {}
-        )
-        try:
-            pid = int(properties.get("ExecMainPID", ""))
-        except ValueError:
-            pid = 0
-        if pid <= 0:
-            pid = 0
+        properties = unit_properties(unit, runner)
+        if not matches_process(
+            properties, card=card_id, owner=owner, claim=claim, pid=pid, invocation=invocation
+        ):
+            continue
         active = properties.get("ActiveState") == "active"
         cgroup = (
             properties.get("ControlGroup")
@@ -181,9 +187,9 @@ def collect_observations(
                 host=host,
                 observer_host=host,
                 observed_at=observed_at,
-                owner=str(beat.get("agent") or beat.get("owner") or ""),
+                owner=owner,
                 card_id=card_id,
-                claim_generation=str(beat.get("claim_revision") or ""),
+                claim_generation=claim,
                 process_identity=f"pid:{pid}" if pid > 0 else None,
                 session_id=str(beat.get("session") or beat.get("session_id") or "") or None,
                 managed_session=True,
@@ -222,8 +228,8 @@ def collect_observations(
                 quiet_tool_wait=bool(beat.get("quiet_tool_wait", False)),
                 interrupted=bool(beat.get("interrupted", False)),
                 cleanup_failed=bool(beat.get("cleanup_failed", False)),
-                claim_active=_claim_revision(home, card_id) is not None,
-                current_claim_generation=_claim_revision(home, card_id),
+                claim_active=True,
+                current_claim_generation=current_claim,
                 cgroup_processes=(
                     len(current_processes) if current_processes is not None else None
                 ),
@@ -241,6 +247,7 @@ def collect_observations(
                 workspace_head=custody[1] if custody else None,
                 workspace_custody_at=observed_at if custody else None,
                 workspace_custody_sha256=custody[2] if custody else None,
+                invocation_id=invocation,
             )
         )
     return tuple(rows)
@@ -263,24 +270,18 @@ def authorize_observation(
         return False
     if _claim_revision(home, observation.card_id) != observation.claim_generation:
         return False
-    show = runner(
-        [
-            "systemctl",
-            "--user",
-            "show",
-            observation.unit or "",
-            "--property=Id,ExecMainPID,ControlGroup,ActiveState",
-        ]
-    )
-    if show.returncode:
-        return False
-    properties = dict(line.split("=", 1) for line in show.stdout.splitlines() if "=" in line)
+    properties = unit_properties(observation.unit or "", runner)
     if (
-        properties.get("Id") != observation.unit
-        or properties.get("ExecMainPID") != str(observation.pid)
+        not matches_process(
+            properties,
+            card=observation.card_id,
+            owner=observation.owner,
+            claim=observation.claim_generation,
+            pid=observation.pid or 0,
+            invocation=observation.invocation_id or "",
+        )
         or properties.get("ActiveState") != "inactive"
         or properties.get("ControlGroup") not in {"", observation.cgroup}
-        or set(properties) != {"Id", "ExecMainPID", "ControlGroup", "ActiveState"}
     ):
         return False
     if properties["ControlGroup"]:
@@ -313,6 +314,8 @@ def authorize_observation(
         if (
             candidate.get("card_id") == observation.card_id
             and candidate.get("claim_revision") == observation.claim_generation
+            and (candidate.get("agent") or candidate.get("owner")) == observation.owner
+            and candidate.get("invocation_id") == observation.invocation_id
         ):
             payload = candidate
             beat_digest = hashlib.sha256(raw).hexdigest()
@@ -372,18 +375,34 @@ class ProductionActions:
 
     def reconcile_projection(self, projection: WorkerProjection) -> None:
         """Publish the exact generation's liveness state through coord."""
-        self.runner(
+        if not projection.unit or not projection.pid or not projection.invocation_id:
+            return
+        result = self.runner(
             [
                 "skcapstone",
                 "coord",
-                "link",
+                "worker-liveness",
                 projection.card_id,
-                "worker_liveness",
-                f"{projection.owner}|{projection.claim_generation}|{projection.state}",
+                "--owner",
+                projection.owner,
+                "--expected-claim-revision",
+                projection.claim_generation,
+                "--state",
+                projection.state,
+                "--unit",
+                projection.unit,
+                "--pid",
+                str(projection.pid),
+                "--invocation",
+                projection.invocation_id,
+                "--home",
+                str(self.home),
                 "--agent",
                 self.agent,
             ]
         )
+        if getattr(result, "returncode", 1):
+            raise RuntimeError("worker liveness publication failed")
 
     def publish_metrics(self, values: Mapping[str, float | int]) -> None:
         """Atomically publish fleet liveness metrics for scraping."""
@@ -431,7 +450,15 @@ def run_production_cycle(
         tuple(projections)
         if projections is not None
         else tuple(
-            WorkerProjection(row.owner, row.card_id, row.claim_generation, "active")
+            WorkerProjection(
+                row.owner,
+                row.card_id,
+                row.claim_generation,
+                "active",
+                row.unit,
+                row.pid,
+                row.invocation_id,
+            )
             for row in observed
         )
     )

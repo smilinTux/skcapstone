@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import fcntl
-import hashlib
 import json
 import logging
 import os
+import secrets
 import shutil
 import subprocess
 import tempfile
@@ -21,7 +21,7 @@ from skcoord.coordination import TaskUnclaimable
 from ..atomic_io import atomic_write_text
 from ..coordination import Board
 from ..seat_mail import startup_hello
-from . import scheduler, store
+from . import production_builder, scheduler, store
 from .churn_breaker import ClaimRefusedError, assert_claim_permitted
 from .node_controller import NodeView, node_views
 from .paths import SOVEREIGN_HOME, FleetPaths, valid_name
@@ -30,10 +30,11 @@ ROLE = "builder-standby"
 PROVIDER = "skgateway"
 LOGICAL_ROUTES = frozenset({"sk-s", "sk-m", "sk-l", "sk-xl"})
 LEASE_SECONDS = 900
-TERMINAL_STATES = {"completed", "blocked", "failed", "stale"}
+TERMINAL_STATES = {"completed", "blocked", "failed", "stale", "awaiting-review"}
 MAX_ATTEMPTS = 2
 MATCH_RETRY_LIMIT = 3
 BUILDER_CAPACITY = 4
+CAPACITY_LABEL = "builder-capacity"
 _PROCESSES: dict[str, object] = {}
 _WORKER_TOOLS = "read,bash,edit,write,grep,find,ls"
 _BUNDLED_GUARD = Path(__file__).resolve().parents[3] / "scripts/fleet/pi-cardstore-guard.mjs"
@@ -78,6 +79,36 @@ def status_path(paths: FleetPaths, node: str, card_id: str) -> Path:
     return paths.status_path(node, "dispatch", card_id)
 
 
+def _validated_status(path: Path, paths: FleetPaths, node: str) -> dict | None:
+    """Return one canonical dispatch status, ignoring untrusted siblings."""
+    if store._is_conflict_copy(path):
+        return None
+    status = _load(path) or {}
+    card_id = status.get("card_id")
+    if (
+        status.get("schema") != "skfleet.builder-dispatch-status/v1"
+        or status.get("node") != node
+        or not isinstance(card_id, str)
+        or not valid_name(card_id)
+        or path != status_path(paths, node, card_id)
+        or not isinstance(status.get("request_id"), str)
+        or not status["request_id"]
+    ):
+        return None
+    return status
+
+
+def _dispatch_statuses(paths: FleetPaths, node: str) -> dict[str, dict]:
+    """Return canonical validated dispatch statuses keyed by safe card id."""
+    directory = status_path(paths, node, "placeholder").parent
+    records: dict[str, dict] = {}
+    for path in sorted(directory.glob("*.json")) if directory.exists() else ():
+        status = _validated_status(path, paths, node)
+        if status is not None:
+            records[status["card_id"]] = status
+    return records
+
+
 @contextmanager
 def _request_exclusion(path: Path):
     """Serialize one request generation across duplicate node daemons."""
@@ -100,11 +131,14 @@ def logical_route(labels: list[str] | tuple[str, ...]) -> str | None:
 def eligible(core: dict, labels: list[str] | tuple[str, ...]) -> bool:
     """Return whether a card is a bounded provider-neutral source workload."""
     normalized = {str(label).strip().lower() for label in labels}
+    excluded = {"host-pin"}
+    if "SKFLEET_PRODUCTION_POLICY" not in os.environ:
+        excluded.update({"codex-only", "qwen-only", "glm-only"})
     return (
         logical_route(labels) is not None
         and "source-only" in normalized
         and not any(label.startswith("seat-") for label in normalized)
-        and not normalized.intersection({"host-pin", "codex-only", "qwen-only", "glm-only"})
+        and not normalized.intersection(excluded)
         and isinstance(core.get("id"), str)
     )
 
@@ -144,7 +178,9 @@ def _source(core: dict) -> tuple[str, str, str]:
     return repository, base_ref, revision
 
 
-def _request_matches_current_card(coordination_home: Path, request: dict) -> None:
+def _request_matches_current_card(
+    coordination_home: Path, request: dict, *, retained_claim=False
+) -> None:
     """Reject an offered request after any source or eligibility amendment."""
     card = CardStore(coordination_home).fold(str(request.get("card_id") or ""))
     if card is None:
@@ -159,13 +195,28 @@ def _request_matches_current_card(coordination_home: Path, request: dict) -> Non
         or labels != expected_labels
     ):
         raise BuilderDispatchError("offered card changed after dispatch request")
+    if request.get("production") is not None and not retained_claim:
+        from .production_test_profile import contract, validate_profile
+
+        try:
+            validate_profile(
+                request.get("test_profile"),
+                contract(dict(core, acceptance_criteria=card.acceptance_criteria)),
+                production_builder.policy(), environment=False,
+            )
+        except (ValueError, TypeError) as exc:
+            raise BuilderDispatchError("offered test qualification changed") from exc
 
 
-def _ensure_request_matches_current_card(coordination_home: Path, request: dict) -> None:
+def _ensure_request_matches_current_card(
+    coordination_home: Path, request: dict, *, retained_claim=False
+) -> None:
     """Re-fold a request briefly before treating a mismatch as durable."""
     for check in range(MATCH_RETRY_LIMIT):
         try:
-            _request_matches_current_card(coordination_home, request)
+            _request_matches_current_card(
+                coordination_home, request, retained_claim=retained_claim
+            )
             return
         except BuilderDispatchError:
             if check == MATCH_RETRY_LIMIT - 1:
@@ -182,20 +233,92 @@ def _ready_builders(paths: FleetPaths) -> list[NodeView]:
     return result
 
 
+def _node_capacity(paths: FleetPaths, node: str) -> int:
+    """Return one node's positive builder ceiling, defaulting to four."""
+    spec = store.read_spec(paths, "node", node) or {}
+    raw = (spec.get("labels") or {}).get(CAPACITY_LABEL)
+    try:
+        capacity = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return BUILDER_CAPACITY
+    return capacity if capacity > 0 else BUILDER_CAPACITY
+
+
 def _node_load(paths: FleetPaths, node: str) -> int:
-    """Return the number of nonterminal remote dispatches on one node."""
-    load = 0
+    """Return distinct cards occupying remote dispatch capacity on one node."""
+    active: set[str] = set()
+    statuses = _dispatch_statuses(paths, node)
     directory = paths.root / "dispatch" / node
     for path in sorted(directory.glob("*.json")) if directory.exists() else ():
         request = _load(path) or {}
-        status = _load(status_path(paths, node, str(request.get("card_id") or ""))) or {}
+        card_id = str(request.get("card_id") or "")
+        status = statuses.get(card_id, {})
         if (
             status.get("request_id") == request.get("request_id")
             and status.get("state") in TERMINAL_STATES
         ):
             continue
-        load += 1
-    return load
+        active.add(card_id or path.stem)
+    active.update(
+        card_id for card_id, status in statuses.items() if status.get("state") == "running"
+    )
+    return len(active)
+
+
+def _under_capacity(paths: FleetPaths, ready: list[NodeView]) -> list[NodeView]:
+    """Return Ready builders below their own configured ceilings."""
+    policy = production_builder.policy()
+    if policy is not None:
+        return _production_ready(paths, ready, policy, "resource-check")
+    return [
+        view for view in ready if _node_load(paths, view.name) < _node_capacity(paths, view.name)
+    ]
+
+
+def _production_ready(paths, ready, policy, card, *, exclude=None):
+    """Reserve native queued and live quotas conservatively against fresh headroom."""
+    from dataclasses import replace
+
+    result = []
+    for view in ready:
+        statuses = _dispatch_statuses(paths, view.name)
+        directory = paths.root / "dispatch" / view.name
+        requests = {path.stem: _load(path) or {} for path in directory.glob("*.json")}
+        cores, ram, unknown = 0.0, 0.0, False
+        for candidate in set(requests) | set(statuses):
+            if candidate == exclude:
+                continue
+            request, status = requests.get(candidate, {}), statuses.get(candidate, {})
+            same = request.get("request_id") == status.get("request_id")
+            if same and status.get("state") in TERMINAL_STATES | {"awaiting-evidence"}:
+                continue
+            if not status and _lease_expired(request, _now()):
+                continue
+            if not request and status.get("state") in TERMINAL_STATES | {"awaiting-evidence"}:
+                continue
+            resources = (status.get("production") or request.get("production") or {}).get(
+                "resources"
+            )
+            if not isinstance(resources, dict):
+                unknown = True
+                break
+            cpu, memory = resources.get("cpu_quota_percent"), resources.get("memory_max_bytes")
+            if type(cpu) is not int or cpu <= 0 or type(memory) is not int or memory <= 0:
+                unknown = True
+                break
+            cores += cpu / 100
+            ram += memory / 1024**3
+        if unknown:
+            continue
+        remaining = dict(view.allocatable)
+        remaining["cores"] = float(remaining.get("cores", 0)) - cores
+        remaining["ram_gb"] = float(remaining.get("ram_gb", 0)) - ram
+        result.extend(
+            production_builder.ready_nodes(
+                paths, [replace(view, allocatable=remaining)], policy, card
+            )
+        )
+    return result
 
 
 def _lease_expired(request: dict, now: datetime) -> bool:
@@ -317,6 +440,22 @@ def offer(
     now: datetime | None = None,
 ) -> dict | None:
     """Place and publish one idempotent Niobe-owned builder dispatch."""
+    policy = production_builder.policy()
+    if policy is not None:
+        if (
+            production_builder.socket.gethostname().split(".")[0].lower()
+            != policy["authority_host"]
+        ):
+            raise BuilderDispatchError("only the production authority may offer work")
+        # The authority is the sole offer writer. This local exclusion makes
+        # reservation accounting plus publication atomic across its processes.
+        with _request_exclusion(paths.root / "dispatch" / ".production-offer"):
+            return _offer(paths, core, labels, writer=writer, now=now)
+    return _offer(paths, core, labels, writer=writer, now=now)
+
+
+def _offer(paths, core, labels, *, writer, now=None):
+    """Publish within the production authority exclusion, or legacy admission."""
     if writer.role != "scheduler" or writer.node != "niobe":
         raise BuilderDispatchError("only the Niobe scheduler may offer builder work")
     if not store.actuation_allowed(paths):
@@ -332,6 +471,15 @@ def offer(
     if route is None:
         raise BuilderDispatchError("card must select exactly one logical route")
     ready = _ready_builders(paths)
+    production = production_builder.policy()
+    test_profile = None
+    if production is not None:
+        from .production_test_profile import preflight
+
+        try:
+            test_profile = preflight(paths.root.parent, core, labels, production)
+        except (OSError, ValueError) as exc:
+            raise BuilderDispatchError("required-test-profile-unqualified") from exc
     selected_node = None
     for view in ready:
         existing = _load(request_path(paths, view.name, card_id))
@@ -344,7 +492,9 @@ def offer(
             existing.get("labels"),
         ) == (repository, base_ref, revision, normalized_labels)
         if same_binding:
-            prior = _load(status_path(paths, view.name, card_id)) or {}
+            prior = (
+                _validated_status(status_path(paths, view.name, card_id), paths, view.name) or {}
+            )
             if prior.get("request_id") == existing.get("request_id") and (
                 prior.get("state") in TERMINAL_STATES
                 and not (
@@ -354,7 +504,7 @@ def offer(
             ):
                 return None
             return existing
-        prior = _load(status_path(paths, view.name, card_id)) or {}
+        prior = _validated_status(status_path(paths, view.name, card_id), paths, view.name) or {}
         if (
             prior.get("request_id") == existing.get("request_id")
             and prior.get("state") == "running"
@@ -363,25 +513,42 @@ def offer(
         selected_node = view.name
         break
     if selected_node is None:
-        builders = [view for view in ready if _node_load(paths, view.name) < BUILDER_CAPACITY]
-        decision = scheduler.select(builders, scheduler.Workload("job", card_id))
-        if decision.node is None:
+        builders = _under_capacity(paths, ready)
+        if production is not None:
+            # Spread already offered work before stale heartbeat headroom can
+            # repeatedly select the same large machine. This is no count cap.
+            builders = sorted(builders, key=lambda view: (_node_load(paths, view.name), view.name))
+            if not builders:
+                return None
+            selected_node = builders[0].name
+        else:
+            decision = scheduler.select(builders, scheduler.Workload("job", card_id))
+            if decision.node is None:
+                return None
+            selected_node = decision.node
+    binding = None
+    if production is not None:
+        binding = production_builder.node_binding(paths, selected_node, production)
+        try:
+            binding.update(
+                production_builder.route_binding(production, card_id, route, normalized_labels)
+            )
+        except production_builder.production_routes.RouteUnavailableError:
             return None
-        selected_node = decision.node
     scheduler.place(
         paths,
-        scheduler.Workload("job", card_id),
+        (
+            production_builder.workload(card_id, binding)
+            if binding
+            else scheduler.Workload("job", card_id)
+        ),
         writer=writer,
         views=[view for view in ready if view.name == selected_node],
     )
     stamp = now or _now()
-    identity = json.dumps(
-        [card_id, selected_node, repository, base_ref, revision, normalized_labels],
-        separators=(",", ":"),
-    )
     request = {
         "schema": "skfleet.builder-dispatch/v1",
-        "request_id": hashlib.sha256(identity.encode()).hexdigest(),
+        "request_id": secrets.token_hex(32),
         "card_id": card_id,
         "node": selected_node,
         "role": ROLE,
@@ -395,6 +562,9 @@ def offer(
         "lease_expires_at": _iso(stamp + timedelta(seconds=LEASE_SECONDS)),
         "writer": {"role": writer.role, "node": writer.node, "identity": writer.identity},
     }
+    if binding is not None:
+        request["production"] = binding
+        request["test_profile"] = test_profile
     path = request_path(paths, selected_node, card_id)
     existing = _load(path)
     if existing and existing.get("request_id") == request["request_id"]:
@@ -445,7 +615,7 @@ def decline_reason(
         existing = _load(request_path(paths, view.name, card_id))
         if not existing:
             continue
-        prior = _load(status_path(paths, view.name, card_id)) or {}
+        prior = _validated_status(status_path(paths, view.name, card_id), paths, view.name) or {}
         same_generation = prior.get("request_id") == existing.get("request_id")
         same_binding = (
             existing.get("repository"),
@@ -470,13 +640,25 @@ def decline_reason(
         if same_generation and prior.get("state") == "running":
             return f"superseded-binding-running: node={view.name}"
         return None
-    builders = [view for view in ready if _node_load(paths, view.name) < BUILDER_CAPACITY]
+    builders = _under_capacity(paths, ready)
+    production = production_builder.policy()
+    if production is not None:
+        if not builders:
+            return "builders-resource-headroom-or-reservations"
+        try:
+            production_builder.route_binding(
+                production, card_id, logical_route(labels), normalized_labels
+            )
+        except ValueError:
+            return "gateway-card-route-unavailable"
+        return None
     if not builders:
         # The common real cause, and the one that used to reach the log as
         # "unschedulable: unschedulable ()": every Ready builder is full, so
         # the scheduler was handed nothing to choose between. Name the loads.
         loads = ", ".join(
-            f"{view.name}={_node_load(paths, view.name)}/{BUILDER_CAPACITY}" for view in ready
+            f"{view.name}={_node_load(paths, view.name)}/{_node_capacity(paths, view.name)}"
+            for view in ready
         )
         return f"builders-at-capacity: {loads}"
     decision = scheduler.select(builders, scheduler.Workload("job", card_id))
@@ -497,6 +679,8 @@ def _write_status(paths: FleetPaths, node: str, request: dict, state: str, **ext
         "writer": {"role": "sknoded", "node": node, "identity": store.writer_identity()},
         **extra,
     }
+    if request.get("production") is not None:
+        payload["production"] = request["production"]
     path = status_path(paths, node, request["card_id"])
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -541,6 +725,11 @@ def _process_state(status: dict) -> tuple[bool | None, int | None]:
     """Return exact-generation liveness, or unknown when death is unproven."""
     request_id = str(status.get("request_id") or "")
     process = _PROCESSES.get(request_id)
+    if status.get("production") is not None:
+        alive, code = production_builder.service_state(status, process)
+        if alive is False:
+            _PROCESSES.pop(request_id, None)
+        return alive, code
     if process is not None:
         code = process.poll()
         if code is None:
@@ -578,10 +767,14 @@ def _frozen_claim_status(
     owner: str,
     revision: str,
     prior_attempt: int,
+    *,
+    preserve_claim: bool = False,
 ) -> dict | None:
     """Release an exact prelaunch claim when the human freeze has won."""
     if store.actuation_allowed(paths):
         return None
+    if preserve_claim:
+        return {"state": "awaiting-evidence", "claim_released": False}
     released = _release_exact(coordination_home, request["card_id"], owner, revision, actor=owner)
     return _write_status(
         paths,
@@ -599,7 +792,23 @@ def _reconcile_running(
     paths: FleetPaths, coordination_home: Path, node: str, request: dict, status: dict
 ) -> dict:
     """Refresh one live generation or close it after exact process death."""
-    alive, exit_code = _process_state(status)
+    _finalize_builder_admission(coordination_home, request, status)
+    if (
+        status.get("production") is not None
+        and status.get("state") in {"awaiting-evidence", "awaiting-review"}
+        and type(status.get("exit_code")) is int
+    ):
+        alive, exit_code = False, status["exit_code"]
+    else:
+        alive, exit_code = _process_state(status)
+    if alive is False and status.get("production") is not None:
+        from .builder_terminal import observe
+
+        try:
+            observe(coordination_home, status)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            # A missing receipt withholds collected-unit continuation only.
+            pass
     owner = str(status.get("owner") or "")
     revision = str(status.get("claim_revision") or "")
     common = {
@@ -609,6 +818,18 @@ def _reconcile_running(
         "pid_start_ticks": status.get("pid_start_ticks"),
         "attempt": int(status.get("attempt") or 1),
     }
+    for key in ("admission_contract", "admission_terminal"):
+        if key in status:
+            common[key] = status[key]
+    if status.get("continuation_consumed"):
+        common["continuation_consumed"] = status["continuation_consumed"]
+    if status.get("production") is not None:
+        common.update(
+            production=status["production"],
+            unit=status.get("unit"),
+            invocation=status.get("invocation"),
+            route_preflight=status.get("route_preflight"),
+        )
     if alive is not False:
         return _write_status(
             paths,
@@ -628,6 +849,63 @@ def _reconcile_running(
             "evidence_sha256": card.links.get("evidence_sha256")
             or card.links.get("candidate_evidence_sha256"),
         }
+    elif status.get("production") is not None:
+        from .builder_continue import original_outcome_pending
+        from .production_exit import release_blocked
+        from .source_bundle import SourceBundleError, publish_source
+
+        if original_outcome_pending(coordination_home, request, status):
+            return _write_status(
+                paths, node, request, "awaiting-evidence", **common,
+                exit_code=exit_code, claim_released=False,
+                error="continued generation has not recorded a new outcome",
+            )
+        blocked = release_blocked(coordination_home, request, owner, revision)
+        if blocked is not None:
+            return _write_status(
+                paths,
+                node,
+                request,
+                "blocked",
+                **common,
+                exit_code=exit_code,
+                claim_released=True,
+                error=blocked["reason"],
+                outcome_event=blocked["outcome_event"],
+            )
+
+        try:
+            artifact = publish_source(
+                coordination_home,
+                request,
+                owner,
+                revision,
+                paths.root / "workspaces" / owner,
+                acknowledged=(status.get("source_artifact") or {}).get("manifest_sha256"),
+            )
+        except (SourceBundleError, OSError, ValueError, KeyError):
+            # A process exit is not an outcome. Keep original custody for
+            # review/recovery rather than replaying implementation work.
+            return _write_status(
+                paths,
+                node,
+                request,
+                "awaiting-evidence",
+                **common,
+                exit_code=exit_code,
+                claim_released=False,
+                error="exact typed candidate artifacts pending",
+            )
+        return _write_status(
+            paths,
+            node,
+            request,
+            "awaiting-review",
+            **common,
+            exit_code=exit_code,
+            claim_released=False,
+            source_artifact=artifact,
+        )
     else:
         released = _release_exact(
             coordination_home, request["card_id"], owner, revision, actor=owner
@@ -646,6 +924,47 @@ def _reconcile_running(
         mail_sent=mail_sent,
         completion=completion,
     )
+
+
+def _finalize_builder_admission(home: Path, request: dict, status: dict) -> None:
+    """Discharge only a proven failed reservation, preserving workflow custody."""
+    contract = status.get("admission_contract")
+    if not isinstance(contract, dict) or status.get("admission_terminal"):
+        return
+    from . import production_admission as admission
+
+    try:
+        binding = {
+            "card_id": request["card_id"], "owner": status["owner"],
+            "claim_revision": status["claim_revision"],
+            "request_id": request["request_id"], "attempt": status["attempt"],
+        }
+        unit = production_builder.unit_name(request, status["attempt"])
+        if (status["request_id"] != request["request_id"]
+                or status["card_id"] != request["card_id"]
+                or status.get("production") != request.get("production")
+                or status.get("unit") != unit or contract["binding"] != binding):
+            return
+        observed = admission.unit_state(unit, terminal=True)
+        if observed.get("ActiveState") != "failed":
+            return
+        invocation = observed.get("InvocationID", "")
+        if status.get("invocation") not in (None, invocation):
+            return
+        policy = production_builder.policy()
+        if policy is None:
+            return
+        proof = admission.finalize_failed_launch(
+            home, policy, request["production"]["host"], unit, binding,
+            contract["argv"], invocation=invocation,
+            expected_card_revision=contract["card_revision"],
+        )
+        status["invocation"] = invocation
+        status["admission_terminal"] = proof
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        # Missing or ambiguous custody remains charged; no release or retry.
+        logger.warning("failed builder admission requires exact custody: %s",
+                       request.get("card_id"))
 
 
 def _guard_path() -> str:
@@ -674,6 +993,43 @@ def worker_command(request: dict, owner: str, claim_revision: str, workspace: Pa
         raise BuilderDispatchError("dispatch request has no supported logical route")
     home = str(Path.home())
     sovereign_home = str(Path(SOVEREIGN_HOME).expanduser())
+    production = request.get("production")
+    model = production["model"] if production is not None else route
+    prompt = (
+        f"Work only SKCapstone card {request['card_id']}. "
+        f"Claim revision {claim_revision}. Source is reconstructed at {workspace}. "
+        "Use skcapstone coord and SKMail for all lifecycle updates."
+    )
+    if production is not None:
+        from .production_brief import production_worker_brief
+
+        prompt = production_worker_brief(
+            card_id=request["card_id"],
+            owner=owner,
+            claim_revision=claim_revision,
+            workspace=str(workspace),
+            base_revision=request["base_revision"],
+            title="Exact claimed native card",
+            description=(
+                "Read the exact current card through skcapstone coord show --json; "
+                "its description and referenced TDD define the entire authorized task."
+            ),
+            acceptance_criteria=["Satisfy every exact current native card criterion."],
+        )
+        if request.get("_continuation"):
+            prompt = (
+                "PRESERVED SOURCE CONTINUATION\n"
+                "Continue the existing staged implementation in this workspace. Do not reset, "
+                "reimplement, release the claim or replace the source offer. Inspect the "
+                "preserved changes and actual evidence; finish only remaining validation, "
+                "correct any inaccurate test chronology in the draft evidence, "
+                "the already authorized commit and typed handoff. Original BLOCKED evidence "
+                "remains historical. Machine Git identity is assigned in this environment.\n\n"
+                + prompt
+            )
+    from .worker_git import identity
+
+    git_environment = identity(owner) if production is not None else {}
     return [
         "/usr/bin/env",
         "-i",
@@ -685,6 +1041,7 @@ def worker_command(request: dict, owner: str, claim_revision: str, workspace: Pa
         f"SKCAPSTONE_HOME={sovereign_home}",
         f"SKFLEET_CARD_ID={request['card_id']}",
         f"SKFLEET_CLAIM_REVISION={claim_revision}",
+        *(f"{key}={value}" for key, value in git_environment.items()),
         worker,
         "--no-approve",
         "--extension",
@@ -694,7 +1051,7 @@ def worker_command(request: dict, owner: str, claim_revision: str, workspace: Pa
         "--provider",
         PROVIDER,
         "--model",
-        route,
+        model,
         "--thinking",
         "off",
         "--no-context-files",
@@ -702,11 +1059,7 @@ def worker_command(request: dict, owner: str, claim_revision: str, workspace: Pa
         "--tools",
         _WORKER_TOOLS,
         "-p",
-        (
-            f"Work only SKCapstone card {request['card_id']}. "
-            f"Claim revision {claim_revision}. Source is reconstructed at {workspace}. "
-            "Use skcapstone coord and SKMail for all lifecycle updates."
-        ),
+        prompt,
     ]
 
 
@@ -775,6 +1128,8 @@ def _consume_available(
     materializer: Callable[[dict, Path], Path],
 ) -> dict | None:
     """Refresh every active generation before admitting pending requests."""
+    from . import builder_continue, builder_retry
+
     spec = store.read_spec(paths, "node", node) or {}
     if spec.get("spec", {}).get("role") != ROLE or spec.get("spec", {}).get("actuate") is not True:
         return None
@@ -782,8 +1137,39 @@ def _consume_available(
         return None
     directory = paths.root / "dispatch" / node
     paths_to_visit = sorted(directory.glob("*.json")) if directory.exists() else ()
+    requests = {
+        str(request.get("card_id") or ""): request
+        for path in paths_to_visit
+        if (request := (_load(path) or {})).get("schema") == "skfleet.builder-dispatch/v1"
+        and request.get("node") == node
+    }
     result = None
-    active = 0
+    active_cards: set[str] = set()
+    reconciled_orphans: set[str] = set()
+    for card_id, status in _dispatch_statuses(paths, node).items():
+        if status.get("state") != "running":
+            continue
+        request = requests.get(card_id) or {}
+        if request.get("request_id") == status.get("request_id"):
+            continue
+        active_cards.add(card_id)  # Preserve live and unknown-liveness orphan generations.
+        try:
+            heartbeat = datetime.strptime(status["heartbeat_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+        if _now() <= heartbeat + timedelta(seconds=LEASE_SECONDS):
+            continue
+        generation = {
+            "request_id": status["request_id"],
+            "card_id": card_id,
+            "node": node,
+        }
+        result = _reconcile_running(paths, coordination_home, node, generation, status)
+        reconciled_orphans.add(card_id)
+        if result["state"] != "running":
+            active_cards.discard(card_id)
     for path in paths_to_visit:
         with _request_exclusion(path):
             request = _load(path) or {}
@@ -792,14 +1178,32 @@ def _consume_available(
                 or request.get("node") != node
             ):
                 continue
-            prior = _load(status_path(paths, node, request["card_id"])) or {}
-            if prior.get("state") != "running":
+            prior = (
+                _validated_status(status_path(paths, node, request["card_id"]), paths, node) or {}
+            )
+            if prior.get("state") not in {"running", "awaiting-evidence", "awaiting-review"}:
                 continue
             if prior.get("request_id") != request.get("request_id"):
-                active += 1  # Preserve an uncertain prior generation and its claim.
+                active_cards.add(request["card_id"])
                 continue
+            try:
+                continuing = builder_continue.attach(coordination_home, request, prior)
+            except (ValueError, OSError):
+                continue
+            retry_handler = builder_continue if continuing else builder_retry
+            if continuing or builder_retry.pending(request, prior):
+                try:
+                    retry_handler.check_attempt(paths, coordination_home, request, prior)
+                except (ValueError, OSError):
+                    if continuing:
+                        continue  # Preserve changed continuation custody for the operator.
+                else:
+                    continue
             result = _reconcile_running(paths, coordination_home, node, request, prior)
-            active += result["state"] == "running"
+            if result["state"] == "running":
+                active_cards.add(request["card_id"])
+            else:
+                active_cards.discard(request["card_id"])
     for path in paths_to_visit:
         with _request_exclusion(path):
             request = _load(path) or {}
@@ -808,49 +1212,75 @@ def _consume_available(
                 or request.get("node") != node
             ):
                 continue
-            prior = _load(status_path(paths, node, request["card_id"])) or {}
-            if (
-                prior
-                and prior.get("request_id") != request.get("request_id")
-                and (prior.get("owner") or prior.get("claim_revision"))
-            ):
-                if prior.get("state") == "running":
+            prior = (
+                _validated_status(status_path(paths, node, request["card_id"]), paths, node) or {}
+            )
+            try:
+                continuing = builder_continue.attach(coordination_home, request, prior)
+            except (ValueError, OSError):
+                continue
+            retry_handler = builder_continue if continuing else builder_retry
+            retrying = continuing or builder_retry.pending(request, prior)
+            if retrying:
+                try:
+                    retry_handler.check_attempt(paths, coordination_home, request, prior)
+                except (ValueError, OSError):
+                    continue
+            if request["card_id"] in reconciled_orphans:
+                continue
+            if prior and prior.get("request_id") != request.get("request_id"):
+                if prior.get("state") == "running" or (
+                    prior.get("production") is not None
+                    and prior.get("state") in {"awaiting-evidence", "awaiting-review"}
+                ):
                     continue
                 prior_owner = str(prior.get("owner") or "")
                 prior_revision = str(prior.get("claim_revision") or "")
-                released = bool(prior_owner and prior_revision) and _release_exact(
-                    coordination_home,
-                    request["card_id"],
-                    prior_owner,
-                    prior_revision,
-                    actor=prior_owner,
-                )
-                result = _write_status(
-                    paths,
-                    node,
-                    request,
-                    "blocked",
-                    owner=prior_owner,
-                    claim_revision=prior_revision,
-                    attempt=int(prior.get("attempt") or 0),
-                    claim_released=released,
-                )
-                continue
+                if prior_owner and prior_revision and not prior.get("claim_released"):
+                    released = _release_exact(
+                        coordination_home,
+                        request["card_id"],
+                        prior_owner,
+                        prior_revision,
+                        actor=prior_owner,
+                    )
+                    if released:
+                        result = _write_status(
+                            paths,
+                            node,
+                            {
+                                "request_id": prior["request_id"],
+                                "card_id": request["card_id"],
+                            },
+                            str(prior.get("state") or "blocked"),
+                            owner=prior_owner,
+                            claim_revision=prior_revision,
+                            attempt=int(prior.get("attempt") or 0),
+                            claim_released=True,
+                        )
+                    continue
+                prior = {}
             if prior.get("request_id") == request.get("request_id"):
                 if prior.get("state") == "running":
                     continue
-                if prior.get("state") not in {"failed", "frozen"} or (
-                    prior.get("state") == "failed"
-                    and int(prior.get("attempt") or 1) >= MAX_ATTEMPTS
+                if not retrying and (
+                    prior.get("state") not in {"failed", "frozen"}
+                    or (
+                        prior.get("state") == "failed"
+                        and int(prior.get("attempt") or 1) >= MAX_ATTEMPTS
+                    )
                 ):
                     continue
             try:
                 expires = datetime.strptime(
-                    request["lease_expires_at"], "%Y-%m-%dT%H:%M:%SZ"
+                    request["_continuation"]["expires_at"] if continuing
+                    else request["lease_expires_at"], "%Y-%m-%dT%H:%M:%SZ"
                 ).replace(tzinfo=timezone.utc)
             except (KeyError, TypeError, ValueError):
                 expires = datetime.min.replace(tzinfo=timezone.utc)
             if _now() > expires:
+                if retrying:
+                    continue
                 result = _write_status(
                     paths,
                     node,
@@ -861,16 +1291,61 @@ def _consume_available(
                     error="unclaimed offer expired",
                 )
                 continue
-            if active >= BUILDER_CAPACITY:
+            try:
+                production = production_builder.validate_request(paths, node, request, local=True)
+            except production_builder.production_routes.RouteUnavailableError:
+                continue
+            except ValueError:
+                if retrying:
+                    continue
+                _write_status(
+                    paths,
+                    node,
+                    request,
+                    "blocked",
+                    claim_released=False,
+                    error="production request policy or host changed",
+                )
+                continue
+            if production is not None:
+                policy = production_builder.policy()
+                if not any(
+                    view.name == node
+                    for view in _production_ready(
+                        paths,
+                        _ready_builders(paths),
+                        policy,
+                        request["card_id"],
+                        exclude=request["card_id"],
+                    )
+                ):
+                    continue
+                try:
+                    route_preflight = production_builder.production_routes.preflight(
+                        policy, production
+                    )
+                except ValueError:
+                    # Transient provider/catalog failure is retryable without
+                    # a native claim or implementation attempt.
+                    continue
+            elif len(active_cards) >= _node_capacity(paths, node):
                 continue
             attempt = int(prior.get("attempt") or 0) + 1
-            owner = f"pi-builder-standby-{node}-{request['card_id']}"
+            owner = (
+                f"pi-{production['family']}-builder-{node}-{request['card_id']}"
+                if production
+                else f"pi-builder-standby-{node}-{request['card_id']}"
+            )
             workspace = paths.root / "workspaces" / owner
             if not store.actuation_allowed(paths):
                 return None
             try:
-                _ensure_request_matches_current_card(coordination_home, request)
+                _ensure_request_matches_current_card(
+                    coordination_home, request, retained_claim=retrying
+                )
             except BuilderDispatchError as exc:
+                if retrying:
+                    continue
                 _write_status(
                     paths,
                     node,
@@ -882,8 +1357,11 @@ def _consume_available(
                 )
                 continue
             try:
-                materializer(request, workspace)
+                if not continuing:
+                    materializer(request, workspace)
             except BuilderDispatchError as exc:
+                if retrying:
+                    continue
                 _write_status(
                     paths,
                     node,
@@ -896,6 +1374,8 @@ def _consume_available(
                 )
                 continue
             if not store.actuation_allowed(paths):
+                if retrying:
+                    return None
                 return _write_status(
                     paths,
                     node,
@@ -905,8 +1385,12 @@ def _consume_available(
                     claim_released=False,
                 )
             try:
-                _ensure_request_matches_current_card(coordination_home, request)
+                _ensure_request_matches_current_card(
+                    coordination_home, request, retained_claim=retrying
+                )
             except BuilderDispatchError as exc:
+                if retrying:
+                    continue
                 _write_status(
                     paths,
                     node,
@@ -920,6 +1404,8 @@ def _consume_available(
             try:
                 assert_claim_permitted(coordination_home, request["card_id"], owner)
             except ClaimRefusedError as exc:
+                if retrying:
+                    continue
                 _write_status(
                     paths,
                     node,
@@ -931,7 +1417,8 @@ def _consume_available(
                 )
                 continue
             try:
-                Board(coordination_home).claim_task(owner, request["card_id"])
+                if not retrying:
+                    Board(coordination_home).claim_task(owner, request["card_id"])
             except TaskUnclaimable as exc:
                 # ziowk01-wsl, 2026-09-18: card 59553966 was voided and replaced
                 # while it sat in this queue, claim_task raised, and the bare
@@ -973,8 +1460,12 @@ def _consume_available(
             if not card or card.owner != owner or not revision:
                 raise BuilderDispatchError("claimed generation is not authoritative")
             try:
-                _ensure_request_matches_current_card(coordination_home, request)
+                _ensure_request_matches_current_card(
+                    coordination_home, request, retained_claim=retrying
+                )
             except BuilderDispatchError as exc:
+                if retrying:
+                    continue
                 released = _release_exact(
                     coordination_home, request["card_id"], owner, revision, actor=owner
                 )
@@ -998,11 +1489,38 @@ def _consume_available(
                 owner,
                 revision,
                 int(prior.get("attempt") or 0),
+                preserve_claim=retrying,
             )
             if frozen is not None:
                 return frozen
             startup_hello(coordination_home, owner, host=node)
             command = worker_command(request, owner, revision, workspace)
+            if production is not None:
+                try:
+                    from .worker_git import preflight
+
+                    preflight(command, workspace, owner)
+                    production_builder.validate_request(paths, node, request, local=True)
+                    command = production_builder.service_command(
+                        request, attempt, command, workspace
+                    )
+                except ValueError as exc:
+                    if retrying:
+                        continue
+                    released = _release_exact(
+                        coordination_home, request["card_id"], owner, revision, actor=owner
+                    )
+                    _write_status(
+                        paths,
+                        node,
+                        request,
+                        "blocked",
+                        owner=owner,
+                        claim_revision=revision,
+                        claim_released=released,
+                        error=f"production launch preflight failed: {exc}",
+                    )
+                    continue
             frozen = _frozen_claim_status(
                 paths,
                 coordination_home,
@@ -1011,11 +1529,17 @@ def _consume_available(
                 owner,
                 revision,
                 int(prior.get("attempt") or 0),
+                preserve_claim=retrying,
             )
             if frozen is not None:
                 return frozen
             run = launcher or (lambda argv, cwd: subprocess.Popen(argv, cwd=cwd))
+            from .production_admission import AdmissionDeferredError
+
             exclusion_acquired = False
+            admission_pending = False
+            admission_reserved = False
+            admission_contract = None
             try:
                 with store.actuation_exclusion(paths):
                     exclusion_acquired = True
@@ -1027,11 +1551,98 @@ def _consume_available(
                         owner,
                         revision,
                         int(prior.get("attempt") or 0),
+                        preserve_claim=retrying,
                     )
                     if frozen is not None:
                         return frozen
-                    process = run(command, workspace)
+                    if production is not None:
+                        from .production_admission import reserve_launch
+
+                        # Unknown admission or spawn never grants claim release.
+                        admission_pending = True
+                        original_command = list(command)
+                        admission_binding = {
+                            "card_id": request["card_id"], "owner": owner,
+                            "claim_revision": revision, "request_id": request["request_id"],
+                            "attempt": attempt,
+                        }
+                        command = reserve_launch(
+                            coordination_home, policy, production["host"],
+                            production_builder.unit_name(request, attempt),
+                            admission_binding, command,
+                        )
+                        admission_reserved = True
+                        if not retrying:
+                            _write_status(
+                                paths, node, request, "running", owner=owner,
+                                claim_revision=revision, attempt=attempt, pid=None,
+                                unit=production_builder.unit_name(request, attempt),
+                                invocation=None, route_preflight=route_preflight,
+                            )
+                    def spawn():
+                        nonlocal admission_contract
+                        if production is not None:
+                            from ..seraph_review_cardstore import card_revision
+
+                            card = CardStore(coordination_home).fold(request["card_id"])
+                            if card is None:
+                                raise BuilderDispatchError("launch card unavailable")
+                            admission_contract = {
+                                "binding": admission_binding, "argv": original_command,
+                                "card_revision": card_revision(card),
+                            }
+                            consumed = {}
+                            if retrying:
+                                key = ("continuation_consumed" if continuing
+                                       else "operator_retry_consumed")
+                                grant = (request["_continuation"] if continuing
+                                         else request["operator_retry"])
+                                consumed[key] = grant["id"]
+                            _write_status(
+                                paths, node, request, "running", owner=owner,
+                                claim_revision=revision, attempt=attempt, pid=None,
+                                unit=production_builder.unit_name(request, attempt),
+                                invocation=None, route_preflight=route_preflight,
+                                admission_contract=admission_contract,
+                                **consumed,
+                            )
+                        return run(command, workspace)
+
+                    if retrying:
+                        with retry_handler.consume(
+                            paths,
+                            coordination_home,
+                            request,
+                            prior,
+                            route_preflight=route_preflight,
+                        ):
+                            process = spawn()
+                    else:
+                        process = spawn()
+            except AdmissionDeferredError:
+                if retrying or admission_reserved:
+                    return None
+                released = _release_exact(
+                    coordination_home, request["card_id"], owner, revision, actor=owner
+                )
+                return _write_status(
+                    paths, node, request, "failed" if released else "blocked",
+                    owner=owner, claim_revision=revision, claim_released=released,
+                    attempt=int(prior.get("attempt") or 0), retryable=released,
+                    error="node-resource-capacity-deferred",
+                )
             except Exception:
+                if admission_pending:
+                    logger.warning("production admission or launch requires custody: %s",
+                                   request["card_id"])
+                    return None
+                if retrying:
+                    # A spent authorization never releases custody or relaunches.
+                    # Its persisted unknown unit state requires operator recovery.
+                    logger.warning(
+                        "operator retry refused or launch uncertain: %s", request["card_id"]
+                    )
+                    return None
                 released = _release_exact(
                     coordination_home, request["card_id"], owner, revision, actor=owner
                 )
@@ -1051,6 +1662,18 @@ def _consume_available(
             pid = getattr(process, "pid", None)
             if pid is not None:
                 _PROCESSES[request["request_id"]] = process
+            service = {}
+            if production is not None:
+                service = {
+                    "unit": production_builder.unit_name(request, attempt),
+                    "invocation": None,
+                    "route_preflight": route_preflight,
+                    "admission_contract": admission_contract,
+                }
+            if retrying:
+                key = "continuation_consumed" if continuing else "operator_retry_consumed"
+                grant = request["_continuation"] if continuing else request["operator_retry"]
+                service[key] = grant["id"]
             result = _write_status(
                 paths,
                 node,
@@ -1061,8 +1684,9 @@ def _consume_available(
                 pid=pid,
                 pid_start_ticks=_proc_start_ticks(pid) if pid is not None else None,
                 attempt=attempt,
+                **service,
             )
-            active += 1
+            active_cards.add(request["card_id"])
     return result
 
 
@@ -1076,8 +1700,16 @@ def recover_stale(
 ) -> bool:
     """Release only the exact expired generation reported by this node."""
     request = _load(request_path(paths, node, card_id)) or {}
-    status = _load(status_path(paths, node, card_id)) or {}
-    if not request or status.get("request_id") != request.get("request_id"):
+    status = _validated_status(status_path(paths, node, card_id), paths, node) or {}
+    if request and status.get("request_id") != request.get("request_id"):
+        return False
+    if not request:
+        request = {
+            "request_id": status.get("request_id"),
+            "card_id": status.get("card_id"),
+            "node": node,
+        }
+    if not request.get("request_id") or request.get("card_id") != card_id:
         return False
     if status.get("state") != "running":
         return False

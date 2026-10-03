@@ -96,9 +96,10 @@ class LiveCardStoreGateway:
     def __init__(self, home: Path) -> None:
         self.home = home
 
-    def read_card(self, card_id: str) -> CardSnapshot:
+    def read_card(self, card_id: str, *, _store: CardStore | None = None) -> CardSnapshot:
         """Read current candidate and attributed verdict, never caller assertions."""
-        store = CardStore(self.home)  # Refresh cached legacy projections on every check.
+        # Internal callers may share only their current locked inspection's store.
+        store = CardStore(self.home) if _store is None else _store
         try:
             card = store.fold(card_id)
             if card is None or card.id != card_id:
@@ -149,7 +150,9 @@ class LiveCardStoreGateway:
             if is_review
             else outcome.get("candidate_sha256") or _binding(card, "candidate_evidence_sha256")
         )
-        evidence_hash = _binding(card, "evidence_sha256", "reviewer_evidence_sha256")
+        evidence_hash = _binding(
+            card, "review_evidence_sha256", "evidence_sha256", "reviewer_evidence_sha256"
+        )
         evidence_path = card.links.get("evidence")
         if isinstance(evidence_path, str) and "#sha256=" in evidence_path:
             evidence_path, linked_hash = evidence_path.rsplit("#sha256=", 1)
@@ -168,6 +171,11 @@ class LiveCardStoreGateway:
                     )
                 ):
                     continue
+                if card.meta.get("review_attempt"):
+                    from .review_replacement import authorized_predecessor
+
+                    if authorized_predecessor(self.home, card, sibling, _store=store):
+                        continue
                 if _candidate(sibling) != (repository, number, head):
                     continue
                 sibling_outcome = _latest_outcome(store, sibling.id)

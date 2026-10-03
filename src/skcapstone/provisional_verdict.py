@@ -146,3 +146,93 @@ def candidate_evidence(
         "candidate_tree": str(tree).strip().lower(),
         "candidate_ref": str(ref).strip(),
     }
+
+
+def record_guarded_verdict(
+    home: Path,
+    card_id: str,
+    agent: str,
+    outcome: str,
+    payload: dict[str, str],
+    *,
+    expected_source_revision: str,
+    expected_claim_revision: str,
+    transition_id: str,
+) -> dict:
+    """Record once under the native card lock only while exact inputs remain current.
+
+    The optional CLI guard supports a controller relaying terminal worker
+    evidence. It does not grant review, completion, merge or deployment.
+    A replay must match the original request and still be the current outcome
+    of the unchanged claim. It cannot silently adopt a later generation.
+    """
+    from skcoord.card_store import card_mutation_lock
+
+    from .card_store import CardStore
+    from .seraph_review_cardstore import LiveCardStoreGateway, _latest_outcome, card_revision
+
+    for name, value, size in (
+        ("source revision", expected_source_revision, 64),
+        ("claim revision", expected_claim_revision, 32),
+        ("transition id", transition_id, 64),
+    ):
+        if not isinstance(value, str) or not re.fullmatch(f"[0-9a-f]{{{size}}}", value):
+            raise ValueError(f"guarded verdict invalid {name}")
+    request = {
+        "writer": agent,
+        "verdict": outcome,
+        "expected_source_revision": expected_source_revision,
+        "expected_claim_revision": expected_claim_revision,
+        **payload,
+    }
+    with card_mutation_lock(home, card_id):
+        current_payload = candidate_evidence(
+            payload["candidate_path"],
+            payload["candidate_commit"],
+            payload["candidate_tree"],
+            payload["candidate_ref"],
+        )
+        if current_payload != payload:
+            raise ValueError("guarded verdict candidate changed")
+        store = CardStore(home)
+        card = store.fold(card_id)
+        if (
+            card is None
+            or card.owner != agent
+            or card.meta.get("_claim_revision") != expected_claim_revision
+            or card.meta.get("claim_conflicts")
+            or card.archived
+            or card.status.value not in {"ready", "doing", "review"}
+        ):
+            raise ValueError("guarded verdict claim changed")
+        stable_revision = card_revision(card)
+        matches = [
+            event
+            for event in store._read_events(card_id)
+            if event.get("transition_id") == transition_id
+        ]
+        if matches:
+            if len(matches) != 1:
+                raise ValueError("guarded verdict ambiguous transition")
+            existing = matches[0]
+            if (
+                existing.get("action") != "verdict"
+                or any(existing.get(key) != value for key, value in request.items())
+                or existing.get("guarded_card_revision") != stable_revision
+                or _latest_outcome(store, card_id).get("event_id") != existing.get("event_id")
+            ):
+                raise ValueError("guarded verdict transition changed")
+            return existing
+        if LiveCardStoreGateway(home).read_card(card_id).revision != expected_source_revision:
+            raise ValueError("guarded verdict source changed")
+        return store.append_event(
+            card_id,
+            "verdict",
+            agent,
+            verdict=outcome,
+            **payload,
+            expected_source_revision=expected_source_revision,
+            expected_claim_revision=expected_claim_revision,
+            guarded_card_revision=stable_revision,
+            transition_id=transition_id,
+        )

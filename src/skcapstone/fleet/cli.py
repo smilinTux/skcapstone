@@ -76,6 +76,98 @@ def nodes_cmd() -> None:
         )
 
 
+@fleet.command("builder-retry")
+@click.argument("card_id")
+@click.option("--node", required=True)
+@click.option("--request-id", required=True)
+@click.option("--claim", required=True)
+@click.option("--invocation", required=True)
+@click.option("--agent", required=True)
+@click.option("--reason", required=True)
+@click.option("--evidence", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--apply", is_flag=True, help="Authorize once while frozen; default checks only.")
+def builder_retry_cmd(
+    card_id, node, request_id, claim, invocation, agent, reason, evidence, apply
+):
+    """Authorize a fresh session for one stopped unchanged production attempt."""
+    from .builder_retry import authorize
+
+    try:
+        result = authorize(
+            default_paths(),
+            Path.home() / ".skcapstone",
+            node,
+            card_id,
+            request_id=request_id,
+            claim=claim,
+            invocation=invocation,
+            actor=agent,
+            reason=reason,
+            evidence=evidence,
+            apply=apply,
+        )
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(jsonlib.dumps(result, sort_keys=True))
+
+
+@fleet.command("builder-continue")
+@click.argument("card_id")
+@click.option("--node", required=True)
+@click.option("--request-id", required=True)
+@click.option("--claim", required=True)
+@click.option("--invocation", required=True)
+@click.option("--agent", required=True)
+@click.option("--reason", required=True)
+@click.option("--apply", is_flag=True, help="Authorize once; default checks only.")
+def builder_continue_cmd(card_id, node, request_id, claim, invocation, agent, reason, apply):
+    """Continue exact stopped staged work without releasing its source claim."""
+    from .builder_continue import authorize
+
+    try:
+        result = authorize(
+            default_paths(), Path.home() / ".skcapstone", node, card_id,
+            request_id=request_id, claim=claim, invocation=invocation,
+            actor=agent, reason=reason, apply=apply,
+        )
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(jsonlib.dumps(result, sort_keys=True))
+
+
+@fleet.command("builder-retire")
+@click.argument("card_id")
+@click.option("--node", required=True)
+@click.option("--request-sha256", required=True)
+@click.option("--status-sha256", required=True)
+@click.option("--card-sha256", required=True)
+@click.option("--agent", required=True)
+@click.option("--reason", required=True)
+@click.option("--apply", is_flag=True, help="Preserve source then retire; default checks only.")
+def builder_retire_cmd(
+    card_id, node, request_sha256, status_sha256, card_sha256, agent, reason, apply
+):
+    """Retire one exact stopped terminal offer on the production authority."""
+    from .builder_retire import retire
+
+    try:
+        result = retire(
+            default_paths(),
+            Path.home() / ".skcapstone",
+            node,
+            card_id,
+            request_sha256=request_sha256,
+            status_sha256=status_sha256,
+            card_sha256=card_sha256,
+            actor=agent,
+            reason=reason,
+            apply=apply,
+        )
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(jsonlib.dumps(result, sort_keys=True))
+
+
 @fleet.command("describe")
 @click.argument("kind")
 @click.argument("name")

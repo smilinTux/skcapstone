@@ -69,11 +69,19 @@ def register_coord_commands(main: click.Group) -> None:
         """
 
     from .coord_amend import register_coord_amend_commands
+    from .coord_liveness import register_coord_liveness_command
+
+    register_coord_liveness_command(coord)
+    from .coord_historical_pr import register_historical_pr_command
+
+    register_historical_pr_command(coord)
     from .coord_mail_cmd import register_coord_mail_commands
+    from .coord_review_work import register_coord_review_work
     from .portfolio_plan_cmd import register_portfolio_plan_command
 
     register_coord_amend_commands(coord)
     register_coord_mail_commands(coord)
+    register_coord_review_work(coord)
     register_portfolio_plan_command(coord)
 
     @coord.command("status")
@@ -655,15 +663,39 @@ def register_coord_commands(main: click.Group) -> None:
     @click.argument("task_id")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", required=True, help="Agent name completing the task.")
+    @click.option("--expected-source-revision", help="Optional exact native card snapshot digest.")
+    @click.option("--expected-claim-revision", help="Optional exact owned claim generation.")
+    @click.option(
+        "--review-card", help="Guarded source completion: exact completed independent review."
+    )
+    @click.option(
+        "--expected-review-revision", help="Guarded source completion: exact review snapshot."
+    )
     @click.option("--casey-authorization", type=click.Path(path_type=Path))
     @click.option("--casey-change-id")
-    def coord_complete(task_id, home, agent, casey_authorization, casey_change_id):
+    def coord_complete(
+        task_id,
+        home,
+        agent,
+        casey_authorization,
+        casey_change_id,
+        expected_source_revision,
+        expected_claim_revision,
+        review_card,
+        expected_review_revision,
+    ):
         """Mark a task as completed."""
         validate_task_id(task_id)
         validate_agent_name(agent)
 
         home_path = Path(home).expanduser()
-        from ..coord_completion import complete_coord_task
+        from contextlib import ExitStack
+
+        from ..coord_completion import (
+            complete_coord_task,
+            owned_revision_guard,
+            reviewed_source_guard,
+        )
         from ..jarvis_emergency import authorize_coord_mutation
         from ..seat_boundaries import Action
 
@@ -674,7 +706,31 @@ def register_coord_commands(main: click.Group) -> None:
         from ..coord_completion import GATED_EXIT_CODE, GatesPending
 
         try:
-            result = complete_coord_task(home_path, agent, task_id)
+            guards = (expected_source_revision, expected_claim_revision)
+            if any(value is not None for value in guards) and not all(guards):
+                raise ValueError("guarded completion requires both revisions")
+            review_guards = (review_card, expected_review_revision)
+            if any(value is not None for value in review_guards) and not (
+                all(guards) and all(review_guards)
+            ):
+                raise ValueError("guarded review completion requires all source and review guards")
+            if all(guards):
+                guard = owned_revision_guard(home_path, agent, task_id, *guards)
+                with ExitStack() as stack:
+                    related = (
+                        reviewed_source_guard(home_path, task_id, *review_guards, stack)
+                        if all(review_guards)
+                        else None
+                    )
+                    result = complete_coord_task(
+                        home_path,
+                        agent,
+                        task_id,
+                        precondition=guard,
+                        mutation_precondition=related,
+                    )
+            else:
+                result = complete_coord_task(home_path, agent, task_id)
         except ValueError as e:
             console.print(f"\n  [red]Error:[/] {e}\n")
             sys.exit(1)
@@ -1456,13 +1512,7 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--repair", is_flag=True, default=False)
     @click.option("--agent", default="coord-reconcile", help="Receipt writer identity.")
     @click.option("--stale-seconds", default=3600, type=click.IntRange(min=0))
-    @click.option(
-        "--task-id",
-        "task_ids",
-        multiple=True,
-        help="Limit audit/repair to exact card IDs; repeat for a reviewed set.",
-    )
-    def coord_reconcile_agents(home, repair, agent, stale_seconds, task_ids):
+    def coord_reconcile_agents(home, repair, agent, stale_seconds):
         """Audit agent projection drift and optionally repair it explicitly."""
         import json
 
@@ -1474,20 +1524,16 @@ def register_coord_commands(main: click.Group) -> None:
 
         home_path = Path(home).expanduser()
         try:
-            for task_id in task_ids:
-                validate_task_id(task_id)
-            scope = set(task_ids) or None
             if repair:
                 receipt = repair_lifecycle(
                     home_path,
                     actor=agent,
                     stale_after_seconds=stale_seconds,
-                    task_ids=scope,
                 )
                 payload = receipt.to_dict()
                 payload["receipt_path"] = str(receipt.receipt_path)
             else:
-                payload = audit_lifecycle(home_path, task_ids=scope).to_dict()
+                payload = audit_lifecycle(home_path).to_dict()
         except (OSError, RuntimeError, ValueError) as exc:
             raise click.ClickException(str(exc)) from None
         console.print(json.dumps(payload, indent=2))
@@ -1729,9 +1775,32 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--commit", required=True, help="git rev-parse HEAD")
     @click.option("--tree", required=True, help="git rev-parse HEAD^{tree}")
     @click.option("--ref", required=True, help="refs/heads/<branch> or an https:// URL")
+    @click.option(
+        "--expected-source-revision", help="Optional exact native source snapshot digest."
+    )
+    @click.option("--expected-claim-revision", help="Optional exact owned claim generation.")
+    @click.option(
+        "--expected-candidate-sha256", help="Controller's already verified candidate digest."
+    )
+    @click.option(
+        "--transition-id", help="Optional 64-hex idempotency key; requires both revision guards."
+    )
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", default=None, help="Writer name. Required: the producer.")
-    def coord_verdict(task_id, outcome, candidate, commit, tree, ref, home, agent):
+    def coord_verdict(
+        task_id,
+        outcome,
+        candidate,
+        commit,
+        tree,
+        ref,
+        home,
+        agent,
+        expected_source_revision,
+        expected_claim_revision,
+        expected_candidate_sha256,
+        transition_id,
+    ):
         """Record an outcome bound to the candidate a reviewer will verify.
 
         This is the verdict path for anything that owes an independent review.
@@ -1747,8 +1816,9 @@ def register_coord_commands(main: click.Group) -> None:
         link after the verdict, such as your own evidence or commit reference,
         is fine and does not disturb it.
         """
+        from ..blocked_verdict import validate_blocked_verdict
         from ..jarvis_emergency import authorize_coord_mutation
-        from ..provisional_verdict import candidate_evidence
+        from ..provisional_verdict import candidate_evidence, record_guarded_verdict
         from ..seat_boundaries import Action
 
         # The opener attributes an outcome to exactly one producer and fails
@@ -1758,17 +1828,40 @@ def register_coord_commands(main: click.Group) -> None:
                 "--agent is required: a verdict is attributed to exactly one producer, "
                 "and the review opener fails closed on an unnamed one."
             )
+        guards = (expected_source_revision, expected_claim_revision, transition_id)
+        if any(value is not None for value in guards) and not all(guards):
+            raise click.ClickException("guarded verdict requires both revisions and transition id")
+        if expected_candidate_sha256 is not None and not all(guards):
+            raise click.ClickException("expected candidate digest requires revision guards")
         authorize_coord_mutation(agent, Action.LINK_CARD, task_id, None, None)
         from ..card_store import CardStore
 
         try:
+            validate_blocked_verdict("verdict", outcome)
             payload = candidate_evidence(candidate, commit, tree, ref)
+            if (
+                expected_candidate_sha256 is not None
+                and payload["candidate_sha256"] != expected_candidate_sha256
+            ):
+                raise ValueError("guarded verdict candidate digest changed")
         except ValueError as exc:
             raise click.ClickException(str(exc)) from None
         try:
-            event = CardStore(Path(home).expanduser()).append_event(
-                task_id, "verdict", agent, verdict=str(outcome).strip(), **payload
-            )
+            if any(guards):
+                event = record_guarded_verdict(
+                    Path(home).expanduser(),
+                    task_id,
+                    agent,
+                    str(outcome).strip(),
+                    payload,
+                    expected_source_revision=expected_source_revision,
+                    expected_claim_revision=expected_claim_revision,
+                    transition_id=transition_id,
+                )
+            else:
+                event = CardStore(Path(home).expanduser()).append_event(
+                    task_id, "verdict", agent, verdict=str(outcome).strip(), **payload
+                )
         except ValueError as exc:
             raise click.ClickException(str(exc)) from None
         console.print(
@@ -1783,7 +1876,25 @@ def register_coord_commands(main: click.Group) -> None:
     @click.argument("value")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", default=None, help="Writer name (defaults to host).")
-    def coord_link(task_id, key, value, home, agent):
+    @click.option("--expected-source-revision", help="Optional exact native card snapshot digest.")
+    @click.option("--expected-claim-revision", help="Optional exact owned claim generation.")
+    @click.option(
+        "--transition-id", help="Optional idempotency key; requires both revision guards."
+    )
+    @click.option(
+        "--json", "as_json", is_flag=True, help="Guarded writes: return exact native readback."
+    )
+    def coord_link(
+        task_id,
+        key,
+        value,
+        home,
+        agent,
+        expected_source_revision,
+        expected_claim_revision,
+        transition_id,
+        as_json,
+    ):
         """Attach a link (pr/commit/doc/...) to a card."""
         from ..jarvis_emergency import authorize_coord_mutation
         from ..seat_boundaries import Action
@@ -1818,17 +1929,39 @@ def register_coord_commands(main: click.Group) -> None:
 
         home_path = Path(home).expanduser()
         try:
-            CardEventLog(home_path).append(
-                CardEvent(
-                    card_id=task_id,
-                    action="link",
-                    link_key=key,
-                    link_value=value,
-                    writer=agent or "",
+            guards = (expected_source_revision, expected_claim_revision, transition_id)
+            if any(item is not None for item in guards) and not all(guards):
+                raise ValueError("guarded link requires both revisions and transition id")
+            if as_json and not all(guards):
+                raise ValueError("guarded link JSON readback requires revision guards")
+            if all(guards):
+                from ..guarded_coord_link import record_guarded_link
+
+                readback = record_guarded_link(
+                    home_path,
+                    task_id,
+                    agent or "",
+                    key,
+                    value,
+                    expected_source_revision=expected_source_revision,
+                    expected_claim_revision=expected_claim_revision,
+                    transition_id=transition_id,
                 )
-            )
+            else:
+                CardEventLog(home_path).append(
+                    CardEvent(
+                        card_id=task_id,
+                        action="link",
+                        link_key=key,
+                        link_value=value,
+                        writer=agent or "",
+                    )
+                )
         except ValueError as exc:
             raise click.ClickException(str(exc)) from None
+        if as_json:
+            click.echo(json.dumps(readback, sort_keys=True))
+            return
         console.print(f"\n  [green]Linked {task_id}: {key} = {value}.[/]\n")
 
     @coord.command("recover-overlay")

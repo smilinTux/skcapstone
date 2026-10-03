@@ -54,6 +54,7 @@ class LivenessObservation:
     workspace_head: str | None = None
     workspace_custody_at: datetime | None = None
     workspace_custody_sha256: str | None = None
+    invocation_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,9 @@ class WorkerProjection:
     card_id: str
     claim_generation: str
     state: str
+    unit: str | None = None
+    pid: int | None = None
+    invocation_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -436,6 +440,8 @@ def reconcile(
     for projection in projections:
         key = (projection.owner, projection.card_id, projection.claim_generation)
         decision = decisions.get(key)
+        if not decision or not decision.attributable or decision.quarantine:
+            continue
         if decision and decision.state in TERMINAL_STATES:
             projection = replace(projection, state="terminal")
         reconciled.append(projection)

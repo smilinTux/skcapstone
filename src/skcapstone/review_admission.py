@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
+import stat
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -180,11 +182,31 @@ def reviewer_capacity_evaluation(
     host = (os.environ.get("SKFLEET_EVIDENCE_HOST") or os.uname().nodename).split(".")[0].lower()
     if not re.fullmatch(r"[a-z0-9-]+", host):
         host = os.uname().nodename.split(".")[0].lower()
-    path = home / "evidence" / f"fleet-review-routes.{host}.json"
-    if not path.is_file():
-        path = home / "evidence" / "fleet-review-routes.json"
+    paths = (home / "evidence" / f"fleet-review-routes.{host}.json",
+             home / "evidence" / "fleet-review-routes.json")
     try:
-        snapshot = json.loads(path.read_text(encoding="utf-8"))
+        observations = []
+        for path in paths:
+            if not os.path.lexists(path):
+                continue
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode):
+                    raise ValueError("route evidence is not a regular file")
+                raw = stream.read(1_048_577)
+            if len(raw) > 1_048_576:
+                raise ValueError("route evidence exceeds bound")
+            value = json.loads(raw)
+            if not isinstance(value, dict):
+                raise ValueError("route evidence is not an object")
+            stamp = value.get("observed_at")
+            if type(stamp) not in {int, float} or not math.isfinite(stamp):
+                raise ValueError("invalid route observation timestamp")
+            observations.append(value)
+        # A stale host file must not shadow a newer gateway observation from
+        # the older publisher. The newest failure still overrides older health.
+        snapshot = max(observations, key=lambda value: value["observed_at"], default={})
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         snapshot = {}
     return evaluate_review_capacity(
