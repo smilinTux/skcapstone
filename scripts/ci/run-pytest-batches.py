@@ -47,6 +47,10 @@ def main():
     for offset in range(0, len(files), args.batch_size):
         batch = files[offset : offset + args.batch_size]
         print(f"Batch {offset // args.batch_size + 1}: {batch[0]} through {batch[-1]}", flush=True)
+        print(
+            f"::notice title=pytest batch {offset // args.batch_size + 1}::Starting {len(batch)} files",
+            flush=True,
+        )
         coverage = ["--cov=skcapstone", "--cov-report="] if args.coverage else []
         if args.coverage and offset:
             coverage.append("--cov-append")
@@ -54,6 +58,10 @@ def main():
             [*pytest, *batch, *common, *coverage, "-o", "faulthandler_timeout=120"]
         )
         print(f"Batch completed with exit {result.returncode}", flush=True)
+        print(
+            f"::notice title=pytest batch {offset // args.batch_size + 1}::Exit status {result.returncode}",
+            flush=True,
+        )
         failed |= result.returncode != 0
     if args.coverage:
         for report in ("xml", "report"):
