@@ -169,7 +169,7 @@ def test_the_launch_site_actually_calls_lane_model():
     time the fleet was routing everything to qwen38.
     """
     src = _source()
-    assert "_lane_model(_LANE,core)" in src.replace(
+    assert "_lane_model(_LANE,core,_labels)" in src.replace(
         " ", ""
     ), "the launch site must resolve the model through _lane_model"
     assert "_lane_model(_LANE,fresh_claimability" in src.replace(
@@ -268,7 +268,8 @@ def test_a_producer_card_route_identity_is_unaffected():
     else_idx = source.rindex(
         '\n    else:\n        admitted,health_reason=_health_for(_LANE["name"],model)'
     )
-    window = source[else_idx : else_idx + 900]
+    # Deployed 997b9795 qualifies production routes before constructing identity.
+    window = source[else_idx : source.index("    if not admitted:", else_idx)]
     assert '"capacity_domains":[str(_selected_route["capacity_domain"])],' in window
     assert '"model_or_bucket":model,' in window
     assert "model=_bucket" not in window
