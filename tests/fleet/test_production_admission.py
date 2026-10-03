@@ -65,7 +65,7 @@ def test_crash_before_spawn_keeps_capacity_and_denies_replay(capacity):
 
 def _contend(home, barrier, queue, number):
     """Race distinct launch paths against one shared node allowance."""
-    barrier.wait()
+    barrier.wait(timeout=5)
     try:
         reserve(
             home, dict(BINDING, claim_revision=str(number)), f"skfleet-builder-{number}.service"
@@ -81,13 +81,23 @@ def test_concurrent_paths_cannot_over_admit(capacity):
     children = [
         context.Process(target=_contend, args=(capacity, barrier, queue, i)) for i in range(4)
     ]
-    for child in children:
-        child.start()
-    answers = [queue.get(timeout=5) for _ in children]
-    for child in children:
-        child.join(5)
-        assert child.exitcode == 0
-    assert answers.count("reserved") == 1
+    try:
+        for child in children:
+            child.start()
+        answers = [queue.get(timeout=5) for _ in children]
+        for child in children:
+            child.join(5)
+            assert child.exitcode == 0
+        assert answers.count("reserved") == 1
+    finally:
+        # A failed child must fail the test without trapping pytest at shutdown.
+        for child in children:
+            if child.is_alive():
+                child.kill()
+        for child in children:
+            if child.pid is not None:
+                child.join(5)
+        queue.close()
 
 
 def test_generation_lifetime_lock_does_not_block_admission(capacity):
