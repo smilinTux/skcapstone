@@ -18,7 +18,7 @@ def main():
     common = ["--strict-markers", "-m", "not integration and not e2e"]
     pytest = [sys.executable, "-m", "pytest"]
     collected = subprocess.run(
-        [*pytest, *args.paths, *common, "--collect-only", "-q", "-o", "addopts="],
+        [*pytest, *args.paths, *common, "--collect-only", "-q", "-rs", "-o", "addopts="],
         capture_output=True,
         text=True,
     )
@@ -31,6 +31,11 @@ def main():
         for line in collected.stdout.splitlines()
         if "::" in line and Path(line.split("::", 1)[0]).is_file()
     ]
+    # Keep collection-time skips and warnings visible as well as batch results.
+    selected = set(nodeids)
+    for line in collected.stdout.splitlines():
+        if line not in selected:
+            print(line, flush=True)
     files = list(dict.fromkeys(node.split("::", 1)[0] for node in nodeids))
     if not files:
         print("No test files collected; refusing an empty success.", file=sys.stderr)
