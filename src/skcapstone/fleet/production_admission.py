@@ -19,6 +19,9 @@ import subprocess
 from contextlib import contextmanager
 from pathlib import Path
 
+from skcoord.card_store import CardStore, card_mutation_lock
+
+from ..seraph_review_cardstore import card_revision
 from .production_resources import active_resource_units, local_worker_admission
 from .production_test_plan import private_dir, read_json, write_once
 
@@ -33,7 +36,7 @@ class AdmissionDeferredError(AdmissionError):
     """Measured RAM is insufficient; no intent or spawn exists for this generation."""
 
 
-def unit_state(unit: str) -> dict:
+def unit_state(unit: str, *, terminal: bool = False) -> dict:
     """Read a unit's marker without logging environment contents."""
     result = subprocess.run(
         [
@@ -41,7 +44,12 @@ def unit_state(unit: str) -> dict:
             "--user",
             "show",
             unit,
-            "--property=Id,LoadState,ActiveState,InvocationID,Environment,MemoryMax,MemoryCurrent",
+            "--property=Id,LoadState,ActiveState,InvocationID,Environment,MemoryMax,MemoryCurrent"
+            + (
+                ",SubState,MainPID,ControlPID,ExecMainPID,ExecMainCode,ExecMainStatus,ControlGroup,TasksCurrent,Result"
+                if terminal
+                else ""
+            ),
         ],
         capture_output=True,
         text=True,
@@ -125,6 +133,12 @@ def _occupancy(root: Path, home: Path) -> list[dict]:
         if _reservation_id(intent) != directory.name:
             raise AdmissionError("reservation identity is inconsistent")
         unit, maximum = intent["unit"], intent["resources"]["memory_max_bytes"]
+        if (directory / "failed-terminal.json").exists():
+            proof = read_json(directory / "failed-terminal.json")
+            if not _valid_failed_receipt(proof, intent):
+                raise AdmissionError("failed launch terminal receipt is inconsistent")
+            # Any current service remains charged by the live inventory above.
+            continue
         if (directory / "observed.json").exists():
             observed = read_json(directory / "observed.json")
             if (
@@ -166,6 +180,125 @@ def _occupancy(root: Path, home: Path) -> list[dict]:
         else:
             units[unit] = {"unit": unit, "reserved_memory_max": maximum}
     return list(units.values())
+
+
+def _failed_state(state: dict, intent: dict, invocation: str) -> bool:
+    """Validate retained failed invocation metadata, never absence or elapsed time."""
+    return (
+        state.get("Id") == intent["unit"]
+        and state.get("LoadState") == "loaded"
+        and (state.get("ActiveState"), state.get("SubState")) == ("failed", "failed")
+        and state.get("InvocationID") == invocation
+        and bool(re.fullmatch(r"[0-9a-f]{32}", invocation))
+        and state.get(MARKER) == _reservation_id(intent)
+        and state.get("MemoryMax") == str(intent["resources"]["memory_max_bytes"])
+        and state.get("MainPID") == "0"
+        and state.get("ControlPID") == "0"
+        and bool(re.fullmatch(r"[1-9][0-9]*", state.get("ExecMainPID", "")))
+        and state.get("ExecMainCode") in {"1", "2", "3"}
+        and bool(re.fullmatch(r"[1-9][0-9]*", state.get("ExecMainStatus", "")))
+        and state.get("Result")
+        in {"exit-code", "signal", "core-dump", "timeout", "oom-kill", "resources"}
+        and (
+            (state.get("ControlGroup") == "" and state.get("TasksCurrent") == "[not set]")
+            or (
+                isinstance(state.get("ControlGroup"), str)
+                and state["ControlGroup"].startswith("/")
+                and ".." not in Path(state["ControlGroup"]).parts
+                and Path(state["ControlGroup"]).name == intent["unit"]
+                and state.get("TasksCurrent") == "0"
+            )
+        )
+    )
+
+
+def _valid_failed_receipt(proof: dict, intent: dict) -> bool:
+    """Bind durable terminal evidence to every original source and command byte."""
+    return (
+        proof.get("schema") == "skfleet.failed-admission-terminal/v1"
+        and proof.get("intent_sha256") == _digest(intent)
+        and proof.get("reservation_id") == _reservation_id(intent)
+        and bool(re.fullmatch(r"[0-9a-f]{64}", str(proof.get("card_revision", ""))))
+        and proof.get("process_absent") is True
+        and proof.get("cgroup_empty") is True
+        and isinstance(proof.get("state"), dict)
+        and _failed_state(proof["state"], intent, proof["state"].get("InvocationID", ""))
+    )
+
+
+def finalize_failed_launch(
+    home: Path,
+    policy: dict,
+    host: str,
+    unit: str,
+    binding: dict,
+    argv: list[str],
+    *,
+    invocation: str,
+    expected_card_revision: str,
+) -> dict:
+    """Finalize only a retained failed invocation under unchanged native custody.
+
+    The caller supplies its exact original command and source binding. No launch
+    is replayed, unit stopped, claim released or absent intent aged out. A lost
+    reply may reread the same immutable receipt while that exact claim remains.
+    """
+    intent = _intent(policy, host, unit, binding, argv)
+    identity = _reservation_id(intent)
+    if not re.fullmatch(r"[0-9a-f]{8}", str(binding.get("card_id", ""))):
+        raise AdmissionError("failed launch card identity invalid")
+    with _transaction(home, host) as root, card_mutation_lock(home, binding["card_id"]):
+        directory = root / identity
+        if read_json(directory / "intent.json") != intent:
+            raise AdmissionError("failed launch source or command binding changed")
+        card = CardStore(home).fold(binding["card_id"])
+        if (
+            card is None
+            or card.archived
+            or card.meta.get("claim_conflicts")
+            or card.status.value != "doing"
+            or card.owner != binding["owner"]
+            or card.meta.get("_claim_revision") != binding["claim_revision"]
+            or card_revision(card) != expected_card_revision
+        ):
+            raise AdmissionError("failed launch native custody changed")
+        path = directory / "failed-terminal.json"
+        if path.exists():
+            proof = read_json(path)
+            if (
+                not _valid_failed_receipt(proof, intent)
+                or proof["state"]["InvocationID"] != invocation
+                or proof["card_revision"] != expected_card_revision
+            ):
+                raise AdmissionError("failed launch receipt changed")
+            return proof
+        if (directory / "observed.json").exists():
+            raise AdmissionError("launch already observed; normal lifecycle owns termination")
+        before = unit_state(unit, terminal=True)
+        if not _failed_state(before, intent, invocation):
+            raise AdmissionError("exact retained failed invocation unavailable")
+        if Path("/proc", before["ExecMainPID"]).exists():
+            raise AdmissionError("failed launch process still exists")
+        group = before["ControlGroup"]
+        if group:
+            events = Path("/sys/fs/cgroup") / group.lstrip("/") / "cgroup.events"
+            if events.exists() and "populated 0" not in events.read_text().splitlines():
+                raise AdmissionError("failed launch cgroup is not empty")
+        if unit_state(unit, terminal=True) != before:
+            raise AdmissionError("failed launch invocation changed during observation")
+        proof = dict(
+            schema="skfleet.failed-admission-terminal/v1",
+            reservation_id=identity,
+            intent_sha256=_digest(intent),
+            card_revision=expected_card_revision,
+            state=before,
+            process_absent=True,
+            cgroup_empty=True,
+        )
+        if not _valid_failed_receipt(proof, intent):
+            raise AdmissionError("failed launch terminal proof is invalid")
+        write_once(path, proof)
+        return proof
 
 
 def reserve_launch(
