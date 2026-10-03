@@ -1,0 +1,48 @@
+PHASE 2d REPORT - 2026-10-03
+NOT GREEN. No merge, undraft, deployment or force push.
+
+SKCapstone draft: https://github.com/smilinTux/skcapstone/pull/898
+SKCoord draft: https://github.com/smilinTux/skcoord/pull/131
+
+CLASSIFICATION
+All 83 Phase 2c candidate-only failures have exactly one bucket and evidence in failure-classification.json.
+A: 13 deployed contracts supersede main-era assertions.
+B: 4 main-forward requirements (local observation, fleet path resolver, private SKGit Link scope, protected SOP lane targets).
+C: 34 fixture/environment failures.
+D: 32 missing connections with no deployed caller. No invented wiring, skips or expected-failure markers were added.
+The 51 non-D test cases pass in a focused run. The SOP target case passes its source test in the retained legacy branch but the separate protected docs gate remains unresolved.
+
+SIBLING PRESERVATION
+Installed SKCoord snapshot publish/installed-chiap08-20261003: 23b6f83f80e87cc816e35bf13db70ebe52740b97.
+95 files: 46 Python, 46 bytecode and 3 rollback backups. Host git hash-object, second read and local blob checks passed; gitleaks passed.
+Main fe77c126 differs in four Python files only: card_store.py, coordination.py, owner_helpers.py, review_replacement.py. All four copied unchanged into the reconciliation; release excludes bytecode/backups.
+SKCoord candidate: 4a440b9e0d6a1048671fab6ad12129504d8c9fa1. All hosted checks green, including Python 3.10/3.12, lint/build/docs/secrets. Local full suite 926 passed. The candidate source equals the CI pin 47cf3b1d; later changes only correct an evidence file count.
+A pre-existing concurrency fixture race was reproduced on unchanged main and fixed in its own C-fixture commit; production locking/read safety unchanged.
+SKCapstone CI first verifies released SKCoord 0.1.82, then installs the exact reconciled candidate. The missing-module collection blocker is removed.
+
+PROTECTED DOCS CONFLICT
+Main docs and protected skmail files remain byte-identical to main 428af310.
+The SOP asserts unconditional TARGET/GLM_TARGET assignments; deployed production mode rejects those environment variables and uses gateway capacity. Restoring only the assignments would make policy launches fail. That incomplete fix (4c9d6925) was forward-reverted (534ae8d8).
+A coherent fixed-limit port must also change entrypoint policy validation, production lane construction and unit configuration. The alternative is to retain deployed policy and report the docs gate as blocked. User clarification remains pending; no policy change was invented.
+
+D CONNECTION AUDIT
+crew_admission: 8; crew_controller: 3; crew_progress: 1; herdr_handoff_cli: 14; coord_helpers: 6.
+Captured package, bin scripts, user units and production module call paths have no callers for those connections. They remain visible failures. Strict expected-failure disposition was asked as an option but has not been applied without an answer.
+
+VALIDATION
+Focused original non-D failures: 51 passed in 4.03s.
+Retained dispatch/policy checks: 88 passed in 2.08s.
+Main Phase 2c baseline: 10367 passed, 2 failed, 37 skipped, 33 deselected.
+Final full run at dc31b1a: 11707 passed, 33 failed, 0 errors, 37 skipped, 33 deselected, 570 warnings, 1316.35 seconds.
+All 51 original non-D cases pass. Remaining failures: exactly 32 D cases plus the same pre-existing Pi tool-name failure. Main's live drill snapshot failure did not recur. No additional candidate-only failures were found.
+Command: PYTHONPATH=/home/skuser01/reviews/jarvis-phase2d-20261003/skcoord-candidate/src /home/skuser01/.skenv/bin/python -m pytest tests/ --strict-markers -m 'not integration and not e2e' -o addopts='--tb=short -ra' -q --junitxml=../full-suite-retained.xml
+The full run uses a separate fixed worktree. The early isolated-environment collection attempt and the interrupted run containing the withdrawn SOP fix are not acceptance evidence.
+
+No runtime changes were performed; rollback of hosts is unnecessary. Snapshot branches remain immutable; all release changes are separate forward commits. #895/#896/#897 remain open superseded drafts. STOP after the final Phase 2d report.
+
+HOSTED STATE AT REPORT PREPARATION
+SKCoord #131: all checks green at 4a440b9e.
+SKCapstone #898 at dc31b1a: lint, build, providers, shim and secret checks pass; docs fails for the disclosed policy conflict. Both unit lanes are running after successfully installing the pinned SKCoord candidate. No green claim is made while those lanes or the policy decisions remain unresolved.
+
+COMPLETION LIMIT
+The requested green target is NOT achieved. The original failure partition is complete and 51 tests are repaired, but 32 unwired D connections remain visible failures and the protected-docs policy conflict is unresolved. No test is skipped or xfailed to obtain green status. The two user questions remain pending.

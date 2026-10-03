@@ -11,497 +11,497 @@
       "nodeid": "tests/fleet/test_crew_admission.py::test_remote_preclaim_refuses_stale_parent[claim]",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_crew_admission.py::test_remote_preclaim_refuses_stale_parent[contract]",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_crew_admission.py::test_remote_preclaim_refuses_stale_parent[source]",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_crew_admission.py::test_remote_preclaim_refuses_stale_parent[restrictions]",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_crew_admission.py::test_remote_preclaim_refuses_stale_parent[deps]",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_crew_admission.py::test_remote_preclaim_refuses_stale_parent[ownerless]",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_crew_admission.py::test_remote_preclaim_refuses_stale_parent[terminal]",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_crew_admission.py::test_actual_rotation_authoritative_admission_uses_parent_guard[True]",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_crew_controller.py::test_real_node_hook_assigns_once_for_thirty_unchanged_cycles",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_crew_controller.py::test_actual_cli_register_reconcile_status",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_crew_controller.py::test_malformed_request_does_not_stop_heartbeat",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_crew_controller.py::test_budget_stop_advances_only_through_considered_crews",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "d43bece06cd49ae42ef2c630b8daf743b536523f"
     },
     {
       "nodeid": "tests/fleet/test_crew_progress.py::test_actual_reporter_publishes_only_exact_local_fresh_identity",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_crew_requests.py::test_nonresource_dedup_requires_same_slot_and_evidence",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "6a29a32e3086fc943f869b24696aae2d27512520"
     },
     {
       "nodeid": "tests/fleet/test_crew_requests.py::test_same_resource_different_authorized_slot_does_not_collapse",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "6a29a32e3086fc943f869b24696aae2d27512520"
     },
     {
       "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_deliver_uses_existing_entry_points_and_explicit_roots[False]",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_deliver_uses_existing_entry_points_and_explicit_roots[True]",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_observe_uses_configured_coordination_home",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_receipt_delegates_exact_kind_and_payload[pickup]",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_receipt_delegates_exact_kind_and_payload[result]",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_help_does_not_import_manager_or_transport",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_expected_manager_errors_are_click_errors[error0]",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_expected_manager_errors_are_click_errors[error1]",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_bad_json_is_rejected_before_manager_creation",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_actor_is_required_before_any_manager_call",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_real_manager_cli_deliver_observe_and_receipts_preserve_ownership",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_cli_keeps_real_loader_bounds_without_manager_or_transport[{\"a\":1,\"a\":2}]",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_cli_keeps_real_loader_bounds_without_manager_or_transport[xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx]",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_cli_keeps_real_loader_bounds_without_manager_or_transport[[]]",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/fleet/test_lane_model_routing.py::test_the_launch_site_actually_calls_lane_model",
       "bucket": "A",
       "reason": "Captured dispatcher 997b9795 supersedes main-era source shape while retaining the tested safety invariant.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "00e62e387dbfa43d5b77e70e6f9506ccb83dfd1b"
     },
     {
       "nodeid": "tests/fleet/test_lane_model_routing.py::test_a_producer_card_route_identity_is_unaffected",
       "bucket": "A",
       "reason": "Captured dispatcher 997b9795 supersedes main-era source shape while retaining the tested safety invariant.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "00e62e387dbfa43d5b77e70e6f9506ccb83dfd1b"
     },
     {
       "nodeid": "tests/fleet/test_root_relocation.py::test_only_paths_py_may_name_the_fleet_root",
       "bucket": "B",
       "reason": "Installed drift detector bypassed main paths_for_home; use the existing canonical explicit-home resolver.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "6a0dcae2edb0e2444dafc9d46c0120bc6bf5a5ab"
     },
     {
       "nodeid": "tests/fleet/test_root_relocation.py::test_any_other_skcapstone_path_is_a_named_exemption",
       "bucket": "A",
       "reason": "Installed modules use coordination CardStore/evidence homes outside the fleet tree. Name individual exemptions; retain no-duplicate-fleet-root guard.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "1becfc4eaaac25a5d924e4765554bdb5f3be29ac"
     },
     {
       "nodeid": "tests/test_coord_helpers.py::test_missing_supported_api_is_clear_and_writes_nothing",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/test_coord_helpers.py::test_dry_run_never_calls_creation",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/test_coord_helpers.py::test_cli_consults_normal_creation_authorization",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/test_coord_helpers.py::test_cli_real_api_creates_then_replays_without_parent_change",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/test_coord_helpers.py::test_cli_source_helpers_reject_overlapping_active_assignments",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/test_coord_helpers.py::test_helper_uses_normal_claim_after_real_dependency_finishes",
       "bucket": "D",
       "reason": "No caller for the missing crew/helper/handoff integration in captured bin scripts, user units, or their production module call paths. Do not invent wiring.",
-      "status": "unwired; disposition pending user answer",
+      "status": "Still failing in final full suite; no deployed caller; no wiring or expected-failure marker added",
       "fix_commit": null
     },
     {
       "nodeid": "tests/test_fleet_cycle_deadline.py::test_cycle_deadline_reserves_receipt_window",
       "bucket": "A",
       "reason": "Captured dispatcher 997b9795 supersedes main-era source shape while retaining the tested safety invariant.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "f2f7c8e037d4f74cb0b850283b2031c7f92e73fc"
     },
     {
       "nodeid": "tests/test_fleet_duplicate_admission.py::test_launch_path_checks_admission_after_claim_before_process",
       "bucket": "A",
       "reason": "Captured dispatcher 997b9795 supersedes main-era source shape while retaining the tested safety invariant.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "f12d383f6d459d7c9543820b75fc6b05dcf4fa1b"
     },
     {
       "nodeid": "tests/test_fleet_duplicate_admission.py::test_claim_displaced_recheck_sits_between_lock_and_process",
       "bucket": "A",
       "reason": "Captured dispatcher 997b9795 supersedes main-era source shape while retaining the tested safety invariant.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "f12d383f6d459d7c9543820b75fc6b05dcf4fa1b"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[up-None-S]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[up-None-M]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[up-None-L]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[up-None-XL]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[up-distinct-S]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[up-distinct-M]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[up-distinct-L]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[up-distinct-XL]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[up-shared-S]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[up-shared-M]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[up-shared-L]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[up-shared-XL]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[down-None-S]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[down-None-M]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[down-None-L]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[down-None-XL]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[down-distinct-S]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[down-distinct-M]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[down-distinct-L]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[down-distinct-XL]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[down-shared-S]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[down-shared-M]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[down-shared-L]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_codex_size_aliases_have_exact_health_admission[down-shared-XL]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_fleet_lane_health.py::test_rotator_health_lanes_carry_no_duplicate_bindings",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0a3d256e3f3930da50930bc093ecf88da575d2f8"
     },
     {
       "nodeid": "tests/test_link_observation_cycle.py::test_service_supplies_exact_repository_scope",
       "bucket": "B",
       "reason": "Installed unit omitted main PR 850 private SKGit repository scope and optional credential EnvironmentFile; port exact main forward.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "0acc543e0ba0fc78da3596dc64c21fdc3088ac84"
     },
     {
       "nodeid": "tests/test_scheduler_decision.py::test_launcher_ruff_does_not_expand_the_exact_inherited_baseline",
       "bucket": "A",
       "reason": "Captured dispatcher 997b9795 supersedes main-era source shape while retaining the tested safety invariant.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "65d51eb3f205be3d9b14ed037f5e425630d3e2aa"
     },
     {
       "nodeid": "tests/test_skfleet_capacity_fill.py::test_prelaunch_admission_uses_the_current_cards_elastic_state[order0]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "ff9985223b3139c7aa73ecfbc8f22128cdc738ec"
     },
     {
       "nodeid": "tests/test_skfleet_capacity_fill.py::test_prelaunch_admission_uses_the_current_cards_elastic_state[order1]",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "ff9985223b3139c7aa73ecfbc8f22128cdc738ec"
     },
     {
@@ -515,77 +515,77 @@
       "nodeid": "tests/test_skfleet_dispatch_integrity.py::test_existing_holds_reservations_capacity_and_cadence_remain",
       "bucket": "A",
       "reason": "Captured dispatcher 997b9795 supersedes main-era source shape while retaining the tested safety invariant.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "1fc077e88cae56d263abd5a81d010598b5246ac7"
     },
     {
       "nodeid": "tests/test_skfleet_niobe_builder_reachability.py::test_builder_cards_are_withheld_from_regular_lanes_while_the_builder_holds_them",
       "bucket": "A",
       "reason": "Captured dispatcher 997b9795 supersedes main-era source shape while retaining the tested safety invariant.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "101f3ed541e361292299049c3bdcf0f58c43e60b"
     },
     {
       "nodeid": "tests/test_skfleet_review_claim_release.py::test_releases_four_finished_claims_with_exact_cas_and_keeps_evidence",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "e1494fcd2312ec588014e58941af0a0c50d9b242"
     },
     {
       "nodeid": "tests/test_skfleet_review_claim_release.py::test_live_process_and_changed_generation_are_never_released",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "e1494fcd2312ec588014e58941af0a0c50d9b242"
     },
     {
       "nodeid": "tests/test_skfleet_review_claim_release.py::test_incomplete_pass_records_rejection_without_release",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "e1494fcd2312ec588014e58941af0a0c50d9b242"
     },
     {
       "nodeid": "tests/test_skfleet_worker_cgroup.py::test_launch_command_creates_a_collected_user_service",
       "bucket": "A",
       "reason": "Captured dispatcher 997b9795 supersedes main-era source shape while retaining the tested safety invariant.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "dcbc916a8f410b3e3cddae8fa5369490693a57c4"
     },
     {
       "nodeid": "tests/test_skfleet_worker_cgroup.py::test_launch_delegates_exact_claim_release_to_wrapper",
       "bucket": "A",
       "reason": "Captured dispatcher 997b9795 supersedes main-era source shape while retaining the tested safety invariant.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "a135e552a8114379f0f837e5971d1d2bb7c7e128"
     },
     {
       "nodeid": "tests/test_skfleet_worker_exit_evidence.py::test_launcher_routes_every_lane_through_exit_wrapper",
       "bucket": "A",
       "reason": "Captured dispatcher 997b9795 supersedes main-era source shape while retaining the tested safety invariant.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "a135e552a8114379f0f837e5971d1d2bb7c7e128"
     },
     {
       "nodeid": "tests/test_skfleet_worker_startup_runtime.py::test_terminal_wrapper_exit_allows_real_next_claim_and_managed_launch",
       "bucket": "C",
       "reason": "Isolated test globals, fake systemd argv parsing, or overlapping crew fixture ownership do not match installed contracts.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "270ee4860f1d1d1c6ab1da317cde90e46f4fd11f"
     },
     {
       "nodeid": "tests/test_skfleet_worker_stop_semantics.py::test_exact_generation_claim_release_is_owned_by_the_wrapper",
       "bucket": "A",
       "reason": "Captured dispatcher 997b9795 supersedes main-era source shape while retaining the tested safety invariant.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "a135e552a8114379f0f837e5971d1d2bb7c7e128"
     },
     {
       "nodeid": "tests/test_skfleet_working.py::test_collect_observes_local_canonical_host_without_ssh",
       "bucket": "B",
       "reason": "Installed script omitted main PR 890 canonical local-host observation; port exact main forward.",
-      "status": "passed in focused 51-test rerun",
+      "status": "Passed focused rerun and final full suite",
       "fix_commit": "de3b1c511755a8a9f07134c50122f5e9a31aa966"
     }
   ]

@@ -1,0 +1,28 @@
+0a3d256e3f3930da50930bc093ecf88da575d2f8 C-fixture: declare legacy policy mode in isolated lane-health tests
+ff9985223b3139c7aa73ecfbc8f22128cdc738ec C-fixture: supply legacy policy mode for extracted capacity admission
+e1494fcd2312ec588014e58941af0a0c50d9b242 C-fixture: model cached claim exclusion independently of fresh CAS reads
+270ee4860f1d1d1c6ab1da317cde90e46f4fd11f C-fixture: parse systemd option delimiter in fake launcher
+67fbf12a4b44700286ded082b1e202fd8208c206 C-environment: pin deployed SKCoord reconciliation after registry contract checks
+de3b1c511755a8a9f07134c50122f5e9a31aa966 B-main-forward: retain PR 890 local canonical-host observation
+6a0dcae2edb0e2444dafc9d46c0120bc6bf5a5ab B-main-forward: use the canonical explicit-home fleet path for drift marker
+6a29a32e3086fc943f869b24696aae2d27512520 C-fixture: isolate independent crew mandates in request deduplication tests
+d43bece06cd49ae42ef2c630b8daf743b536523f C-fixture: give budget-cursor crews disjoint owner paths
+dcbc916a8f410b3e3cddae8fa5369490693a57c4 A-deployed-contract: expect the captured systemd option delimiter
+a135e552a8114379f0f837e5971d1d2bb7c7e128 A-deployed-contract: verify wrapper launch through production custody reservation
+f12d383f6d459d7c9543820b75fc6b05dcf4fa1b A-deployed-contract: retain duplicate-admission checks around reserved launch argv
+f2f7c8e037d4f74cb0b850283b2031c7f92e73fc A-deployed-contract: test shared production cycle budget and legacy receipt reserve
+1becfc4eaaac25a5d924e4765554bdb5f3be29ac A-deployed-contract: explain installed modules coordination-home paths
+00e62e387dbfa43d5b77e70e6f9506ccb83dfd1b A-deployed-contract: assert label-qualified routing without a fixed source window
+f3b73cbd7e26e32cb7f55fb9fb6f38d14126c3ec C-source-contract: expose documented legacy target assignments without changing policy mode
+1fc077e88cae56d263abd5a81d010598b5246ac7 A-deployed-contract: retain deepseek lane and relative legacy dispatch order
+101f3ed541e361292299049c3bdcf0f58c43e60b A-deployed-contract: assert dry-run exclusion and bounded Niobe offers
+0acc543e0ba0fc78da3596dc64c21fdc3088ac84 B-main-forward: retain PR 850 private SKGit Link observation scope
+65d51eb3f205be3d9b14ed037f5e425630d3e2aa A-deployed-contract: pin lint debt to the immutable installed dispatcher baseline
+2e564af40ccaebdd09e0137a200f5c7190d41b1e C-style: format labelled fixture and contract fixes for CI
+fdf5fb045e3df0e8358838d125b7d9a490875b1b C-environment: pin the SKCoord candidate with its required changelog evidence
+c7b721240a2d88c91bdc8cc361fdcd4abd868836 evidence: classify all 83 candidate-only failures and record deployed caller audit
+4c9d6925479ee140e17d13a1e95511a53925f1db B-main-forward: enforce protected SOP operator lane targets in every dispatcher mode
+850c9ac29167cc72d0349314b6e820b39e1a9d67 evidence: classify protected SOP requirement as main-forward bucket B
+ef16fa54bd64af391f165855ea6597c3d39a7ae1 C-environment: pin validated SKCoord candidate with concurrency fixture correction
+534ae8d81cbfa542f149f48b940260143f975f75 Revert "B-main-forward: enforce protected SOP operator lane targets in every dispatcher mode"
+dc31b1a02076286ffa36062a2520aaf15e1df4cb evidence: disclose protected SOP and production capacity policy conflict

@@ -1,0 +1,190 @@
+{
+  "snapshot": "23b6f83f80e87cc816e35bf13db70ebe52740b97",
+  "candidate": "4a440b9e0d6a1048671fab6ad12129504d8c9fa1",
+  "python_files_identical": [
+    {
+      "path": "__init__.py",
+      "blob": "d6f1a06dd6a8ebed2a7d0d546f77b3854de008ad"
+    },
+    {
+      "path": "_scheduler_truth_impl.py",
+      "blob": "d0f73d8336927d11b39d5b1aa529ba88f5a2b3c2"
+    },
+    {
+      "path": "abandon_reason.py",
+      "blob": "70cd46d2aedd597bbcbe09c73fe92ba530f15e78"
+    },
+    {
+      "path": "agent_card.py",
+      "blob": "c28fd4585b16cb90dd5f70eea742425b0bf31a9b"
+    },
+    {
+      "path": "atomic_io.py",
+      "blob": "016147952eb40c4a7fc6dfda01ed44588c63ef24"
+    },
+    {
+      "path": "authorized_card_policy.py",
+      "blob": "450bd94840d9c917078f9746cdda8adce5ed9c8d"
+    },
+    {
+      "path": "authorized_card_snapshot.py",
+      "blob": "173761a8b396e06977ae704304894d03ebdb2dec"
+    },
+    {
+      "path": "card.py",
+      "blob": "010f5f1eea0fd40be23d23ae503445cb84f3aa21"
+    },
+    {
+      "path": "card_chain_recovery.py",
+      "blob": "acdae8d19cf5ca007b19ce050fb6ddf6bd95b33e"
+    },
+    {
+      "path": "card_event_recovery.py",
+      "blob": "74e878535e40b3f8e6a258a8bf95d06c9e6a8447"
+    },
+    {
+      "path": "card_recovery.py",
+      "blob": "a91a912a35053c3acafc1e060f341a57070ecd02"
+    },
+    {
+      "path": "card_store.py",
+      "blob": "b0c4c78290fa14d3ac5766d4d71cd51f61b43bdf"
+    },
+    {
+      "path": "cmdb.py",
+      "blob": "a9ec306a926770618d451a9c3abc57871b350c81"
+    },
+    {
+      "path": "cmdb_ownership.py",
+      "blob": "cde6acf3f07031731add75d8c3d48a6ab9f0c583"
+    },
+    {
+      "path": "cmdb_projection.py",
+      "blob": "682e62497ed58d45776df5652191aa34df6761a0"
+    },
+    {
+      "path": "cmdb_reconcile.py",
+      "blob": "cbb5b6c2277b053e54258dba036f51efb1d706c3"
+    },
+    {
+      "path": "cmdb_rollout.py",
+      "blob": "5f9d1a1de3a7b23d55dfc65b5f64f0b21ab0cc8b"
+    },
+    {
+      "path": "cmdb_scheduler.py",
+      "blob": "ca209bd9efa8b4be5f381987efefe8fc9281667b"
+    },
+    {
+      "path": "coordination.py",
+      "blob": "cce256ea2372558c65e4f3acbe991948e61a2762"
+    },
+    {
+      "path": "dependency_graph.py",
+      "blob": "8e9d763016943fc5e20720a88ff9438a7dca2c4b"
+    },
+    {
+      "path": "discovery.py",
+      "blob": "541f9fce77ee5cd695db8931e7bc02242637e9d6"
+    },
+    {
+      "path": "discovery_assets.py",
+      "blob": "5adf29c0f6096e291683867c020a2934cd0af217"
+    },
+    {
+      "path": "discovery_base.py",
+      "blob": "a234df5ae6f78fc4efcccffa2d02d6ade68c5676"
+    },
+    {
+      "path": "discovery_connects.py",
+      "blob": "7dee53733ec6930dcd0ebc500e672f5a1864296d"
+    },
+    {
+      "path": "discovery_declared.py",
+      "blob": "7991bf9f89fd67395ec87f3d1c3812e7e302696c"
+    },
+    {
+      "path": "discovery_drift.py",
+      "blob": "7fae06a58ee4f15ffc10f6baebba2862659d4547"
+    },
+    {
+      "path": "discovery_identity.py",
+      "blob": "598cccd3b8d1a9bd0f4e1acbbec9c1ca84341dc1"
+    },
+    {
+      "path": "discovery_reconcile.py",
+      "blob": "524d639a6ad167224d358e630d4d45b02927a179"
+    },
+    {
+      "path": "discovery_runtime.py",
+      "blob": "d8c98ad2e71bad6efc327c3c5760445a45d8379a"
+    },
+    {
+      "path": "discovery_scan.py",
+      "blob": "e71fe7f331f26e77266d1cd3eb3bcff59549f10b"
+    },
+    {
+      "path": "discovery_syncthing.py",
+      "blob": "5b471507f9633e079b20b9c62fe8ff467af024fa"
+    },
+    {
+      "path": "discovery_systemd.py",
+      "blob": "bb6489c5d0ee070189c87c131f092402b4ad3dff"
+    },
+    {
+      "path": "github_review_broker.py",
+      "blob": "c7efd23b3dfe994fd8b2831285dce0979c37a480"
+    },
+    {
+      "path": "graph_truth.py",
+      "blob": "a37cd95c1060e39fd401e8286a6c55229e44d809"
+    },
+    {
+      "path": "infrastructure_discovery.py",
+      "blob": "7f6009460cd1442aae4f7ffaa181934b5b090c72"
+    },
+    {
+      "path": "itil.py",
+      "blob": "42487c96a39579d9a8c7f4552acc82904801631f"
+    },
+    {
+      "path": "lifecycle.py",
+      "blob": "4245fd2d9f0ec4791bb14e450af125240c07df71"
+    },
+    {
+      "path": "lifecycle_reassessment.py",
+      "blob": "e805a7ba2ac23575f6ae4a98825a742bd3225fea"
+    },
+    {
+      "path": "owner_helpers.py",
+      "blob": "356873a4e886f09c3d6f14601cc587c19943c92c"
+    },
+    {
+      "path": "portfolio.py",
+      "blob": "2c056254dd820ded80e525369afedbc5fedd7288"
+    },
+    {
+      "path": "portfolio_contracts.py",
+      "blob": "6fe8ae3d46e09f7e28e2ef7d5560a64efd951b64"
+    },
+    {
+      "path": "portfolio_invocation.py",
+      "blob": "976f6e1a21abe92274fb2b4ec57cd6a86f2b3701"
+    },
+    {
+      "path": "review_replacement.py",
+      "blob": "fadf68630cb97d14508313e02f0c8bcc9768fa37"
+    },
+    {
+      "path": "scheduler_truth/__init__.py",
+      "blob": "c3d981e10b5523b582978e9f9eb07e54fa907a20"
+    },
+    {
+      "path": "scheduler_truth/__main__.py",
+      "blob": "f25441b8e22ca18e8aa6a7c5ffa1203c79b8d959"
+    },
+    {
+      "path": "scheduler_truth_cli.py",
+      "blob": "6987eae6b996bd672eaf479e0ae0a0a61eec20f7"
+    }
+  ]
+}
