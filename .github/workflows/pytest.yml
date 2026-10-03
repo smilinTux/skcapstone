@@ -57,6 +57,12 @@ concurrency:
   group: pytest-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -p -e -o pipefail {0}
+env:
+  BASH_ENV: ""
+
 jobs:
   classify:
     name: classify test impact
@@ -169,17 +175,21 @@ jobs:
           export XDG_RUNTIME_DIR="/run/user/$(id -u)"
           echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
           systemctl --user show-environment > /dev/null
+          scripts/ci/check-native-sandbox.sh
       - name: Install package with all extras and dev tools
         if: needs.classify.outputs.docs-only != 'true'
         run: |
+          python scripts/ci/test_environment.py
           python -m pip install --upgrade pip
-          pip install -e ".[all,dev]"
+          python scripts/ci/test_environment.py
+          python -m pip install -e ".[all,dev]"
       - name: Verify resolved package dependencies
         if: needs.classify.outputs.docs-only != 'true'
         run: python -m pip check
       - name: Verify registry skcoord contract before source overlay
         if: needs.classify.outputs.docs-only != 'true'
         run: |
+          python scripts/ci/test_environment.py
           python -m pip install --force-reinstall --no-deps --no-cache-dir \
             --only-binary=:all: "skcoord==0.1.82"
           python -m pip show skcoord
@@ -251,7 +261,8 @@ jobs:
         # Keep the registry-only contract above; this exact overlay supplies
         # the unpublished helper/replacement APIs used by production.
         run: |
-          pip install --force-reinstall --no-deps --no-cache-dir \
+          python scripts/ci/test_environment.py
+          python -m pip install --force-reinstall --no-deps --no-cache-dir \
             "skcoord @ git+https://github.com/smilinTux/skcoord@47cf3b1d6cbfbda5a07f32ae3a9ed9ad59de6217"
           python -c "import skcoord.owner_helpers, skcoord.review_replacement"
       - name: Resolve exact sibling revisions
@@ -272,7 +283,8 @@ jobs:
           DASHBOARD_SHA: ${{ steps.siblings.outputs.dashboard }}
           HARNESS_SHA: ${{ steps.siblings.outputs.harness }}
         run: |
-          pip install --force-reinstall --no-deps --no-cache-dir \
+          python scripts/ci/test_environment.py
+          python -m pip install --force-reinstall --no-deps --no-cache-dir \
             "skdashboard @ git+https://github.com/smilinTux/skdashboard@${DASHBOARD_SHA}" \
             "skharness @ git+https://github.com/smilinTux/skharness@${HARNESS_SHA}"
       - name: Run complete deterministic unit suite
@@ -312,7 +324,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: pytest-diagnostics-py${{ matrix.python-version }}
-          path: pytest-ci.log
+          path: |
+            pytest-ci.log
+            sandbox-ci.log
           if-no-files-found: warn
           retention-days: 7
       - name: Upload coverage
