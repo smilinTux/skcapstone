@@ -1,0 +1,6 @@
+Protected docs remain byte-identical to main.
+The SOP evidence command uses grep -qxF for unconditional TARGET and GLM_TARGET assignments.
+Captured production mode instead uses gateway-controlled routes and rejects legacy ceiling variables in niobe_live_entrypoint._production_environment.
+Commit f3b73cbd expands equivalent conditional assignments into explicit branches, preserving behavior and passing the source test, but cannot satisfy the SOP line anchor.
+Commit 4c9d6925 temporarily restored unconditional assignments. Further caller tracing showed this breaks the deployed production entrypoint: no target values can be supplied without rejection. The commit was forward-reverted; the incomplete fix must not ship.
+A coherent main-forward resolution requires extending main's fixed lane limits through entrypoints, production lane construction and unit environment. Alternatively, production policy remains authoritative and the protected-docs gate stays blocked. User clarification is pending. No live units or policies were modified.
