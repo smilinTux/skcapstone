@@ -1,0 +1,8 @@
+[Unit]
+Description=Run estate GLM lane rotation (offset from niobe cadence)
+[Timer]
+OnCalendar=*-*-* *:5,15,25,35,45,55:30
+RandomizedDelaySec=20
+Persistent=true
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Pull CHIWK13-owned SKFleet status into the control-bus replica
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/skfleet-pull-chiwk13
+
+[Install]
+WantedBy=default.target

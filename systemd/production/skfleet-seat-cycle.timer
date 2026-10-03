@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the canonical production scheduler after the previous generation
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=15s
+AccuracySec=1s
+Persistent=false
+Unit=skfleet-seat-cycle.service
+
+[Install]
+WantedBy=timers.target

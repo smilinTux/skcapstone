@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/home/skuser01/.skenv/bin/python
 """Reconcile Pi's SKGateway catalog to healthy advertised logical routes.
 
 Ownership boundary:

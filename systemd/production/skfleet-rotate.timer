@@ -1,0 +1,7 @@
+[Unit]
+Description=Run SKWorld fleet rotation every 5 minutes (chiap08 offset)
+[Timer]
+OnCalendar=*-*-* *:3,8,13,18,23,28,33,38,43,48,53,58:00
+Persistent=false
+[Install]
+WantedBy=timers.target

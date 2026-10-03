@@ -1,0 +1,6 @@
+[Unit]
+Description=Retire stale idle agent projections into reversible quarantine
+
+[Service]
+Type=oneshot
+ExecStart=%h/.skenv/bin/python3 %h/.local/bin/skfleet-projection-retire --apply

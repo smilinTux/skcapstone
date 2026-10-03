@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/home/skuser01/.skenv/bin/python
 """Run one fleet worker and preserve bounded terminal diagnostics."""
 
 from __future__ import annotations
@@ -161,6 +161,9 @@ def write_process_record(
         "pid": pid,
         **runtime_route_identity(args),
     }
+    source_disposition = getattr(args, "production_source_disposition", None)
+    if source_disposition is not None:
+        record["source_disposition"] = source_disposition
     path = Path.home() / ".skcapstone/fleet/direct-seats" / (args.owner + ".json")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -871,6 +874,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--logical-route", default="")
     parser.add_argument("--provider", default="")
     parser.add_argument("--capacity-domain", action="append", default=[])
+    parser.add_argument("--source-repository", default="")
+    parser.add_argument("--source-base-revision", default="")
     parser.add_argument("--stdout", required=True, type=Path)
     parser.add_argument("--evidence-dir", required=True, type=Path)
     parser.add_argument("--mail-recipient", default="jarvis")
@@ -1027,6 +1032,23 @@ def finalize_worker_exit(args: argparse.Namespace, child: subprocess.Popen | Non
     bounded retries), the exception propagates and the projection stays
     active for fenced reconciliation.
     """
+    from skcapstone.fleet.production_exit import retry_disposition
+
+    if not hasattr(args, "production_child_exit_code"):
+        args.production_child_exit_code = getattr(child, "returncode", None)
+    source = retry_disposition(
+        args,
+        lambda: "SKFLEET_PRODUCTION_POLICY" in os.environ and terminal_local_evidence(child),
+    )
+    if source is not None:
+        write_process_record(
+            args,
+            pid=child.pid if child is not None else os.getpid(),
+            completion_state=source["state"] if source["process_terminal"] else "running",
+        )
+        if source["claim_released"]:
+            idle_owner_projection(args.owner, args.card, args.claim_revision)
+        return
     terminalized = False
     try:
         terminalized = finalize_terminal_capacity(args, child)
@@ -1113,16 +1135,33 @@ def main() -> int:
                 result_code = 75
                 completion_failure = reason
         record_terminal_exit(args, stderr, result_code, completion_failure)
-        record_workspace_lifecycle_decision(args, "success" if result_code == 0 else "failure")
+        from skcapstone.fleet.production_exit import retry_disposition
+
+        args.production_child_exit_code = result_code
+        source = retry_disposition(
+            args,
+            lambda: "SKFLEET_PRODUCTION_POLICY" in os.environ and terminal_local_evidence(child),
+        )
+        if source is None:
+            record_workspace_lifecycle_decision(args, "success" if result_code == 0 else "failure")
         write_process_record(
             args,
             pid=child.pid,
-            completion_state="completed" if child.returncode == 0 else "failed",
+            completion_state=(
+                (source["state"] if source["process_terminal"] else "running")
+                if source is not None
+                else ("completed" if child.returncode == 0 else "failed")
+            ),
         )
         emit_work_mail(
             args,
-            "work.complete" if result_code == 0 else "work.blocked",
-            f"phase=finished exit_code={result_code}",
+            (
+                "agent.status"
+                if source is not None
+                else ("work.complete" if result_code == 0 else "work.blocked")
+            ),
+            f"phase={source['state'] if source is not None else 'finished'} "
+            f"exit_code={result_code}",
         )
         return result_code
     finally:
