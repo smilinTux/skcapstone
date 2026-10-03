@@ -48,6 +48,8 @@ def test_launch_command_creates_a_collected_user_service() -> None:
         "--property=KillMode=control-group",
         "--working-directory",
         "/workspace",
+        # Deployed dispatcher 997b9795 separates systemd options from argv.
+        "--",
         "bash",
         "-lc",
         "worker",
