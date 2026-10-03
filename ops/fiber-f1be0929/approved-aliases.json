@@ -1,0 +1,59 @@
+{
+  "providers": {
+    "skgw-deepseek": {
+      "baseUrl": "http://chiap01:18790/v1",
+      "api": "openai-completions",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": true
+      },
+      "models": [
+        {
+          "id": "deepseek-flash",
+          "name": "DeepSeek V4.1 Flash via SKGateway",
+          "reasoning": true,
+          "input": [
+            "text",
+            "image"
+          ]
+        }
+      ]
+    },
+    "skgw-zai": {
+      "baseUrl": "http://chiap01:18790/v1",
+      "api": "openai-completions",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": true
+      },
+      "models": [
+        {
+          "id": "sk-zai-m",
+          "name": "GLM M bucket via production SKGateway",
+          "reasoning": true,
+          "input": [
+            "text"
+          ]
+        }
+      ]
+    },
+    "skgw-codex": {
+      "baseUrl": "http://chiap01:18790/v1",
+      "api": "openai-completions",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": true
+      },
+      "models": [
+        {
+          "id": "gpt-5.6-sol",
+          "name": "Codex GPT-5.6 sol via SKGateway",
+          "reasoning": true,
+          "input": [
+            "text"
+          ]
+        }
+      ]
+    }
+  }
+}
