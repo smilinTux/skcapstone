@@ -1,0 +1,1 @@
+- Card `b1d1fe01`: reconcile orphaned builder generations without reusing generation IDs, terminalizing newer offers, trusting noncanonical statuses, or undercounting occupied builder capacity.
