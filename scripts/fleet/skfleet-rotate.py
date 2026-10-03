@@ -3040,14 +3040,6 @@ def authoritative_claimability(cid, core=None, fresh=False):
     folded_core["links"] = dict(state["links"])
     labels = state["labels"]
     reason = _claimability_reason(core, state)
-    if "owner-helper" in labels or (folded_core.get("meta") or {}).get("helper_parent_id"):
-        try:
-            from skcapstone.fleet.crew_admission import validate_helper_generation
-
-            _helper_home = Path(CARDS).parent
-            validate_helper_generation(_helper_home, CardStore(_helper_home).fold(cid))
-        except (ValueError, OSError):
-            reason = "helper-parent-stale"
     legacy_owners = state["legacy_owners"]
     if len(legacy_owners) > 1 or (state["owner"] and legacy_owners
                                   and state["owner"] not in legacy_owners):
@@ -3713,20 +3705,6 @@ def _report_worker_progress(session_names, units=(), now=None):
                 progress_at=progress_at, session_alive=True,
                 transcript_bytes=transcript_bytes)
             state = classify_progress(observation, now=now_dt)
-            if local and _fresh_owner == owner:
-                try:
-                    from pathlib import Path
-                    from skcapstone.fleet.crew_progress import publish_progress
-                    from skcapstone.fleet.paths import FleetPaths
-
-                    publish_progress(
-                        FleetPaths(Path(HOME) / ".skcapstone" / "fleet"),
-                        observation, host=HOST, observed_at=now_dt.isoformat(),
-                        source=source, receipt_local=local,
-                        claim_owner=_fresh_owner)
-                except (OSError, ValueError, TypeError) as exc:
-                    log(d, "CREW_PROGRESS_UNAVAILABLE|%s|%s|%s" %
-                        (HOST, cid, type(exc).__name__))
             age = ("none" if progress_ts is None
                    else str(int(max(0, now - progress_ts))))
             claim_age = (now - fresh_ts) if fresh_ts else None
