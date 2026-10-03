@@ -72,6 +72,8 @@ def test_niobe_environment_template_ships_in_wheel_and_sdist(tmp_path: Path) -> 
             "pip",
             "wheel",
             "--no-deps",
+            "--no-build-isolation",
+            "--no-index",
             "--no-cache-dir",
             "--wheel-dir",
             str(outdir),
