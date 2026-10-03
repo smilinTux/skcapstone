@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import re
 import socket
+from itertools import islice
 from pathlib import Path
+
+from skcoord.card_store import CardStore, card_mutation_lock
 
 from . import production_test_node as node
 from . import production_test_plan as plan
@@ -117,8 +121,8 @@ def recipe_checks(recipe: dict) -> list[dict]:
     return checks
 
 
-def validate_profile(value: dict, expected: dict, policy: dict, *, environment=True) -> dict:
-    """Validate authority qualification or its existing trusted dispatch copy."""
+def _validate_shape(value: dict) -> None:
+    """Check each historical generation without requalifying its old environment."""
     node_profile = node.is_node(value)
     fields = FIELDS | {"node_environment"} if node_profile else FIELDS
     schema = node.SCHEMA if node_profile else SCHEMA
@@ -126,7 +130,6 @@ def validate_profile(value: dict, expected: dict, policy: dict, *, environment=T
         not isinstance(value, dict)
         or set(value) != fields
         or value["schema"] != schema
-        or any(value.get(k) != v for k, v in expected.items())
         or not isinstance(value["qualified_by"], str)
         or not value["qualified_by"]
         or any(
@@ -139,13 +142,23 @@ def validate_profile(value: dict, expected: dict, policy: dict, *, environment=T
                 "policy_sha256",
             )
         )
-        or value["policy_sha256"] != digest(policy)
-        or value["host"] != policy["authority_host"]
     ):
         raise plan.TestEvidenceError("qualified test profile is missing, stale or conflicting")
     recipe_checks(value["recipe"])
     if ("vitest" in value["recipe"]) != node_profile:
         raise plan.TestEvidenceError("test recipe and profile variant disagree")
+
+
+def validate_profile(value: dict, expected: dict, policy: dict, *, environment=True) -> dict:
+    """Validate authority qualification or its existing trusted dispatch copy."""
+    _validate_shape(value)
+    if (
+        any(value.get(k) != v for k, v in expected.items())
+        or value["policy_sha256"] != digest(policy)
+        or value["host"] != policy["authority_host"]
+    ):
+        raise plan.TestEvidenceError("qualified test profile is missing, stale or conflicting")
+    node_profile = node.is_node(value)
     if node_profile and environment:
         node.validate_environment(value["node_environment"])
     if environment and (
@@ -189,6 +202,123 @@ def qualify_profile(
     return path
 
 
+def read_profile(home: Path, card: str, *, pinned: dict | None = None) -> tuple[dict, str]:
+    """Resolve an append-only chain, or an exact historical sealed-plan profile."""
+    if not isinstance(card, str) or not re.fullmatch(r"[0-9a-f]{8}", card):
+        raise plan.TestEvidenceError("invalid profile card")
+    root = home / "fleet/test-profiles"
+    raw = plan.read_private(root / (card + ".json"))
+    value = json.loads(raw, object_pairs_hook=plan._unique_object)
+    found = None
+    seen = set()
+    for _ in range(128):
+        fingerprint = plan.sha(raw)
+        if fingerprint in seen or not isinstance(value, dict) or value.get("card") != card:
+            raise plan.TestEvidenceError("invalid test profile chain")
+        _validate_shape(value)
+        seen.add(fingerprint)
+        if pinned is not None and value == pinned:
+            found = (value, fingerprint)
+        directory = root / card
+        if directory.exists() or directory.is_symlink():
+            plan.private_dir(directory)
+        path = directory / (fingerprint + ".json")
+        try:
+            raw = plan.read_private(path)
+        except FileNotFoundError:
+            if directory.exists() and len(list(islice(directory.iterdir(), 129))) != len(seen) - 1:
+                raise plan.TestEvidenceError("ambiguous or disconnected test profile chain")
+            if pinned is None:
+                return value, fingerprint
+            if found is not None:
+                return found
+            raise plan.TestEvidenceError("candidate test profile changed") from None
+        envelope = json.loads(raw, object_pairs_hook=plan._unique_object)
+        if (
+            not isinstance(envelope, dict)
+            or set(envelope) != {"schema", "predecessor_sha256", "source_claim", "profile"}
+            or envelope["schema"] != "skfleet.test-profile-successor/v1"
+            or envelope["predecessor_sha256"] != fingerprint
+            or not isinstance(envelope["source_claim"], dict)
+            or set(envelope["source_claim"]) != {"owner", "claim_revision"}
+            or any(not isinstance(v, str) or not v for v in envelope["source_claim"].values())
+        ):
+            raise plan.TestEvidenceError("invalid test profile successor")
+        value = envelope["profile"]
+    raise plan.TestEvidenceError("test profile chain exceeds generation bound")
+
+
+def supersede_profile(
+    home: Path,
+    core: dict,
+    policy: dict,
+    recipe: dict,
+    qualified_by: str,
+    qualification_sha256: str,
+    *,
+    predecessor_sha256: str,
+    source_claim: dict,
+    runtime_sha256: str,
+    node_environment: dict | None = None,
+) -> Path:
+    """Append qualified evidence under exact live source custody, never repin history."""
+    expected = contract(core)
+    if (
+        not isinstance(source_claim, dict)
+        or set(source_claim) != {"owner", "claim_revision"}
+        or any(not isinstance(v, str) or not v for v in source_claim.values())
+        or not isinstance(predecessor_sha256, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", predecessor_sha256)
+    ):
+        raise plan.TestEvidenceError("invalid profile successor binding")
+    with card_mutation_lock(home, expected["card"]):
+        card = CardStore(home).fold(expected["card"])
+        if (
+            card is None
+            or card.archived
+            or card.meta.get("claim_conflicts")
+            or card.status.value != "doing"
+            or card.owner != source_claim["owner"]
+            or card.meta.get("_claim_revision") != source_claim["claim_revision"]
+            or contract(card.model_dump(mode="json")) != expected
+        ):
+            raise plan.TestEvidenceError("profile source claim changed")
+        predecessor, current = read_profile(home, expected["card"])
+        if current != predecessor_sha256:
+            raise plan.TestEvidenceError("profile predecessor changed")
+        if qualification_sha256 == predecessor.get("qualification_sha256"):
+            raise plan.TestEvidenceError("profile successor requires fresh qualification evidence")
+        value = {
+            "schema": SCHEMA,
+            **expected,
+            "recipe": recipe,
+            "qualified_by": qualified_by,
+            "qualification_sha256": qualification_sha256,
+            "python_sha256": plan.sha((plan.PREFIX / "bin/python").read_bytes()),
+            "runtime_sha256": runtime_sha256,
+            "policy_sha256": digest(policy),
+            "host": socket.gethostname().split(".")[0].lower(),
+        }
+        if node_environment is not None:
+            value.update(schema=node.SCHEMA, node_environment=node_environment)
+        validate_profile(value, expected, policy)
+        directory = home / "fleet/test-profiles" / expected["card"]
+        plan.private_dir(directory, create=True)
+        if len(list(islice(directory.iterdir(), 128))) >= 127:
+            raise plan.TestEvidenceError("test profile chain exceeds generation bound")
+        path = directory / (current + ".json")
+        plan.write_once(
+            path,
+            {
+                "schema": "skfleet.test-profile-successor/v1",
+                "predecessor_sha256": current,
+                "source_claim": source_claim,
+                "profile": value,
+            },
+        )
+        return path
+
+
 def preflight(home: Path, core: dict, labels, policy: dict) -> dict | None:
     """Withhold only new source-only producers without a supported trusted contract."""
     labels = {str(label).lower() for label in labels}
@@ -196,7 +326,7 @@ def preflight(home: Path, core: dict, labels, policy: dict) -> dict | None:
         return None
     expected = contract(core)
     try:
-        value = plan.read_json(home / "fleet/test-profiles" / (expected["card"] + ".json"))
+        value, _ = read_profile(home, expected["card"])
     except FileNotFoundError:
         raise plan.TestEvidenceError("required-test-profile-unqualified") from None
     return validate_profile(value, expected, policy)
@@ -216,7 +346,7 @@ def seal_candidate(
         "repository": repository,
         "criteria_sha256": binding["criteria_sha256"],
     }
-    value = plan.read_json(home / "fleet/test-profiles" / (expected["card"] + ".json"))
+    value, _ = read_profile(home, expected["card"])
     validate_profile(value, expected, policy)
     plan.seal_plan(
         home,

@@ -287,10 +287,10 @@ def load_plan(home: Path, binding: dict) -> tuple[dict, Path, str]:
     }
     expected_checks = approved_checks()
     if "profile" in plan:
-        from .production_test_profile import recipe_checks
+        from .production_test_profile import read_profile, recipe_checks
 
         required.add("profile")
-        profile = read_json(home / "fleet/test-profiles" / (binding["source_card"] + ".json"))
+        profile, _ = read_profile(home, binding["source_card"], pinned=plan["profile"])
         if (
             profile != plan["profile"]
             or profile.get("card") != binding["source_card"]
