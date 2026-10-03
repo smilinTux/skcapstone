@@ -526,7 +526,9 @@ def test_terminal_wrapper_exit_allows_real_next_claim_and_managed_launch(tmp_pat
         "import subprocess,sys\n"
         "args=sys.argv[1:]\n"
         "i=args.index('--working-directory')\n"
-        "raise SystemExit(subprocess.run(args[i+2:],cwd=args[i+1]).returncode)\n"
+        "command=args[i+2:]\n"
+        "if command[:1] == ['--']: command=command[1:]\n"
+        "raise SystemExit(subprocess.run(command,cwd=args[i+1]).returncode)\n"
     )
     systemd_run.chmod(0o700)
     marker = tmp_path / "second-launched"
