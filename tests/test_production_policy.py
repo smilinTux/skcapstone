@@ -230,8 +230,8 @@ assert os.environ['SKFLEET_MAX_CLAIMS'] == '7'
 assert all(policy['lanes'][lane]['enabled'] for lane in ('codex','glm','deepseek','qwen'))
 assert 'SKFLEET_TARGET' not in os.environ
 home = Path(os.environ['SKFLEET_NIOBE_ACTIVATION']).parent.parent
-evidence = home/'evidence/fleet-rotation'/os.environ['SKFLEET_ROTATION_ID']/'actions.log'
-evidence.parent.mkdir(parents=True)
+evidence = home/'evidence/fleet-rotation'/('chiap08-'+os.environ['SKFLEET_ROTATION_ID'])/'actions.log'
+evidence.parent.mkdir(parents=True, exist_ok=True)
 evidence.write_text('NOOP_RECEIPT|chiap08|reason=synthetic-qualified\n')
 """.replace("synthetic-qualified\n'", "synthetic-qualified\\n'"))
     assert run_live(activation_path=activation, dispatcher=dispatcher, local_host="chiap08") == 0
