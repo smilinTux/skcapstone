@@ -516,9 +516,7 @@ print(json.dumps({'bundle':base64.b64encode(raw).decode()}))
 
 def export_review_packet(home: Path, workspace: Path, binding: dict, *, execution: dict) -> dict:
     """Export a bounded committed review delta after actual proposal inspection."""
-    from .production_review_evidence import inspect_proposal
-
-    proposal = inspect_proposal(workspace, **binding)
+    proposal = inspect_remote_review(workspace, **binding)
     exported = _inspect(
         workspace,
         _REVIEW_EXPORT,
@@ -531,6 +529,7 @@ def export_review_packet(home: Path, workspace: Path, binding: dict, *, executio
     raw = base64.b64decode(exported["bundle"], validate=True)
     manifest = dict(
         schema="skfleet.review-bundle/v1",
+        verdict=proposal["proposal"]["verdict"],
         binding=binding,
         execution=execution,
         review_head=proposal["review_head"],
@@ -541,13 +540,7 @@ def export_review_packet(home: Path, workspace: Path, binding: dict, *, executio
         bundle_bytes=len(raw),
     )
     packet = {"manifest": manifest, "bundle": exported["bundle"]}
-    # The existing fleet tree is replicated. The packet contains no original
-    # private inputs, only the exact two committed review evidence files.
-    root = Path(home) / "fleet/review-artifacts" / binding["card"]
-    _once(
-        root / (_sha(json.dumps(manifest, sort_keys=True).encode()) + ".json"),
-        json.dumps(packet, sort_keys=True).encode(),
-    )
+    retain_review_packet(home, packet)
     return packet
 
 
@@ -555,8 +548,6 @@ def import_review_packet(
     home: Path, packet: dict, workspace: Path, binding: dict, *, execution: dict
 ) -> None:
     """Apply a verified delta to an exact private source checkout and re-inspect."""
-    from .production_review_evidence import inspect_proposal
-
     manifest = packet["manifest"]
     raw = base64.b64decode(packet["bundle"], validate=True)
     if (
@@ -617,6 +608,11 @@ def import_review_packet(
         raise SourceBundleError("review delta advertises another head")
     git("-c", "protocol.file.allow=always", "fetch", "--no-tags", str(blob), "HEAD")
     git("merge-base", "--is-ancestor", binding["source_head"], manifest["review_head"])
+    if (
+        git("rev-list", "--count", binding["source_head"] + ".." + manifest["review_head"]) != "1"
+        or git("rev-parse", manifest["review_head"] + "^") != binding["source_head"]
+    ):
+        raise SourceBundleError("review delta must contain only one evidence commit")
     # Validate paths and modes before checkout to avoid materializing extra or
     # redirected worker files in the authority's source checkout.
     prefix = "docs/evidence/agents/" + binding["card"] + "/"
@@ -642,9 +638,90 @@ def import_review_packet(
     git("checkout", "--detach", manifest["review_head"])
     for name in expected:
         (workspace / name).chmod(0o600)
-    proposal = inspect_proposal(workspace, **binding)
+    proposal = inspect_remote_review(workspace, **binding)
+    if proposal["proposal"]["verdict"] != manifest.get("verdict"):
+        raise SourceBundleError("imported review verdict differs")
     if any(
         proposal[key] != manifest[key]
         for key in ("review_head", "review_tree", "report_sha256", "decision_sha256")
     ):
         raise SourceBundleError("imported review evidence differs")
+
+
+def retain_review_packet(home, packet):
+    """Keep large bounded artifacts outside small native status records."""
+    card = packet["manifest"]["binding"]["card"]
+    _root(Path(home), card)  # Reuse exact native card path validation.
+    raw = json.dumps(packet, sort_keys=True, separators=(",", ":")).encode()
+    if len(raw) > 2 * MAX_BUNDLE + MAX_EVIDENCE:
+        raise SourceBundleError("review packet exceeds transport bound")
+    digest = _sha(raw)
+    _once(Path(home) / "fleet/review-artifacts" / card / (digest + ".json"), raw)
+    return dict(card=card, sha256=digest)
+
+
+def load_review_packet(home, reference, card):
+    """Resolve only a content-addressed native packet, never a supplied path."""
+    if (
+        set(reference) != {"card", "sha256"}
+        or reference["card"] != card
+        or not re.fullmatch(r"[0-9a-f]{64}", reference["sha256"])
+    ):
+        raise SourceBundleError("review artifact reference differs")
+    _root(Path(home), card)
+    raw = _read(
+        Path(home) / "fleet/review-artifacts" / card / (reference["sha256"] + ".json"),
+        2 * MAX_BUNDLE + MAX_EVIDENCE,
+    )
+    if _sha(raw) != reference["sha256"]:
+        raise SourceBundleError("review artifact content changed")
+    return json.loads(raw)
+
+
+def inspect_remote_review(workspace, **binding):
+    """Reuse native inspection, extending only its closed verdict to typed BLOCKED.
+
+    The deployed brief writes a structured BLOCKED verdict, while its inspector
+    accepts only the bare token. Preserve the detailed committed bytes and run
+    the same sandbox program and native blocked-verdict validator. If that
+    upstream assertion changes, this compatibility extension refuses safely.
+    """
+    from ..blocked_verdict import validate_blocked_verdict
+    from .production_review_evidence import _REVIEW_PROGRAM, ReviewEvidenceError, inspect_proposal
+
+    try:
+        return inspect_proposal(workspace, **binding)
+    except ReviewEvidenceError:
+        assertion = "assert proposal['verdict'] in ('PASS','FAIL','BLOCKED')"
+        if _REVIEW_PROGRAM.count(assertion) != 1:
+            raise
+        if (
+            not all(re.fullmatch(r"[0-9a-f]{8}", binding[k]) for k in ("card", "parent_card"))
+            or binding["card"] == binding["parent_card"]
+            or not all(
+                re.fullmatch(r"[0-9a-f]{40}", binding[k]) for k in ("source_head", "source_tree")
+            )
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", binding["reviewer_identity"])
+        ):
+            raise
+        program = _REVIEW_PROGRAM.replace(
+            assertion,
+            "assert isinstance(proposal['verdict'],str) "
+            "and proposal['verdict'].startswith('BLOCKED ')",
+        )
+        result = _inspect(
+            workspace,
+            program,
+            *(
+                binding[k]
+                for k in ("card", "parent_card", "source_head", "source_tree", "reviewer_identity")
+            ),
+        )
+        validate_blocked_verdict("verdict", result["proposal"]["verdict"])
+        for key in ("report", "decision"):
+            if (
+                _sha(base64.b64decode(result[key + "_b64"], validate=True))
+                != result[key + "_sha256"]
+            ):
+                raise ReviewEvidenceError("remote blocked review inspection digest differs")
+        return result

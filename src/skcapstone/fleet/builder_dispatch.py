@@ -432,6 +432,14 @@ def held_card_ids(paths: FleetPaths, *, now: datetime | None = None) -> set[str]
                 continue
             if request_holds_card(request, status, stamp):
                 held.add(card_id)
+    # Missing request replication never turns destination review custody idle.
+    for path in paths.status.glob("*/dispatch/*.json"):
+        try:
+            status = _validated_status(path, paths, path.parent.parent.name)
+            if status and status.get("work_kind") == "review":
+                held.add(path.stem)
+        except (BuilderDispatchError, OSError, ValueError):
+            held.add(path.stem)
     return held
 
 
@@ -1175,7 +1183,8 @@ def _consume_available(
         with _request_exclusion(path):
             try:
                 result = review_dispatch.consume_review(
-                    paths, coordination_home, node, request, launcher=launcher)
+                    paths, coordination_home, node, request, launcher=launcher
+                )
             except (OSError, ValueError, KeyError, TypeError):
                 # Request/claim/intent stays held for exact evidence or recovery.
                 continue

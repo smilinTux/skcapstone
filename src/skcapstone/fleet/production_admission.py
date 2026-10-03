@@ -143,6 +143,21 @@ def _occupancy(root: Path, home: Path, *, strict_terminal=False) -> list[dict]:
             if not _valid_success_receipt(proof, intent):
                 raise AdmissionError("successful launch terminal receipt is inconsistent")
             continue
+        if strict_terminal and unit not in units:
+            terminal_path = directory / "terminal.json"
+            if terminal_path.exists():
+                proof = read_json(terminal_path)
+                if proof.get("intent_sha256") != _digest(intent) or not _terminal_state(
+                    proof.get("state", {}), intent
+                ):
+                    raise AdmissionError("terminal admission proof differs")
+                continue
+            state = unit_state(unit, terminal=True)
+            if _terminal_state(state, intent):
+                if unit_state(unit, terminal=True) != state:
+                    raise AdmissionError("terminal admission observation changed")
+                write_once(terminal_path, {"intent_sha256": _digest(intent), "state": state})
+                continue
         if (directory / "failed-terminal.json").exists():
             proof = read_json(directory / "failed-terminal.json")
             if not _valid_failed_receipt(proof, intent):
@@ -209,6 +224,25 @@ def _occupancy(root: Path, home: Path, *, strict_terminal=False) -> list[dict]:
         else:
             units[unit] = {"unit": unit, "reserved_memory_max": maximum}
     return list(units.values())
+
+
+def _terminal_state(state, intent):
+    """Require a retained marked invocation with no remaining process or cgroup."""
+    return (
+        state.get("Id") == intent["unit"]
+        and state.get("LoadState") == "loaded"
+        and state.get(MARKER) == _reservation_id(intent)
+        and state.get("MemoryMax") == str(intent["resources"]["memory_max_bytes"])
+        and bool(re.fullmatch(r"[0-9a-f]{32}", str(state.get("InvocationID", ""))))
+        and state.get("ActiveState") in {"inactive", "failed"}
+        and state.get("SubState") in {"dead", "failed"}
+        and state.get("MainPID") == "0"
+        and state.get("ControlPID") == "0"
+        and state.get("TasksCurrent") in {"0", "[not set]"}
+        and state.get("ControlGroup") == ""
+        and state.get("ExecMainCode") in {"1", "2", "3"}
+        and bool(re.fullmatch(r"[0-9]+", str(state.get("ExecMainStatus", ""))))
+    )
 
 
 def _failed_state(state: dict, intent: dict, invocation: str) -> bool:
