@@ -1,67 +1,74 @@
-# Host-local fleet liveness publisher rollout candidate
+# Host-local liveness: real namespace and exclusive authoritative writer
 
-Status: source-only candidate. Do not execute these commands on this
-source-repair card.
+The publisher observes legacy tmux sessions and native systemd worker units
+without selecting, claiming, releasing or launching work. Niobe remains the
+sole dispatcher. skfleet-rotate.timer remains disabled on retired per-host
+rotation installations; do not enable duplicate schedulers.
+skfleet-niobe-live.timer remains the sole centralized dispatcher. The consumer requires literal boolean complete=true and
+fresh, host-matching evidence from every configured host before absence-based
+reaping. Missing, delayed or ambiguous evidence fails closed.
 
-The `skfleet-live-publisher` unit reads only local tmux sessions, running
-`skfleet-worker-*.service` units, and CardStore claim identity. It atomically
-publishes `evidence/fleet-live/<host>.json`. It has no card selection, claim,
-release, launch, reaper, or dispatch path.
+## Namespace contract
 
-## Explicit namespace-safe pane-evidence contract
+The unit uses the actual shared host /tmp namespace (PrivateTmp=no) and
+SKFLEET_TMUX_SOCKET=/tmp/tmux-%U/default. The former runtime-only socket
+contained an unrelated liveness anchor on four hosts while actual worker
+sessions used the default socket. An anchor is not evidence about another
+server.
 
-The service keeps `PrivateTmp=yes`, so its `/tmp` is a private namespace and
-cannot see the default `/tmp/tmux-$UID` socket. Pane evidence is therefore
-read only through an explicitly configured socket:
-`SKFLEET_TMUX_SOCKET=%t/skfleet/tmux.sock`, created under the shared per-user
-runtime directory (`/run/user/$UID`), which `PrivateTmp` does not shadow.
-`RuntimeDirectory=skfleet` provisions that directory.
+With SKFLEET_ALLOW_ABSENT_DEFAULT_TMUX=1, an absent default socket is empty
+only after a successful own-user process query shows no tmux process.
+This opt-in applies only to the exact default path. Missing custom sockets,
+permission failures, failed process probes and live tmux with a missing
+default socket still fail. No server or session is created.
 
-The publisher refuses to run without this explicit socket and fails closed —
-it exits nonzero and leaves the last published snapshot untouched — whenever
-the socket is missing, is not a socket file, or the probe cannot connect.
-`failed to connect` is never accepted as an empty process view, so a hidden
-socket can no longer publish false-empty evidence that would satisfy the
-all-known-host freshness gate. A truthful empty view requires a reachable
-server on the explicit socket that reports zero sessions.
+SKFLEET_AUDIT_TMUX_SERVERS=1 additionally joins all own-user tmux server PIDs
+to existing socket files under /tmp/tmux-UID and /run/user/UID/skfleet
+(tmux*.sock). The publisher queries each real server PID and sessions and
+requires stable process membership before/after the observation. Unknown
+unlinked servers, failed socket probes or a changing process set deny
+authority. Reachable anchor sockets are included as observed sessions,
+never substituted for the real default namespace. Hidden servers in other
+namespaces remain unknown until their real socket can be observed.
 
-## Lane capacity: carried, never fabricated
+Report tmux_sessions, tmux_sockets, and systemd_units expose actual observed
+names, including operator SKLegal units without inventing card bindings.
+Only supported fleet naming patterns produce card IDs and exact current
+owner/claim-revision records. Diagnostics remain explicitly incomplete when
+either runtime observation fails.
 
-The publisher does not measure lane capacity. Lane targets are estate
-configuration in the dispatcher's unit environment, and the codex lane's
-`free` is bounded by live gateway route capacity; the publisher can see
-neither. It used to hardcode `lanes: {}`, which consumers that sum `free`
-read as "zero free capacity", so a publisher run 41 seconds after the
-dispatcher overwrote the dispatcher's truthful lane table with zeros every
-cycle. The publisher now carries the most recent lane table forward
-unchanged, stamped with the time it was measured (`lanes_ts`), and drops it
-once it is older than the 30-minute freshness fence the readers already
-apply. When no fresh measurement exists it publishes the explicit marker
-`"lanes": "unknown"`, which capacity readers skip (the host reports no
-capacity data) instead of counting as zero. "Could not measure" and
-"measured zero free slots" are therefore never the same snapshot.
+## One authoritative writer
 
-After independent review and a separate human-authorized execution card, stage
-the packaged service and timer on every host in the estate's `rotation_hosts`
-list. The execution card must also point the worker tmux servers at the same
-`%t/skfleet/tmux.sock` so the publisher and workers share one socket. Verify
-the files first, then install and enable only
-`skfleet-live-publisher.timer`. `skfleet-rotate.timer remains disabled` on every
-host; `skfleet-niobe-live.timer remains the sole centralized dispatcher` on its
-authorized control host.
+Only fleet_live_publisher writes evidence/fleet-live/HOST.json.
+Rotation publish_live now writes its lane measurement under
+evidence/fleet-lanes/HOST.json, retaining its existing return value and
+observations. It cannot overwrite a complete report with weaker empty
+process probes. reporting_capacity reads the separate lane file, with
+legacy fallback during rollout. The publisher carries this fresh lane
+measurement and original lanes_ts; stale measurements become unknown.
+The terminal worker invalidator still removes only an exactly released
+generation and preserves the original observation timestamp.
 
-Candidate commands for that later execution card:
+## Rollout and rollback
 
-```bash
-install -m 0644 skfleet-live-publisher.service "$HOME/.config/systemd/user/"
-install -m 0644 skfleet-live-publisher.timer "$HOME/.config/systemd/user/"
-systemctl --user daemon-reload
-systemctl --user enable --now skfleet-live-publisher.timer
-```
+Do not execute these commands on this
+source-repair card without explicit operator rollout authorization.
 
-Acceptance must show one fresh, host-matching report for every configured host,
-with each observed worker carrying its exact owner and claim revision. Missing,
-invalid, future, delayed, or stale evidence continues to deny reaper authority.
-Rollback disables and removes only `skfleet-live-publisher.timer` and its
-service; it does not enable any retired rotation timer or alter centralized
-dispatch.
+Before changes, independently review exact source and save hash-bound
+per-host installed preimages. Update the actual authority dispatcher lane
+writer/read path first, preserving unrelated admission changes. Wait for
+any older dispatcher cycle to finish naturally before enabling new publisher
+units. Update both module and unit on each host, daemon-reload, and invoke
+only the read-only publisher. No worker restart or new worker is required.
+
+Verify real sessions/server PID coverage, truthful idle-host state, fresh
+per-host reports and actual authority health after transport converges.
+An unlinked server must be recovered safely before claiming full quorum;
+the source does not guess it away. Never signal a server to recreate a
+socket onto another live server's occupied pathname.
+
+Rollback only exact current installed hashes to recorded preimages.
+Preserve the existing completeness consumer guard. Reverting namespace
+alignment restores missing/anchor-only evidence limitations; do not
+represent rollback as recovered authority. Keep canonical source and
+receipts, then remove task-owned scratch clones/staged files.

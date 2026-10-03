@@ -72,9 +72,13 @@ def test_publisher_reads_panes_through_the_explicit_socket(tmp_path: Path) -> No
     assert target == tmp_path / "evidence" / "fleet-live" / "chiap01.json"
     assert json.loads(target.read_text(encoding="utf-8")) == {
         "cards": ["aaaaaaaa", "bbbbbbbb"],
+        "complete": True,
         "host": "chiap01",
         "lanes": "unknown",
         "tmux_socket": str(socket_path),
+        "tmux_sessions": ["codex-auto-aaaaaaaa", "noise"],
+        "tmux_sockets": [str(socket_path)],
+        "systemd_units": ["skfleet-worker-glm-bbbbbbbb.service"],
         "ts": 1234.5,
         "workers": [
             {"card_id": "aaaaaaaa", "claim_revision": "rev-a", "owner": "codex-host-aaaaaaaa"},
@@ -245,7 +249,7 @@ def test_main_requires_an_explicit_socket(
 
     assert fleet_live_publisher.main() == 1
     assert "explicit tmux socket required" in capsys.readouterr().err
-    assert not (tmp_path / "evidence").exists()
+    assert not (tmp_path / "evidence" / "fleet-live").exists()
 
 
 def test_main_fails_closed_without_replacing_the_last_good_snapshot(
@@ -289,11 +293,12 @@ def test_service_preserves_the_explicit_namespace_safe_socket_contract() -> None
     assert units[0] == units[1]
     for service in units:
         assert "Type=oneshot" in service
-        assert "PrivateTmp=yes" in service
-        assert "Environment=SKFLEET_TMUX_SOCKET=%t/skfleet/tmux.sock" in service
+        assert "PrivateTmp=no" in service
+        assert "Environment=SKFLEET_TMUX_SOCKET=/tmp/tmux-%U/default" in service
+        assert "SKFLEET_ALLOW_ABSENT_DEFAULT_TMUX=1" in service
         assert "RuntimeDirectory=skfleet" in service
         assert "RuntimeDirectoryPreserve=yes" in service
-        assert "/tmp" not in service.split("ExecStart", 1)[0]
+        assert "SKFLEET_AUDIT_TMUX_SERVERS=1" in service
         assert "-m skcapstone.fleet_live_publisher" in service
         assert "skfleet-rotate" not in service
         assert "niobe_live_entrypoint" not in service
@@ -458,3 +463,41 @@ def test_legacy_empty_lane_map_is_treated_as_no_data(tmp_path: Path) -> None:
     )
 
     assert json.loads(target.read_text(encoding="utf-8"))["lanes"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    "units,failed",
+    [
+        ("skfleet-worker-codex-aaaaaaaa.service loaded active running worker\n", False),
+        ("", False),
+        ("", True),
+    ],
+)
+def test_systemd_observation_never_replaces_authoritative_report(tmp_path, units, failed):
+    """Independent systemd evidence is useful while legacy tmux is unknown."""
+    target = tmp_path / "evidence/fleet-live/chiap01.json"
+    target.parent.mkdir(parents=True)
+    target.write_text("last good")
+
+    def runner(command, **kwargs):
+        assert command[0] == "systemctl"
+        return SimpleNamespace(returncode=int(failed), stdout=units)
+
+    result = fleet_live_publisher.publish_systemd_observation(
+        home=tmp_path,
+        host="chiap01",
+        store=_Store(),
+        runner=runner,
+        now=lambda: 17,
+    )
+    payload = json.loads(result.read_text())
+    assert result == tmp_path / "evidence/fleet-live-diagnostics/chiap01.json"
+    assert payload["complete"] is False
+    assert payload["tmux"] == "unknown"
+    assert payload["systemd"] == ("unknown" if failed else "observed")
+    assert payload["cards"] == (None if failed else ["aaaaaaaa"] if units else [])
+    if units:
+        assert payload["workers"] == [
+            {"card_id": "aaaaaaaa", "owner": "codex-host-aaaaaaaa", "claim_revision": "rev-a"}
+        ]
+    assert target.read_text() == "last good"

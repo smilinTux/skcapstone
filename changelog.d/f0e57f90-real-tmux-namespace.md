@@ -1,0 +1,1 @@
+- Card `f0e57f90`: observe the real shared tmux namespace, prove no-server idle state without creating a server, reject uncovered server PIDs, expose actual workload names, and separate rotation lane reports so they cannot overwrite authoritative publisher snapshots.

@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 SCRIPT = Path(__file__).parents[1] / "scripts" / "fleet" / "skfleet-rotate.py"
 HOSTS = ("chiap01", "chiap02", "chiap03", "chiap04", "chiap08")
 
@@ -37,7 +39,7 @@ def _load_health(live: Path):
 def _report(live: Path, host: str, age: int, cards=()) -> None:
     """Write one serialized host report."""
     (live / f"{host}.json").write_text(
-        json.dumps({"host": host, "ts": 10_000 - age, "cards": list(cards)}),
+        json.dumps({"host": host, "ts": 10_000 - age, "cards": list(cards), "complete": True}),
         encoding="utf-8",
     )
 
@@ -113,3 +115,25 @@ def test_reaper_logs_distinct_shortage_and_visibility_loss() -> None:
     assert 'if not report_health.get("authoritative", nhosts >= known):' in source
     assert "missing=%s; reaped nothing" in source
     assert "FLEET_LIVE_FAULT|%s|host=%s|reason=%s|age_seconds=%s" in source
+
+
+@pytest.mark.parametrize("marker", [None, False, "true", 1])
+def test_incomplete_or_legacy_report_cannot_authorize_absence(tmp_path, marker):
+    """Fresh unknown/legacy evidence cannot supply the fifth host."""
+    for host in HOSTS:
+        _report(tmp_path, host, 10)
+        path = tmp_path / f"{host}.json"
+        payload = json.loads(path.read_text())
+        payload["complete"] = True
+        path.write_text(json.dumps(payload))
+    path = tmp_path / "chiap01.json"
+    payload = json.loads(path.read_text())
+    if marker is not None:
+        payload["complete"] = marker
+    else:
+        payload.pop("complete")
+    path.write_text(json.dumps(payload))
+    health = _load_health(tmp_path)(now=10000)
+    assert not health["authoritative"]
+    assert "chiap01" not in health["reporting"]
+    assert health["faults"][0]["reason"] == "incomplete"

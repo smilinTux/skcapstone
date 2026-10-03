@@ -2207,8 +2207,9 @@ def publish_live(sessions, units=()):
                        "worker remains live; bounded escalation recorded"
                     % (HOST, _cid, worker, path, int(age)))
     try:
-        os.makedirs(LIVE, exist_ok=True)
-        p = os.path.join(LIVE, HOST + ".json")
+        lane_directory = os.path.join(os.path.dirname(LIVE), "fleet-lanes")
+        os.makedirs(lane_directory, exist_ok=True)
+        p = os.path.join(lane_directory, HOST + ".json")
         tmp = p + ".new"
         workers = []
         for card in cards:
@@ -2249,7 +2250,9 @@ def reporting_capacity():
     """Return total free lanes advertised by each currently reporting host."""
     capacity = {}
     now = time.time()
-    for path in glob.glob(os.path.join(LIVE, "*.json")):
+    lane_directory = os.path.join(os.path.dirname(LIVE), "fleet-lanes")
+    for path in (glob.glob(os.path.join(LIVE, "*.json")) +
+                 glob.glob(os.path.join(lane_directory, "*.json"))):
         try:
             with open(path, encoding="utf-8") as fh:
                 snap = json.load(fh)
@@ -2296,6 +2299,11 @@ def live_report_health(expected_hosts=None, now=None):
         if age > LIVE_FRESH:
             faults.append({"host": host, "reason": "stale",
                            "age_seconds": int(age), "detail": ""})
+            continue
+        if snap.get("complete") is not True:
+            faults.append({"host": host, "reason": "incomplete",
+                           "age_seconds": int(age),
+                           "detail": "tmux and systemd completeness not established"})
             continue
         stamps.append(ts)
         reporting.add(host)
