@@ -16,8 +16,14 @@
 # agents on the SAME host can still share one writer file.
 #
 #   skmail send <from> <to> <priority> <re> <body...>
-#   skmail read <me>          unread for me, oldest first
-#   skmail ack  <me>          mark everything currently visible as read
+#   skmail read <me>          unread for me, oldest first, capped at ~8 KiB
+#                             (SKMAIL_READ_MAX_BYTES); says how many remain
+#   skmail read <me> --summary    counts by sender and subject (does not arm ack)
+#   skmail read <me> --urgent     urgent only (does not arm ack)
+#   skmail read <me> --limit N    at most N messages;  --all  no cap
+#   skmail ack  <me>          mark read ONLY what the last plain read showed
+#   skmail ack  <me> --before <iso>   deliberately skip a backlog (logged)
+#   skmail ack  <me> --all    mark everything addressed to you as read
 #   skmail tail [n]           recent traffic, any peer
 #   skmail adopt              one-off: fold legacy skmail.jsonl + sync-conflict
 #                             files into skmail.d/ without losing anything
@@ -59,8 +65,11 @@ case "$cmd" in
     ;;
   read|ack|tail)
     me="${1:-}"
-    [ "$cmd" != "tail" ] && [ -z "$me" ] && { echo "usage: skmail $cmd <me>" >&2; exit 2; }
-    SKM_DIR="$BOXDIR" SKM_ME="$me" SKM_CMD="$cmd" SKM_N="${1:-10}" \
+    [ "$cmd" != "tail" ] && [ -z "$me" ] && { echo "usage: skmail $cmd <me> [flags]" >&2; exit 2; }
+    SKM_N="${1:-10}"
+    [ "$cmd" != "tail" ] && shift
+    SKM_ARGS="$*" SKM_MAXB="${SKMAIL_READ_MAX_BYTES:-8192}" SKM_LOG="$COORD/.skmail-ack-before.log" \
+    SKM_DIR="$BOXDIR" SKM_ME="$me" SKM_CMD="$cmd" SKM_N="$SKM_N" \
     SKM_CUR="$CUR.$(lc "${me:-_}")" python3 -c '
 import datetime, glob, hashlib, json, os, sys
 d, me, cmd, cur = os.environ["SKM_DIR"], os.environ["SKM_ME"], os.environ["SKM_CMD"], os.environ["SKM_CUR"]
@@ -197,25 +206,100 @@ def for_me(to, stamp):
     to = to.lower()
     return to in (me.lower(), "all") or (to == "fleet" and stamp is not None and stamp > FLEET_SINCE)
 mine = [(stamp, record) for stamp, record in valid if for_me(record["to"], stamp)]
-if cmd == "ack":
-    newest = max((record["ts"] for _, record in mine), default="1970-01-01T00:00:00+00:00")
-    open(cur, "w", encoding="utf-8").write(newest)
-    print("acked up to %s" % newest); raise SystemExit(0)
+# READ CAP and SAFE ACK (2026-10-03). A large backlog (10,791 messages, 7 MB for
+# jarvis on chiap08) cannot be read at once, so read shows the OLDEST unread mail
+# up to SKMAIL_READ_MAX_BYTES (default 8192) and says how many remain. Ack then
+# advances only through the last message that read actually showed, recorded in
+# a .shown sidecar, so read-then-ack walks a backlog in order and never discards
+# unseen mail. Views that hide mail (--urgent, --summary) never arm ack.
+args = os.environ.get("SKM_ARGS", "").split()
+shown_path = cur + ".shown"
+def flag(name):
+    return name in args
+def opt(name):
+    return args[args.index(name) + 1] if name in args and args.index(name) + 1 < len(args) else None
 try:
     cut = datetime.datetime.fromisoformat(open(cur, encoding="utf-8").read().strip())
 except (OSError, ValueError):
     cut = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+unread = [(stamp, record) for stamp, record in mine if stamp > cut]
+if cmd == "ack":
+    if flag("--all"):
+        target = max((record["ts"] for _, record in mine), default=None)
+        why = "--all: everything addressed to you"
+    elif opt("--before"):
+        target = opt("--before")
+        try:
+            datetime.datetime.fromisoformat(target)
+        except ValueError:
+            print("--before needs an ISO timestamp, for example 2026-09-15T00:00:00+00:00", file=sys.stderr); raise SystemExit(2)
+        # Strictly BEFORE: a message stamped exactly at the boundary stays unread.
+        target = (datetime.datetime.fromisoformat(target) - datetime.timedelta(microseconds=1)).isoformat()
+        skipped = sum(1 for stamp, _ in unread if stamp <= datetime.datetime.fromisoformat(target))
+        with open(os.environ["SKM_LOG"], "a", encoding="utf-8") as log:
+            log.write(json.dumps({"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(), "reader": me,
+                                  "before": target, "skipped_unread": skipped}) + "\n")
+        why = "--before: deliberately skipped %d unread (logged)" % skipped
+    else:
+        try:
+            target = open(shown_path, encoding="utf-8").read().strip()
+        except OSError:
+            print("skmail ack: nothing to ack. Ack only marks mail that a plain skmail read just showed you, "
+                  "and no read has shown you anything since your last ack. Run skmail read %s first. "
+                  "To skip a backlog on purpose use ack %s --before <iso-time>; to mark everything, --all." % (me, me),
+                  file=sys.stderr)
+            raise SystemExit(3)
+        why = "through the last message read showed you"
+    if target is None:
+        print("acked nothing: no mail addressed to you"); raise SystemExit(0)
+    target_dt = datetime.datetime.fromisoformat(target)
+    if target_dt > cut:
+        open(cur, "w", encoding="utf-8").write(target)
+    try: os.remove(shown_path)
+    except OSError: pass
+    left = sum(1 for stamp, _ in mine if stamp > max(cut, target_dt))
+    print("acked up to %s (%s). %d still unread." % (target, why, left))
+    raise SystemExit(0)
 for item in invalid:
     if (me.lower() in item["recipients"] or "all" in item["recipients"]
             or ("fleet" in item["recipients"] and item["parsed"] is not None and item["parsed"] > FLEET_SINCE)) and (item["parsed"] is None or item["parsed"] > cut):
         show_invalid(item)
-n = 0
-for stamp, record in mine:
-    if stamp <= cut: continue
-    n += 1
-    print("[%s] %s -> %s  re %s\n  %s\n" %
-          (record["priority"].upper(), record["from"], record["to"], record["re"], record["body"]))
-print("(%d new)" % n)
+if flag("--summary"):
+    from collections import Counter
+    urgent = sum(1 for _, r in unread if r["priority"] == "urgent")
+    print("%d unread (%d urgent)%s" % (len(unread), urgent,
+          "" if not unread else ", %s to %s" % (unread[0][1]["ts"][:16], unread[-1][1]["ts"][:16])))
+    print("by sender:")
+    for who, c in Counter(r["from"] for _, r in unread).most_common(10): print("  %5d  %s" % (c, who))
+    print("by subject:")
+    for re_, c in Counter(r["re"] for _, r in unread).most_common(15): print("  %5d  %s" % (c, re_[:90]))
+    print("(summary only: this view does not arm ack)")
+    raise SystemExit(0)
+view = [(stamp, r) for stamp, r in unread if r["priority"] == "urgent"] if flag("--urgent") else unread
+limit = int(opt("--limit")) if opt("--limit") and opt("--limit").isdigit() else None
+maxb = None if flag("--all") else int(os.environ.get("SKM_MAXB", "8192"))
+out, used, shown = [], 0, []
+for i, (stamp, record) in enumerate(view):
+    block = "[%s] %s -> %s  re %s\n  %s\n" % (record["priority"].upper(), record["from"], record["to"], record["re"], record["body"])
+    same_stamp = bool(shown) and stamp == shown[-1][0]
+    over = (maxb is not None and used + len(block.encode()) > maxb) or (limit is not None and len(shown) >= limit)
+    if shown and over and not same_stamp:
+        break
+    out.append(block); used += len(block.encode()); shown.append((stamp, record))
+for block in out: print(block)
+rest = len(view) - len(shown)
+if flag("--urgent") or flag("--summary"):
+    print("(%d urgent shown, %d more urgent, %d unread in total; filtered view, does not arm ack)" % (len(shown), rest, len(unread)))
+elif shown:
+    open(shown_path, "w", encoding="utf-8").write(shown[-1][1]["ts"])
+    if rest:
+        print("(%d new shown, %d more unread: act on these, skmail ack %s, then skmail read %s again)" % (len(shown), rest, me, me))
+    else:
+        print("(%d new)" % len(shown))
+else:
+    try: os.remove(shown_path)
+    except OSError: pass
+    print("(0 new)")
 '
     ;;
   adopt)
