@@ -225,6 +225,8 @@ def check_card(home, card, request, expected):
 
 def node_check(payload, *, paths=None, home=None, locked=False):
     """Preserve an exact stopped local attempt under the native request lock."""
+    from . import builder_terminal
+
     paths, home = paths or default_paths(), home or Path.home() / ".skcapstone"
     node, card = payload["node"], payload["card_id"]
     if not valid_name(node) or not re.fullmatch(r"[0-9a-f]{8}", card):
@@ -240,7 +242,7 @@ def node_check(payload, *, paths=None, home=None, locked=False):
         request, status, req, sts = read_attempt(
             paths, node, card, payload["request_sha256"], payload["status_sha256"]
         )
-        prove_dead(status)
+        builder_terminal.prove(home, status)
         target = directory(home, card, request["request_id"])
         workspace = paths.root / "workspaces" / status["owner"]
         source = source_bundle._inspect(
@@ -258,7 +260,7 @@ print(json.dumps({'head':git('rev-parse','HEAD^{commit}').decode().strip(),
         )
         proof = preserve(workspace, target, apply=payload["apply"])
         proof["source"] = source
-        prove_dead(status)
+        builder_terminal.prove(home, status)
         read_attempt(paths, node, card, payload["request_sha256"], payload["status_sha256"])
         if payload["apply"]:
             source_bundle._once(target / "request.json", req)

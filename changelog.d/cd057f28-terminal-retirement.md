@@ -1,0 +1,1 @@
+- Card `cd057f28`: reuse qualified exact terminal custody during retirement so collected worker units can retire without weakening process identity checks.
