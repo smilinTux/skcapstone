@@ -11,7 +11,6 @@ Fixes two defects found 03:50Z:
 import bisect,json,os,glob,subprocess,sys,time,fcntl,datetime,hashlib,collections,re,importlib.util,shlex
 import importlib.metadata
 import shutil
-import copy
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -59,7 +58,6 @@ from skcapstone.fleet.production_resources import local_worker_admission
 from skcapstone.fleet.pi_catalog import materialize_gateway_catalog
 from skcapstone.fleet.production_receipts import persist_production_snapshot
 from skcapstone.fleet.production_brief import production_worker_brief, production_source_review_brief
-from skcapstone.fleet.production_hosted_review_brief import production_hosted_review_brief
 
 SKFLEET_PRODUCTION_POLICY_V1 = True
 from skcapstone.fleet.review_capacity import (
@@ -691,7 +689,7 @@ def _worker_launch_command(unit, workspace, inner):
         *(worker_resource_properties(PRODUCTION_POLICY, HOST)
           if globals().get("PRODUCTION_POLICY") else []),
         *production_env,
-        "--working-directory", workspace, "--", *child_argv,
+        "--working-directory", workspace, *child_argv,
     ]
 
 
@@ -2619,7 +2617,6 @@ _claim_rows = {}
 _legacy_claim_rows = None
 _legacy_projection_claims = None
 _production_native_store = None
-_selection_snapshots = None
 
 
 def _legacy_projection_owners(cid, fresh=False):
@@ -2997,11 +2994,6 @@ def _claimability_reason(core, state):
 def _authoritative_card_snapshot(cid, core=None, fresh=False):
     """Read and fold one card from one core and event snapshot."""
     global _production_native_store
-    snapshots = globals().get("_selection_snapshots")
-    if not fresh and snapshots is not None and cid in snapshots:
-        snapshot = snapshots[cid]
-        if core is None or core == snapshot[0]:
-            return copy.deepcopy(snapshot)
     if core is None:
         with open(os.path.join(CARDS, cid, "core.json"), encoding="utf-8") as fh:
             core = json.load(fh)
@@ -3021,10 +3013,7 @@ def _authoritative_card_snapshot(cid, core=None, fresh=False):
         {"core": core, "events": rows, "legacy_owners": legacy_owners},
         sort_keys=True, separators=(",", ":")
     ).encode()).hexdigest()
-    snapshot = core, state, source_revision
-    if not fresh and snapshots is not None:
-        snapshots[cid] = copy.deepcopy(snapshot)
-    return snapshot
+    return core, state, source_revision
 
 
 def _authoritative_card_state(cid, core=None, fresh=False):
@@ -4613,52 +4602,6 @@ def terminal_review_verdict(cid, core=None):
         ts
         and re.match(r"^\s*(?:PASS\s*(?::|$)|FAIL(?:\s*(?::|$)|_))", str(value or ""), re.I)
     )
-
-
-def _reopened_after(cid, epoch):
-    """True when an explicit reopen event is newer than ``epoch``.
-
-    Reopen is the one operator action that clears terminality, and it must
-    outrank terminal evidence only when it is LATER than that evidence (the
-    same rule ``blocked_backoff`` applies to BLOCKED). A reopen that predates
-    the terminal outcome is history, not a revival.
-    """
-    if not epoch:
-        return False
-    return any(
-        event.get("action") == "reopen"
-        and _ts_epoch(event.get("ts")) > epoch
-        for event in event_rows(cid)
-    )
-
-
-def authoritatively_terminal(cid, core=None, lifecycle=None):
-    """True only when authoritative evidence already proves terminality.
-
-    This is exactly the disjunction POOL_V2 uses to make a card ineligible for
-    a terminal reason, so skipping the bounded admission fold for these cards
-    cannot change the eligible set:
-
-    * the CardStore lifecycle fold reached complete/void (``terminal_cardstore``);
-    * the ITIL projection state is terminal (``terminal_itil``);
-    * a hashed review outcome records PASS/FAIL (``selector_excluded``).
-
-    Reopened cards are preserved. A reopen event clears the lifecycle terminal
-    bit, so the lifecycle arm does not fire on an actively reopened card, and
-    the review-outcome arm additionally requires that no reopen is newer than
-    the recorded outcome. ``initial_labels`` and any pre-fold projection are
-    deliberately NOT consulted: only the authoritative fold above proves
-    terminality.
-    """
-    state = lifecycle if lifecycle is not None else lifecycle_state(cid)
-    if state in {"complete", "void"}:
-        return True
-    if itil_terminal(cid):
-        return True
-    if not terminal_review_verdict(cid, core):
-        return False
-    outcome_ts, _value = _load_outcomes().get(cid, (None, None))
-    return not _reopened_after(cid, _ts_epoch(outcome_ts))
 
 
 def outcome_lifecycle_bucket(lifecycle, historical_review):
@@ -6305,97 +6248,6 @@ def _provisional_candidate(parent, outcome_ts, token):
     return producer, verified[0][0], verified[0][1], commit, tree, ref
 
 
-def _production_review_plan(parent, outcome_ts, candidate):
-    """Bind the qualified native review identity to exact retained source custody."""
-    try:
-        from skcoord.card_store import CardStore
-        from skcapstone.fleet.production_custody import reviewable_source_candidate, source_binding
-        from skcapstone.link_review_work import card_generation
-        from skcapstone.review_replacement import replacement_binding
-        from skcapstone.seraph_review_cardstore import LiveCardStoreGateway
-
-        home = Path(CARDS).parent
-        gateway = LiveCardStoreGateway(home)
-        snapshot = gateway.read_card(parent)
-        if (HOST != PRODUCTION_POLICY["authority_host"] or
-                not reviewable_source_candidate(
-                    home, parent, outcome_ts, candidate,
-                    policy=PRODUCTION_POLICY, process_check=_card_process_snapshot)):
-            return None
-        source = CardStore(home).fold(parent)
-        producer, path, digest, commit, tree, ref = candidate
-        lineage = replacement_binding(home, parent, commit)
-        review_id = lineage.pop("review_card_id")
-        plan = {
-            "review_id": review_id,
-            "claim_revision": source.meta["_claim_revision"],
-            "source": source_binding(source),
-            "meta": {
-                "source_revision": snapshot.revision,
-                "link_source_card": parent, "link_head_revision": commit,
-                "link_card_generation": card_generation(source),
-                "link_evidence_sha256": digest, "link_review_class": "review",
-                "producer_identity": producer, "candidate_path": path,
-                "candidate_evidence_sha256": digest,
-                "candidate_tree": tree, "candidate_ref": ref, **lineage,
-            },
-        }
-        if gateway.read_card(parent).revision == snapshot.revision:
-            return plan
-    except (ImportError, OSError, ValueError, KeyError, TypeError, AttributeError):
-        pass
-    return None
-
-
-def _open_production_review(parent, outcome_ts, candidate, plan):
-    """Use the guarded native command and verify full source-bound readback."""
-    try:
-        from skcoord.card_store import CardStore
-
-        # Selection is not authority for a later write. Recheck terminal custody
-        # and the exact planned generation immediately before the guarded CLI.
-        if _production_review_plan(parent, outcome_ts, candidate) != plan:
-            return False
-        if any(lifecycle_state(cid) in {"open", "claimed"}
-               for cid in _reviews_by_parent().get(parent, ())):
-            return False
-        result = subprocess.run(
-            [SKC, "coord", "review-work", parent, "--producer", candidate[0],
-             "--expected-source-revision", plan["meta"]["source_revision"],
-             "--expected-claim-revision", plan["claim_revision"], "--agent", "link",
-             "--home", str(Path(CARDS).parent)],
-            capture_output=True, text=True, timeout=60,
-            env=dict(os.environ, SKCOORD_CARD_STORE="1"))
-        if result.returncode:
-            return False
-        receipt = json.loads(result.stdout)
-        review_id = plan["review_id"]
-        if (receipt.get("review_card_id") != review_id or
-                receipt.get("source_card") != parent or
-                receipt.get("head_revision") != candidate[3] or
-                receipt.get("launchable") is not True):
-            return False
-        _rows.pop(review_id, None)
-        review = CardStore(Path(CARDS).parent).fold(review_id)
-        from skcapstone.fleet.production_custody import source_binding
-
-        return bool(
-            review and not review.archived and not review.owner and
-            review.status.value == "review" and
-            {"source-only", "review", "seat-seraph"}.issubset(review.labels) and
-            not {"hold", "do-not-claim"}.intersection(review.labels) and
-            [label for label in review.labels if label.startswith("parent-")] ==
-            ["parent-" + parent] and
-            source_binding(review) == plan["source"] and
-            all(review.meta.get(key) == value for key, value in plan["meta"].items()) and
-            _production_review_plan(parent, outcome_ts, candidate) == plan and
-            {cid for cid in _reviews_by_parent().get(parent, set())
-             if lifecycle_state(cid) in {"open", "claimed"}} == {review_id})
-    except (ImportError, OSError, ValueError, KeyError, TypeError, AttributeError,
-            subprocess.SubprocessError):
-        return False
-
-
 def _eligible_provisional_reviews(capacity):
     """Return a deterministic prefix bounded by initial free review slots."""
     try:
@@ -6409,10 +6261,7 @@ def _eligible_provisional_reviews(capacity):
     for parent, (outcome_ts, raw_verdict) in sorted(_load_outcomes().items()):
         if len(selected) >= budget:
             break
-        parent_state = lifecycle_state(parent)
-        if parent_state not in {"open", "claimed"}:
-            continue
-        if parent_state == "claimed" and not globals().get("PRODUCTION_POLICY"):
+        if lifecycle_state(parent) != "open":
             continue
         match = _PROVISIONAL_PASS_RE.match(str(raw_verdict or ""))
         if not match:
@@ -6421,6 +6270,11 @@ def _eligible_provisional_reviews(capacity):
                for cid in reviews.get(parent, ())):
             continue
         token = match.group(1).upper()
+        review_id = _review_card_id(parent, str(outcome_ts or ""), token)
+        if os.path.isdir(os.path.join(CARDS, review_id)):
+            continue
+        if os.path.exists(os.path.join(_REVIEW_REFUSALS, review_id + ".json")):
+            continue
         generation = _parent_review_generation(parent, outcome_ts, token)
         if not generation:
             _log_once_per_hour(
@@ -6451,20 +6305,7 @@ def _eligible_provisional_reviews(capacity):
                 (HOST, parent, str(outcome_ts or ""), token),
             )
             continue
-        plan = None
-        if globals().get("PRODUCTION_POLICY"):
-            plan = _production_review_plan(parent, str(outcome_ts or ""), generation[1:])
-            if not plan:
-                continue
-            review_id = plan["review_id"]
-        else:
-            review_id = _review_card_id(parent, str(outcome_ts or ""), token)
-        if os.path.isdir(os.path.join(CARDS, review_id)):
-            continue
-        if os.path.exists(os.path.join(_REVIEW_REFUSALS, review_id + ".json")):
-            continue
-        row = (parent, str(outcome_ts or ""), token, review_id) + generation
-        selected.append(row + (plan,) if plan else row)
+        selected.append((parent, str(outcome_ts or ""), token, review_id) + generation)
     return selected
 
 
@@ -6540,19 +6381,8 @@ def open_provisional_reviews(capacity, dry_run=False):
         return len(selected)
 
     opened = 0
-    for row in selected:
-        (parent, outcome_ts, token, review_id, generation, producer, path, digest,
-         commit, tree, ref) = row[:11]
-        if len(row) == 12:
-            if not _open_production_review(parent, outcome_ts, row[5:11], row[11]):
-                _REVIEW_READBACK_BLOCKED.add(review_id)
-                log(d, "OPEN_REVIEW_NATIVE_BLOCKED|%s|%s|review=%s" %
-                    (HOST, parent, review_id))
-                break
-            opened += 1
-            log(d, "OPENED_REVIEW|%s|%s|review=%s|%s|producer=%s|sha256=%s" %
-                (HOST, parent, review_id, token, producer, digest))
-            continue
+    for (parent, outcome_ts, token, review_id, generation, producer, path, digest,
+         commit, tree, ref) in selected:
         # Each attempted create consumes one unit of the initial capacity budget,
         # whether it succeeds or fails.  A transient failure stops the batch.
         description = (
@@ -6959,10 +6789,6 @@ claimability_errors=[]
 sensitive_withheld=0
 historical_review_terminal=0
 historical_review_claimed=0
-_terminal_review_fold_skips=0
-# Reuse each validated fold only during this read-only selection pass. No
-# claim, review mutation or dispatch uses this cache; fresh=True also bypasses it.
-_selection_snapshots = {}
 structural_leaf=leaf_eligibility_counts(Path(HOME) / ".skcapstone").leaves
 human_gated=0
 ENG=("SKGW","SKCP","SKCOORD","SKHARNESS","SKMEM","CAPAUTH","FLEET","INC",
@@ -6975,29 +6801,16 @@ for cd in sorted(glob.glob(CARDS+"/*")):
         _structural_core = json.load(open(core_p))
     except Exception:
         _structural_core = {}
-    # The legacy selector already folds this card authoritatively. Run it FIRST
-    # so the structural review admission below can consult that fold instead of
-    # re-reading initial_labels as current authority.
-    legacy = _legacy_selector_decision(cid, core_p)
-    legacy_reason = legacy["reason"]
     if "review" in {
         str(label).strip().lower()
         for label in _structural_core.get("initial_labels", ())
     }:
-        # POOL_V2 can safely re-admit a structurally labelled review card, but
-        # only when it is not already proven terminal. Re-folding a terminal
-        # review card through the bounded admission snapshot is pure cost: its
-        # terminal fact makes it ineligible in POOL_V2 either way, so the
-        # eligible set is identical with or without the fold. Measured on the
-        # production board, terminal_cardstore dominated the population
-        # (1518/1752) while only 21 cards were ready.
-        if authoritatively_terminal(cid, _structural_core):
-            _terminal_review_fold_skips += 1
-        else:
-            _pool_v2_inputs.append((cid, _structural_core))
-            _pool_v2_input_ids.add(cid)
+        _pool_v2_inputs.append((cid, _structural_core))
+        _pool_v2_input_ids.add(cid)
     if lifecycle_state(cid) == "open":
         human_gated += int(_human_gate(cid))
+    legacy = _legacy_selector_decision(cid, core_p)
+    legacy_reason = legacy["reason"]
     if legacy_reason == "selector_excluded" and cid in _REVIEW_READBACK_BLOCKED:
         if DRY:
             log(d,"DRY_SELECTION|%s|%s|excluded=stale-review-readback"%(HOST,cid))
@@ -7577,13 +7390,6 @@ if PRODUCTION_POLICY:
         occupancy_ambiguous=_review_route_ambiguous,physical_maximum=None)
 
 _emit_shadow_pool_v2()
-_selection_snapshots = None
-# Bounded call-count evidence for the terminal review admission skip. The
-# counter is incremented once per structurally labelled review card that the
-# authoritative fold already proved terminal, so it measures exactly the
-# bounded admission folds avoided in this cycle.
-log(d,"POOL_V2_TERMINAL_SKIP|%s|structurally_review_terminal_skipped=%d|"
-      "pool_v2_inputs=%d"%(HOST,_terminal_review_fold_skips,len(_pool_v2_inputs)))
 
 # POOL_V2 alone supplies dispatch candidates. Reuse legacy rows where present,
 # then build missing rows only from the same admission snapshot. Any unknown or
@@ -8796,17 +8602,6 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             "SKIPPED_LANE_HEALTH|%s|%s|%s|lane=%s|model=%s|reason=%s"%
             (HOST,sess,cid,_LANE["name"],model,health_reason))
         continue
-    # Reject unsupported tests before spending tokens on route qualification.
-    try:
-        if PRODUCTION_POLICY and _governed_review_metadata(
-                fresh_claimability["core"], fresh_claimability["labels"]) is None:
-            from skcapstone.fleet.production_test_profile import preflight as test_preflight
-            test_preflight(Path(HOME)/".skcapstone", dict(fresh_claimability["core"], id=cid),
-                           fresh_claimability["labels"], PRODUCTION_POLICY)
-    except (OSError,ValueError) as exc:
-        log(d,"TEST_PROFILE_BLOCKED|%s|%s|%s"%(HOST,cid,exc))
-        _record_workspace_cooldown(cid)
-        continue
     # Link's recommendation appends evidence. Compare the bounded admission
     # after lane health so no event mutates the card before the final preclaim.
     try:
@@ -8889,7 +8684,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             fresh_claimability["core"],
             fresh_claimability["labels"],
         )
-    except (OSError,ValueError) as exc:
+    except ValueError as exc:
         log(d,"WORKSPACE_BLOCKED|%s|%s|%s"%(HOST,cid,exc))
         # Yield the slot: without this the same card is re-picked every
         # cycle and the rest of the pool never gets a turn.
@@ -8914,15 +8709,6 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
                 process={"host":HOST,"workspace":workspace})
         except (FanoutBoundaryError, OSError, ValueError) as exc:
             log(d,"FANOUT_MATERIALIZE_RECEIPT_FAILED|%s|%s|%s"%(HOST,cid,exc))
-            continue
-    if PRODUCTION_POLICY and _governed_review_metadata(
-            fresh_claimability["core"], fresh_claimability["labels"]) is None:
-        try:
-            _test_current=authoritative_claimability(cid, fresh=True)
-            test_preflight(Path(HOME)/".skcapstone", dict(_test_current["core"], id=cid),
-                           _test_current["labels"], PRODUCTION_POLICY)
-        except (OSError,ValueError) as exc:
-            log(d,"PRECLAIM_DEFERRED|%s|%s|reason=test-profile-%s"%(HOST,cid,exc))
             continue
     claim=subprocess.run([SKC,"coord","claim",cid,"--agent",name],capture_output=True,text=True)
     claimed_owner,_claimed_at,claimed_revision=_current_claim_identity_fresh(cid)
@@ -8949,12 +8735,10 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             brief += "\nNIOBE FAN-OUT request=%s requester=%s allowed_route=%s\n"%_fanout_env
         with open(bf,"w",encoding="utf-8") as _brief_handle:
             _brief_handle.write(brief)
-    elif PRODUCTION_POLICY and _review_seat is not None and _source_spec is not None:
+    elif (PRODUCTION_POLICY and _review_seat is not None and _source_spec is not None
+          and "source-only" in {str(label).lower() for label in fresh_claimability["labels"]}):
         try:
-            _review_renderer=(production_source_review_brief
-                if "source-only" in {str(label).lower() for label in fresh_claimability["labels"]}
-                else production_hosted_review_brief)
-            brief=_review_renderer(
+            brief=production_source_review_brief(
                 card_id=cid,owner=name,claim_revision=claimed_revision,
                 workspace=workspace,source_head=_source_spec[2],
                 core=fresh_claimability["core"],labels=fresh_claimability["labels"])
@@ -9052,7 +8836,6 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         "mkdir -p ~/.skcapstone/fleet/beats; "
         "echo '{\"owner\":\"%s\",\"card_id\":\"%s\",\"claim_revision\":\"%s\","
         "\"session_id\":\"%s\","
-        "\"pid\":'$PPID',\"invocation_id\":\"'${INVOCATION_ID:-}'\","
         "\"emitter\":\"wrapper\",\"disposition\":\"RUNNING\","
         "\"proves\":\"shell-liveness\","
         "\"beat_at\":'$(date +%%s)',\"elapsed_s\":'$SECONDS'}' "
@@ -9100,26 +8883,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         "--session",sess,"--worker-executable",PI,
         "--","bash","-lc",child,
     ]
-    _launch_argv=_worker_launch_command(unit,workspace,inner)
-    if PRODUCTION_POLICY:
-        from skcapstone.fleet.production_admission import (
-            AdmissionDeferredError, AdmissionError, reserve_launch)
-
-        try:
-            _launch_argv=reserve_launch(
-                Path(HOME)/".skcapstone",PRODUCTION_POLICY,HOST,unit,
-                {"card_id":cid,"owner":name,"claim_revision":claimed_revision},_launch_argv)
-        except AdmissionDeferredError:
-            # Exact prelaunch capacity refusal proves no intent and no spawn.
-            subprocess.run([SKC,"coord","release-claim",cid,"--owner",name,
-                            "--expected-claim-revision",claimed_revision,"--agent",name,
-                            "--abandon-reason","error"],capture_output=True,text=True)
-            log(d,"NODE_ADMISSION_DEFERRED|%s|%s"%(HOST,cid))
-            continue
-        except AdmissionError:
-            log(d,"NODE_ADMISSION_CUSTODY_REQUIRED|%s|%s"%(HOST,cid))
-            continue
-    r=subprocess.run(_launch_argv,capture_output=True,text=True)
+    r=subprocess.run(_worker_launch_command(unit,workspace,inner),capture_output=True,text=True)
     ok = r.returncode==0
     launch_identity=(
         _launch_claim_fields(name,claimed_revision,ok)
@@ -9207,13 +8971,10 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
     if not ok:
         # LAUNCH_FAILED above: the launch command itself returned nonzero,
         # so the claimed worker never came alive.
-        if not globals().get("PRODUCTION_POLICY"):
-            subprocess.run([SKC,"coord","release-claim",cid,"--owner",name,
-                            "--expected-claim-revision",claimed_revision,"--agent",name,
-                            "--abandon-reason","error"],
-                           capture_output=True,text=True)
-        # Production keeps the exact claim and reservation: nonzero launcher
-        # exit alone never proves that the attempted spawn had no effect.
+        subprocess.run([SKC,"coord","release-claim",cid,"--owner",name,
+                        "--expected-claim-revision",claimed_revision,"--agent",name,
+                        "--abandon-reason","error"],
+                       capture_output=True,text=True)
     else:
         launched+=1
         launch_remaining[_LANE["name"]]-=1
