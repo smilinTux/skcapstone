@@ -537,3 +537,28 @@ def test_orphan_destination_custody_is_held_across_seats(execution):
     assert e["card"] in builder.held_card_ids(e["paths"])
     e["host"][0] = "chiap08"
     assert review.offer_review(e["paths"], e["home"], e["card"], writer=e["writer"]) is None
+
+
+def test_remote_wrapper_receives_policy_and_native_startup_identity(execution):
+    e = execution
+    request, status = offer_and_consume(e)
+    argv = e["launches"][0][0]
+    assert "--setenv=SKFLEET_PRODUCTION_POLICY=" + str(e["home"] / "production.json") in argv
+    assert "--setenv=SKFLEET_AUTHORITY_HOST=chiap08" in argv
+    assert "SKFLEET_SESSION_ID=" + request["reviewer"] in " ".join(argv)
+    assert "shell-liveness" in " ".join(argv)
+
+
+def test_review_child_retains_attributable_heartbeat_and_reaps_emitter(tmp_path):
+    import subprocess
+
+    command = production.review_child_command(
+        tmp_path, "pi-seraph-chiap03-ab000002", "ab000002", "a" * 32, ["/bin/sleep", "0.3"]
+    )
+    result = subprocess.run(command, capture_output=True, timeout=5)
+    assert result.returncode == 0
+    beat = json.loads((tmp_path / "fleet/beats/pi-seraph-chiap03-ab000002.json").read_text())
+    assert beat["owner"] == beat["session_id"] == "pi-seraph-chiap03-ab000002"
+    assert beat["claim_revision"] == "a" * 32
+    assert beat["card_id"] == "ab000002"
+    assert beat["proves"] == "shell-liveness"

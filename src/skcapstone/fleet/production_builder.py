@@ -255,6 +255,8 @@ def launch_review(paths, home, request, card, handoff, workspace, *, launcher=No
         "SKCAPSTONE_AGENT=" + owner,
         "SKFLEET_CARD_ID=" + card.id,
         "SKFLEET_CLAIM_REVISION=" + claim,
+        "SKFLEET_SESSION_ID=" + owner,
+        "SKFLEET_WORKSPACE=" + str(workspace),
         *(key + "=" + value for key, value in identity(owner).items()),
         worker,
         "--no-approve",
@@ -322,12 +324,17 @@ def launch_review(paths, home, request, card, handoff, workspace, *, launcher=No
         "--worker-executable",
         worker,
         "--",
-        *child,
+        *review_child_command(home, owner, card.id, claim, child),
     ]
     command = service_command(request, 1, inner, workspace)
     command = [("--unit=" + unit) if arg.startswith("--unit=") else arg for arg in command]
     command.insert(1, "--setenv=SKFLEET_REVIEW_REQUEST=" + request["request_id"])
     command.insert(1, "--setenv=SKFLEET_REVIEW_NODE=" + request["node"])
+    command.insert(
+        1, "--setenv=SKFLEET_PRODUCTION_POLICY=" + os.environ["SKFLEET_PRODUCTION_POLICY"]
+    )
+    command.insert(1, "--setenv=SKFLEET_AUTHORITY_HOST=" + request["production"]["authority"])
+    command.insert(1, "--setenv=SKCAPSTONE_HOME=" + str(home))
     binding = dict(
         card_id=card.id,
         owner=owner,
@@ -422,3 +429,30 @@ def _review_card(home, card):
     from skcoord.card_store import CardStore
 
     return CardStore(home).fold(card)
+
+
+def review_child_command(home, owner, card, claim, child):
+    """Retain the wrapper's attributed startup heartbeat without claiming progress."""
+    import shlex
+
+    heartbeat = """import json,os,sys,time
+from pathlib import Path
+home,owner,card,claim=sys.argv[1:]
+root=Path(home)/'fleet/beats';root.mkdir(parents=True,exist_ok=True,mode=0o700)
+path=root/(owner+'.json');temporary=root/(owner+'.tmp')
+while True:
+    row=dict(owner=owner,card_id=card,claim_revision=claim,session_id=owner,
+             pid=os.getppid(),invocation_id=os.environ.get('INVOCATION_ID',''),
+             emitter='wrapper',disposition='RUNNING',proves='shell-liveness',beat_at=time.time())
+    with open(temporary,'w') as stream: json.dump(row,stream)
+    os.chmod(temporary,0o600);os.replace(temporary,path)
+    time.sleep(30)
+"""
+    beat = ["/usr/bin/python3", "-c", heartbeat, str(home), owner, card, claim]
+    shell = (
+        shlex.join(beat) + " </dev/null >/dev/null 2>&1 & beat=$!; "
+        'trap \'kill "$beat" 2>/dev/null || true; wait "$beat" 2>/dev/null || true\' EXIT; '
+        + shlex.join(child)
+        + '; rc=$?; exit "$rc"'
+    )
+    return ["/bin/bash", "-c", shell]
