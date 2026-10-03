@@ -10,7 +10,7 @@ from pathlib import Path
 _POWERSHELL = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
 _COMMAND = (
     "$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';"
-    "$m=Get-CimInstance Win32_OperatingSystem;"
+    "$m=Get-CimInstance Win32_OperatingSystem -OperationTimeoutSec 3;"
     "@{total_kb=[int64]$m.TotalVisibleMemorySize;"
     "available_kb=[int64]$m.FreePhysicalMemory} | ConvertTo-Json -Compress"
 )
