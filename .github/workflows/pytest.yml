@@ -293,7 +293,7 @@ jobs:
             -m "not integration and not e2e" \
             --durations=40 -o faulthandler_timeout=60 \
             --cov=skcapstone --cov-report=xml --cov-report=term-missing \
-            2>&1 | tee pytest-ci.log
+            > pytest-ci.log 2>&1
       - name: Build and run Python 3.11 compatibility lane
         if: >-
           needs.classify.outputs.docs-only != 'true' &&
@@ -306,7 +306,7 @@ jobs:
         run: |
           set -o pipefail
           timeout --kill-after=10s 24m scripts/ci/run-python311-compat.sh "$BASE_SHA" "$GITHUB_SHA" \
-            2>&1 | tee pytest-ci.log
+            > pytest-ci.log 2>&1
       - name: Preserve test diagnostics even when pytest times out
         if: always() && needs.classify.outputs.docs-only != 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
