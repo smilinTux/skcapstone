@@ -181,7 +181,7 @@ def test_terminal_projection_reconciliation_is_exact_and_idempotent() -> None:
     twice = reconcile(once, decisions)
     assert once == twice
     assert once[0].state == "terminal"
-    assert once[1].state == "ready"
+    assert len(once) == 1  # Unobserved projections cannot publish unverified state.
 
 
 def test_metrics_are_deterministic() -> None:
