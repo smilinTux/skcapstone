@@ -55,7 +55,16 @@ def load_production_policy(path: Path, *, host: str) -> dict:
     if (
         not isinstance(value, dict)
         or not required <= value.keys()
-        or value.keys() - required - {"node_quotas", "cycle_budget_seconds", "scan_budget"}
+        or value.keys()
+        - required
+        - {
+            "node_quotas",
+            "cycle_budget_seconds",
+            "scan_budget",
+            "worker_destinations",
+            "remote_review",
+            "node_admission",
+        }
     ):
         raise ValueError("production policy fields are invalid")
     if value["schema"] != SCHEMA or value["capacity_authority"] != "skgateway":
@@ -117,4 +126,81 @@ def load_production_policy(path: Path, *, host: str) -> dict:
             raise ValueError("production policy cycle budget is invalid")
     if value.get("cycle_budget_seconds", 250) > 250:
         raise ValueError("production policy cycle budget exceeds dispatcher timeout margin")
+    validate_execution_policy(value)
     return value
+
+
+def validate_execution_policy(value: dict) -> None:
+    """Validate additive placement and bounded remote-review rollout fields."""
+    quotas = value.get("node_quotas", {})
+    destinations = value.get("worker_destinations")
+    if destinations is not None and (
+        not isinstance(destinations, list)
+        or not destinations
+        or any(not isinstance(h, str) or not _HOST.fullmatch(h) for h in destinations)
+        or len(set(destinations)) != len(destinations)
+        or any(h not in quotas for h in destinations)
+    ):
+        raise ValueError("worker destinations require unique qualified hosts")
+    admission = value.get("node_admission", {})
+    if not isinstance(admission, dict):
+        raise ValueError("node admission must be an object")
+    for host, limits in admission.items():
+        if host not in (destinations or quotas) or not isinstance(limits, dict):
+            raise ValueError("node admission requires an authorized host")
+        if set(limits) - {
+            "max_concurrent_workers",
+            "memory_floor_bytes",
+            "protected_service_bindings",
+        }:
+            raise ValueError("node admission fields are invalid")
+        for key in ("max_concurrent_workers", "memory_floor_bytes"):
+            if key not in limits or type(limits[key]) is not int or limits[key] <= 0:
+                raise ValueError("node admission limits must be positive integers")
+        protected = limits.get("protected_service_bindings", {})
+        if not isinstance(protected, dict) or any(
+            not re.fullmatch(r"skfleet-worker-[a-zA-Z0-9_.-]+\.service", unit)
+            or not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            for unit, digest in protected.items()
+        ):
+            raise ValueError("protected services require exact definition digests")
+    review = value.get("remote_review")
+    if review is None:
+        return
+    if (
+        not isinstance(review, dict)
+        or set(review) != {"enabled", "destinations", "card_ids"}
+        or type(review["enabled"]) is not bool
+    ):
+        raise ValueError("remote review rollout fields are invalid")
+    hosts, cards = review["destinations"], review["card_ids"]
+    if (
+        not isinstance(hosts, list)
+        or not hosts
+        or any(not isinstance(h, str) for h in hosts)
+        or len(set(hosts)) != len(hosts)
+        or destinations is None
+        or any(h not in destinations for h in hosts)
+    ):
+        raise ValueError("remote review destinations must be explicitly authorized")
+    if cards is not None and (
+        not isinstance(cards, list)
+        or not cards
+        or any(not isinstance(c, str) or not re.fullmatch(r"[0-9a-f]{8}", c) for c in cards)
+        or len(set(cards)) != len(cards)
+    ):
+        raise ValueError("remote review card restriction is invalid")
+    if (
+        review["enabled"]
+        and not {"worker_destinations", "node_admission", "node_quotas"} <= value.keys()
+    ):
+        raise ValueError("enabled remote review requires complete execution policy")
+
+
+def require_destination(value: dict, host: str) -> dict:
+    """Enforce explicit placement even when a stale quota still exists."""
+    quotas = value.get("node_quotas", {})
+    if host not in quotas or host not in value.get("worker_destinations", quotas):
+        raise ValueError("worker destination is not authorized and qualified")
+    return quotas[host]

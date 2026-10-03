@@ -215,8 +215,37 @@ def collect(home, policy, card, claim, *, process_check):
     source_terminal = _producer_terminal(home, source, manifest)
     if producer_family(source.owner, source_terminal["family"]) == provider_family(domain):
         raise ReviewEvidenceError("review family is not independent")
+    review_workspace = Path(terminal["workspace"])
+    if launches[0].get("schema") == "skfleet.review-assignment-launch/v3":
+        from .review_dispatch import proposal_binding
+        from .builder_dispatch import status_path, request_path
+        from .paths import FleetPaths
+        from .source_bundle import import_review_packet
+
+        paths = FleetPaths(home / "fleet")
+        execution = launches[0]["execution"]
+        status = read_json(status_path(paths, execution["node"], card))
+        request = read_json(request_path(paths, execution["node"], card))
+        if (
+            status.get("state") != "awaiting-review-acceptance"
+            or status.get("terminal") != terminal
+            or terminal.get("execution") != execution
+        ):
+            raise ReviewEvidenceError("remote terminal custody differs")
+        unit_terminal(execution["unit"], execution["invocation"], host=execution["host"])
+        review_workspace = directory / "imported-review"
+        if not review_workspace.exists():
+            if not import_review_source(core, repository, head, review_workspace):
+                raise ReviewEvidenceError("remote review source import unavailable")
+        import_review_packet(
+            home,
+            status["review_packet"],
+            review_workspace,
+            proposal_binding(request),
+            execution=execution,
+        )
     proposal = inspect_proposal(
-        Path(terminal["workspace"]),
+        review_workspace,
         card=card,
         parent_card=parent,
         source_head=head,
@@ -300,6 +329,9 @@ def reconcile(home, policy, *, process_check):
     home = Path(home)
     if policy["authority_host"] != socket.gethostname().split(".")[0].lower():
         raise ReviewEvidenceError("source acceptance is authority-only")
+    from .production_review_custody import import_remote_exits
+
+    import_remote_exits(home, policy)
     results = []
     for path in sorted((home / "evidence/production-review-exits").glob("*.json")):
         match = re.fullmatch(r"([0-9a-f]{8})-([0-9a-f]{32})\.json", path.name)

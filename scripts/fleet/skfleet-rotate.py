@@ -7677,7 +7677,37 @@ except (builder_dispatch.BuilderDispatchError, OSError) as _exc:
     # idle, so fall back to the pre-2026-09-19 full withhold. Parked cards are
     # recoverable on the next readable tick; two workers on one card are not.
     log(d, "BUILDER_HOLD_SCAN_FAILED|%s|%s" % (HOST, _exc))
-    _builder_held_ids = set(_builder_candidate_ids)
+    _builder_held_ids = set(_builder_candidate_ids) | {row[2] for row in owned if "review" in row[4]}
+# Governed review transport precedes every authority-local capacity check.
+# Held review generations remain excluded even when new offers are disabled.
+owned = [row for row in owned
+         if not ("review" in row[4] and row[2] in _builder_held_ids)]
+if PRODUCTION_POLICY and PRODUCTION_POLICY.get("remote_review", {}).get("enabled"):
+    from skcapstone.fleet import review_dispatch
+
+    _rollout = PRODUCTION_POLICY["remote_review"]
+    _remote_reviews = [row for row in owned if "review" in row[4]
+        and (_rollout["card_ids"] is None or row[2] in _rollout["card_ids"])]
+    _remote_review_ids = {row[2] for row in _remote_reviews}
+    # A remote refusal is a deferral, never permission to fall back to local 08.
+    owned = [row for row in owned if row[2] not in _remote_review_ids]
+    if not DRY:
+        for _candidate in _remote_reviews[:MAX_CANDIDATE_SCAN]:
+            if time.monotonic() - _cycle_started >= _production_cycle_budget:
+                break
+            try:
+                _request = review_dispatch.offer_review(
+                    default_fleet_paths(), Path(HOME) / ".skcapstone", _candidate[2],
+                    writer=fleet_store.Writer(role="scheduler", node="niobe", identity="niobe"))
+                if _request:
+                    log(d, "REVIEW_OFFERED|%s|%s|node=%s|request=%s" %
+                        (HOST, _candidate[2], _request["node"], _request["request_id"]))
+                else:
+                    log(d, "REVIEW_REMOTE_DEFERRED|%s|%s" % (HOST, _candidate[2]))
+            except (OSError, ValueError, KeyError, TypeError) as _exc:
+                log(d, "REVIEW_REMOTE_HELD|%s|%s|reason=%s" %
+                    (HOST, _candidate[2], type(_exc).__name__))
+
 owned, _builder_withheld_ids, _builder_returned_ids = _builder_partition(
     owned, _builder_candidate_ids, _builder_held_ids
 )
@@ -8240,6 +8270,26 @@ def _observe_assigned_reviews():
             if event.get("action") == "mero_observation"
             and isinstance(event.get("process"), dict)
         ]
+        if receipts and receipts[-1].get("schema") == "skfleet.review-assignment-launch/v3":
+            try:
+                from skcapstone.fleet.production_receipts import production_receipt_allowed
+                _remote = receipts[-1]
+                _execution = _remote["execution"]
+                _status = builder_dispatch._validated_status(
+                    builder_dispatch.status_path(default_fleet_paths(), _execution["node"], cid),
+                    default_fleet_paths(), _execution["node"])
+                _card = CardStore(Path(HOME) / ".skcapstone").fold(cid)
+                _launch = {"host": _execution["host"], "owner": _remote["reviewer"],
+                           "revision": _remote["claim_revision"],
+                           "lane": _status["production"]["family"],
+                           "model": _status["production"]["model"]}
+                if production_receipt_allowed(Path(HOME) / ".skcapstone", PRODUCTION_POLICY,
+                                              _launch, _card, _remote):
+                    log(d, "REVIEW_REMOTE_OBSERVED|%s|%s|destination=%s|state=%s" %
+                        (HOST, cid, _execution["host"], _status["state"]))
+            except (OSError, ValueError, KeyError, TypeError):
+                log(d, "REVIEW_REMOTE_CUSTODY_PENDING|%s|%s" % (HOST, cid))
+            continue
         if not receipts or not observations:
             continue
         receipt = receipts[-1]
