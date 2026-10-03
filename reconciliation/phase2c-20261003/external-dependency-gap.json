@@ -1,0 +1,10 @@
+{
+  "local_distribution": "skcoord",
+  "reported_version": "0.1.82",
+  "locally_present_modules": {
+    "owner_helpers.py": "356873a4e886f09c3d6f14601cc587c19943c92c",
+    "review_replacement.py": "fadf68630cb97d14508313e02f0c8bcc9768fa37"
+  },
+  "github_py312": "five collection errors: skcoord.owner_helpers (four test modules), skcoord.review_replacement (one test module)",
+  "ci_job": "https://github.com/smilinTux/skcapstone/actions/runs/37138878366/job/111249020842"
+}

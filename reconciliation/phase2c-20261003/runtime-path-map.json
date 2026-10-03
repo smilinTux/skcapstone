@@ -124,7 +124,9 @@
       "systemd/skfleet-atlas.timer"
     ],
     "disposition": "deployed bytes",
-    "release_blob": "63326b64d36d0abe1d6ff1311f15d4436fd66db6"
+    "release_blob": "63326b64d36d0abe1d6ff1311f15d4436fd66db6",
+    "package_mirror": "src/skcapstone/data/systemd/skfleet-atlas.timer",
+    "package_mirror_blob": "63326b64d36d0abe1d6ff1311f15d4436fd66db6"
   },
   {
     "snapshot_path": "systemd-user/skfleet-estate-glm.service",
@@ -187,7 +189,9 @@
       "systemd/skfleet-link-producer.service"
     ],
     "disposition": "deployed bytes",
-    "release_blob": "6d20aa7bf5c41449c12a046d7574255e4a05f037"
+    "release_blob": "6d20aa7bf5c41449c12a046d7574255e4a05f037",
+    "package_mirror": "src/skcapstone/data/systemd/skfleet-link-producer.service",
+    "package_mirror_blob": "6d20aa7bf5c41449c12a046d7574255e4a05f037"
   },
   {
     "snapshot_path": "systemd-user/skfleet-link-producer.service.d/9173d235-scope.conf",
@@ -205,7 +209,9 @@
       "systemd/skfleet-link-producer.timer"
     ],
     "disposition": "deployed bytes",
-    "release_blob": "2b46c16e6d836af036ac731111b23be6a56cd50d"
+    "release_blob": "2b46c16e6d836af036ac731111b23be6a56cd50d",
+    "package_mirror": "src/skcapstone/data/systemd/skfleet-link-producer.timer",
+    "package_mirror_blob": "2b46c16e6d836af036ac731111b23be6a56cd50d"
   },
   {
     "snapshot_path": "systemd-user/skfleet-link.service",
@@ -214,7 +220,9 @@
       "systemd/skfleet-link.service"
     ],
     "disposition": "deployed bytes",
-    "release_blob": "b8b74882c1c22a0e652bb15973e5de9edb4040f8"
+    "release_blob": "b8b74882c1c22a0e652bb15973e5de9edb4040f8",
+    "package_mirror": "src/skcapstone/data/systemd/skfleet-link.service",
+    "package_mirror_blob": "b8b74882c1c22a0e652bb15973e5de9edb4040f8"
   },
   {
     "snapshot_path": "systemd-user/skfleet-link.timer",
@@ -223,7 +231,9 @@
       "systemd/skfleet-link.timer"
     ],
     "disposition": "deployed bytes",
-    "release_blob": "56f62f530a0c63b7cec27aa4362f4e332384a519"
+    "release_blob": "56f62f530a0c63b7cec27aa4362f4e332384a519",
+    "package_mirror": "src/skcapstone/data/systemd/skfleet-link.timer",
+    "package_mirror_blob": "56f62f530a0c63b7cec27aa4362f4e332384a519"
   },
   {
     "snapshot_path": "systemd-user/skfleet-live-publisher.service",
@@ -259,7 +269,9 @@
       "systemd/skfleet-mero.service"
     ],
     "disposition": "deployed bytes",
-    "release_blob": "1403f7dadf314a04af56e8f86cf12bf34e899d64"
+    "release_blob": "1403f7dadf314a04af56e8f86cf12bf34e899d64",
+    "package_mirror": "src/skcapstone/data/systemd/skfleet-mero.service",
+    "package_mirror_blob": "1403f7dadf314a04af56e8f86cf12bf34e899d64"
   },
   {
     "snapshot_path": "systemd-user/skfleet-mero.timer",
@@ -268,7 +280,9 @@
       "systemd/skfleet-mero.timer"
     ],
     "disposition": "deployed bytes",
-    "release_blob": "6a87b6c7e58af53535b4c0a96d8f1c3cd911b268"
+    "release_blob": "6a87b6c7e58af53535b4c0a96d8f1c3cd911b268",
+    "package_mirror": "src/skcapstone/data/systemd/skfleet-mero.timer",
+    "package_mirror_blob": "6a87b6c7e58af53535b4c0a96d8f1c3cd911b268"
   },
   {
     "snapshot_path": "systemd-user/skfleet-niobe-live.service",
@@ -286,7 +300,9 @@
       "systemd/skfleet-niobe-live.timer"
     ],
     "disposition": "deployed bytes",
-    "release_blob": "ff00429903f91d0d9f578983c2eae52511b28a6a"
+    "release_blob": "ff00429903f91d0d9f578983c2eae52511b28a6a",
+    "package_mirror": "src/skcapstone/data/systemd/skfleet-niobe-live.timer",
+    "package_mirror_blob": "ff00429903f91d0d9f578983c2eae52511b28a6a"
   },
   {
     "snapshot_path": "systemd-user/skfleet-niobe.service",
@@ -295,7 +311,9 @@
       "systemd/skfleet-niobe.service"
     ],
     "disposition": "deployed bytes",
-    "release_blob": "6b0bb647bcbc103b891ca557babfaf330e811cfd"
+    "release_blob": "6b0bb647bcbc103b891ca557babfaf330e811cfd",
+    "package_mirror": "src/skcapstone/data/systemd/skfleet-niobe.service",
+    "package_mirror_blob": "6b0bb647bcbc103b891ca557babfaf330e811cfd"
   },
   {
     "snapshot_path": "systemd-user/skfleet-niobe.timer",
@@ -304,7 +322,9 @@
       "systemd/skfleet-niobe.timer"
     ],
     "disposition": "deployed bytes",
-    "release_blob": "b5c8444e185b0e70f191802ed383d910e10c1f20"
+    "release_blob": "b5c8444e185b0e70f191802ed383d910e10c1f20",
+    "package_mirror": "src/skcapstone/data/systemd/skfleet-niobe.timer",
+    "package_mirror_blob": "b5c8444e185b0e70f191802ed383d910e10c1f20"
   },
   {
     "snapshot_path": "systemd-user/skfleet-projection-retire.service",
@@ -358,7 +378,9 @@
       "systemd/skfleet-readiness.timer"
     ],
     "disposition": "deployed bytes",
-    "release_blob": "dd343d38d74bb6f93877ad0ffa40f7f3e402f0dc"
+    "release_blob": "dd343d38d74bb6f93877ad0ffa40f7f3e402f0dc",
+    "package_mirror": "src/skcapstone/data/systemd/skfleet-readiness.timer",
+    "package_mirror_blob": "dd343d38d74bb6f93877ad0ffa40f7f3e402f0dc"
   },
   {
     "snapshot_path": "systemd-user/skfleet-rotate-alert.service",
@@ -448,7 +470,9 @@
       "systemd/skfleet-seraph.timer"
     ],
     "disposition": "deployed bytes",
-    "release_blob": "dac6a819911f1cfe0084156ed8e7e4fd58cf11cc"
+    "release_blob": "dac6a819911f1cfe0084156ed8e7e4fd58cf11cc",
+    "package_mirror": "src/skcapstone/data/systemd/skfleet-seraph.timer",
+    "package_mirror_blob": "dac6a819911f1cfe0084156ed8e7e4fd58cf11cc"
   },
   {
     "snapshot_path": "systemd-user/skfleet-seraph.timer.d/50-rotate-window.conf",
