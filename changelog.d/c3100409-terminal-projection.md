@@ -1,0 +1,1 @@
+- Card `c3100409`: allow exact stale ownerless completed agent projections to be reversibly retired, retaining card/projection hash fences and refusing other outstanding claims.

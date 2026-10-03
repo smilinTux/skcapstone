@@ -44,5 +44,14 @@ skmail read <seat>
 ```
 
 Do not use `skmail tail` as the authoritative poll and do not acknowledge
-automatically. Read, act on every applicable message, then acknowledge. A mail
+automatically. Read, act on every applicable message, then acknowledge.
+
+`skmail read` shows the oldest unread mail capped at about 8 KiB
+(`SKMAIL_READ_MAX_BYTES`), always ends with `(N new)` where N is the total
+unread, and records what it showed. `skmail ack <seat>` marks read only those
+shown messages, so a backlog is worked through as repeated read, act, ack. Ack
+with nothing shown since the last ack refuses. `read --summary` and
+`read --urgent` are triage views that never arm ack. `ack --before <iso>`
+deliberately skips older mail and is logged; `ack --all` is the old
+mark-everything behaviour and must be asked for explicitly. A mail
 failure is recorded in the lifecycle beat and never broadens authority.

@@ -1,0 +1,1 @@
+- Card `13bf1d1e`: require explicit complete tmux/systemd evidence before fleet reaper authority; publish separate, non-authoritative systemd diagnostics when the host publisher fails. Legacy and partial snapshots remain fail-closed.

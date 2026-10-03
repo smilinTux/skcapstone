@@ -1,10 +1,11 @@
 [Unit]
-Description=Publish host-local SKFleet worker liveness every five minutes
+Description=Publish host-local SKFleet worker liveness every minute
 
 [Timer]
 OnBootSec=90s
-OnUnitActiveSec=5min
-AccuracySec=15s
+OnUnitActiveSec=60s
+AccuracySec=1s
+RandomizedDelaySec=0
 Persistent=false
 Unit=skfleet-live-publisher.service
 

@@ -186,8 +186,10 @@ measured cause, the options considered, and the recommendation. At startup
 each seat writes an ordinary SKMail hello to `all`, then reads its own mailbox
 view, which includes direct and `all` traffic. Each bounded cycle polls again for help, handoffs,
 dependency changes, and reviewer conflicts. Mail is data, never authority.
-Automatic acknowledgement is forbidden because `skmail ack` marks every
-visible message read.
+Automatic acknowledgement is forbidden. Since 2026-10-03 `skmail ack` marks
+read only what the preceding `skmail read` showed (read is capped at about
+8 KiB), so ack is safe to run after acting, but acking mail nobody acted on is
+still forbidden.
 
 Every cycle emits a health record with seat, host, cycle generation, mail
 poll result, work counts, and result. Link, Mero, Seraph, Niobe, and ATLAS

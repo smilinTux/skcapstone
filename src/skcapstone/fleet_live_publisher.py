@@ -1,12 +1,12 @@
 """Publish one strictly host-local fleet worker liveness snapshot.
 
-Pane evidence is read only through an explicit tmux socket path (the
-``--tmux-socket`` argument or the ``SKFLEET_TMUX_SOCKET`` environment
-variable). The socket must live in a namespace the publisher shares, such as
-the user runtime directory below ``/run/user/$UID``; the packaged unit sets
-it explicitly and keeps ``PrivateTmp=yes``. Any missing, non-socket, or
-unreachable path fails closed: no snapshot is written and the last published
-evidence stays intact.
+Pane evidence uses explicitly configured real tmux sockets. The packaged unit
+shares the host /tmp namespace and names the established default socket.
+Its opt-in process/socket audit requires every own-user tmux server to be
+reachable, including runtime sockets. An absent default socket is empty only
+when a successful own-user process view proves no tmux process exists.
+Custom missing sockets, denied probes and unlinked live servers fail closed.
+CLI failures publish separate non-authoritative systemd diagnostics.
 
 Lane capacity is not measured here. The fleet rotation dispatcher
 (its ``publish_live`` step) owns the lane table (target, busy, free
@@ -154,11 +154,63 @@ def _claim_identity(store: object, card_id: str) -> dict[str, str] | None:
     return {"card_id": card_id, "owner": owner, "claim_revision": revision}
 
 
+def _tmux_server_pids(runner: Callable[..., object]) -> set[int]:
+    """Read the current user's server processes, refusing a failed process view."""
+    output = _probe(["ps", "-u", str(os.getuid()), "-o", "pid=,comm="], runner=runner)
+    servers = set()
+    for line in output.splitlines():
+        fields = line.strip().split(None, 1)
+        if len(fields) != 2 or not fields[0].isdigit():
+            raise RuntimeError("malformed tmux process evidence")
+        if fields[1] == "tmux: server":
+            servers.add(int(fields[0]))
+    return servers
+
+
+def _audited_tmux_sessions(primary: Path, runner: Callable[..., object]) -> tuple[str, list[str]]:
+    """Join every live server to a real socket, never assume an orphan is empty."""
+    before = _tmux_server_pids(runner)
+    candidates = {primary} if primary.exists() else set()
+    for directory, pattern in (
+        (Path(f"/tmp/tmux-{os.getuid()}"), "*"),
+        (Path(f"/run/user/{os.getuid()}/skfleet"), "tmux*.sock"),
+    ):
+        try:
+            entries = list(directory.iterdir())
+        except FileNotFoundError:
+            continue
+        for entry in entries:
+            if entry.match(pattern) and stat.S_ISSOCK(entry.stat().st_mode):
+                candidates.add(entry)
+    observed = set()
+    sessions = []
+    sockets = []
+    for path in sorted(candidates):
+        pid = _probe(
+            ["tmux", "-S", str(path), "display-message", "-p", "#{pid}"], runner=runner
+        ).strip()
+        if not pid.isdigit():
+            raise RuntimeError(f"invalid tmux server identity at {path}")
+        names = _probe(["tmux", "-S", str(path), "ls", "-F", "#{session_name}"], runner=runner)
+        observed.add(int(pid))
+        sessions.extend(names.splitlines())
+        sockets.append(str(path))
+    after = _tmux_server_pids(runner)
+    if before != after or observed != after:
+        raise RuntimeError(
+            f"tmux server coverage incomplete: processes={sorted(after)} "
+            f"observed={sorted(observed)}"
+        )
+    return "\n".join(sessions), sockets
+
+
 def publish_host_snapshot(
     *,
     home: Path,
     host: str,
     tmux_socket: str | None = None,
+    allow_absent_default: bool = False,
+    audit_tmux_servers: bool = False,
     store: object | None = None,
     runner: Callable[..., object] = subprocess.run,
     now: Callable[[], float] = time.time,
@@ -168,10 +220,13 @@ def publish_host_snapshot(
     Args:
         home: SKCapstone sovereign home directory.
         host: Exact local host name used as the snapshot identity.
-        tmux_socket: Explicit namespace-safe tmux socket path; defaults to
-            the ``SKFLEET_TMUX_SOCKET`` environment variable. There is no
-            implicit default-socket discovery, which a private ``/tmp``
-            namespace can shadow into a false empty view.
+        tmux_socket: Explicit socket path, defaulting to SKFLEET_TMUX_SOCKET.
+            The packaged unit shares the producer host namespace.
+        allow_absent_default: Permit an absent shared default socket only after
+            a successful own-user process probe proves no tmux process exists.
+            Requires the host shared /tmp namespace, as configured by the unit.
+        audit_tmux_servers: Require all live own-user tmux servers to map to
+            real default-directory or runtime-directory sockets.
         store: Optional CardStore-compatible reader for tests.
         runner: Read-only subprocess runner for local process probes.
         now: Clock used for the snapshot timestamp.
@@ -187,11 +242,29 @@ def publish_host_snapshot(
     host = host.strip().lower()
     if not _HOST_RE.fullmatch(host):
         raise ValueError("invalid fleet liveness host")
-    socket_path = _resolve_tmux_socket(tmux_socket)
-    sessions = _probe(
-        ["tmux", "-S", str(socket_path), "ls", "-F", "#{session_name}"],
-        runner=runner,
-    )
+    try:
+        socket_path = _resolve_tmux_socket(tmux_socket)
+    except RuntimeError as exc:
+        raw = (tmux_socket or os.environ.get(_TMUX_SOCKET_ENV) or "").strip()
+        socket_path = Path(raw).expanduser()
+        if (
+            not allow_absent_default
+            or not isinstance(exc.__cause__, FileNotFoundError)
+            or socket_path != Path(f"/tmp/tmux-{os.getuid()}/default")
+        ):
+            raise
+        processes = _probe(["ps", "-u", str(os.getuid()), "-o", "comm="], runner=runner)
+        if any(line.strip().startswith("tmux") for line in processes.splitlines()):
+            raise RuntimeError("default socket absent but tmux processes exist") from exc
+        sessions = ""
+    else:
+        sessions = _probe(
+            ["tmux", "-S", str(socket_path), "ls", "-F", "#{session_name}"],
+            runner=runner,
+        )
+    tmux_sockets = [str(socket_path)] if socket_path.exists() else []
+    if audit_tmux_servers:
+        sessions, tmux_sockets = _audited_tmux_sessions(socket_path, runner)
     units = _probe(
         [
             "systemctl",
@@ -227,19 +300,36 @@ def publish_host_snapshot(
     target = home / "evidence" / "fleet-live" / f"{host}.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     timestamp = now()
-    lanes, lanes_ts = _carried_lane_capacity(target, timestamp)
+    lane_target = home / "evidence" / "fleet-lanes" / f"{host}.json"
+    lanes, lanes_ts = _carried_lane_capacity(
+        lane_target if lane_target.exists() else target, timestamp
+    )
     payload = {
         "host": host,
+        "complete": True,
         "ts": timestamp,
         "cards": sorted(cards),
         "workers": workers,
         "lanes": lanes,
         "tmux_socket": str(socket_path),
+        "tmux_sessions": sessions.splitlines(),
+        "tmux_sockets": tmux_sockets,
+        "systemd_units": [
+            line.split()[0]
+            for line in units.splitlines()
+            if line.split() and line.split()[0].startswith("skfleet-worker-")
+        ],
     }
     if lanes_ts is not None:
         payload["lanes_ts"] = lanes_ts
+    return _write_snapshot(target, payload)
+
+
+def _write_snapshot(target: Path, payload: dict) -> Path:
+    """Atomically replace one observation without exposing partial JSON."""
+    target.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
-        "w", encoding="utf-8", dir=target.parent, prefix=f".{host}.", delete=False
+        "w", encoding="utf-8", dir=target.parent, prefix=f".{target.stem}.", delete=False
     ) as stream:
         temporary = Path(stream.name)
         json.dump(payload, stream, sort_keys=True)
@@ -250,6 +340,70 @@ def publish_host_snapshot(
     finally:
         temporary.unlink(missing_ok=True)
     return target
+
+
+def publish_systemd_observation(
+    *,
+    home: Path,
+    host: str,
+    store: object | None = None,
+    runner: Callable[..., object] = subprocess.run,
+    now: Callable[[], float] = time.time,
+) -> Path:
+    """Publish partial diagnostics outside the authoritative report directory.
+
+    Successful systemd enumeration proves only the observed unit set, never
+    absence of legacy tmux workers. Failed enumeration is unknown, not empty.
+    """
+    host = host.strip().lower()
+    if not _HOST_RE.fullmatch(host):
+        raise ValueError("invalid fleet liveness host")
+    cards = None
+    workers = None
+    try:
+        units = _probe(
+            [
+                "systemctl",
+                "--user",
+                "list-units",
+                "--type=service",
+                "--state=running",
+                "--no-legend",
+                "--plain",
+            ],
+            runner=runner,
+        )
+    except (RuntimeError, OSError, subprocess.SubprocessError):
+        pass
+    else:
+        cards = sorted(
+            {
+                match.group(1)
+                for line in units.splitlines()
+                if line.split() and (match := _UNIT_RE.fullmatch(line.split()[0]))
+            }
+        )
+        workers = []
+        card_store = store or CardStore(home)
+        for card in cards:
+            try:
+                identity = _claim_identity(card_store, card)
+            except (OSError, TypeError, ValueError):
+                identity = None
+            if identity:
+                workers.append(identity)
+    return _write_snapshot(
+        home / "evidence" / "fleet-live-diagnostics" / f"{host}.json",
+        {
+            "host": host,
+            "ts": now(),
+            "complete": False,
+            "tmux": "unknown",
+            "systemd": "unknown" if cards is None else "observed",
+            "cards": cards,
+            "workers": workers,
+        },
+    )
 
 
 def main() -> int:
@@ -264,9 +418,20 @@ def main() -> int:
     )
     args = parser.parse_args()
     try:
-        publish_host_snapshot(home=args.home, host=args.host, tmux_socket=args.tmux_socket)
-    except (RuntimeError, ValueError) as exc:
+        publish_host_snapshot(
+            home=args.home,
+            host=args.host,
+            tmux_socket=args.tmux_socket,
+            allow_absent_default=os.environ.get("SKFLEET_ALLOW_ABSENT_DEFAULT_TMUX") == "1",
+            audit_tmux_servers=os.environ.get("SKFLEET_AUDIT_TMUX_SERVERS") == "1",
+        )
+    except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as exc:
         print(f"fleet-live-publisher: {exc}", file=sys.stderr)
+        try:
+            diagnostic = publish_systemd_observation(home=args.home, host=args.host)
+            print(f"fleet-live-publisher: partial diagnostics: {diagnostic}", file=sys.stderr)
+        except (ValueError, OSError) as diagnostic_error:
+            print(f"fleet-live-publisher: diagnostics failed: {diagnostic_error}", file=sys.stderr)
         return 1
     return 0
 

@@ -79,7 +79,9 @@ def schedule_period_seconds(schedule: str) -> int:
 
 
 def _parse_iso(value: str) -> datetime:
-    return datetime.strptime(value, _ISO_FORMAT).replace(tzinfo=timezone.utc)
+    # Edge collectors emit fractional seconds; retain them for missed-run math.
+    timestamp_format = "%Y-%m-%dT%H:%M:%S.%fZ" if "." in value else _ISO_FORMAT
+    return datetime.strptime(value, timestamp_format).replace(tzinfo=timezone.utc)
 
 
 def _format_iso(value: datetime) -> str:

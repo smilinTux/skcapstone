@@ -171,3 +171,69 @@ def test_cli_requires_both_hash_fences(tmp_path):
     )
     assert result.exit_code != 0
     assert "expected-card-sha256" in result.output
+
+
+def test_completed_projection_retires_without_changing_card(tmp_path):
+    store, projection = _world(tmp_path, void=False)
+    store.append_event("deadbeef", "move", "test", column="done")
+    before = card_generation_sha256(store.fold("deadbeef"))
+    receipt = retire_projection(
+        tmp_path,
+        task_id="deadbeef",
+        projection_agent="pi-test-deadbeef",
+        expected_card_sha256=before,
+        expected_projection_sha256=_sha(projection),
+        actor="repair",
+    )
+    assert card_generation_sha256(store.fold("deadbeef")) == before
+    assert receipt.quarantined_path.is_file()
+    assert receipt.restore(expected_quarantine_sha256=receipt.projection_sha256) == projection
+
+
+@pytest.mark.parametrize("race", ["card", "projection", "fresh", "other_claim", "itil"])
+def test_completed_projection_refuses_changed_or_live_state(tmp_path, race):
+    store, projection = _world(tmp_path, void=False)
+    store.append_event("deadbeef", "move", "test", column="done")
+    card_hash = card_generation_sha256(store.fold("deadbeef"))
+    projection_hash = _sha(projection)
+    expected = "card hash conflict" if race == "card" else "projection hash conflict"
+    if race == "card":
+        store.append_event("deadbeef", "link", "other", key="evidence", value="changed")
+    else:
+        payload = json.loads(projection.read_text())
+        if race in {"projection", "fresh"}:
+            payload["last_seen"] = datetime.now(timezone.utc).isoformat()
+        elif race == "itil":
+            payload["itil_claims"] = ["incident-123"]
+        else:
+            payload["claimed_tasks"].append("cafebabe")
+        projection.write_text(json.dumps(payload))
+        if race in {"fresh", "other_claim", "itil"}:
+            projection_hash = _sha(projection)
+            expected = "live or has future" if race == "fresh" else "other claimed tasks"
+    before = projection.read_bytes()
+    with pytest.raises(ValueError, match=expected):
+        retire_projection(
+            tmp_path,
+            task_id="deadbeef",
+            projection_agent="pi-test-deadbeef",
+            expected_card_sha256=card_hash,
+            expected_projection_sha256=projection_hash,
+            actor="repair",
+        )
+    assert projection.read_bytes() == before
+    assert not (tmp_path / "agents-quarantine").exists()
+
+
+def test_nonterminal_ownerless_projection_refuses(tmp_path):
+    store, projection = _world(tmp_path, void=False)
+    with pytest.raises(ValueError, match="done or voided"):
+        retire_projection(
+            tmp_path,
+            task_id="deadbeef",
+            projection_agent="pi-test-deadbeef",
+            expected_card_sha256=card_generation_sha256(store.fold("deadbeef")),
+            expected_projection_sha256=_sha(projection),
+            actor="repair",
+        )
+    assert projection.is_file()

@@ -1456,7 +1456,13 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--repair", is_flag=True, default=False)
     @click.option("--agent", default="coord-reconcile", help="Receipt writer identity.")
     @click.option("--stale-seconds", default=3600, type=click.IntRange(min=0))
-    def coord_reconcile_agents(home, repair, agent, stale_seconds):
+    @click.option(
+        "--task-id",
+        "task_ids",
+        multiple=True,
+        help="Limit audit/repair to exact card IDs; repeat for a reviewed set.",
+    )
+    def coord_reconcile_agents(home, repair, agent, stale_seconds, task_ids):
         """Audit agent projection drift and optionally repair it explicitly."""
         import json
 
@@ -1468,16 +1474,20 @@ def register_coord_commands(main: click.Group) -> None:
 
         home_path = Path(home).expanduser()
         try:
+            for task_id in task_ids:
+                validate_task_id(task_id)
+            scope = set(task_ids) or None
             if repair:
                 receipt = repair_lifecycle(
                     home_path,
                     actor=agent,
                     stale_after_seconds=stale_seconds,
+                    task_ids=scope,
                 )
                 payload = receipt.to_dict()
                 payload["receipt_path"] = str(receipt.receipt_path)
             else:
-                payload = audit_lifecycle(home_path).to_dict()
+                payload = audit_lifecycle(home_path, task_ids=scope).to_dict()
         except (OSError, RuntimeError, ValueError) as exc:
             raise click.ClickException(str(exc)) from None
         console.print(json.dumps(payload, indent=2))

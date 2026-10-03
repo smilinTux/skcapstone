@@ -1,0 +1,2 @@
+- Card `f0e57f90`: observe the real shared tmux namespace, prove no-server idle state without creating a server, reject uncovered server PIDs, expose actual workload names, and separate rotation lane reports so they cannot overwrite authoritative publisher snapshots.
+- Publish every60 seconds with1-second timer accuracy to retain margin for native sync delays without relaxing the360-second consumer freshness fence.

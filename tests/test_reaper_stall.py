@@ -110,6 +110,10 @@ def test_publish_live_logs_exact_attribution(tmp_path):
     ]
     home = str(tmp_path)
     live = tmp_path / "live"
+    live.mkdir()
+    authoritative = live / "chiap08.json"
+    authoritative.write_text('{"complete": true, "cards": ["authoritative"]}')
+    authoritative_before = authoritative.read_bytes()
     messages = []
     ns = {
         "CardStore": type(
@@ -159,7 +163,10 @@ def test_publish_live_logs_exact_attribution(tmp_path):
     assert "|log=%s|" % path in messages[0]
     assert "|age_seconds=" in messages[0]
     assert "worker remains live" in messages[0]
-    assert json.loads((live / "chiap08.json").read_text())["cards"] == ["aaaa0001"]
+    assert json.loads((live.parent / "fleet-lanes/chiap08.json").read_text())["cards"] == [
+        "aaaa0001"
+    ]
+    assert authoritative.read_bytes() == authoritative_before
     markers = list((tmp_path / ".skcapstone/evidence/live-no-progress").glob("*.json"))
     assert len(markers) == 1
     marker = json.loads(markers[0].read_text())
@@ -204,6 +211,10 @@ def test_systemd_only_worker_with_exact_progress_is_not_reported_stalled(tmp_pat
     ]
     home = str(tmp_path)
     live = tmp_path / "live"
+    live.mkdir()
+    authoritative = live / "chiap08.json"
+    authoritative.write_text('{"complete": true, "cards": ["authoritative"]}')
+    authoritative_before = authoritative.read_bytes()
     messages = []
     owner = "pi-glm-chiap08-aaaa0001"
     revision = "revision-1"
@@ -306,7 +317,10 @@ def test_systemd_only_worker_with_exact_progress_is_not_reported_stalled(tmp_pat
     assert ns["publish_live"]([], [worker]) == ["aaaa0001"]
     assert not messages
     assert not list((tmp_path / ".skcapstone/evidence/live-no-progress").glob("*.json"))
-    assert json.loads((live / "chiap08.json").read_text())["cards"] == ["aaaa0001"]
+    assert json.loads((live.parent / "fleet-lanes/chiap08.json").read_text())["cards"] == [
+        "aaaa0001"
+    ]
+    assert authoritative.read_bytes() == authoritative_before
 
 
 if __name__ == "__main__":
