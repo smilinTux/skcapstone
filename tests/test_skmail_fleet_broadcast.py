@@ -18,8 +18,15 @@ SCRIPT = Path(__file__).parents[1] / "scripts" / "fleet" / "skmail"
 
 
 def _rec(ts: str, to: str, re: str) -> dict[str, object]:
-    return {"ts": ts, "from": "seraph", "to": to, "priority": "urgent",
-            "re": re, "body": "b", "host": "chiap01"}
+    return {
+        "ts": ts,
+        "from": "seraph",
+        "to": to,
+        "priority": "urgent",
+        "re": re,
+        "body": "b",
+        "host": "chiap01",
+    }
 
 
 def _read(coord: Path, me: str, records: list[dict[str, object]]) -> str:
@@ -28,8 +35,9 @@ def _read(coord: Path, me: str, records: list[dict[str, object]]) -> str:
     box.write_text("".join(json.dumps(r) + "\n" for r in records))
     env = os.environ.copy()
     env["SKMAIL_DIR"] = str(coord)
-    return subprocess.run([str(SCRIPT), "read", me], check=True,
-                          capture_output=True, env=env, text=True).stdout
+    return subprocess.run(
+        [str(SCRIPT), "read", me], check=True, capture_output=True, env=env, text=True
+    ).stdout
 
 
 def test_new_fleet_broadcast_reaches_every_reader(tmp_path: Path) -> None:
@@ -48,11 +56,15 @@ def test_pre_rollout_fleet_mail_stays_dark(tmp_path: Path) -> None:
 
 
 def test_all_and_own_name_unchanged(tmp_path: Path) -> None:
-    out = _read(tmp_path, "worker7", [
-        _rec("2026-09-01T00:00:00+00:00", "all", "OLDALL"),
-        _rec("2026-09-01T00:00:00+00:00", "worker7", "MINE"),
-        _rec("2026-09-01T00:00:00+00:00", "someoneelse", "NOTMINE"),
-    ])
+    out = _read(
+        tmp_path,
+        "worker7",
+        [
+            _rec("2026-09-01T00:00:00+00:00", "all", "OLDALL"),
+            _rec("2026-09-01T00:00:00+00:00", "worker7", "MINE"),
+            _rec("2026-09-01T00:00:00+00:00", "someoneelse", "NOTMINE"),
+        ],
+    )
     assert "OLDALL" in out and "MINE" in out
     assert "NOTMINE" not in out
 
@@ -62,5 +74,7 @@ def test_ack_covers_fleet_broadcast(tmp_path: Path) -> None:
     _read(tmp_path, "worker7", rec)
     env = os.environ.copy()
     env["SKMAIL_DIR"] = str(tmp_path)
-    subprocess.run([str(SCRIPT), "ack", "worker7"], check=True, capture_output=True, env=env, text=True)
+    subprocess.run(
+        [str(SCRIPT), "ack", "worker7"], check=True, capture_output=True, env=env, text=True
+    )
     assert "ACKME" not in _read(tmp_path, "worker7", rec)
