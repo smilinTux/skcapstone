@@ -89,7 +89,7 @@ def test_native_state_reuses_only_current_locked_store(tmp_path, monkeypatch, le
 
 
 @pytest.fixture
-def pair(source, monkeypatch, tmp_path):  # noqa: F811
+def pair(source, monkeypatch, tmp_path, qualified_runtime):  # noqa: F811
     import socket
 
     monkeypatch.setattr(socket, "gethostname", lambda: "control")
