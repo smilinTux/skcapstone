@@ -1,0 +1,1 @@
+- Card c3100b04: WSL capacity and workspace admission now require fresh physical Windows memory headroom, preserving host reserves and failing closed when the host probe is unavailable. Native Linux admission is unchanged.

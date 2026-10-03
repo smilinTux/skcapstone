@@ -128,6 +128,14 @@ def node_capacity() -> dict:
         base = resources()
     except Exception:
         base = _fallback_resources()
+    from .physical_memory import physical_headroom_kb
+
+    try:
+        physical = physical_headroom_kb()
+        if physical is not None:
+            base = dict(base, ram_gb=round(min(base["ram_gb"], physical / 2**20), 1))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        base = dict(base, ram_gb=0.0)
     gpu = _gpu_info()
     return {
         "cores": base["cores"],

@@ -262,9 +262,12 @@ def list_bindings(home: Path) -> list[WorkspaceBinding]:
 
 def read_meminfo(path: Path = Path("/proc/meminfo")) -> str:
     """Read meminfo text; fail closed when unreadable."""
+    from .physical_memory import constrain_meminfo
+
     try:
-        return path.read_text(encoding="utf-8")
-    except OSError as exc:
+        text = path.read_text(encoding="utf-8")
+        return constrain_meminfo(text) if path == Path("/proc/meminfo") else text
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
         raise WorkspaceRuntimeError("meminfo is unreadable") from exc
 
 
