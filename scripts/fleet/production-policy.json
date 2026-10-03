@@ -1,0 +1,102 @@
+{
+  "schema": "skfleet.production/v1",
+  "authority_host": "chiap08",
+  "capacity_authority": "skgateway",
+  "gateway_url": "http://chiap01:18790",
+  "cycle_budget_seconds": 250,
+  "scan_budget": 128,
+  "lanes": {
+    "codex": {
+      "enabled": true,
+      "provider": "skgateway"
+    },
+    "glm": {
+      "enabled": true,
+      "provider": "skgateway"
+    },
+    "deepseek": {
+      "enabled": true,
+      "provider": "skgateway"
+    },
+    "qwen": {
+      "enabled": true,
+      "provider": "skgateway"
+    },
+    "kimi": {
+      "enabled": false
+    }
+  },
+  "node_quotas": {
+    "chiap08": {
+      "cpu_quota_percent": 200,
+      "memory_max_bytes": 3221225472,
+      "tasks_max": 256,
+      "runtime_max_seconds": 3600
+    },
+    "chiap02": {
+      "cpu_quota_percent": 200,
+      "memory_max_bytes": 3221225472,
+      "tasks_max": 256,
+      "runtime_max_seconds": 3600
+    },
+    "chiap03": {
+      "cpu_quota_percent": 200,
+      "memory_max_bytes": 3221225472,
+      "tasks_max": 256,
+      "runtime_max_seconds": 3600
+    },
+    "chiap04": {
+      "cpu_quota_percent": 200,
+      "memory_max_bytes": 3221225472,
+      "tasks_max": 256,
+      "runtime_max_seconds": 3600
+    },
+    "chiwk12": {
+      "cpu_quota_percent": 200,
+      "memory_max_bytes": 3221225472,
+      "tasks_max": 256,
+      "runtime_max_seconds": 3600
+    },
+    "chiwk13": {
+      "cpu_quota_percent": 100,
+      "memory_max_bytes": 1610612736,
+      "tasks_max": 256,
+      "runtime_max_seconds": 3600
+    },
+    "ziowk01": {
+      "cpu_quota_percent": 400,
+      "memory_max_bytes": 6442450944,
+      "tasks_max": 256,
+      "runtime_max_seconds": 3600
+    },
+    "chiap01": {
+      "cpu_quota_percent": 400,
+      "memory_max_bytes": 6442450944,
+      "tasks_max": 256,
+      "runtime_max_seconds": 3600
+    }
+  },
+  "worker_destinations": [
+    "chiap01",
+    "chiap02",
+    "chiap03",
+    "chiap04",
+    "chiap08"
+  ],
+  "remote_review": {
+    "enabled": false,
+    "destinations": [
+      "chiap03"
+    ],
+    "card_ids": [
+      "b4594faa"
+    ]
+  },
+  "node_admission": {
+    "chiap08": {
+      "max_concurrent_workers": 1,
+      "memory_floor_bytes": 8589934592,
+      "protected_service_bindings": {}
+    }
+  }
+}
