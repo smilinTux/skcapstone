@@ -53,6 +53,8 @@ def check_http_readiness(
     )
     started = time.monotonic()
     try:
+        if not isinstance(url, str):
+            raise ValueError("readiness URL must be a string")
         parsed = urlsplit(url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username:
             raise ValueError("readiness requires an HTTP(S) URL without credentials")

@@ -181,3 +181,12 @@ def test_malformed_registry_flag_cannot_fall_back_to_reachability(monkeypatch):
     result = next(r for r in service_health.check_all_services() if r["name"] == "misconfigured")
     assert result["status"] == "unknown"
     assert result["error_class"] == "invalid_config"
+
+
+@pytest.mark.parametrize(
+    "url", [None, 42, "file:///etc/passwd", "https://user:password@example.test"]
+)
+def test_bad_url_is_unknown_without_network(url):
+    result = check_http_readiness("bad", url)
+    assert result["status"] == "unknown"
+    assert result["error_class"] == "invalid_config"
