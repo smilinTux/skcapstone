@@ -85,7 +85,7 @@ def active_resource_units(home=None):
     return list(units.values())
 
 
-def available_worker_memory(meminfo, units):
+def available_worker_memory(meminfo, units, *, memory_floor_bytes=0):
     """Reserve unfinished worker allowances without counting their memory twice."""
     memory = {}
     for line in meminfo.splitlines():
@@ -103,7 +103,7 @@ def available_worker_memory(meminfo, units):
         if maximum <= 0 or current < 0 or maximum >= 2**63:
             raise ValueError("worker memory reservation is unknown")
         reserved += max(0, maximum - current)
-    headroom = max(512 * 1024**2, memory["MemTotal:"] // 10)
+    headroom = max(512 * 1024**2, memory["MemTotal:"] // 10, memory_floor_bytes)
     return max(0, memory["MemAvailable:"] - reserved - headroom)
 
 
@@ -164,7 +164,13 @@ def local_worker_admission(policy, host, worker_units, *, runner=subprocess.run)
                     units.append({"MemoryMax": reservations[row["Id"]], "MemoryCurrent": 0})
                 elif row.get("ActiveState") not in {"inactive", "failed"}:
                     raise ValueError("worker resource custody is uncertain")
-        available = available_worker_memory(meminfo, units)
+        available = available_worker_memory(
+            meminfo,
+            units,
+            memory_floor_bytes=policy.get("node_admission", {})
+            .get(host, {})
+            .get("memory_floor_bytes", 0),
+        )
         required = policy["node_quotas"][host]["memory_max_bytes"]
         return available >= required, "memory_available=%d required=%d" % (available, required)
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):

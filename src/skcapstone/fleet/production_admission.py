@@ -127,7 +127,7 @@ def reserved_command(
     return [argv[0], "--setenv=" + MARKER + "=" + identity, *argv[1:]]
 
 
-def _occupancy(root: Path, home: Path) -> list[dict]:
+def _occupancy(root: Path, home: Path, *, strict_terminal=False) -> list[dict]:
     """Account live units plus unobserved intents, without double charging RAM."""
     units = {row["unit"]: dict(row) for row in active_resource_units(home)}
     for directory in sorted(root.iterdir()):
@@ -158,6 +158,21 @@ def _occupancy(root: Path, home: Path) -> list[dict]:
                 or not re.fullmatch(r"[0-9a-f]{32}", observed.get("invocation", ""))
             ):
                 raise AdmissionError("reservation acknowledgment is inconsistent")
+            if strict_terminal and unit not in units:
+                state = unit_state(unit, terminal=True)
+                if not (
+                    state.get("Id") == unit
+                    and state.get("LoadState") == "loaded"
+                    and state.get("InvocationID") == observed["invocation"]
+                    and state.get(MARKER) == directory.name
+                    and state.get("ActiveState") in {"inactive", "failed"}
+                    and state.get("SubState") in {"dead", "failed"}
+                    and state.get("MainPID") == "0"
+                    and state.get("ControlPID") == "0"
+                    and state.get("TasksCurrent") in {"0", "[not set]"}
+                    and state.get("ControlGroup") == ""
+                ):
+                    units[unit] = {"unit": unit, "reserved_memory_max": maximum}
             continue
         if unit in units:
             state = unit_state(unit)
@@ -425,7 +440,9 @@ def reserve_launch(
             )
         ):
             raise AdmissionError("launch identity is invalid")
-        limits = policy["node_quotas"][host]
+        from .production_policy import require_destination
+
+        limits = require_destination(policy, host)
         keys = {"cpu_quota_percent", "memory_max_bytes", "tasks_max", "runtime_max_seconds"}
         if set(limits) != keys or any(type(n) is not int or n <= 0 for n in limits.values()):
             raise AdmissionError("launch quota is invalid")
@@ -487,7 +504,25 @@ def reserve_launch(
             directory = root / identity
             if directory.exists():
                 raise AdmissionError("launch already reserved; exact custody required")
-            rows = _occupancy(root, home)
+            limits_policy = policy.get("node_admission", {}).get(host, {})
+            rows = _occupancy(root, home, strict_terminal=bool(limits_policy))
+            protected = limits_policy.get("protected_service_bindings", {})
+            charged = 0
+            for row in rows:
+                if row["unit"] in protected:
+                    result = subprocess.run(
+                        ["systemctl", "--user", "cat", row["unit"]],
+                        capture_output=True,
+                        check=True,
+                        timeout=5,
+                    )
+                    if hashlib.sha256(result.stdout).hexdigest() != protected[row["unit"]]:
+                        raise AdmissionError("protected service definition changed")
+                else:
+                    charged += 1
+            cap = limits_policy.get("max_concurrent_workers")
+            if cap is not None and charged >= cap:
+                raise AdmissionDeferredError("worker occupancy cap reached")
             if any(row["unit"] == unit for row in rows):
                 raise AdmissionError("unit already occupied or pending")
             ready, reason = local_worker_admission(policy, host, rows)

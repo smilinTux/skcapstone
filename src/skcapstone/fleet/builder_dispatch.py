@@ -373,6 +373,9 @@ def request_holds_card(request: dict, status: dict, now: datetime) -> bool:
     """
     if not request:
         return False
+    if request.get("schema") == "skfleet.builder-dispatch/v2":
+        # Remote review expiry and process exit are never release evidence.
+        return True
     if status.get("request_id") == request.get("request_id"):
         return status.get("state") not in TERMINAL_STATES
     return not _lease_expired(request, now)
@@ -680,6 +683,8 @@ def _write_status(paths: FleetPaths, node: str, request: dict, state: str, **ext
         "writer": {"role": "sknoded", "node": node, "identity": store.writer_identity()},
         **extra,
     }
+    if request.get("work_kind") == "review":
+        payload["work_kind"] = "review"
     if request.get("production") is not None:
         payload["production"] = request["production"]
     path = status_path(paths, node, request["card_id"])
@@ -1161,9 +1166,25 @@ def _consume_available(
         and request.get("node") == node
     }
     result = None
+    from . import review_dispatch
+
+    for path in paths_to_visit:
+        request = _load(path) or {}
+        if request.get("schema") != review_dispatch.SCHEMA or request.get("node") != node:
+            continue
+        with _request_exclusion(path):
+            try:
+                result = review_dispatch.consume_review(
+                    paths, coordination_home, node, request, launcher=launcher)
+            except (OSError, ValueError, KeyError, TypeError):
+                # Request/claim/intent stays held for exact evidence or recovery.
+                continue
     active_cards: set[str] = set()
     reconciled_orphans: set[str] = set()
     for card_id, status in _dispatch_statuses(paths, node).items():
+        if status.get("work_kind") == "review":
+            active_cards.add(card_id)
+            continue
         if status.get("state") != "running":
             continue
         request = requests.get(card_id) or {}

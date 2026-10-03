@@ -498,3 +498,153 @@ def import_review_source(core: dict, repository: str, base_revision: str, worksp
     finally:
         if temporary.exists():
             shutil.rmtree(temporary)
+
+
+_REVIEW_EXPORT = _INSPECT_SETUP + r"""
+assert git('rev-parse','HEAD^{commit}').decode().strip()==head
+assert git('rev-parse','HEAD^{tree}').decode().strip()==tree
+assert not git('status','--porcelain','--untracked-files=all')
+assert git('rev-list','--count',base+'..'+head).decode().strip()=='1'
+assert git('rev-parse',head+'^').decode().strip()==base
+# Bundle only review descendants; source objects are prerequisites, not exported.
+git('bundle','create','/tmp/review.bundle','HEAD','^'+base)
+raw=Path('/tmp/review.bundle').read_bytes()
+assert 0<len(raw)<=8388608
+print(json.dumps({'bundle':base64.b64encode(raw).decode()}))
+"""
+
+
+def export_review_packet(home: Path, workspace: Path, binding: dict, *, execution: dict) -> dict:
+    """Export a bounded committed review delta after actual proposal inspection."""
+    from .production_review_evidence import inspect_proposal
+
+    proposal = inspect_proposal(workspace, **binding)
+    exported = _inspect(
+        workspace,
+        _REVIEW_EXPORT,
+        binding["card"],
+        binding["source_head"],
+        proposal["review_head"],
+        proposal["review_tree"],
+        "HEAD",
+    )
+    raw = base64.b64decode(exported["bundle"], validate=True)
+    manifest = dict(
+        schema="skfleet.review-bundle/v1",
+        binding=binding,
+        execution=execution,
+        review_head=proposal["review_head"],
+        review_tree=proposal["review_tree"],
+        report_sha256=proposal["report_sha256"],
+        decision_sha256=proposal["decision_sha256"],
+        bundle_sha256=_sha(raw),
+        bundle_bytes=len(raw),
+    )
+    packet = {"manifest": manifest, "bundle": exported["bundle"]}
+    # The existing fleet tree is replicated. The packet contains no original
+    # private inputs, only the exact two committed review evidence files.
+    root = Path(home) / "fleet/review-artifacts" / binding["card"]
+    _once(
+        root / (_sha(json.dumps(manifest, sort_keys=True).encode()) + ".json"),
+        json.dumps(packet, sort_keys=True).encode(),
+    )
+    return packet
+
+
+def import_review_packet(
+    home: Path, packet: dict, workspace: Path, binding: dict, *, execution: dict
+) -> None:
+    """Apply a verified delta to an exact private source checkout and re-inspect."""
+    from .production_review_evidence import inspect_proposal
+
+    manifest = packet["manifest"]
+    raw = base64.b64decode(packet["bundle"], validate=True)
+    if (
+        manifest.get("schema") != "skfleet.review-bundle/v1"
+        or manifest.get("binding") != binding
+        or manifest.get("execution") != execution
+        or not 0 < len(raw) <= MAX_BUNDLE
+        or len(raw) != manifest.get("bundle_bytes")
+        or _sha(raw) != manifest.get("bundle_sha256")
+        or any(
+            not re.fullmatch(r"[0-9a-f]{40}", str(manifest.get(k, "")))
+            for k in ("review_head", "review_tree")
+        )
+    ):
+        raise SourceBundleError("review packet binding differs")
+    workspace = Path(workspace)
+    if workspace.resolve() != workspace or not workspace.is_dir():
+        raise SourceBundleError("review import workspace is redirected")
+    blob = (
+        Path(home)
+        / "fleet/review-artifacts"
+        / binding["card"]
+        / (manifest["bundle_sha256"] + ".bundle")
+    )
+    _once(blob, raw)
+
+    def git(*args):
+        result = subprocess.run(
+            [
+                "/usr/bin/git",
+                "--no-replace-objects",
+                "-C",
+                str(workspace),
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "fetch.fsckObjects=true",
+                "-c",
+                "transfer.fsckObjects=true",
+                *args,
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+        if result.returncode:
+            raise SourceBundleError("review delta import refused")
+        return result.stdout.decode().strip()
+
+    current = git("rev-parse", "HEAD")
+    if current not in {binding["source_head"], manifest["review_head"]} or git(
+        "status", "--porcelain"
+    ):
+        raise SourceBundleError("review import requires exact clean source")
+    git("bundle", "verify", str(blob))
+    if git("bundle", "list-heads", str(blob)).split() != [manifest["review_head"], "HEAD"]:
+        raise SourceBundleError("review delta advertises another head")
+    git("-c", "protocol.file.allow=always", "fetch", "--no-tags", str(blob), "HEAD")
+    git("merge-base", "--is-ancestor", binding["source_head"], manifest["review_head"])
+    # Validate paths and modes before checkout to avoid materializing extra or
+    # redirected worker files in the authority's source checkout.
+    prefix = "docs/evidence/agents/" + binding["card"] + "/"
+    expected = {prefix + "COMPLETION-EVIDENCE.md", prefix + "REVIEW-DECISION.json"}
+    if (
+        set(
+            git(
+                "diff", "--name-only", binding["source_head"], manifest["review_head"]
+            ).splitlines()
+        )
+        != expected
+    ):
+        raise SourceBundleError("review delta changes source")
+    for name in expected:
+        row = git("ls-tree", manifest["review_head"], "--", name).split()
+        if len(row) != 4 or row[:2] != ["100644", "blob"] or row[3] != name:
+            raise SourceBundleError("review delta path is not a regular evidence file")
+        parent = workspace
+        for part in Path(name).parts[:-1]:
+            parent /= part
+            if parent.is_symlink():
+                raise SourceBundleError("review evidence parent is redirected")
+    git("checkout", "--detach", manifest["review_head"])
+    for name in expected:
+        (workspace / name).chmod(0o600)
+    proposal = inspect_proposal(workspace, **binding)
+    if any(
+        proposal[key] != manifest[key]
+        for key in ("review_head", "review_tree", "report_sha256", "decision_sha256")
+    ):
+        raise SourceBundleError("imported review evidence differs")
