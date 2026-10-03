@@ -1,0 +1,22 @@
+[Unit]
+Description=SKFleet Link role-bounded observation producer
+After=network-online.target
+Before=skfleet-link.service
+
+[Service]
+Type=oneshot
+Environment=SKAGENT=link-producer
+Environment=SKCAPSTONE_AGENT=link-producer
+Environment=SKFLEET_LINK_REPOSITORIES=smilinTux/skcapstone,smilinTux/skdashboard,smilinTux/skworld,smilinTux/sk-standards
+Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.skenv/bin/python3 %h/.skenv/bin/skfleet-link-producer.py
+TimeoutStartSec=180
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=read-only
+# Atomic replacement requires write access to the containing directory. The
+# wrapper fixes all writable output names and accepts no path arguments.
+ReadWritePaths=%h/.skcapstone/coordination
+
+[Install]
+WantedBy=default.target

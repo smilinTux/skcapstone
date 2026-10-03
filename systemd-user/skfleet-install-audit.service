@@ -1,0 +1,9 @@
+[Unit]
+Description=SKFleet install hygiene audit (report only)
+Documentation=man:systemd-tmpfiles(8)
+
+[Service]
+Type=oneshot
+# Report only. This unit cannot install, remove or modify anything: it reads
+# package metadata and prints. A finding is an alert, never an action.
+ExecStart=%h/.skenv/bin/python3 %h/.local/bin/skfleet-install-audit

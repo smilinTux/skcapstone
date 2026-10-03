@@ -1,0 +1,784 @@
+{
+  "host": "chiap08",
+  "started_at": "2026-10-03T16:52:55.569063+00:00",
+  "verified_at": "2026-10-03T16:52:55.693755+00:00",
+  "roots": {
+    "bin": "/home/skuser01/.skenv/bin",
+    "systemd-user": "/home/skuser01/.config/systemd/user"
+  },
+  "files": [
+    {
+      "path": "bin/skfleet",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet",
+      "git_blob": "1cfd8124630e5ba1e9892e1fb9250f7c79ceafa3",
+      "sha256": "14f3cbd8c47385f3b34f35beac019c200642518053ebe8fef9ec0c9e11a0ccd7",
+      "size": 183,
+      "mode": 509,
+      "mtime_ns": 1790702607031635008,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet-claim-expiry",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-claim-expiry",
+      "git_blob": "eafe81c956ab4a3d0760925ea3d16ae39d44c137",
+      "sha256": "708b7871e593f63910a202caca5a5d834923f67d9bf23f43f5f2ebaed4918f3a",
+      "size": 196,
+      "mode": 509,
+      "mtime_ns": 1790702607031745612,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet-link-producer.py",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-link-producer.py",
+      "git_blob": "ef5f8ddd9bba52848a3caefd0ad016b18e5c1db7",
+      "sha256": "9cd7e16f82897afcdb618530ca278ac50b3aec8255956cfc88b636d85c4eff4a",
+      "size": 3243,
+      "mode": 509,
+      "mtime_ns": 1790702605578108402,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet-pi-model-catalog.py",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-pi-model-catalog.py",
+      "git_blob": "193cd98fddfa1408f70ddbdfbab3d1b51c76eac1",
+      "sha256": "461f7b3f9514248a9170be19d314c89203432abfa95776921712f7132586b6d9",
+      "size": 19775,
+      "mode": 509,
+      "mtime_ns": 1790702605578381067,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet-projection-retire",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-projection-retire",
+      "git_blob": "487295a2aab0fa77d06e792ddbc5d14d5c116b76",
+      "sha256": "6b0c8d27406873f24b0a0184439823b172ea15380ecc402db99d068531b82a4c",
+      "size": 21311,
+      "mode": 493,
+      "mtime_ns": 1789278270000000000,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet-rotate.py",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-rotate.py",
+      "git_blob": "997b9795347bce62dff49a810f95bf929f822e96",
+      "sha256": "e18b3cf02afbb3db72288db4ac6367ba597abc21e2eda406a308fb82b4e3c013",
+      "size": 441822,
+      "mode": 493,
+      "mtime_ns": 1791041767502534033,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet-route-preflight.py",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-route-preflight.py",
+      "git_blob": "fc272f79a4c1f6405ed602f7fa2e5501aa15681c",
+      "sha256": "b96b1b4b60710e3660f854fc3b2c848e78b30f9dc916a160b4cc8231d2d2f8f0",
+      "size": 715,
+      "mode": 493,
+      "mtime_ns": 1789102652000000000,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet-worker-wrapper.py",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-worker-wrapper.py",
+      "git_blob": "4df93aa9e2912db5abc2e5aee705a35760fc13c9",
+      "sha256": "eece97e3cfbdd3c19ca0e0aa45e43faed908f1fc393d6cb04235c6c62d01f9d7",
+      "size": 47828,
+      "mode": 493,
+      "mtime_ns": 1790856332178194518,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet-working.py",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-working.py",
+      "git_blob": "e7e4f153ac9a47756f72cc8bb5537968e16b2765",
+      "sha256": "96e1b166ccdafdf602161400a256ef1ea20d42f4667c3fa0b8976897722e3fab",
+      "size": 26351,
+      "mode": 493,
+      "mtime_ns": 1789278270000000000,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet_readiness.py",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet_readiness.py",
+      "git_blob": "a8e85e07892e7610ab75a22f4e7dbeb725c17fd8",
+      "sha256": "8f8080c40af7d48a189f0f0937b63e0cb7c5c4d66297a0e1e297c1c68a9d0e8f",
+      "size": 29841,
+      "mode": 493,
+      "mtime_ns": 1790843239467184784,
+      "symlink": false
+    },
+    {
+      "path": "bin/skmail",
+      "original_path": "/home/skuser01/.skenv/bin/skmail",
+      "git_blob": "520710d106eb11c7db206b22478e7a8e2655fd07",
+      "sha256": "161cc998b0a80e8dff99d6a80f7aa8cd5810df373489fdfba80f125fec1d5071",
+      "size": 19345,
+      "mode": 493,
+      "mtime_ns": 1791040390896367340,
+      "symlink": false
+    },
+    {
+      "path": "bin/skmail_work.py",
+      "original_path": "/home/skuser01/.skenv/bin/skmail_work.py",
+      "git_blob": "af7bc05e55a1121d16532edc48a5696dcb2b5b97",
+      "sha256": "8e7e4ec35ee400653ba105cf904bdf1fbe7f228528c091d7b6e17428c2f1f62b",
+      "size": 6667,
+      "mode": 509,
+      "mtime_ns": 1790702605582734442,
+      "symlink": false
+    },
+    {
+      "path": "bin/skmail_writer.py",
+      "original_path": "/home/skuser01/.skenv/bin/skmail_writer.py",
+      "git_blob": "94081ee54c64f0057a71384c03408ed0d352cc2f",
+      "sha256": "8c7825d0bc2b92b5942b45a97a5d13d39f6b0215530000071cf9fc690525f09a",
+      "size": 7712,
+      "mode": 509,
+      "mtime_ns": 1790702605582973542,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-atlas.service",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-atlas.service",
+      "git_blob": "5dae62d6070455a165dca762ed83653f0b768d8b",
+      "sha256": "c6e80dab5963236e4e72eae697521e11af5d0899b29c2c272dbeb17b6d93d03a",
+      "size": 903,
+      "mode": 420,
+      "mtime_ns": 1790843239558464383,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-atlas.timer",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-atlas.timer",
+      "git_blob": "63326b64d36d0abe1d6ff1311f15d4436fd66db6",
+      "sha256": "dc63c2e88f353a9b7e23929bb94ab3da309bf702dc94591f4c563ebf013515fe",
+      "size": 205,
+      "mode": 420,
+      "mtime_ns": 1789012807931123384,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-estate-glm.service",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-estate-glm.service",
+      "git_blob": "33aac8e194044bc9a250f363bf31d5b6fc38601c",
+      "sha256": "d2d572ab8432b85ea0ff6140882bb6a912f339684895a3aa7a6f06257b8aa849",
+      "size": 280,
+      "mode": 420,
+      "mtime_ns": 1790843239573517371,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-estate-glm.timer",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-estate-glm.timer",
+      "git_blob": "3ab58e789e8b7c38a92f86cd72ddb40b10886d75",
+      "sha256": "466a7ed0c7ac879719ebe4c6e4a6e0e05b744178abf80fdd37a84c0e1c69ca64",
+      "size": 194,
+      "mode": 436,
+      "mtime_ns": 1790664716413423929,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-fiber-dispatch.service",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-fiber-dispatch.service",
+      "git_blob": "dc1dc0cde0f7dff7b7f7c9347fff75936d705cb8",
+      "sha256": "fd5d32feb2d3562582258990ecfca9b88376957e512d5caac72ad89fc78d2df4",
+      "size": 9,
+      "mode": 511,
+      "mtime_ns": 1790835334524187523,
+      "symlink": true
+    },
+    {
+      "path": "systemd-user/skfleet-fiber-dispatch.timer",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-fiber-dispatch.timer",
+      "git_blob": "dc1dc0cde0f7dff7b7f7c9347fff75936d705cb8",
+      "sha256": "fd5d32feb2d3562582258990ecfca9b88376957e512d5caac72ad89fc78d2df4",
+      "size": 9,
+      "mode": 511,
+      "mtime_ns": 1790835334524231645,
+      "symlink": true
+    },
+    {
+      "path": "systemd-user/skfleet-install-audit.service",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-install-audit.service",
+      "git_blob": "7d9a9a6b99bc4cb6d77d10f0da8d00a490c2b161",
+      "sha256": "4a3b6e772383bb34e8cf193087bcd3758f808520cf38d5745a8f4777e16efb05",
+      "size": 341,
+      "mode": 436,
+      "mtime_ns": 1787993498216399932,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-install-audit.timer",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-install-audit.timer",
+      "git_blob": "319af58410eae3eebc54ddc4fd25f7d16ba3ea34",
+      "sha256": "84a79e2163c403fa3d4f65071ed5671dd8450ac6ccf75b0e11e5064b4540b61c",
+      "size": 389,
+      "mode": 436,
+      "mtime_ns": 1787993499263412525,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-link-producer.service",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-link-producer.service",
+      "git_blob": "6d20aa7bf5c41449c12a046d7574255e4a05f037",
+      "sha256": "adfefc6419682f4ff242c6c681f6356a8631969bc2e262da3bf7c682ab7ba3e5",
+      "size": 794,
+      "mode": 420,
+      "mtime_ns": 1789012807917653661,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-link-producer.service.d/9173d235-scope.conf",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-link-producer.service.d/9173d235-scope.conf",
+      "git_blob": "3e03b424c90292f998e6ac32f6d0a70ca0f0546c",
+      "sha256": "b9fb647f9cd7ffdb1398d4d5a5c0ef59b2c5dfb89fe0773531f087e0381c0ccd",
+      "size": 423,
+      "mode": 436,
+      "mtime_ns": 1790779536403863520,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-link-producer.timer",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-link-producer.timer",
+      "git_blob": "2b46c16e6d836af036ac731111b23be6a56cd50d",
+      "sha256": "1815078412d0194ae2c26d0a972f7b4e38157c3c9e70332b8cd6cbbe59b3e9d2",
+      "size": 212,
+      "mode": 420,
+      "mtime_ns": 1789012807918880681,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-link.service",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-link.service",
+      "git_blob": "b8b74882c1c22a0e652bb15973e5de9edb4040f8",
+      "sha256": "8680c843a02c278864dfd478c5dc065931c8c5d861d19134f8eec971052b42c9",
+      "size": 708,
+      "mode": 420,
+      "mtime_ns": 1789012807921461331,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-link.timer",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-link.timer",
+      "git_blob": "56f62f530a0c63b7cec27aa4362f4e332384a519",
+      "sha256": "3ea0204861ac542b70f2d04f1c9132c7e6d7a548b980ea5a291f24c8bdc61b6a",
+      "size": 186,
+      "mode": 420,
+      "mtime_ns": 1788989458848407266,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-live-publisher.service",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-live-publisher.service",
+      "git_blob": "5481cdf001e653a8808237b0a6675f594dd08459",
+      "sha256": "77d847f51b4f7d769499d672bb683fc5ec75e79548c175be3a3c277b0c684010",
+      "size": 559,
+      "mode": 420,
+      "mtime_ns": 1791024752535175163,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-live-publisher.service.bak-20260913T054409Z-pre-ffbbe708",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-live-publisher.service.bak-20260913T054409Z-pre-ffbbe708",
+      "git_blob": "58d2909419716a730b5b7a3d92d74ffc4dd12581",
+      "sha256": "d6b1e95f29e6044319d33bad4415b535601f6875bc218918e8f20266dc0ea505",
+      "size": 442,
+      "mode": 420,
+      "mtime_ns": 1789275921318722642,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-live-publisher.timer",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-live-publisher.timer",
+      "git_blob": "8a9349ffa81c8263210c5ca025d2663ddb2e462f",
+      "sha256": "a1fa70bb4a9ad7a7e67bc3d8652dffc845851f5b30715078ce425270b650b04a",
+      "size": 241,
+      "mode": 420,
+      "mtime_ns": 1791025190548977568,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-mail-ack.service",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-mail-ack.service",
+      "git_blob": "5d1dbf1358510a731016e2f77ea76fde4cc848ea",
+      "sha256": "8c4d5925de05679aa1a0839758d93bece9b160d89600700ac184ca0b3854225e",
+      "size": 225,
+      "mode": 436,
+      "mtime_ns": 1788669688962432863,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-mero.service",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-mero.service",
+      "git_blob": "1403f7dadf314a04af56e8f86cf12bf34e899d64",
+      "sha256": "3af6240abb85e75bce8f49ad9b8c221b194a06e2491371cad2067c6a636f49c4",
+      "size": 690,
+      "mode": 420,
+      "mtime_ns": 1789012807922902521,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-mero.timer",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-mero.timer",
+      "git_blob": "6a87b6c7e58af53535b4c0a96d8f1c3cd911b268",
+      "sha256": "b269e27d3f2bdb2dcbabdaa5bb26334d0f5758522523742571ecbb6d2d54eb99",
+      "size": 186,
+      "mode": 420,
+      "mtime_ns": 1788989458849038834,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-niobe-live.service",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-niobe-live.service",
+      "git_blob": "dd730c9cd8d058df4134dc236e5e806ed4c332d0",
+      "sha256": "874b1a23d4a8975b61e38854f3336d7f0e728462c801e2e1986983610cb401f5",
+      "size": 878,
+      "mode": 420,
+      "mtime_ns": 1790843239564252496,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-niobe-live.timer",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-niobe-live.timer",
+      "git_blob": "ff00429903f91d0d9f578983c2eae52511b28a6a",
+      "sha256": "d9a151dc1cb9f6231bb1d69caf67383aabbe4d6d6717805f7abfdb7339a0458c",
+      "size": 219,
+      "mode": 420,
+      "mtime_ns": 1789529199629069159,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-niobe.service",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-niobe.service",
+      "git_blob": "6b0bb647bcbc103b891ca557babfaf330e811cfd",
+      "sha256": "a426756e1133479ce9c0d668dd91dab9a94379a638b2327bc3c7f4b84ff770d0",
+      "size": 657,
+      "mode": 420,
+      "mtime_ns": 1789529903406360488,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-niobe.timer",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-niobe.timer",
+      "git_blob": "b5c8444e185b0e70f191802ed383d910e10c1f20",
+      "sha256": "92767ed0df4455f249aad85bded32182052da47bb20ade2d76007d068f012b94",
+      "size": 207,
+      "mode": 420,
+      "mtime_ns": 1789529199626509489,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-projection-retire.service",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-projection-retire.service",
+      "git_blob": "3c317826a126aca6fb6aace62010e468443bf51b",
+      "sha256": "0f6c11dfe1469e35170036376e5bb3280b71ea4ffe1a133fb9d6e5733e2186db",
+      "size": 186,
+      "mode": 436,
+      "mtime_ns": 1788559941398292998,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-projection-retire.timer",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-projection-retire.timer",
+      "git_blob": "2d4dbca9744d4ece07b991b74f55e12fc2b6ea46",
+      "sha256": "21f3298714506950eef8ca5d92fe741521b09baa08a19e096134b872bdd9ab44",
+      "size": 131,
+      "mode": 436,
+      "mtime_ns": 1788559941399282485,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-pull-chiwk13.service",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-pull-chiwk13.service",
+      "git_blob": "396d5c801ad831d0d691743173d5a15630183b5a",
+      "sha256": "ad4e623a8b4b19c20de917b0c2e9cb05d675ce0bb567fefbab14d90d873aaea7",
+      "size": 261,
+      "mode": 436,
+      "mtime_ns": 1790173250341372995,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-pull-chiwk13.timer",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-pull-chiwk13.timer",
+      "git_blob": "da769f4006d588243f99d772e033430d0b5aa804",
+      "sha256": "81d0e97ea0afdd10ed5f3cdb90aee143a9444328cbe296cfb98d20cb70d18b30",
+      "size": 205,
+      "mode": 436,
+      "mtime_ns": 1790173250345513218,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-readiness.service",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-readiness.service",
+      "git_blob": "639d64307d5aa17aea1e49e1e84a5784767ee3a3",
+      "sha256": "4e591d1d4067b98a4592743de1def8259cccb3e99626bf48c20656b4caf8d4d1",
+      "size": 706,
+      "mode": 420,
+      "mtime_ns": 1790843239575634345,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-readiness.timer",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-readiness.timer",
+      "git_blob": "dd343d38d74bb6f93877ad0ffa40f7f3e402f0dc",
+      "sha256": "74b31e7e3cd384ee577af258305ca586c5b0a478adec5950ba0aebce06d03a06",
+      "size": 216,
+      "mode": 436,
+      "mtime_ns": 1789702958005448636,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-rotate-alert.service",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-rotate-alert.service",
+      "git_blob": "4b45ad5159f85926c02091ba040ccb073f2f7d97",
+      "sha256": "1096ef8f626ca2d0b5eb7311fa5d90bd18262f6bfd1b7044522ac8bc2af86ece",
+      "size": 460,
+      "mode": 436,
+      "mtime_ns": 1788142779265218145,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-rotate.service",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-rotate.service",
+      "git_blob": "75e049e412fe97e390681ff510d7c462a4bce6a8",
+      "sha256": "cb6c7f04a5dc82fe08fccf8f7d2ad1b0886147a9d7f239c085ea11c4fbb27ba2",
+      "size": 283,
+      "mode": 420,
+      "mtime_ns": 1790843239567543308,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-rotate.service.bak-20260830-lanesat",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-rotate.service.bak-20260830-lanesat",
+      "git_blob": "20cb121c86590c4196c16f11504baa93efba262a",
+      "sha256": "e4c39b817dbbfe8801bee7f51c30ffc9ee77f0ea68e301d2261fed7bc5a347b3",
+      "size": 398,
+      "mode": 420,
+      "mtime_ns": 1788133946201418851,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-rotate.service.bak-20260830-onfailure",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-rotate.service.bak-20260830-onfailure",
+      "git_blob": "46f41e4d2392c1544129e60b6bbba29226c7f793",
+      "sha256": "1ee38d5cd6c886739df739f7957a1f050a20516d0c3d57dc997c3de336c10677",
+      "size": 420,
+      "mode": 420,
+      "mtime_ns": 1788142789540854427,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-rotate.service.bak-20260919T080034Z",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-rotate.service.bak-20260919T080034Z",
+      "git_blob": "44a55e21503b593c8f85c119894f922800d5a851",
+      "sha256": "950a0190127b3fffb75eb6d6bac439f98c0d139e361c12df5dac3607522f67e2",
+      "size": 759,
+      "mode": 420,
+      "mtime_ns": 1788981788578867610,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-rotate.timer",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-rotate.timer",
+      "git_blob": "709bcdc45014e8108a7dce32001466547938802d",
+      "sha256": "d162a987f5b1460ec0616096688121159e1394d31f940435467572403ef3207d",
+      "size": 193,
+      "mode": 436,
+      "mtime_ns": 1787818014419195136,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-rotate.timer.d/50-seraph-window.conf",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-rotate.timer.d/50-seraph-window.conf",
+      "git_blob": "7f4c020c4017d5a3437cba74caeae2676fc6089b",
+      "sha256": "1082a9bcd00c7c4c7dee4ffe896ca2baf0db1af7913ecf1e94fc1c33313dcaab",
+      "size": 915,
+      "mode": 436,
+      "mtime_ns": 1789884877118680347,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-seat-cycle.service",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-seat-cycle.service",
+      "git_blob": "8da8c6287d474e44365a366df7472801f889bc1e",
+      "sha256": "3c2221e74671cd31229b9691488c18e10af07f9f93ac5e7ed451e46d9d66f0c9",
+      "size": 542,
+      "mode": 420,
+      "mtime_ns": 1790843239554503835,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-seat-cycle.timer",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-seat-cycle.timer",
+      "git_blob": "ab494c5928ccda3be2333ef094d4171f78c6c377",
+      "sha256": "05c2ebe274da1eb47db122d5a85df1ec460d49c40d18dffa8dad3605aa167c7d",
+      "size": 231,
+      "mode": 420,
+      "mtime_ns": 1790843239556621363,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-seraph.service",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-seraph.service",
+      "git_blob": "a7090a4af64f1ca0bc1ad44cb017cdd9b4b899bb",
+      "sha256": "d9addf5315e7de61233b6c96be575aca587df14ccf8145d19536062515fc0800",
+      "size": 665,
+      "mode": 420,
+      "mtime_ns": 1790843239560809664,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-seraph.timer",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-seraph.timer",
+      "git_blob": "dac6a819911f1cfe0084156ed8e7e4fd58cf11cc",
+      "sha256": "7492faa01a10ff676c529b7789f1cc33df9a10854f5649aa9f399bf1fb937725",
+      "size": 218,
+      "mode": 420,
+      "mtime_ns": 1789529199623473319,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-seraph.timer.d/50-rotate-window.conf",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-seraph.timer.d/50-rotate-window.conf",
+      "git_blob": "0c17141920d1cd5f2ad78bf8ebf5f30e383a805e",
+      "sha256": "ab6419f78d683f2e6296fb317a565c4d16175435b8bc58d19f69cecb1dc530b1",
+      "size": 255,
+      "mode": 436,
+      "mtime_ns": 1789884877119414211,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-ziowk01-cursor-auth-sync.service",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-ziowk01-cursor-auth-sync.service",
+      "git_blob": "660f8dc2b0551bb03aa27a795ea9584431e9d422",
+      "sha256": "01e862d4b86c1fddcd685f190627d23ed5a92f40d68c6408ac29ae97bffa9fb8",
+      "size": 164,
+      "mode": 384,
+      "mtime_ns": 1789334443874256263,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-ziowk01-cursor-auth-sync.timer",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-ziowk01-cursor-auth-sync.timer",
+      "git_blob": "8a5c06c543b7cd4337201a2bcb773a9c1ba8b69f",
+      "sha256": "d661f29dc50e45502d1ec5b145f155c6b7c65de7e0194f41bebec69c522fb053",
+      "size": 165,
+      "mode": 384,
+      "mtime_ns": 1789334443874259335,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-ziowk01-kimi-auth-sync.service",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-ziowk01-kimi-auth-sync.service",
+      "git_blob": "eca4ed086a18514e29211f97270bfddaad2bb9eb",
+      "sha256": "651aec4982456f5fa9a710e82f6e1889aa175746d01076f4a911feb0d7d0052a",
+      "size": 160,
+      "mode": 384,
+      "mtime_ns": 1789334443873816507,
+      "symlink": false
+    },
+    {
+      "path": "systemd-user/skfleet-ziowk01-kimi-auth-sync.timer",
+      "original_path": "/home/skuser01/.config/systemd/user/skfleet-ziowk01-kimi-auth-sync.timer",
+      "git_blob": "80921ff68e68fcbb142ff9c3032d055bf3d23d7c",
+      "sha256": "e96856ca9eae9605d192f422db6aca84f34cccccce2068a02800cc00f423fe27",
+      "size": 162,
+      "mode": 384,
+      "mtime_ns": 1789334443873838109,
+      "symlink": false
+    }
+  ],
+  "excluded_backup_scripts": [
+    {
+      "path": "bin/skfleet-pi-model-catalog.py.bak-20260913T050824Z-pre-e1ada0e7",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-pi-model-catalog.py.bak-20260913T050824Z-pre-e1ada0e7",
+      "git_blob": "193cd98fddfa1408f70ddbdfbab3d1b51c76eac1",
+      "sha256": "461f7b3f9514248a9170be19d314c89203432abfa95776921712f7132586b6d9",
+      "size": 19775,
+      "mode": 509,
+      "mtime_ns": 1789276104000000000,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet-pi-model-catalog.py.bak-20260913T054430Z-pre-ffbbe708",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-pi-model-catalog.py.bak-20260913T054430Z-pre-ffbbe708",
+      "git_blob": "193cd98fddfa1408f70ddbdfbab3d1b51c76eac1",
+      "sha256": "461f7b3f9514248a9170be19d314c89203432abfa95776921712f7132586b6d9",
+      "size": 19775,
+      "mode": 509,
+      "mtime_ns": 1789278222000000000,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet-projection-retire.bak-20260913T054430Z-pre-ffbbe708",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-projection-retire.bak-20260913T054430Z-pre-ffbbe708",
+      "git_blob": "487295a2aab0fa77d06e792ddbc5d14d5c116b76",
+      "sha256": "6b0c8d27406873f24b0a0184439823b172ea15380ecc402db99d068531b82a4c",
+      "size": 21311,
+      "mode": 493,
+      "mtime_ns": 1789276104000000000,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet-rotate.py.bak-20260913T050824Z-pre-e1ada0e7",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-rotate.py.bak-20260913T050824Z-pre-e1ada0e7",
+      "git_blob": "d77f53705dda6c179e234d01ffeca321ed8416c6",
+      "sha256": "c1bdf93c0d1ff4328458216bd2f1159473bbdcbf0483cc4e45eaec25208f3010",
+      "size": 283532,
+      "mode": 509,
+      "mtime_ns": 1789276104000000000,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet-rotate.py.bak-20260913T054430Z-pre-ffbbe708",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-rotate.py.bak-20260913T054430Z-pre-ffbbe708",
+      "git_blob": "d77f53705dda6c179e234d01ffeca321ed8416c6",
+      "sha256": "c1bdf93c0d1ff4328458216bd2f1159473bbdcbf0483cc4e45eaec25208f3010",
+      "size": 283532,
+      "mode": 509,
+      "mtime_ns": 1789278222000000000,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet-rotate.py.bak-20260913T062655Z-pre-0c0bd42a",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-rotate.py.bak-20260913T062655Z-pre-0c0bd42a",
+      "git_blob": "4fd4f9adebbe7e01f89f062087e4e46b00006494",
+      "sha256": "716ad638ea08c224611b4dd3ebba6d8bca08a5d45ab91be57b253a4c282d068b",
+      "size": 283927,
+      "mode": 509,
+      "mtime_ns": 1789280815000000000,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet-rotate.py.bak-pre-launchdetail",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-rotate.py.bak-pre-launchdetail",
+      "git_blob": "6098a561305b935f0313a14e3e67c36cec69124e",
+      "sha256": "94b5c9f5edfd0c4a12464976012e5c4029fc8582297173679004115a68f587dc",
+      "size": 389680,
+      "mode": 509,
+      "mtime_ns": 1789938182000000000,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet-rotate.py.pre-86237bb9-route-capacity",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-rotate.py.pre-86237bb9-route-capacity",
+      "git_blob": "8f20a89f7ff8c86d5b1a0e7073abe89bc8118f9f",
+      "sha256": "827331bdd5be402559b4fbbcf9012d554c0336502ad0b0313f29731a6db4421d",
+      "size": 410983,
+      "mode": 509,
+      "mtime_ns": 1790142919158522587,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet-rotate.py.pre-86237bb9-worker-brief",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-rotate.py.pre-86237bb9-worker-brief",
+      "git_blob": "5d736d4f9a41152f5b598a2f03179475946aa94d",
+      "sha256": "a8389cd961fb6692a415d1308950a616f6af1b29f6eb1e964d9c75f65992806b",
+      "size": 411087,
+      "mode": 509,
+      "mtime_ns": 1790275647756153213,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet-rotate.py.rollback-6b8de21a",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-rotate.py.rollback-6b8de21a",
+      "git_blob": "780d8de45b158b07d9b7f0685374a3f7407eb491",
+      "sha256": "9212e5aa91fffb81fc5157908b1bf559a99355ed8fe40d85d9e5a7ef98d1a263",
+      "size": 250679,
+      "mode": 493,
+      "mtime_ns": 1789096306000000000,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet-rotate.py.rollback-ee637d80",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-rotate.py.rollback-ee637d80",
+      "git_blob": "cff6bb70fbb0160f6bd09499cde0eea51068b616",
+      "sha256": "73c3aeec3f9f98e14c709e08f0c44359c0d533d178813c681ce663fd22836d54",
+      "size": 240373,
+      "mode": 493,
+      "mtime_ns": 1789095280000000000,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet-worker-wrapper.py.bak-20260913T050824Z-pre-e1ada0e7",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-worker-wrapper.py.bak-20260913T050824Z-pre-e1ada0e7",
+      "git_blob": "51067fdb86a76f6600531dfe455e71cfca307577",
+      "sha256": "4eb7a3a9180f636fdb9dfbc487c40d51e1ea101c39137c397d0e9b636b9fff74",
+      "size": 29594,
+      "mode": 509,
+      "mtime_ns": 1789276104000000000,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet-worker-wrapper.py.bak-20260913T054430Z-pre-ffbbe708",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-worker-wrapper.py.bak-20260913T054430Z-pre-ffbbe708",
+      "git_blob": "51067fdb86a76f6600531dfe455e71cfca307577",
+      "sha256": "4eb7a3a9180f636fdb9dfbc487c40d51e1ea101c39137c397d0e9b636b9fff74",
+      "size": 29594,
+      "mode": 509,
+      "mtime_ns": 1789278222000000000,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet-worker-wrapper.py.rollback-24f203e3",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-worker-wrapper.py.rollback-24f203e3",
+      "git_blob": "da855eab70e71004af68ed9ce16e12868e2c9407",
+      "sha256": "ab87e715b9f32640c35cff0712befb66f78e24abca0abba74ecb1ed3a21f84e0",
+      "size": 18456,
+      "mode": 509,
+      "mtime_ns": 1789095800000000000,
+      "symlink": false
+    },
+    {
+      "path": "bin/skfleet-working.py.bak-20260913T054430Z-pre-ffbbe708",
+      "original_path": "/home/skuser01/.skenv/bin/skfleet-working.py.bak-20260913T054430Z-pre-ffbbe708",
+      "git_blob": "e7e4f153ac9a47756f72cc8bb5537968e16b2765",
+      "sha256": "96e1b166ccdafdf602161400a256ef1ea20d42f4667c3fa0b8976897722e3fab",
+      "size": 26351,
+      "mode": 493,
+      "mtime_ns": 1789276104000000000,
+      "symlink": false
+    },
+    {
+      "path": "bin/skmail.bak-20260831-b27301c0",
+      "original_path": "/home/skuser01/.skenv/bin/skmail.bak-20260831-b27301c0",
+      "git_blob": "c0e26b1665e30d8ea34b2dbe53bfce9612df9107",
+      "sha256": "6ccd5d9e2c8432d82120f3055558f1b374c4587b193980e5593b9ffb50587351",
+      "size": 12047,
+      "mode": 493,
+      "mtime_ns": 1788179370000000000,
+      "symlink": false
+    },
+    {
+      "path": "bin/skmail.bak-20260907-preargfix",
+      "original_path": "/home/skuser01/.skenv/bin/skmail.bak-20260907-preargfix",
+      "git_blob": "f86a4a6724de3e35a9da6df6e48d214aa1226e96",
+      "sha256": "4ac4c7b2cb22d0b1bbe0ce1a6fadac8b1f4ca884df0b87547c43dcadd6048836",
+      "size": 12616,
+      "mode": 493,
+      "mtime_ns": 1788456729000000000,
+      "symlink": false
+    },
+    {
+      "path": "bin/skmail.bak-20261003-pre-db80fd7d",
+      "original_path": "/home/skuser01/.skenv/bin/skmail.bak-20261003-pre-db80fd7d",
+      "git_blob": "7c52a542194100a2d5d72285e0943fba91c60127",
+      "sha256": "3334867602c30d6521a2c958606a9ef30213252761ef056384d0f03046c9949a",
+      "size": 13367,
+      "mode": 509,
+      "mtime_ns": 1790702605582488510,
+      "symlink": false
+    },
+    {
+      "path": "bin/skmail.bak-20261003-pre-readcap",
+      "original_path": "/home/skuser01/.skenv/bin/skmail.bak-20261003-pre-readcap",
+      "git_blob": "6a60fc73bbb726b4112d83a07bf0b5681d5da421",
+      "sha256": "e04ecb36a47966c44bcb574d751e1bebd26c142209439b9f70668783fdd40892",
+      "size": 14090,
+      "mode": 493,
+      "mtime_ns": 1791038561488583054,
+      "symlink": false
+    }
+  ],
+  "capture": "Unchanged file/link bytes; git hash-object on source host; second read verified. Resolved regular symlink targets also retained."
+}

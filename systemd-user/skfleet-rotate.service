@@ -1,0 +1,12 @@
+[Unit]
+Description=SKFleet compatibility invocation of canonical production generation
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl --user start skfleet-seat-cycle.service
+TimeoutStartSec=660
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

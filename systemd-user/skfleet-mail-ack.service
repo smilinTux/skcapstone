@@ -1,0 +1,11 @@
+[Unit]
+Description=Bounded SKMail worker status acknowledgments
+After=default.target
+
+[Service]
+ExecStart=%h/.skenv/bin/python3 %h/.local/bin/skfleet-mail-ack.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

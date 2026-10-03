@@ -1,0 +1,12 @@
+[Unit]
+Description=SKWorld fleet rotation (chiap08: small target, this host is the coordination hub)
+
+[Service]
+Type=oneshot
+Environment=SKFLEET_TARGET=3
+Environment=SKFLEET_QWEN_TARGET=6
+Environment=SKFLEET_QWEN_MODEL=qwen3.8-chiap08
+Environment=SKFLEET_GLM_TARGET=0
+Environment=SKFLEET_GLM_TARGET=0
+Environment=SKFLEET_MAX_LAUNCH=2
+ExecStart=/usr/bin/python3 %h/.local/bin/skfleet-rotate.py --go

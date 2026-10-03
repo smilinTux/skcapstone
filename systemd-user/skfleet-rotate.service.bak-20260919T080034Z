@@ -1,0 +1,18 @@
+[Unit]
+# Wired 2026-08-30 on chiap08 ONLY (the coordination hub, and the single
+# authority node for this alert). Cross-node ITIL writes have caused an
+# orphan incident storm on this estate before, so one fleet-wide fault must
+# raise ONE incident. Fleet-wide coverage without a storm is card ba72dcb9.
+OnFailure=skfleet-rotate-alert.service
+
+Description=SKWorld fleet rotation (chiap08: small target, this host is the coordination hub)
+
+[Service]
+Type=oneshot
+Environment=SKFLEET_TARGET=2
+Environment=SKFLEET_QWEN_TARGET=0
+Environment=SKFLEET_QWEN_MODEL=qwen3.8-27b-huihui-abliterated-q4_k_m
+Environment=SKFLEET_GLM_TARGET=3
+Environment=SKFLEET_MAX_LAUNCH=10
+Environment=SKFLEET_KIMI_TARGET=1
+ExecStart=/usr/bin/python3 %h/.skenv/bin/skfleet-rotate.py --go
