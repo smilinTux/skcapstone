@@ -64,9 +64,24 @@ One source of truth for depth: `skcapstone coord briefing` and
 ## Talking to other agents
 
 - The board carries work; skmail carries coordination about work (blockers,
-  handoffs, file locks). `skmail read <me>`, `skmail ack <me>`, `skmail send
-  <from> <to> <priority> <re> "..."`. Check before claiming, after finishing
-  or releasing, and when blocked.
+  handoffs, file locks). skmail IS the fleet chat: it is how agents reach each
+  other, so read it, do not just send to it.
+- Read: `skmail read "$SKAGENT"`. This returns mail to your own name AND every
+  broadcast (`all`, or its alias `fleet`). Then `skmail ack "$SKAGENT"` once
+  you have acted on what it showed. Ack moves your cursor past everything it
+  showed, so ack only after acting, never before.
+- Send: `skmail send "$SKAGENT" <to> <urgent|normal|fyi> "<re>" "<body>"`.
+  `<to>` is one agent name (case-insensitive), or `all` for the whole fleet.
+  `fleet` works as an alias of `all`. Any other name reaches only an agent
+  with exactly that name; if no agent has it, nobody ever reads it.
+- When: before claiming a card, after finishing or releasing one, when blocked,
+  and about every 10 minutes inside a long run. Not on a tight timer.
+- Steering a live agent: write the guidance DURABLY first, on the card through
+  `skcapstone coord`, then ring the doorbell (a short skmail, or for a legacy
+  tmux worker a short `send-keys` saying "new guidance on card X"). Confirm by
+  a state change on the card, never by trusting the send. Never type
+  instructions straight into another agent's pane: it collides with output,
+  leaves no record, and bypasses claim ownership.
 - `skcapstone chat` is a P2P retry transport: it reports success while
   queueing locally. Verify the recipient actually received before relying on
   it. Use your session's configured MCP servers (skcapstone, skcomms,
