@@ -1,3 +1,5 @@
+HISTORICAL PHASE 2D CHECKPOINT. Chef subsequently resolved both decisions; see phase2d-resolution.txt. Test counts below describe the earlier checkpoint.
+
 PHASE 2d REPORT - 2026-10-03
 NOT GREEN. No merge, undraft, deployment or force push.
 

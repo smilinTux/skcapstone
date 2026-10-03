@@ -1,0 +1,11 @@
+Chef-authorized resolution, 2026-10-03
+
+A-docs commit 476df074: deployed gateway-controlled capacity remains. Root SOP and its executable docs-evidence check now distinguish policy scan budgets from legacy fixed targets. Protected skmail files remain byte-identical to main 428af310.
+
+D-follow-up commit a15f9dc8: exactly 32 integration cases moved out of #898. Draft https://github.com/smilinTux/skcapstone/pull/900 restores those cases in commit 7a5969b5, based on #898. Deployed modules stay in #898. No wiring, skips, or xfails introduced. All 97 remaining cases in the five affected files pass.
+
+Coord card 9cea78f0 was created via CLI and read back. It is unclaimed backlog, with human-gate and do-not-claim labels and a verified PR link to #900.
+
+Original bucket counts remain A=13, B=4, C=34, D=32. Moving D cases does not reclassify them or claim their missing integration is implemented.
+
+Full-suite and hosted-CI final results are recorded in the PR body and local Phase 2d resolution report after completion. Do not interpret this checkpoint as a green verdict before those checks complete.
