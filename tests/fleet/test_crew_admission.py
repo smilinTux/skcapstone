@@ -74,7 +74,39 @@ def test_current_helper_passes_and_ordinary_cards_remain_unchanged(helper):
     validate_helper_generation(home, CardStore(home).fold("aaaa1111"))
 
 
-@pytest.mark.parametrize("stale", [False])
+@pytest.mark.parametrize(
+    "change", ["claim", "contract", "source", "restrictions", "deps", "ownerless", "terminal"]
+)
+def test_remote_preclaim_refuses_stale_parent(helper, monkeypatch, change):
+    home, card = helper
+    original = CardStore.fold
+
+    def changed(store, card_id):
+        result = original(store, card_id)
+        if card_id == "aaaa1111":
+            result = result.model_copy(deep=True)
+            if change == "claim":
+                result.meta["_claim_revision"] = "replacement"
+            elif change == "contract":
+                result.description = "Changed contract"
+            elif change == "source":
+                result.meta["base_revision"] = "b" * 40
+            elif change == "restrictions":
+                result.labels = [*result.labels, "no-new-scope"]
+            elif change == "deps":
+                result.dependencies = ["cccc3333"]
+            elif change == "ownerless":
+                result.owner = None
+            else:
+                result.archived = True
+        return result
+
+    monkeypatch.setattr(CardStore, "fold", changed)
+    with pytest.raises(builder_dispatch.BuilderDispatchError, match="owner-helper"):
+        builder_dispatch._request_matches_current_card(home, request(card))
+
+
+@pytest.mark.parametrize("stale", [False, True])
 def test_actual_rotation_authoritative_admission_uses_parent_guard(helper, monkeypatch, stale):
     home, card = helper
     script = Path(__file__).parents[2] / "scripts/fleet/skfleet-rotate.py"
