@@ -272,7 +272,9 @@ def test_existing_holds_reservations_capacity_and_cadence_remain() -> None:
     assert "off = ROTATION_HOSTS.index(HOST) if HOST in ROTATION_HOSTS else 0" in rotate
     # Deployed 997b9795 adds deepseek while retaining the relative legacy order.
     rank_node = next(
-        node for node in ast.parse(rotate).body if isinstance(node, ast.Assign)
+        node
+        for node in ast.parse(rotate).body
+        if isinstance(node, ast.Assign)
         and any(isinstance(t, ast.Name) and t.id == "_LANE_RANK" for t in node.targets)
     )
     ranks = ast.literal_eval(rank_node.value)

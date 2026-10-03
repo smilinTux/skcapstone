@@ -31,7 +31,16 @@ SCRIPT = Path(__file__).parents[1] / "scripts" / "fleet" / "skfleet-rotate.py"
 
 # Exact deployed dispatcher blob 997b9795, preserved in snapshot d0974223.
 # Forward fixes may reduce this inherited debt but may not expand it.
-LAUNCHER_RUFF_BASELINE = {'E401': 1, 'E402': 11, 'E501': 18, 'E701': 93, 'E702': 16, 'E722': 2, 'E741': 4, 'I001': 4}
+LAUNCHER_RUFF_BASELINE = {
+    "E401": 1,
+    "E402": 11,
+    "E501": 18,
+    "E701": 93,
+    "E702": 16,
+    "E722": 2,
+    "E741": 4,
+    "I001": 4,
+}
 
 
 @pytest.mark.parametrize(

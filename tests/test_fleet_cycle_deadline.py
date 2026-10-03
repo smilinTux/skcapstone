@@ -20,15 +20,22 @@ def test_cycle_deadline_reserves_receipt_window() -> None:
     assert "_CYCLE_DEADLINE_RESERVE_S = 20" in source
     # Deployed 997b9795 uses the shared production cycle start and budget.
     assignment = next(
-        node for node in ast.parse(source).body
+        node
+        for node in ast.parse(source).body
         if isinstance(node, ast.Assign)
         and any(isinstance(t, ast.Name) and t.id == "_cycle_deadline" for t in node.targets)
     )
     for policy, expected in [(None, 750), ({"enabled": True}, 220)]:
-        namespace = {"PRODUCTION_POLICY": policy, "_cycle_started": 100,
-                     "_production_cycle_budget": 120, "_CYCLE_DEADLINE_RESERVE_S": 20,
-                     "time": SimpleNamespace(monotonic=lambda: 500)}
-        exec(compile(ast.Module(body=[assignment], type_ignores=[]), str(ROTATE), "exec"), namespace)
+        namespace = {
+            "PRODUCTION_POLICY": policy,
+            "_cycle_started": 100,
+            "_production_cycle_budget": 120,
+            "_CYCLE_DEADLINE_RESERVE_S": 20,
+            "time": SimpleNamespace(monotonic=lambda: 500),
+        }
+        exec(
+            compile(ast.Module(body=[assignment], type_ignores=[]), str(ROTATE), "exec"), namespace
+        )
         assert namespace["_cycle_deadline"] == expected
     # On reaching the inner deadline the loop stops launching and logs the
     # deferral so the final receipt still gets written before the wrapper
