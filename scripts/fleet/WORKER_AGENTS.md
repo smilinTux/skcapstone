@@ -67,9 +67,16 @@ One source of truth for depth: `skcapstone coord briefing` and
   handoffs, file locks). skmail IS the fleet chat: it is how agents reach each
   other, so read it, do not just send to it.
 - Read: `skmail read "$SKAGENT"`. This returns mail to your own name AND every
-  broadcast (`all`, or its alias `fleet`). Then `skmail ack "$SKAGENT"` once
-  you have acted on what it showed. Ack moves your cursor past everything it
-  showed, so ack only after acting, never before.
+  broadcast (`all`, or its alias `fleet`), OLDEST first, capped at about 8 KiB.
+  If more is waiting it says "(N shown, M more unread)". The last line is always
+  "(T new)" with T the total unread.
+- Ack: act on what read showed, then `skmail ack "$SKAGENT"`. Ack marks read ONLY
+  the messages that read just showed you, so repeat read, act, ack until it
+  reports "(0 new)". Ack with nothing shown refuses rather than guessing.
+- Big backlog: `skmail read "$SKAGENT" --summary` first (counts by sender and
+  subject). To skip stale machine chatter on purpose:
+  `skmail ack "$SKAGENT" --before <iso-time>` (logged, never deletes).
+  `--urgent` shows urgent only. Neither view arms ack.
 - Send: `skmail send "$SKAGENT" <to> <urgent|normal|fyi> "<re>" "<body>"`.
   `<to>` is one agent name (case-insensitive), or `all` for the whole fleet.
   `fleet` works as an alias of `all`. Any other name reaches only an agent
