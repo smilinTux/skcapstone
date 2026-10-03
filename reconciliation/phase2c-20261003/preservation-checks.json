@@ -1,0 +1,18 @@
+{
+  "main": "428af3101ea12a36be56e9bd916bbfb876880f6f",
+  "docs_tree": "cb9b36bf3f3ef6ed6447b641735591feb8340322",
+  "protected": {
+    "scripts/fleet/WORKER_AGENTS.md": "b7ff0beaf92eaa51d95f711b5539a563476115d7",
+    "scripts/fleet/skmail": "520710d106eb11c7db206b22478e7a8e2655fd07",
+    "scripts/fleet/skmail_work.py": "b7d456aeb94cb837f8816b91ad725d91ec455eae",
+    "scripts/fleet/skmail_writer.py": "81b3caa0c822378ed22b956ffac24c0155b14d22",
+    "tests/test_skmail_fleet_broadcast.py": "2ffbd427a499eb77c71080a1e7148b8c1524f8e6",
+    "tests/test_skmail_quarantine.py": "b0c2050eeadcffcf443b86cf699c3e22873e3e61",
+    "tests/test_skmail_read_cap.py": "180480c1de77b3d518432b1b7e7925ef80c9b1a6",
+    "tests/test_skmail_reader.py": "0f4d4725439587b820b64367e72c03f5e77fe829",
+    "tests/test_skmail_work.py": "f85cc74377a838f4c38027ccb239acf976cd8fc9",
+    "tests/test_skmail_writer.py": "0541b30464720f98b4a212baad66d0641123b822"
+  },
+  "newer_main_files_verified": true,
+  "baseline_ref": "48e0828032619ce62e14c3b4f069d16c43779cbc"
+}

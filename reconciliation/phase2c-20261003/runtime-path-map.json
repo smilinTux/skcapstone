@@ -2,14 +2,20 @@
   {
     "snapshot_path": "bin/skfleet",
     "blob": "1cfd8124630e5ba1e9892e1fb9250f7c79ceafa3",
-    "destinations": [],
-    "disposition": "generated console wrapper: snapshot only; pyproject entry point retained"
+    "destinations": [
+      "scripts/fleet/skfleet"
+    ],
+    "disposition": "deployed generated console wrapper retained exactly; wheel continues generating project.scripts entry point",
+    "release_blob": "1cfd8124630e5ba1e9892e1fb9250f7c79ceafa3"
   },
   {
     "snapshot_path": "bin/skfleet-claim-expiry",
     "blob": "eafe81c956ab4a3d0760925ea3d16ae39d44c137",
-    "destinations": [],
-    "disposition": "generated console wrapper: snapshot only; pyproject entry point retained"
+    "destinations": [
+      "scripts/fleet/skfleet-claim-expiry"
+    ],
+    "disposition": "deployed generated console wrapper retained exactly; wheel continues generating project.scripts entry point",
+    "release_blob": "eafe81c956ab4a3d0760925ea3d16ae39d44c137"
   },
   {
     "snapshot_path": "bin/skfleet-link-producer.py",
