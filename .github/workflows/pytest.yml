@@ -285,11 +285,13 @@ jobs:
           ((github.event_name != 'pull_request' && github.event_name != 'merge_group') ||
            matrix.python-version == '3.12')
         run: |
-          python -m pytest tests/ \
+          set -o pipefail
+          timeout --kill-after=10s 24m python -u -m pytest tests/ \
             --strict-markers \
             -m "not integration and not e2e" \
             --durations=40 -o faulthandler_timeout=60 \
-            --cov=skcapstone --cov-report=xml --cov-report=term-missing
+            --cov=skcapstone --cov-report=xml --cov-report=term-missing \
+            2>&1 | tee pytest-ci.log
       - name: Build and run Python 3.11 compatibility lane
         if: >-
           needs.classify.outputs.docs-only != 'true' &&
@@ -297,7 +299,20 @@ jobs:
           matrix.python-version == '3.11'
         env:
           BASE_SHA: ${{ needs.classify.outputs.base-sha }}
-        run: scripts/ci/run-python311-compat.sh "$BASE_SHA" "$GITHUB_SHA"
+          PYTEST_ADDOPTS: --durations=40 -o faulthandler_timeout=60
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set -o pipefail
+          timeout --kill-after=10s 24m scripts/ci/run-python311-compat.sh "$BASE_SHA" "$GITHUB_SHA" \
+            2>&1 | tee pytest-ci.log
+      - name: Preserve test diagnostics even when pytest times out
+        if: always() && needs.classify.outputs.docs-only != 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pytest-diagnostics-py${{ matrix.python-version }}
+          path: pytest-ci.log
+          if-no-files-found: warn
+          retention-days: 7
       - name: Upload coverage
         if: >-
           always() && !cancelled() && matrix.python-version == '3.12' &&
