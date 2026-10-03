@@ -17,11 +17,35 @@ def main():
         parser.error("batch size must be positive")
     common = ["--strict-markers", "-m", "not integration and not e2e"]
     pytest = [sys.executable, "-m", "pytest"]
-    collected = subprocess.run(
-        [*pytest, *args.paths, *common, "--collect-only", "-q", "-rs", "-o", "addopts="],
-        capture_output=True,
-        text=True,
-    )
+    collect_command = [
+        sys.executable,
+        "-c",
+        "import faulthandler, sys; faulthandler.dump_traceback_later(120); "
+        "import pytest; raise SystemExit(pytest.main(sys.argv[1:]))",
+        *args.paths,
+        *common,
+        "--collect-only",
+        "-q",
+        "-rs",
+        "-o",
+        "addopts=",
+    ]
+    try:
+        collected = subprocess.run(
+            collect_command,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+    except subprocess.TimeoutExpired as exc:
+        for output in (exc.stdout, exc.stderr):
+            if output:
+                print(
+                    output.decode(errors="replace") if isinstance(output, bytes) else output,
+                    flush=True,
+                )
+        print("Collection exceeded 180 seconds; refusing to omit tests.", flush=True)
+        return 124
     if collected.returncode:
         print(collected.stdout, flush=True)
         print(collected.stderr, file=sys.stderr, flush=True)
