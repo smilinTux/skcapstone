@@ -88,6 +88,8 @@ def main():
             f"::notice title=pytest batch {number}::Exit status {result.returncode}",
             flush=True,
         )
+        if result.returncode == 124:
+            return 124
         failed |= result.returncode != 0
     if args.coverage:
         for report in ("xml", "report"):
