@@ -792,6 +792,7 @@ def _reconcile_running(
     paths: FleetPaths, coordination_home: Path, node: str, request: dict, status: dict
 ) -> dict:
     """Refresh one live generation or close it after exact process death."""
+    _finalize_builder_admission(coordination_home, request, status)
     if (
         status.get("production") is not None
         and status.get("state") in {"awaiting-evidence", "awaiting-review"}
@@ -817,6 +818,9 @@ def _reconcile_running(
         "pid_start_ticks": status.get("pid_start_ticks"),
         "attempt": int(status.get("attempt") or 1),
     }
+    for key in ("admission_contract", "admission_terminal"):
+        if key in status:
+            common[key] = status[key]
     if status.get("continuation_consumed"):
         common["continuation_consumed"] = status["continuation_consumed"]
     if status.get("production") is not None:
@@ -920,6 +924,47 @@ def _reconcile_running(
         mail_sent=mail_sent,
         completion=completion,
     )
+
+
+def _finalize_builder_admission(home: Path, request: dict, status: dict) -> None:
+    """Discharge only a proven failed reservation, preserving workflow custody."""
+    contract = status.get("admission_contract")
+    if not isinstance(contract, dict) or status.get("admission_terminal"):
+        return
+    from . import production_admission as admission
+
+    try:
+        binding = {
+            "card_id": request["card_id"], "owner": status["owner"],
+            "claim_revision": status["claim_revision"],
+            "request_id": request["request_id"], "attempt": status["attempt"],
+        }
+        unit = production_builder.unit_name(request, status["attempt"])
+        if (status["request_id"] != request["request_id"]
+                or status["card_id"] != request["card_id"]
+                or status.get("production") != request.get("production")
+                or status.get("unit") != unit or contract["binding"] != binding):
+            return
+        observed = admission.unit_state(unit, terminal=True)
+        if observed.get("ActiveState") != "failed":
+            return
+        invocation = observed.get("InvocationID", "")
+        if status.get("invocation") not in (None, invocation):
+            return
+        policy = production_builder.policy()
+        if policy is None:
+            return
+        proof = admission.finalize_failed_launch(
+            home, policy, request["production"]["host"], unit, binding,
+            contract["argv"], invocation=invocation,
+            expected_card_revision=contract["card_revision"],
+        )
+        status["invocation"] = invocation
+        status["admission_terminal"] = proof
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        # Missing or ambiguous custody remains charged; no release or retry.
+        logger.warning("failed builder admission requires exact custody: %s",
+                       request.get("card_id"))
 
 
 def _guard_path() -> str:
@@ -1494,6 +1539,7 @@ def _consume_available(
             exclusion_acquired = False
             admission_pending = False
             admission_reserved = False
+            admission_contract = None
             try:
                 with store.actuation_exclusion(paths):
                     exclusion_acquired = True
@@ -1514,12 +1560,16 @@ def _consume_available(
 
                         # Unknown admission or spawn never grants claim release.
                         admission_pending = True
+                        original_command = list(command)
+                        admission_binding = {
+                            "card_id": request["card_id"], "owner": owner,
+                            "claim_revision": revision, "request_id": request["request_id"],
+                            "attempt": attempt,
+                        }
                         command = reserve_launch(
                             coordination_home, policy, production["host"],
                             production_builder.unit_name(request, attempt),
-                            {"card_id": request["card_id"], "owner": owner,
-                             "claim_revision": revision, "request_id": request["request_id"],
-                             "attempt": attempt}, command,
+                            admission_binding, command,
                         )
                         admission_reserved = True
                         if not retrying:
@@ -1529,6 +1579,35 @@ def _consume_available(
                                 unit=production_builder.unit_name(request, attempt),
                                 invocation=None, route_preflight=route_preflight,
                             )
+                    def spawn():
+                        nonlocal admission_contract
+                        if production is not None:
+                            from ..seraph_review_cardstore import card_revision
+
+                            card = CardStore(coordination_home).fold(request["card_id"])
+                            if card is None:
+                                raise BuilderDispatchError("launch card unavailable")
+                            admission_contract = {
+                                "binding": admission_binding, "argv": original_command,
+                                "card_revision": card_revision(card),
+                            }
+                            consumed = {}
+                            if retrying:
+                                key = ("continuation_consumed" if continuing
+                                       else "operator_retry_consumed")
+                                grant = (request["_continuation"] if continuing
+                                         else request["operator_retry"])
+                                consumed[key] = grant["id"]
+                            _write_status(
+                                paths, node, request, "running", owner=owner,
+                                claim_revision=revision, attempt=attempt, pid=None,
+                                unit=production_builder.unit_name(request, attempt),
+                                invocation=None, route_preflight=route_preflight,
+                                admission_contract=admission_contract,
+                                **consumed,
+                            )
+                        return run(command, workspace)
+
                     if retrying:
                         with retry_handler.consume(
                             paths,
@@ -1537,9 +1616,9 @@ def _consume_available(
                             prior,
                             route_preflight=route_preflight,
                         ):
-                            process = run(command, workspace)
+                            process = spawn()
                     else:
-                        process = run(command, workspace)
+                        process = spawn()
             except AdmissionDeferredError:
                 if retrying or admission_reserved:
                     return None
@@ -1589,6 +1668,7 @@ def _consume_available(
                     "unit": production_builder.unit_name(request, attempt),
                     "invocation": None,
                     "route_preflight": route_preflight,
+                    "admission_contract": admission_contract,
                 }
             if retrying:
                 key = "continuation_consumed" if continuing else "operator_retry_consumed"

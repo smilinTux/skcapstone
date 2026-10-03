@@ -29,9 +29,13 @@ def test_production_family_exclusive_eligibility_preserves_legacy_and_host_exclu
 
 @pytest.fixture
 def production_setup(paths, operator, monkeypatch, tmp_path):
+    from skcapstone import seraph_review_cardstore
     from skcapstone.fleet import production_test_plan as test_plan
     from skcapstone.fleet import production_test_profile as test_profile
     from skcapstone.fleet import worker_git
+
+    # These legacy cards are SimpleNamespace fixtures, not native folded models.
+    monkeypatch.setattr(seraph_review_cardstore, "card_revision", lambda card: "b" * 64)
 
     # Dispatcher fixtures use synthetic workspaces; real Git is checked separately.
     monkeypatch.setattr(worker_git, "preflight", lambda *args: None)
