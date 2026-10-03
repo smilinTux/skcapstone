@@ -310,6 +310,9 @@ def test_packaged_timer_is_distinct_from_disabled_rotation_and_central_dispatch(
     for unit_root in (root / "systemd", root / "src" / "skcapstone" / "data" / "systemd"):
         timer = (unit_root / "skfleet-live-publisher.timer").read_text(encoding="utf-8")
         assert "Unit=skfleet-live-publisher.service" in timer
+        assert "OnUnitActiveSec=60s" in timer
+        assert "AccuracySec=1s" in timer
+        assert "RandomizedDelaySec=0" in timer
 
     rollout = (root / "docs" / "fleet" / "liveness-publisher-rollout.md").read_text()
     assert "skfleet-rotate.timer remains disabled" in rollout

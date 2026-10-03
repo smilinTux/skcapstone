@@ -49,6 +49,15 @@ measurement and original lanes_ts; stale measurements become unknown.
 The terminal worker invalidator still removes only an exactly released
 generation and preserves the original observation timestamp.
 
+## Freshness margin
+
+Publish every60 seconds with1-second accuracy and no randomized delay.
+The consumer360-second transport fence is unchanged. This leaves margin
+for the observed native transport delays (up to193 seconds in the bounded
+verification), unlike the former5-minute cadence. Larger delays still fail
+closed. This changes only an existing lightweight read-only monitor;
+worker quotas, publisher service timeout and dispatch schedules are unchanged.
+
 ## Rollout and rollback
 
 Do not execute these commands on this
