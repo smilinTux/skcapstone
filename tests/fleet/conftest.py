@@ -2,9 +2,55 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from skcapstone.fleet.paths import FleetPaths
+
+
+@pytest.fixture
+def qualified_runtime(tmp_path, monkeypatch):
+    """Fingerprint synthetic installed bytes, never the operator's real .skenv.
+
+    These plan/dispatch tests inspect runtime custody without executing it.
+    Keep the real fingerprint implementation so changed bytes still invalidate
+    a qualified plan. Each test owns its tree and can mutate it independently.
+    """
+    from skcapstone.fleet import production_test_plan as plan
+    from skcapstone.fleet import production_test_worker as worker
+    from skcapstone.fleet import production_tests as native
+
+    prefix = tmp_path / "qualified-runtime"
+    (prefix / "bin").mkdir(parents=True)
+    for executable in ("python", "ruff"):
+        (prefix / "bin" / executable).write_bytes(b"synthetic runtime bytes\n")
+    site = (
+        prefix
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+    )
+    for package in (
+        "pytest",
+        "_pytest",
+        "ruff",
+        "skcoord",
+        "skcapstone",
+        "pydantic",
+        "pydantic_core",
+        "pluggy",
+        "yaml",
+        "rich",
+        "click",
+    ):
+        directory = site / package
+        directory.mkdir(parents=True)
+        (directory / "__init__.py").write_text("# Synthetic qualified dependency.\n")
+    for module in (plan, native, worker):
+        monkeypatch.setattr(module, "PREFIX", prefix)
+    monkeypatch.setattr(plan, "_RUNTIME_CACHE", {})
+    return prefix
 
 
 @pytest.fixture(autouse=True)

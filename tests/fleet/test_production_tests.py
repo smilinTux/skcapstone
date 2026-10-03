@@ -43,7 +43,7 @@ def junit():
 
 
 @pytest.fixture
-def setup(tmp_path, monkeypatch):
+def setup(tmp_path, monkeypatch, qualified_runtime):
     """Use a real clean Git source and private immutable plan fixture."""
     workspace = tmp_path / "source"
     workspace.mkdir()

@@ -14,6 +14,13 @@ from skcapstone.fleet import production_test_profile as profile
 from tests.fleet.test_production_tests import setup  # noqa: F401
 
 
+def test_runtime_fingerprint_tracks_changed_installed_bytes(qualified_runtime):
+    before = plan.runtime_fingerprint()
+    assert plan.runtime_fingerprint() == before
+    (qualified_runtime / "bin/ruff").write_bytes(b"changed synthetic runtime\n")
+    assert plan.runtime_fingerprint() != before
+
+
 @pytest.fixture
 def qualified(tmp_path, monkeypatch):
     home = tmp_path / "home"
