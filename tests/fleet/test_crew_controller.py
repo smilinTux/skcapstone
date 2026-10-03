@@ -319,6 +319,7 @@ def test_budget_stop_advances_only_through_considered_crews(scenario):
     _, _, cards, _, packet = scenario
     for index in range(9):
         packet["crew_id"] = f"crew-{index:02d}"
+        packet["owner_paths"] = [f"src/owner_{index}.py"]
         register(scenario)
     first = cycle(scenario)
     assert len(first["created"]) == 8

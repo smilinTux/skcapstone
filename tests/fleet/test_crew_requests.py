@@ -200,6 +200,7 @@ def test_nonresource_dedup_requires_same_slot_and_evidence(scenario):
     s = scenario
     packet = copy.deepcopy(s.packet)
     packet["crew_id"] = "nonresource"
+    packet["owner_paths"] = ["nonresource/owner.py"]
     packet["slots"][0].pop("resource")
     requests.register(s.paths, s.home, "test-owner", packet)
     first = requests.submit_support(s.paths, s.home, "test-owner", support(crew_id="nonresource"))
@@ -220,6 +221,7 @@ def test_same_resource_different_authorized_slot_does_not_collapse(scenario):
     s = scenario
     packet = copy.deepcopy(s.packet)
     packet["crew_id"] = "two-slots"
+    packet["owner_paths"] = ["two_slots/owner.py"]
     second = copy.deepcopy(packet["slots"][0])
     second["slot_id"] = "verify-resource"
     second["role"] = "verification"

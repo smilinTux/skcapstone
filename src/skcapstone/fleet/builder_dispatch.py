@@ -185,6 +185,12 @@ def _request_matches_current_card(
     card = CardStore(coordination_home).fold(str(request.get("card_id") or ""))
     if card is None:
         raise BuilderDispatchError("offered card is no longer foldable")
+    from .crew_admission import validate_helper_generation
+
+    try:
+        validate_helper_generation(coordination_home, card)
+    except ValueError as exc:
+        raise BuilderDispatchError(f"owner-helper admission refused: {exc}") from exc
     core = {"id": card.id, "meta": card.meta, "links": card.links}
     labels = sorted(str(label).strip().lower() for label in card.labels)
     expected_labels = request.get("labels")
