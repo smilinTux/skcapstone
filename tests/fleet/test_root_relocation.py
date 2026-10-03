@@ -188,6 +188,18 @@ def test_the_two_path_classes_outside_fleetpaths_still_relocate() -> None:
 #: here is a deliberate act: it means "this path is not fleet state, and
 #: relocating SKFLEET_ROOT is not supposed to move it".
 _SKCAPSTONE_PATH_EXEMPT = {
+    # Installed snapshot 3f556cb8 adds coordination consumers, not fleet roots.
+    'builder_continue.py': 'reads native CardStore under the sovereign home; fleet state uses default_paths',
+    'builder_retire.py': 'uses explicit CardStore home independently of FleetPaths',
+    'builder_retry.py': 'reads native CardStore; retry dispatch state uses FleetPaths',
+    'cli.py': 'passes coordination home to board operations; fleet paths remain explicit',
+    'herdr_handoff_cli.py': 'documents the separately overridable coordination root',
+    'production_brief.py': 'names canonical card evidence and CardStore, not fleet state',
+    'production_exit.py': 'reads CardStore custody under the sovereign home',
+    'production_hosted_review_brief.py': 'binds card evidence and CardStore to canonical coordination home',
+    'production_resources.py': 'reads coordination authorization under an overridable home',
+    'source_bundle.py': 'uses SKCAPSTONE_HOME for native card authority',
+    'source_transport.py': 'uses CardStore home for transport custody',
     "paths.py": "owns the SKFLEET_ROOT default; the one place allowed to name it",
     "skmeter.py": "writes ~/.skcapstone/skmeter, a SIBLING of the fleet tree, not fleet state",
     "stignore_doctor.py": (
