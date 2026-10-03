@@ -237,6 +237,15 @@ jobs:
             tests/test_cli_kanban.py \
             tests/test_coord_kanban_mcp.py \
             tests/test_coord_amend.py
+      - name: Install preserved production SKCoord candidate
+        if: needs.classify.outputs.docs-only != 'true'
+        # Draft sibling reconciliation: smilinTux/skcoord#131.
+        # Keep the registry-only contract above; this exact overlay supplies
+        # the unpublished helper/replacement APIs used by production.
+        run: |
+          pip install --force-reinstall --no-deps --no-cache-dir \
+            "skcoord @ git+https://github.com/smilinTux/skcoord@cef0ee91bdc3c24c0a546d605f4affea66106e6b"
+          python -c "import skcoord.owner_helpers, skcoord.review_replacement"
       - name: Resolve exact sibling revisions
         if: needs.classify.outputs.docs-only != 'true'
         id: siblings
