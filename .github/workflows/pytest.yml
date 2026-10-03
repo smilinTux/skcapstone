@@ -279,10 +279,8 @@ jobs:
           ((github.event_name != 'pull_request' && github.event_name != 'merge_group') ||
            matrix.python-version == '3.12')
         run: |
-          timeout --signal=INT --kill-after=30s 50m python -m pytest tests/ \
-            --strict-markers \
-            -m "not integration and not e2e" \
-            --cov=skcapstone --cov-report=xml --cov-report=term-missing
+          timeout --signal=INT --kill-after=30s 50m \
+            python scripts/ci/run-pytest-batches.py --coverage tests/
       - name: Build and run Python 3.11 compatibility lane
         if: >-
           needs.classify.outputs.docs-only != 'true' &&
