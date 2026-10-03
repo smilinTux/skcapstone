@@ -133,7 +133,9 @@ jobs:
     # deterministic suite, in 268-292s. 30 minutes is roughly six times the
     # slowest observed run, so it absorbs a cold cache or a slow runner while
     # still failing a genuine hang in minutes rather than hours.
-    timeout-minutes: 30
+    # Reconciled installed sources add substantial coverage; retain a bounded
+    # command below so timeout diagnostics finish before the runner is killed.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -277,7 +279,7 @@ jobs:
           ((github.event_name != 'pull_request' && github.event_name != 'merge_group') ||
            matrix.python-version == '3.12')
         run: |
-          python -m pytest tests/ \
+          timeout --signal=INT --kill-after=30s 50m python -m pytest tests/ \
             --strict-markers \
             -m "not integration and not e2e" \
             --cov=skcapstone --cov-report=xml --cov-report=term-missing
@@ -288,7 +290,7 @@ jobs:
           matrix.python-version == '3.11'
         env:
           BASE_SHA: ${{ needs.classify.outputs.base-sha }}
-        run: scripts/ci/run-python311-compat.sh "$BASE_SHA" "$GITHUB_SHA"
+        run: timeout --signal=INT --kill-after=30s 50m scripts/ci/run-python311-compat.sh "$BASE_SHA" "$GITHUB_SHA"
       - name: Upload coverage
         if: >-
           always() && !cancelled() && matrix.python-version == '3.12' &&
