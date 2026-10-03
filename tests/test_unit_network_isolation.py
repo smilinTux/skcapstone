@@ -1,6 +1,8 @@
 """A forgotten transport stub fails before DNS or a production connection."""
 
 import socket
+import urllib.error
+import urllib.request
 
 import pytest
 
@@ -21,3 +23,11 @@ def test_loopback_server_contracts_still_connect():
         client.connect(server.getsockname())
         connection, _ = server.accept()
         connection.close()
+
+
+@pytest.mark.parametrize(
+    "url", ["https://skskills.skworld.io/api/index.json", "https://pypi.org/pypi/skcapstone/json"]
+)
+def test_default_public_services_are_offline_without_dns(url):
+    with pytest.raises(urllib.error.URLError, match="synthetic offline service"):
+        urllib.request.urlopen(url)
