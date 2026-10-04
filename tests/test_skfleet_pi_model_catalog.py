@@ -288,6 +288,7 @@ def test_cli_repairs_stale_default_using_healthy_logical_routes(tmp_path: Path):
     )
     applied = subprocess.run(
         [
+            sys.executable,
             str(SCRIPT),
             "--catalog",
             str(catalog),
@@ -334,6 +335,7 @@ def test_cli_reports_sanitized_error_without_traceback(tmp_path: Path):
     )
     result = subprocess.run(
         [
+            sys.executable,
             str(SCRIPT),
             "--catalog",
             str(path),
