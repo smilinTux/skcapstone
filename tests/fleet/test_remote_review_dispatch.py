@@ -124,6 +124,49 @@ def test_expired_unknown_review_offer_remains_held(request_record):
     )
 
 
+def test_exact_expired_review_can_resume_only_before_launch(
+    dispatch, request_record, remote_policy, paths, tmp_path, monkeypatch
+):
+    request_record["lease_expires_at"] = "2000-01-01T00:00:00Z"
+    monkeypatch.setattr(dispatch.production, "policy", lambda: remote_policy)
+    monkeypatch.setattr(dispatch.socket, "gethostname", lambda: "chiap03")
+    monkeypatch.setattr(dispatch, "_capable", lambda *_args: True)
+    monkeypatch.setattr(dispatch.production, "validate_request", lambda *_args, **_kw: None)
+    monkeypatch.setattr(
+        dispatch.production,
+        "ready_nodes",
+        lambda *_args, **_kw: [type("Node", (), {"name": request_record["node"]})()],
+    )
+    monkeypatch.setattr(dispatch.dispatch, "_ready_builders", lambda *_args: [])
+    monkeypatch.setattr(dispatch.store, "actuation_allowed", lambda *_args: True)
+    monkeypatch.setattr(dispatch, "_recorded", lambda *_args: None)
+    monkeypatch.setattr(dispatch, "_current", lambda *_args, **_kw: "current-review")
+    monkeypatch.setattr(dispatch, "process_snapshot", lambda *_args: {"units": [], "sessions": []})
+    recommendation = dict(
+        action="review_assignment_recommendation",
+        recommendation_id=request_record["request_id"],
+        reviewer=request_record["reviewer"],
+    )
+    events = [recommendation]
+    monkeypatch.setattr(dispatch.CardStore, "_read_events", lambda *_args: events)
+    assert (
+        dispatch.validate_request(paths, tmp_path, request_record["node"], request_record)
+        == "current-review"
+    )
+
+    events.append({"action": "review_assignment_launch"})
+    with pytest.raises(ValueError, match="remote review offer expired"):
+        dispatch.validate_request(paths, tmp_path, request_record["node"], request_record)
+    events.pop()
+    status = dispatch.dispatch.status_path(
+        paths, request_record["node"], request_record["card_id"]
+    )
+    status.parent.mkdir(parents=True, exist_ok=True)
+    status.write_text("{}")
+    with pytest.raises(ValueError, match="remote review offer expired"):
+        dispatch.validate_request(paths, tmp_path, request_record["node"], request_record)
+
+
 def test_historical_policy_widening_only_for_receipt_validation(
     dispatch, request_record, remote_policy
 ):

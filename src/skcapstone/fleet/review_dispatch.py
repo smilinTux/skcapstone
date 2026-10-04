@@ -324,7 +324,17 @@ def validate_request(paths, home, node, request, *, claimed=False):
     if policy is None:
         raise ValueError("remote review requires production policy")
     host = socket.gethostname().split(".")[0].lower()
-    validate_contract(request, policy, host=host)
+    try:
+        validate_contract(request, policy, host=host)
+    except ValueError as exc:
+        if str(exc) != "remote review offer expired":
+            raise
+        # Capacity may defer an exact native offer past its lease without ever
+        # launching it. Continue only that same generation under current
+        # source/policy/activation checks; unknown custody still stays held.
+        if request["policy"] != policy or not _expired_unlaunched(paths, home, node, request):
+            raise
+        validate_contract(request, policy, host=host, historical=True)
     if request["node"] != node or not _capable(paths, node):
         raise ValueError("destination consumer capability or node differs")
     production.validate_request(paths, node, request, local=True)
@@ -339,6 +349,23 @@ def validate_request(paths, home, node, request, *, claimed=False):
         raise ValueError("fleet actuation is frozen")
     _recorded(home, request)
     return _current(home, request, claimed=claimed)
+
+
+def _expired_unlaunched(paths, home, node, request):
+    """Prove the expired review has recommendation but no launch custody."""
+    if dispatch.status_path(paths, node, request["card_id"]).exists():
+        return False
+    events = CardStore(home)._read_events(request["card_id"])
+    recommendation = request["request_id"]
+    if not any(
+        row.get("action") == "review_assignment_recommendation"
+        and row.get("recommendation_id") == recommendation
+        and row.get("reviewer") == request["reviewer"]
+        for row in events
+    ) or any(row.get("action") == "review_assignment_launch" for row in events):
+        return False
+    observed = process_snapshot(request["card_id"])
+    return not any(observed.values())
 
 
 def process_snapshot(card):
