@@ -236,15 +236,22 @@ def read_profile(home: Path, card: str, *, pinned: dict | None = None) -> tuple[
                 return found
             raise plan.TestEvidenceError("candidate test profile changed") from None
         envelope = json.loads(raw, object_pairs_hook=plan._unique_object)
-        if (
-            not isinstance(envelope, dict)
-            or set(envelope) != {"schema", "predecessor_sha256", "source_claim", "profile"}
-            or envelope["schema"] != "skfleet.test-profile-successor/v1"
-            or envelope["predecessor_sha256"] != fingerprint
-            or not isinstance(envelope["source_claim"], dict)
-            or set(envelope["source_claim"]) != {"owner", "claim_revision"}
-            or any(not isinstance(v, str) or not v for v in envelope["source_claim"].values())
-        ):
+        if not isinstance(envelope, dict) or envelope.get("predecessor_sha256") != fingerprint:
+            raise plan.TestEvidenceError("invalid test profile successor")
+        claimed = (
+            set(envelope) == {"schema", "predecessor_sha256", "source_claim", "profile"}
+            and envelope["schema"] == "skfleet.test-profile-successor/v1"
+            and isinstance(envelope["source_claim"], dict)
+            and set(envelope["source_claim"]) == {"owner", "claim_revision"}
+            and all(isinstance(v, str) and v for v in envelope["source_claim"].values())
+        )
+        unclaimed = (
+            set(envelope) == {"schema", "predecessor_sha256", "source_card_sha256", "profile"}
+            and envelope["schema"] == "skfleet.test-profile-successor/v2"
+            and isinstance(envelope["source_card_sha256"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", envelope["source_card_sha256"])
+        )
+        if not (claimed or unclaimed):
             raise plan.TestEvidenceError("invalid test profile successor")
         value = envelope["profile"]
     raise plan.TestEvidenceError("test profile chain exceeds generation bound")
@@ -259,18 +266,23 @@ def supersede_profile(
     qualification_sha256: str,
     *,
     predecessor_sha256: str,
-    source_claim: dict,
     runtime_sha256: str,
+    source_claim: dict | None = None,
+    unclaimed: bool = False,
     node_environment: dict | None = None,
 ) -> Path:
-    """Append qualified evidence under exact live source custody, never repin history."""
+    """Append qualified evidence under exact claimed or unclaimed source custody."""
     expected = contract(core)
     if (
+        unclaimed == (source_claim is not None)
+        or not isinstance(predecessor_sha256, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", predecessor_sha256)
+    ):
+        raise plan.TestEvidenceError("invalid profile successor binding")
+    if source_claim is not None and (
         not isinstance(source_claim, dict)
         or set(source_claim) != {"owner", "claim_revision"}
         or any(not isinstance(v, str) or not v for v in source_claim.values())
-        or not isinstance(predecessor_sha256, str)
-        or not re.fullmatch(r"[0-9a-f]{64}", predecessor_sha256)
     ):
         raise plan.TestEvidenceError("invalid profile successor binding")
     with card_mutation_lock(home, expected["card"]):
@@ -279,10 +291,21 @@ def supersede_profile(
             card is None
             or card.archived
             or card.meta.get("claim_conflicts")
-            or card.status.value != "doing"
+            or contract(card.model_dump(mode="json")) != expected
+        ):
+            raise plan.TestEvidenceError("profile source claim changed")
+        if unclaimed:
+            if card.status.value not in {"backlog", "ready"} or card.owner is not None:
+                raise plan.TestEvidenceError("profile source claim changed")
+            source_card_sha256 = plan.sha(
+                json.dumps(
+                    card.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
+                ).encode()
+            )
+        elif (
+            card.status.value != "doing"
             or card.owner != source_claim["owner"]
             or card.meta.get("_claim_revision") != source_claim["claim_revision"]
-            or contract(card.model_dump(mode="json")) != expected
         ):
             raise plan.TestEvidenceError("profile source claim changed")
         predecessor, current = read_profile(home, expected["card"])
@@ -309,15 +332,14 @@ def supersede_profile(
         if len(list(islice(directory.iterdir(), 128))) >= 127:
             raise plan.TestEvidenceError("test profile chain exceeds generation bound")
         path = directory / (current + ".json")
-        plan.write_once(
-            path,
-            {
-                "schema": "skfleet.test-profile-successor/v1",
-                "predecessor_sha256": current,
-                "source_claim": source_claim,
-                "profile": value,
-            },
-        )
+        envelope = {"predecessor_sha256": current, "profile": value}
+        if unclaimed:
+            envelope.update(
+                schema="skfleet.test-profile-successor/v2", source_card_sha256=source_card_sha256
+            )
+        else:
+            envelope.update(schema="skfleet.test-profile-successor/v1", source_claim=source_claim)
+        plan.write_once(path, envelope)
         return path
 
 

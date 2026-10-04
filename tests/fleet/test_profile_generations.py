@@ -71,6 +71,51 @@ def test_immutable_predecessor_and_multiple_successors(qualified):
     )
 
 
+def test_unclaimed_backlog_successor_preserves_history(qualified):
+    home, core, policy, recipe, original = qualified
+    CardStore(home).create(CardCore(**core, title="Unclaimed producer fixture"))
+    before = original.read_bytes()
+    path = profile.supersede_profile(
+        home,
+        core,
+        policy,
+        recipe,
+        "operator",
+        "c" * 64,
+        predecessor_sha256=plan.sha(before),
+        runtime_sha256="a" * 64,
+        unclaimed=True,
+    )
+    envelope = json.loads(path.read_bytes())
+    assert envelope["schema"] == "skfleet.test-profile-successor/v2"
+    assert len(envelope["source_card_sha256"]) == 64
+    assert (
+        profile.preflight(home, core, ["source-only"], policy)["qualification_sha256"] == "c" * 64
+    )
+    assert profile.read_profile(home, core["id"], pinned=json.loads(before))[0] == json.loads(
+        before
+    )
+    assert original.read_bytes() == before
+
+
+def test_unclaimed_successor_refuses_owned_source(qualified):
+    home, core, policy, recipe, original = qualified
+    custody(home, core)
+    with pytest.raises(plan.TestEvidenceError, match="source claim changed"):
+        profile.supersede_profile(
+            home,
+            core,
+            policy,
+            recipe,
+            "operator",
+            "c" * 64,
+            predecessor_sha256=plan.sha(original.read_bytes()),
+            runtime_sha256="a" * 64,
+            unclaimed=True,
+        )
+    assert not (original.parent / core["id"]).exists()
+
+
 @pytest.mark.parametrize("change", ["hash", "owner", "claim", "runtime", "released", "criteria"])
 def test_stale_bindings_write_nothing(qualified, change):
     home, core, _, _, original = qualified

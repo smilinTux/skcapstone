@@ -8,6 +8,13 @@ qualification evidence SHA256, and qualified runtime SHA256. The source card
 must remain Doing, unarchived and unconflicted with the same repository and
 acceptance criteria. Native card mutation locking covers validation and append.
 
+For an unclaimed Backlog or Ready source card, an operator may instead pass
+`unclaimed=True` with no `source_claim`. The same native lock verifies the card
+is unowned, unarchived and unconflicted with unchanged repository and criteria.
+Its full folded card SHA256 is stored in a v2 successor envelope. This permits
+requalification before preclaim, which otherwise cannot occur when the old
+profile blocks dispatch. It does not claim the source card or change its work.
+
 The original `fleet/test-profiles/<card>.json` remains immutable. Successors
 are private exclusive-create records in `fleet/test-profiles/<card>/`, named
 for the exact predecessor byte hash. No mutable current pointer is introduced.
