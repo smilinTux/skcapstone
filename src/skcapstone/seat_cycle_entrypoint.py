@@ -444,6 +444,52 @@ def verify_seraph_dispatch(
         for line in output.splitlines()
         if (match := _NOOP.fullmatch(line.strip()))
     ]
+    offers = [
+        match.groupdict()
+        for line in output.splitlines()
+        if (
+            match := re.fullmatch(
+                r"REVIEW_OFFERED\|(?P<host>[^|]+)\|(?P<card>[0-9a-f]{8})"
+                r"\|node=(?P<node>[a-z0-9][a-z0-9_.-]*)\|request=(?P<request>[0-9a-f]{64})",
+                line.strip(),
+            )
+        )
+    ]
+    if offers and not launches and completed.returncode == 0 and production_policy:
+        try:
+            from .fleet import builder_dispatch, review_dispatch
+            from .fleet.paths import FleetPaths
+            from .fleet.production_review_finish import read_json
+
+            paths = FleetPaths(home / "fleet")
+            seen = set()
+            for offer in offers:
+                if offer["card"] in seen or offer["host"] != production_policy["authority_host"]:
+                    raise ValueError("ambiguous review offer")
+                seen.add(offer["card"])
+                request = read_json(
+                    builder_dispatch.request_path(paths, offer["node"], offer["card"])
+                )
+                if request["request_id"] != offer["request"] or request["node"] != offer["node"]:
+                    raise ValueError("remote offer generation changed")
+                review_dispatch.validate_contract(
+                    request, production_policy, host=request["production"]["host"]
+                )
+                review_dispatch._recorded(home, request)
+            return {
+                "cards_examined": len(offers),
+                "recommendations": 0,
+                "suppressed": 0,
+                "pending_offers": len(offers),
+                "reason": "seraph_remote_review_pending",
+            }
+        except (OSError, ValueError, KeyError, TypeError):
+            return {
+                "cards_examined": len(offers),
+                "recommendations": 0,
+                "suppressed": 1,
+                "reason": "seraph_remote_offer_invalid",
+            }
     if completed.returncode != 0 and not launches:
         return {
             "cards_examined": 0,
@@ -502,7 +548,8 @@ def verify_seraph_dispatch(
         route_identity = receipts[0].get("route_identity") if len(receipts) == 1 else None
         model_allowed = (
             isinstance(route_identity, dict)
-            and receipts[0].get("schema") == "skfleet.review-assignment-launch/v2"
+            and receipts[0].get("schema")
+            in {"skfleet.review-assignment-launch/v2", "skfleet.review-assignment-launch/v3"}
             and route_identity.get("model_or_bucket") == launch["model"]
             and isinstance(route_identity.get("logical_route"), str)
             and bool(route_identity.get("logical_route"))

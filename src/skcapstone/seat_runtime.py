@@ -204,6 +204,7 @@ def append_review_launch_receipt(
     claim_revision: str,
     launched: bool,
     route_identity: Mapping[str, object] | None = None,
+    execution: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Record one governed reviewer's exact claim generation and result."""
 
@@ -221,15 +222,43 @@ def append_review_launch_receipt(
     ):
         raise BoundaryError("review launch receipt does not match the exact claim")
     route = _launch_route_identity(home, route_identity)
+    extra = {}
+    if execution is not None:
+        from .fleet import production_builder, review_dispatch
+
+        extra["execution"] = dict(execution)
+        review_dispatch.validate_execution(
+            home,
+            production_builder.policy(),
+            {"host": execution["host"], "owner": actor, "revision": claim_revision},
+            card,
+            {
+                "schema": "skfleet.review-assignment-launch/v3",
+                "action": "review_assignment_launch",
+                "writer": actor,
+                "reviewer": actor,
+                "claim_revision": claim_revision,
+                "launched": bool(launched),
+                "recommendation_id": handoff.recommendation_id,
+                "observed_state_revision": handoff.state_revision,
+                "route_identity": route,
+                **extra,
+            },
+            recorded=False,
+        )
     return store.append_event(
         handoff.card_id,
         "review_assignment_launch",
         actor,
         transition_id=(actor + "-" + handoff.recommendation_id + "-" + claim_revision),
         schema=(
-            "skfleet.review-assignment-launch/v2"
-            if route
-            else "skfleet.review-assignment-launch/v1"
+            "skfleet.review-assignment-launch/v3"
+            if execution is not None
+            else (
+                "skfleet.review-assignment-launch/v2"
+                if route
+                else "skfleet.review-assignment-launch/v1"
+            )
         ),
         recommendation_id=handoff.recommendation_id,
         reviewer=handoff.reviewer,
@@ -237,6 +266,7 @@ def append_review_launch_receipt(
         claim_revision=claim_revision,
         launched=bool(launched),
         route_identity=route or None,
+        **extra,
     )
 
 

@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 
 from . import production_routes, scheduler, store
-from .production_policy import load_production_policy
+from .production_policy import load_production_policy, require_destination
 
 
 def policy() -> dict | None:
@@ -36,7 +36,7 @@ def node_binding(paths, node: str, value: dict) -> dict:
     """Resolve a node's explicit host identity and qualified worker resources."""
     spec = store.read_spec(paths, "node", node) or {}
     host = (spec.get("labels") or {}).get("host")
-    limits = value.get("node_quotas", {}).get(host)
+    limits = require_destination(value, host)
     if not isinstance(host, str) or not isinstance(limits, dict):
         raise ValueError("production builder node lacks qualified worker resources")
     return {
@@ -209,3 +209,250 @@ def service_state(status: dict, process=None) -> tuple[bool | None, int | None]:
         except (KeyError, ValueError):
             pass
     return None, None
+
+
+def launch_review(paths, home, request, card, handoff, workspace, *, launcher=None):
+    """Launch the existing production wrapper under destination-native custody."""
+    import shutil
+    import sys
+    import time
+
+    from ..seat_runtime import append_review_launch_receipt
+    from . import builder_dispatch, review_dispatch
+    from .production_admission import MARKER, _digest, reserve_launch, unit_state
+    from .production_brief import production_source_review_brief
+    from .production_receipts import persist_production_snapshot
+    from .production_review_finish import read_json
+    from .worker_git import identity, preflight
+
+    owner, claim = request["reviewer"], card.meta["_claim_revision"]
+    bound = request["production"]
+    host, lane = bound["host"], bound["family"]
+    unit = "skfleet-worker-" + lane + "-" + card.id + ".service"
+    worker = os.environ.get("SKFLEET_PI") or shutil.which("pi")
+    wrapper = shutil.which("skfleet-worker-wrapper.py") or str(
+        Path(__file__).resolve().parents[3] / "scripts/fleet/skfleet-worker-wrapper.py"
+    )
+    if not worker or not Path(wrapper).is_file():
+        raise ValueError("managed review worker runtime unavailable")
+    brief = production_source_review_brief(
+        card_id=card.id,
+        owner=owner,
+        claim_revision=claim,
+        workspace=str(workspace),
+        source_head=request["source"]["head"],
+        core=card.model_dump(mode="json"),
+        labels=card.labels,
+    )
+    child = [
+        "/usr/bin/env",
+        "-i",
+        "HOME=" + str(Path.home()),
+        "PATH=" + os.environ.get("PATH", "/usr/bin:/bin"),
+        "LANG=C.UTF-8",
+        "SKCAPSTONE_HOME=" + str(home),
+        "SKAGENT=" + owner,
+        "SKCAPSTONE_AGENT=" + owner,
+        "SKFLEET_CARD_ID=" + card.id,
+        "SKFLEET_CLAIM_REVISION=" + claim,
+        "SKFLEET_SESSION_ID=" + owner,
+        "SKFLEET_WORKSPACE=" + str(workspace),
+        *(key + "=" + value for key, value in identity(owner).items()),
+        worker,
+        "--no-approve",
+        "--extension",
+        builder_dispatch._guard_path(),
+        "--name",
+        owner,
+        "--provider",
+        "skgateway",
+        "--model",
+        bound["model"],
+        "--thinking",
+        "off",
+        "--no-context-files",
+        "--no-skills",
+        "--tools",
+        builder_dispatch._WORKER_TOOLS,
+        "-p",
+        brief,
+    ]
+    preflight(child, workspace, owner)
+    observed = production_routes.snapshot(request["policy"])
+    route = dict(
+        logical_route=request["logical_route"],
+        provider="skgateway",
+        capacity_domains=[bound["capacity_domain"]],
+        model_or_bucket=bound["model"],
+        production_snapshot=persist_production_snapshot(home, observed),
+    )
+    logs = paths.root / "review-logs"
+    logs.mkdir(parents=True, exist_ok=True, mode=0o700)
+    inner = [
+        sys.executable,
+        wrapper,
+        "--card",
+        card.id,
+        "--owner",
+        owner,
+        "--claim-revision",
+        claim,
+        "--host",
+        host,
+        "--lane",
+        lane,
+        "--model",
+        bound["model"],
+        "--logical-route",
+        request["logical_route"],
+        "--provider",
+        "skgateway",
+        "--capacity-domain",
+        bound["capacity_domain"],
+        "--source-repository",
+        request["repository"],
+        "--source-base-revision",
+        request["source"]["head"],
+        "--stdout",
+        str(logs / (request["request_id"] + ".log")),
+        "--evidence-dir",
+        str(Path(home) / "evidence/worker-exits"),
+        "--live-snapshot",
+        str(paths.root / "live" / (host + ".json")),
+        "--session",
+        owner,
+        "--worker-executable",
+        worker,
+        "--",
+        *review_child_command(home, owner, card.id, claim, child),
+    ]
+    command = service_command(request, 1, inner, workspace)
+    command = [("--unit=" + unit) if arg.startswith("--unit=") else arg for arg in command]
+    command.insert(1, "--setenv=SKFLEET_REVIEW_REQUEST=" + request["request_id"])
+    command.insert(1, "--setenv=SKFLEET_REVIEW_NODE=" + request["node"])
+    command.insert(
+        1, "--setenv=SKFLEET_PRODUCTION_POLICY=" + os.environ["SKFLEET_PRODUCTION_POLICY"]
+    )
+    command.insert(1, "--setenv=SKFLEET_AUTHORITY_HOST=" + request["production"]["authority"])
+    command.insert(1, "--setenv=SKCAPSTONE_HOME=" + str(home))
+    binding = dict(
+        card_id=card.id,
+        owner=owner,
+        claim_revision=claim,
+        request_id=request["request_id"],
+        request_sha256=digest(request),
+        policy_sha256=bound["policy_sha256"],
+        work_kind="review",
+    )
+    review_dispatch.validate_request(paths, home, request["node"], request, claimed=True)
+    if _review_card(home, card.id).meta.get("_claim_revision") != claim:
+        raise ValueError("review claim changed before reservation")
+    production_routes.preflight(request["policy"], bound)
+    argv = reserve_launch(home, request["policy"], host, unit, binding, command)
+    reservation = next(
+        arg.split("=", 2)[2] for arg in argv if arg.startswith("--setenv=" + MARKER + "=")
+    )
+    intent = read_json(
+        Path(home) / "fleet/resource-admission" / host / reservation / "intent.json"
+    )
+    execution = dict(
+        request_id=request["request_id"],
+        request_sha256=digest(request),
+        authority=bound["authority"],
+        node=request["node"],
+        host=host,
+        policy_sha256=bound["policy_sha256"],
+        work_kind="review",
+        unit=unit,
+        admission_id=reservation,
+        admission_sha256=_digest(intent),
+        invocation="",
+    )
+    # Publish custody before spawning. A crash or any exception hereafter holds
+    # the exact claim and intent; duplicate consumption never retries it.
+    pending = dict(
+        owner=owner,
+        claim_revision=claim,
+        claim_released=False,
+        execution=execution,
+        admission=intent,
+        route_snapshot=observed,
+        workspace=str(workspace),
+        command=command,
+    )
+    builder_dispatch._write_status(paths, request["node"], request, "admission-pending", **pending)
+    if launcher is None:
+        process = subprocess.Popen(
+            argv,
+            cwd=workspace,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    else:
+        process = launcher(argv, workspace)
+    builder_dispatch._PROCESSES[request["request_id"]] = process
+    # A successful Popen is not a service acknowledgment.
+    for _ in range(20):
+        state = unit_state(unit)
+        if (
+            state.get("Id") == unit
+            and state.get("LoadState") == "loaded"
+            and state.get(MARKER) == reservation
+            and re.fullmatch(r"[0-9a-f]{32}", state.get("InvocationID", ""))
+            and int(state.get("MemoryMax", "0")) == bound["resources"]["memory_max_bytes"]
+        ):
+            break
+        time.sleep(0.05)
+    else:
+        raise ValueError("native review service acknowledgment pending")
+    execution["invocation"] = state["InvocationID"]
+    pending["execution"] = execution
+    pending["acknowledgment"] = {
+        k: state[k] for k in ("Id", "LoadState", MARKER, "InvocationID", "MemoryMax")
+    }
+    status = builder_dispatch._write_status(paths, request["node"], request, "running", **pending)
+    append_review_launch_receipt(
+        home,
+        handoff,
+        actor=owner,
+        claim_revision=claim,
+        launched=True,
+        route_identity=route,
+        execution=execution,
+    )
+    return status
+
+
+def _review_card(home, card):
+    """Read exact final claim through the native fold."""
+    from skcoord.card_store import CardStore
+
+    return CardStore(home).fold(card)
+
+
+def review_child_command(home, owner, card, claim, child):
+    """Retain the wrapper's attributed startup heartbeat without claiming progress."""
+    import shlex
+
+    heartbeat = """import json,os,sys,time
+from pathlib import Path
+home,owner,card,claim=sys.argv[1:]
+root=Path(home)/'fleet/beats';root.mkdir(parents=True,exist_ok=True,mode=0o700)
+path=root/(owner+'.json');temporary=root/(owner+'.tmp')
+while True:
+    row=dict(owner=owner,card_id=card,claim_revision=claim,session_id=owner,
+             pid=os.getppid(),invocation_id=os.environ.get('INVOCATION_ID',''),
+             emitter='wrapper',disposition='RUNNING',proves='shell-liveness',beat_at=time.time())
+    with open(temporary,'w') as stream: json.dump(row,stream)
+    os.chmod(temporary,0o600);os.replace(temporary,path)
+    time.sleep(30)
+"""
+    beat = ["/usr/bin/python3", "-c", heartbeat, str(home), owner, card, claim]
+    shell = (
+        shlex.join(beat) + " </dev/null >/dev/null 2>&1 & beat=$!; "
+        'trap \'kill "$beat" 2>/dev/null || true; wait "$beat" 2>/dev/null || true\' EXIT; '
+        + shlex.join(child)
+        + '; rc=$?; exit "$rc"'
+    )
+    return ["/bin/bash", "-c", shell]
