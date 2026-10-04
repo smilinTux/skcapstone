@@ -7698,11 +7698,9 @@ if PRODUCTION_POLICY and PRODUCTION_POLICY.get("remote_review", {}).get("enabled
     from skcapstone.fleet import review_dispatch
 
     _rollout = PRODUCTION_POLICY["remote_review"]
-    _remote_reviews = [row for row in owned if "review" in row[4]
-        and (_rollout["card_ids"] is None or row[2] in _rollout["card_ids"])]
-    _remote_review_ids = {row[2] for row in _remote_reviews}
+    # Only native source-only reviews have the custody needed by remote review.
     # A remote refusal is a deferral, never permission to fall back to local 08.
-    owned = [row for row in owned if row[2] not in _remote_review_ids]
+    _remote_reviews, owned = review_dispatch.partition_remote_reviews(owned, _rollout)
     if not DRY:
         for _candidate in _remote_reviews[:MAX_CANDIDATE_SCAN]:
             if time.monotonic() - _cycle_started >= _production_cycle_budget:

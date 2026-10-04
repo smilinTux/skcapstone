@@ -31,6 +31,18 @@ SCHEMA = "skfleet.builder-dispatch/v2"
 CAPABILITY = "remote-review-v1"
 
 
+def partition_remote_reviews(owned, rollout):
+    """Keep legacy provisional reviews on their existing local seat path."""
+    remote = [
+        row
+        for row in owned
+        if {"review", "seat-seraph", "source-only"} <= set(row[4])
+        and (rollout["card_ids"] is None or row[2] in rollout["card_ids"])
+    ]
+    remote_ids = {row[2] for row in remote}
+    return remote, [row for row in owned if row[2] not in remote_ids]
+
+
 def validate_contract(request, policy, *, host, historical=False):
     """Reject ambiguous role, placement, generation or independence bindings."""
     validate_execution_policy(policy)
