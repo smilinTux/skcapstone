@@ -19,6 +19,8 @@ from tests.test_skfleet_provisional_opener import (  # noqa: F401
     qualified_review_api,
 )
 
+pytestmark = pytest.mark.host_systemd
+
 
 @pytest.fixture
 def canonical_opener(review_candidate, qualified_review_api, tmp_path):  # noqa: F811

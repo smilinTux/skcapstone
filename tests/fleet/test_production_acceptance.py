@@ -14,6 +14,8 @@ from skcapstone.fleet.production_review_finish import native_command, native_sta
 from tests.fleet.test_production_review_finish import pair  # noqa: F401
 from tests.fleet.test_source_bundle import git, source  # noqa: F401
 
+pytestmark = pytest.mark.host_systemd
+
 
 @pytest.fixture
 def stopped_pair(pair, source, monkeypatch, request):  # noqa: F811

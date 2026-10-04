@@ -111,6 +111,7 @@ def candidate_allowed(value, process=None):
 
 
 @pytest.mark.parametrize("source", ["https"], indirect=True)
+@pytest.mark.host_systemd
 def test_exact_production_candidate_retains_claim_and_enters_existing_opener(
     review_candidate, tmp_path, qualified_review_api  # noqa: F811
 ):
@@ -182,6 +183,7 @@ def test_exact_production_candidate_retains_claim_and_enters_existing_opener(
         "request-labels",
     ],
 )
+@pytest.mark.host_systemd
 def test_production_opener_rejects_inexact_or_unavailable_custody(
     review_candidate, monkeypatch, mutation
 ):

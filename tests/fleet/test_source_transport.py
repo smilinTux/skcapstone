@@ -13,6 +13,7 @@ from tests.fleet.test_source_bundle import publish
 from tests.fleet.test_source_bundle import source as source_fixture
 
 source = source_fixture
+pytestmark = pytest.mark.host_systemd
 
 
 def authority_copy(source, tmp_path):

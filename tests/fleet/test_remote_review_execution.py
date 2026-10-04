@@ -19,7 +19,7 @@ from tests.fleet.remote_review_fixtures import (
     terminal_review,
 )  # noqa: F401
 
-
+@pytest.mark.host_systemd
 def test_native_remote_claim_launch_and_receipt_on_destination(execution):
     e = execution
     request, status = offer_and_consume(e)
@@ -50,6 +50,7 @@ def test_native_remote_claim_launch_and_receipt_on_destination(execution):
     assert len(e["launches"]) == 1
 
 
+@pytest.mark.host_systemd
 def test_destination_capacity_loss_does_not_claim_or_burn_attempt(execution):
     e = execution
     e["capacity"][0] = False
@@ -61,6 +62,7 @@ def test_destination_capacity_loss_does_not_claim_or_burn_attempt(execution):
     assert review.offer_review(e["paths"], e["home"], e["card"], writer=e["writer"]) is None
 
 
+@pytest.mark.host_systemd
 def test_remote_review_consumes_the_native_start_fence_once(execution):
     e = execution
     request, status = offer_and_consume(e)
@@ -77,6 +79,7 @@ def test_remote_review_consumes_the_native_start_fence_once(execution):
     assert (directory / "start.json").read_bytes() == before
 
 
+@pytest.mark.host_systemd
 def test_claim_release_after_remote_reservation_refuses_spawn(execution, monkeypatch):
     e = execution
     write_status = builder._write_status
@@ -118,6 +121,7 @@ def test_claim_release_after_remote_reservation_refuses_spawn(execution, monkeyp
         "duplicate",
     ],
 )
+@pytest.mark.host_systemd
 def test_remote_receipt_refuses_changed_native_binding(execution, change):
     e = execution
     request, status = offer_and_consume(e)
@@ -163,6 +167,7 @@ def test_remote_receipt_refuses_changed_native_binding(execution, change):
     assert not production_receipt_allowed(e["home"], e["policy"], launch, card, event)
 
 
+@pytest.mark.host_systemd
 def test_authority_imports_real_remote_review_without_original_workspace(terminal_review):
     from skcapstone.fleet.production_acceptance import collect
 
@@ -182,6 +187,7 @@ def test_authority_imports_real_remote_review_without_original_workspace(termina
 
 
 @pytest.mark.parametrize("change", ["missing-packet", "bundle-hash", "owner", "claim", "live"])
+@pytest.mark.host_systemd
 def test_remote_completion_rejects_bad_transport_or_custody(terminal_review, monkeypatch, change):
     from skcapstone.fleet import production_acceptance as acceptance
 
@@ -213,6 +219,7 @@ def test_remote_completion_rejects_bad_transport_or_custody(terminal_review, mon
     assert e["source"]["store"].fold(e["source"]["card"]).status.value != "done"
 
 
+@pytest.mark.host_systemd
 def test_seraph_offer_is_pending_never_a_successful_launch(execution):
     import subprocess
     from skcapstone.seat_cycle_entrypoint import verify_seraph_dispatch
@@ -239,6 +246,7 @@ def test_seraph_offer_is_pending_never_a_successful_launch(execution):
 @pytest.mark.parametrize(
     "terminal_review", ["FAIL", "BLOCKED", "STRUCTURED_BLOCKED"], indirect=True
 )
+@pytest.mark.host_systemd
 def test_negative_remote_review_completes_only_review(terminal_review):
     from skcapstone.fleet import production_acceptance as acceptance
 
@@ -256,6 +264,7 @@ def test_negative_remote_review_completes_only_review(terminal_review):
 
 
 @pytest.mark.parametrize("change", ["quota", "capability", "host-alias", "cordon", "same-family"])
+@pytest.mark.host_systemd
 def test_changed_destination_or_route_refuses_before_claim(execution, monkeypatch, change):
     e = execution
     request = review.offer_review(e["paths"], e["home"], e["card"], writer=e["writer"])
@@ -287,6 +296,7 @@ def test_changed_destination_or_route_refuses_before_claim(execution, monkeypatc
 
 
 @pytest.mark.parametrize("terminal_review", ["LARGE"], indirect=True)
+@pytest.mark.host_systemd
 def test_large_bounded_review_evidence_does_not_overflow_native_status(terminal_review):
     from skcapstone.fleet.production_acceptance import collect
 
@@ -303,6 +313,7 @@ def test_large_bounded_review_evidence_does_not_overflow_native_status(terminal_
     assert context["review"]["proposal"]["verdict"] == "PASS"
 
 
+@pytest.mark.host_systemd
 def test_missing_request_never_reassigns_existing_native_review_offer(execution):
     e = execution
     request = review.offer_review(e["paths"], e["home"], e["card"], writer=e["writer"])
@@ -310,6 +321,7 @@ def test_missing_request_never_reassigns_existing_native_review_offer(execution)
     assert review.offer_review(e["paths"], e["home"], e["card"], writer=e["writer"]) is None
 
 
+@pytest.mark.host_systemd
 def test_orphan_destination_custody_is_held_across_seats(execution):
     e = execution
     request, status = offer_and_consume(e)
@@ -319,6 +331,7 @@ def test_orphan_destination_custody_is_held_across_seats(execution):
     assert review.offer_review(e["paths"], e["home"], e["card"], writer=e["writer"]) is None
 
 
+@pytest.mark.host_systemd
 def test_remote_wrapper_receives_policy_and_native_startup_identity(execution):
     e = execution
     request, status = offer_and_consume(e)

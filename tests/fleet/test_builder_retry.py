@@ -229,6 +229,7 @@ def ready_retry(paths, production_setup, monkeypatch, tmp_path):
     return SimpleNamespace(paths=paths, home=tmp_path, request=request, status=status, card=card)
 
 
+@pytest.mark.host_systemd
 def test_consumer_launches_once_with_original_claim_and_fresh_unit(ready_retry):
     a = ready_retry
     launches = []
@@ -317,6 +318,7 @@ def test_new_candidate_after_authorization_uses_review_path(ready_retry, monkeyp
     assert result["claim_revision"] == a.status["claim_revision"]
 
 
+@pytest.mark.host_systemd
 def test_launch_exception_consumes_once_and_keeps_exact_custody(ready_retry):
     a = ready_retry
     calls = []
@@ -350,6 +352,7 @@ def test_grant_hash_detects_changed_operator_evidence(attempt):
     assert not retry.pending(a.request, a.status)
 
 
+@pytest.mark.host_systemd
 def test_clean_base_is_verified_inside_real_readonly_git_sandbox(source):
     from skcapstone.fleet import source_bundle as real
 

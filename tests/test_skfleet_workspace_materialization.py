@@ -121,6 +121,7 @@ def test_production_bad_bundle_does_not_fall_back_to_another_revision(monkeypatc
 
 
 @pytest.mark.parametrize("source", ["https"], indirect=True)
+@pytest.mark.host_systemd
 def test_generated_review_imports_unpublished_head_not_producer_base(source, tmp_path):
     """Exercise both launcher helpers against real typed source/bundle custody."""
     from skcapstone.fleet import source_bundle

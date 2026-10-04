@@ -199,6 +199,7 @@ def test_consumption_is_once_and_launch_failure_retains_custody(preserved):
     assert continuation.original_outcome_pending(a.home, a.request, current)
 
 
+@pytest.mark.host_systemd
 def test_real_git_source_proof_binds_index_and_untracked(source, tmp_path, monkeypatch):
     data = source
     workspace, base = data["workspace"], data["base"]
@@ -223,6 +224,7 @@ def test_real_git_source_proof_binds_index_and_untracked(source, tmp_path, monke
     assert changed["inventory_sha256"] != result["inventory_sha256"]
 
 
+@pytest.mark.host_systemd
 def test_native_dispatch_continues_once_without_materializing_or_releasing(
     ready_retry, monkeypatch
 ):

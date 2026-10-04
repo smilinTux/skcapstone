@@ -20,8 +20,8 @@ environment gave **11 passed, 12 failed**; the candidate adds one passing
 regression. The qualified test executor uses a separate bwrap sandbox with
 `--clearenv` and no `/run/user` mount, so passing bus variables to the Pi
 builder would not make host-systemd tests executable during qualification.
-The affected source-bundle cases and related review tests (29 cases in four
-files) now carry `host_systemd`. Qualified producer recipes deselect that
+The affected source-bundle cases and related review tests (135 cases across
+12 files) now carry `host_systemd`. Qualified producer recipes deselect that
 marker and still require their configured number of passing tests from every
 selected file;
 hosted CI continues to run the marked cases on its disposable user manager.
@@ -30,8 +30,8 @@ Validation of this change on main: with `env -i`,
 `pytest -q -m 'not host_systemd' tests/fleet/test_source_bundle.py` gave
 **11 passed, 12 deselected**. With the host user manager available,
 `pytest -q tests/fleet/test_source_bundle.py` gave **23 passed**.
-Across the four affected files, the clean profile selection gave **50 passed,
-29 deselected**; the host-user-manager run gave **79 passed**.
+Across the 12 affected files, the clean profile selection gave **140 passed,
+135 deselected**. The unfiltered host-user-manager run gave **275 passed**.
 
 The original completion evidence remains unchanged at
 `~/.skcapstone/evidence/work/9aa11902/completion-b58fde04431b99cca687a25bea26b02053a7e5f4.0625a6510fc9452097ebf0db7c44f27b.md`.
