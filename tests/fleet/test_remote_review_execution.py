@@ -63,9 +63,7 @@ def test_remote_review_consumes_the_native_start_fence_once(execution):
     e = execution
     request, status = offer_and_consume(e)
     directory = (
-        e["home"]
-        / "fleet/resource-admission/chiap03"
-        / status["execution"]["admission_id"]
+        e["home"] / "fleet/resource-admission/chiap03" / status["execution"]["admission_id"]
     )
     before = (directory / "start.json").read_bytes()
     start = json.loads(before)
