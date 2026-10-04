@@ -284,9 +284,20 @@ that wants to render or gate on it programmatically rather than read text.
 With `--apply`, `rollout` visits `--node` arguments in order and, for each
 one: records the manifest now in force (so a later rollback has something
 to return to -- this happens BEFORE any change, so a failure partway still
-leaves a record), then runs the same four steps the activation runbook
-documents by hand (`git pull`, `pip install -e .`, copy the dispatcher
-script, converge), then gates the node with the existing readiness verdict
+leaves a record), then pulls the checkout, installs the package, installs each
+declared per-host artifact and the canonical systemd units, reloads systemd
+definitions, and converges. Production dispatcher and wrapper launchers in
+`~/.local/bin` are small compatibility shims into `~/.skenv/bin`; unpackaged
+scripts retain full source copies. Production units use `systemd/production`
+overlays where present. Unit installation does not enable, start or restart
+services. Existing sknoded worker/policy settings are retained in
+`~/.config/sknoded/operator-http.env`; existing assignments there win.
+Changed unit bytes are preserved under
+`~/.skcapstone/fleet/rollout-unit-preimages/<sha256>/<unit>`.
+Rollback retains the installer before changing the checkout so a previous
+main that predates the helper can still be restored. The remote gate explicitly
+passes the expanded requested checkout through `--repo-root`, then checks
+the existing readiness verdict
 plus `node drift`'s own no-unambiguous-drift rule -- no second notion of
 "healthy" is invented for this. **The first node that fails to deploy or
 fails its gate halts the rollout.** Every later node is left untouched,

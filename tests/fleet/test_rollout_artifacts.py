@@ -1,6 +1,7 @@
 """Real temporary-file rollout regressions, without hosts or systemd mutation."""
 
 import hashlib
+import json
 import os
 import shlex
 import shutil
@@ -153,6 +154,42 @@ def test_remote_gate_explicitly_uses_expanded_requested_checkout():
     assert command.startswith("cd ~/deploy/skcapstone && ")
     assert '--repo-root "$PWD"' in command
     assert "--expect-git-sha 9533b254" in command
+
+
+def test_remote_shell_checks_deploy_checkout_instead_of_cli_default(tmp_path):
+    """Exercise tilde/PWD expansion and a CLI whose default remains the work checkout."""
+    home = tmp_path / "remote-home"
+    deployed = home / "deploy/skcapstone"
+    legacy = home / "work/skcapstone"
+    deployed.mkdir(parents=True)
+    legacy.mkdir(parents=True)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    cli = bin_dir / "skcapstone"
+    cli.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "args = sys.argv\n"
+        "root = args[args.index('--repo-root') + 1] if '--repo-root' in args else os.path.expanduser('~/work/skcapstone')\n"
+        "print(json.dumps({'drifts': [], 'checked_repo': root}))\n"
+    )
+    cli.chmod(0o755)
+    observed = []
+
+    def runner(argv):
+        command = shlex.split(" ".join(argv[2:]))[2]
+        result = subprocess.run(
+            ["bash", "-c", command],
+            env={"HOME": str(home), "PATH": f"{bin_dir}:/usr/bin:/bin"},
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        observed.append(json.loads(result.stdout)["checked_repo"])
+        return result
+
+    assert _remote_drift("chiap03", "~/deploy/skcapstone", runner, "9533b254") == ([], "")
+    assert observed == [str(deployed)]
 
 
 def test_unit_install_reloads_definitions_without_enable_start_or_restart():
