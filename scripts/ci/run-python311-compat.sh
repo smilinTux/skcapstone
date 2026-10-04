@@ -1,9 +1,12 @@
-#!/usr/bin/env bash
+#!/usr/bin/env -S -u BASH_ENV bash
 set -euo pipefail
 
 base="${1:?usage: run-python311-compat.sh BASE HEAD}"
 head="${2:?usage: run-python311-compat.sh BASE HEAD}"
 python_bin="${PYTHON_BIN:-python}"
+
+"$python_bin" "$(dirname "$0")/test_environment.py"
+unset BASH_ENV ENV
 
 "$python_bin" -m compileall -q src
 

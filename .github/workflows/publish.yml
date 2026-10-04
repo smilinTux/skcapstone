@@ -23,6 +23,12 @@ permissions:
 # Scoping the group to `tag` keeps the property that comment asked for while
 # leaving a pending approval unable to block anything but itself.
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -p -e -o pipefail {0}
+env:
+  BASH_ENV: ""
+
 jobs:
   tests:
     uses: ./.github/workflows/pytest.yml
@@ -145,6 +151,7 @@ jobs:
           SETUPTOOLS_SCM_PRETEND_VERSION: ${{ needs.tag.outputs.version }}
         run: |
           set -euo pipefail
+          python scripts/ci/test_environment.py
           python -m pip install --upgrade setuptools_scm >/dev/null
           v="$(python -m setuptools_scm 2>/dev/null || echo unknown)"
           echo "version to publish: $v"
@@ -153,7 +160,9 @@ jobs:
               echo "::error::refusing to publish a non-release version: $v"
               exit 1 ;;
           esac
-      - run: python -m pip install --upgrade build twine
+      - run: |
+          python scripts/ci/test_environment.py
+          python -m pip install --upgrade build twine
       - run: python -m build
         env:
           SETUPTOOLS_SCM_PRETEND_VERSION: ${{ needs.tag.outputs.version }}

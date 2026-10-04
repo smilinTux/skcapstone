@@ -160,6 +160,9 @@ def test_dependency_artifact_and_runtime_drift(tmp_path, monkeypatch):
 
 
 def test_source_config_scripts_and_lock_must_match(tmp_path, monkeypatch):
+    executable = tmp_path / "node"
+    executable.write_bytes(b"synthetic qualified node runtime")
+    monkeypatch.setattr(node, "NODE", executable)
     monkeypatch.setattr(node, "artifact_path", lambda e: tmp_path)
     monkeypatch.setattr(node, "artifact_digest", lambda p: "a" * 64)
     (tmp_path / "node_modules").mkdir()
