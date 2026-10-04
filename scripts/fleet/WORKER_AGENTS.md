@@ -61,6 +61,19 @@ One source of truth for depth: `skcapstone coord briefing` and
 - Release stale or failing claims only through `coord release-claim` with the
   exact owner and claim revision. Preserve uncertain worktrees.
 
+## Code only reaches a host through main
+
+- Every code change: your own worktree off `origin/main`, commit, push the
+  branch the same turn, open a PR. Workers never deploy; the operator runs
+  `skcapstone fleet rollout` from main after merge.
+- Never copy files into `~/.skenv` (site-packages or bin), never
+  `pip install -e` a worktree into the live venv, never commit to a repo whose
+  `origin` is a local path. Check with `git remote -v`.
+- If a host already runs code not on main, push it to a
+  `publish/installed-<host>-<date>` branch and say so on skmail. Do not install
+  more on top.
+- Runbook with examples: `docs/fleet/DEPLOY-FROM-MAIN.md` in skcapstone.
+
 ## Talking to other agents
 
 - The board carries work; skmail carries coordination about work (blockers,

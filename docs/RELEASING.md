@@ -133,3 +133,9 @@ time, gated by that same check, dry run by default. See
 [`docs/fleet/rollout-drift.md`](fleet/rollout-drift.md). All three are
 human-invoked: nothing here is scheduled, and cutting a release still does
 not put it on any host by itself.
+
+The other half is what reaches the hosts between releases. Fleet hosts run
+`main`, deployed by `skcapstone fleet rollout`, and nothing else: no hand
+copies into `~/.skenv`, no installs from an unmerged worktree. The full
+branch to PR to rollout procedure, with examples and the one emergency path,
+is [`docs/fleet/DEPLOY-FROM-MAIN.md`](fleet/DEPLOY-FROM-MAIN.md).

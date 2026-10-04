@@ -487,6 +487,16 @@ Standard:
   Every `127.0.0.1:7777` URL elsewhere in this document is written as
   `127.0.0.1:<port>`; substitute the resolved port.
 
+**Fleet deploy (code onto hosts).** Separate from the PyPI release above, and the
+rule is absolute: **main is what runs.** Every change goes branch, push, PR, CI green,
+merge to `main`, then `skcapstone fleet rollout` from main (dry run, canary, rest).
+Arm auto-merge when you open the PR (`gh pr merge --auto --rebase <branch>`) so a
+green PR lands without anyone coming back for it. Never copy files into
+`~/.skenv`, never `pip install -e` a worktree on a live host, never commit to a repo
+whose `origin` is a local path. A host down right now gets the emergency path, which
+still installs only a pushed commit. Full runbook with worked examples:
+[`docs/fleet/DEPLOY-FROM-MAIN.md`](docs/fleet/DEPLOY-FROM-MAIN.md).
+
 ---
 
 ## 6. Configuration / Usage
