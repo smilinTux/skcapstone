@@ -245,8 +245,13 @@ def offer_review(paths, home, card_id, *, writer):
         # Any generation, including expired or orphaned custody, suppresses
         # reassignment. An operator must resolve uncertain custody explicitly.
         existing = list((paths.root / "dispatch").glob("*/" + card_id + ".json"))
+        events = CardStore(home)._read_events(card_id)
+        from .review_retire import retired_offers
+
+        retired = retired_offers(Path(home), card_id, events)
         offered = any(
-            e.get("action") == "remote_review_offer" for e in CardStore(home)._read_events(card_id)
+            e.get("action") == "remote_review_offer" and e.get("request_id") not in retired
+            for e in events
         )
         if existing or offered or card_id in dispatch.held_card_ids(paths):
             return None

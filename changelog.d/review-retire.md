@@ -1,0 +1,1 @@
+- Add an exact, evidence-bound operator retirement for failed remote review generations that have no completed review custody. Preserve the request, status and worker exit before allowing a new offer.
