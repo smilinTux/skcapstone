@@ -209,7 +209,13 @@ def test_ack_loss_or_absent_unit_never_frees_capped_slot(capacity, remote_policy
         reserve(capacity, remote_policy, "chiap08", "87654321")
 
 
-def test_exact_journal_terminal_frees_collected_slot(capacity, remote_policy, monkeypatch):
+@pytest.mark.parametrize(
+    "terminal_message_id",
+    ["9d1aaa27d60140bd96365438aad20286", "ae8f7b866b0347b9af31fe1c80b127c0"],
+)
+def test_exact_journal_terminal_frees_collected_slot(
+    capacity, remote_policy, monkeypatch, terminal_message_id
+):
     reserve(capacity, remote_policy, "chiap08", "12345678")
     path = next((capacity / "fleet/resource-admission/chiap08").glob("*/intent.json"))
     intent = json.loads(path.read_text())
@@ -238,7 +244,7 @@ def test_exact_journal_terminal_frees_collected_slot(capacity, remote_policy, mo
         event = dict(
             USER_UNIT=intent["unit"],
             USER_INVOCATION_ID=observed["invocation"],
-            MESSAGE_ID="9d1aaa27d60140bd96365438aad20286",
+            MESSAGE_ID=terminal_message_id,
             __REALTIME_TIMESTAMP="1791120000000000",
         )
         return type("Result", (), {"stdout": json.dumps(event) + "\n", "returncode": 0})()

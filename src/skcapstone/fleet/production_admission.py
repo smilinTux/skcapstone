@@ -34,6 +34,7 @@ MARKER = "SKFLEET_ADMISSION_ID"
 _JOURNAL_TERMINAL_IDS = {
     "9d1aaa27d60140bd96365438aad20286",  # Stopped
     "d9b373ed55a64feb8242e02dbe79a49c",  # Failed
+    "ae8f7b866b0347b9af31fe1c80b127c0",  # Unit runtime completed; resources consumed
 }
 
 
