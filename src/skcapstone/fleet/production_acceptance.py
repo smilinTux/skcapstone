@@ -54,7 +54,12 @@ def _producer_terminal(home, source, manifest):
             or status.get("node") != path.parent.parent.name
             or status.get("card_id") != source.id
             or status.get("state") != "awaiting-review"
-            or status.get("exit_code") != 0
+            or not (
+                type(status.get("exit_code")) is int
+                and status["exit_code"] == 0
+                or status.get("exit_code") is None
+                and status.get("terminal_proof") == "qualified-terminal"
+            )
             or status.get("claim_released") is not False
             or (status.get("writer") or {}).get("role") != "sknoded"
             or (status.get("writer") or {}).get("node") != status["node"]

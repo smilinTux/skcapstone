@@ -105,6 +105,24 @@ def test_real_unpublished_candidate_and_committed_review_collect_separately(stop
     assert store.fold(context["source"]["card"]).owner == context["source"]["owner"]
 
 
+def test_collected_producer_terminal_can_enter_independent_review(stopped_pair):
+    home, _, review, status_path, _, store = stopped_pair
+    status = json.loads(status_path.read_text())
+    status["exit_code"] = None
+    status["terminal_proof"] = "qualified-terminal"
+    status_path.write_text(json.dumps(status))
+    source_card = store.fold(status["card_id"])
+    terminal = acceptance._producer_terminal(home, source_card, status["source_artifact"])
+    assert terminal["invocation"] == status["invocation"]
+
+    status.pop("terminal_proof")
+    status_path.write_text(json.dumps(status))
+    with pytest.raises(
+        acceptance.ReviewEvidenceError, match="native producer terminal custody differs"
+    ):
+        acceptance._producer_terminal(home, source_card, status["source_artifact"])
+
+
 @pytest.mark.parametrize(
     "kind",
     [
@@ -214,9 +232,9 @@ def test_controller_requires_trusted_tests_and_finishes_without_legacy_release(
         home, policy, process_check=lambda card: {"sessions": [], "units": []}
     )
     assert len(results) == 1
-    assert results[0]["state"] == (
-        "accepted" if tests_ready else "awaiting-trusted-tests"
-    ), results
+    assert results[0]["state"] == ("accepted" if tests_ready else "awaiting-trusted-tests"), (
+        results
+    )
     row = store.fold(review["card"])
     assert row.status.value == ("done" if tests_ready else "doing")
     assert row.owner == (None if tests_ready else review["owner"])
