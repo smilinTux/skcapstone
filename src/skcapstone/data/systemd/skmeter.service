@@ -16,7 +16,7 @@ Type=simple
 # reach the port, so it stays a deliberate deployment decision and never a
 # default. Bind to the specific fleet address, not 0.0.0.0, and keep the meter
 # URL in the gateway's energy.meters block pointed at the same address.
-ExecStart=/home/cbrd21/.skenv/bin/python -m skcapstone.fleet.skmeter
+ExecStart=%h/.skenv/bin/python -m skcapstone.fleet.skmeter
 Restart=always
 RestartSec=10
 # StartLimitIntervalSec must exceed RestartSec x (Burst - 1), or the limiter
