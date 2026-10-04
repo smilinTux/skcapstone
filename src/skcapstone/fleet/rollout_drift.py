@@ -171,7 +171,7 @@ def _installed_git_sha(home: Path, repo_root: Path) -> str | None:
     from -- the same kind of fact ``git_sha`` itself is, not a label.
     """
     for dist_info in sorted(
-        home.glob(".skenv/lib/python3.*/site-packages/skcapstone-*.dist-info")
+        (home / ".skenv" / "lib").glob("python3.*/site-packages/skcapstone-*.dist-info")
     ):
         match = _DIST_INFO_GIT_SHA_RE.search(dist_info.name)
         if match:
@@ -615,7 +615,7 @@ def detect_drift(manifest: dict[str, Any], home: Path | str, repo_root: Path | s
     # Mail now ships as package resources behind console entry points. Keep
     # checking actual implementation bytes rather than trusting its version.
     mail_package = Path("skcapstone/fleet/skmail")
-    installed_roots = sorted(home.glob(".skenv/lib/python3.*/site-packages"))
+    installed_roots = sorted((home / ".skenv" / "lib").glob("python3.*/site-packages"))
     for name in ("__init__.py", "__main__.py", "skmail", "skmail_writer.py"):
         relative = mail_package / name
         expected_digest = _sha256_file(repo_root / "src" / relative)

@@ -382,8 +382,9 @@ def installed_git_sha():
     dist-info cannot be globbed is not thereby unready.
     """
     home = Path(os.path.expanduser("~"))
+    # Start below home so glob never stats unrelated entries such as NFS links.
     for dist_info in sorted(
-        home.glob(".skenv/lib/python3.*/site-packages/skcapstone-*.dist-info")
+        (home / ".skenv" / "lib").glob("python3.*/site-packages/skcapstone-*.dist-info")
     ):
         match = _DIST_INFO_GIT_SHA_RE.search(dist_info.name)
         if match:

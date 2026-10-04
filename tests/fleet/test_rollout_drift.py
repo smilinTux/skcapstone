@@ -530,6 +530,21 @@ def test_installed_git_sha_keeps_embedded_hash_without_tag(home: Path, tmp_path:
     assert rollout_drift._installed_git_sha(home, tmp_path / "no-repo") == "deadbeef"
 
 
+def test_drift_checks_do_not_scan_unrelated_home_entries(home: Path, monkeypatch):
+    _install_dist_info(home, "deadbeef")
+    (home / "unavailable-nfs-link").symlink_to("/mnt/cloud/unavailable")
+    original_glob = Path.glob
+
+    def guarded_glob(path, pattern):
+        if path == home:
+            raise AssertionError("drift check scanned unrelated home entries")
+        return original_glob(path, pattern)
+
+    monkeypatch.setattr(Path, "glob", guarded_glob)
+    assert rollout_drift._installed_git_sha(home, REPO_ROOT) == "deadbeef"
+    detect_drift(_manifest(), home, REPO_ROOT)
+
+
 def test_git_sha_missing_when_no_dist_info_is_reported_as_missing_not_changed(
     home: Path, monkeypatch
 ):

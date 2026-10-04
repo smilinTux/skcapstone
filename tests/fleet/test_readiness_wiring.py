@@ -315,6 +315,23 @@ def test_write_verdict_creates_parent_directories(tmp_path):
     assert verdict_path.exists()
 
 
+def test_installed_git_sha_does_not_scan_unrelated_home_entries(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    dist_info = home / ".skenv/lib/python3.12/site-packages/skcapstone-1.2+gdeadbeef.dist-info"
+    dist_info.mkdir(parents=True)
+    (home / "unavailable-nfs-link").symlink_to("/mnt/cloud/unavailable")
+    monkeypatch.setattr(skfleet_readiness.os.path, "expanduser", lambda _: str(home))
+    original_glob = Path.glob
+
+    def guarded_glob(path, pattern):
+        if path == home:
+            raise AssertionError("readiness scanned unrelated home entries")
+        return original_glob(path, pattern)
+
+    monkeypatch.setattr(Path, "glob", guarded_glob)
+    assert skfleet_readiness.installed_git_sha() == "deadbeef"
+
+
 def test_run_writes_the_verdict_when_a_verdict_path_is_given(tmp_path, monkeypatch):
     monkeypatch.setattr(
         skfleet_readiness.subprocess,
