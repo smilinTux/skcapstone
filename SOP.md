@@ -266,7 +266,7 @@ pip install -e ".[all]"          # runtime + every optional sibling (capauth, sk
 - **Build a wheel:** `python -m build` → `dist/skcapstone-<version>-*.whl`, where
   `<version>` is derived from the git tag at build time (see §9). Do not expect a
   literal you can predict from the tree.
-- **Console scripts: there are six**, not three (`pyproject.toml`
+- **Console scripts: there are eight** (`pyproject.toml`
   `[project.scripts]`):
 
   | Script | Target |
@@ -277,6 +277,12 @@ pip install -e ".[all]"          # runtime + every optional sibling (capauth, sk
   | `skfleet` | `skcapstone.fleet.cli:main` |
   | `skoperator` | `skcapstone.operator_seat.cli:main` |
   | `skfleet-claim-expiry` | `skcapstone.fleet.claim_expiry_cli:main` |
+  | `skmail` | `skcapstone.fleet.skmail:main` |
+  | `skmail_writer` | `skcapstone.fleet.skmail.skmail_writer:main` |
+
+`skmail --version` reports the installed skcapstone version. The old
+`scripts/fleet/skmail` path delegates to the packaged implementation;
+`skmail_writer.py` remains installed for existing writer callers.
 
 Verify with `skcapstone --version`, and expect a **setuptools-scm** string such as
 `0.15.15.dev25+g90df5e0` on a dev checkout, not a clean release number. See §9.
@@ -739,8 +745,8 @@ skcapstone coord parity --check         # re-verify (exit non-zero on any residu
 <!-- docs-evidence
 verified: 2026-09-18
 checks:
-  - name: all six console scripts exist and there are still exactly six (section 3)
-    run: test $(grep -cE '^[a-z-]+ = "skcapstone\.' pyproject.toml) -eq 6 && grep -qxF 'skcapstone = "skcapstone.cli:main"' pyproject.toml && grep -qxF 'skfleet = "skcapstone.fleet.cli:main"' pyproject.toml && grep -qxF 'skoperator = "skcapstone.operator_seat.cli:main"' pyproject.toml && grep -qxF 'skfleet-claim-expiry = "skcapstone.fleet.claim_expiry_cli:main"' pyproject.toml
+  - name: all eight console scripts match the inventory in section 3
+    run: python3 -c 'import tomllib; assert tomllib.load(open("pyproject.toml","rb"))["project"]["scripts"] == {"skcapstone":"skcapstone.cli:main","skcapstone-mcp":"skcapstone.mcp_server:main","crush":"skcapstone.crush_shim:main","skfleet":"skcapstone.fleet.cli:main","skoperator":"skcapstone.operator_seat.cli:main","skfleet-claim-expiry":"skcapstone.fleet.claim_expiry_cli:main","skmail":"skcapstone.fleet.skmail:main","skmail_writer":"skcapstone.fleet.skmail.skmail_writer:main"}'
   - name: the two disagreeing DEFAULT_PORT constants are still what section 5 describes
     run: grep -qxF 'DEFAULT_PORT = 7777' src/skcapstone/daemon.py && grep -qxF 'DEFAULT_PORT = int(os.environ.get("SKCAPSTONE_PORT", "9383"))' src/skcapstone/__init__.py
   - name: the per-agent port map still matches the ports section 5 tells operators to expect

@@ -29,6 +29,8 @@ from pathlib import Path
 
 import pytest
 
+pytest_plugins = ("tests.skmail_installation",)
+
 
 @pytest.fixture(autouse=True)
 def _packaging_install_boundary(request):

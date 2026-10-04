@@ -590,6 +590,31 @@ def detect_drift(manifest: dict[str, Any], home: Path | str, repo_root: Path | s
         elif found_digest != expected_digest:
             drifts.append(Drift(artifact, "changed", expected_digest, found_digest, host))
 
+    # Mail now ships as package resources behind console entry points. Keep
+    # checking actual implementation bytes rather than trusting its version.
+    mail_package = Path("skcapstone/fleet/skmail")
+    installed_roots = sorted(home.glob(".skenv/lib/python3.*/site-packages"))
+    for name in ("__init__.py", "__main__.py", "skmail", "skmail_writer.py"):
+        relative = mail_package / name
+        expected_digest = _sha256_file(repo_root / "src" / relative)
+        if expected_digest is None:
+            continue
+        installed = [root / relative for root in installed_roots] or [
+            home / ".skenv/lib/site-packages" / relative
+        ]
+        for path in installed:
+            found_digest = _sha256_file(path)
+            if found_digest != expected_digest:
+                drifts.append(
+                    Drift(
+                        f"package:skmail/{name}",
+                        "missing" if found_digest is None else "changed",
+                        expected_digest,
+                        found_digest,
+                        host,
+                    )
+                )
+
     # 3. package:git_sha -- the installed distribution's embedded commit
     # hash. This is the SECOND of the three version surfaces a chi host
     # carries, and the one the 2026-09-19 outage tripped over: an ad-hoc
