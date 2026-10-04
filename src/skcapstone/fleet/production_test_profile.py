@@ -360,11 +360,17 @@ def seal_candidate(
     home: Path, binding: dict, workspace: Path, policy: dict, repository: str
 ) -> None:
     """Seal once only after acceptance has independently validated current custody."""
+    predecessor_sha256 = None
     try:
-        plan.load_plan(home, binding)
-        return
+        existing, _, predecessor_sha256 = plan.load_plan(home, binding)
+        if existing["policy_sha256"] == digest(policy):
+            return
     except FileNotFoundError:
         pass
+    except plan.TestEvidenceError as exc:
+        if str(exc) != "operator test plan is invalid or stale":
+            raise
+        _, _, predecessor_sha256 = plan.load_plan(home, binding, require_current=False)
     expected = {
         "card": binding["source_card"],
         "repository": repository,
@@ -380,4 +386,5 @@ def seal_candidate(
         value["qualified_by"],
         value["qualification_sha256"],
         profile=value,
+        predecessor_sha256=predecessor_sha256,
     )

@@ -23,6 +23,15 @@ and new candidate sealing use the latest generation. Existing sealed plans
 resolve their embedded historical profile and retain all runtime, interpreter,
 host and policy checks. A historical plan is not executable on a new runtime.
 
+When a sealed candidate has not launched its native test unit, a freshly
+qualified profile can seal an append-only successor plan for the same source
+head. The original plan remains immutable. Successor files sit beside it,
+named by the predecessor plan SHA256, and bind that predecessor in the new
+record. The old run lock fences publication against a concurrent launch; a
+prior `launch.json` refuses succession. Readers validate the whole chain and
+execute only its current generation. A runtime or test policy change without
+fresh qualification still refuses.
+
 Malformed, disconnected, ambiguous, redirected and over-bound chains refuse.
 This filesystem evidence boundary cannot detect removal of the entire final
 suffix when no retained caller pin refers to it. Removing an interior record

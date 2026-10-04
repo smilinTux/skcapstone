@@ -319,6 +319,8 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
     lock_fd = os.open(directory / ".run.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     with os.fdopen(lock_fd, "r+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        if load_plan(home, binding)[2] != plan_sha:
+            raise TestEvidenceError("test plan generation changed before launch")
         private_dir(directory, create=True)
         if (directory / "launch.json").exists():
             launch = read_json(directory / "launch.json")

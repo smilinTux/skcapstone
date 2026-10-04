@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -10,6 +11,7 @@ import socket
 import stat
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -244,15 +246,77 @@ def seal_plan(
     qualification_sha256: str,
     *,
     profile: dict | None = None,
+    predecessor_sha256: str | None = None,
 ) -> Path:
     """Seal an explicitly qualified legacy or reusable profile for one candidate."""
+    if predecessor_sha256 is not None:
+        if not re.fullmatch(r"[0-9a-f]{64}", predecessor_sha256):
+            raise TestEvidenceError("test plan predecessor invalid")
+        with _plan_run_lock(home, predecessor_sha256):
+            return _seal_plan(
+                home,
+                binding,
+                workspace,
+                policy,
+                qualified_by,
+                qualification_sha256,
+                profile,
+                predecessor_sha256,
+            )
+    return _seal_plan(
+        home,
+        binding,
+        workspace,
+        policy,
+        qualified_by,
+        qualification_sha256,
+        profile,
+        predecessor_sha256,
+    )
+
+
+@contextmanager
+def _plan_run_lock(home: Path, fingerprint: str):
+    """Fence successor publication against an old generation's test launch."""
+    root = home / "fleet/test-runs"
+    private_dir(root, create=True)
+    directory = run_directory(home, fingerprint)
+    private_dir(directory, create=True)
+    fd = os.open(directory / ".run.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "r+") as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        yield
+
+
+def _seal_plan(
+    home: Path,
+    binding: dict,
+    workspace: Path,
+    policy: dict,
+    qualified_by: str,
+    qualification_sha256: str,
+    profile: dict | None,
+    predecessor_sha256: str | None,
+) -> Path:
     check_binding(binding)
     source_state(workspace, binding)
     directory = home / "fleet/test-plans"
     private_dir(directory, create=True)
-    path = directory / (binding["source_card"] + "-" + binding["source_head"] + ".json")
+    base = directory / (binding["source_card"] + "-" + binding["source_head"] + ".json")
+    path = base
+    if predecessor_sha256 is not None:
+        previous, _, current = load_plan(home, binding, require_current=False)
+        if current != predecessor_sha256:
+            raise TestEvidenceError("test plan predecessor changed")
+        if (run_directory(home, current) / "launch.json").exists():
+            raise TestEvidenceError("prior test plan already launched")
+        path = base.with_name(base.stem + "." + current + ".json")
     value = {
-        "schema": "skfleet.native-test-plan/v1",
+        "schema": (
+            "skfleet.native-test-plan/v2"
+            if predecessor_sha256 is not None
+            else "skfleet.native-test-plan/v1"
+        ),
         "binding": binding,
         "checks": approved_checks(),
         "qualified_by": qualified_by,
@@ -262,6 +326,8 @@ def seal_plan(
         "host": socket.gethostname().split(".")[0].lower(),
         "policy_sha256": production_builder.digest(policy),
     }
+    if predecessor_sha256 is not None:
+        value["predecessor_sha256"] = predecessor_sha256
     if profile is not None:
         from .production_test_profile import recipe_checks, validate_profile
 
@@ -282,20 +348,57 @@ def seal_plan(
         or value["host"] != policy["authority_host"]
     ):
         raise TestEvidenceError("operator qualification is incomplete")
+    if predecessor_sha256 is not None and all(
+        previous[key] == value[key]
+        for key in ("qualification_sha256", "python_sha256", "runtime_sha256", "policy_sha256")
+    ):
+        raise TestEvidenceError("test plan successor lacks fresh qualification")
     write_once(path, value)
     return path
 
 
-def load_plan(home: Path, binding: dict) -> tuple[dict, Path, str]:
-    """Read the operator-installed plan and bind its exact approved runtime/profile."""
+def load_plan(
+    home: Path, binding: dict, *, require_current: bool = True
+) -> tuple[dict, Path, str]:
+    """Read an append-only plan chain and bind its latest approved environment."""
     check_binding(binding)
-    path = (
+    base = (
         home
         / "fleet/test-plans"
         / (binding["source_card"] + "-" + binding["source_head"] + ".json")
     )
+    path = base
     raw = read_private(path)
-    plan = json.loads(raw, object_pairs_hook=_unique_object)
+    seen = set()
+    for generation in range(128):
+        fingerprint = sha(raw)
+        if fingerprint in seen:
+            raise TestEvidenceError("test plan chain repeats")
+        seen.add(fingerprint)
+        plan = json.loads(raw, object_pairs_hook=_unique_object)
+        _validate_plan(home, binding, plan, successor=generation > 0)
+        next_path = base.with_name(base.stem + "." + fingerprint + ".json")
+        try:
+            next_raw = read_private(next_path)
+        except FileNotFoundError:
+            extras = list(base.parent.glob(base.stem + ".*.json"))
+            if len(extras) != generation:
+                raise TestEvidenceError("test plan chain is disconnected") from None
+            if require_current:
+                _validate_current_plan(plan)
+            return plan, path, fingerprint
+        if (run_directory(home, fingerprint) / "launch.json").exists():
+            raise TestEvidenceError("prior test plan already launched")
+        next_plan = json.loads(next_raw, object_pairs_hook=_unique_object)
+        if not isinstance(next_plan, dict) or next_plan.get("predecessor_sha256") != fingerprint:
+            raise TestEvidenceError("test plan predecessor changed")
+        path, raw = next_path, next_raw
+    raise TestEvidenceError("test plan chain exceeds generation bound")
+
+
+def _validate_plan(home: Path, binding: dict, plan: dict, *, successor: bool) -> None:
+    if not isinstance(plan, dict):
+        raise TestEvidenceError("operator test plan is invalid or stale")
     required = {
         "schema",
         "binding",
@@ -307,6 +410,8 @@ def load_plan(home: Path, binding: dict) -> tuple[dict, Path, str]:
         "host",
         "policy_sha256",
     }
+    if successor:
+        required.add("predecessor_sha256")
     expected_checks = approved_checks()
     if "profile" in plan:
         from .production_test_profile import read_profile, recipe_checks
@@ -336,9 +441,9 @@ def load_plan(home: Path, binding: dict) -> tuple[dict, Path, str]:
         if node.is_node(profile):
             node.validate_environment(profile["node_environment"])
     if (
-        not isinstance(plan, dict)
-        or set(plan) != required
-        or plan["schema"] != "skfleet.native-test-plan/v1"
+        set(plan) != required
+        or plan["schema"]
+        != ("skfleet.native-test-plan/v2" if successor else "skfleet.native-test-plan/v1")
         or plan["binding"] != binding
         or plan["checks"] != expected_checks
         or not isinstance(plan["qualified_by"], str)
@@ -347,12 +452,17 @@ def load_plan(home: Path, binding: dict) -> tuple[dict, Path, str]:
             not re.fullmatch(r"[0-9a-f]{64}", str(plan[k]))
             for k in ("qualification_sha256", "python_sha256", "runtime_sha256", "policy_sha256")
         )
-        or plan["python_sha256"] != sha((PREFIX / "bin/python").read_bytes())
-        or plan["runtime_sha256"] != runtime_fingerprint()
         or plan["host"] != socket.gethostname().split(".")[0].lower()
     ):
         raise TestEvidenceError("operator test plan is invalid or stale")
-    return plan, path, sha(raw)
+
+
+def _validate_current_plan(plan: dict) -> None:
+    if (
+        plan["python_sha256"] != sha((PREFIX / "bin/python").read_bytes())
+        or plan["runtime_sha256"] != runtime_fingerprint()
+    ):
+        raise TestEvidenceError("operator test plan is invalid or stale")
 
 
 def source_state(workspace: Path, binding: dict) -> dict:

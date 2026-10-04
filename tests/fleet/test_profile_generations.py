@@ -230,6 +230,116 @@ def test_sealed_plan_keeps_old_pin_and_refuses_changed_runtime(setup, monkeypatc
         plan.load_plan(s.home, binding)
     assert plan.sha(path.read_bytes()) == fingerprint
 
+    _, current_sha = profile.read_profile(s.home, core["id"])
+    profile.supersede_profile(
+        s.home,
+        core,
+        s.policy,
+        recipe,
+        "operator",
+        "d" * 64,
+        predecessor_sha256=current_sha,
+        source_claim=CLAIM,
+        runtime_sha256="f" * 64,
+    )
+    profile.seal_candidate(s.home, binding, s.workspace, s.policy, core["meta"]["repository"])
+    latest, latest_path, latest_sha = plan.load_plan(s.home, binding)
+    assert latest["schema"] == "skfleet.native-test-plan/v2"
+    assert latest["predecessor_sha256"] == fingerprint
+    assert latest["profile"]["qualification_sha256"] == "d" * 64
+    assert latest_path != path and latest_sha != fingerprint
+    assert latest_path.parent == path.parent
+    assert plan.sha(path.read_bytes()) == fingerprint
+    profile.seal_candidate(s.home, binding, s.workspace, s.policy, core["meta"]["repository"])
+    assert plan.load_plan(s.home, binding)[2] == latest_sha
+
+
+def test_launched_prior_plan_cannot_be_superseded(setup, monkeypatch):  # noqa: F811
+    s = setup
+    s.plan_path.unlink()
+    core = {
+        "id": "89508f84",
+        "meta": {"repository": "https://example.org/public.git"},
+        "acceptance_criteria": ["Run parser checks"],
+    }
+    custody(s.home, core)
+    binding = dict(
+        s.binding,
+        source_card=core["id"],
+        source_owner=CLAIM["owner"],
+        source_claim_revision=CLAIM["claim_revision"],
+        criteria_sha256=profile.contract(core)["criteria_sha256"],
+    )
+    recipe = {"pytest": {"tests/test_parser.py": 1}, "compile": [], "lint": [], "changelog": False}
+    original = profile.qualify_profile(s.home, core, s.policy, recipe, "operator", "b" * 64)
+    profile.seal_candidate(s.home, binding, s.workspace, s.policy, core["meta"]["repository"])
+    _, path, fingerprint = plan.load_plan(s.home, binding)
+    run = plan.run_directory(s.home, fingerprint)
+    plan.private_dir(run.parent, create=True)
+    plan.private_dir(run, create=True)
+    plan.write_once(run / "launch.json", {"source": "fixture launched"})
+    monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "f" * 64)
+    profile.supersede_profile(
+        s.home,
+        core,
+        s.policy,
+        recipe,
+        "operator",
+        "c" * 64,
+        predecessor_sha256=plan.sha(original.read_bytes()),
+        source_claim=CLAIM,
+        runtime_sha256="f" * 64,
+    )
+    with pytest.raises(plan.TestEvidenceError, match="already launched"):
+        profile.seal_candidate(s.home, binding, s.workspace, s.policy, core["meta"]["repository"])
+    assert path.exists()
+    assert not list(path.parent.glob(path.stem + ".*.json"))
+
+
+def test_policy_change_requires_requalification_before_plan_successor(setup):  # noqa: F811
+    s = setup
+    s.plan_path.unlink()
+    core = {
+        "id": "89508f84",
+        "meta": {"repository": "https://example.org/public.git"},
+        "acceptance_criteria": ["Run parser checks"],
+    }
+    custody(s.home, core)
+    binding = dict(
+        s.binding,
+        source_card=core["id"],
+        source_owner=CLAIM["owner"],
+        source_claim_revision=CLAIM["claim_revision"],
+        criteria_sha256=profile.contract(core)["criteria_sha256"],
+    )
+    recipe = {"pytest": {"tests/test_parser.py": 1}, "compile": [], "lint": [], "changelog": False}
+    original = profile.qualify_profile(s.home, core, s.policy, recipe, "operator", "b" * 64)
+    profile.seal_candidate(s.home, binding, s.workspace, s.policy, core["meta"]["repository"])
+    _, path, fingerprint = plan.load_plan(s.home, binding)
+    changed_policy = dict(s.policy, remote_review={"enabled": True})
+    with pytest.raises(plan.TestEvidenceError, match="profile"):
+        profile.seal_candidate(
+            s.home, binding, s.workspace, changed_policy, core["meta"]["repository"]
+        )
+    assert not list(path.parent.glob(path.stem + ".*.json"))
+    profile.supersede_profile(
+        s.home,
+        core,
+        changed_policy,
+        recipe,
+        "operator",
+        "c" * 64,
+        predecessor_sha256=plan.sha(original.read_bytes()),
+        source_claim=CLAIM,
+        runtime_sha256=plan.runtime_fingerprint(),
+    )
+    profile.seal_candidate(
+        s.home, binding, s.workspace, changed_policy, core["meta"]["repository"]
+    )
+    latest, _, _ = plan.load_plan(s.home, binding)
+    assert latest["predecessor_sha256"] == fingerprint
+    assert latest["policy_sha256"] == profile.digest(changed_policy)
+
 
 def test_runtime_successor_restores_preflight_without_repinning(qualified, monkeypatch):
     home, core, policy, _, original = qualified

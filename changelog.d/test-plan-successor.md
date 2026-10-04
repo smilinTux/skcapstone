@@ -1,0 +1,1 @@
+- Native candidate test plans can advance through immutable, hash-linked successors after a newly qualified runtime or policy, provided the prior generation never launched.
