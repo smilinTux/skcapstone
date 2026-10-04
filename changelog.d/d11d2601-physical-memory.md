@@ -1,0 +1,1 @@
+- Preserve the existing chiwk12 Windows physical-memory clamp when installing terminal-success resource accounting. Missing or invalid physical measurements still deny admission, and unfinished reservations remain charged.

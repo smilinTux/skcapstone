@@ -4,6 +4,8 @@ import re
 import subprocess
 from pathlib import Path
 
+from .physical_memory import constrain_meminfo
+
 
 def successful_terminal_state(state):
     """Recognize exact retained-success metadata without interpreting unknown memory."""
@@ -103,7 +105,7 @@ def available_worker_memory(meminfo, units):
 def local_worker_admission(policy, host, worker_units, *, runner=subprocess.run):
     """Read fresh resources before claiming, without changing a node or worker."""
     try:
-        meminfo = Path("/proc/meminfo").read_text()
+        meminfo = constrain_meminfo(Path("/proc/meminfo").read_text(), runner=runner)
         units = []
         names = [row["unit"] for row in worker_units]
         reservations = {
