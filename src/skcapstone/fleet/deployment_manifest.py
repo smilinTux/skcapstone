@@ -92,6 +92,13 @@ PER_HOST_ARTIFACTS: tuple[Path, ...] = (
 PRODUCTION_CANONICAL_SCRIPTS = frozenset({"skfleet-rotate.py", "skfleet-worker-wrapper.py"})
 
 
+def unit_source_path(repo_root: Path, name: str, production: bool) -> Path:
+    """Select the same canonical unit for installation and drift checking."""
+    root = repo_root / CANONICAL_SYSTEMD_RELATIVE_DIR
+    overlay = root / "production" / name
+    return overlay if production and overlay.is_file() else root / name
+
+
 def production_script_bytes(source: bytes, home: Path | str) -> bytes:
     """Bind the one production script to the existing native interpreter."""
     body = source.split(b"\n", 1)[1] if source.startswith(b"#!") else source

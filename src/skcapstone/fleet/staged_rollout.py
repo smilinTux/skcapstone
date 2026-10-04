@@ -109,7 +109,6 @@ from .actuation import Runner, default_runner
 from .deployment_manifest import (
     DISPATCHER_RELATIVE_PATH,
     PER_HOST_ARTIFACTS,
-    PER_HOST_BIN_RELATIVE_DIR,
 )
 from .paths import paths_for_home, self_node_name, valid_name
 from .rollout_drift import Drift, detect_drift
@@ -130,7 +129,7 @@ PER_HOST_ARTIFACT_NAMES = ", ".join(artifact.name for artifact in PER_HOST_ARTIF
 
 
 def _copy_steps() -> tuple[tuple[str, str], ...]:
-    """One ``cp`` step per declared per-host artifact.
+    """One installation step per declared per-host artifact.
 
     Derived from ``deployment_manifest.PER_HOST_ARTIFACTS`` rather than
     hardcoding a single script name, so a per-host artifact added there is
@@ -145,11 +144,11 @@ def _copy_steps() -> tuple[tuple[str, str], ...]:
     (``StepOutcome.step``) names which artifact failed to copy, rather than
     reporting one opaque "copy" failure for the whole set.
     """
-    bin_dir = PER_HOST_BIN_RELATIVE_DIR.as_posix()
     return tuple(
         (
             "copy_" + artifact.stem.replace("-", "_"),
-            f"cp {{repo}}/{artifact.as_posix()} ~/{bin_dir}/{artifact.name}",
+            "~/.skenv/bin/python -m skcapstone.fleet.rollout_artifacts "
+            f"{{repo}} {artifact.name}",
         )
         for artifact in PER_HOST_ARTIFACTS
     )
@@ -162,6 +161,11 @@ _DEPLOY_STEPS: tuple[tuple[str, str], ...] = (
     ("git_pull", "git -C {repo} pull"),
     ("pip_install", "cd {repo} && pip install -e ."),
     *_copy_steps(),
+    (
+        "install_units",
+        "~/.skenv/bin/python -m skcapstone.fleet.rollout_artifacts {repo} units "
+        "&& systemctl --user daemon-reload",
+    ),
     ("converge", "skcapstone fleet sknoded --once"),
 )
 
@@ -190,6 +194,11 @@ _ROLLBACK_STEPS: tuple[tuple[str, str], ...] = (
     ),
     ("pip_install", "cd {repo} && pip install -e ."),
     *_copy_steps(),
+    (
+        "install_units",
+        "~/.skenv/bin/python -m skcapstone.fleet.rollout_artifacts {repo} units "
+        "&& systemctl --user daemon-reload",
+    ),
     ("converge", "skcapstone fleet sknoded --once"),
 )
 
@@ -754,7 +763,9 @@ def _remote_drift(
     each other a consequence of the existing gate rather than a second
     fleet-wide report.
     """
-    remote_command = f"cd {remote_repo_root} && skcapstone fleet node drift --json"
+    remote_command = (
+        f'cd {remote_repo_root} && skcapstone fleet node drift --json --repo-root "$PWD"'
+    )
     if expect_git_sha:
         remote_command += f" --expect-git-sha {shlex.quote(expect_git_sha)}"
     try:

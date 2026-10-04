@@ -54,6 +54,7 @@ from .deployment_manifest import (
     PRODUCTION_CANONICAL_SCRIPTS,
     production_compatibility_shim,
     production_script_bytes,
+    unit_source_path,
 )
 from .paths import paths_for_home, self_node_name
 
@@ -471,10 +472,7 @@ def detect_drift(manifest: dict[str, Any], home: Path | str, repo_root: Path | s
         if in_scope is False:
             continue  # legitimate local state: this role does not apply here
 
-        expected_path = repo_root / CANONICAL_SYSTEMD_RELATIVE_DIR / unit_name
-        production_unit = repo_root / CANONICAL_SYSTEMD_RELATIVE_DIR / "production" / unit_name
-        if production and production_unit.is_file():
-            expected_path = production_unit
+        expected_path = unit_source_path(repo_root, unit_name, production)
         expected_digest = _sha256_file(expected_path)
         if expected_digest is None:
             continue  # manifest names a unit the repo no longer ships

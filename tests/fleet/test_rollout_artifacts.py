@@ -1,0 +1,161 @@
+"""Real temporary-file rollout regressions, without hosts or systemd mutation."""
+
+import hashlib
+import shlex
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from skcapstone.fleet.deployment_manifest import PER_HOST_ARTIFACTS, production_compatibility_shim
+from skcapstone.fleet.paths import paths_for_home
+from skcapstone.fleet.rollout_artifacts import install_artifact, install_units
+from skcapstone.fleet.staged_rollout import _DEPLOY_STEPS, _ROLLBACK_STEPS, _remote_drift
+
+
+@pytest.fixture
+def layout(tmp_path):
+    """Create a synthetic checkout and a production home."""
+    repo, home = tmp_path / "repo", tmp_path / "home"
+    (repo / "systemd/production").mkdir(parents=True)
+    (repo / "systemd/sknoded.service").write_text(
+        "[Service]\nEnvironmentFile=-%h/.config/sknoded/operator-http.env\nExecStart=main\n"
+    )
+    (repo / "systemd/skfleet-readiness.service").write_bytes(b"legacy readiness\n")
+    (repo / "systemd/production/skfleet-readiness.service").write_bytes(
+        b"main production readiness\n"
+    )
+    (repo / "systemd/skfleet-seat-cycle.timer").write_bytes(b"main timer\n")
+    for relative in PER_HOST_ARTIFACTS:
+        source = repo / relative
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(b"#!/usr/bin/env python3\n# deployed " + source.name.encode() + b"\n")
+    fleet = paths_for_home(home).root
+    fleet.mkdir(parents=True)
+    (fleet / "production.json").write_text("{}")
+    return repo, home
+
+
+@pytest.mark.parametrize("name", ["skfleet-rotate.py", "skfleet-worker-wrapper.py"])
+def test_production_shim_is_byte_identical_to_drift_contract(layout, name):
+    """Delegate to the pip-installed script, preserving executable mode."""
+    repo, home = layout
+    install_artifact(repo, home, name)
+    target = home / ".local/bin" / name
+    assert target.read_bytes() == production_compatibility_shim(name, home)
+    assert target.stat().st_mode & 0o777 == 0o755
+
+
+@pytest.mark.parametrize("production", [False, True])
+def test_unpackaged_sweep_remains_a_full_copy(layout, production):
+    """There is no native pip script for the sweep shim to delegate to."""
+    repo, home = layout
+    if not production:
+        (paths_for_home(home).root / "production.json").unlink()
+    install_artifact(repo, home, "skwork-sweep.py")
+    assert (home / ".local/bin/skwork-sweep.py").read_bytes() == (
+        repo / "scripts/fleet/skwork-sweep.py"
+    ).read_bytes()
+
+
+def test_legacy_dispatcher_remains_a_full_copy(layout):
+    """Non-production hosts retain the checker's original full-copy contract."""
+    repo, home = layout
+    (paths_for_home(home).root / "production.json").unlink()
+    install_artifact(repo, home, "skfleet-rotate.py")
+    assert (home / ".local/bin/skfleet-rotate.py").read_bytes() == (
+        repo / "scripts/fleet/skfleet-rotate.py"
+    ).read_bytes()
+
+
+@pytest.mark.parametrize("production", [False, True])
+def test_unit_bytes_match_checker_selection_and_retain_preimages(layout, production):
+    """Install timers too, with production precedence and durable old unit bytes."""
+    repo, home = layout
+    if not production:
+        (paths_for_home(home).root / "production.json").unlink()
+    units = home / ".config/systemd/user"
+    units.mkdir(parents=True)
+    old = b"old readiness\n"
+    (units / "skfleet-readiness.service").write_bytes(old)
+    install_units(repo, home)
+    prefix = "systemd/production" if production else "systemd"
+    assert (units / "skfleet-readiness.service").read_bytes() == (
+        repo / prefix / "skfleet-readiness.service"
+    ).read_bytes()
+    for name in ("sknoded.service", "skfleet-seat-cycle.timer"):
+        assert (units / name).read_bytes() == (repo / "systemd" / name).read_bytes()
+    backup = paths_for_home(home).root / "rollout-unit-preimages" / hashlib.sha256(old).hexdigest()
+    assert (backup / "skfleet-readiness.service").read_bytes() == old
+
+
+def test_host_worker_values_survive_main_unit_and_existing_env_wins(layout):
+    """Do not overwrite operator settings or mix host values into shipped unit bytes."""
+    repo, home = layout
+    units = home / ".config/systemd/user"
+    units.mkdir(parents=True)
+    (units / "sknoded.service").write_text(
+        '[Service]\nEnvironment="SKFLEET_PI=/opt/pi with spaces"\n'
+        'Environment="SKFLEET_PI_CARDSTORE_GUARD=%h/.skenv/bin/guard.mjs"\n'
+        "Environment=UNRELATED_SECRET=synthetic\n"
+    )
+    dropins = units / "sknoded.service.d"
+    dropins.mkdir()
+    (dropins / "20-policy.conf").write_text(
+        "[Service]\nEnvironment=SKFLEET_AUTHORITY_HOST=chiap08\n"
+    )
+    environment = home / ".config/sknoded/operator-http.env"
+    environment.parent.mkdir(parents=True)
+    original = b"# existing operator gate\nSKFLEET_PI=/operator/pi\nOPERATOR_HTTP=0"
+    environment.write_bytes(original)
+    install_units(repo, home)
+    first = environment.read_bytes()
+    assert first.startswith(original + b"\n")
+    assert b"/opt/pi with spaces" not in first
+    assert b"UNRELATED_SECRET" not in first
+    assignments = dict(item.split("=", 1) for item in shlex.split(first.decode(), comments=True))
+    assert assignments["SKFLEET_PI"] == "/operator/pi"
+    assert assignments["SKFLEET_PI_CARDSTORE_GUARD"] == str(home / ".skenv/bin/guard.mjs")
+    assert assignments["SKFLEET_AUTHORITY_HOST"] == "chiap08"
+    assert environment.stat().st_mode & 0o777 == 0o600
+    assert (units / "sknoded.service").read_bytes() == (
+        repo / "systemd/sknoded.service"
+    ).read_bytes()
+    install_units(repo, home)
+    assert environment.read_bytes() == first
+
+
+def test_unknown_artifact_and_missing_unit_tree_fail_closed(layout):
+    """A bad artifact or checkout cannot silently succeed."""
+    repo, home = layout
+    with pytest.raises(ValueError, match="undeclared"):
+        install_artifact(repo, home, "other.py")
+    for source in (repo / "systemd").glob("*.*"):
+        source.unlink()
+    with pytest.raises(RuntimeError, match="no shipped"):
+        install_units(repo, home)
+
+
+def test_remote_gate_explicitly_uses_expanded_requested_checkout():
+    """Changing working directory alone did not override the CLI default checkout."""
+    calls = []
+
+    def runner(argv):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, '{"drifts": []}', "")
+
+    assert _remote_drift("chiap03", "~/deploy/skcapstone", runner, "9533b254") == ([], "")
+    command = shlex.split(" ".join(calls[0][2:]))[2]
+    assert command.startswith("cd ~/deploy/skcapstone && ")
+    assert '--repo-root "$PWD"' in command
+    assert "--expect-git-sha 9533b254" in command
+
+
+def test_unit_install_reloads_definitions_without_enable_start_or_restart():
+    """Rollout does not turn a stopped destination consumer on as a side effect."""
+    for steps in (_DEPLOY_STEPS, _ROLLBACK_STEPS):
+        names = [name for name, _ in steps]
+        assert names.index("pip_install") < names.index("install_units") < names.index("converge")
+        command = dict(steps)["install_units"]
+        assert "systemctl --user daemon-reload" in command
+        assert all(action not in command for action in (" enable", " start", " restart"))
