@@ -85,6 +85,7 @@ DISPATCHER_UNIT_NAME = "skfleet-rotate.service"
 ALLOWED_UNSHIPPED_UNITS = frozenset({"skfleet-rotate.service", "skfleet-rotate.timer"})
 
 _DIST_INFO_GIT_SHA_RE = re.compile(r"\+g([0-9a-f]+)", re.IGNORECASE)
+_DIST_INFO_RELEASE_RE = re.compile(r"^skcapstone-(\d+\.\d+\.\d+)\.dist-info$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -151,15 +152,16 @@ def _sha256_script_body(path: Path) -> str | None:
     return hashlib.sha256(content).hexdigest()
 
 
-def _installed_git_sha(home: Path) -> str | None:
+def _installed_git_sha(home: Path, repo_root: Path) -> str | None:
     """The git commit embedded in the installed skcapstone distribution.
 
     ``setuptools_scm`` bakes the short git hash into the version it derives
     from the git tag, and that version is part of the dist-info directory
-    name itself (e.g. ``skcapstone-0.15.168.dev165+g723e6a98.dist-info``), so
-    this needs only a glob under the one place SK* packages install
-    (``~/.skenv``, per this estate's own convention) -- no subprocess, no
-    file open.
+    name itself (e.g. ``skcapstone-0.15.168.dev165+g723e6a98.dist-info``).
+    The distribution is found under the estate's ``~/.skenv`` convention.
+
+    An exact release tag has no ``+g`` suffix. Resolve its ``v<version>``
+    tag in the checkout so the gate can still compare commit identities.
 
     This is the one place a version STRING is consulted, and it is not the
     naive check this module exists to distrust: a semantic version number
@@ -174,6 +176,28 @@ def _installed_git_sha(home: Path) -> str | None:
         match = _DIST_INFO_GIT_SHA_RE.search(dist_info.name)
         if match:
             return match.group(1).lower()
+        release = _DIST_INFO_RELEASE_RE.fullmatch(dist_info.name)
+        if release:
+            try:
+                result = subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(repo_root),
+                        "rev-parse",
+                        "--verify",
+                        "--quiet",
+                        f"v{release.group(1)}^{{commit}}",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=30,
+                )
+            except (OSError, subprocess.SubprocessError):
+                continue
+            if result.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", result.stdout.strip()):
+                return result.stdout.strip().lower()
     return None
 
 
@@ -623,7 +647,7 @@ def detect_drift(manifest: dict[str, Any], home: Path | str, repo_root: Path | s
     # glance WHICH surface is stale rather than having to know which of the
     # three a bare name refers to.
     expected_sha = manifest.get("git_sha", "")
-    found_sha = _installed_git_sha(home)
+    found_sha = _installed_git_sha(home, repo_root)
     if found_sha is None:
         drifts.append(Drift("package:git_sha", "missing", expected_sha, None, host))
     elif not _sha_matches(expected_sha, found_sha):

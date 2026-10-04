@@ -488,6 +488,48 @@ def test_git_sha_mismatch_is_reported(home: Path, monkeypatch):
     assert git_sha_drifts[0].found == "deadbeef"
 
 
+def test_installed_git_sha_resolves_exact_release_tag(home: Path, tmp_path: Path):
+    repo = tmp_path / "tagged-repo"
+    repo.mkdir()
+    _REAL_SUBPROCESS_RUN(["git", "init", "-q", str(repo)], check=True)
+    _REAL_SUBPROCESS_RUN(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.org",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "release",
+        ],
+        check=True,
+    )
+    sha = _REAL_SUBPROCESS_RUN(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    _REAL_SUBPROCESS_RUN(["git", "-C", str(repo), "tag", "v1.2.3"], check=True)
+
+    dist_dir = home / ".skenv/lib/python3.12/site-packages"
+    (dist_dir / "skcapstone-1.2.3.dist-info").mkdir(parents=True)
+    assert rollout_drift._installed_git_sha(home, repo) == sha
+
+    (dist_dir / "skcapstone-1.2.3.dist-info").rename(dist_dir / "skcapstone-1.2.4.dist-info")
+    assert rollout_drift._installed_git_sha(home, repo) is None
+
+
+def test_installed_git_sha_keeps_embedded_hash_without_tag(home: Path, tmp_path: Path):
+    _install_dist_info(home, "deadbeef")
+    assert rollout_drift._installed_git_sha(home, tmp_path / "no-repo") == "deadbeef"
+
+
 def test_git_sha_missing_when_no_dist_info_is_reported_as_missing_not_changed(
     home: Path, monkeypatch
 ):

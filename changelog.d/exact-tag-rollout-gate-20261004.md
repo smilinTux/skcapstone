@@ -1,0 +1,1 @@
+- Resolve exact-tag skcapstone release versions to their Git commit during rollout drift checks, so a tagged install does not falsely report a missing package commit.
