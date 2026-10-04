@@ -156,6 +156,7 @@ record_for() {
 }
 ssh() {
   local arg host=""
+  cat >/dev/null
   for arg in "$@"; do
     case "$arg" in chiap01|chiap02|chiap03|chiap04) host=$arg ;; esac
   done
