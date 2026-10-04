@@ -139,6 +139,6 @@ def test_aliases_and_default_priority_are_accepted_without_rewrite(
     assert box.read_bytes() == before
 
 
-def test_skmail_is_valid_bash() -> None:
+def test_skmail_is_valid_bash(skmail_installation) -> None:
     """The embedded Python remains safely quoted by the Bash wrapper."""
-    subprocess.run(["bash", "-n", str(SCRIPT)], check=True)
+    subprocess.run(["bash", "-n", str(skmail_installation["package"] / "skmail")], check=True)

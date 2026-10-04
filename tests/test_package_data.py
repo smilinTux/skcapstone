@@ -102,6 +102,9 @@ def test_niobe_environment_template_ships_in_wheel_and_sdist(tmp_path: Path) -> 
     wheel = next(outdir.glob("*.whl"))
     with zipfile.ZipFile(wheel) as archive:
         assert archive.read(PACKAGE_PATH) == expected
+        for name in ("skmail", "skmail_writer.py"):
+            path = f"skcapstone/fleet/skmail/{name}"
+            assert archive.read(path) == (ROOT / "src" / path).read_bytes()
 
     sdist = next(outdir.glob("*.tar.gz"))
     with tarfile.open(sdist, "r:gz") as archive:
@@ -109,6 +112,10 @@ def test_niobe_environment_template_ships_in_wheel_and_sdist(tmp_path: Path) -> 
         extracted = archive.extractfile(member)
         assert extracted is not None
         assert extracted.read() == expected
+        for name in ("skmail", "skmail_writer.py"):
+            path = f"skcapstone/fleet/skmail/{name}"
+            item = next(m for m in archive.getmembers() if m.name.endswith(path))
+            assert archive.extractfile(item).read() == (ROOT / "src" / path).read_bytes()
 
     assert _egg_info_fingerprint() == before
 

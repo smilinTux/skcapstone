@@ -1,0 +1,1 @@
+- Card `0fa7a623`: package the existing skmail implementation, install versioned skmail and skmail_writer console entry points, and retain compatibility paths. Test the built installation and preserve content-based mail drift checks.
