@@ -19,6 +19,7 @@ from tests.fleet.remote_review_fixtures import (
     terminal_review,
 )  # noqa: F401
 
+
 @pytest.mark.host_systemd
 def test_native_remote_claim_launch_and_receipt_on_destination(execution):
     e = execution
