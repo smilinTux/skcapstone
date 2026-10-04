@@ -1,6 +1,5 @@
 """D1 policy and host-native resource boundaries, without live services."""
 
-import copy
 import json
 import multiprocessing
 
@@ -208,6 +207,97 @@ def test_ack_loss_or_absent_unit_never_frees_capped_slot(capacity, remote_policy
     admission.write_once(path.parent / "observed.json", observed)
     with pytest.raises(admission.AdmissionError):
         reserve(capacity, remote_policy, "chiap08", "87654321")
+
+
+def test_exact_journal_terminal_frees_collected_slot(capacity, remote_policy, monkeypatch):
+    reserve(capacity, remote_policy, "chiap08", "12345678")
+    path = next((capacity / "fleet/resource-admission/chiap08").glob("*/intent.json"))
+    intent = json.loads(path.read_text())
+    observed = dict(
+        reservation_id=path.parent.name,
+        unit=intent["unit"],
+        memory_max_bytes=3 * GIB,
+        invocation="a" * 32,
+    )
+    admission.write_once(path.parent / "observed.json", observed)
+    state = dict(
+        Id=intent["unit"],
+        LoadState="not-found",
+        ActiveState="inactive",
+        SubState="dead",
+        MainPID="0",
+        ControlPID="0",
+        TasksCurrent="[not set]",
+        ControlGroup="",
+    )
+    monkeypatch.setattr(admission, "unit_state", lambda *a, **kw: state)
+    calls = []
+
+    def journal(argv, **kwargs):
+        calls.append(argv)
+        event = dict(
+            USER_UNIT=intent["unit"],
+            USER_INVOCATION_ID=observed["invocation"],
+            MESSAGE_ID="9d1aaa27d60140bd96365438aad20286",
+            __REALTIME_TIMESTAMP="1791120000000000",
+        )
+        return type("Result", (), {"stdout": json.dumps(event) + "\n", "returncode": 0})()
+
+    monkeypatch.setattr(admission.subprocess, "run", journal)
+    reserve(capacity, remote_policy, "chiap08", "87654321")
+    assert len(calls) == 1
+    assert (path.parent / "journal-terminal.json").exists()
+    # The saved proof remains sufficient if journald later rotates the event.
+    monkeypatch.setattr(
+        admission.subprocess, "run", lambda *a, **kw: pytest.fail("journal replay")
+    )
+    with pytest.raises(admission.AdmissionDeferredError, match="cap reached"):
+        reserve(capacity, remote_policy, "chiap08", "abcdef12")
+
+
+def test_journal_event_for_other_invocation_cannot_free_slot(capacity, remote_policy, monkeypatch):
+    reserve(capacity, remote_policy, "chiap08", "12345678")
+    path = next((capacity / "fleet/resource-admission/chiap08").glob("*/intent.json"))
+    intent = json.loads(path.read_text())
+    admission.write_once(
+        path.parent / "observed.json",
+        dict(
+            reservation_id=path.parent.name,
+            unit=intent["unit"],
+            memory_max_bytes=3 * GIB,
+            invocation="a" * 32,
+        ),
+    )
+    monkeypatch.setattr(
+        admission,
+        "unit_state",
+        lambda unit, **kw: dict(
+            Id=unit,
+            LoadState="not-found",
+            ActiveState="inactive",
+            SubState="dead",
+            MainPID="0",
+            ControlPID="0",
+            TasksCurrent="[not set]",
+            ControlGroup="",
+        ),
+    )
+    event = dict(
+        USER_UNIT=intent["unit"],
+        USER_INVOCATION_ID="b" * 32,
+        MESSAGE_ID="9d1aaa27d60140bd96365438aad20286",
+        __REALTIME_TIMESTAMP="1791120000000000",
+    )
+    monkeypatch.setattr(
+        admission.subprocess,
+        "run",
+        lambda *a, **kw: type(
+            "Result", (), {"stdout": json.dumps(event) + "\n", "returncode": 0}
+        )(),
+    )
+    with pytest.raises(admission.AdmissionDeferredError, match="cap reached"):
+        reserve(capacity, remote_policy, "chiap08", "87654321")
+    assert not (path.parent / "journal-terminal.json").exists()
 
 
 def test_protected_identity_mismatch_holds(capacity, remote_policy, monkeypatch):

@@ -9159,12 +9159,13 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             _launch_argv=reserve_launch(
                 Path(HOME)/".skcapstone",PRODUCTION_POLICY,HOST,unit,
                 {"card_id":cid,"owner":name,"claim_revision":claimed_revision},_launch_argv)
-        except AdmissionDeferredError:
+        except AdmissionDeferredError as _admission_exc:
             # Exact prelaunch capacity refusal proves no intent and no spawn.
             subprocess.run([SKC,"coord","release-claim",cid,"--owner",name,
                             "--expected-claim-revision",claimed_revision,"--agent",name,
                             "--abandon-reason","error"],capture_output=True,text=True)
-            log(d,"NODE_ADMISSION_DEFERRED|%s|%s"%(HOST,cid))
+            log(d,"NODE_ADMISSION_DEFERRED|%s|%s|reason=%s"%(
+                HOST,cid,str(_admission_exc)[:160]))
             continue
         except AdmissionError:
             log(d,"NODE_ADMISSION_CUSTODY_REQUIRED|%s|%s"%(HOST,cid))

@@ -31,6 +31,10 @@ from .production_resources import (
 from .production_test_plan import private_dir, read_json, write_once
 
 MARKER = "SKFLEET_ADMISSION_ID"
+_JOURNAL_TERMINAL_IDS = {
+    "9d1aaa27d60140bd96365438aad20286",  # Stopped
+    "d9b373ed55a64feb8242e02dbe79a49c",  # Failed
+}
 
 
 class AdmissionError(ValueError):
@@ -174,6 +178,11 @@ def _occupancy(root: Path, home: Path, *, strict_terminal=False) -> list[dict]:
             ):
                 raise AdmissionError("reservation acknowledgment is inconsistent")
             if strict_terminal and unit not in units:
+                journal_path = directory / "journal-terminal.json"
+                if journal_path.exists():
+                    if not _valid_journal_terminal(read_json(journal_path), intent, observed):
+                        raise AdmissionError("journal terminal proof differs")
+                    continue
                 state = unit_state(unit, terminal=True)
                 if not (
                     state.get("Id") == unit
@@ -187,6 +196,10 @@ def _occupancy(root: Path, home: Path, *, strict_terminal=False) -> list[dict]:
                     and state.get("TasksCurrent") in {"0", "[not set]"}
                     and state.get("ControlGroup") == ""
                 ):
+                    proof = _journal_terminal_proof(intent, observed, state)
+                    if proof is not None:
+                        write_once(journal_path, proof)
+                        continue
                     units[unit] = {"unit": unit, "reserved_memory_max": maximum}
             continue
         if unit in units:
@@ -224,6 +237,80 @@ def _occupancy(root: Path, home: Path, *, strict_terminal=False) -> list[dict]:
         else:
             units[unit] = {"unit": unit, "reserved_memory_max": maximum}
     return list(units.values())
+
+
+def _valid_journal_terminal(proof: dict, intent: dict, observed: dict) -> bool:
+    """A collected service needs a terminal event for its exact invocation."""
+    return (
+        proof.get("schema") == "skfleet.journal-admission-terminal/v1"
+        and proof.get("intent_sha256") == _digest(intent)
+        and proof.get("reservation_id") == _reservation_id(intent)
+        and proof.get("unit") == intent["unit"]
+        and proof.get("invocation") == observed["invocation"]
+        and proof.get("message_id") in _JOURNAL_TERMINAL_IDS
+        and bool(re.fullmatch(r"[0-9]+", str(proof.get("realtime_us", ""))))
+        and bool(re.fullmatch(r"[0-9a-f]{64}", str(proof.get("entry_sha256", ""))))
+    )
+
+
+def _journal_terminal_proof(intent: dict, observed: dict, state: dict) -> dict | None:
+    """Recover systemd-collected terminal custody without treating absence as proof."""
+    if not (
+        state.get("Id") == intent["unit"]
+        and state.get("LoadState") in {"loaded", "not-found"}
+        and state.get("ActiveState") in {"inactive", "failed"}
+        and state.get("SubState") in {"dead", "failed"}
+        and state.get("MainPID") == "0"
+        and state.get("ControlPID") == "0"
+        and state.get("TasksCurrent") in {"0", "[not set]"}
+        and state.get("ControlGroup") == ""
+    ):
+        return None
+    try:
+        result = subprocess.run(
+            [
+                "journalctl",
+                "--user",
+                "--quiet",
+                "--no-pager",
+                "--output=json",
+                "USER_UNIT=" + intent["unit"],
+                "USER_INVOCATION_ID=" + observed["invocation"],
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    for line in result.stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        if (
+            event.get("USER_UNIT") == intent["unit"]
+            and event.get("USER_INVOCATION_ID") == observed["invocation"]
+            and event.get("MESSAGE_ID") in _JOURNAL_TERMINAL_IDS
+        ):
+            proof = {
+                "schema": "skfleet.journal-admission-terminal/v1",
+                "intent_sha256": _digest(intent),
+                "reservation_id": _reservation_id(intent),
+                "unit": intent["unit"],
+                "invocation": observed["invocation"],
+                "message_id": event["MESSAGE_ID"],
+                "realtime_us": event.get("__REALTIME_TIMESTAMP"),
+                "entry_sha256": hashlib.sha256(line.encode()).hexdigest(),
+            }
+            if (
+                _valid_journal_terminal(proof, intent, observed)
+                and unit_state(intent["unit"], terminal=True) == state
+            ):
+                return proof
+    return None
 
 
 def _terminal_state(state, intent):
@@ -556,7 +643,9 @@ def reserve_launch(
                     charged += 1
             cap = limits_policy.get("max_concurrent_workers")
             if cap is not None and charged >= cap:
-                raise AdmissionDeferredError("worker occupancy cap reached")
+                raise AdmissionDeferredError(
+                    f"worker occupancy cap reached: charged={charged} cap={cap}"
+                )
             if any(row["unit"] == unit for row in rows):
                 raise AdmissionError("unit already occupied or pending")
             ready, reason = local_worker_admission(policy, host, rows)
