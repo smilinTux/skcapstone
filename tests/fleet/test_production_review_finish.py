@@ -244,6 +244,7 @@ def pair(source, monkeypatch, tmp_path, qualified_runtime):  # noqa: F811
     return home, tmp_path / "finish", context, store, calls, receipt
 
 
+@pytest.mark.host_systemd
 def test_real_guarded_native_completion_review_before_source_and_replay_without_writes(pair):
     home, directory, context, store, calls, _ = pair
     guards = []
@@ -270,6 +271,7 @@ def test_real_guarded_native_completion_review_before_source_and_replay_without_
 
 
 @pytest.mark.parametrize("lost", ["link", "review-complete", "source-complete"])
+@pytest.mark.host_systemd
 def test_crash_after_successful_native_write_recovers_exactly_once(pair, lost):
     home, directory, context, store, _, _ = pair
     crashed = []
@@ -294,6 +296,7 @@ def test_crash_after_successful_native_write_recovers_exactly_once(pair, lost):
         assert len([e for e in events if e["action"] == "complete"]) == 1
 
 
+@pytest.mark.host_systemd
 def test_sigkill_after_native_link_before_ack_resumes_in_fresh_controller(pair):
     home, directory, context, store, _, _ = pair
     finish.once(directory / "context.json", context)
@@ -352,6 +355,7 @@ def native_revision(home, card):
 
 
 @pytest.mark.parametrize("change", ["source", "claim", "report", "decision", "FAIL", "tests"])
+@pytest.mark.host_systemd
 def test_changed_identity_artifacts_or_missing_trusted_tests_never_complete(
     pair, change, monkeypatch
 ):
@@ -384,6 +388,7 @@ def test_changed_identity_artifacts_or_missing_trusted_tests_never_complete(
     )
 
 
+@pytest.mark.host_systemd
 def test_false_hosted_ci_events_cannot_be_downgraded_to_source_only_acceptance(pair):
     from skcapstone.review_verdict import _source_only_applicability
 

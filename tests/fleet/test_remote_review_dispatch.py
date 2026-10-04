@@ -149,6 +149,7 @@ def test_old_producer_eligibility_does_not_accept_review(request_record):
     assert not builder.eligible({"id": request_record["card_id"]}, request_record["labels"])
 
 
+@pytest.mark.host_systemd
 def test_review_bundle_roundtrip_inspects_real_commit(proposal, tmp_path):
     from skcapstone.fleet import source_bundle
     from skcapstone.fleet.production_review_evidence import inspect_proposal

@@ -57,6 +57,7 @@ def proposal(tmp_path):
     return workspace, binding, path, report
 
 
+@pytest.mark.host_systemd
 def test_real_git_review_commit_preserves_candidate_and_reads_committed_proposal(proposal):
     workspace, binding, path, report = proposal
     result = inspect_proposal(workspace, **binding)
@@ -69,6 +70,7 @@ def test_real_git_review_commit_preserves_candidate_and_reads_committed_proposal
     assert inspect_proposal(workspace, **binding) == result
 
 
+@pytest.mark.host_systemd
 def test_review_inspection_through_hardened_coordinator_boundary(proposal):
     workspace, binding, _, _ = proposal
     source = Path(__file__).resolve().parents[2] / "src"
@@ -169,6 +171,7 @@ def test_artifact_and_git_custody_refusals(proposal, kind):
 
 
 @pytest.mark.parametrize("verdict", ["FAIL", "BLOCKED"])
+@pytest.mark.host_systemd
 def test_nonpass_proposals_are_retained_without_becoming_acceptance(proposal, verdict):
     workspace, binding, path, _ = proposal
     body = json.loads(path.read_text())
