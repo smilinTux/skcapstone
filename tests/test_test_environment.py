@@ -64,7 +64,9 @@ def test_compat_refuses_production_before_build(tmp_path):
     assert not list(tmp_path.iterdir())
 
 
-@pytest.mark.parametrize("script", ["ci/run-python311-compat.sh", "e2e-test.sh", "ci-check.sh"])
+@pytest.mark.parametrize(
+    "script", ["ci/run-python311-compat.sh", "e2e-test.sh", "ci-check.sh", "verify_install.sh"]
+)
 def test_entrypoint_does_not_source_bash_env(tmp_path, script):
     """A poison startup file must never execute, even before the guard runs."""
     marker = tmp_path / "sourced"
