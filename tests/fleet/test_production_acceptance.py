@@ -232,9 +232,9 @@ def test_controller_requires_trusted_tests_and_finishes_without_legacy_release(
         home, policy, process_check=lambda card: {"sessions": [], "units": []}
     )
     assert len(results) == 1
-    assert results[0]["state"] == ("accepted" if tests_ready else "awaiting-trusted-tests"), (
-        results
-    )
+    assert results[0]["state"] == (
+        "accepted" if tests_ready else "awaiting-trusted-tests"
+    ), results
     row = store.fold(review["card"])
     assert row.status.value == ("done" if tests_ready else "doing")
     assert row.owner == (None if tests_ready else review["owner"])
