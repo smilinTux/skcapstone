@@ -30,15 +30,16 @@ already has a documented case of three signals -- version strings, pip
 metadata, and actual content -- disagreeing silently; a third
 "healthy" would just be a fourth).
 
-What "deploy to a node" means here, chosen deliberately: the four steps
-Chef performed by hand on 2026-09-17, in the order that made them safe --
-``git pull`` in the node's checkout, ``pip install -e .`` (the dispatcher
+Deployment preserves the package-before-artifacts order from Chef's
+2026-09-17 activation: ``git pull`` in the node's checkout, ``pip install -e .``
+(the dispatcher
 script imports ``GATED_EXIT_CODE`` from the installed package, so a newer
 script against an older package fails at import and takes that host's
-dispatcher down: package first, then script), copying
-``scripts/fleet/skfleet-rotate.py`` to ``~/.local/bin``, then converging
+dispatcher down: package first, then script), installing per-host artifacts
+(production compatibility shims delegate into the native venv), installing
+canonical units and reloading their definitions, then converging
 (``skcapstone fleet sknoded --once``). ``record_deployment`` runs before
-any of those four, never after: a failure mid-node must still leave a
+any of those changes, never after: a failure mid-node must still leave a
 previous-state record for Task 3's rollback to use.
 
 Local versus remote, and why both exist: ``rollout_drift.detect_drift``
@@ -942,7 +943,8 @@ def execute_rollout(
                     drift=(),
                     detail=(
                         f"dry run: would record deployment, then git pull, pip install, "
-                        f"copy {PER_HOST_ARTIFACT_NAMES}, and converge on {node}; not executed"
+                        f"install {PER_HOST_ARTIFACT_NAMES} and canonical units, "
+                        f"reload definitions, and converge on {node}; not executed"
                     ),
                 )
             )
@@ -1114,8 +1116,9 @@ def execute_rollback(
                     drift=(),
                     detail=(
                         f"dry run: would look up {node}'s recorded previous manifest and, "
-                        "if one exists, record it, check out its git_sha, reinstall, copy "
-                        f"{PER_HOST_ARTIFACT_NAMES}, converge, then gate the node; not executed"
+                        "if one exists, record it, preserve the installer, check out its "
+                        f"git_sha, reinstall, install {PER_HOST_ARTIFACT_NAMES} and canonical "
+                        "units, reload definitions, converge, then gate the node; not executed"
                     ),
                 )
             )
