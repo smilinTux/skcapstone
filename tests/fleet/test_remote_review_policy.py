@@ -5,6 +5,7 @@ import json
 import multiprocessing
 
 import pytest
+from skcoord.card_store import CardCore, CardStore
 
 from skcapstone.fleet import production_admission as admission
 from skcapstone.fleet.production_policy import load_production_policy
@@ -104,6 +105,18 @@ def command(unit):
 
 
 def reserve(home, policy, host, token, kind="review"):
+    # The deployed reserve/start fence locks a real, exactly claimed core.
+    cards = CardStore(home)
+    owner = "pi-seraph-" + host + "-" + token
+    if cards.fold(token) is None:
+        cards.create(
+            CardCore(
+                id=token,
+                title="Synthetic remote capacity claim",
+                initial_owner=owner,
+                initial_claim_revision=token * 4,
+            )
+        )
     prefix = "skfleet-worker-deepseek-" if kind == "review" else "skfleet-builder-" + kind + "-"
     unit = prefix + token + ".service"
     return admission.reserve_launch(
@@ -111,7 +124,7 @@ def reserve(home, policy, host, token, kind="review"):
         policy,
         host,
         unit,
-        dict(card_id=token, owner="pi-seraph-" + host + "-" + token, claim_revision=token * 4),
+        dict(card_id=token, owner=owner, claim_revision=token * 4),
         command(unit),
     )
 
