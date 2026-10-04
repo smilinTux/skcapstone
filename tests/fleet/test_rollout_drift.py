@@ -156,6 +156,11 @@ def _install_all_script_files(home: Path) -> None:
             _, _, rest = content.partition(b"\n")
             content = b"#!" + str(home / ".skenv" / "bin" / "python").encode() + b"\n" + rest
         dest.write_bytes(content)
+    package = REPO_ROOT / "src/skcapstone/fleet/skmail"
+    target = home / ".skenv/lib/python3.12/site-packages/skcapstone/fleet/skmail"
+    target.mkdir(parents=True, exist_ok=True)
+    for name in ("__init__.py", "__main__.py", "skmail", "skmail_writer.py"):
+        shutil.copyfile(package / name, target / name)
 
 
 def _matching_host(home: Path, git_sha: str = "deadbeef") -> None:
@@ -587,18 +592,14 @@ def test_hand_installed_dispatcher_out_of_scope_enablement_is_not_checked(home: 
 
 
 # ---------------------------------------------------------------------------
-# pyproject.toml script-files: the skmail incident, generalised. skmail is
-# declared in script-files now, but the detector must catch the NEXT
-# divergent copy the same way, for any entry in that list, not just skmail.
+# The remaining script-files still require content-based drift detection.
+# The packaged skmail implementation is checked separately below.
 # ---------------------------------------------------------------------------
 
 
-def test_script_files_list_includes_skmail():
-    """skmail is declared in pyproject.toml's script-files (the specific bug
-    already fixed); this pins that so a regression there fails loudly here
-    too, not only in a packaging test far away.
-    """
-    assert "scripts/fleet/skmail" in rollout_drift._script_files(REPO_ROOT)
+def test_script_files_list_keeps_writer_compatibility():
+    """The writer's historical executable name remains installed for callers."""
+    assert "scripts/fleet/skmail_writer.py" in rollout_drift._script_files(REPO_ROOT)
 
 
 def test_divergent_script_file_binary_is_reported(home: Path, monkeypatch):
@@ -610,12 +611,12 @@ def test_divergent_script_file_binary_is_reported(home: Path, monkeypatch):
     monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
     monkeypatch.setenv("SKFLEET_NODE", "node-test")
     _matching_host(home)
-    installed = home / ".skenv" / "bin" / "skmail"
+    installed = home / ".skenv" / "bin" / "skmail_writer.py"
     installed.write_bytes(installed.read_bytes() + b"\n# a divergent binary on this host\n")
 
     drifts = detect_drift(_manifest(), home, REPO_ROOT)
 
-    changed = [d for d in drifts if d.artifact == "script:skmail"]
+    changed = [d for d in drifts if d.artifact == "script:skmail_writer.py"]
     assert len(changed) == 1
     assert changed[0].kind == "changed"
     assert changed[0].found is not None
@@ -626,11 +627,11 @@ def test_missing_script_file_is_reported_distinctly_from_changed(home: Path, mon
     monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
     monkeypatch.setenv("SKFLEET_NODE", "node-test")
     _matching_host(home)
-    (home / ".skenv" / "bin" / "skmail").unlink()
+    (home / ".skenv" / "bin" / "skmail_writer.py").unlink()
 
     drifts = detect_drift(_manifest(), home, REPO_ROOT)
 
-    missing = [d for d in drifts if d.artifact == "script:skmail"]
+    missing = [d for d in drifts if d.artifact == "script:skmail_writer.py"]
     assert len(missing) == 1
     assert missing[0].kind == "missing"
     assert missing[0].found is None
@@ -821,3 +822,24 @@ def test_the_three_surfaces_are_named_distinctly(home: Path, monkeypatch):
     assert "checkout:git_sha" in artifacts
     assert "package:git_sha" in artifacts
     assert "dispatcher:skfleet-worker-wrapper.py" in artifacts
+
+
+@pytest.mark.parametrize("name", ("__init__.py", "__main__.py", "skmail", "skmail_writer.py"))
+@pytest.mark.parametrize("mutation", ("missing", "changed"))
+def test_packaged_mail_content_drift_is_reported(home, monkeypatch, name, mutation):
+    """Moving mail out of script-files must preserve detection of real drift."""
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+    path = home / ".skenv/lib/python3.12/site-packages/skcapstone/fleet/skmail" / name
+    if mutation == "missing":
+        path.unlink()
+    else:
+        path.write_bytes(path.read_bytes() + b"\n# changed implementation\n")
+    found = [
+        d
+        for d in detect_drift(_manifest(), home, REPO_ROOT)
+        if d.artifact == f"package:skmail/{name}"
+    ]
+    assert len(found) == 1
+    assert found[0].kind == mutation
