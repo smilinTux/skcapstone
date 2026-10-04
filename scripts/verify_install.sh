@@ -1,9 +1,11 @@
-#!/bin/bash
+#!/usr/bin/env -S -u BASH_ENV bash
 # verify_install.sh — Verify skcapstone pip install works cleanly.
 # Creates a fresh venv, installs each package, runs --version, reports pass/fail.
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+"${PYTHON_BIN:-python3}" "$REPO_ROOT/scripts/ci/test_environment.py" || exit 1
+unset BASH_ENV ENV
 VENV_DIR="/tmp/skcapstone_verify_venv_$$"
 PASS=0
 FAIL=0
@@ -44,6 +46,7 @@ hr
 "$PYTHON" -m venv "$VENV_DIR" || { echo "ERROR: venv creation failed"; exit 1; }
 PIP="$VENV_DIR/bin/pip"
 PYEXE="$VENV_DIR/bin/python"
+"$PYEXE" "$REPO_ROOT/scripts/ci/test_environment.py" || exit 1
 
 "$PIP" install --quiet --upgrade pip wheel setuptools 2>&1 | tail -1
 
