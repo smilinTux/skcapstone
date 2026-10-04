@@ -20,6 +20,7 @@ NAMES = (
     "_load_workspace_cooldown",
     "_record_workspace_cooldown",
     "_workspace_cooldown_active",
+    "_remote_review_cooldown_exempt",
 )
 CONSTANTS = {
     "_WORKSPACE_COOLDOWN_DEFAULT_SECONDS",
@@ -86,6 +87,23 @@ def test_an_unrecorded_card_is_never_skipped(tmp_path, monkeypatch):
     monkeypatch.setenv("SKFLEET_WORKSPACE_COOLDOWN_SECONDS", "100")
     ns["_record_workspace_cooldown"]("aaa11111", now=1000.0)
     assert ns["_workspace_cooldown_active"]("bbb22222", now=1001.0) is False
+
+
+def test_local_cooldown_does_not_suppress_one_enabled_remote_review(tmp_path):
+    ns = _load(tmp_path)
+    ns["_record_workspace_cooldown"]("aaa11111", now=1000.0)
+    ns["_record_workspace_cooldown"]("bbb22222", now=1000.0)
+    table = ns["_load_workspace_cooldown"]()
+    policy = {"remote_review": {"enabled": True, "card_ids": ["aaa11111"]}}
+    review = (None, None, "aaa11111", None, ["review"])
+    other_review = (None, None, "bbb22222", None, ["review"])
+    source = (None, None, "aaa11111", None, ["source-only"])
+    assert ns["_workspace_cooldown_active"]("aaa11111", table, now=1001.0)
+    assert ns["_remote_review_cooldown_exempt"](review, policy)
+    assert not ns["_remote_review_cooldown_exempt"](other_review, policy)
+    assert not ns["_remote_review_cooldown_exempt"](source, policy)
+    policy["remote_review"]["enabled"] = False
+    assert not ns["_remote_review_cooldown_exempt"](review, policy)
 
 
 def test_zero_window_disables_the_throttle(tmp_path, monkeypatch):
@@ -159,3 +177,7 @@ def test_the_pool_filter_runs_after_every_rebuild_of_pool():
     assert source.index(skip) < source.index(
         owned
     ), "cooldown filter must run BEFORE owned is derived from pool"
+    assert (
+        "and not _remote_review_cooldown_exempt(row, PRODUCTION_POLICY)"
+        in source[source.index(skip) - 600 : source.index(owned)]
+    ), "remote review must bypass the local workspace cooldown in the actual pool filter"

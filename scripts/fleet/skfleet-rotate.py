@@ -1051,6 +1051,17 @@ def _workspace_cooldown_active(card_id, cooldown=None, now=None):
     return (moment - stamp) < window
 
 
+def _remote_review_cooldown_exempt(row, policy):
+    """A local workspace failure must not suppress an explicitly remote review."""
+    review = (policy or {}).get("remote_review", {})
+    cards = review.get("card_ids")
+    return bool(
+        review.get("enabled")
+        and "review" in row[4]
+        and (cards is None or row[2] in cards)
+    )
+
+
 def _preclaim_source_ref(repository, base_ref, base_revision, runner=subprocess.run):
     """Check reconstructability before creating a reviewer workspace."""
     candidates = [base_ref] if base_ref.startswith("refs/") else [
@@ -7624,7 +7635,7 @@ def owns(cid):
     # partition also apply would strand any card whose pin and hash slice disagree:
     # pinned to chiap08 but hashed into chiap02's slice means NO host takes it.
     return owner_host(cid) == HOST
-# Drop recently blocked workspaces LAST, immediately before `owned` is derived.
+# Drop recently blocked local workspaces LAST, immediately before `owned` is derived.
 # This must sit after the POOL_V2 authority rebuild at _pool_v2_authority_rows
 # and after _seraph_unique_source_heads, both of which REPLACE `pool` wholesale.
 # Filtering earlier is silently undone: measured 2026-09-21, the filter logged
@@ -7635,6 +7646,7 @@ if _workspace_cooldown_table:
     _cooling = sorted(
         row[2] for row in pool
         if _workspace_cooldown_active(row[2], _workspace_cooldown_table)
+        and not _remote_review_cooldown_exempt(row, PRODUCTION_POLICY)
     )
     if _cooling:
         _cooling_set = set(_cooling)
