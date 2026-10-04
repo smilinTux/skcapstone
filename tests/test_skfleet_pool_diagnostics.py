@@ -125,7 +125,7 @@ def test_retained_remote_review_is_not_reported_as_foreign() -> None:
     source = ROTATE.read_text(encoding="utf-8")
     assert "REVIEW_REMOTE_HELD|%s|%s|reason=retained-custody" in source
     assert source.index("_remote_held_ids = sorted(") < source.index(
-        "owned = [row for row in owned\n         if not (\"review\" in row[4]"
+        'owned = [row for row in owned\n         if not ("review" in row[4]'
     )
     assert "_builder_returned_ids, _unrouted_candidates, _remote_held_ids)" in source
 
