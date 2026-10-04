@@ -28,6 +28,8 @@ def test_native_remote_claim_launch_and_receipt_on_destination(execution):
     assert len(e["launches"]) == 1
     assert {"review", "seat-seraph", "source-only"} <= set(request["labels"])
     assert "PRODUCTION SOURCE-ONLY INDEPENDENT REVIEW" in e["launches"][0][0][-1]
+    expected_path = f"PATH={Path.home()}/.skenv/bin:{Path.home()}/.local/bin:"
+    assert expected_path in str(e["launches"][0][0])
     card = e["source"]["store"].fold(e["card"])
     assert card.owner == request["reviewer"]
     events = e["source"]["store"]._read_events(e["card"])

@@ -211,6 +211,11 @@ def service_state(status: dict, process=None) -> tuple[bool | None, int | None]:
     return None, None
 
 
+def review_worker_path(home: Path, inherited: str) -> str:
+    """Prefer the installed user tools over system binaries in a clean worker."""
+    return os.pathsep.join((str(home / ".skenv/bin"), str(home / ".local/bin"), inherited))
+
+
 def launch_review(paths, home, request, card, handoff, workspace, *, launcher=None):
     """Launch the existing production wrapper under destination-native custody."""
     import shutil
@@ -248,7 +253,7 @@ def launch_review(paths, home, request, card, handoff, workspace, *, launcher=No
         "/usr/bin/env",
         "-i",
         "HOME=" + str(Path.home()),
-        "PATH=" + os.environ.get("PATH", "/usr/bin:/bin"),
+        "PATH=" + review_worker_path(Path.home(), os.environ.get("PATH", "/usr/bin:/bin")),
         "LANG=C.UTF-8",
         "SKCAPSTONE_HOME=" + str(home),
         "SKAGENT=" + owner,
