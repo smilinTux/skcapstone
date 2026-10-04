@@ -4,6 +4,7 @@ import ast
 import copy
 import json
 import socket
+import sys
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -14,10 +15,57 @@ from skcapstone.fleet import production_test_profile as profile
 from tests.fleet.test_production_tests import setup  # noqa: F401
 
 
+def _site(prefix: Path) -> Path:
+    version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    return prefix / "lib" / version / "site-packages"
+
+
 def test_runtime_fingerprint_tracks_changed_installed_bytes(qualified_runtime):
     before = plan.runtime_fingerprint()
     assert plan.runtime_fingerprint() == before
     (qualified_runtime / "bin/ruff").write_bytes(b"changed synthetic runtime\n")
+    assert plan.runtime_fingerprint() != before
+
+
+def test_runtime_fingerprint_ignores_install_provenance_and_subject_code(qualified_runtime):
+    before = plan.runtime_fingerprint()
+    site = _site(qualified_runtime)
+    metadata = site / "skcapstone-0.15.201.dist-info"
+    metadata.mkdir()
+    (metadata / "RECORD").write_text("new wheel provenance\n")
+    subject = site / "skcapstone"
+    subject.mkdir()
+    (subject / "unrelated.py").write_text("changed application code\n")
+    assert plan.runtime_fingerprint() == before
+
+
+def test_runtime_fingerprint_tracks_harness_and_startup_bytes(qualified_runtime):
+    before = plan.runtime_fingerprint()
+    (plan.HARNESS_ROOT / "production_test_worker.py").write_text("changed trusted executor\n")
+    changed = plan.runtime_fingerprint()
+    assert changed != before
+    site = _site(qualified_runtime)
+    startup = site / "__editable__.skcapstone-0.15.200.pth"
+    startup.write_text("/work/source\n")
+    with_startup = plan.runtime_fingerprint()
+    assert with_startup != changed
+    startup.rename(site / "__editable__.skcapstone-0.15.201.pth")
+    assert plan.runtime_fingerprint() == with_startup
+    (site / "__editable__.skcapstone-0.15.201.pth").write_text("/different/source\n")
+    assert plan.runtime_fingerprint() != with_startup
+    (site / "__editable__.skcapstone-0.15.200.pth").write_text("/work/source\n")
+    with pytest.raises(plan.TestEvidenceError, match="ambiguous"):
+        plan.runtime_fingerprint()
+
+
+def test_runtime_fingerprint_tracks_test_tool_metadata(qualified_runtime):
+    site = _site(qualified_runtime)
+    metadata = site / "pytest-9.1.dist-info"
+    metadata.mkdir()
+    path = metadata / "METADATA"
+    path.write_text("Version: 9.1\n")
+    before = plan.runtime_fingerprint()
+    path.write_text("Version: 9.2\n")
     assert plan.runtime_fingerprint() != before
 
 

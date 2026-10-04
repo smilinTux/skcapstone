@@ -47,14 +47,26 @@ BINDING_KEYS = frozenset(
     }
 )
 _RUNTIME_CACHE = {}
+HARNESS_ROOT = Path(__file__).resolve().parent
+TOOL_PACKAGES = ("pytest", "_pytest", "ruff", "pluggy", "iniconfig", "packaging")
+HARNESS_MODULES = (
+    "production_test_plan.py",
+    "production_test_profile.py",
+    "production_test_worker.py",
+    "production_test_node.py",
+    "production_tests.py",
+    "production_admission.py",
+    "production_builder.py",
+    "production_policy.py",
+)
 
 
 def runtime_fingerprint() -> str:
-    """Pin metadata and executable sources for selected qualified test dependencies.
+    """Pin the test toolchain and trusted executor, not package install provenance.
 
     Cache only exact inode/size/mtime/ctime observations, never a timed success.
-    All distribution metadata and startup .pth files are included; selected
-    package Python/native modules cover pytest, ruff and the local stack imports.
+    Candidate source is bound separately and its tests run from /work/src. A
+    new SKCapstone wheel RECORD or unrelated module cannot change this contract.
     """
     site = (
         PREFIX
@@ -62,37 +74,29 @@ def runtime_fingerprint() -> str:
         / f"python{sys.version_info.major}.{sys.version_info.minor}"
         / "site-packages"
     )
-    files = set(site.glob("*.dist-info/METADATA")) | set(site.glob("*.dist-info/RECORD"))
-    files.update(site.glob("*.pth"))
-    files.add(PREFIX / "bin/ruff")
-    for package in (
-        "pytest",
-        "_pytest",
-        "ruff",
-        "skcoord",
-        "skcapstone",
-        "pydantic",
-        "pydantic_core",
-        "pluggy",
-        "yaml",
-        "rich",
-        "click",
-    ):
+    files = {PREFIX / "bin/ruff"}
+    for package in TOOL_PACKAGES:
         directory = site / package
         if not directory.is_dir():
             raise TestEvidenceError("qualified runtime dependency is missing: " + package)
         files.update(
             path for path in directory.rglob("*") if path.suffix in {".py", ".so", ".pyd"}
         )
+    for tool in ("pytest", "ruff", "pluggy", "iniconfig", "packaging"):
+        files.update(site.glob(tool + "-*.dist-info/METADATA"))
     files.update(
         path for path in (site / "sitecustomize.py", site / "usercustomize.py") if path.exists()
     )
-    if len(files) > 10000:
+    startup = sorted(site.glob("*.pth"))
+    harness = [HARNESS_ROOT / name for name in HARNESS_MODULES]
+    if len(files) + len(startup) + len(harness) > 10000:
         raise TestEvidenceError("qualified runtime fingerprint exceeds file bound")
     rows, total = [], 0
-    for path in sorted(files):
+
+    def add(path: Path, label: str, root: Path) -> None:
+        nonlocal total
         info = path.lstat()
-        if not stat.S_ISREG(info.st_mode) or not path.resolve().is_relative_to(PREFIX.resolve()):
+        if not stat.S_ISREG(info.st_mode) or not path.resolve().is_relative_to(root.resolve()):
             raise TestEvidenceError("qualified runtime contains redirected modules")
         total += info.st_size
         if total > 64 * 1024 * 1024:
@@ -102,7 +106,25 @@ def runtime_fingerprint() -> str:
         if digest is None:
             digest = sha(path.read_bytes())
             _RUNTIME_CACHE[key] = digest
-        rows.append((str(path.relative_to(PREFIX)), digest))
+        rows.append((label, digest))
+
+    for path in sorted(files):
+        add(path, str(path.relative_to(PREFIX)), PREFIX)
+    startup_names = set()
+    for path in startup:
+        name = path.name
+        if name.startswith("__editable__."):
+            package, separator, version = name[:-4].rpartition("-")
+            if separator and version[:1].isdigit():
+                name = package + ".pth"
+        if name in startup_names:
+            raise TestEvidenceError("qualified runtime startup files are ambiguous")
+        startup_names.add(name)
+        # Editable .pth filenames contain a wheel version that does not alter
+        # startup behavior. Keep the package name and ordering, and hash bytes.
+        add(path, "startup/" + name, PREFIX)
+    for path in harness:
+        add(path, "harness/" + path.name, HARNESS_ROOT)
     return sha(json.dumps(rows, separators=(",", ":")).encode())
 
 

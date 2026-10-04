@@ -28,3 +28,14 @@ The API trusts the operator-supplied hash of actual new qualification evidence,
 as the existing qualification API does. It does not run recipes, authorize
 claims, release reservations, repin plans or restore automated admission.
 Installation requires the separate rollout barrier and native qualification.
+
+The runtime hash covers the installed Python test toolchain, interpreter
+startup `.pth` contents, and the trusted SKCapstone test executor modules.
+Distribution `RECORD` files and unrelated package source are not test
+qualification inputs. Candidate source, the approved recipe, card criteria,
+policy, interpreter, and actual test results have their own checks. A main
+rollout that changes only unrelated package code or wheel provenance therefore
+keeps existing profiles usable. A change to the toolchain, startup path, or
+trusted executor still requires governed qualification before new producers
+launch. Profiles made with the previous whole-package hash need one final
+qualification after this change lands; their immutable history is preserved.

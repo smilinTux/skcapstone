@@ -31,22 +31,15 @@ def qualified_runtime(tmp_path, monkeypatch):
         / f"python{sys.version_info.major}.{sys.version_info.minor}"
         / "site-packages"
     )
-    for package in (
-        "pytest",
-        "_pytest",
-        "ruff",
-        "skcoord",
-        "skcapstone",
-        "pydantic",
-        "pydantic_core",
-        "pluggy",
-        "yaml",
-        "rich",
-        "click",
-    ):
+    for package in plan.TOOL_PACKAGES:
         directory = site / package
         directory.mkdir(parents=True)
         (directory / "__init__.py").write_text("# Synthetic qualified dependency.\n")
+    harness = tmp_path / "harness"
+    harness.mkdir()
+    for name in plan.HARNESS_MODULES:
+        (harness / name).write_text("# Synthetic trusted executor.\n")
+    monkeypatch.setattr(plan, "HARNESS_ROOT", harness)
     for module in (plan, native, worker):
         monkeypatch.setattr(module, "PREFIX", prefix)
     monkeypatch.setattr(plan, "_RUNTIME_CACHE", {})
