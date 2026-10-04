@@ -173,8 +173,14 @@ def test_accepted_pair_survives_runtime_upgrade_without_any_write(accepted, monk
     a = accepted
     before = {p: p.read_bytes() for p in a.s.home.rglob("*") if p.is_file()}
     monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "0" * 64)
-    with pytest.raises(native.TestEvidenceError):
-        native.validate_test_receipt(a.s.home, a.s.binding, a.s.workspace)
+    if "profile" in a.s.plan:
+        with pytest.raises(native.TestEvidenceError):
+            native.validate_test_receipt(a.s.home, a.s.binding, a.s.workspace)
+    else:
+        assert (
+            native.validate_test_receipt(a.s.home, a.s.binding, a.s.workspace)
+            == a.historical["test_receipt"]
+        )
     monkeypatch.setattr(finish, "once", lambda *args: pytest.fail("historical write attempted"))
     assert replay(a) == a.historical
     assert {p: p.read_bytes() for p in a.s.home.rglob("*") if p.is_file()} == before
@@ -235,12 +241,17 @@ def test_incomplete_history_never_replays_a_native_write(accepted, missing):
         replay(a)
 
 
-def test_unfinished_pair_still_requires_current_runtime(accepted, monkeypatch):
+def test_unfinished_pair_recovers_only_completed_test(accepted, monkeypatch):
     a = accepted
     (a.directory / "finished.json").unlink()
     monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "0" * 64)
-    with pytest.raises(native.TestEvidenceError):
-        replay(a)
+    if "profile" in a.s.plan:
+        with pytest.raises(native.TestEvidenceError):
+            replay(a)
+    else:
+        # Every native write was already acknowledged; only the final marker is missing.
+        assert replay(a) == a.historical
+        assert (a.directory / "finished.json").exists()
 
 
 @pytest.mark.parametrize(
