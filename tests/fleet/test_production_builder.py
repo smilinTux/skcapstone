@@ -208,6 +208,13 @@ def test_production_consumer_uses_real_resource_service_and_stable_claims(
     ]
     monkeypatch.setattr(production.socket, "gethostname", lambda: "worker")
     rows = {row["card_id"]: _folded(id=row["card_id"]) for row in requests}
+    # The deployed claim fence requires a native core even with synthetic folds.
+    from skcoord.card_store import CardCore
+
+    for row in requests:
+        builder.CardStore(tmp_path).create(
+            CardCore(id=row["card_id"], title="Synthetic production claim")
+        )
 
     def claim(_board, owner, card):
         rows[card].owner = owner

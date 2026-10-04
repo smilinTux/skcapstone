@@ -188,6 +188,18 @@ def ready_retry(paths, production_setup, monkeypatch, tmp_path):
     )
     card = _folded(owner=owner, archived=False)
     card.meta["_claim_revision"] = "a" * 32
+    # Deployed admission now locks an existing native core at reserve and spawn.
+    # Preserve the synthetic fold below while exercising the real lock anchor.
+    from skcoord.card_store import CardCore
+
+    builder.CardStore(tmp_path).create(
+        CardCore(
+            id=request["card_id"],
+            title="Synthetic retry claim",
+            initial_owner=owner,
+            initial_claim_revision="a" * 32,
+        )
+    )
     monkeypatch.setattr(builder.CardStore, "fold", lambda *args: card)
     monkeypatch.setattr(retry, "_latest_outcome", lambda *args: {})
     monkeypatch.setattr(retry, "card_mutation_lock", lambda *args: nullcontext())
