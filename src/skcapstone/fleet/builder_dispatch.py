@@ -507,6 +507,9 @@ def _offer(paths, core, labels, *, writer, now=None):
             prior = (
                 _validated_status(status_path(paths, view.name, card_id), paths, view.name) or {}
             )
+            if _unclaimed_expired_offer(existing, prior):
+                selected_node = view.name
+                break
             if prior.get("request_id") == existing.get("request_id") and (
                 prior.get("state") in TERMINAL_STATES
                 and not (
@@ -586,6 +589,19 @@ def _offer(paths, core, labels, *, writer, now=None):
     return request
 
 
+def _unclaimed_expired_offer(request: dict, status: dict) -> bool:
+    """Retry only a node-proven expiry that never acquired source custody."""
+    return bool(
+        status.get("request_id") == request.get("request_id")
+        and status.get("state") == "blocked"
+        and status.get("error") == "unclaimed offer expired"
+        and status.get("attempt") == 0
+        and not status.get("owner")
+        and not status.get("claim_revision")
+        and _lease_expired(request, _now())
+    )
+
+
 def decline_reason(
     paths: FleetPaths,
     core: dict,
@@ -636,6 +652,8 @@ def decline_reason(
             existing.get("labels"),
         ) == (repository, base_ref, revision, normalized_labels)
         if same_binding:
+            if _unclaimed_expired_offer(existing, prior):
+                return None
             if (
                 same_generation
                 and prior.get("state") in TERMINAL_STATES

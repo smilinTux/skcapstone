@@ -390,6 +390,67 @@ def test_expired_unclaimed_offer_is_terminal_without_claim(
     assert status["attempt"] == 0
 
 
+def test_node_proven_unclaimed_expiry_can_receive_fresh_offer(
+    paths, operator, noded41, monkeypatch, tmp_path
+) -> None:
+    _node(paths, operator, noded41)
+    writer = store.Writer(role="scheduler", node="niobe", identity="")
+    first = builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=writer,
+        now=datetime(2020, 1, 1, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(
+        builder_dispatch.Board, "claim_task", lambda *_args: pytest.fail("claimed")
+    )
+    builder_dispatch.consume_one(paths, tmp_path, first["node"])
+    prior = builder_dispatch._load(
+        builder_dispatch.status_path(paths, first["node"], first["card_id"])
+    )
+    assert prior["error"] == "unclaimed offer expired"
+    assert builder_dispatch.decline_reason(paths, _card(), ["sk-m", "source-only"]) is None
+
+    second = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
+    assert second["request_id"] != first["request_id"]
+    assert second["base_revision"] == first["base_revision"]
+    assert (
+        builder_dispatch._load(
+            builder_dispatch.status_path(paths, first["node"], first["card_id"])
+        )
+        == prior
+    )
+
+
+@pytest.mark.parametrize("change", ["attempt", "owner", "error", "lease"])
+def test_uncertain_expired_builder_offer_stays_held(paths, operator, noded41, change) -> None:
+    _node(paths, operator, noded41)
+    writer = store.Writer(role="scheduler", node="niobe", identity="")
+    first = builder_dispatch.offer(
+        paths,
+        _card(),
+        ["sk-m", "source-only"],
+        writer=writer,
+        now=datetime(2020, 1, 1, tzinfo=timezone.utc),
+    )
+    status_fields = dict(attempt=0, error="unclaimed offer expired")
+    if change == "attempt":
+        status_fields["attempt"] = 1
+    elif change == "owner":
+        status_fields["owner"] = "pi-codex-builder-node-ziowk01-24b00003"
+    elif change == "error":
+        status_fields["error"] = "policy changed"
+    else:
+        first["lease_expires_at"] = "2099-01-01T00:00:00Z"
+        builder_dispatch.atomic_write_text(
+            builder_dispatch.request_path(paths, first["node"], first["card_id"]),
+            json.dumps(first),
+        )
+    builder_dispatch._write_status(paths, first["node"], first, "blocked", **status_fields)
+    assert builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer) is None
+
+
 def test_offer_rejects_wrong_scheduler_and_lane_pins(paths) -> None:
     wrong = store.Writer(role="scheduler", node="atlas", identity="")
     try:
