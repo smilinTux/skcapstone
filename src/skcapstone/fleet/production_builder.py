@@ -219,7 +219,7 @@ def launch_review(paths, home, request, card, handoff, workspace, *, launcher=No
 
     from ..seat_runtime import append_review_launch_receipt
     from . import builder_dispatch, review_dispatch
-    from .production_admission import MARKER, _digest, reserve_launch, unit_state
+    from .production_admission import MARKER, _digest, reserve_launch, start_reserved, unit_state
     from .production_brief import production_source_review_brief
     from .production_receipts import persist_production_snapshot
     from .production_review_finish import read_json
@@ -381,16 +381,19 @@ def launch_review(paths, home, request, card, handoff, workspace, *, launcher=No
         command=command,
     )
     builder_dispatch._write_status(paths, request["node"], request, "admission-pending", **pending)
-    if launcher is None:
-        process = subprocess.Popen(
-            argv,
+
+    def spawn(command):
+        if launcher is not None:
+            return launcher(command, workspace)
+        return subprocess.Popen(
+            command,
             cwd=workspace,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-    else:
-        process = launcher(argv, workspace)
+
+    process = start_reserved(home, host, argv, spawn)
     builder_dispatch._PROCESSES[request["request_id"]] = process
     # A successful Popen is not a service acknowledgment.
     for _ in range(20):
