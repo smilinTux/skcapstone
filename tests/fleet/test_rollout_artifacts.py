@@ -3,7 +3,6 @@
 import hashlib
 import shlex
 import subprocess
-from pathlib import Path
 
 import pytest
 
@@ -159,3 +158,12 @@ def test_unit_install_reloads_definitions_without_enable_start_or_restart():
         command = dict(steps)["install_units"]
         assert "systemctl --user daemon-reload" in command
         assert all(action not in command for action in (" enable", " start", " restart"))
+
+
+def test_rollback_retains_tool_before_checkout_without_importing_new_manifest_symbol():
+    """The previous main predates rollout_artifacts; reset must not remove the installer."""
+    names = [name for name, _ in _ROLLBACK_STEPS]
+    assert names.index("preserve_rollout_tool") < names.index("git_checkout")
+    commands = dict(_ROLLBACK_STEPS)
+    for name in ("copy_skfleet_rotate", "copy_skfleet_worker_wrapper", "install_units"):
+        assert "~/.cache/skcapstone-rollout/rollout_artifacts.py" in commands[name]

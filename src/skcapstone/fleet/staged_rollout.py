@@ -128,7 +128,9 @@ DISPATCHER_SCRIPT_NAME = DISPATCHER_RELATIVE_PATH.name
 PER_HOST_ARTIFACT_NAMES = ", ".join(artifact.name for artifact in PER_HOST_ARTIFACTS)
 
 
-def _copy_steps() -> tuple[tuple[str, str], ...]:
+def _copy_steps(
+    tool: str = "-m skcapstone.fleet.rollout_artifacts",
+) -> tuple[tuple[str, str], ...]:
     """One installation step per declared per-host artifact.
 
     Derived from ``deployment_manifest.PER_HOST_ARTIFACTS`` rather than
@@ -147,8 +149,7 @@ def _copy_steps() -> tuple[tuple[str, str], ...]:
     return tuple(
         (
             "copy_" + artifact.stem.replace("-", "_"),
-            "~/.skenv/bin/python -m skcapstone.fleet.rollout_artifacts "
-            f"{{repo}} {artifact.name}",
+            f"~/.skenv/bin/python {tool} {{repo}} {artifact.name}",
         )
         for artifact in PER_HOST_ARTIFACTS
     )
@@ -187,16 +188,24 @@ _DEPLOY_STEPS: tuple[tuple[str, str], ...] = (
 #: later ``git pull`` cannot recover from on its own.
 _ROLLBACK_STEPS: tuple[tuple[str, str], ...] = (
     (
+        "preserve_rollout_tool",
+        "mkdir -p ~/.cache/skcapstone-rollout && "
+        "if test -f {repo}/src/skcapstone/fleet/rollout_artifacts.py; then "
+        "cp {repo}/src/skcapstone/fleet/rollout_artifacts.py "
+        "~/.cache/skcapstone-rollout/rollout_artifacts.py; else "
+        "test -f ~/.cache/skcapstone-rollout/rollout_artifacts.py; fi",
+    ),
+    (
         "git_checkout",
         "branch=$(git -C {repo} symbolic-ref --short HEAD) && "
         'git -C {repo} checkout "$branch" && '
         "git -C {repo} reset --hard {git_sha}",
     ),
     ("pip_install", "cd {repo} && pip install -e ."),
-    *_copy_steps(),
+    *_copy_steps("~/.cache/skcapstone-rollout/rollout_artifacts.py"),
     (
         "install_units",
-        "~/.skenv/bin/python -m skcapstone.fleet.rollout_artifacts {repo} units "
+        "~/.skenv/bin/python ~/.cache/skcapstone-rollout/rollout_artifacts.py {repo} units "
         "&& systemctl --user daemon-reload",
     ),
     ("converge", "skcapstone fleet sknoded --once"),

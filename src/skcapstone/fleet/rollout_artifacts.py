@@ -9,15 +9,14 @@ import shlex
 import tempfile
 from pathlib import Path
 
-from .deployment_manifest import (
+from skcapstone.fleet.deployment_manifest import (
     CANONICAL_SYSTEMD_RELATIVE_DIR,
     PER_HOST_ARTIFACTS,
     PER_HOST_BIN_RELATIVE_DIR,
     PRODUCTION_CANONICAL_SCRIPTS,
     production_compatibility_shim,
-    unit_source_path,
 )
-from .paths import paths_for_home
+from skcapstone.fleet.paths import paths_for_home
 
 _SKNODED_HOST_KEYS = frozenset(
     {
@@ -27,6 +26,13 @@ _SKNODED_HOST_KEYS = frozenset(
         "SKFLEET_AUTHORITY_HOST",
     }
 )
+
+
+def unit_source_path(repo_root: Path, name: str, production: bool) -> Path:
+    """Select the same canonical unit for installation and drift checking."""
+    root = repo_root / CANONICAL_SYSTEMD_RELATIVE_DIR
+    overlay = root / "production" / name
+    return overlay if production and overlay.is_file() else root / name
 
 
 def _write(path: Path, data: bytes, mode: int) -> None:

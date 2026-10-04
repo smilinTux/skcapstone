@@ -303,7 +303,9 @@ def test_deploy_step_order_is_load_bearing_package_before_script(home: Path) -> 
 
     joined = [" ".join(c) for c in calls]
     pip_index = next(i for i, c in enumerate(joined) if "pip" in c and "install" in c)
-    copy_index = next(i for i, c in enumerate(joined) if "skfleet-rotate.py" in c and "cp" in c)
+    copy_index = next(
+        i for i, c in enumerate(joined) if "skfleet-rotate.py" in c and "rollout_artifacts" in c
+    )
     assert pip_index < copy_index
 
 
@@ -1002,7 +1004,9 @@ def test_default_rollback_deploy_node_checks_out_the_manifests_git_sha(home: Pat
     checkout_index = next(i for i, c in enumerate(joined) if "checkout" in c)
     assert manifest["git_sha"] in joined[checkout_index]
     pip_index = next(i for i, c in enumerate(joined) if "pip" in c and "install" in c)
-    copy_index = next(i for i, c in enumerate(joined) if "skfleet-rotate.py" in c and "cp" in c)
+    copy_index = next(
+        i for i, c in enumerate(joined) if "skfleet-rotate.py" in c and "rollout_artifacts" in c
+    )
     converge_index = next(i for i, c in enumerate(joined) if "sknoded" in c)
     assert checkout_index < pip_index < copy_index < converge_index
 
@@ -1029,7 +1033,9 @@ def test_default_rollback_deploy_node_records_before_change_remotely(home: Path)
     assert "ssh" in calls[0]
     assert "record_deployment" in first_cmd
     second_cmd = " ".join(calls[1])
-    assert "git" in second_cmd and "checkout" in second_cmd
+    assert "rollout_artifacts.py" in second_cmd
+    checkout_cmd = " ".join(calls[2])
+    assert "git" in checkout_cmd and "checkout" in checkout_cmd
 
 
 def test_default_rollback_deploy_node_stops_at_the_first_failing_step(home: Path) -> None:
@@ -1237,10 +1243,8 @@ def test_declaring_an_artifact_is_enough_to_deploy_it():
     """
     from skcapstone.fleet.deployment_manifest import (
         PER_HOST_ARTIFACTS,
-        PER_HOST_BIN_RELATIVE_DIR,
     )
 
-    bin_dir = PER_HOST_BIN_RELATIVE_DIR.as_posix()
     for steps in (_DEPLOY_STEPS, _ROLLBACK_STEPS):
         copy_steps = [(n, t) for n, t in steps if n.startswith("copy_")]
         assert len(copy_steps) == len(PER_HOST_ARTIFACTS), (
@@ -1248,10 +1252,10 @@ def test_declaring_an_artifact_is_enough_to_deploy_it():
             f"artifacts: {[n for n, _ in copy_steps]}"
         )
         for artifact in PER_HOST_ARTIFACTS:
-            target = f"~/{bin_dir}/{artifact.name}"
             assert any(
-                artifact.as_posix() in t and t.rstrip().endswith(target) for _, t in copy_steps
-            ), f"no step copies {artifact.as_posix()} to {target}"
+                "rollout_artifacts" in t and t.rstrip().endswith(artifact.name)
+                for _, t in copy_steps
+            ), f"no step installs declared artifact {artifact.name}"
 
 
 def test_copy_steps_are_ordered_after_the_package_install():

@@ -54,9 +54,9 @@ from .deployment_manifest import (
     PRODUCTION_CANONICAL_SCRIPTS,
     production_compatibility_shim,
     production_script_bytes,
-    unit_source_path,
 )
 from .paths import paths_for_home, self_node_name
+from .rollout_artifacts import unit_source_path
 
 #: Not in the shipped systemd/ tree (see the module docstring: the dispatcher
 #: script is deployed by a separate mechanism from the package), but it is
