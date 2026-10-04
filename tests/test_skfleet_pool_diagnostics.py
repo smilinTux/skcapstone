@@ -105,6 +105,31 @@ def test_builder_withheld_count_is_always_reported() -> None:
     assert "builder_withheld=0" in detail
 
 
+def test_retained_remote_review_is_not_reported_as_foreign() -> None:
+    """An exact native request retains review custody after the unit exits."""
+    helpers = _load_helpers()
+    card_id = "c60a542e"
+    detail = helpers["_selection_diagnostic"](
+        [_row(card_id)],
+        [],
+        _lanes(target=4, free=4),
+        lambda _card_id: "chiap08",
+        {"chiap08": 4},
+        remote_held=[card_id],
+    )
+    assert "reason=remote-review-held" in detail
+    assert "ids=c60a542e" in detail
+    assert "remote_held=1" in detail
+    assert "foreign-hash-partition" not in detail
+
+    source = ROTATE.read_text(encoding="utf-8")
+    assert "REVIEW_REMOTE_HELD|%s|%s|reason=retained-custody" in source
+    assert source.index("_remote_held_ids = sorted(") < source.index(
+        "owned = [row for row in owned\n         if not (\"review\" in row[4]"
+    )
+    assert "_builder_returned_ids, _unrouted_candidates, _remote_held_ids)" in source
+
+
 @pytest.mark.parametrize(
     ("capacity", "expected", "excluded"),
     [
@@ -248,4 +273,4 @@ def test_the_unrouted_drop_is_logged_before_the_scan_consumes_it() -> None:
     drop = source.index("_unrouted_candidates=[candidate[2] for candidate in owned")
     scan = source.index("_candidate_scan = _bounded_candidate_sequence(")
     assert drop < scan
-    assert "_builder_returned_ids, _unrouted_candidates)" in source
+    assert "_builder_returned_ids, _unrouted_candidates, _remote_held_ids)" in source

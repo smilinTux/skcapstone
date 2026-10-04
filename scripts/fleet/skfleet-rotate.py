@@ -347,7 +347,8 @@ def _partition_owner(card_id, hosts, pinned_host=None):
 
 
 def _selection_diagnostic(pool, owned, lanes, owner_for, host_capacity=None,
-                          builder_withheld=(), builder_returned=(), unrouted=()):
+                          builder_withheld=(), builder_returned=(), unrouted=(),
+                          remote_held=()):
     """Classify why an authoritative pool produced no local selection.
 
     This is diagnostic only. It never changes ownership or claimability, so the
@@ -371,11 +372,15 @@ def _selection_diagnostic(pool, owned, lanes, owner_for, host_capacity=None,
     trailing ``no-compatible-lane``, which is a LANE verdict, for cards no lane
     was ever offered. Chi sat at zero dispatch on 2026-09-19 reading that string
     at face value through three wrong diagnoses.
+
+    ``remote_held`` names owned reviews with retained native request custody.
+    They have not moved to another host's hash slice.
     """
     pool_ids = [row[2] for row in pool]
     owned_ids = [row[2] for row in owned]
     builder_ids = [str(card_id) for card_id in builder_withheld]
     unrouted_ids = [str(card_id) for card_id in unrouted]
+    remote_held_ids = [str(card_id) for card_id in remote_held]
     total_target = sum(int(lane.get("target", 0)) for lane in lanes)
     total_free = sum(int(lane.get("free", 0)) for lane in lanes)
     if not pool:
@@ -383,7 +388,9 @@ def _selection_diagnostic(pool, owned, lanes, owner_for, host_capacity=None,
     elif total_target == 0:
         reason, ids = "zero-target", owned_ids or pool_ids
     elif not owned:
-        if builder_ids:
+        if remote_held_ids:
+            reason, ids = "remote-review-held", remote_held_ids
+        elif builder_ids:
             reason, ids = "builder-path-withheld", builder_ids
         else:
             reason, ids = "foreign-hash-partition", pool_ids
@@ -406,10 +413,10 @@ def _selection_diagnostic(pool, owned, lanes, owner_for, host_capacity=None,
     ) or "-"
     return (
         "reason=%s pool=%d owned=%d target=%d free=%d ids=%s omitted=%d "
-        "owners=%s owner_free=%s builder_withheld=%d builder_returned=%d"
+        "owners=%s owner_free=%s builder_withheld=%d builder_returned=%d remote_held=%d"
         % (reason, len(pool), len(owned), total_target, total_free, bounded,
            omitted, owner_counts, owner_free, len(builder_ids),
-           len(tuple(builder_returned)))
+           len(tuple(builder_returned)), len(remote_held_ids))
     )
 
 
@@ -7692,6 +7699,12 @@ except (builder_dispatch.BuilderDispatchError, OSError) as _exc:
     _builder_held_ids = set(_builder_candidate_ids) | {row[2] for row in owned if "review" in row[4]}
 # Governed review transport precedes every authority-local capacity check.
 # Held review generations remain excluded even when new offers are disabled.
+_remote_held_ids = sorted(
+    row[2] for row in owned
+    if "review" in row[4] and row[2] in _builder_held_ids
+)
+for _held_id in _remote_held_ids:
+    log(d, "REVIEW_REMOTE_HELD|%s|%s|reason=retained-custody" % (HOST, _held_id))
 owned = [row for row in owned
          if not ("review" in row[4] and row[2] in _builder_held_ids)]
 if PRODUCTION_POLICY and PRODUCTION_POLICY.get("remote_review", {}).get("enabled"):
@@ -8352,7 +8365,7 @@ if not picks:
     _observe_assigned_reviews()
     detail = _selection_diagnostic(
         pool, owned, LANES, owner_host, _HOST_CAPACITY, _builder_withheld_ids,
-        _builder_returned_ids, _unrouted_candidates)
+        _builder_returned_ids, _unrouted_candidates, _remote_held_ids)
     log(d,"SELECTION_EMPTY|%s|%s"%(HOST,detail))
     log(d,"NOOP|%s|selection empty: %s"%(HOST,detail))
     log(d,"NOOP_RECEIPT|%s|reason=%s|seat=%s"%
