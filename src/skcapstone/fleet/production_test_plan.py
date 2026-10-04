@@ -358,7 +358,7 @@ def _seal_plan(
 
 
 def load_plan(
-    home: Path, binding: dict, *, require_current: bool = True
+    home: Path, binding: dict, *, require_current: bool = True, allow_completed: bool = False
 ) -> tuple[dict, Path, str]:
     """Read an append-only plan chain and bind its latest approved environment."""
     check_binding(binding)
@@ -385,7 +385,15 @@ def load_plan(
             if len(extras) != generation:
                 raise TestEvidenceError("test plan chain is disconnected") from None
             if require_current:
-                _validate_current_plan(plan)
+                try:
+                    _validate_current_plan(plan)
+                except TestEvidenceError:
+                    run = run_directory(home, fingerprint)
+                    if not allow_completed or not all(
+                        (run / name).exists()
+                        for name in ("launch.json", "receipt.json", "terminal.json")
+                    ):
+                        raise
             return plan, path, fingerprint
         if (run_directory(home, fingerprint) / "launch.json").exists():
             raise TestEvidenceError("prior test plan already launched")

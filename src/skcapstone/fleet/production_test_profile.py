@@ -362,7 +362,7 @@ def seal_candidate(
     """Seal once only after acceptance has independently validated current custody."""
     predecessor_sha256 = None
     try:
-        existing, _, predecessor_sha256 = plan.load_plan(home, binding)
+        existing, _, predecessor_sha256 = plan.load_plan(home, binding, allow_completed=True)
         if existing["policy_sha256"] == digest(policy):
             return
     except FileNotFoundError:

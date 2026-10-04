@@ -296,6 +296,23 @@ def test_launched_prior_plan_cannot_be_superseded(setup, monkeypatch):  # noqa: 
     assert not list(path.parent.glob(path.stem + ".*.json"))
 
 
+def test_completed_plan_can_be_verified_after_runtime_change(setup, monkeypatch):  # noqa: F811
+    s = setup
+    run = plan.run_directory(s.home, s.digest)
+    plan.private_dir(run.parent, create=True)
+    plan.private_dir(run, create=True)
+    for name in ("launch.json", "receipt.json", "terminal.json"):
+        plan.write_once(run / name, {"fixture": name})
+    monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "f" * 64)
+    with pytest.raises(plan.TestEvidenceError, match="stale"):
+        plan.load_plan(s.home, s.binding)
+    assert plan.load_plan(s.home, s.binding, allow_completed=True)[2] == s.digest
+    profile.seal_candidate(s.home, s.binding, s.workspace, s.policy, "https://example.org/repo")
+    (run / "receipt.json").unlink()
+    with pytest.raises(plan.TestEvidenceError, match="stale"):
+        plan.load_plan(s.home, s.binding, allow_completed=True)
+
+
 def test_policy_change_requires_requalification_before_plan_successor(setup):  # noqa: F811
     s = setup
     s.plan_path.unlink()

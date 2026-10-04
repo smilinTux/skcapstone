@@ -275,6 +275,22 @@ def test_receipt_rehashes_raw_output_and_terminal_custody(setup, monkeypatch):
         native.validate_test_receipt(setup.home, setup.binding, setup.workspace)
 
 
+def test_receipt_rebuilds_command_with_sealed_successor_path(setup, monkeypatch):
+    receipt_fixture(setup, monkeypatch)
+    successor = setup.plan_path.with_name(setup.plan_path.stem + ".successor.json")
+    monkeypatch.setattr(
+        native, "load_plan", lambda *args, **kwargs: (setup.plan, successor, setup.digest)
+    )
+
+    def exact_command(home, policy, host, unit, binding, argv):
+        assert str(successor) in argv
+        return native.read_json(setup.directory / "launch.json")["service_argv"]
+
+    monkeypatch.setattr(native, "reserved_command", exact_command)
+    receipt = native.validate_test_receipt(setup.home, setup.binding, setup.workspace)
+    assert receipt["counts"]["total"] == 226
+
+
 @pytest.mark.parametrize(
     "key,value",
     [

@@ -89,7 +89,7 @@ def validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
 
 def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
     """Rehash real output, argv, JUnit, source and independently observed unit exit."""
-    plan, _, plan_sha = load_plan(home, binding)
+    plan, plan_path, plan_sha = load_plan(home, binding, allow_completed=True)
     directory = run_directory(home, plan_sha)
     launch = read_json(directory / "launch.json")
     receipt = read_json(directory / "receipt.json")
@@ -101,9 +101,7 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
     policy = launch.get("policy", {})
     expected_argv = service_argv(
         launch,
-        home
-        / "fleet/test-plans"
-        / (binding["source_card"] + "-" + binding["source_head"] + ".json"),
+        plan_path,
         directory,
         workspace,
     )
@@ -305,7 +303,7 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
     The caller owns exact current claim/revision checks before this launch.
     """
     try:
-        plan, plan_path, plan_sha = load_plan(home, binding)
+        plan, plan_path, plan_sha = load_plan(home, binding, allow_completed=True)
     except FileNotFoundError:
         return None
     if plan["policy_sha256"] != production_builder.digest(policy):
@@ -319,7 +317,7 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
     lock_fd = os.open(directory / ".run.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     with os.fdopen(lock_fd, "r+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        if load_plan(home, binding)[2] != plan_sha:
+        if load_plan(home, binding, allow_completed=True)[2] != plan_sha:
             raise TestEvidenceError("test plan generation changed before launch")
         private_dir(directory, create=True)
         if (directory / "launch.json").exists():
