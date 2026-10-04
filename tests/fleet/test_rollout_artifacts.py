@@ -170,7 +170,8 @@ def test_remote_shell_checks_deploy_checkout_instead_of_cli_default(tmp_path):
         f"#!{sys.executable}\n"
         "import json, os, sys\n"
         "args = sys.argv\n"
-        "root = args[args.index('--repo-root') + 1] if '--repo-root' in args else os.path.expanduser('~/work/skcapstone')\n"
+        "root = (args[args.index('--repo-root') + 1] if '--repo-root' in args\n"
+        "        else os.path.expanduser('~/work/skcapstone'))\n"
         "print(json.dumps({'drifts': [], 'checked_repo': root}))\n"
     )
     cli.chmod(0o755)
