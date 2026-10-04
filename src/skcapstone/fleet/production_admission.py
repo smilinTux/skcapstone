@@ -148,6 +148,17 @@ def _occupancy(root: Path, home: Path, *, strict_terminal=False) -> list[dict]:
             if not _valid_success_receipt(proof, intent):
                 raise AdmissionError("successful launch terminal receipt is inconsistent")
             continue
+        prestart = directory / "released-prestart.json"
+        if prestart.exists():
+            proof = read_json(prestart)
+            if not _released_prestart(home, intent, proof):
+                raise AdmissionError("released prestart proof differs")
+            continue
+        if strict_terminal and unit not in units and not (directory / "start.json").exists():
+            proof = _released_prestart_proof(home, intent)
+            if proof is not None:
+                write_once(prestart, proof)
+                continue
         if strict_terminal and unit not in units:
             terminal_path = directory / "terminal.json"
             if terminal_path.exists():
@@ -238,6 +249,68 @@ def _occupancy(root: Path, home: Path, *, strict_terminal=False) -> list[dict]:
         else:
             units[unit] = {"unit": unit, "reserved_memory_max": maximum}
     return list(units.values())
+
+
+def _released_prestart_proof(home: Path, intent: dict) -> dict | None:
+    """Retire only an unstarted intent whose exact native claim was released."""
+    binding = intent["binding"]
+    store = CardStore(home)
+    card = store.fold(binding["card_id"])
+    releases = [
+        event
+        for event in store._read_events(binding["card_id"])
+        if event.get("action") == "release_claim"
+        and event.get("released_owner") == binding["owner"]
+        and event.get("expected_claim_revision") == binding["claim_revision"]
+    ]
+    if (
+        card is None
+        or not releases
+        or (card.owner, card.meta.get("_claim_revision"))
+        == (binding["owner"], binding["claim_revision"])
+    ):
+        return None
+    state = unit_state(intent["unit"], terminal=True)
+    if not _unstarted_unit_state(state, intent):
+        return None
+    return {
+        "schema": "skfleet.released-prestart/v1",
+        "reservation_id": _reservation_id(intent),
+        "intent_sha256": _digest(intent),
+        "release_sha256": _digest(releases[-1]),
+        "state": state,
+    }
+
+
+def _unstarted_unit_state(state: dict, intent: dict) -> bool:
+    return (
+        isinstance(state, dict)
+        and state.get("Id") == intent["unit"]
+        and state.get("LoadState") == "not-found"
+        and state.get("ActiveState") == "inactive"
+        and state.get("MainPID") == "0"
+        and state.get("ControlPID") == "0"
+        and state.get("ControlGroup") == ""
+        and state.get("InvocationID") == ""
+    )
+
+
+def _released_prestart(home: Path, intent: dict, proof: dict) -> bool:
+    if (
+        proof.get("schema") != "skfleet.released-prestart/v1"
+        or proof.get("reservation_id") != _reservation_id(intent)
+        or proof.get("intent_sha256") != _digest(intent)
+        or not _unstarted_unit_state(proof.get("state"), intent)
+    ):
+        return False
+    binding = intent["binding"]
+    return any(
+        _digest(event) == proof.get("release_sha256")
+        and event.get("action") == "release_claim"
+        and event.get("released_owner") == binding["owner"]
+        and event.get("expected_claim_revision") == binding["claim_revision"]
+        for event in CardStore(home)._read_events(binding["card_id"])
+    )
 
 
 def _valid_journal_terminal(proof: dict, intent: dict, observed: dict) -> bool:

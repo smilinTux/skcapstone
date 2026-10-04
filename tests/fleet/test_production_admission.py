@@ -72,6 +72,83 @@ def test_crash_before_spawn_keeps_capacity_and_denies_replay(capacity):
         reserve(capacity, dict(BINDING, attempt="other"), "skfleet-builder-other.service")
 
 
+def test_released_claim_retires_only_an_unstarted_reservation(capacity, monkeypatch):
+    monkeypatch.setitem(POLICY, "node_admission", {HOST: {"max_concurrent_workers": 1}})
+    original = reserve(capacity)
+    identity = original[1].split("=", 2)[2]
+    directory = capacity / "fleet/resource-admission" / HOST / identity
+    CardStore(capacity).append_event(
+        BINDING["card_id"],
+        "release_claim",
+        "operator",
+        released_owner=BINDING["owner"],
+        expected_claim_revision=BINDING["claim_revision"],
+        transition_id="released",
+    )
+    monkeypatch.setattr(
+        admission,
+        "unit_state",
+        lambda unit, terminal=False: {
+            "Id": unit,
+            "LoadState": "not-found",
+            "ActiveState": "inactive",
+            "MainPID": "0",
+            "ControlPID": "0",
+            "ControlGroup": "",
+            "InvocationID": "",
+        },
+    )
+    next_binding = dict(card_id="87654321", owner="next", claim_revision="next-claim")
+    CardStore(capacity).create(
+        CardCore(
+            id=next_binding["card_id"],
+            title="Next synthetic work",
+            initial_owner=next_binding["owner"],
+            initial_claim_revision=next_binding["claim_revision"],
+        )
+    )
+    reserve(capacity, next_binding, "skfleet-builder-next.service")
+    assert (directory / "released-prestart.json").is_file()
+    with pytest.raises(admission.AdmissionError, match="launch native claim changed"):
+        reserve(capacity)
+    with pytest.raises(admission.AdmissionError, match="launch native claim changed"):
+        admission.start_reserved(capacity, HOST, original, lambda argv: None)
+
+
+def test_released_claim_does_not_retire_a_consumed_start(capacity, monkeypatch):
+    monkeypatch.setitem(POLICY, "node_admission", {HOST: {"max_concurrent_workers": 1}})
+    original = reserve(capacity)
+    admission.start_reserved(capacity, HOST, original, lambda argv: None)
+    CardStore(capacity).append_event(
+        BINDING["card_id"],
+        "release_claim",
+        "operator",
+        released_owner=BINDING["owner"],
+        expected_claim_revision=BINDING["claim_revision"],
+        transition_id="released",
+    )
+    monkeypatch.setattr(
+        admission,
+        "unit_state",
+        lambda unit, terminal=False: {
+            "Id": unit,
+            "LoadState": "not-found",
+            "ActiveState": "inactive",
+        },
+    )
+    next_binding = dict(card_id="87654321", owner="next", claim_revision="next-claim")
+    CardStore(capacity).create(
+        CardCore(
+            id=next_binding["card_id"],
+            title="Next synthetic work",
+            initial_owner=next_binding["owner"],
+            initial_claim_revision=next_binding["claim_revision"],
+        )
+    )
+    with pytest.raises(admission.AdmissionError, match="worker occupancy cap"):
+        reserve(capacity, next_binding, "skfleet-builder-next.service")
+
+
 def _contend(home, barrier, queue, number):
     """Race distinct launch paths against one shared node allowance."""
     barrier.wait(timeout=5)
