@@ -1,11 +1,16 @@
 """Real temporary-file rollout regressions, without hosts or systemd mutation."""
 
 import hashlib
+import os
 import shlex
+import shutil
 import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
+from skcapstone.fleet import deployment_manifest, paths, rollout_artifacts
 from skcapstone.fleet.deployment_manifest import PER_HOST_ARTIFACTS, production_compatibility_shim
 from skcapstone.fleet.paths import paths_for_home
 from skcapstone.fleet.rollout_artifacts import install_artifact, install_units
@@ -167,3 +172,34 @@ def test_rollback_retains_tool_before_checkout_without_importing_new_manifest_sy
     commands = dict(_ROLLBACK_STEPS)
     for name in ("copy_skfleet_rotate", "copy_skfleet_worker_wrapper", "install_units"):
         assert "~/.cache/skcapstone-rollout/rollout_artifacts.py" in commands[name]
+
+
+def test_cached_installer_runs_when_target_package_has_no_rollout_artifacts(layout, tmp_path):
+    """Execute the retained tool against the older manifest/path API on disk."""
+    repo, home = layout
+    package = tmp_path / "old-package/skcapstone"
+    fleet = package / "fleet"
+    fleet.mkdir(parents=True)
+    (package / "__init__.py").touch()
+    (fleet / "__init__.py").touch()
+    for module in (deployment_manifest, paths):
+        shutil.copyfile(module.__file__, fleet / Path(module.__file__).name)
+    assert not (fleet / "rollout_artifacts.py").exists()
+    assert b"unit_source_path" not in (fleet / "deployment_manifest.py").read_bytes()
+    tool = tmp_path / "cached-rollout_artifacts.py"
+    shutil.copyfile(rollout_artifacts.__file__, tool)
+    environment = {
+        key: value for key, value in os.environ.items() if key not in {"BASH_ENV", "VIRTUAL_ENV"}
+    }
+    environment.update(HOME=str(home), PYTHONPATH=str(package.parent))
+    result = subprocess.run(
+        [sys.executable, str(tool), str(repo), "units"],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (home / ".config/systemd/user/sknoded.service").read_bytes() == (
+        repo / "systemd/sknoded.service"
+    ).read_bytes()
