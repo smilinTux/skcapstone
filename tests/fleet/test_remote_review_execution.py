@@ -59,6 +59,49 @@ def test_destination_capacity_loss_does_not_claim_or_burn_attempt(execution):
     assert review.offer_review(e["paths"], e["home"], e["card"], writer=e["writer"]) is None
 
 
+def test_remote_review_consumes_the_native_start_fence_once(execution):
+    e = execution
+    request, status = offer_and_consume(e)
+    directory = (
+        e["home"]
+        / "fleet/resource-admission/chiap03"
+        / status["execution"]["admission_id"]
+    )
+    before = (directory / "start.json").read_bytes()
+    start = json.loads(before)
+    assert start["binding"]["card_id"] == e["card"]
+    assert start["binding"]["owner"] == request["reviewer"]
+    assert start["binding"]["claim_revision"] == status["claim_revision"]
+    builder.consume_one(e["paths"], e["home"], "node-chiap03", launcher=e["launcher"])
+    assert len(e["launches"]) == 1
+    assert (directory / "start.json").read_bytes() == before
+
+
+def test_claim_release_after_remote_reservation_refuses_spawn(execution, monkeypatch):
+    e = execution
+    write_status = builder._write_status
+
+    def release_after_reservation(paths, node, request, state, **extra):
+        result = write_status(paths, node, request, state, **extra)
+        if state == "admission-pending":
+            card = e["source"]["store"].fold(e["card"])
+            e["source"]["store"].append_event(
+                e["card"],
+                "release_claim",
+                card.owner,
+                released_owner=card.owner,
+                expected_claim_revision=card.meta["_claim_revision"],
+            )
+        return result
+
+    monkeypatch.setattr(builder, "_write_status", release_after_reservation)
+    offer_and_consume(e)
+    assert not e["launches"]
+    root = e["home"] / "fleet/resource-admission/chiap03"
+    assert len(list(root.glob("*/intent.json"))) == 1
+    assert not list(root.glob("*/start.json"))
+
+
 @pytest.mark.parametrize(
     "change",
     [
