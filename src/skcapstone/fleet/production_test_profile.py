@@ -105,6 +105,8 @@ def recipe_checks(recipe: dict) -> list[dict]:
                 "-q",
                 "-p",
                 "no:cacheprovider",
+                "-m",
+                "not host_systemd",
                 "--junitxml=/output/pytest.xml",
                 *tests,
             ],

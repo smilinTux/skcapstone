@@ -112,6 +112,7 @@ def publish(source):
     )
 
 
+@pytest.mark.host_systemd
 def test_actual_unpublished_export_import_and_immutable_retry(source, tmp_path):
     result = publish(source)
     assert publish(source) == result
@@ -164,6 +165,7 @@ def test_export_refuses_changed_or_untrusted_source(source, kind):
 @pytest.mark.parametrize(
     "kind", ["digest", "head", "repository", "producer", "evidence", "conflict", "symlink"]
 )
+@pytest.mark.host_systemd
 def test_import_preflight_refuses_changed_binding_or_artifact(source, kind, tmp_path):
     result = publish(source)
     core, repository, head = source["core"], source["remote"], source["head"]
@@ -196,6 +198,7 @@ def test_ordinary_source_uses_existing_clone_but_missing_production_artifact_fai
         bundle.verify_review_source(source["core"], source["remote"], source["head"])
 
 
+@pytest.mark.host_systemd
 def test_existing_workspace_never_changes_on_refusal(source, tmp_path):
     publish(source)
     target = tmp_path / "existing"
@@ -206,6 +209,7 @@ def test_existing_workspace_never_changes_on_refusal(source, tmp_path):
     assert (target / "custody").read_text() == "must remain"
 
 
+@pytest.mark.host_systemd
 def test_acknowledged_immutable_candidate_does_not_reexport_or_reupload(source, monkeypatch):
     from skcapstone.fleet import source_transport
 
@@ -225,6 +229,7 @@ def test_acknowledged_immutable_candidate_does_not_reexport_or_reupload(source, 
     assert retained == result
 
 
+@pytest.mark.host_systemd
 def test_inspection_preserves_sandbox_and_native_service_bounds(tmp_path, monkeypatch):
     calls = []
     run = subprocess.run
@@ -308,6 +313,7 @@ def test_inspection_refuses_malformed_failed_or_oversized_output(tmp_path, progr
         bundle._inspect(tmp_path, program)
 
 
+@pytest.mark.host_systemd
 def test_inspection_lost_launcher_stops_exact_unit_and_descendants(tmp_path, monkeypatch):
     run = subprocess.run
     units = []

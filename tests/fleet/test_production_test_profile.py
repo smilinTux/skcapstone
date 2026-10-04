@@ -96,6 +96,8 @@ def test_hyphenated_targets_preserve_fixed_argv():
                 "-q",
                 "-p",
                 "no:cacheprovider",
+                "-m",
+                "not host_systemd",
                 "--junitxml=/output/pytest.xml",
                 "tests/fleet-checks/test_parser-case.py",
             ],

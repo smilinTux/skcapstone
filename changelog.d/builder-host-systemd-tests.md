@@ -1,0 +1,1 @@
+- Keep tests that require the host user systemd manager out of isolated producer test profiles; hosted CI continues to run them with its disposable user manager.
