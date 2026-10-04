@@ -99,7 +99,8 @@ def test_missing_invocation_recovers_only_exact_collected_generation(collected):
 
 
 @pytest.mark.parametrize(
-    "change", ["second-invocation", "invalid-invocation", "malformed", "live"]
+    "change",
+    ["second-invocation", "invalid-invocation", "unhashable-invocation", "malformed", "live"],
 )
 def test_missing_invocation_recovery_refuses_ambiguous_or_live_generation(collected, change):
     a = collected
@@ -108,6 +109,8 @@ def test_missing_invocation_recovery_refuses_ambiguous_or_live_generation(collec
         a.rows[-1]["USER_INVOCATION_ID"] = "f" * 32
     elif change == "invalid-invocation":
         a.rows[-1]["USER_INVOCATION_ID"] = "invalid"
+    elif change == "unhashable-invocation":
+        a.rows[-1]["USER_INVOCATION_ID"] = []
     elif change == "malformed":
         a.rows.append("not-an-object")
     else:

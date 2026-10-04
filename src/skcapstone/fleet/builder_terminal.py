@@ -303,7 +303,9 @@ def recover_collected(home, status):
     rows = [json.loads(line) for line in raw.splitlines() if line.strip()]
     if any(not isinstance(row, dict) for row in rows):
         raise ValueError("collected unit journal is malformed")
-    invocations = {row.get("USER_INVOCATION_ID") for row in rows}
+    if any(not isinstance(row.get("USER_INVOCATION_ID"), str) for row in rows):
+        raise ValueError("collected unit invocation is invalid")
+    invocations = {row["USER_INVOCATION_ID"] for row in rows}
     if len(invocations) != 1:
         raise ValueError("collected unit invocation is ambiguous")
     invocation = invocations.pop()
