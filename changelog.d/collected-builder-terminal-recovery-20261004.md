@@ -1,0 +1,1 @@
+- Recover a collected builder's exact terminal custody from qualified systemd evidence after sknoded restarts, preserving its claim and source artifact instead of leaving the dispatch status running indefinitely.

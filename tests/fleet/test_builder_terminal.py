@@ -87,6 +87,63 @@ def test_journal_check_only_then_private_durable_exact_receipt(collected):
     assert target.read_bytes() == raw
 
 
+def test_missing_invocation_recovers_only_exact_collected_generation(collected):
+    a = collected
+    expected = a.status["invocation"]
+    a.status["invocation"] = None
+    recovered = terminal.recover_collected(a.home, a.status)
+    assert a.status["invocation"] is None
+    assert recovered["invocation"] == expected
+    assert json.loads(terminal.path(a.home, recovered).read_bytes())["kind"] == "qualified-journal"
+    terminal.prove(a.home, recovered)
+
+
+@pytest.mark.parametrize(
+    "change", ["second-invocation", "invalid-invocation", "malformed", "live"]
+)
+def test_missing_invocation_recovery_refuses_ambiguous_or_live_generation(collected, change):
+    a = collected
+    a.status["invocation"] = None
+    if change == "second-invocation":
+        a.rows[-1]["USER_INVOCATION_ID"] = "f" * 32
+    elif change == "invalid-invocation":
+        a.rows[-1]["USER_INVOCATION_ID"] = "invalid"
+    elif change == "malformed":
+        a.rows.append("not-an-object")
+    else:
+        a.values.update(LoadState="loaded", ActiveState="active", MainPID="9")
+    with pytest.raises(ValueError):
+        terminal.recover_collected(a.home, a.status)
+    assert a.status["invocation"] is None
+
+
+@pytest.mark.parametrize("missing_invocation", [True, False])
+def test_dispatcher_preserves_recovered_terminal_and_source_custody(
+    collected, monkeypatch, missing_invocation
+):
+    from skcapstone.fleet import builder_continue, production_exit, source_bundle
+    from skcapstone.fleet import builder_dispatch as builder
+
+    a = collected
+    a.status.update(state="running", invocation=None if missing_invocation else "d" * 32)
+    monkeypatch.setattr(builder, "_process_state", lambda status: (None, None))
+    monkeypatch.setattr(builder.CardStore, "fold", lambda *args: a.card)
+    monkeypatch.setattr(builder_continue, "original_outcome_pending", lambda *args: False)
+    monkeypatch.setattr(production_exit, "release_blocked", lambda *args: None)
+    monkeypatch.setattr(
+        source_bundle, "publish_source", lambda *args, **kwargs: {"manifest_sha256": "f" * 64}
+    )
+
+    result = builder._reconcile_running(a.paths, a.home, "node-worker", a.request, a.status)
+    assert result["state"] == "awaiting-review"
+    assert result["terminal_proof"] == "qualified-terminal"
+    assert result["invocation"] == "d" * 32
+    assert result["exit_code"] is None
+    again = builder._reconcile_running(a.paths, a.home, "node-worker", a.request, result)
+    assert again["state"] == "awaiting-review"
+    assert again["terminal_proof"] == "qualified-terminal"
+
+
 @pytest.mark.parametrize(
     "change",
     [

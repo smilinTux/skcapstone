@@ -125,6 +125,8 @@ def journal(status, boot):
         ]
     )
     rows = [json.loads(line) for line in raw.splitlines() if line.strip()]
+    if any(not isinstance(row, dict) for row in rows):
+        raise ValueError("collected unit journal is malformed")
     if not rows or len(rows) > 64:
         raise ValueError("bounded terminal journal history unavailable")
     manager = f"/user.slice/user-{os.getuid()}.slice/user@{os.getuid()}.service/init.scope"
@@ -274,3 +276,39 @@ def prove(home, status, *, apply=False):
         raise ValueError("terminal journal receipt changed")
     if apply and receipt is None:
         persist(home, status, reconstructed)
+
+
+def recover_collected(home, status):
+    """Recover one lost invocation from the exact collected unit's journal."""
+    if status.get("invocation") is not None:
+        raise ValueError("recovery requires a missing invocation")
+    try:
+        unit = production_builder.unit_name(status, status["attempt"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("exact terminal generation unavailable") from exc
+    if status.get("unit") != unit:
+        raise ValueError("exact terminal generation unavailable")
+    raw = command(
+        [
+            "journalctl",
+            "--user",
+            "--boot=" + boot_id(),
+            "USER_UNIT=" + unit,
+            "--output=json",
+            "--no-pager",
+            "-n",
+            "65",
+        ]
+    )
+    rows = [json.loads(line) for line in raw.splitlines() if line.strip()]
+    if any(not isinstance(row, dict) for row in rows):
+        raise ValueError("collected unit journal is malformed")
+    invocations = {row.get("USER_INVOCATION_ID") for row in rows}
+    if len(invocations) != 1:
+        raise ValueError("collected unit invocation is ambiguous")
+    invocation = invocations.pop()
+    if not isinstance(invocation, str) or not re.fullmatch(r"[0-9a-f]{32}", invocation):
+        raise ValueError("collected unit invocation is invalid")
+    recovered = {**status, "invocation": invocation}
+    prove(home, recovered, apply=True)
+    return recovered

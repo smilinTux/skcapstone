@@ -807,7 +807,15 @@ def _reconcile_running(
 ) -> dict:
     """Refresh one live generation or close it after exact process death."""
     _finalize_builder_admission(coordination_home, request, status)
-    if (
+    from . import builder_terminal
+
+    if status.get("terminal_proof") == "qualified-terminal":
+        try:
+            builder_terminal.prove(coordination_home, status)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return status
+        alive, exit_code = False, status.get("exit_code")
+    elif (
         status.get("production") is not None
         and status.get("state") in {"awaiting-evidence", "awaiting-review"}
         and type(status.get("exit_code")) is int
@@ -815,11 +823,26 @@ def _reconcile_running(
         alive, exit_code = False, status["exit_code"]
     else:
         alive, exit_code = _process_state(status)
-    if alive is False and status.get("production") is not None:
-        from .builder_terminal import observe
-
+    if alive is None and status.get("production") is not None:
         try:
-            observe(coordination_home, status)
+            if status.get("invocation") is None:
+                status = builder_terminal.recover_collected(coordination_home, status)
+            else:
+                if builder_terminal.snapshot(status).get("LoadState") != "not-found":
+                    raise ValueError("collected builder unit required")
+                builder_terminal.prove(coordination_home, status, apply=True)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+        else:
+            status["terminal_proof"] = "qualified-terminal"
+            alive, exit_code = False, None
+    if (
+        alive is False
+        and status.get("production") is not None
+        and status.get("terminal_proof") != "qualified-terminal"
+    ):
+        try:
+            builder_terminal.observe(coordination_home, status)
         except (OSError, ValueError, subprocess.SubprocessError):
             # A missing receipt withholds collected-unit continuation only.
             pass
@@ -835,6 +858,8 @@ def _reconcile_running(
     for key in ("admission_contract", "admission_terminal"):
         if key in status:
             common[key] = status[key]
+    if status.get("terminal_proof") == "qualified-terminal":
+        common["terminal_proof"] = "qualified-terminal"
     if status.get("continuation_consumed"):
         common["continuation_consumed"] = status["continuation_consumed"]
     if status.get("production") is not None:
