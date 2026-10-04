@@ -1,0 +1,1 @@
+- Permit governed test-profile requalification for unclaimed Backlog and Ready producer cards before source preclaim, while preserving immutable profile history and exact card custody.
