@@ -253,6 +253,99 @@ def test_link_only_source_and_restrictions_survive(tmp_path):
     assert {"human-gate", "do-not-claim", "tenant-secret"}.issubset(helper.tags)
 
 
+def test_missing_supported_api_is_clear_and_writes_nothing(tmp_path, monkeypatch):
+    _parent(tmp_path)
+    monkeypatch.setattr(Board, "create_helper_task", None, raising=False)
+    before = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*"))
+    result = _invoke(tmp_path, _packet())
+    assert result.exit_code != 0
+    assert "lacks Board.create_helper_task" in result.output
+    assert sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*")) == before
+
+
+def test_dry_run_never_calls_creation(tmp_path, monkeypatch):
+    _parent(tmp_path)
+
+    def forbidden(*args):
+        pytest.fail("dry-run attempted helper creation")
+
+    monkeypatch.setattr(Board, "create_helper_task", forbidden, raising=False)
+    result = _invoke(tmp_path, _packet(), "--dry-run")
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert report["actuation"] == "dry-run"
+    assert report["launch"] == "not-requested"
+    assert CardStore(tmp_path).fold(report["helper_id"]) is None
+
+
+def test_cli_consults_normal_creation_authorization(tmp_path, monkeypatch):
+    _parent(tmp_path)
+
+    def deny(*args):
+        raise ValueError("synthetic authorization refusal")
+
+    monkeypatch.setattr("skcapstone.jarvis_emergency.authorize_coord_mutation", deny)
+    result = _invoke(tmp_path, _packet())
+    assert result.exit_code != 0
+    assert "synthetic authorization refusal" in str(result.exception)
+
+
+def test_cli_real_api_creates_then_replays_without_parent_change(tmp_path):
+    before = _parent(tmp_path).model_dump()
+    first = _invoke(tmp_path, _packet())
+    assert first.exit_code == 0, first.output
+    report = json.loads(first.output)
+    helper = CardStore(tmp_path).fold(report["helper_id"])
+    assert helper is not None and helper.owner is None
+    assert helper.status.value == "backlog"
+    assert helper.dependencies == before["dependencies"]
+    assert {key: helper.meta[key] for key in SOURCE} == SOURCE
+    retry = _invoke(tmp_path, _packet())
+    assert retry.exit_code == 0, retry.output
+    assert json.loads(retry.output)["request_digest"] == report["request_digest"]
+    assert CardStore(tmp_path).fold(PARENT).model_dump() == before
+    changed = copy.deepcopy(_packet())
+    changed["objective"] = "Changed objective under the same request ID"
+    conflict = _invoke(tmp_path, changed)
+    assert conflict.exit_code != 0
+    assert "conflict" in conflict.output.lower()
+
+
+def test_cli_source_helpers_reject_overlapping_active_assignments(tmp_path):
+    _parent(tmp_path)
+    first = _packet()
+    first["allowed_paths"] = ["tests/retry"]
+    first_result = _invoke(tmp_path, first)
+    assert first_result.exit_code == 0, first_result.output
+    overlapping = _packet()
+    overlapping["request_id"] = "second-writing-helper"
+    overlapping["allowed_paths"] = ["tests/retry/test_resume.py"]
+    refused = _invoke(tmp_path, overlapping)
+    assert refused.exit_code != 0
+    assert "overlap" in refused.output.lower()
+    readonly = _packet()
+    readonly["request_id"] = "independent-readonly-help"
+    accepted = _invoke(tmp_path, readonly)
+    assert accepted.exit_code == 0, accepted.output
+
+
+def test_helper_uses_normal_claim_after_real_dependency_finishes(tmp_path):
+    before = _parent(tmp_path)
+    board = Board(tmp_path)
+    board.claim_task("dependency-owner", "deaf1234")
+    board.complete_task("dependency-owner", "deaf1234")
+    result = _invoke(tmp_path, _packet())
+    assert result.exit_code == 0, result.output
+    helper_id = json.loads(result.output)["helper_id"]
+    board.claim_task("helper-worker", helper_id)
+    helper = CardStore(tmp_path).fold(helper_id)
+    parent = CardStore(tmp_path).fold(PARENT)
+    assert helper.owner == "helper-worker"
+    assert parent.owner == OWNER
+    assert parent.meta["_claim_revision"] == REVISION
+    assert parent.acceptance_criteria == before.acceptance_criteria
+
+
 @pytest.mark.parametrize("field", ["description", "criteria"])
 def test_parent_contract_change_before_locked_creation_refuses(tmp_path, field):
     from skcoord.card_store import explicit_creation_request_digest

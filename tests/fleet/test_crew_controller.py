@@ -81,6 +81,23 @@ def cycle(scenario):
     return controller.reconcile_crews(paths, home, "fixture-node")
 
 
+def test_real_node_hook_assigns_once_for_thirty_unchanged_cycles(scenario, monkeypatch):
+    home, paths, cards, _, _ = scenario
+    register(scenario)
+    monkeypatch.setattr(sknoded, "node_capacity", lambda: {"cores": 4, "ram_gb": 8, "disk_gb": 40})
+    monkeypatch.setattr(sknoded, "node_inventory", lambda: {})
+    before = cards.fold("aabb0011").model_dump(mode="json")
+    first = sknoded.run_once(paths, "fixture-node")["crew"]
+    assert len(first["created"]) == 1
+    for _ in range(30):
+        assert sknoded.run_once(paths, "fixture-node")["crew"]["created"] == []
+    assert len(cards.list_cards()) == 2
+    helper = cards.fold(first["created"][0])
+    assert helper.owner is None
+    assert helper.meta["helper_parent_id"] == "aabb0011"
+    assert cards.fold("aabb0011").model_dump(mode="json") == before
+
+
 def test_no_manifest_is_no_store_write(scenario):
     _, paths, *_ = scenario
     assert cycle(scenario) is None
@@ -184,6 +201,30 @@ def test_missing_dependency_parks_before_helper_creation(scenario):
     assert len(cards.list_cards()) == 2
 
 
+def test_actual_cli_register_reconcile_status(scenario, tmp_path):
+    from click.testing import CliRunner
+
+    from skcapstone.fleet.cli import fleet
+
+    home, _, cards, _, packet = scenario
+    source = tmp_path / "manifest.json"
+    source.write_text(json.dumps(packet))
+    runner = CliRunner()
+    registered = runner.invoke(
+        fleet,
+        ["crew", "register", "--home", str(home), "--agent", "jarvis", "--packet", str(source)],
+    )
+    assert registered.exit_code == 0, registered.output
+    reconciled = runner.invoke(fleet, ["crew", "reconcile", "--home", str(home)])
+    assert reconciled.exit_code == 0, reconciled.output
+    assert len(json.loads(reconciled.output)["created"]) == 1
+    readback = runner.invoke(fleet, ["crew", "status", "crew-test", "--home", str(home)])
+    assert readback.exit_code == 0, readback.output
+    requests = json.loads(readback.output)["requests"]
+    assert len(requests) == 1 and requests[0]["state"] == "assigned"
+    assert cards.fold(requests[0]["helper_id"]).owner is None
+
+
 def test_fqdn_coordinator_matches_registration(scenario, monkeypatch):
     home, paths, _, _, packet = scenario
     monkeypatch.setattr(socket, "gethostname", lambda: "Fixture.Example")
@@ -202,6 +243,18 @@ def test_corrupt_manifest_does_not_starve_valid_crew(scenario, contents):
     result = cycle(scenario)
     assert len(result["created"]) == 1
     assert any(row["state"] == "held" for row in result["crews"])
+
+
+def test_malformed_request_does_not_stop_heartbeat(scenario, monkeypatch):
+    _, paths, _, _, _ = scenario
+    register(scenario)
+    monkeypatch.setattr(sknoded, "node_capacity", lambda: {"cores": 4, "ram_gb": 8, "disk_gb": 40})
+    monkeypatch.setattr(sknoded, "node_inventory", lambda: {})
+    ledger = CrewStore(paths)
+    (ledger.directory / ledger._request_name("crew-test", "broken")).write_text("{")
+    result = sknoded.run_once(paths, "fixture-node")
+    assert result["heartbeat"] is True
+    assert result["crew"]["crews"][0]["state"] == "held"
 
 
 def test_too_long_derived_objective_refused_before_registration(scenario):
