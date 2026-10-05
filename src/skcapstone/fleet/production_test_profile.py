@@ -61,7 +61,6 @@ def contract(core: dict) -> dict:
     return {"card": card, "repository": repository, "criteria_sha256": digest(criteria)}
 
 
-
 def _validate_shape(value: dict) -> None:
     """Check each historical generation without requalifying its old environment."""
     node_profile = node.is_node(value)
