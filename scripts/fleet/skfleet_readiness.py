@@ -108,6 +108,33 @@ def production_environment_error(
     return None if result.returncode == 0 else "invalid production policy or effective authority"
 
 
+def qualification_sandbox_error(python_bin: str) -> str | None:
+    """Execute the real sealed boundary even on a non-authority production host."""
+    code = (
+        "import subprocess,tempfile; from pathlib import Path; "
+        "from skcapstone.fleet.production_test_worker import sandbox_command\n"
+        "with tempfile.TemporaryDirectory(prefix='skfleet-readiness-') as directory:\n"
+        " root=Path(directory); source=root/'source'; source.mkdir(); "
+        "output=root/'output'; output.mkdir()\n"
+        " subprocess.run(sandbox_command(source,output,['/usr/bin/true']),"
+        "check=True,timeout=15)\n"
+    )
+    try:
+        result = subprocess.run(
+            [python_bin, "-I", "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            env={key: value for key, value in os.environ.items() if key != "BASH_ENV"},
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "native sealed sandbox unavailable or timed out"
+    if result.returncode:
+        detail = result.stderr.strip().splitlines()
+        return "native sealed sandbox refused" + (": " + detail[0][:240] if detail else "")
+    return None
+
+
 def unit_modules(unit_text: str) -> list[str]:
     """Return every ``python -m <module>`` / ``python3 -m <module>`` module path
     found in ExecStart= lines, in order, with no duplicates.
@@ -453,6 +480,14 @@ def _run(
         return 1
 
     mandatory = required_env(dispatcher_source)
+
+    if env_from_systemd == "skfleet-seat-cycle.service":
+        sandbox_error = qualification_sandbox_error(python_bin)
+        if sandbox_error:
+            ok = False
+            lines.append("FAIL qualification sandbox: " + sandbox_error)
+        else:
+            lines.append("OK qualification sandbox: native sealed execution")
 
     # Verify the dispatcher script itself actually imports. Its unit names a
     # script path, not `python -m`, so unit_modules() below never covers it.

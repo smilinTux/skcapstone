@@ -14,6 +14,7 @@ import skfleet_readiness as readiness
 
 @pytest.fixture
 def production(tmp_path, monkeypatch):
+    monkeypatch.setattr(readiness, "qualification_sandbox_error", lambda _: None)
     monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[2] / "src"))
     host = socket.gethostname().split(".")[0].lower()
     policy = tmp_path / "production.json"

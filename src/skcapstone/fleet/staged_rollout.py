@@ -162,6 +162,10 @@ def _copy_steps(
 _DEPLOY_STEPS: tuple[tuple[str, str], ...] = (
     ("git_pull", "git -C {repo} pull"),
     ("pip_install", "cd {repo} && pip install '.[fleet-qualify]'"),
+    (
+        "install_sandbox_profile",
+        "~/.skenv/bin/python -m skcapstone.fleet.rollout_artifacts {repo} sandbox-profile",
+    ),
     *_copy_steps(),
     (
         "install_units",
@@ -203,6 +207,12 @@ _ROLLBACK_STEPS: tuple[tuple[str, str], ...] = (
         "git -C {repo} reset --hard {git_sha}",
     ),
     ("pip_install", "cd {repo} && pip install '.[fleet-qualify]'"),
+    (
+        "install_sandbox_profile",
+        "if test -f {repo}/systemd/apparmor/skfleet-bwrap; then "
+        "~/.skenv/bin/python ~/.cache/skcapstone-rollout/rollout_artifacts.py "
+        "{repo} sandbox-profile; fi",
+    ),
     *_copy_steps("~/.cache/skcapstone-rollout/rollout_artifacts.py"),
     (
         "install_units",

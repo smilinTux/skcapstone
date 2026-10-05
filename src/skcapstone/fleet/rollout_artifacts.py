@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import os
 import shlex
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -26,6 +27,38 @@ _SKNODED_HOST_KEYS = frozenset(
         "SKFLEET_AUTHORITY_HOST",
     }
 )
+SANDBOX_PROFILE_TARGET = Path("/etc/apparmor.d/skfleet-bwrap")
+
+
+def install_sandbox_profile(repo_root: Path, home: Path) -> None:
+    """Load the shipped bwrap attachment without relaxing host namespace policy."""
+    if not (paths_for_home(home).root / "production.json").is_file():
+        return
+    source = repo_root / "systemd/apparmor/skfleet-bwrap"
+    if source.is_symlink() or SANDBOX_PROFILE_TARGET.is_symlink():
+        raise ValueError("sandbox profile must not be a symlink")
+    data = source.read_bytes()
+    target = SANDBOX_PROFILE_TARGET
+    previous = target.read_bytes() if target.exists() else None
+    if previous is not None and previous != data:
+        backup = (
+            paths_for_home(home).root
+            / "rollout-apparmor-preimages"
+            / hashlib.sha256(previous).hexdigest()
+            / target.name
+        )
+        if not backup.exists():
+            _write(backup, previous, 0o600)
+    subprocess.run(
+        ["sudo", "-n", "/usr/bin/install", "-m", "0644", str(source), str(target)],
+        check=True,
+        timeout=30,
+    )
+    subprocess.run(
+        ["sudo", "-n", "/usr/sbin/apparmor_parser", "-r", str(target)],
+        check=True,
+        timeout=30,
+    )
 
 
 def unit_source_path(repo_root: Path, name: str, production: bool) -> Path:
@@ -135,9 +168,11 @@ def main() -> None:
     """Expose artifact installation to the existing staged rollout shell steps."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("repo_root", type=Path)
-    parser.add_argument("artifact", help="Declared script basename, or 'units'")
+    parser.add_argument("artifact", help="Declared script basename, 'units' or 'sandbox-profile'")
     args = parser.parse_args()
-    if args.artifact == "units":
+    if args.artifact == "sandbox-profile":
+        install_sandbox_profile(args.repo_root, Path.home())
+    elif args.artifact == "units":
         install_units(args.repo_root, Path.home())
     else:
         install_artifact(args.repo_root, Path.home(), args.artifact)
