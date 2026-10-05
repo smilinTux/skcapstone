@@ -144,6 +144,8 @@ def test_hyphenated_targets_preserve_fixed_argv():
                 "-q",
                 "-p",
                 "no:cacheprovider",
+                "-p",
+                "production_pytest_selection",
                 "-m",
                 "not host_systemd",
                 "--junitxml=/output/pytest.xml",

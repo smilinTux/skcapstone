@@ -24,7 +24,7 @@ def test_simple_src_repository_keeps_existing_sandbox_contract(tmp_path):
     source = tmp_path / "source"
     (source / "src").mkdir(parents=True)
     argv = worker.sandbox_command(source, tmp_path / "output", ["python", "-V"])
-    assert pythonpath(argv) == "/work/src"
+    assert pythonpath(argv) == "/work/src:/qualified"
     assert "--clearenv" in argv and "--unshare-all" in argv
     assert argv[argv.index(str(source)) - 1] == "--ro-bind"
 
@@ -41,7 +41,11 @@ def test_monorepo_imports_only_candidate_source_roots(tmp_path, monkeypatch):
         (source / relative).mkdir(parents=True)
     monkeypatch.setenv("PYTHONPATH", "/old-host-checkout/services/api/src")
     argv = worker.sandbox_command(source, tmp_path / "output", ["python", "-V"])
-    assert set(pythonpath(argv).split(":")) == {"/work/src", *("/work/" + p for p in roots)}
+    assert set(pythonpath(argv).split(":")) == {
+        "/work/src",
+        "/qualified",
+        *("/work/" + p for p in roots),
+    }
     assert not any("old-host-checkout" in word for word in argv)
 
 

@@ -120,7 +120,7 @@ def sandbox_command(
         "--",
         *argv,
     ]
-    if profile and not node.is_node(profile) and requires_selection(profile["recipe"]):
+    if not node.is_node(profile):
         position = command.index("--tmpfs")
         command[position:position] = [
             "--ro-bind",

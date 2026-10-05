@@ -119,12 +119,14 @@ def recipe_checks(recipe: dict) -> list[dict]:
         "-q",
         "-p",
         "no:cacheprovider",
+        "-p",
+        "production_pytest_selection",
         "-m",
         "not host_systemd",
         "--junitxml=/output/pytest.xml",
     ]
     if requires_selection(recipe):
-        argv += ["--rootdir=/work", "--confcutdir=/work", "-p", "production_pytest_selection"]
+        argv += ["--rootdir=/work", "--confcutdir=/work"]
         argv += ["--skfleet-baseline-node=" + n for n in baseline]
     checks = [{"id": "pytest", "argv": [*argv, *tests]}]
     if recipe["compile"]:
