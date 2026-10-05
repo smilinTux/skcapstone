@@ -55,3 +55,32 @@ keeps existing profiles usable. A change to the toolchain, startup path, or
 trusted executor still requires governed qualification before new producers
 launch. Profiles made with the previous whole-package hash need one final
 qualification after this change lands; their immutable history is preserved.
+
+Python recipe targets may be literal files or directories containing a `tests`
+path component, including `v1/tests` and versioned contract subdirectories.
+Absolute paths, traversal, shell syntax, globs, overlapping targets, and symlink
+redirection are rejected. Each target must exist inside the clean sealed source
+at candidate sealing, execution, and independent receipt verification. Directory
+trees are bounded at 100,000 entries. The `pytest` mapping records the minimum
+successful selected case count for each file or directory. The default maximum
+is 64 targets; an explicit integer `file_cap` can raise it up to 4096. Compile
+and lint targets retain their separate 64-file bound.
+
+An optional `deselect` list names exact pytest node IDs for an operator-approved
+known-failure or excluded integration baseline. Every ID must belong to an
+approved test target and actually occur in collection. Duplicate, missing,
+wildcard, and out-of-scope IDs refuse the run. The trusted collection hook
+removes exact matches rather than pytest's prefix-based `--deselect`, so a new
+similarly named failure remains a failure. Directory and baseline recipes use a
+stable `/work` root and a fingerprinted read-only collection hook. Legacy file
+recipes without exclusions retain their original command argv.
+
+The hook writes private `selection.json` evidence with all collected selected
+IDs and exact deselected baseline IDs. Worker receipts bind its byte SHA256;
+independent verification rehashes it and matches every remaining JUnit identity
+and target minimum. All remaining tests must pass with no errors or skips.
+Excluded cases are recorded as `deselected`, never counted as passing tests.
+Actual qualification evidence must include the approved recipe, selection file,
+raw JUnit, source revision, runtime fingerprint, policy fingerprint, check logs,
+and justification for each baseline ID. Profile publication still requires the
+native operator qualification API and the separate main rollout barrier.

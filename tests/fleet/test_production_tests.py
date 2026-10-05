@@ -50,6 +50,18 @@ def setup(tmp_path, monkeypatch, qualified_runtime):
     workspace.mkdir()
     subprocess.run(["git", "init", "-q", str(workspace)], check=True)
     (workspace / "source.py").write_text("value = 1\n")
+    # These profile fixtures now owe real source targets before plan sealing.
+    for name in (
+        "tests/test_parser-case.py",
+        "tests/test_any.py",
+        "tests/test_parser.py",
+        "tests/fleet/test_parser.py",
+        "scripts/fleet/skfleet-working.py",
+        "src/parser-case.py",
+    ):
+        target = workspace / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# Synthetic sealed source target.\n")
     subprocess.run(["git", "-C", str(workspace), "add", "."], check=True)
     subprocess.run(
         [
@@ -272,6 +284,46 @@ def test_receipt_rehashes_raw_output_and_terminal_custody(setup, monkeypatch):
     assert result["counts"]["total"] == 226
     private_bytes(setup.directory / "compile.log", b"changed")
     with pytest.raises(native.TestEvidenceError, match="raw output"):
+        native.validate_test_receipt(setup.home, setup.binding, setup.workspace)
+
+
+def test_directory_receipt_rehashes_exact_collection_evidence(setup, monkeypatch):
+    """The independent receipt reader rejects changed collection bytes."""
+    from skcapstone.fleet.production_test_profile import recipe_checks
+
+    approved = {"pytest": {"tests": 226}, "compile": [], "lint": [], "changelog": False}
+    setup.plan["profile"] = {"recipe": approved}
+    setup.plan["checks"] = recipe_checks(approved)
+    monkeypatch.setattr(
+        native, "load_plan", lambda *a, **kw: (setup.plan, setup.plan_path, setup.digest)
+    )
+    receipt, terminal = receipt_fixture(setup, monkeypatch)
+    selected = []
+    for index, filename in enumerate(native.TEST_FILES):
+        selected.extend(f"{filename}::test_{n}" for n in range(19 if index < 10 else 18))
+    selection = {
+        "schema": "skfleet.pytest-selection/v1",
+        "baseline": [],
+        "deselected": [],
+        "selected": sorted(selected),
+    }
+    raw = json.dumps(selection).encode()
+    private_bytes(setup.directory / "selection.json", raw)
+    receipt["selection_sha256"] = native.sha(raw)
+    receipt["counts"] = native.junit_counts(junit(), setup.plan["profile"], selection=selection)
+    check = setup.plan["checks"][0]
+    receipt["checks"][0]["sandbox_argv"] = worker.sandbox_command(
+        setup.workspace, setup.directory / "output", check["argv"], setup.plan["profile"]
+    )
+    private_bytes(setup.directory / "receipt.json", json.dumps(receipt).encode())
+    terminal["receipt_sha256"] = native.sha(native.read_private(setup.directory / "receipt.json"))
+    private_bytes(setup.directory / "terminal.json", json.dumps(terminal).encode())
+    assert (
+        native.validate_test_receipt(setup.home, setup.binding, setup.workspace)["counts"]["total"]
+        == 226
+    )
+    private_bytes(setup.directory / "selection.json", raw + b" ")
+    with pytest.raises(native.TestEvidenceError, match="selection evidence changed"):
         native.validate_test_receipt(setup.home, setup.binding, setup.workspace)
 
 

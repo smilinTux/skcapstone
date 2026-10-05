@@ -53,6 +53,8 @@ _RUNTIME_CACHE = {}
 HARNESS_ROOT = Path(__file__).resolve().parent
 HARNESS_MODULES = (
     "qualified_runtime.py",
+    "production_pytest_recipe.py",
+    "production_pytest_selection.py",
     "production_test_plan.py",
     "production_test_profile.py",
     "production_test_worker.py",
@@ -343,6 +345,10 @@ def _seal_plan(
 
         if node.is_node(profile):
             node.validate_environment(profile["node_environment"], workspace)
+        else:
+            from .production_pytest_recipe import validate_source
+
+            validate_source(profile["recipe"], workspace)
     if (
         not qualified_by
         or not re.fullmatch(r"[0-9a-f]{64}", qualification_sha256)
@@ -512,12 +518,18 @@ def run_directory(home: Path, plan_sha: str) -> Path:
     return home / "fleet/test-runs" / plan_sha
 
 
-def junit_counts(raw: bytes, profile: dict | None = None) -> dict:
+def junit_counts(
+    raw: bytes, profile: dict | None = None, *, selection: dict | None = None
+) -> dict:
     """Recompute strict per-file coverage from raw JUnit, never reported totals alone."""
     from . import production_test_node as node
 
     if node.is_node(profile):
         return node.junit_counts(raw, profile)
+    from .production_pytest_recipe import requires_selection, selected_junit_counts
+
+    if profile and requires_selection(profile["recipe"]):
+        return selected_junit_counts(raw, profile, selection)
     if b"<!DOCTYPE" in raw or b"<!ENTITY" in raw:
         raise TestEvidenceError("JUnit entities are forbidden")
     root = ElementTree.fromstring(raw)

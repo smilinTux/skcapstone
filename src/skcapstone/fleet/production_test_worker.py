@@ -13,6 +13,8 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 from . import production_test_node as node
+from . import production_test_plan as test_plan
+from .production_pytest_recipe import requires_selection, validate_source
 from .production_tests import (
     MAX_OUTPUT,
     PREFIX,
@@ -118,6 +120,15 @@ def sandbox_command(
         "--",
         *argv,
     ]
+    if profile and not node.is_node(profile) and requires_selection(profile["recipe"]):
+        position = command.index("--tmpfs")
+        command[position:position] = [
+            "--ro-bind",
+            str(test_plan.HARNESS_ROOT / "production_pytest_selection.py"),
+            "/qualified/production_pytest_selection.py",
+        ]
+        position = command.index("PYTHONPATH") + 1
+        command[position] += ":/qualified"
     if node.is_node(profile):
         artifact = node.artifact_path(profile["node_environment"])
         source_position = command.index(str(workspace)) - 1
@@ -233,6 +244,8 @@ def execute(plan_path: Path, directory: Path) -> int:
         profile = plan.get("profile")
         if node.is_node(profile):
             node.validate_environment(profile["node_environment"], workspace)
+        elif profile:
+            validate_source(profile["recipe"], workspace)
         for check in plan["checks"]:
             if node.is_node(profile) and check["id"] == "typecheck":
                 # Earlier candidate tests cannot seed an incremental cache that
@@ -264,7 +277,19 @@ def execute(plan_path: Path, directory: Path) -> int:
         with os.fdopen(fd, "wb") as output:
             output.write(raw)
         receipt["junit_sha256"] = sha(raw)
-        receipt["counts"] = junit_counts(raw, plan.get("profile"))
+        selection = None
+        if profile and not node.is_node(profile) and requires_selection(profile["recipe"]):
+            selection_raw = read_private(directory / "output/selection.json")
+            fd = os.open(
+                directory / "selection.json",
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+            )
+            with os.fdopen(fd, "wb") as output:
+                output.write(selection_raw)
+            receipt["selection_sha256"] = sha(selection_raw)
+            selection = read_json(directory / "selection.json")
+        receipt["counts"] = junit_counts(raw, plan.get("profile"), selection=selection)
     except (OSError, ValueError, subprocess.SubprocessError, ElementTree.ParseError) as exc:
         receipt["failure"] = {"type": type(exc).__name__, "message": str(exc)[:1000]}
     write_once(directory / "receipt.json", receipt)

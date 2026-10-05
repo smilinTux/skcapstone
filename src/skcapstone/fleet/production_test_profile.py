@@ -13,6 +13,7 @@ from skcoord.card_store import CardStore, card_mutation_lock
 from . import production_test_node as node
 from . import production_test_plan as plan
 from .production_builder import digest
+from .production_pytest_recipe import recipe_checks
 
 SCHEMA = "skfleet.qualified-test-profile/v1"
 FIELDS = {
@@ -59,68 +60,6 @@ def contract(core: dict) -> dict:
         raise plan.TestEvidenceError("test repository must be credential-free HTTPS")
     return {"card": card, "repository": repository, "criteria_sha256": digest(criteria)}
 
-
-def recipe_checks(recipe: dict) -> list[dict]:
-    """Compile bounded file lists into fixed argv templates for the existing sandbox."""
-    if isinstance(recipe, dict) and "vitest" in recipe:
-        return node.checks(recipe)
-    if not isinstance(recipe, dict) or set(recipe) != {"pytest", "compile", "lint", "changelog"}:
-        raise plan.TestEvidenceError("unsupported test recipe")
-    tests = recipe["pytest"]
-    if (
-        not isinstance(tests, dict)
-        or not 1 <= len(tests) <= 64
-        or any(type(n) is not int or not 1 <= n <= 100000 for n in tests.values())
-    ):
-        raise plan.TestEvidenceError("required per-file test coverage is missing")
-    for category in ("compile", "lint"):
-        paths = recipe[category]
-        if (
-            not isinstance(paths, list)
-            or len(paths) > 64
-            or any(not isinstance(path, str) for path in paths)
-            or len(paths) != len(set(paths))
-        ):
-            raise plan.TestEvidenceError("invalid approved check targets")
-    if type(recipe["changelog"]) is not bool:
-        raise plan.TestEvidenceError("invalid changelog selection")
-    for path in [*tests, *recipe["compile"], *recipe["lint"]]:
-        if (
-            not isinstance(path, str)
-            or len(path) > 240
-            or not re.fullmatch(r"(?:tests|src|scripts)/[A-Za-z0-9_/-]+\.py", path)
-            or "//" in path
-        ):
-            raise plan.TestEvidenceError("unsafe test target")
-    if any(not p.startswith("tests/") for p in tests):
-        raise plan.TestEvidenceError("pytest requires explicit test files")
-    python = str(plan.PREFIX / "bin/python")
-    checks = [
-        {
-            "id": "pytest",
-            "argv": [
-                python,
-                "-m",
-                "pytest",
-                "-q",
-                "-p",
-                "no:cacheprovider",
-                "-m",
-                "not host_systemd",
-                "--junitxml=/output/pytest.xml",
-                *tests,
-            ],
-        }
-    ]
-    if recipe["compile"]:
-        checks.append({"id": "compile", "argv": [python, "-m", "py_compile", *recipe["compile"]]})
-    if recipe["lint"]:
-        checks.append({"id": "lint", "argv": [python, "-m", "ruff", "check", *recipe["lint"]]})
-    if recipe["changelog"]:
-        checks.append(
-            {"id": "changelog", "argv": [python, "scripts/changelog_fragments.py", "--check"]}
-        )
-    return checks
 
 
 def _validate_shape(value: dict) -> None:

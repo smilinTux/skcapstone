@@ -97,6 +97,10 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
     expected = source_state(workspace, binding)
     if node.is_node(plan.get("profile")):
         node.validate_environment(plan["profile"]["node_environment"], workspace)
+    elif plan.get("profile"):
+        from .production_pytest_recipe import validate_source
+
+        validate_source(plan["profile"]["recipe"], workspace)
     unit = production_builder.unit_name(launch, 1)
     policy = launch.get("policy", {})
     expected_argv = service_argv(
@@ -163,7 +167,16 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
             raise TestEvidenceError("native command or raw output mismatch")
     name = "vitest.xml" if node.is_node(plan.get("profile")) else "pytest.xml"
     raw = read_private(directory / name)
-    counts = junit_counts(raw, plan.get("profile"))
+    selection = None
+    from .production_pytest_recipe import requires_selection
+
+    profile = plan.get("profile")
+    if profile and not node.is_node(profile) and requires_selection(profile["recipe"]):
+        selection_raw = read_private(directory / "selection.json")
+        if receipt.get("selection_sha256") != sha(selection_raw):
+            raise TestEvidenceError("native selection evidence changed")
+        selection = read_json(directory / "selection.json")
+    counts = junit_counts(raw, profile, selection=selection)
     if receipt.get("junit_sha256") != sha(raw) or receipt.get("counts") != counts:
         raise TestEvidenceError("native JUnit evidence mismatch")
     return {
