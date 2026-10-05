@@ -69,6 +69,116 @@ def test_exact_stopped_unchanged_attempt_is_qualified(attempt):
     assert proof["attempt"] == 1
 
 
+@pytest.fixture
+def retired_blocked(attempt, monkeypatch):
+    """Preserve the prior stopped request/status, as the retirement CLI does."""
+    from skcapstone.fleet import builder_retire
+
+    a = attempt
+    old_claim = "e" * 32
+    old_owner = "pi-codex-builder-node-worker-1234abcd"
+    outcome = dict(
+        verdict="BLOCKED blocked_on=capability referent=deps",
+        writer=old_owner,
+        ts="2026-10-05T07:25:09+00:00",
+        candidate_commit=a.request["base_revision"],
+        candidate_tree="f" * 40,
+    )
+    events = [
+        dict(
+            action="claim",
+            owner=old_owner,
+            claim_revision=old_claim,
+            ts="2026-10-05T07:22:00+00:00",
+        ),
+        dict(
+            action="claim",
+            owner=a.status["owner"],
+            claim_revision=a.status["claim_revision"],
+            ts="2026-10-05T08:32:49+00:00",
+        ),
+    ]
+    monkeypatch.setattr(retry.CardStore, "_read_events", lambda *args: events)
+    monkeypatch.setattr(retry, "_latest_outcome", lambda *args: outcome)
+    old_request = {**a.request, "request_id": "9" * 64}
+    old_status = {
+        **a.status,
+        "request_id": old_request["request_id"],
+        "owner": old_owner,
+        "claim_revision": old_claim,
+        "state": "blocked",
+        "claim_released": True,
+    }
+    target = builder_retire.directory(a.home, a.request["card_id"], old_request["request_id"])
+    target.mkdir(parents=True, mode=0o700)
+    for name, value in [("request", old_request), ("status", old_status), ("inventory", {})]:
+        path = target / (name + ".json")
+        path.write_bytes(retry.encoded(value))
+        path.chmod(0o600)
+    hashes = {
+        name + "_sha256": hashlib.sha256((target / (name + ".json")).read_bytes()).hexdigest()
+        for name in ("request", "status", "inventory")
+    }
+    (target / "workspace.tar.gz").write_bytes(b"preserved archive")
+    (target / "workspace.tar.gz").chmod(0o600)
+    archive_sha = hashlib.sha256((target / "workspace.tar.gz").read_bytes()).hexdigest()
+    receipt = dict(
+        schema=builder_retire.SCHEMA,
+        host="worker",
+        binding=dict(
+            card_id=a.request["card_id"],
+            node=a.request["node"],
+            request_sha256=hashes["request_sha256"],
+            status_sha256=hashes["status_sha256"],
+        ),
+        proof=dict(
+            **hashes,
+            archive_sha256=archive_sha,
+            process_dead=True,
+            source=dict(head=a.request["base_revision"], tree="f" * 40),
+        ),
+    )
+    (target / "retirement.json").write_bytes(retry.encoded(receipt))
+    (target / "retirement.json").chmod(0o600)
+    return a, target, outcome, receipt, events
+
+
+def test_retired_prior_blocked_outcome_does_not_fence_new_claim(retired_blocked):
+    """bc9 GLM retry should not inherit the retired Codex generation's refusal."""
+    a, target, _, _, _ = retired_blocked
+    before = {p.name: p.read_bytes() for p in target.iterdir()}
+    assert (
+        retry.check_attempt(a.paths, a.home, a.request, a.status)["claim_revision"]
+        == a.status["claim_revision"]
+    )
+    assert {p.name: p.read_bytes() for p in target.iterdir()} == before
+
+
+@pytest.mark.parametrize(
+    "change", ["current", "pass", "missing", "hash", "death", "tree", "claim"]
+)
+def test_retirement_exception_preserves_other_custody_fences(retired_blocked, change):
+    a, target, outcome, receipt, events = retired_blocked
+    if change == "current":
+        outcome["ts"] = "2026-10-05T08:33:00+00:00"
+    elif change == "pass":
+        outcome["verdict"] = "PASS_FOR_REVIEW"
+    elif change == "missing":
+        (target / "retirement.json").unlink()
+    elif change == "hash":
+        (target / "status.json").write_bytes(b"{}")
+    elif change == "death":
+        receipt["proof"]["process_dead"] = False
+    elif change == "tree":
+        outcome["candidate_tree"] = "0" * 40
+    else:
+        events[-1]["claim_revision"] = "0" * 32
+    if change in {"death", "tree"}:
+        (target / "retirement.json").write_bytes(retry.encoded(receipt))
+    with pytest.raises(ValueError):
+        retry.check_attempt(a.paths, a.home, a.request, a.status)
+
+
 @pytest.mark.parametrize(
     "change",
     [

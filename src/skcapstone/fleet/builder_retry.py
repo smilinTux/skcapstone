@@ -8,7 +8,8 @@ import socket
 import subprocess
 import sys
 from contextlib import contextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta
+from itertools import islice
 from pathlib import Path
 
 from skcoord.card_store import CardStore, card_mutation_lock
@@ -109,8 +110,9 @@ def check_attempt(paths, home, request, status, *, local=True):
     """Refuse changed custody, proposals, artifacts, workspaces or process identity."""
     native, card = check_custody(home, request, status)
     card_id = request["card_id"]
+    outcome = _latest_outcome(native, card_id)
     if (
-        _latest_outcome(native, card_id)
+        (outcome and not _retired_blocked(native, home, request, status, outcome))
         or status.get("source_artifact")
         or any("candidate" in key or key in {"evidence", "commit_sha"} for key in card.links)
     ):
@@ -127,6 +129,95 @@ def check_attempt(paths, home, request, status, *, local=True):
             paths.root / "workspaces" / card.owner, request["base_revision"]
         )
     return binding(request, status)
+
+
+def _retired_blocked(native, home, request, status, outcome):
+    """Recognize only preserved prior BLOCKED custody, never a current outcome."""
+    from . import builder_retire
+
+    if not str(outcome.get("verdict", "")).startswith("BLOCKED "):
+        return False
+    try:
+        claims = [
+            event
+            for event in native._read_events(request["card_id"])
+            if event.get("action") == "claim"
+        ]
+        current = [
+            event
+            for event in claims
+            if event.get("claim_revision", event.get("event_id")) == status["claim_revision"]
+            and event.get("owner") == status["owner"]
+        ]
+        at = datetime.fromisoformat(outcome["ts"].replace("Z", "+00:00"))
+        if len(current) != 1 or at >= datetime.fromisoformat(
+            current[0]["ts"].replace("Z", "+00:00")
+        ):
+            return False
+        prior = [
+            event
+            for event in claims
+            if datetime.fromisoformat(event["ts"].replace("Z", "+00:00")) <= at
+        ]
+        old_claim = max(prior, key=lambda event: event["ts"])
+        if old_claim.get("owner") != outcome.get("writer"):
+            return False
+        root = home / "evidence/work" / request["card_id"] / "terminal-offers"
+        entries = list(islice(root.iterdir(), 129))
+        if len(entries) > 128:
+            return False
+        for target in entries:
+            if target.resolve() != target or target.stat().st_mode & 0o777 != 0o700:
+                continue
+            if not re.fullmatch(r"[0-9a-f]{64}", target.name):
+                continue
+            raw_request = source_bundle._read(target / "request.json", source_bundle.MAX_EVIDENCE)
+            raw_status = source_bundle._read(target / "status.json", source_bundle.MAX_EVIDENCE)
+            receipt = json.loads(
+                source_bundle._read(target / "retirement.json", source_bundle.MAX_EVIDENCE)
+            )
+            old_request, old_status = json.loads(raw_request), json.loads(raw_status)
+            proof, bound = receipt["proof"], receipt["binding"]
+            hashes = dict(
+                request_sha256=builder_retire.sha(raw_request),
+                status_sha256=builder_retire.sha(raw_status),
+            )
+            if (
+                receipt.get("schema") != builder_retire.SCHEMA
+                or receipt.get("host") != request["production"]["host"]
+                or any(bound.get(k) != request[k] for k in ("card_id", "node"))
+                or any(bound.get(k) != v or proof.get(k) != v for k, v in hashes.items())
+                or any(
+                    old_request.get(k) != request[k] for k in ("card_id", "node", "base_revision")
+                )
+                or old_request.get("request_id") != target.name
+                or old_status.get("request_id") != target.name
+                or old_status.get("state") != "blocked"
+                or old_status.get("claim_released") is not True
+                or old_status.get("owner") != outcome.get("writer")
+                or old_status.get("claim_revision")
+                != old_claim.get("claim_revision", old_claim.get("event_id"))
+                or proof.get("process_dead") is not True
+                or proof.get("source")
+                != dict(head=outcome.get("candidate_commit"), tree=outcome.get("candidate_tree"))
+                or outcome.get("candidate_commit") != request["base_revision"]
+                or not re.fullmatch(r"[0-9a-f]{64}", str(proof.get("archive_sha256", "")))
+                or builder_retire.sha(
+                    source_bundle._read(target / "inventory.json", source_bundle.MAX_EVIDENCE)
+                )
+                != proof.get("inventory_sha256")
+            ):
+                continue
+            if receipt["host"] == socket.gethostname().split(".")[0].lower():
+                if (
+                    builder_retire.file_digest(target / "workspace.tar.gz")
+                    != proof["archive_sha256"]
+                ):
+                    return False
+            return True
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    return False
 
 
 def node_check(payload):

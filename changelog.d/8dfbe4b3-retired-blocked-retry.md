@@ -1,0 +1,1 @@
+- Card `8dfbe4b3`: exact stopped builder retries can recognize a prior BLOCKED generation already preserved and retired through governance. Current outcomes and candidates still prohibit retry; prior claim chronology, retired request/status/inventory hashes and execution-node archive custody are verified without modifying history.
