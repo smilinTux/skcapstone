@@ -280,7 +280,7 @@ def test_junit_requires_each_qualified_file_without_failures_or_skips(qualified)
 
 
 def test_auto_seals_clean_exact_candidate_and_refuses_profile_drift(
-    setup, monkeypatch
+    setup, monkeypatch  # noqa: F811
 ):  # noqa:F811
     s = setup
     s.plan_path.unlink()  # Fixture-only removal of the legacy one-candidate plan.
@@ -367,7 +367,7 @@ def test_actual_local_preclaim_block_reads_current_contract(qualified, changed):
 
 
 def test_acceptance_hook_seals_before_tests_and_does_not_self_complete(
-    setup, monkeypatch
+    setup, monkeypatch  # noqa: F811
 ):  # noqa:F811
     from skcapstone.fleet import production_acceptance as acceptance
     from skcapstone.fleet import production_tests
