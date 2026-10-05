@@ -1,0 +1,1 @@
+- Card `47f989ca`: bound collected-builder journal proof to structured native start and terminal transitions, so routine manager chatter cannot obscure exact invocation evidence. Preserve trusted-manager, reuse, process-absence and ambiguity checks.

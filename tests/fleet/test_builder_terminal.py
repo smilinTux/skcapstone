@@ -87,6 +87,61 @@ def test_journal_check_only_then_private_durable_exact_receipt(collected):
     assert target.read_bytes() == raw
 
 
+@pytest.mark.parametrize("noise_count", [10, 100])
+@pytest.mark.parametrize("missing_invocation", [False, True])
+@pytest.mark.parametrize("later_invocation", [False, True])
+def test_transition_query_preserves_proof_and_detects_reuse_amid_manager_noise(
+    collected, monkeypatch, noise_count, missing_invocation, later_invocation
+):
+    a = collected
+    events = deepcopy(a.rows)
+    for i in range(noise_count):
+        row = {
+            **a.rows[-1],
+            "MESSAGE_ID": "routine-manager-message",
+            "__CURSOR": f"noise-{i}",
+            "__MONOTONIC_TIMESTAMP": str(4000000 + i),
+        }
+        row.pop("USER_INVOCATION_ID")
+        events.append(row)
+    if later_invocation:
+        events.append(
+            {
+                **a.rows[0],
+                "USER_INVOCATION_ID": "f" * 32,
+                "__CURSOR": "later-start",
+                "__MONOTONIC_TIMESTAMP": "5000000",
+            }
+        )
+    if missing_invocation:
+        a.status["invocation"] = None
+    original_command = terminal.command
+
+    def command(argv):
+        if argv[0] != "journalctl":
+            return original_command(argv)
+        # Match journalctl's OR semantics for repeated fields, then its bound.
+        ids = {arg.split("=", 1)[1] for arg in argv if arg.startswith("MESSAGE_ID=")}
+        rows = [row for row in events if not ids or row["MESSAGE_ID"] in ids]
+        return "\n".join(json.dumps(row) for row in rows[-int(argv[argv.index("-n") + 1]) :])
+
+    monkeypatch.setattr(terminal, "command", command)
+    if later_invocation:
+        with pytest.raises(ValueError):
+            if missing_invocation:
+                terminal.recover_collected(a.home, a.status)
+            else:
+                terminal.prove(a.home, a.status, apply=True)
+        assert not terminal.path(a.home, {**a.status, "invocation": "d" * 32}).exists()
+    else:
+        recovered = (
+            terminal.recover_collected(a.home, a.status) if missing_invocation else a.status
+        )
+        terminal.prove(a.home, recovered, apply=True)
+        receipt = json.loads(terminal.path(a.home, recovered).read_bytes())
+        assert receipt["entry"] == a.rows[-1]
+
+
 def test_missing_invocation_recovers_only_exact_collected_generation(collected):
     a = collected
     expected = a.status["invocation"]
