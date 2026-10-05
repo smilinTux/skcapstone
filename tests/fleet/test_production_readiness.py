@@ -102,6 +102,14 @@ def test_production_observer_skips_only_legacy_caps_preserves_imports_and_other_
     production, tmp_path, monkeypatch, capsys, broken_import, extra_required
 ):
     _, environment = production
+    # This observer fixture needs an importable controller, independently of
+    # the developer interpreter's extras. Keep real subprocess import checks.
+    controller = tmp_path / "controller"
+    (controller / "ansible").mkdir(parents=True)
+    (controller / "ansible/__init__.py").write_text("# Synthetic controller fixture.\n")
+    monkeypatch.setenv(
+        "PYTHONPATH", str(Path(__file__).resolve().parents[2] / "src") + ":" + str(controller)
+    )
     source = tmp_path / "dispatcher.py"
     source.write_text(
         "SKFLEET_PRODUCTION_POLICY_V1 = True\nimport "
