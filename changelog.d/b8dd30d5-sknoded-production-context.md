@@ -1,0 +1,1 @@
+- Card `b8dd30d5`: ship a production sknoded unit with persistent policy and authority context so fresh or restarted builder nodes can validate governed offers without historical shell settings. Legacy unit and all policy, route, claim and profile checks remain unchanged.

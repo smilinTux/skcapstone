@@ -241,3 +241,30 @@ def test_cached_installer_runs_when_target_package_has_no_rollout_artifacts(layo
     assert (home / ".config/systemd/user/sknoded.service").read_bytes() == (
         repo / "systemd/sknoded.service"
     ).read_bytes()
+
+
+@pytest.mark.parametrize("production", [False, True])
+def test_fresh_sknoded_install_persists_production_context(tmp_path, production):
+    """Fresh nodes receive policy bindings without a historical host environment."""
+    repo = Path(__file__).resolve().parents[2]
+    home = tmp_path / "home"
+    fleet = paths_for_home(home).root
+    fleet.mkdir(parents=True)
+    if production:
+        (fleet / "production.json").write_text("{}")
+    install_units(repo, home)
+    unit = home / ".config/systemd/user/sknoded.service"
+    expected = rollout_artifacts.unit_source_path(repo, "sknoded.service", production)
+    assert unit.read_bytes() == expected.read_bytes()
+    assert unit.stat().st_mode & 0o777 == 0o644
+    context = {
+        line.removeprefix("Environment=")
+        for line in unit.read_text().splitlines()
+        if line.startswith("Environment=SKFLEET_")
+    }
+    wanted = {
+        "SKFLEET_PRODUCTION_POLICY=%h/.skcapstone/fleet/production.json",
+        "SKFLEET_AUTHORITY_HOST=chiap08",
+    }
+    assert context == (wanted if production else set())
+    assert not (home / ".config/sknoded/operator-http.env").exists()
