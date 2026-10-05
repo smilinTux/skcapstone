@@ -100,3 +100,11 @@ def test_sandbox_executes_pinned_module_and_excludes_old_host_source(tmp_path, m
     assert actual == dict(
         value="pinned264", file="/work/packages/domain/src/qualification_probe.py"
     )
+
+
+@pytest.mark.parametrize("name", ["import:injection", "source with spaces"])
+def test_candidate_paths_cannot_inject_pythonpath_entries(tmp_path, name):
+    source = tmp_path / "source"
+    (source / "packages" / name / "src").mkdir(parents=True)
+    with pytest.raises(TestEvidenceError, match="candidate Python source root is unsafe"):
+        worker.sandbox_command(source, tmp_path / "output", ["python", "-V"])

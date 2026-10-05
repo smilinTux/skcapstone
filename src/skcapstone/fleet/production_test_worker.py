@@ -41,6 +41,8 @@ def candidate_pythonpath(workspace: Path) -> str:
     paths = ["/work/src"]
     for path in roots:
         relative = path.relative_to(workspace)
+        if any(not re.fullmatch(r"[A-Za-z0-9_.-]+", part) for part in relative.parts):
+            raise TestEvidenceError("candidate Python source root is unsafe")
         if not path.is_dir() or path.resolve() != workspace.resolve() / relative:
             raise TestEvidenceError("candidate Python source root is redirected")
         paths.append("/work/" + relative.as_posix())
