@@ -410,3 +410,29 @@ def test_uncertain_fenced_assignment_retains_capacity(
         monkeypatch.setattr(CardStore, "_read_events", changing)
     assert len(admission._occupancy(root, home, strict_terminal=True)) == 1
     assert not (directory / "fenced-assignment-terminal.json").exists()
+
+
+def test_cached_fenced_terminal_survives_legitimate_card_handoff(
+    fenced_without_launch_receipt, monkeypatch
+):
+    home, root, directory, state, events, entries = fenced_without_launch_receipt
+    assert admission._occupancy(root, home, strict_terminal=True) == []
+    card = CardStore(home).fold("12345678")
+    card.owner = None
+    card.meta.pop("_claim_revision", None)
+    monkeypatch.setattr(CardStore, "fold", lambda *a: card)
+    monkeypatch.setattr(
+        admission, "unit_state", lambda *a, **k: pytest.fail("cached terminal queried systemctl")
+    )
+    assert admission._occupancy(root, home, strict_terminal=True) == []
+
+
+def test_fresh_fenced_recovery_refuses_changed_current_custody(
+    fenced_without_launch_receipt, monkeypatch
+):
+    home, root, directory, state, events, entries = fenced_without_launch_receipt
+    card = CardStore(home).fold("12345678")
+    card.owner = "another-owner"
+    monkeypatch.setattr(CardStore, "fold", lambda *a: card)
+    assert len(admission._occupancy(root, home, strict_terminal=True)) == 1
+    assert not (directory / "fenced-assignment-terminal.json").exists()

@@ -43,7 +43,7 @@ def _launches(home: Path, intent: dict) -> list[dict]:
     ]
 
 
-def _fenced_claim(directory: Path, home: Path, intent: dict) -> list[dict]:
+def _fenced_claim(directory: Path, home: Path, intent: dict, *, current=True) -> list[dict]:
     """A consumed claim fence is evidence, never a synthetic launch event."""
     binding = intent["binding"]
     match = re.fullmatch(
@@ -66,16 +66,18 @@ def _fenced_claim(directory: Path, home: Path, intent: dict) -> list[dict]:
     ):
         return []
     store = CardStore(home)
-    card = store.fold(binding["card_id"])
-    if (
-        card is None
-        or card.archived
-        or card.meta.get("claim_conflicts")
-        or card.status.value != "doing"
-        or card.owner != binding["owner"]
-        or card.meta.get("_claim_revision") != binding["claim_revision"]
-    ):
-        return []
+    if current:
+        card = store.fold(binding["card_id"])
+        if (
+            card is None
+            or card.archived
+            or card.meta.get("claim_conflicts")
+            or card.status.value != "doing"
+            or card.owner != binding["owner"]
+            or card.meta.get("_claim_revision") != binding["claim_revision"]
+        ):
+        
+    return []
     return [
         event
         for event in store._read_events(binding["card_id"])
@@ -187,11 +189,13 @@ def reconcile_legacy_assignment(
     """
     launches = _launches(home, intent)
     fenced = not launches
-    if fenced:
-        launches = _fenced_claim(directory, home, intent)
     path = directory / (
         "fenced-assignment-terminal.json" if fenced else "legacy-assignment-terminal.json"
     )
+    if fenced:
+        # Historical resource discharge survives later legitimate card handoff.
+        # A fresh recovery still requires the unchanged current native claim.
+        launches = _fenced_claim(directory, home, intent, current=not path.exists())
 
     def valid(proof):
         return _valid(proof, intent, launches, fenced=fenced) and (
