@@ -1,0 +1,1 @@
+- Re-select a currently eligible production host when renewing a node-proven unclaimed expired builder offer; preserve the expired request on its original host and all current claim/custody and admission fences.

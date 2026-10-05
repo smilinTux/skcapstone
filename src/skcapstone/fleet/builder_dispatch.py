@@ -509,6 +509,10 @@ def _offer(paths, core, labels, *, writer, now=None):
                 _validated_status(status_path(paths, view.name, card_id), paths, view.name) or {}
             )
             if _unclaimed_expired_offer(existing, prior):
+                if production is not None:
+                    # A fresh generation must pass current host selection;
+                    # the expired, unclaimed offer does not pin placement.
+                    continue
                 selected_node = view.name
                 break
             if prior.get("request_id") == existing.get("request_id") and (

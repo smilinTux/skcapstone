@@ -237,6 +237,58 @@ def test_production_spreads_workers_without_charging_retained_evidence(
     assert request_path.read_bytes() == original
 
 
+@pytest.mark.parametrize("original_blocker", ["memory", "occupied"])
+def test_expired_unclaimed_production_offer_can_move_to_an_eligible_host(
+    paths, operator, production_setup, monkeypatch, original_blocker
+):
+    p = production_setup
+    p.policy["node_quotas"]["idle"] = dict(p.policy["node_quotas"]["worker"])
+    p.path.write_text(json.dumps(p.policy))
+    labels = ["sk-m", "source-only", "glm-only"]
+    card = _card() | {"id": "24b00004"}
+    expired = builder.offer(paths, card, labels, writer=p.writer)
+    expired["lease_expires_at"] = "2000-01-01T00:00:00Z"
+    old_path = builder.request_path(paths, p.view.name, card["id"])
+    store._dump(old_path, expired)
+    builder._write_status(
+        paths,
+        p.view.name,
+        expired,
+        "blocked",
+        attempt=0,
+        error="unclaimed offer expired",
+        claim_released=False,
+    )
+    old_bytes = old_path.read_bytes()
+    if original_blocker == "memory":
+        p.view.allocatable["ram_gb"] = 0.5
+    else:
+        occupied = dict(expired, card_id="24b00005", request_id="a" * 64)
+        store._dump(builder.request_path(paths, p.view.name, occupied["card_id"]), occupied)
+        builder._write_status(paths, p.view.name, occupied, "running")
+    idle = NodeView(
+        "node-z",
+        "Ready",
+        role="builder-standby",
+        labels={"host": "idle"},
+        capacity={"cores": 16, "ram_gb": 32},
+        allocatable={"cores": 12, "ram_gb": 16},
+    )
+    store.write_spec(
+        paths,
+        "node",
+        idle.name,
+        {"role": "builder-standby", "actuate": True, "cordoned": False},
+        writer=operator,
+        labels=idle.labels,
+    )
+    monkeypatch.setattr(builder, "node_views", lambda _paths: [p.view, idle])
+    fresh = builder.offer(paths, card, labels, writer=p.writer)
+    assert fresh["request_id"] != expired["request_id"]
+    assert fresh["node"] == idle.name
+    assert old_path.read_bytes() == old_bytes
+
+
 def test_local_content_requires_explicit_simple_qwen_policy(production_setup):
     p = production_setup.policy
     assert production.route_binding(p, "24b00001", "sk-s", ["local-only"])["family"] == "qwen"
