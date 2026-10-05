@@ -56,6 +56,7 @@ from .deployment_manifest import (
     production_script_bytes,
 )
 from .paths import paths_for_home, self_node_name
+from .qualified_runtime import missing_dependencies
 from .rollout_artifacts import unit_source_path
 
 #: Not in the shipped systemd/ tree (see the module docstring: the dispatcher
@@ -483,6 +484,11 @@ def detect_drift(manifest: dict[str, Any], home: Path | str, repo_root: Path | s
     readiness = _load_readiness_module(repo_root)
 
     drifts: list[Drift] = []
+    if production:
+        drifts.extend(
+            Drift(f"qualified-runtime:{name}", "missing", "fleet-qualify", None, host)
+            for name in missing_dependencies(home / ".skenv")
+        )
     scope_cache: dict[str, tuple[bool | None, str | None, str]] = {}
 
     def scope_of(unit_name: str) -> tuple[bool | None, str | None, str]:

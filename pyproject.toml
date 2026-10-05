@@ -77,6 +77,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+fleet-qualify = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.3",
+    "pluggy>=1.0",
+    "iniconfig>=1.0",
+    "packaging>=23.0",
+]
 dashboard = [
     "starlette>=0.40",
     "uvicorn>=0.30",

@@ -17,6 +17,7 @@ from xml.etree import ElementTree
 
 from . import production_builder
 from .production_policy import _unique_object
+from .qualified_runtime import TOOL_PACKAGES
 
 PREFIX = Path.home() / ".skenv"
 MAX_OUTPUT = 4 * 1024 * 1024
@@ -50,8 +51,8 @@ BINDING_KEYS = frozenset(
 )
 _RUNTIME_CACHE = {}
 HARNESS_ROOT = Path(__file__).resolve().parent
-TOOL_PACKAGES = ("pytest", "_pytest", "pytest_asyncio", "ruff", "pluggy", "iniconfig", "packaging")
 HARNESS_MODULES = (
+    "qualified_runtime.py",
     "production_test_plan.py",
     "production_test_profile.py",
     "production_test_worker.py",

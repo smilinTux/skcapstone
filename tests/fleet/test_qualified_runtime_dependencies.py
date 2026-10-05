@@ -1,0 +1,106 @@
+"""Qualified toolchain installation and fail-closed observer regressions."""
+
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+import tomllib
+from packaging.requirements import Requirement
+
+from skcapstone.fleet import production_test_plan as plan
+from skcapstone.fleet import rollout_drift
+from skcapstone.fleet.cli import _drift_is_role_ambiguous
+from skcapstone.fleet.staged_rollout import _DEPLOY_STEPS, _ROLLBACK_STEPS
+
+
+def test_packaging_extra_covers_fingerprinted_tools_and_both_install_directions():
+    root = Path(__file__).resolve().parents[2]
+    config = tomllib.loads((root / "pyproject.toml").read_text())
+    names = {
+        Requirement(item).name
+        for item in config["project"]["optional-dependencies"]["fleet-qualify"]
+    }
+    assert {"pytest", "pytest-asyncio", "ruff", "pluggy", "iniconfig", "packaging"} <= names
+    assert set(plan.TOOL_PACKAGES) == {
+        "pytest",
+        "_pytest",
+        "pytest_asyncio",
+        "ruff",
+        "pluggy",
+        "iniconfig",
+        "packaging",
+    }
+    for steps in (_DEPLOY_STEPS, _ROLLBACK_STEPS):
+        command = dict(steps)["pip_install"]
+        assert "pip install -e '.[fleet-qualify]'" in command
+
+
+def test_missing_tools_probe_uses_the_target_prefix(tmp_path):
+    from skcapstone.fleet.qualified_runtime import missing_dependencies
+
+    site = (
+        tmp_path
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+    )
+    site.mkdir(parents=True)
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin/ruff").write_text("synthetic executable")
+    for name in plan.TOOL_PACKAGES:
+        (site / name).mkdir()
+    assert missing_dependencies(tmp_path) == []
+    (site / "pytest_asyncio").rmdir()
+    assert missing_dependencies(tmp_path) == ["pytest_asyncio"]
+    (tmp_path / "bin/ruff").unlink()
+    assert missing_dependencies(tmp_path) == ["pytest_asyncio", "ruff executable"]
+
+
+def test_production_drift_and_rollout_gate_cannot_hide_missing_tools(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    policy = home / ".skcapstone/fleet/production.json"
+    policy.parent.mkdir(parents=True)
+    policy.write_text("{}")
+    observer = SimpleNamespace(
+        unit_in_scope=lambda _: (False, None, "fixture"),
+        _systemctl_show_value=lambda *args: ("inactive", None),
+    )
+    monkeypatch.setattr(rollout_drift, "_load_readiness_module", lambda _: observer)
+    monkeypatch.setattr(rollout_drift, "_script_files", lambda _: [])
+    drifts = rollout_drift.detect_drift({"units": []}, home, tmp_path)
+    missing = [d for d in drifts if d.artifact == "qualified-runtime:pytest_asyncio"]
+    assert len(missing) == 1 and missing[0].kind == "missing"
+    assert not _drift_is_role_ambiguous(missing[0])
+
+
+@pytest.mark.parametrize("missing", [True, False])
+def test_production_readiness_reports_the_actual_interpreter_missing_plugin(
+    tmp_path, monkeypatch, capsys, missing
+):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts/fleet"))
+    import skfleet_readiness as readiness
+
+    source = tmp_path / "dispatcher.py"
+    source.write_text("SKFLEET_PRODUCTION_POLICY_V1 = True\n")
+    units = tmp_path / "units"
+    units.mkdir()
+    (units / "fixture.service").write_text("ExecStart=/usr/bin/python3 -m json\n")
+    monkeypatch.setenv("SKFLEET_PRODUCTION_POLICY", str(tmp_path / "policy.json"))
+    monkeypatch.setenv("SKFLEET_AUTHORITY_HOST", "fixture")
+    monkeypatch.setattr(readiness, "production_environment_error", lambda *args: None)
+    calls = []
+
+    def imports(modules, interpreter):
+        calls.append((modules, interpreter))
+        return {module: not missing or module != "pytest_asyncio" for module in modules}
+
+    monkeypatch.setattr(readiness, "check_module_imports", imports)
+    assert readiness._run(source, units, "/fixture/python", None) == int(missing)
+    assert (
+        "FAIL qualified-runtime dependency: pytest_asyncio" in capsys.readouterr().out
+    ) == missing
+    assert any(
+        "pytest_asyncio" in modules and interpreter == "/fixture/python"
+        for modules, interpreter in calls
+    )

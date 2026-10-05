@@ -956,6 +956,7 @@ def _drift_is_role_ambiguous(drift) -> bool:
         drift.kind == "missing"
         and drift.artifact not in _UNAMBIGUOUS_MISSING_ARTIFACTS
         and not drift.artifact.startswith("script:")
+        and not drift.artifact.startswith("qualified-runtime:")
     )
 
 
