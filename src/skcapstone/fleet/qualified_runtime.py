@@ -9,7 +9,7 @@ REQUIRED_PACKAGES = (*TOOL_PACKAGES, "ansible", "skcapstone")
 
 
 def missing_dependencies(prefix: Path) -> list[str]:
-    """Return missing fingerprint inputs in the node's qualified interpreter prefix."""
+    """Return missing prefix-contained dependencies for governed qualification."""
     site = prefix / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}"
     site = site / "site-packages"
     missing = [
