@@ -76,7 +76,7 @@ def _fenced_claim(directory: Path, home: Path, intent: dict, *, current=True) ->
             or card.owner != binding["owner"]
             or card.meta.get("_claim_revision") != binding["claim_revision"]
         ):
-        
+            return []
     return []
     return [
         event
