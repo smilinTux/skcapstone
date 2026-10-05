@@ -46,7 +46,7 @@ def safe_node(node_id: str, targets: dict[str, int]) -> str:
     """Validate an exact pytest ID bound to a selected test source file."""
     if (
         not isinstance(node_id, str)
-        or len(node_id) > 1024
+        or len(node_id) > 16384
         or any(c in node_id for c in "\x00\r\n")
     ):
         raise plan.TestEvidenceError("invalid baseline node ID")

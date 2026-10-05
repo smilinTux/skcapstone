@@ -97,7 +97,13 @@ def test_deselection_is_recorded_as_exact_ids_and_never_prefix_options():
 
 
 def run_fixture(
-    tmp_path, *, extra_failure=False, missing=False, parameterized=False, extra_baseline=None
+    tmp_path,
+    *,
+    extra_failure=False,
+    missing=False,
+    parameterized=False,
+    extra_baseline=None,
+    long_parameter=False,
 ):
     tests = tmp_path / "v1/tests"
     tests.mkdir(parents=True)
@@ -106,7 +112,9 @@ def run_fixture(
         "def test_known_failure(): assert False\n"
         f"def test_known_failure_extra(): assert {not extra_failure}\n"
         + (
-            "import pytest\n@pytest.mark.parametrize('value', ['a?b', 'a*b'])\n"
+            "import pytest\n@pytest.mark.parametrize('value', "
+            + repr(["a?b", "a*b"] + (["x" * 1200] if long_parameter else []))
+            + ")\n"
             "def test_parameter_value(value): assert value\n"
             if parameterized
             else ""
@@ -171,6 +179,35 @@ def test_parameter_baseline_matches_one_literal_id_and_never_a_pattern(tmp_path)
     )
     assert result.returncode != 0
     assert "baseline node IDs missing" in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("exclude_long_parameter", [False, True])
+def test_long_parameter_id_is_valid_in_selection_and_exact_baseline(
+    tmp_path, exclude_long_parameter
+):
+    """Collected long URL-like parameter values remain literal and hash-bound."""
+    node = "v1/tests/test_backup.py::test_parameter_value[" + "x" * 1200 + "]"
+    result, approved, _ = run_fixture(
+        tmp_path,
+        parameterized=True,
+        long_parameter=True,
+        extra_baseline=[node] if exclude_long_parameter else [],
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    selection = json.loads((tmp_path / "selection.json").read_text())
+    counts = plan.junit_counts(
+        (tmp_path / "pytest.xml").read_bytes(), {"recipe": approved}, selection=selection
+    )
+    assert counts["total"] == (4 if exclude_long_parameter else 5)
+    assert node in selection["deselected" if exclude_long_parameter else "selected"]
+    assert (node in counts["deselected"]) is exclude_long_parameter
+
+
+def test_parameter_id_still_has_a_bounded_size():
+    """An exact baseline cannot supply an unbounded argument or receipt ID."""
+    node = "v1/tests/test_backup.py::test_parameter_value[" + "x" * 16384 + "]"
+    with pytest.raises(plan.TestEvidenceError, match="invalid baseline node ID"):
+        profile.recipe_checks(recipe(deselect=[node]))
 
 
 def test_real_pytest_exact_baseline_and_directory_coverage(tmp_path):

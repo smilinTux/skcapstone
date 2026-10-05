@@ -1,0 +1,1 @@
+- Card `ad4c4217`: accept bounded literal pytest parameter IDs up to 16 KiB in exact baseline and coverage evidence. Native dashboard collection produced a valid 1,121-character ID that the previous 1,024-character limit refused. Oversized IDs, unsafe source paths, control characters, and absent exact exclusions still fail closed.
