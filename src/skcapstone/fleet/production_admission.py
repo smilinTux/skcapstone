@@ -182,6 +182,16 @@ def _occupancy(root: Path, home: Path, *, strict_terminal=False) -> list[dict]:
                 ):
                     raise AdmissionError("terminal admission proof differs")
                 continue
+            # Historical manager proof already binds the exact invocation. Live
+            # inventory above still charges any later reuse of this unit name.
+            journal_path = directory / "journal-terminal.json"
+            if journal_path.exists() and (directory / "observed.json").exists():
+                observed = read_json(directory / "observed.json")
+                if not _valid_observed(observed, intent):
+                    raise AdmissionError("reservation acknowledgment is inconsistent")
+                if not _valid_journal_terminal(read_json(journal_path), intent, observed):
+                    raise AdmissionError("journal terminal proof differs")
+                continue
             state = unit_state(unit, terminal=True)
             if _terminal_state(state, intent):
                 if unit_state(unit, terminal=True) != state:
@@ -196,12 +206,7 @@ def _occupancy(root: Path, home: Path, *, strict_terminal=False) -> list[dict]:
             continue
         if (directory / "observed.json").exists():
             observed = read_json(directory / "observed.json")
-            if (
-                observed.get("reservation_id") != directory.name
-                or observed.get("unit") != unit
-                or observed.get("memory_max_bytes") != maximum
-                or not re.fullmatch(r"[0-9a-f]{32}", observed.get("invocation", ""))
-            ):
+            if not _valid_observed(observed, intent):
                 raise AdmissionError("reservation acknowledgment is inconsistent")
             if strict_terminal and unit not in units:
                 journal_path = directory / "journal-terminal.json"
@@ -324,6 +329,15 @@ def _released_prestart(home: Path, intent: dict, proof: dict) -> bool:
         and event.get("released_owner") == binding["owner"]
         and event.get("expected_claim_revision") == binding["claim_revision"]
         for event in CardStore(home)._read_events(binding["card_id"])
+    )
+
+
+def _valid_observed(observed: dict, intent: dict) -> bool:
+    return (
+        observed.get("reservation_id") == _reservation_id(intent)
+        and observed.get("unit") == intent["unit"]
+        and observed.get("memory_max_bytes") == intent["resources"]["memory_max_bytes"]
+        and bool(re.fullmatch(r"[0-9a-f]{32}", str(observed.get("invocation", ""))))
     )
 
 

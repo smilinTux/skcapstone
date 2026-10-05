@@ -224,3 +224,31 @@ def test_next_native_offer_is_admitted_without_releasing_source_claim(collected,
     assert any(arg.startswith("--setenv=SKFLEET_ADMISSION_ID=") for arg in argv)
     assert CardStore(home).fold("12345678").owner == "fixture"
     assert len(list(root.glob("*/intent.json"))) == 2
+
+
+def test_cached_journal_terminal_skips_per_unit_systemctl(collected, monkeypatch):
+    home, root, directory, state, entries, calls, unit = collected
+    assert admission._occupancy(root, home, strict_terminal=True) == []
+    monkeypatch.setattr(
+        admission, "unit_state", lambda *a, **k: pytest.fail("cached terminal queried systemctl")
+    )
+    assert admission._occupancy(root, home, strict_terminal=True) == []
+    assert len(calls) == 1
+
+
+def test_cached_journal_terminal_binding_still_checked(collected):
+    home, root, directory, state, entries, calls, unit = collected
+    assert admission._occupancy(root, home, strict_terminal=True) == []
+    proof = admission.read_json(directory / "journal-terminal.json")
+    proof["invocation"] = "f" * 32
+    (directory / "journal-terminal.json").write_text(json.dumps(proof))
+    with pytest.raises(admission.AdmissionError, match="journal terminal proof differs"):
+        admission._occupancy(root, home, strict_terminal=True)
+
+
+def test_cached_terminal_never_removes_reused_live_unit(collected, monkeypatch):
+    home, root, directory, state, entries, calls, unit = collected
+    assert admission._occupancy(root, home, strict_terminal=True) == []
+    live = dict(unit=unit, reserved_memory_max=2048)
+    monkeypatch.setattr(admission, "active_resource_units", lambda home: [live])
+    assert admission._occupancy(root, home, strict_terminal=True) == [live]
