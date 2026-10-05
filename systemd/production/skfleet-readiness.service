@@ -8,11 +8,10 @@ Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/.skenv/bin/python3 %h/.skenv/bin/skfleet_readiness.py --rotate-script %h/.skenv/bin/skfleet-rotate.py --units-dir %h/.config/systemd/user --python-bin %h/.skenv/bin/python3 --env-from-systemd skfleet-seat-cycle.service --verdict-path %h/.skcapstone/fleet/status/node-%H/readiness/verdict.json
 TimeoutStartSec=120
 Nice=15
-NoNewPrivileges=yes
-PrivateTmp=yes
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=%h/.skcapstone/fleet
+# Match the worker host context: systemd mount restrictions nest user namespaces
+# and refuse bwrap. NoNewPrivileges also blocks the bounded loaded-profile read.
+# Bubblewrap still owns source/runtime mounts, network and child capabilities.
+UMask=0077
 
 [Install]
 WantedBy=default.target
