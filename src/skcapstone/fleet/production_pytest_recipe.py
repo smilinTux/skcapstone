@@ -16,7 +16,12 @@ _PATH = re.compile(
 
 def safe_target(path: str, *, pytest: bool = False) -> str:
     """Admit literal relative components, never flags, globs or traversal."""
-    if not isinstance(path, str) or len(path) > 240 or not _PATH.fullmatch(path):
+    if (
+        not isinstance(path, str)
+        or len(path) > 240
+        or path.startswith("-")
+        or not _PATH.fullmatch(path)
+    ):
         raise plan.TestEvidenceError("unsafe test target")
     parts = PurePosixPath(path).parts
     if pytest:

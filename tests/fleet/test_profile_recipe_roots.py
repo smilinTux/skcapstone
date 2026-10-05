@@ -57,6 +57,7 @@ def test_operator_file_cap_is_bounded_and_legacy_default_unchanged():
         "v1/tests/../../bad.py",
         "v1/tests/*",
         "v1/tests;id",
+        "-v1/tests",
         "src/test_bad.py",
     ),
 )
