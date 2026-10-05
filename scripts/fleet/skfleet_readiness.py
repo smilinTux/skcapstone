@@ -89,8 +89,10 @@ def production_environment_error(
         "from skcapstone.niobe_live_entrypoint import _production_environment; "
         "payload=json.load(sys.stdin); environment=payload['environment']; "
         "host=socket.gethostname().split('.')[0].lower()\n"
-        "if environment.get('SKFLEET_AUTHORITY_HOST') != host: raise ValueError('effective authority mismatch')\n"
-        "if not environment.get('SKFLEET_PRODUCTION_POLICY'): raise ValueError('explicit policy required')\n"
+        "if environment.get('SKFLEET_AUTHORITY_HOST') != host: "
+        "raise ValueError('effective authority mismatch')\n"
+        "if not environment.get('SKFLEET_PRODUCTION_POLICY'): "
+        "raise ValueError('explicit policy required')\n"
         "validated=_production_environment(Path(payload['dispatcher']),host=host,environment=environment)\n"
         "policy=production_policy_from_environment(validated,host)\n"
         "if not policy: raise ValueError('explicit production policy required')\n"
@@ -747,17 +749,30 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--env-from-unit",
         default=None,
-        help="Optional unit file name; check env against its Environment= lines only (drop-ins are not read), instead of the process environment",
+        help=(
+            "Optional unit file name; check env against its Environment= lines only (drop-ins "
+            "are not read), instead of the process environment"
+        ),
     )
     parser.add_argument(
         "--env-from-systemd",
         default=None,
-        help="Optional systemd unit name; check env against the unit's EFFECTIVE environment as reported by systemctl --user show, which already merges the unit file and every drop-in. Preferred over --env-from-unit when both are given. When given, the unit's role is scoped first: its paired timer (for a .service) or the unit itself must be active or boot-enabled on this host, or its environment is reported skipped rather than asserted.",
+        help=(
+            "Optional systemd unit name; check env against the unit's EFFECTIVE environment "
+            "as reported by systemctl --user show, which already merges the unit file and "
+            "every drop-in. Preferred over --env-from-unit when both are given. When given, "
+            "the unit's role is scoped first: its paired timer (for a .service) or the unit "
+            "itself must be active or boot-enabled on this host, or its environment is "
+            "reported skipped rather than asserted."
+        ),
     )
     parser.add_argument(
         "--verdict-path",
         default=None,
-        help="Optional path to write the verdict as JSON (atomic write), so another process can read it without re-running the gate. Not written when omitted.",
+        help=(
+            "Optional path to write the verdict as JSON (atomic write), so another process "
+            "can read it without re-running the gate. Not written when omitted."
+        ),
     )
     args = parser.parse_args(argv)
 
