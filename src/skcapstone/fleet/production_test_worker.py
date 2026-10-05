@@ -51,6 +51,20 @@ def candidate_pythonpath(workspace: Path) -> str:
     return ":".join(paths)
 
 
+def system_awk_alias() -> list[str]:
+    """Recreate Debian's awk link using only a binary already exposed under /usr."""
+    awk = Path("/usr/bin/awk")
+    try:
+        if not awk.is_symlink() or awk.readlink() != Path("/etc/alternatives/awk"):
+            return []
+        target = awk.resolve(strict=True)
+        if target.parent != Path("/usr/bin") or not target.is_file():
+            raise TestEvidenceError("system awk alternative is outside sealed system binaries")
+    except (OSError, RuntimeError) as exc:
+        raise TestEvidenceError("system awk alternative is unavailable") from exc
+    return ["--symlink", str(target), "/etc/alternatives/awk"]
+
+
 def sandbox_command(
     workspace: Path, output: Path, argv: list[str], profile: dict | None = None
 ) -> list[str]:
@@ -64,6 +78,7 @@ def sandbox_command(
         "--ro-bind",
         "/usr",
         "/usr",
+        *system_awk_alias(),
         "--symlink",
         "usr/bin",
         "/bin",
