@@ -186,6 +186,57 @@ def test_missing_node_quota_never_invents_a_limit(paths, production_setup):
     assert builder.offer(paths, _card(), ["sk-m", "source-only"], writer=p.writer) is None
 
 
+@pytest.mark.parametrize("retained", ["awaiting-evidence", "expired", "unknown", "running"])
+def test_production_spreads_workers_without_charging_retained_evidence(
+    paths, operator, production_setup, monkeypatch, retained
+):
+    p = production_setup
+    p.policy["node_quotas"]["idle"] = dict(p.policy["node_quotas"]["worker"])
+    p.path.write_text(json.dumps(p.policy))
+    idle = NodeView(
+        "node-z",
+        "Ready",
+        role="builder-standby",
+        labels={"host": "idle"},
+        capacity=dict(p.view.capacity),
+        allocatable=dict(p.view.allocatable),
+    )
+    store.write_spec(
+        paths,
+        "node",
+        idle.name,
+        {"role": "builder-standby", "actuate": True, "cordoned": False},
+        writer=operator,
+        labels=idle.labels,
+    )
+    monkeypatch.setattr(builder, "node_views", lambda _paths: [p.view, idle])
+    labels = ["sk-m", "source-only", "glm-only"]
+    active = builder.offer(paths, _card() | {"id": "24b00001"}, labels, writer=p.writer)
+    assert active["node"] == p.view.name
+    builder._write_status(paths, p.view.name, active, "running")
+    historical = dict(active, card_id="24b00002", node=idle.name, request_id="e" * 64)
+    if retained == "expired":
+        historical["lease_expires_at"] = "2000-01-01T00:00:00Z"
+    store._dump(builder.request_path(paths, idle.name, historical["card_id"]), historical)
+    if retained != "expired":
+        status_request = dict(historical)
+        if retained == "unknown":
+            status_request["request_id"] = "f" * 64
+        builder._write_status(
+            paths,
+            idle.name,
+            status_request,
+            "running" if retained == "running" else "awaiting-evidence",
+        )
+    request_path = builder.request_path(paths, idle.name, historical["card_id"])
+    original = request_path.read_bytes()
+    assert builder._node_load(paths, idle.name) == 1  # Legacy ceilings are unchanged.
+    fresh = builder.offer(paths, _card() | {"id": "24b00003"}, labels, writer=p.writer)
+    expected = idle.name if retained in {"awaiting-evidence", "expired"} else p.view.name
+    assert fresh["node"] == expected
+    assert request_path.read_bytes() == original
+
+
 def test_local_content_requires_explicit_simple_qwen_policy(production_setup):
     p = production_setup.policy
     assert production.route_binding(p, "24b00001", "sk-s", ["local-only"])["family"] == "qwen"

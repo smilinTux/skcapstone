@@ -245,8 +245,8 @@ def _node_capacity(paths: FleetPaths, node: str) -> int:
     return capacity if capacity > 0 else BUILDER_CAPACITY
 
 
-def _node_load(paths: FleetPaths, node: str) -> int:
-    """Return distinct cards occupying remote dispatch capacity on one node."""
+def _node_load(paths: FleetPaths, node: str, *, production: bool = False) -> int:
+    """Count occupied cards using the selected admission boundary."""
     active: set[str] = set()
     statuses = _dispatch_statuses(paths, node)
     directory = paths.root / "dispatch" / node
@@ -254,10 +254,11 @@ def _node_load(paths: FleetPaths, node: str) -> int:
         request = _load(path) or {}
         card_id = str(request.get("card_id") or "")
         status = statuses.get(card_id, {})
-        if (
-            status.get("request_id") == request.get("request_id")
-            and status.get("state") in TERMINAL_STATES
-        ):
+        same = status.get("request_id") == request.get("request_id")
+        terminal = TERMINAL_STATES | ({"awaiting-evidence"} if production else set())
+        if same and status.get("state") in terminal:
+            continue
+        if production and not status and _lease_expired(request, _now()):
             continue
         active.add(card_id or path.stem)
     active.update(
@@ -532,7 +533,10 @@ def _offer(paths, core, labels, *, writer, now=None):
         if production is not None:
             # Spread already offered work before stale heartbeat headroom can
             # repeatedly select the same large machine. This is no count cap.
-            builders = sorted(builders, key=lambda view: (_node_load(paths, view.name), view.name))
+            builders = sorted(
+                builders,
+                key=lambda view: (_node_load(paths, view.name, production=True), view.name),
+            )
             if not builders:
                 return None
             selected_node = builders[0].name
