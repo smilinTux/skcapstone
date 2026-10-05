@@ -1137,14 +1137,29 @@ def worker_command(request: dict, owner: str, claim_revision: str, workspace: Pa
 
 
 def materialize_source(request: dict, workspace: Path) -> Path:
-    """Reconstruct and verify the exact source revision before claiming."""
+    """Reconstruct and verify exact source without inheriting host Git settings."""
+    # Match preseed custody literally; host insteadOf or Git environment must
+    # not redirect the registered source or select another repository.
+    git = ["/usr/bin/git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]
+    environment = {
+        "PATH": "/usr/bin:/bin",
+        "HOME": "/nonexistent",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_TERMINAL_PROMPT": "0",
+    }
     if workspace.exists():
         head = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=workspace, capture_output=True, text=True
+            [*git, "rev-parse", "HEAD"],
+            cwd=workspace,
+            env=environment,
+            capture_output=True,
+            text=True,
         )
         remote = subprocess.run(
-            ["git", "remote", "get-url", "origin"],
+            [*git, "remote", "get-url", "origin"],
             cwd=workspace,
+            env=environment,
             capture_output=True,
             text=True,
         )
@@ -1160,13 +1175,15 @@ def materialize_source(request: dict, workspace: Path) -> Path:
     temporary = Path(tempfile.mkdtemp(prefix=f".{workspace.name}.", dir=workspace.parent))
     try:
         commands = (
-            ["git", "init", "--quiet", str(temporary)],
-            ["git", "remote", "add", "origin", request["repository"]],
-            ["git", "fetch", "--quiet", "--depth=1", "origin", request["base_revision"]],
-            ["git", "checkout", "--quiet", "--detach", request["base_revision"]],
+            [*git, "init", "--quiet", str(temporary)],
+            [*git, "remote", "add", "origin", request["repository"]],
+            [*git, "fetch", "--quiet", "--depth=1", "origin", request["base_revision"]],
+            [*git, "checkout", "--quiet", "--detach", request["base_revision"]],
         )
         for command in commands:
-            result = subprocess.run(command, cwd=temporary, capture_output=True, text=True)
+            result = subprocess.run(
+                command, cwd=temporary, env=environment, capture_output=True, text=True
+            )
             if result.returncode:
                 raise BuilderDispatchError("exact source reconstruction failed")
         temporary.replace(workspace)
