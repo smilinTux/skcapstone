@@ -154,6 +154,12 @@ def _occupancy(root: Path, home: Path, *, strict_terminal=False) -> list[dict]:
             if not _released_prestart(home, intent, proof):
                 raise AdmissionError("released prestart proof differs")
             continue
+        if (
+            unit not in units
+            and not (directory / "observed.json").exists()
+            and _recover_unobserved_builder(directory, intent)
+        ):
+            continue
         if strict_terminal and unit not in units and not (directory / "start.json").exists():
             proof = _released_prestart_proof(home, intent)
             if proof is not None:
@@ -327,7 +333,94 @@ def _valid_journal_terminal(proof: dict, intent: dict, observed: dict) -> bool:
     )
 
 
-def _journal_terminal_proof(intent: dict, observed: dict, state: dict) -> dict | None:
+def _recover_unobserved_builder(directory: Path, intent: dict) -> bool:
+    """Recover a unique consumed builder start that systemd collected before observation."""
+    binding = intent["binding"]
+    card, request, attempt = (binding.get(key) for key in ("card_id", "request_id", "attempt"))
+    if (
+        not re.fullmatch(r"[0-9a-f]{8}", str(card))
+        or not re.fullmatch(r"[0-9a-f]{64}", str(request))
+        or type(attempt) is not int
+        or attempt < 1
+        or intent["unit"] != f"skfleet-builder-{card}-{request}-{attempt}.service"
+        or not (directory / "start.json").exists()
+        or read_json(directory / "start.json")
+        != {
+            "schema": "skfleet.resource-start/v1",
+            "reservation_id": _reservation_id(intent),
+            "binding": binding,
+            "argv_sha256": intent["argv_sha256"],
+        }
+    ):
+        return False
+    state = unit_state(intent["unit"], terminal=True)
+    if state.get("LoadState") != "not-found":
+        return False
+    started = "39f53479d3a045ac8e11786248231fbf"
+    try:
+        result = subprocess.run(
+            [
+                "journalctl",
+                "--user",
+                "--quiet",
+                "--no-pager",
+                "--output=json",
+                "USER_UNIT=" + intent["unit"],
+                *("MESSAGE_ID=" + key for key in sorted(_JOURNAL_TERMINAL_IDS | {started})),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode or len(result.stdout) > 65536:
+            return False
+        lines = result.stdout.splitlines()
+        events = [json.loads(line) for line in lines]
+        if any(not isinstance(event, dict) for event in events):
+            return False
+        events = [event for event in events if event.get("USER_UNIT") == intent["unit"]]
+        starts = [event for event in events if event.get("MESSAGE_ID") == started]
+        invocations = {event.get("USER_INVOCATION_ID") for event in events}
+        if len(starts) != 1 or len(invocations) != 1:
+            return False
+        invocation = starts[0].get("USER_INVOCATION_ID")
+        if not re.fullmatch(r"[0-9a-f]{32}", str(invocation)):
+            return False
+        start_time = int(starts[0]["__REALTIME_TIMESTAMP"])
+        if start_time <= 0 or not any(
+            event.get("MESSAGE_ID") in _JOURNAL_TERMINAL_IDS
+            and int(event["__REALTIME_TIMESTAMP"]) > start_time
+            for event in events
+        ):
+            return False
+        terminal_lines = [
+            line for line in lines if int(json.loads(line)["__REALTIME_TIMESTAMP"]) > start_time
+        ]
+    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, KeyError):
+        return False
+    observed = dict(
+        reservation_id=_reservation_id(intent),
+        unit=intent["unit"],
+        invocation=invocation,
+        memory_max_bytes=intent["resources"]["memory_max_bytes"],
+    )
+    proof = _journal_terminal_proof(intent, observed, state, entries=terminal_lines)
+    if proof is None:
+        return False
+    proof["start_realtime_us"] = starts[0]["__REALTIME_TIMESTAMP"]
+    proof["start_entry_sha256"] = next(
+        hashlib.sha256(line.encode()).hexdigest()
+        for line in lines
+        if json.loads(line) == starts[0]
+    )
+    write_once(directory / "journal-terminal.json", proof)
+    write_once(directory / "observed.json", observed)
+    return True
+
+
+def _journal_terminal_proof(
+    intent: dict, observed: dict, state: dict, *, entries: list[str] | None = None
+) -> dict | None:
     """Recover systemd-collected terminal custody without treating absence as proof."""
     if not (
         state.get("Id") == intent["unit"]
@@ -340,26 +433,28 @@ def _journal_terminal_proof(intent: dict, observed: dict, state: dict) -> dict |
         and state.get("ControlGroup") == ""
     ):
         return None
-    try:
-        result = subprocess.run(
-            [
-                "journalctl",
-                "--user",
-                "--quiet",
-                "--no-pager",
-                "--output=json",
-                "USER_UNIT=" + intent["unit"],
-                "USER_INVOCATION_ID=" + observed["invocation"],
-            ],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if result.returncode != 0:
-        return None
-    for line in result.stdout.splitlines():
+    if entries is None:
+        try:
+            result = subprocess.run(
+                [
+                    "journalctl",
+                    "--user",
+                    "--quiet",
+                    "--no-pager",
+                    "--output=json",
+                    "USER_UNIT=" + intent["unit"],
+                    "USER_INVOCATION_ID=" + observed["invocation"],
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if result.returncode != 0:
+            return None
+        entries = result.stdout.splitlines()
+    for line in entries:
         try:
             event = json.loads(line)
         except json.JSONDecodeError:
