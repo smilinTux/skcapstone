@@ -514,7 +514,11 @@ def _run_shell_steps(
     for step_name, template in steps:
         command = template.format(**format_kwargs)
         try:
-            result = runner(wrap(command))
+            argv = wrap(command)
+            if step_name == "qualification_tools" and runner is default_runner:
+                result = default_runner(argv, timeout=120)
+            else:
+                result = runner(argv)
         except Exception as exc:  # pragma: no cover - defensive, mirrors actuation.py
             return DeployOutcome(ok=False, step=step_name, reason=str(exc))
         if result.returncode != 0:

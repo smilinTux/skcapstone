@@ -192,3 +192,27 @@ def test_expansion_bound_is_enforced_before_any_replacement(tools, monkeypatch):
     with pytest.raises(ValueError, match="bound"):
         module.provision(prefix, config, "worker", "x86_64", apply=True, fetch=fetch)
     assert list((prefix / "bin").iterdir()) == []
+
+
+def test_governed_tool_step_has_a_bounded_download_budget(monkeypatch):
+    """Two pinned downloads need a rollout budget beyond the ordinary probe timeout."""
+    from types import SimpleNamespace
+
+    from skcapstone.fleet import staged_rollout as rollout
+
+    calls = []
+
+    def runner(argv, *, timeout=30):
+        calls.append((argv, timeout))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(rollout, "default_runner", runner)
+    result = rollout._run_shell_steps(
+        "worker",
+        steps=(("probe", "true"), ("qualification_tools", "true")),
+        repo="/source",
+        runner=runner,
+        wrap=lambda cmd: ["bash", "-c", cmd],
+    )
+    assert result.ok
+    assert [timeout for _, timeout in calls] == [30, 120]
