@@ -1,0 +1,1 @@
+- Card `ad4c4217`: install pinned `skharness` through the governed fleet qualification extra so sealed dashboard economy tests can run; report missing or outside-prefix packages in readiness and drift instead of relying on a host-only editable checkout.

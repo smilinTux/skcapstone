@@ -5,7 +5,7 @@ from pathlib import Path
 
 TOOL_PACKAGES = ("pytest", "_pytest", "pytest_asyncio", "ruff", "pluggy", "iniconfig", "packaging")
 
-REQUIRED_PACKAGES = (*TOOL_PACKAGES, "ansible", "skcapstone")
+REQUIRED_PACKAGES = (*TOOL_PACKAGES, "ansible", "skcapstone", "skharness")
 
 
 def missing_dependencies(prefix: Path) -> list[str]:

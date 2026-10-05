@@ -62,7 +62,10 @@ def test_missing_tools_probe_uses_the_target_prefix(tmp_path):
     assert missing_dependencies(tmp_path) == ["pytest_asyncio", "ruff executable"]
 
 
-def test_production_drift_and_rollout_gate_cannot_hide_missing_tools(tmp_path, monkeypatch):
+@pytest.mark.parametrize("module", ["pytest_asyncio", "skharness"])
+def test_production_drift_and_rollout_gate_cannot_hide_missing_tools(
+    tmp_path, monkeypatch, module
+):
     home = tmp_path / "home"
     policy = home / ".skcapstone/fleet/production.json"
     policy.parent.mkdir(parents=True)
@@ -74,14 +77,15 @@ def test_production_drift_and_rollout_gate_cannot_hide_missing_tools(tmp_path, m
     monkeypatch.setattr(rollout_drift, "_load_readiness_module", lambda _: observer)
     monkeypatch.setattr(rollout_drift, "_script_files", lambda _: [])
     drifts = rollout_drift.detect_drift({"units": []}, home, tmp_path)
-    missing = [d for d in drifts if d.artifact == "qualified-runtime:pytest_asyncio"]
+    missing = [d for d in drifts if d.artifact == "qualified-runtime:" + module]
     assert len(missing) == 1 and missing[0].kind == "missing"
     assert not _drift_is_role_ambiguous(missing[0])
 
 
 @pytest.mark.parametrize("missing", [True, False])
+@pytest.mark.parametrize("module", ["pytest_asyncio", "skharness"])
 def test_production_readiness_reports_the_actual_interpreter_missing_plugin(
-    tmp_path, monkeypatch, capsys, missing
+    tmp_path, monkeypatch, capsys, missing, module
 ):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts/fleet"))
     import skfleet_readiness as readiness
@@ -99,16 +103,13 @@ def test_production_readiness_reports_the_actual_interpreter_missing_plugin(
 
     def imports(modules, interpreter):
         calls.append((modules, interpreter))
-        return {module: not missing or module != "pytest_asyncio" for module in modules}
+        return {name: not missing or name != module for name in modules}
 
     monkeypatch.setattr(readiness, "check_module_imports", imports)
     assert readiness._run(source, units, "/fixture/python", None) == int(missing)
-    assert (
-        "FAIL qualified-runtime dependency: pytest_asyncio" in capsys.readouterr().out
-    ) == missing
+    assert ("FAIL qualified-runtime dependency: " + module in capsys.readouterr().out) == missing
     assert any(
-        "pytest_asyncio" in modules and interpreter == "/fixture/python"
-        for modules, interpreter in calls
+        module in modules and interpreter == "/fixture/python" for modules, interpreter in calls
     )
 
 
@@ -162,3 +163,41 @@ def test_checkout_symlink_cannot_satisfy_sealed_core_requirement(tmp_path):
     (checkout / "__init__.py").write_text("# Outside the sandbox runtime.\n")
     (site / "skcapstone").symlink_to(checkout, target_is_directory=True)
     assert "skcapstone" in missing_dependencies(tmp_path)
+
+
+def test_dashboard_dependency_is_pinned_in_the_governed_install_extra():
+    """Rollout and rollback can install the dashboard's private sibling."""
+    root = Path(__file__).resolve().parents[2]
+    config = tomllib.loads((root / "pyproject.toml").read_text())
+    requirements = [
+        Requirement(item) for item in config["project"]["optional-dependencies"]["fleet-qualify"]
+    ]
+    matches = [item for item in requirements if item.name == "skharness"]
+    assert len(matches) == 1
+    assert matches[0].url == (
+        "git+https://github.com/smilinTux/skharness.git@"
+        "7409a1ab28f9c8fed87cd40226f4c031ca9e3f6e"
+    )
+
+
+@pytest.mark.parametrize("placement", ["absent", "editable", "packaged"])
+def test_dashboard_dependency_must_be_available_inside_the_sealed_prefix(tmp_path, placement):
+    """Host-only editable imports cannot qualify the dashboard economy tests."""
+    from skcapstone.fleet.qualified_runtime import missing_dependencies
+
+    site = (
+        tmp_path
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+    )
+    site.mkdir(parents=True)
+    if placement == "editable":
+        outside = tmp_path.parent / ("dashboard-sibling-" + tmp_path.name)
+        outside.mkdir()
+        (outside / "__init__.py").write_text("# Outside the sealed runtime.\n")
+        (site / "skharness").symlink_to(outside, target_is_directory=True)
+    elif placement == "packaged":
+        (site / "skharness").mkdir()
+        (site / "skharness/__init__.py").write_text("# Packaged sibling.\n")
+    assert ("skharness" in missing_dependencies(tmp_path)) == (placement != "packaged")
