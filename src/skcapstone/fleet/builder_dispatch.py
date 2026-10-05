@@ -1098,15 +1098,34 @@ def worker_command(request: dict, owner: str, claim_revision: str, workspace: Pa
             acceptance_criteria=["Satisfy every exact current native card criterion."],
         )
         if request.get("_continuation"):
+            transport_failure = request["_continuation"].get("binding", {}).get("transport")
+            historical = (
+                "The earlier session ended in a verified gateway transport failure, not a "
+                "product verdict. Its transcript and all historical candidate outcomes "
+                "remain preserved. Reuse the existing source; do not resume the oversized "
+                "conversation or infer that a historical PASS approves this generation.\n\n"
+                if transport_failure
+                else "Original BLOCKED evidence remains historical.\n\n"
+            )
             prompt = (
                 "PRESERVED SOURCE CONTINUATION\n"
-                "Continue the existing staged implementation in this workspace. Do not reset, "
-                "reimplement, release the claim or replace the source offer. Inspect the "
-                "preserved changes and actual evidence; finish only remaining validation, "
-                "correct any inaccurate test chronology in the draft evidence, "
-                "the already authorized commit and typed handoff. Original BLOCKED evidence "
-                "remains historical. Machine Git identity is assigned in this environment.\n\n"
-                + prompt
+                + (
+                    "Continue the exact retained source in this workspace. Read the current "
+                    "card and implement only its remaining authorized work. Do not reset, "
+                    if transport_failure
+                    else "Continue the existing staged implementation in this workspace. "
+                    "Do not reset, "
+                )
+                + "reimplement, release the claim or replace the source offer. Inspect the "
+                "preserved changes and actual evidence; "
+                + (
+                    "finish remaining authorized implementation and validation, "
+                    if transport_failure
+                    else "finish only remaining validation, "
+                )
+                + "correct any inaccurate test chronology in the draft evidence, "
+                "the already authorized commit and typed handoff. "
+                "Machine Git identity is assigned in this environment.\n\n" + historical + prompt
             )
     from .worker_git import identity
 

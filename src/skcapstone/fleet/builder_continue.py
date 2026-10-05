@@ -15,7 +15,7 @@ from skcoord.card_store import card_mutation_lock
 from ..seraph_review_cardstore import _latest_outcome, card_revision
 from . import builder_dispatch as builder
 from . import builder_retire as custody
-from . import builder_retry, builder_terminal, source_bundle
+from . import builder_retry, builder_terminal, builder_transport, source_bundle
 from .paths import FleetPaths, default_paths, valid_name
 from .worker_git import identity
 
@@ -34,7 +34,7 @@ def original(request):
     return {key: value for key, value in request.items() if key != "_continuation"}
 
 
-def binding(home, request, status):
+def binding(home, request, status, *, transport=None):
     """Pin native source, original outcome and stable terminal process status."""
     raw_request = source_bundle._read(
         builder.request_path(FleetPaths(home / "fleet"), request["node"], request["card_id"]),
@@ -42,8 +42,47 @@ def binding(home, request, status):
     )
     if json.loads(raw_request) != original(request):
         raise ValueError("immutable source request changed")
-    native, card = builder_retry.check_custody(home, request, status)
+    transport = transport or request.get("_continuation", {}).get("binding", {}).get("transport")
+    native, card = builder_retry.check_custody(
+        home, request, status, allow_final_attempt=transport is not None
+    )
     outcome = _latest_outcome(native, request["card_id"])
+    if transport is not None:
+        if not isinstance(transport, dict):
+            raise ValueError("transport binding must be an object")
+        transport = builder_transport.token(transport.get("session"), transport.get("sha256"))
+        artifacts = source_bundle._root(home, request["card_id"])
+        if artifacts.exists() and any(artifacts.iterdir()):
+            raise ValueError("review source custody forbids transport continuation")
+        claims = [
+            event
+            for event in native._read_events(request["card_id"])
+            if event.get("action") == "claim"
+            and (event.get("claim_revision") or event.get("event_id")) == status["claim_revision"]
+        ]
+        if (
+            request["production"].get("family") != "glm"
+            or status.get("source_artifact")
+            or request.get("operator_retry")
+            or status.get("continuation_consumed")
+            or card.meta.get("claim_conflicts")
+            or len(claims) != 1
+            or claims[0].get("owner") != status["owner"]
+            or (
+                outcome
+                and builder_transport.timestamp(outcome.get("ts", ""))
+                >= builder_transport.timestamp(claims[0].get("ts", ""))
+            )
+        ):
+            raise ValueError("exact transport claim without a current outcome required")
+        return {
+            "request_sha256": custody.sha(raw_request),
+            "status": {key: value for key, value in status.items() if key != "heartbeat_at"},
+            "card_revision": card_revision(card),
+            "outcome": outcome,
+            "identity": identity(status["owner"]),
+            "transport": transport,
+        }
     if (
         not outcome
         or outcome.get("action") != "verdict"
@@ -99,19 +138,24 @@ def binding(home, request, status):
     }
 
 
-def source_proof(paths, request, status, target, *, apply=False):
+def source_proof(paths, request, status, target, *, apply=False, transport=None):
     """Preserve every workspace byte and inspect Git only in the read-only sandbox."""
     if request["production"]["host"] != socket.gethostname().split(".")[0].lower():
         raise ValueError("continuation process belongs to another host")
     builder_terminal.prove(paths.root.parent, status, apply=apply)
+    transport = transport or request.get("_continuation", {}).get("binding", {}).get("transport")
+    failure = builder_transport.proof(paths, request, status, transport) if transport else None
     workspace = paths.root / "workspaces" / status["owner"]
     source = source_bundle._inspect(
         workspace,
-        source_bundle._INSPECT_SETUP + """
+        source_bundle._INSPECT_SETUP
+        + """
 assert git('rev-parse','HEAD^{commit}').decode().strip()==base
 ref=git('symbolic-ref','HEAD').decode().strip()
 assert ref.startswith('refs/heads/') and ref not in ('refs/heads/main','refs/heads/master')
-assert git('status','--porcelain','--untracked-files=all')
+"""
+        + ("assert git('status','--porcelain','--untracked-files=all')\n" if not transport else "")
+        + """
 print(json.dumps({'head':base,'tree':git('rev-parse','HEAD^{tree}').decode().strip(),
                   'ref':ref,'index_sha256':hashlib.sha256((root/'.git/index').read_bytes()).hexdigest()}))
 """,
@@ -123,12 +167,15 @@ print(json.dumps({'head':base,'tree':git('rev-parse','HEAD^{tree}').decode().str
     )
     preserved = custody.preserve(workspace, target, apply=apply)
     builder_terminal.prove(paths.root.parent, status, apply=apply)
-    return {"source": source, **preserved}
+    result = {"source": source, **preserved}
+    if failure is not None:
+        result["transport_failure"] = failure
+    return result
 
 
-def node_check(payload):
+def node_check(payload, *, paths=None, home=None):
     """Run the fixed native custody probe on the execution node."""
-    paths, home = default_paths(), Path.home() / ".skcapstone"
+    paths, home = paths or default_paths(), home or Path.home() / ".skcapstone"
     node, card = payload["node"], payload["card_id"]
     if not valid_name(node) or not re.fullmatch(r"[0-9a-f]{8}", card):
         raise ValueError("invalid continuation identity")
@@ -137,17 +184,23 @@ def node_check(payload):
         status = (
             builder._validated_status(builder.status_path(paths, node, card), paths, node) or {}
         )
-        if binding(home, request, status) != payload["binding"]:
+        transport = payload["binding"].get("transport")
+        if binding(home, request, status, transport=transport) != payload["binding"]:
             raise ValueError("node continuation generation changed")
         proof = source_proof(
-            paths, request, status, directory(home, request), apply=payload["apply"]
+            paths,
+            request,
+            status,
+            directory(home, request),
+            apply=payload["apply"],
+            transport=transport,
         )
         expected = payload["binding"]["outcome"]
-        if any(
+        if not transport and any(
             proof["source"][key] != expected.get("candidate_" + key) for key in ("tree", "ref")
         ):
             raise ValueError("preserved Git identities differ from blocked outcome")
-        if binding(home, request, status) != payload["binding"]:
+        if binding(home, request, status, transport=transport) != payload["binding"]:
             raise ValueError("node continuation claim changed")
         return proof
 
@@ -187,6 +240,8 @@ def authorize(
     invocation,
     actor,
     reason,
+    transport_session=None,
+    transport_sha256=None,
     apply=False,
     probe=remote_check,
 ):
@@ -214,7 +269,10 @@ def authorize(
             invocation,
         ):
             raise ValueError("continuation generation changed")
-        bound = binding(home, request, status)
+        transport = None
+        if transport_session is not None or transport_sha256 is not None:
+            transport = builder_transport.token(transport_session, transport_sha256)
+        bound = binding(home, request, status, transport=transport)
         target = directory(home, request)
         if (target / "grant.json").exists() or (target / "consumed.json").exists():
             raise ValueError("continuation already authorized or consumed")
@@ -231,7 +289,10 @@ def authorize(
             apply and not re.fullmatch(r"[0-9a-f]{64}", str(proof.get("archive_sha256", "")))
         ):
             raise ValueError("complete source preservation required")
-        if binding(home, request, status) != bound or builder._load(path) != request:
+        if (
+            binding(home, request, status, transport=transport) != bound
+            or builder._load(path) != request
+        ):
             raise ValueError("continuation source changed during authorization")
         grant = {
             "schema": SCHEMA,
@@ -288,7 +349,10 @@ def check_attempt(paths, home, request, status):
     if json.loads(source_bundle._read(target / "grant.json", source_bundle.MAX_EVIDENCE)) != grant:
         raise ValueError("continuation grant changed after attachment")
     proof = source_proof(paths, request, status, target)
-    if any(proof[key] != grant["proof"][key] for key in ("source", "inventory_sha256")):
+    keys = ("source", "inventory_sha256") + (
+        ("transport_failure",) if grant["binding"].get("transport") else ()
+    )
+    if any(proof[key] != grant["proof"][key] for key in keys):
         raise ValueError("continuation workspace changed")
     archive = target / "workspace.tar.gz"
     if archive.stat().st_mode & 0o777 != 0o600:

@@ -66,7 +66,7 @@ def pending(request, status):
     )
 
 
-def check_custody(home, request, status):
+def check_custody(home, request, status, *, allow_final_attempt=False):
     """Check the shared exact retained production claim and source contract."""
     card_id, node = request.get("card_id", ""), request.get("node", "")
     if (
@@ -80,7 +80,7 @@ def check_custody(home, request, status):
         or status.get("state") != "awaiting-evidence"
         or status.get("claim_released")
         or type(status.get("attempt")) is not int
-        or not 1 <= status["attempt"] < builder.MAX_ATTEMPTS
+        or not 1 <= status["attempt"] < builder.MAX_ATTEMPTS + int(allow_final_attempt)
         or not re.fullmatch(r"[0-9a-f]{32}", str(status.get("invocation", "")))
         or status.get("unit") != builder.production_builder.unit_name(request, status["attempt"])
     ):

@@ -1,0 +1,1 @@
+- Card `ef11fddc`: add explicit, one-use native continuation for a hash-bound GLM session whose exact invocation ended with gateway413. Preserve source, owner, claim and historical outcomes instead of manufacturing a producer BLOCKED verdict. Existing default retry and continuation guards remain unchanged.

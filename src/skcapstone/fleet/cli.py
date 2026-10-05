@@ -119,8 +119,23 @@ def builder_retry_cmd(
 @click.option("--invocation", required=True)
 @click.option("--agent", required=True)
 @click.option("--reason", required=True)
+@click.option("--transport-session", help="Exact failed Pi session basename; requires its SHA256.")
+@click.option(
+    "--transport-sha256", help="Digest of a native-invocation-bound terminal gateway413 session."
+)
 @click.option("--apply", is_flag=True, help="Authorize once; default checks only.")
-def builder_continue_cmd(card_id, node, request_id, claim, invocation, agent, reason, apply):
+def builder_continue_cmd(
+    card_id,
+    node,
+    request_id,
+    claim,
+    invocation,
+    agent,
+    reason,
+    transport_session,
+    transport_sha256,
+    apply,
+):
     """Continue exact stopped staged work without releasing its source claim."""
     from .builder_continue import authorize
 
@@ -135,6 +150,8 @@ def builder_continue_cmd(card_id, node, request_id, claim, invocation, agent, re
             invocation=invocation,
             actor=agent,
             reason=reason,
+            transport_session=transport_session,
+            transport_sha256=transport_sha256,
             apply=apply,
         )
     except (ValueError, OSError, subprocess.SubprocessError) as exc:
