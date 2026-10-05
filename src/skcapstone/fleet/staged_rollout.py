@@ -31,7 +31,7 @@ metadata, and actual content -- disagreeing silently; a third
 "healthy" would just be a fourth).
 
 Deployment preserves the package-before-artifacts order from Chef's
-2026-09-17 activation: ``git pull`` in the node's checkout, ``pip install -e .``
+2026-09-17 activation: ``git pull`` in the node's checkout, ``pip install '.[fleet-qualify]'``
 (the dispatcher
 script imports ``GATED_EXIT_CODE`` from the installed package, so a newer
 script against an older package fails at import and takes that host's
@@ -161,7 +161,7 @@ def _copy_steps(
 #: checkout path) at call time.
 _DEPLOY_STEPS: tuple[tuple[str, str], ...] = (
     ("git_pull", "git -C {repo} pull"),
-    ("pip_install", "cd {repo} && pip install -e '.[fleet-qualify]'"),
+    ("pip_install", "cd {repo} && pip install '.[fleet-qualify]'"),
     *_copy_steps(),
     (
         "install_units",
@@ -202,7 +202,7 @@ _ROLLBACK_STEPS: tuple[tuple[str, str], ...] = (
         'git -C {repo} checkout "$branch" && '
         "git -C {repo} reset --hard {git_sha}",
     ),
-    ("pip_install", "cd {repo} && pip install -e '.[fleet-qualify]'"),
+    ("pip_install", "cd {repo} && pip install '.[fleet-qualify]'"),
     *_copy_steps("~/.cache/skcapstone-rollout/rollout_artifacts.py"),
     (
         "install_units",

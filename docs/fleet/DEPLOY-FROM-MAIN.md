@@ -154,3 +154,12 @@ Workers and reviewers do not deploy at all. Your job ends at step 4 (PR
 merged, or PR open with your verdict recorded). Rollout is run by the
 operator or the orchestrator. If you think a deploy is needed, say so on
 skmail with the PR number, do not install it yourself.
+
+
+## Sealed source-suite qualification dependencies
+
+Governed staged deploy and rollback install `.[fleet-qualify]` as a regular package, not an editable checkout. Native test workers mount the interpreter prefix read-only; dashboard tests import `skcapstone.agent_run` and `skcapstone.fleet` from that prefix. A checkout outside the sealed mounts cannot satisfy these imports. This environment failure must not be recorded as a product known-failure baseline.
+
+The extra declares ansible-core 2.21.3 on Python 3.12+ to match skstacks render CI, and 2.19.5 on the supported Python 3.11 floor. Missing controller/core packages are reported by readiness and drift. The scoped pytest runtime fingerprint remains unchanged; these packages do not broaden it to unrelated application bytes.
+
+The operator owns deployment. Do not install a candidate into a live prefix. SKLegal fan-out has priority over skbackup/dashboard qualification; native tests and GLM work may start only when the existing admission boundary has capacity available for this work.

@@ -33,7 +33,7 @@ def test_packaging_extra_covers_fingerprinted_tools_and_both_install_directions(
     }
     for steps in (_DEPLOY_STEPS, _ROLLBACK_STEPS):
         command = dict(steps)["pip_install"]
-        assert "pip install -e '.[fleet-qualify]'" in command
+        assert "pip install '.[fleet-qualify]'" in command
 
 
 def test_missing_tools_probe_uses_the_target_prefix(tmp_path):
@@ -48,8 +48,11 @@ def test_missing_tools_probe_uses_the_target_prefix(tmp_path):
     site.mkdir(parents=True)
     (tmp_path / "bin").mkdir()
     (tmp_path / "bin/ruff").write_text("synthetic executable")
-    for name in plan.TOOL_PACKAGES:
+    from skcapstone.fleet.qualified_runtime import REQUIRED_PACKAGES
+
+    for name in REQUIRED_PACKAGES:
         (site / name).mkdir()
+    (site / "skcapstone/__init__.py").write_text("# Packaged fixture.\n")
     assert missing_dependencies(tmp_path) == []
     (site / "pytest_asyncio").rmdir()
     assert missing_dependencies(tmp_path) == ["pytest_asyncio"]
@@ -104,3 +107,55 @@ def test_production_readiness_reports_the_actual_interpreter_missing_plugin(
         "pytest_asyncio" in modules and interpreter == "/fixture/python"
         for modules, interpreter in calls
     )
+
+
+def test_controller_extra_supports_python_311_and_matches_312_source_ci():
+    """The declared controller is resolvable on both fleet Python floors."""
+    root = Path(__file__).resolve().parents[2]
+    config = tomllib.loads((root / "pyproject.toml").read_text())
+    items = [Requirement(x) for x in config["project"]["optional-dependencies"]["fleet-qualify"]]
+    for version, pin in [("3.11", "2.19.5"), ("3.12", "2.21.3")]:
+        matches = [
+            r
+            for r in items
+            if r.name == "ansible-core"
+            and (r.marker is None or r.marker.evaluate({"python_version": version}))
+        ]
+        assert len(matches) == 1 and str(matches[0].specifier) == "==" + pin
+
+
+def test_sealed_runtime_requires_controller_and_prefix_contained_core(tmp_path):
+    """Editable imports outside the sealed prefix cannot satisfy readiness."""
+    from skcapstone.fleet.qualified_runtime import missing_dependencies
+
+    missing = missing_dependencies(tmp_path)
+    assert "ansible" in missing
+    assert "skcapstone" in missing
+    site = (
+        tmp_path
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+    )
+    (site / "skcapstone").mkdir(parents=True)
+    assert "skcapstone" in missing_dependencies(tmp_path)
+    (site / "skcapstone/__init__.py").write_text("# Packaged fixture.\n")
+    assert "skcapstone" not in missing_dependencies(tmp_path)
+
+
+def test_checkout_symlink_cannot_satisfy_sealed_core_requirement(tmp_path):
+    """A prefix entry pointing outside the read-only prefix is still unavailable."""
+    from skcapstone.fleet.qualified_runtime import missing_dependencies
+
+    site = (
+        tmp_path
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+    )
+    site.mkdir(parents=True)
+    checkout = tmp_path.parent / ("outside-" + tmp_path.name) / "skcapstone"
+    checkout.mkdir(parents=True)
+    (checkout / "__init__.py").write_text("# Outside the sandbox runtime.\n")
+    (site / "skcapstone").symlink_to(checkout, target_is_directory=True)
+    assert "skcapstone" in missing_dependencies(tmp_path)

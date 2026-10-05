@@ -558,14 +558,14 @@ def _run(
                     lines.append(
                         "OK production policy: native parser and effective authority validated"
                     )
-                    from skcapstone.fleet.qualified_runtime import TOOL_PACKAGES
+                    from skcapstone.fleet.qualified_runtime import REQUIRED_PACKAGES
 
-                    qualified = check_module_imports(list(TOOL_PACKAGES), python_bin)
-                    for module in TOOL_PACKAGES:
+                    qualified = check_module_imports(list(REQUIRED_PACKAGES), python_bin)
+                    for module in REQUIRED_PACKAGES:
                         if not qualified.get(module):
                             ok = False
                             lines.append("FAIL qualified-runtime dependency: " + module)
-                    if all(qualified.get(module) for module in TOOL_PACKAGES):
+                    if all(qualified.get(module) for module in REQUIRED_PACKAGES):
                         lines.append("OK qualified-runtime dependencies: fleet-qualify")
             if not mandatory:
                 lines.append("OK required env: dispatcher declares no mandatory env vars")

@@ -78,6 +78,8 @@ dependencies = [
 
 [project.optional-dependencies]
 fleet-qualify = [
+    "ansible-core==2.21.3; python_version >= '3.12'",
+    "ansible-core==2.19.5; python_version < '3.12'",
     "pytest>=7.0",
     "pytest-asyncio>=0.23",
     "ruff>=0.3",
