@@ -159,7 +159,9 @@ def _retired_blocked(native, home, request, status, outcome):
             for event in claims
             if datetime.fromisoformat(event["ts"].replace("Z", "+00:00")) <= at
         ]
-        old_claim = max(prior, key=lambda event: event["ts"])
+        old_claim = max(
+            prior, key=lambda event: datetime.fromisoformat(event["ts"].replace("Z", "+00:00"))
+        )
         if old_claim.get("owner") != outcome.get("writer"):
             return False
         root = home / "evidence/work" / request["card_id"] / "terminal-offers"
@@ -202,9 +204,7 @@ def _retired_blocked(native, home, request, status, outcome):
                 != dict(head=outcome.get("candidate_commit"), tree=outcome.get("candidate_tree"))
                 or outcome.get("candidate_commit") != request["base_revision"]
                 or not re.fullmatch(r"[0-9a-f]{64}", str(proof.get("archive_sha256", "")))
-                or builder_retire.sha(
-                    source_bundle._read(target / "inventory.json", source_bundle.MAX_EVIDENCE)
-                )
+                or builder_retire.file_digest(target / "inventory.json")
                 != proof.get("inventory_sha256")
             ):
                 continue

@@ -154,6 +154,16 @@ def test_retired_prior_blocked_outcome_does_not_fence_new_claim(retired_blocked)
     assert {p.name: p.read_bytes() for p in target.iterdir()} == before
 
 
+def test_real_retirement_inventory_can_exceed_candidate_report_bound(retired_blocked):
+    """bc9 inventory is 337 KiB; stream its hash under retirement's source bound."""
+    a, target, _, receipt, _ = retired_blocked
+    raw = retry.encoded({"retained": "x" * (source_bundle.MAX_EVIDENCE + 1)})
+    (target / "inventory.json").write_bytes(raw)
+    receipt["proof"]["inventory_sha256"] = hashlib.sha256(raw).hexdigest()
+    (target / "retirement.json").write_bytes(retry.encoded(receipt))
+    retry.check_attempt(a.paths, a.home, a.request, a.status)
+
+
 @pytest.mark.parametrize(
     "change", ["current", "pass", "missing", "hash", "death", "tree", "claim"]
 )
