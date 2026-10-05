@@ -54,32 +54,37 @@ def _fenced_claim(directory: Path, home: Path, intent: dict) -> list[dict]:
         or match[2] != binding["card_id"]
         or binding["owner"] != f"pi-{match[1]}-{intent['host']}-{match[2]}"
         or not (directory / "start.json").exists()
-        or read_json(directory / "start.json") != dict(
+        or read_json(directory / "start.json")
+        != dict(
             schema="skfleet.resource-start/v1",
             reservation_id=admission._reservation_id(intent),
             binding=binding,
             argv_sha256=intent["argv_sha256"],
         )
-        or read_json(directory / "fenced-start-required.json") != dict(
-            reservation_id=admission._reservation_id(intent), claim_fenced=True
-        )
+        or read_json(directory / "fenced-start-required.json")
+        != dict(reservation_id=admission._reservation_id(intent), claim_fenced=True)
     ):
         return []
     store = CardStore(home)
     card = store.fold(binding["card_id"])
     if (
-        card is None or card.archived or card.meta.get("claim_conflicts")
+        card is None
+        or card.archived
+        or card.meta.get("claim_conflicts")
         or card.status.value != "doing"
         or card.owner != binding["owner"]
         or card.meta.get("_claim_revision") != binding["claim_revision"]
     ):
         return []
-    return [event for event in store._read_events(binding["card_id"])
-            if event.get("action") == "claim"
-            and event.get("writer") == binding["owner"]
-            and event.get("owner") == binding["owner"]
-            and event.get("node") == intent["host"]
-            and event.get("claim_revision") == binding["claim_revision"]]
+    return [
+        event
+        for event in store._read_events(binding["card_id"])
+        if event.get("action") == "claim"
+        and event.get("writer") == binding["owner"]
+        and event.get("owner") == binding["owner"]
+        and event.get("node") == intent["host"]
+        and event.get("claim_revision") == binding["claim_revision"]
+    ]
 
 
 def _wrapper_binding(entry: dict, intent: dict) -> bool:
@@ -89,7 +94,7 @@ def _wrapper_binding(entry: dict, intent: dict) -> bool:
     if not message.startswith(prefix) or " -- " not in message:
         return False
     try:
-        words = shlex.split(message[len(prefix):].split(" -- ", 1)[0])
+        words = shlex.split(message[len(prefix) :].split(" -- ", 1)[0])
         if len(words) < 2 or Path(words[1]).name != "skfleet-worker-wrapper.py":
             return False
         expected = {
@@ -99,8 +104,12 @@ def _wrapper_binding(entry: dict, intent: dict) -> bool:
             "--host": intent["host"],
             "--lane": intent["unit"].split("-")[2],
         }
-        return all(words.count(key) == 1 and words[words.index(key) + 1] == value
-                   for key, value in expected.items())
+        return all(
+            words.count(key) == 1
+            and not any(word.startswith(key + "=") for word in words)
+            and words[words.index(key) + 1] == value
+            for key, value in expected.items()
+        )
     except (ValueError, IndexError, TypeError):
         return False
 
@@ -122,8 +131,10 @@ def _valid(proof: dict, intent: dict, launches: list[dict], *, fenced=False) -> 
         terminal = int(proof["terminal_realtime_us"])
         anchor = _launch_time(launches[0])
         return (
-            proof.get("schema") == (
-                "skfleet.fenced-assignment-terminal/v1" if fenced
+            proof.get("schema")
+            == (
+                "skfleet.fenced-assignment-terminal/v1"
+                if fenced
                 else "skfleet.legacy-assignment-terminal/v1"
             )
             and proof.get("intent_sha256") == admission._digest(intent)
@@ -132,8 +143,11 @@ def _valid(proof: dict, intent: dict, launches: list[dict], *, fenced=False) -> 
             and proof.get("claim_event_sha256" if fenced else "launch_event_sha256")
             == admission._digest(launches[0])
             and bool(re.fullmatch(r"[0-9a-f]{32}", str(proof.get("invocation", ""))))
-            and (anchor <= start <= anchor + intent["resources"]["runtime_max_seconds"] * 1_000_000
-                 if fenced else abs(start - anchor) <= 2_000_000)
+            and (
+                anchor <= start <= anchor + intent["resources"]["runtime_max_seconds"] * 1_000_000
+                if fenced
+                else abs(start - anchor) <= 2_000_000
+            )
             and start
             < terminal
             <= start + (intent["resources"]["runtime_max_seconds"] + 60) * 1_000_000
@@ -175,14 +189,17 @@ def reconcile_legacy_assignment(
     fenced = not launches
     if fenced:
         launches = _fenced_claim(directory, home, intent)
-    path = directory / ("fenced-assignment-terminal.json" if fenced
-                        else "legacy-assignment-terminal.json")
+    path = directory / (
+        "fenced-assignment-terminal.json" if fenced else "legacy-assignment-terminal.json"
+    )
 
     def valid(proof):
         return _valid(proof, intent, launches, fenced=fenced) and (
-            not fenced or proof.get("start_receipt_sha256")
+            not fenced
+            or proof.get("start_receipt_sha256")
             == admission._digest(read_json(directory / "start.json"))
         )
+
     if path.exists():
         if not valid(read_json(path)):
             raise admission.AdmissionError("legacy assignment terminal proof changed")
@@ -207,11 +224,15 @@ def reconcile_legacy_assignment(
                 "USER_UNIT=" + intent["unit"],
                 "MESSAGE_ID=" + START_ID,
                 *["MESSAGE_ID=" + message for message in sorted(admission._JOURNAL_TERMINAL_IDS)],
-                *([] if fenced else [
-                    "--since=@" + str(when // 1_000_000 - 2),
-                    "--until=@" + str(when // 1_000_000
-                                     + intent["resources"]["runtime_max_seconds"] + 62),
-                ]),
+                *(
+                    []
+                    if fenced
+                    else [
+                        "--since=@" + str(when // 1_000_000 - 2),
+                        "--until=@"
+                        + str(when // 1_000_000 + intent["resources"]["runtime_max_seconds"] + 62),
+                    ]
+                ),
             ],
             capture_output=True,
             text=True,
@@ -245,8 +266,11 @@ def reconcile_legacy_assignment(
             terminals, key=lambda entry: int(entry[0]["__REALTIME_TIMESTAMP"])
         )
         proof = dict(
-            schema=("skfleet.fenced-assignment-terminal/v1" if fenced
-                    else "skfleet.legacy-assignment-terminal/v1"),
+            schema=(
+                "skfleet.fenced-assignment-terminal/v1"
+                if fenced
+                else "skfleet.legacy-assignment-terminal/v1"
+            ),
             intent_sha256=admission._digest(intent),
             reservation_id=admission._reservation_id(intent),
             unit=intent["unit"],
@@ -257,14 +281,16 @@ def reconcile_legacy_assignment(
             start_entry_sha256=start_digest,
             terminal_entry_sha256=terminal_digest,
         )
-        proof["claim_event_sha256" if fenced else "launch_event_sha256"] = admission._digest(launches[0])
+        proof["claim_event_sha256" if fenced else "launch_event_sha256"] = admission._digest(
+            launches[0]
+        )
         if fenced:
             proof["start_receipt_sha256"] = admission._digest(read_json(directory / "start.json"))
         if (
             not valid(proof)
             or admission.unit_state(intent["unit"], terminal=True) != state
-            or (_fenced_claim(directory, home, intent) if fenced
-                else _launches(home, intent)) != launches
+            or (_fenced_claim(directory, home, intent) if fenced else _launches(home, intent))
+            != launches
         ):
             return False
     except (OSError, KeyError, TypeError, ValueError, subprocess.SubprocessError):

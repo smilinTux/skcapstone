@@ -280,11 +280,17 @@ def fenced_without_launch_receipt(legacy):
     home, root, directory, state, events, entries = legacy
     intent = admission.read_json(directory / "intent.json")
     binding = intent["binding"]
-    events[:] = [dict(
-        action="claim", event_id="e" * 32, ts=events[0]["ts"],
-        writer=binding["owner"], node=intent["host"], owner=binding["owner"],
-        claim_revision=binding["claim_revision"],
-    )]
+    events[:] = [
+        dict(
+            action="claim",
+            event_id="e" * 32,
+            ts=events[0]["ts"],
+            writer=binding["owner"],
+            node=intent["host"],
+            owner=binding["owner"],
+            claim_revision=binding["claim_revision"],
+        )
+    ]
     entries[0]["__REALTIME_TIMESTAMP"] = str(int(entries[0]["__REALTIME_TIMESTAMP"]) + 1_000_000)
     entries[0]["MESSAGE"] = (
         f"Started {intent['unit']} - /synthetic/bin/python3 "
@@ -292,21 +298,30 @@ def fenced_without_launch_receipt(legacy):
         f"--owner {binding['owner']} --claim-revision {binding['claim_revision']} "
         "--host fixture --lane glm --model sk-glm-m -- bash -lc 'synthetic payload'"
     )
-    admission.write_once(directory / "start.json", dict(
-        schema="skfleet.resource-start/v1", reservation_id=directory.name,
-        binding=binding, argv_sha256=intent["argv_sha256"],
-    ))
+    admission.write_once(
+        directory / "start.json",
+        dict(
+            schema="skfleet.resource-start/v1",
+            reservation_id=directory.name,
+            binding=binding,
+            argv_sha256=intent["argv_sha256"],
+        ),
+    )
     return legacy
 
 
-def test_consumed_assignment_without_launch_receipt_recovers_only_capacity(fenced_without_launch_receipt):
+def test_consumed_assignment_without_launch_receipt_recovers_only_capacity(
+    fenced_without_launch_receipt,
+):
     home, root, directory, state, events, entries = fenced_without_launch_receipt
     before = CardStore(home).fold("12345678").model_dump(mode="json")
     assert admission._occupancy(root, home, strict_terminal=True) == []
     proof = admission.read_json(directory / "fenced-assignment-terminal.json")
     assert proof["schema"] == "skfleet.fenced-assignment-terminal/v1"
     assert proof["claim_event_sha256"] == admission._digest(events[0])
-    assert proof["start_receipt_sha256"] == admission._digest(admission.read_json(directory / "start.json"))
+    assert proof["start_receipt_sha256"] == admission._digest(
+        admission.read_json(directory / "start.json")
+    )
     assert proof["invocation"] == "c" * 32
     assert not (directory / "legacy-assignment-terminal.json").exists()
     assert not (directory / "observed.json").exists()
@@ -316,13 +331,32 @@ def test_consumed_assignment_without_launch_receipt_recovers_only_capacity(fence
     assert admission._occupancy(root, home, strict_terminal=True) == []
 
 
-@pytest.mark.parametrize("defect", [
-    "no-start", "wrong-start", "missing-claim", "wrong-claim", "duplicate-claim",
-    "wrong-wrapper", "wrong-card", "wrong-owner", "wrong-host", "wrong-lane",
-    "duplicate-option", "missing-description", "start-before-claim", "missing-terminal",
-    "second-invocation", "reused-unit", "claim-changed-during-observation",
-])
-def test_uncertain_fenced_assignment_retains_capacity(fenced_without_launch_receipt, monkeypatch, defect):
+@pytest.mark.parametrize(
+    "defect",
+    [
+        "no-start",
+        "wrong-start",
+        "missing-claim",
+        "wrong-claim",
+        "duplicate-claim",
+        "wrong-wrapper",
+        "wrong-card",
+        "wrong-owner",
+        "wrong-host",
+        "wrong-lane",
+        "duplicate-option",
+        "alternate-option",
+        "missing-description",
+        "start-before-claim",
+        "missing-terminal",
+        "second-invocation",
+        "reused-unit",
+        "claim-changed-during-observation",
+    ],
+)
+def test_uncertain_fenced_assignment_retains_capacity(
+    fenced_without_launch_receipt, monkeypatch, defect
+):
     home, root, directory, state, events, entries = fenced_without_launch_receipt
     if defect == "no-start":
         (directory / "start.json").unlink()
@@ -337,15 +371,23 @@ def test_uncertain_fenced_assignment_retains_capacity(fenced_without_launch_rece
     elif defect == "duplicate-claim":
         events.append(dict(events[0]))
     elif defect.startswith("wrong-"):
-        values = {"wrapper": ("skfleet-worker-wrapper.py", "other.py"),
-                  "card": ("12345678", "87654321"),
-                  "owner": ("pi-glm-fixture-12345678", "someone-else"),
-                  "host": ("--host fixture", "--host other"),
-                  "lane": ("--lane glm", "--lane codex")}
+        values = {
+            "wrapper": ("skfleet-worker-wrapper.py", "other.py"),
+            "card": ("12345678", "87654321"),
+            "owner": ("pi-glm-fixture-12345678", "someone-else"),
+            "host": ("--host fixture", "--host other"),
+            "lane": ("--lane glm", "--lane codex"),
+        }
         old, new = values[defect[6:]]
         entries[0]["MESSAGE"] = entries[0]["MESSAGE"].replace(old, new)
     elif defect == "duplicate-option":
-        entries[0]["MESSAGE"] = entries[0]["MESSAGE"].replace(" -- bash", " --card 12345678 -- bash")
+        entries[0]["MESSAGE"] = entries[0]["MESSAGE"].replace(
+            " -- bash", " --card 12345678 -- bash"
+        )
+    elif defect == "alternate-option":
+        entries[0]["MESSAGE"] = entries[0]["MESSAGE"].replace(
+            " -- bash", " --card=87654321 -- bash"
+        )
     elif defect == "missing-description":
         entries[0].pop("MESSAGE")
     elif defect == "start-before-claim":
@@ -359,10 +401,12 @@ def test_uncertain_fenced_assignment_retains_capacity(fenced_without_launch_rece
     elif defect == "claim-changed-during-observation":
         original = CardStore._read_events
         calls = []
+
         def changing(self, cid):
             calls.append(1)
             rows = original(self, cid)
             return rows if len(calls) < 4 else [dict(rows[0], claim_revision="f" * 32)]
+
         monkeypatch.setattr(CardStore, "_read_events", changing)
     assert len(admission._occupancy(root, home, strict_terminal=True)) == 1
     assert not (directory / "fenced-assignment-terminal.json").exists()

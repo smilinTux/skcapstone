@@ -232,6 +232,12 @@ def test_cached_journal_terminal_skips_per_unit_systemctl(collected, monkeypatch
     monkeypatch.setattr(
         admission, "unit_state", lambda *a, **k: pytest.fail("cached terminal queried systemctl")
     )
+    monkeypatch.setattr(
+        admission,
+        "_released_prestart_proof",
+        lambda *a: pytest.fail("terminal was treated as prestart"),
+    )
+    (directory / "start.json").unlink()
     assert admission._occupancy(root, home, strict_terminal=True) == []
     assert len(calls) == 1
 

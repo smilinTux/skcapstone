@@ -143,6 +143,17 @@ def _occupancy(root: Path, home: Path, *, strict_terminal=False) -> list[dict]:
         if _reservation_id(intent) != directory.name:
             raise AdmissionError("reservation identity is inconsistent")
         unit, maximum = intent["unit"], intent["resources"]["memory_max_bytes"]
+        if strict_terminal and unit not in units:
+            # Historical manager proof already binds the exact invocation. Live
+            # inventory above still charges any later reuse of this unit name.
+            journal_path = directory / "journal-terminal.json"
+            if journal_path.exists() and (directory / "observed.json").exists():
+                observed = read_json(directory / "observed.json")
+                if not _valid_observed(observed, intent):
+                    raise AdmissionError("reservation acknowledgment is inconsistent")
+                if not _valid_journal_terminal(read_json(journal_path), intent, observed):
+                    raise AdmissionError("journal terminal proof differs")
+                continue
         from .production_legacy_terminal import reconcile_legacy_assignment
 
         legacy_terminal = reconcile_legacy_assignment(directory, home, intent, live=unit in units)
@@ -181,16 +192,6 @@ def _occupancy(root: Path, home: Path, *, strict_terminal=False) -> list[dict]:
                     proof.get("state", {}), intent
                 ):
                     raise AdmissionError("terminal admission proof differs")
-                continue
-            # Historical manager proof already binds the exact invocation. Live
-            # inventory above still charges any later reuse of this unit name.
-            journal_path = directory / "journal-terminal.json"
-            if journal_path.exists() and (directory / "observed.json").exists():
-                observed = read_json(directory / "observed.json")
-                if not _valid_observed(observed, intent):
-                    raise AdmissionError("reservation acknowledgment is inconsistent")
-                if not _valid_journal_terminal(read_json(journal_path), intent, observed):
-                    raise AdmissionError("journal terminal proof differs")
                 continue
             state = unit_state(unit, terminal=True)
             if _terminal_state(state, intent):

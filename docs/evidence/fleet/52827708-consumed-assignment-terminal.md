@@ -1,0 +1,21 @@
+# Consumed assignment recovery and admission latency
+
+Card 52827708, owner jarvis, claim 96afd66b1b7b44289516b5428f15d3cb. Base bf712d90d249ec9da6474c87d793305ce2f2089d. No candidate install or live service change.
+
+All five chi hosts import the deployed legacy recovery module at SHA256 52152e5de32e4f5936790baa3f89ce1c674a21aa95c8fb9fd4c056f3ce32dafb. Three chiap03 builder journal receipts and chiap08's 7310cafa legacy assignment receipt validate against the original intents and exact invocation identities. Evidence: reviews/jarvis-sep21-20261004/recovered-admission-20261005.json on the operator host.
+
+A fresh chiap08 worker 7a4e1c2b launched at 2026-10-05T02:35:45.295462Z, invocation f3408d93745544b5a206ea2d9e667a1d, then terminated at 02:36:52.539605Z. Its wrapper reports exit 75, completion_failure no_card_mutation. Reservation a0a1fa36805a54f51d4227d5a33873adce1bea0d47db60ff17324f2246b8bbc4 has an exact consumed start, but the cycle records PRODUCTION_LAUNCH_RECEIPT_FAILED BoundaryError. The sealed snapshot was observed at 02:33:04.300682Z, over 120 seconds old at launch. This is a real launched failure, not an unstarted reservation or successful product outcome.
+
+Read-only replay copied all 137 host reservation directories to a temporary directory. It used the genuine current live-unit and native card reads; all receipt writes were confined to that temporary copy. On installed main it took 74.509 seconds, made 130 systemctl reads, and retained the 7a4e1c2b charge. With this repair it took 3.444 seconds, made 3 reads and discharged only that manager-proven terminal reservation. The large delay is repeated CardStore folding in prestart reconciliation of 128 already terminal reservations without historical start.json, as well as redundant systemctl reads. Cached journal proof now precedes both operations and remains fully binding checked. Current live inventory continues to account reused unit names.
+
+Lost native acknowledgement recovery uses a distinct fenced-assignment-terminal receipt. It binds the unchanged exact current native claim, consumed start and required-fence receipts, precise manager wrapper/card/owner/claim/host/lane arguments, one manager invocation across retained journal history, start after the native claim, bounded later termination, and stable collected-unit absence. Ambiguous, reused, missing, changed and mismatched identities remain charged. No native launch event, source custody, successful verdict, prestart release or card transition is created.
+
+Validation before repair: 2 failed, 60 passed. Latest targeted: 63 passed. Broader affected admission/dispatcher/lifecycle/workflow tests: 189 passed in 8.57 seconds:
+
+```
+env -u BASH_ENV -u VIRTUAL_ENV PYTHONPATH=src /tmp/skcapstone-base-venv/bin/python -m pytest -q tests/fleet/test_unobserved_builder_terminal.py tests/fleet/test_legacy_assignment_terminal.py tests/fleet/test_production_admission.py tests/fleet/test_admission_claim_fence.py tests/fleet/test_failed_admission_terminal.py tests/fleet/test_successful_admission_terminal.py tests/test_skfleet_worker_cgroup.py tests/test_fleet_duplicate_admission.py tests/test_skfleet_worker_stop_semantics.py tests/test_ci_throughput_workflow.py -m 'not host_systemd'
+```
+
+Formatting, Ruff and diff checks pass. First commit preceded broader verification. An initial broader command named a nonexistent workflow test file and ran zero tests; the command above corrects that path. No tests are hidden or xfailed. Hosted final-revision CI is pending. PR 931 uses auto rebase merge; lumina-nor owns rollout from merged main.
+
+Frontend card 2fcc1319 retains owner codex-sep21-profile-2fcc1319 and d53 source. Its fresh native attempt was refused before launch at charged 1 cap 1; it has no qualification intent or result. 17818226 retains codex-four-journey-prep and exact transported 264 source, and remains unqualified. Neither card is represented as completed, launched or admitted by this admission repair. No generic pane or old profile substitutes for the required native execution.
