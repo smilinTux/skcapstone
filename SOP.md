@@ -319,6 +319,9 @@ pytest --cov=skcapstone                                                     # wi
   registered markers plus `--strict-markers` (so a typo'd marker errors instead of
   silently selecting nothing). Run them explicitly: `pytest -m integration` /
   `pytest -m e2e`.
+- **Coverage upload:** Codecov is optional (`fail_ci_if_error: false` and step-only
+  `continue-on-error: true`), including action bootstrap failures. Test commands and
+  test jobs remain mandatory; a coverage upload error never masks a pytest failure.
 - **Gate rule:** a release is blocked unless `pytest.yml` is green **and** `ci.yml` lint
   passes. Do not tag a version whose Build/Test steps here do not reproduce.
 
@@ -772,7 +775,7 @@ checks:
   - name: version stays setuptools-scm derived, no literal, and still no package.json
     run: grep -qxF 'dynamic = ["version"]' pyproject.toml && ! grep -qE '^version\s*=' pyproject.toml && ! test -f package.json
   - name: pytest.yml is still the real test gate and is not masked
-    run: grep -qF 'python -m pytest tests/' .github/workflows/pytest.yml && grep -qF 'not integration and not e2e' .github/workflows/pytest.yml && ! grep -vE '^\s*#' .github/workflows/pytest.yml | grep -qE '\|\| true|continue-on-error:\s*true'
+    run: grep -qF 'python -m pytest tests/' .github/workflows/pytest.yml && grep -qF 'not integration and not e2e' .github/workflows/pytest.yml && ! grep -vE '^\s*#' .github/workflows/pytest.yml | grep -qE '\|\| true' && ! awk '/^  [^ ]/ {coverage=0} /^      - / {coverage=($0 == "      - name: Upload coverage")} !coverage && $0 !~ /^[[:space:]]*#/ {print}' .github/workflows/pytest.yml | grep -qE 'continue-on-error:\s*true'
   - name: ci.yml still runs NO tests, as section 4 warns
     run: ! grep -qE '^\s+run:.*pytest' .github/workflows/ci.yml
   - name: skcoord is still a hard dep and coordination is still a shim over it
