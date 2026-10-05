@@ -105,6 +105,76 @@ def test_non_link_actor_cannot_gain_review_assignment_authority(tmp_path):
     assert store.list_card_ids() == [card]
 
 
+@pytest.mark.parametrize("receipt", ["chiap03:native-receipt-1", "chiap03:native-receipt-2"])
+def test_supplemental_native_qualification_preserves_retained_review(tmp_path, receipt):
+    """Operator test evidence does not replace a typed source generation."""
+    store, card, owner, artifact, args = prepared(tmp_path)
+    opened = _run(tmp_path, *args)
+    assert opened.exit_code == 0, opened.output
+    review_id = json.loads(opened.output)["review_card_id"]
+    before = LiveCardStoreGateway(tmp_path).read_card(card).revision
+    store.append_event(
+        card,
+        "link",
+        "jarvis",
+        link_key="native_semantic_candidate_qualification",
+        link_value=receipt,
+    )
+    assert LiveCardStoreGateway(tmp_path).read_card(card).revision == before
+    retried = _run(tmp_path, *args)
+    assert retried.exit_code == 0, retried.output
+    assert json.loads(retried.output)["review_card_id"] == review_id
+    assert json.loads(retried.output)["created"] is False
+    assert store.fold(review_id).meta["source_revision"] == before
+    assert store.fold(card).owner == owner
+    assert store.fold(card).links["native_semantic_candidate_qualification"] == receipt
+
+
+@pytest.mark.parametrize("change", ["criteria", "dependency", "repository", "other-link"])
+def test_supplemental_qualification_does_not_hide_source_changes(tmp_path, change):
+    """The exemption never covers instructions or arbitrary metadata."""
+    store, card, owner, artifact, args = prepared(tmp_path)
+    store.append_event(
+        card,
+        "link",
+        "jarvis",
+        link_key="native_semantic_candidate_qualification",
+        link_value="chiap03:native-receipt",
+    )
+    before = LiveCardStoreGateway(tmp_path).read_card(card).revision
+    if change == "criteria":
+        store.append_event(card, "amend_criteria", owner, criteria=["Changed contract."])
+    elif change == "dependency":
+        store.append_event(card, "add_dependency", owner, dependency="deadbeef")
+    else:
+        key = "repository" if change == "repository" else "new_source_input"
+        store.append_event(card, "link", owner, link_key=key, link_value="https://other/repo")
+    if change == "repository":
+        from skcapstone.seraph_review_contracts import ReviewPublicationError
+
+        with pytest.raises(ReviewPublicationError, match="card_binding_conflict"):
+            LiveCardStoreGateway(tmp_path).read_card(card)
+        return
+    assert LiveCardStoreGateway(tmp_path).read_card(card).revision != before
+
+
+def test_review_card_qualification_link_still_changes_review_revision(tmp_path):
+    """Supplemental producer evidence cannot hide changes on a review itself."""
+    store, card, owner, artifact, args = prepared(tmp_path)
+    opened = _run(tmp_path, *args)
+    assert opened.exit_code == 0, opened.output
+    review_id = json.loads(opened.output)["review_card_id"]
+    before = LiveCardStoreGateway(tmp_path).read_card(review_id).revision
+    store.append_event(
+        review_id,
+        "link",
+        "jarvis",
+        link_key="native_semantic_candidate_qualification",
+        link_value="chiap03:native-receipt",
+    )
+    assert LiveCardStoreGateway(tmp_path).read_card(review_id).revision != before
+
+
 @pytest.mark.parametrize(
     "change", ["claim", "owner", "contract", "outcome", "artifact", "done", "label"]
 )

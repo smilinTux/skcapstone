@@ -22,6 +22,14 @@ def card_revision(card: object) -> str:
     payload.pop("updated_at", None)
     links = dict(payload.get("links") or {})
     links.pop(RECEIPT_LINK, None)
+    if (
+        "source-only" in card.labels
+        and "review" not in card.labels
+        and not is_review_card(card.title)
+    ):
+        # Supplemental operator tests neither replace the typed candidate nor
+        # grant acceptance. Keep every instruction and other binding fenced.
+        links.pop("native_semantic_candidate_qualification", None)
     payload["links"] = links
     return _digest(payload)
 
