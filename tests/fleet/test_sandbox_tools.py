@@ -261,6 +261,11 @@ def test_production_readiness_and_drift_use_shared_sandbox_gate(tmp_path, monkey
     monkeypatch.setenv("SKFLEET_PRODUCTION_POLICY", str(tmp_path / "policy.json"))
     monkeypatch.setattr(observer, "production_environment_error", lambda *args: None)
     monkeypatch.setattr(
+        observer,
+        "qualification_sandbox_error",
+        lambda _: "; ".join(module.readiness(sys.executable)),
+    )
+    monkeypatch.setattr(
         observer, "check_module_imports", lambda modules, _: dict.fromkeys(modules, True)
     )
     assert observer._run(source, units, sys.executable, None) == 1

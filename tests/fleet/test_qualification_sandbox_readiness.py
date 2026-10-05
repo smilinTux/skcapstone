@@ -1,5 +1,6 @@
 """Sandbox readiness and main-only AppArmor rollout, without host mutation."""
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -19,17 +20,32 @@ def test_probe_observes_actual_native_sandbox_exit(monkeypatch, exit_code):
 
     def run(argv, **kwargs):
         calls.append((argv, kwargs))
-        return subprocess.CompletedProcess(argv, exit_code, "", "bwrap: net_admin denied")
+        return subprocess.CompletedProcess(
+            argv,
+            exit_code,
+            json.dumps(
+                {
+                    "schema": "skfleet.sandbox-readiness/v1",
+                    "failures": ["net_admin denied"] if exit_code else [],
+                }
+            ),
+            "",
+        )
 
     monkeypatch.setattr(readiness.subprocess, "run", run)
     monkeypatch.setenv("BASH_ENV", "/untrusted/startup")
     error = readiness.qualification_sandbox_error(sys.executable)
     assert (error is None) == (exit_code == 0)
-    assert calls[0][0][:3] == [sys.executable, "-I", "-c"]
-    code = calls[0][0][3]
-    assert "sandbox_command" in code and "'/usr/bin/true'" in code
+    command = calls[0][0]
+    assert command[:2] == ["/usr/bin/systemd-run", "--user"]
+    assert command[command.index("--") + 1 :] == [
+        sys.executable,
+        "-I",
+        "-m",
+        "skcapstone.fleet.production_sandbox_probe",
+    ]
     assert "BASH_ENV" not in calls[0][1]["env"]
-    assert calls[0][1]["timeout"] == 20
+    assert calls[0][1]["timeout"] == 40
     if error:
         assert "net_admin denied" in error
 

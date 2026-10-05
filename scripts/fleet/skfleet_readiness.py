@@ -111,26 +111,56 @@ def production_environment_error(
 
 
 def qualification_sandbox_error(python_bin: str) -> str | None:
-    """Execute the real sealed boundary even on a non-authority production host."""
-    code = (
-        "import subprocess,tempfile; from pathlib import Path; "
-        "from skcapstone.fleet.production_test_worker import sandbox_command\n"
-        "with tempfile.TemporaryDirectory(prefix='skfleet-readiness-') as directory:\n"
-        " root=Path(directory); source=root/'source'; source.mkdir(); "
-        "output=root/'output'; output.mkdir()\n"
-        " subprocess.run(sandbox_command(source,output,['/usr/bin/true']),"
-        "check=True,timeout=15)\n"
-    )
+    """Grade worker context, preserving readiness's nested filesystem sandbox."""
+    import uuid
+
+    command = [
+        "/usr/bin/systemd-run",
+        "--user",
+        "--quiet",
+        "--pipe",
+        "--wait",
+        "--collect",
+        "--unit=skfleet-sandbox-probe-" + uuid.uuid4().hex,
+        "--property=RuntimeMaxSec=30",
+        "--property=MemoryMax=256M",
+        "--property=CPUQuota=100%",
+        "--property=TasksMax=64",
+        "--property=UnsetEnvironment=BASH_ENV",
+        "--setenv=PATH=/usr/bin:/bin",
+        "--",
+        python_bin,
+        "-I",
+        "-m",
+        "skcapstone.fleet.production_sandbox_probe",
+    ]
     try:
         result = subprocess.run(
-            [python_bin, "-I", "-c", code],
+            command,
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=40,
             env={key: value for key, value in os.environ.items() if key != "BASH_ENV"},
         )
     except (OSError, subprocess.SubprocessError):
         return "native sealed sandbox unavailable or timed out"
+    try:
+        if len(result.stdout) > 8192:
+            raise ValueError("probe result exceeds bound")
+        value = json.loads(result.stdout)
+        if (
+            not isinstance(value, dict)
+            or set(value) != {"schema", "failures"}
+            or value["schema"] != "skfleet.sandbox-readiness/v1"
+            or not isinstance(value["failures"], list)
+            or len(value["failures"]) > 20
+            or any(not isinstance(f, str) or not 1 <= len(f) <= 1024 for f in value["failures"])
+        ):
+            raise ValueError("invalid probe result")
+        if value["failures"]:
+            return "; ".join(value["failures"])
+    except (ValueError, TypeError):
+        return "native sealed sandbox diagnostic missing or invalid"
     if result.returncode:
         detail = result.stderr.strip().splitlines()
         return "native sealed sandbox refused" + (": " + detail[0][:240] if detail else "")
@@ -483,7 +513,8 @@ def _run(
 
     mandatory = required_env(dispatcher_source)
 
-    if env_from_systemd == "skfleet-seat-cycle.service":
+    sandbox_checked = env_from_systemd == "skfleet-seat-cycle.service"
+    if sandbox_checked:
         sandbox_error = qualification_sandbox_error(python_bin)
         if sandbox_error:
             ok = False
@@ -595,17 +626,13 @@ def _run(
                     lines.append(
                         "OK production policy: native parser and effective authority validated"
                     )
-                    from skcapstone.fleet.sandbox_tools import readiness as sandbox_readiness
-
-                    sandbox_failures = sandbox_readiness(python_bin)
-                    for failure in sandbox_failures:
-                        ok = False
-                        lines.append("FAIL qualification sandbox: " + failure)
-                    if not sandbox_failures:
-                        lines.append(
-                            "OK qualification sandbox: profiles, Node 22 and sealed probe"
-                        )
-
+                    if not sandbox_checked:
+                        sandbox_error = qualification_sandbox_error(python_bin)
+                        if sandbox_error:
+                            ok = False
+                            lines.append("FAIL qualification sandbox: " + sandbox_error)
+                        else:
+                            lines.append("OK qualification sandbox: native sealed execution")
                     from skcapstone.fleet.qualified_runtime import REQUIRED_PACKAGES
 
                     qualified = check_module_imports(list(REQUIRED_PACKAGES), python_bin)
