@@ -96,3 +96,11 @@ def scheduler_writer():
     from skcapstone.fleet.store import Writer
 
     return Writer(role="scheduler", node="node-158", identity="")
+
+
+@pytest.fixture
+def sandbox_prerequisites(monkeypatch):
+    """Observer unit tests stub system prerequisites; sandbox tests exercise them."""
+    from skcapstone.fleet import sandbox_tools
+
+    monkeypatch.setattr(sandbox_tools, "readiness", lambda *args, **kwargs: [])

@@ -558,6 +558,17 @@ def _run(
                     lines.append(
                         "OK production policy: native parser and effective authority validated"
                     )
+                    from skcapstone.fleet.sandbox_tools import readiness as sandbox_readiness
+
+                    sandbox_failures = sandbox_readiness(python_bin)
+                    for failure in sandbox_failures:
+                        ok = False
+                        lines.append("FAIL qualification sandbox: " + failure)
+                    if not sandbox_failures:
+                        lines.append(
+                            "OK qualification sandbox: profiles, Node 22 and sealed probe"
+                        )
+
                     from skcapstone.fleet.qualified_runtime import REQUIRED_PACKAGES
 
                     qualified = check_module_imports(list(REQUIRED_PACKAGES), python_bin)

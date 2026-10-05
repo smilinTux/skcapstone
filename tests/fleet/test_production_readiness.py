@@ -47,6 +47,9 @@ def production(tmp_path, monkeypatch):
     return policy, environment
 
 
+pytestmark = pytest.mark.usefixtures("sandbox_prerequisites")
+
+
 def test_native_policy_parser_and_real_authority_are_required(production):
     policy, environment = production
     assert (

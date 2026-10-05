@@ -489,6 +489,13 @@ def detect_drift(manifest: dict[str, Any], home: Path | str, repo_root: Path | s
             Drift(f"qualified-runtime:{name}", "missing", "fleet-qualify", None, host)
             for name in missing_dependencies(home / ".skenv")
         )
+    if production:
+        from .sandbox_tools import readiness as sandbox_readiness
+
+        drifts.extend(
+            Drift("qualification-sandbox:" + finding, "changed", "sandbox-ready", None, host)
+            for finding in sandbox_readiness(str(home / ".skenv/bin/python"))
+        )
     scope_cache: dict[str, tuple[bool | None, str | None, str]] = {}
 
     def scope_of(unit_name: str) -> tuple[bool | None, str | None, str]:

@@ -55,6 +55,9 @@ DISPATCHER_NAME = "skfleet-rotate.py"
 _REAL_SUBPROCESS_RUN = subprocess.run
 
 
+pytestmark = pytest.mark.usefixtures("sandbox_prerequisites")
+
+
 def _fake_systemctl(responses):
     """A subprocess.run replacement answering `systemctl --user show <unit>
     -p <prop> --value` from `responses[(unit, prop)]`, defaulting an unlisted

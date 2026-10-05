@@ -92,7 +92,7 @@ def sandbox_command(
         "/work",
         "--setenv",
         "PATH",
-        str(PREFIX / "bin") + ":/usr/bin",
+        str(PREFIX / "bin") + ":/usr/local/bin:/usr/bin",
         "--setenv",
         "HOME",
         "/tmp",

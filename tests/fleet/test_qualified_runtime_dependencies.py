@@ -13,6 +13,8 @@ from skcapstone.fleet import rollout_drift
 from skcapstone.fleet.cli import _drift_is_role_ambiguous
 from skcapstone.fleet.staged_rollout import _DEPLOY_STEPS, _ROLLBACK_STEPS
 
+pytestmark = pytest.mark.usefixtures("sandbox_prerequisites")
+
 
 def test_packaging_extra_covers_fingerprinted_tools_and_both_install_directions():
     root = Path(__file__).resolve().parents[2]

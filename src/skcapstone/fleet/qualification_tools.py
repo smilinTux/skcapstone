@@ -50,7 +50,7 @@ def load_artifacts(arch: str) -> dict:
     return assets
 
 
-def selected_host(path: Path, host: str) -> bool:
+def selected_host(path: Path, host: str, toolchain: str = "skstacks") -> bool:
     """Require an owned private bounded exact host/toolchain allowlist."""
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -80,9 +80,19 @@ def selected_host(path: Path, host: str) -> bool:
     ):
         raise ValueError("invalid qualification tool allowlist")
     for name, toolchains in value["hosts"].items():
-        if not valid_name(name) or len(name) > 253 or toolchains != ["skstacks"]:
+        if (
+            not valid_name(name)
+            or len(name) > 253
+            or not isinstance(toolchains, list)
+            or not toolchains
+            or any(
+                not isinstance(item, str) or item not in {"skstacks", "sandbox"}
+                for item in toolchains
+            )
+            or len(toolchains) != len(set(toolchains))
+        ):
             raise ValueError("invalid qualification tool allowlist entry")
-    return host in value["hosts"]
+    return toolchain in value["hosts"].get(host, [])
 
 
 def download(url: str) -> bytes:
@@ -204,7 +214,15 @@ def main() -> None:
         platform.machine(),
         apply=args.apply,
     )
-    print(json.dumps(result, sort_keys=True))
+    from .sandbox_tools import provision as provision_sandbox
+
+    sandbox = provision_sandbox(
+        paths_for_home(home).root / "qualification-tools.json",
+        socket.gethostname().split(".")[0].lower(),
+        platform.machine(),
+        apply=args.apply,
+    )
+    print(json.dumps({"source_suite": result, "sandbox": sandbox}, sort_keys=True))
 
 
 if __name__ == "__main__":

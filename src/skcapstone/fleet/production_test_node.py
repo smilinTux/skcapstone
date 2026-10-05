@@ -13,7 +13,15 @@ from xml.etree import ElementTree
 from . import production_test_plan as plan
 
 SCHEMA = "skfleet.qualified-node-test-profile/v1"
-NODE = Path("/usr/bin/node")
+
+
+def system_node(root: Path = Path("/")) -> Path:
+    """Use governed local Node when present, retaining the existing system fallback."""
+    local = root / "usr/local/bin/node"
+    return local if local.is_file() else root / "usr/bin/node"
+
+
+NODE = system_node()
 # Node-local, outside Syncthing, which can normalize read-only directory modes.
 ARTIFACT_ROOT = Path.home() / ".local/share/skcapstone/test-dependencies"
 SOURCE_FILES = (

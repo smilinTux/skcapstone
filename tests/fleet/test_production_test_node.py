@@ -31,7 +31,7 @@ def test_fixed_node_commands_and_exact_membership():
     value, root = specimen()
     checks = profile.recipe_checks(value["recipe"])
     assert [c["id"] for c in checks] == ["vitest", "typecheck", "lint"]
-    assert all(c["argv"][0] == "/usr/bin/node" for c in checks)
+    assert all(c["argv"][0] == str(node.NODE) for c in checks)
     assert "--no-cache" in checks[0]["argv"]
     assert plan.junit_counts(ET.tostring(root), value)["total"] == 2
 
