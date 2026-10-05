@@ -4,10 +4,12 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
+from skcapstone.fleet import production_test_plan as plan
 from skcapstone.fleet import production_test_worker as worker
 from skcapstone.fleet.production_test_plan import TestEvidenceError
 
@@ -108,3 +110,55 @@ def test_candidate_paths_cannot_inject_pythonpath_entries(tmp_path, name):
     (source / "packages" / name / "src").mkdir(parents=True)
     with pytest.raises(TestEvidenceError, match="candidate Python source root is unsafe"):
         worker.sandbox_command(source, tmp_path / "output", ["python", "-V"])
+
+
+@pytest.mark.skipif(shutil.which("bwrap") is None, reason="bubblewrap unavailable")
+def test_strict_asyncio_configuration_runs_in_sealed_sandbox(tmp_path, monkeypatch):
+    # Mount the test runner independently of its host location; /tmp is sealed
+    # over by the sandbox, and local test virtualenvs can live beneath it.
+    monkeypatch.setattr(worker, "PREFIX", Path("/test-runtime"))
+    source, output = tmp_path / "source", tmp_path / "output"
+    source.mkdir()
+    output.mkdir()
+    (source / "pyproject.toml").write_text(
+        '[tool.pytest.ini_options]\naddopts="--strict-config --strict-markers"\n'
+        'asyncio_mode="strict"\nasyncio_default_fixture_loop_scope="function"\n'
+    )
+    (source / "test_async.py").write_text(
+        "import asyncio,pytest\n@pytest.mark.asyncio\n"
+        "async def test_native_async():\n    await asyncio.sleep(0)\n"
+    )
+    monkeypatch.setenv("PYTEST_PLUGINS", "untrusted_host_plugin")
+    command = worker.sandbox_command(
+        source, output, [str(worker.PREFIX / "bin/python"), "-m", "pytest", "-q"]
+    )
+    command[command.index("/test-runtime")] = sys.prefix
+    result = subprocess.run(command, capture_output=True, text=True, timeout=20)
+    if result.returncode and (
+        "Operation not permitted" in result.stderr
+        or "Creating new namespace failed" in result.stderr
+    ):
+        pytest.skip("host does not permit bubblewrap namespaces")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+    assert command[command.index("PYTEST_DISABLE_PLUGIN_AUTOLOAD") + 1] == "1"
+    assert command[command.index("PYTEST_PLUGINS") + 1] == "pytest_asyncio.plugin"
+    assert "untrusted_host_plugin" not in command
+
+
+@pytest.mark.parametrize(
+    "relative", ["pytest_asyncio/plugin.py", "pytest_asyncio-1.3.dist-info/METADATA"]
+)
+def test_runtime_fingerprint_binds_explicit_asyncio_plugin(qualified_runtime, relative):
+    site = (
+        qualified_runtime
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+    )
+    path = site / relative
+    path.parent.mkdir(exist_ok=True)
+    path.write_text("qualified asyncio bytes\n")
+    before = plan.runtime_fingerprint()
+    path.write_text("changed asyncio bytes\n")
+    assert plan.runtime_fingerprint() != before

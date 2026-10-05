@@ -50,7 +50,7 @@ BINDING_KEYS = frozenset(
 )
 _RUNTIME_CACHE = {}
 HARNESS_ROOT = Path(__file__).resolve().parent
-TOOL_PACKAGES = ("pytest", "_pytest", "ruff", "pluggy", "iniconfig", "packaging")
+TOOL_PACKAGES = ("pytest", "_pytest", "pytest_asyncio", "ruff", "pluggy", "iniconfig", "packaging")
 HARNESS_MODULES = (
     "production_test_plan.py",
     "production_test_profile.py",
@@ -84,7 +84,7 @@ def runtime_fingerprint() -> str:
         files.update(
             path for path in directory.rglob("*") if path.suffix in {".py", ".so", ".pyd"}
         )
-    for tool in ("pytest", "ruff", "pluggy", "iniconfig", "packaging"):
+    for tool in ("pytest", "pytest_asyncio", "ruff", "pluggy", "iniconfig", "packaging"):
         files.update(site.glob(tool + "-*.dist-info/METADATA"))
     files.update(
         path for path in (site / "sitecustomize.py", site / "usercustomize.py") if path.exists()
