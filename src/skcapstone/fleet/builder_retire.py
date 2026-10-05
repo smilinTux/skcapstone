@@ -13,6 +13,7 @@ import sys
 import tarfile
 import tempfile
 from contextlib import nullcontext
+from datetime import datetime, timezone
 from pathlib import Path
 
 from skcoord.card_store import CardStore, card_mutation_lock
@@ -173,6 +174,112 @@ def prove_dead(status):
         raise ValueError("process live or identity unavailable")
 
 
+def preclaim_source_failure(request, status):
+    """Recognize only exhausted source preparation with no execution identity."""
+    return (
+        isinstance(request.get("production"), dict)
+        and request["production"].get("family") in {"codex", "glm", "deepseek", "qwen"}
+        and valid_name(request["production"].get("host", ""))
+        and status.get("state") == "failed"
+        and status.get("attempt") == builder.MAX_ATTEMPTS
+        and status.get("error") == "exact source reconstruction failed"
+        and all(
+            status.get(key) is None
+            for key in (
+                "owner",
+                "claim_revision",
+                "pid",
+                "pid_start_ticks",
+                "unit",
+                "invocation",
+                "admission_contract",
+            )
+        )
+    )
+
+
+def no_claim_since_offer(home, request):
+    """A missing status owner never erases a native claim event."""
+    try:
+        offered = datetime.fromisoformat(request["offered_at"].replace("Z", "+00:00"))
+        if offered.tzinfo is None or offered > datetime.now(timezone.utc):
+            raise ValueError("offer time unavailable")
+        for event in CardStore(home)._read_events(request["card_id"]):
+            if event.get("action") != "claim":
+                continue
+            claimed = datetime.fromisoformat(event["ts"].replace("Z", "+00:00"))
+            if claimed.tzinfo is None or claimed >= offered:
+                raise ValueError("native claim exists after offer")
+    except (AttributeError, KeyError, TypeError) as exc:
+        raise ValueError("claim history unavailable") from exc
+
+
+def prove_preclaim(home, request):
+    """Require no claim, service history or admission intent for either attempt."""
+    from . import production_admission as admission
+
+    no_claim_since_offer(home, request)
+    units = [
+        builder.production_builder.unit_name(request, attempt)
+        for attempt in range(1, builder.MAX_ATTEMPTS + 1)
+    ]
+    for unit in units:
+        state = admission.unit_state(unit, terminal=True)
+        if any(
+            state.get(key) != value
+            for key, value in {
+                "LoadState": "not-found",
+                "ActiveState": "inactive",
+                "SubState": "dead",
+                "MainPID": "0",
+                "ControlPID": "0",
+                "InvocationID": "",
+            }.items()
+        ):
+            raise ValueError("preclaim unit identity is not absent")
+        history = subprocess.run(
+            [
+                "journalctl",
+                "--user",
+                "--quiet",
+                "--no-pager",
+                "--output=json",
+                "--since=" + request["offered_at"],
+                "--user-unit=" + unit,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if history.returncode or history.stdout.strip() or history.stderr.strip():
+            raise ValueError("preclaim unit history exists or is unavailable")
+    root = home / "fleet/resource-admission" / request["production"]["host"]
+    if root.exists():
+        if root.resolve() != root or not root.is_dir():
+            raise ValueError("admission evidence directory is redirected")
+        records = list(root.iterdir())
+        if len(records) > 10000:
+            raise ValueError("admission evidence exceeds bound")
+        for record in records:
+            if not re.fullmatch(r"[0-9a-f]{64}", record.name):
+                continue
+            path = record / "intent.json"
+            if path.exists() or path.is_symlink():
+                intent = json.loads(source_bundle._read(path, source_bundle.MAX_EVIDENCE))
+                if not isinstance(intent, dict):
+                    raise ValueError("admission intent is malformed")
+                binding = intent.get("binding") or {}
+                if (
+                    not isinstance(binding, dict)
+                    or intent.get("unit") in units
+                    or binding.get("request_id") == request["request_id"]
+                ):
+                    raise ValueError("preclaim admission intent exists or is unavailable")
+    return dict(
+        units_absent=units, journal_empty=True, no_admission_intent=True, no_claim_since_offer=True
+    )
+
+
 def read_attempt(paths, node, card, request_sha256, status_sha256):
     """Read hash-pinned terminal bytes without modifying node-owned status."""
     raw_request = source_bundle._read(
@@ -198,9 +305,14 @@ def read_attempt(paths, node, card, request_sha256, status_sha256):
         or status["attempt"] < 1
         or (status.get("state") == "failed" and status.get("attempt", 0) < builder.MAX_ATTEMPTS)
         or not re.fullmatch(r"[0-9a-f]{64}", str(request.get("request_id", "")))
-        or not re.fullmatch(r"[0-9a-f]{32}", str(status.get("claim_revision", "")))
-        or not valid_name(status.get("owner", ""))
-        or not status["owner"].endswith("-" + node + "-" + card)
+        or (
+            not preclaim_source_failure(request, status)
+            and (
+                not re.fullmatch(r"[0-9a-f]{32}", str(status.get("claim_revision", "")))
+                or not valid_name(status.get("owner", ""))
+                or not status["owner"].endswith("-" + node + "-" + card)
+            )
+        )
     ):
         raise ValueError("exact terminal attempt required")
     return request, status, raw_request, raw_status
@@ -242,25 +354,54 @@ def node_check(payload, *, paths=None, home=None, locked=False):
         request, status, req, sts = read_attempt(
             paths, node, card, payload["request_sha256"], payload["status_sha256"]
         )
-        builder_terminal.prove(home, status)
+        preclaim = preclaim_source_failure(request, status)
+        if preclaim:
+            if request["production"]["host"] != payload["host"]:
+                raise ValueError("preclaim admission belongs to another host")
+            check_card(home, card, request, payload["card_sha256"])
+            absence = prove_preclaim(home, request)
+        else:
+            builder_terminal.prove(home, status)
         target = directory(home, card, request["request_id"])
-        workspace = paths.root / "workspaces" / status["owner"]
-        source = source_bundle._inspect(
-            workspace,
-            source_bundle._INSPECT_SETUP + """
+        owner = (
+            f"pi-{request['production']['family']}-builder-{node}-{card}"
+            if preclaim
+            else status["owner"]
+        )
+        workspace = paths.root / "workspaces" / owner
+        inspection = source_bundle._INSPECT_SETUP + """
 git('merge-base','--is-ancestor',base,'HEAD')
 print(json.dumps({'head':git('rev-parse','HEAD^{commit}').decode().strip(),
                   'tree':git('rev-parse','HEAD^{tree}').decode().strip()}))
-""",
+"""
+        if preclaim:
+            inspection = source_bundle._INSPECT_SETUP + """
+assert git('rev-parse','HEAD^{commit}').decode().strip()==base
+assert git('remote','get-url','origin').decode().strip()==ref
+assert not git('status','--porcelain','--untracked-files=all')
+assert not git('ls-files','--others','--ignored','--exclude-standard')
+print(json.dumps({'head':base,'tree':git('rev-parse','HEAD^{tree}').decode().strip()}))
+"""
+        source = source_bundle._inspect(
+            workspace,
+            inspection,
             card,
             request["base_revision"],
             "unused",
             "unused",
-            "unused",
+            request["repository"] if preclaim else "unused",
         )
+        if preclaim and source.get("head") != request["base_revision"]:
+            raise ValueError("preclaim source is not the exact clean base")
         proof = preserve(workspace, target, apply=payload["apply"])
         proof["source"] = source
-        builder_terminal.prove(home, status)
+        if preclaim:
+            check_card(home, card, request, payload["card_sha256"])
+            if prove_preclaim(home, request) != absence:
+                raise ValueError("preclaim absence proof changed")
+            proof.update(preclaim=True, **absence)
+        else:
+            builder_terminal.prove(home, status)
         read_attempt(paths, node, card, payload["request_sha256"], payload["status_sha256"])
         if payload["apply"]:
             source_bundle._once(target / "request.json", req)
@@ -358,6 +499,9 @@ def retire(
             paths, node, card, request_sha256, status_sha256
         )
         check_card(home, card, request, card_sha256)
+        preclaim = preclaim_source_failure(request, status)
+        if preclaim:
+            no_claim_since_offer(home, request)
         host = builder.production_builder.node_binding(paths, node, policy)["host"]
         payload = dict(binding, host=host, apply=apply)
         proof = probe(host, payload)
@@ -367,9 +511,23 @@ def retire(
             or proof.get("status_sha256") != status_sha256
             or not re.fullmatch(r"[0-9a-f]{64}", str(proof.get("inventory_sha256", "")))
             or (apply and not re.fullmatch(r"[0-9a-f]{64}", str(proof.get("archive_sha256", ""))))
+            or (
+                preclaim
+                and any(
+                    proof.get(key) is not True
+                    for key in (
+                        "preclaim",
+                        "journal_empty",
+                        "no_admission_intent",
+                        "no_claim_since_offer",
+                    )
+                )
+            )
         ):
             raise ValueError("exact node source custody proof required")
         check_card(home, card, request, card_sha256)
+        if preclaim:
+            no_claim_since_offer(home, request)
         read_attempt(paths, node, card, request_sha256, status_sha256)
         if not apply:
             return {"state": "qualified-check-only", "binding": binding, "proof": proof}
