@@ -94,6 +94,7 @@ def test_production_readiness_reports_the_actual_interpreter_missing_plugin(
     monkeypatch.setenv("SKFLEET_PRODUCTION_POLICY", str(tmp_path / "policy.json"))
     monkeypatch.setenv("SKFLEET_AUTHORITY_HOST", "fixture")
     monkeypatch.setattr(readiness, "production_environment_error", lambda *args: None)
+    monkeypatch.setattr(readiness, "qualification_sandbox_error", lambda *args: None)
     calls = []
 
     def imports(modules, interpreter):
