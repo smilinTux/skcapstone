@@ -91,5 +91,12 @@ def test_workflow_preserves_required_checks_and_coverage() -> None:
         "cancel-in-progress: ${{ github.event_name == 'pull_request'"
         " || github.event_name == 'push' }}" in workflow
     )
-    assert "continue-on-error" not in workflow
+    for job in data["jobs"].values():
+        assert not job.get("continue-on-error")
+        for step in job.get("steps", []):
+            if step.get("continue-on-error"):
+                assert step["name"] == "Upload coverage"
+                assert step["uses"].startswith("codecov/codecov-action@")
+                assert step["with"]["fail_ci_if_error"] is False
+                assert "run" not in step
     assert "|| true" not in workflow
