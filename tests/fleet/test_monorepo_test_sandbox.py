@@ -133,6 +133,10 @@ def test_strict_asyncio_configuration_runs_in_sealed_sandbox(tmp_path, monkeypat
         source, output, [str(worker.PREFIX / "bin/python"), "-m", "pytest", "-q"]
     )
     command[command.index("/test-runtime")] = sys.prefix
+    # setup-python uses a shared libpython outside /usr; bind its qualified
+    # library directory explicitly inside this relocated test runtime.
+    boundary = command.index("--")
+    command[boundary:boundary] = ["--setenv", "LD_LIBRARY_PATH", "/test-runtime/lib"]
     result = subprocess.run(command, capture_output=True, text=True, timeout=20)
     if result.returncode and (
         "Operation not permitted" in result.stderr
