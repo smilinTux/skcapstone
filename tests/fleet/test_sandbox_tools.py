@@ -354,3 +354,19 @@ def test_kernel_profile_reader_is_bounded_read_only_and_fail_closed(tmp_path, mo
     assert seen == [
         ["sudo", "-n", "/usr/bin/cat", str(tmp_path / "sys/kernel/security/apparmor/profiles")]
     ]
+
+
+def test_root_copy_must_reverify_installed_pins_before_load_or_execution(sandbox):
+    module, root, config, _, _, calls, _, fetch, run = sandbox
+
+    def corrupted_copy(argv, **kwargs):
+        result = run(argv, **kwargs)
+        if "/usr/bin/install" in argv and "0755" in argv:
+            Path(argv[-1]).write_bytes(b"unverified node 22")
+        return result
+
+    with pytest.raises(ValueError, match="checksum/ownership"):
+        module.provision(
+            config, "chiap01", "x86_64", root=root, apply=True, fetch=fetch, runner=corrupted_copy
+        )
+    assert not any("apparmor_parser" in " ".join(argv) for argv in calls)

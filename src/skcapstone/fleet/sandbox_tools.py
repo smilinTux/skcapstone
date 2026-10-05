@@ -265,6 +265,10 @@ def provision(
     )
     for path, mode, data in pending:
         _install(path, binary if data is None else data, mode, runner)
+    if not all(
+        root_file_matches(path, digest, int(mode, 8)) for path, digest, mode, _ in destinations
+    ):
+        raise ValueError("installed sandbox artifact checksum/ownership verification failed")
     if pending or not loaded_profiles(root, runner):
         runner(
             ["sudo", "-n", "/usr/sbin/apparmor_parser", "-r", str(destinations[0][0])],
