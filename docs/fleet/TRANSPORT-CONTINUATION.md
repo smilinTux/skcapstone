@@ -21,6 +21,10 @@ the configured body limit actually exceeded. No transcript content is
 returned to the authority or included in the grant.
 
 The path permits a clean or dirty named branch at the exact offered base.
+A transport failure before branch creation may also retain a detached HEAD at
+that base, provided it has no tracked changes or untracked source files. Dirty
+detached work and detached work without transport proof remain refused. The
+fresh worker must create a named feature branch before committing a candidate.
 All source bytes, Git metadata and ignored files are archived and checked
 again before consumption. Historical outcomes remain pinned and unchanged;
 an outcome from the current claim or any already published source artifact

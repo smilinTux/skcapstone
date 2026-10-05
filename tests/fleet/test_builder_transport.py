@@ -398,3 +398,53 @@ def test_native_transport_continuation_launches_third_attempt_once(ready_retry, 
     assert "gateway transport failure, not a product verdict" in launches[0][-1]
     assert "Original BLOCKED" not in launches[0][-1]
     assert "--unit=" + builder.production_builder.unit_name(a.request, 3) in launches[0]
+
+
+@pytest.mark.host_systemd
+@pytest.mark.parametrize(
+    "transport_mode,dirty,allowed",
+    [(True, False, True), (True, True, False), (False, False, False), (False, True, False)],
+)
+def test_detached_base_requires_transport_proof_and_clean_source(
+    source, tmp_path, monkeypatch, transport_mode, dirty, allowed
+):
+    """A transport failure before branch creation can retain its clean clone."""
+    from types import SimpleNamespace
+
+    from skcapstone.fleet import builder_continue as continuation
+    from skcapstone.fleet import source_bundle
+
+    workspace, base = source["workspace"], source["base"]
+    git(workspace, "checkout", "--detach", base)
+    if dirty:
+        (workspace / "untracked-source.txt").write_text("preserve this source")
+    paths = SimpleNamespace(root=tmp_path / "fleet")
+    (paths.root / "workspaces").mkdir(parents=True)
+    workspace.rename(paths.root / "workspaces/worker")
+    workspace = paths.root / "workspaces/worker"
+    before = (workspace / ".git/HEAD").read_bytes()
+    request = {"production": {"host": "worker"}, "card_id": "1234abcd", "base_revision": base}
+    monkeypatch.setattr(continuation.socket, "gethostname", lambda: "worker")
+    monkeypatch.setattr(custody, "prove_dead", lambda *args: None)
+    monkeypatch.setattr(transport, "proof", lambda *args: {"session_sha256": "f" * 64})
+    target = tmp_path / "evidence"
+
+    def check():
+        return continuation.source_proof(
+            paths,
+            request,
+            {"owner": "worker"},
+            target,
+            apply=allowed,
+            transport={"session": "synthetic"} if transport_mode else None,
+        )
+
+    if allowed:
+        proof = check()
+        assert proof["source"]["head"] == base
+        assert proof["source"]["ref"] == "HEAD"
+        assert proof["archive_sha256"] == custody.file_digest(target / "workspace.tar.gz")
+    else:
+        with pytest.raises(source_bundle.SourceBundleError):
+            check()
+    assert (workspace / ".git/HEAD").read_bytes() == before

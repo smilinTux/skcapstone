@@ -1,0 +1,1 @@
+- Card `ad4c4217`: permit governed transport continuation from a clean detached clone at the exact offered base when a verified gateway413 stopped the worker before branch creation. Preserve all source and invocation checks; reject dirty detached source and ordinary detached continuation.

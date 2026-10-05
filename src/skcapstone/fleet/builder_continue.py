@@ -149,10 +149,13 @@ def source_proof(paths, request, status, target, *, apply=False, transport=None)
     source = source_bundle._inspect(
         workspace,
         source_bundle._INSPECT_SETUP
+        + f"allow_detached = {bool(transport)!r}\n"
         + """
 assert git('rev-parse','HEAD^{commit}').decode().strip()==base
-ref=git('symbolic-ref','HEAD').decode().strip()
-assert ref.startswith('refs/heads/') and ref not in ('refs/heads/main','refs/heads/master')
+ref=git('rev-parse','--symbolic-full-name','HEAD').decode().strip()
+named=ref.startswith('refs/heads/') and ref not in ('refs/heads/main','refs/heads/master')
+assert named or (allow_detached and ref=='HEAD'
+                 and not git('status','--porcelain','--untracked-files=all'))
 """
         + ("assert git('status','--porcelain','--untracked-files=all')\n" if not transport else "")
         + """
