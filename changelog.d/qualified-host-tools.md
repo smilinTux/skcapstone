@@ -1,0 +1,1 @@
+- Card `ad4c4217`: existing staged deploy/rollback provision pinned restic 0.19.1 and ShellCheck 0.11.0 only on exact operator-selected skstacks hosts. Missing allowlists enable no host. Verify archive and binary SHA256 before any replacements, retain sealed prefix paths and dry-run/idempotent behavior, and refuse redirected targets or non-regular archive members.

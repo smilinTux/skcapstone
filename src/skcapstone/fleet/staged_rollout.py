@@ -168,6 +168,11 @@ _DEPLOY_STEPS: tuple[tuple[str, str], ...] = (
         "~/.skenv/bin/python -m skcapstone.fleet.rollout_artifacts {repo} units "
         "&& systemctl --user daemon-reload",
     ),
+    (
+        "qualification_tools",
+        "if test -f {repo}/src/skcapstone/fleet/qualification_tools.py; then "
+        "~/.skenv/bin/python -m skcapstone.fleet.qualification_tools --apply; fi",
+    ),
     ("converge", "skcapstone fleet sknoded --once"),
 )
 
@@ -208,6 +213,11 @@ _ROLLBACK_STEPS: tuple[tuple[str, str], ...] = (
         "install_units",
         "~/.skenv/bin/python ~/.cache/skcapstone-rollout/rollout_artifacts.py {repo} units "
         "&& systemctl --user daemon-reload",
+    ),
+    (
+        "qualification_tools",
+        "if test -f {repo}/src/skcapstone/fleet/qualification_tools.py; then "
+        "~/.skenv/bin/python -m skcapstone.fleet.qualification_tools --apply; fi",
     ),
     ("converge", "skcapstone fleet sknoded --once"),
 )

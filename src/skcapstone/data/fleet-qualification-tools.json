@@ -1,0 +1,41 @@
+{
+  "schema": "skfleet.qualification-tools-artifacts/v1",
+  "architectures": {
+    "x86_64": {
+      "restic": {
+        "url": "https://github.com/restic/restic/releases/download/v0.19.1/restic_0.19.1_linux_amd64.bz2",
+        "archive_sha256": "f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c",
+        "binary_sha256": "20d4142678d0d95ec11a4759def1b73fd9190abc9ca19e4b62d067c0b387e639",
+        "version": "0.19.1",
+        "format": "bz2",
+        "member": null
+      },
+      "shellcheck": {
+        "url": "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.gz",
+        "archive_sha256": "b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6",
+        "binary_sha256": "4da528ddb3a4d1b7b24a59d4e16eb2f5fd960f4bd9a3708a15baddbdf1d5a55b",
+        "version": "0.11.0",
+        "format": "tar.gz",
+        "member": "shellcheck-v0.11.0/shellcheck"
+      }
+    },
+    "aarch64": {
+      "restic": {
+        "url": "https://github.com/restic/restic/releases/download/v0.19.1/restic_0.19.1_linux_arm64.bz2",
+        "archive_sha256": "a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465",
+        "binary_sha256": "2fb45ac6f9071b6f20eb883953a188f9e7c7cb6bbe43c67a2e47ada4e85ee7f0",
+        "version": "0.19.1",
+        "format": "bz2",
+        "member": null
+      },
+      "shellcheck": {
+        "url": "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.aarch64.tar.gz",
+        "archive_sha256": "68a8133197a50beb8803f8d42f9908d1af1c5540d4bb05fdfca8c1fa47decefc",
+        "binary_sha256": "127f13925eadd52c341bca0ebaf9ab0dbd78c6468f30a8f262a528bf8de47546",
+        "version": "0.11.0",
+        "format": "tar.gz",
+        "member": "shellcheck-v0.11.0/shellcheck"
+      }
+    }
+  }
+}
