@@ -143,6 +143,14 @@ def _occupancy(root: Path, home: Path, *, strict_terminal=False) -> list[dict]:
         if _reservation_id(intent) != directory.name:
             raise AdmissionError("reservation identity is inconsistent")
         unit, maximum = intent["unit"], intent["resources"]["memory_max_bytes"]
+        from .production_legacy_terminal import reconcile_legacy_assignment
+
+        legacy_terminal = reconcile_legacy_assignment(directory, home, intent, live=unit in units)
+        if legacy_terminal is True:
+            continue
+        if legacy_terminal is False:
+            units.setdefault(unit, {"unit": unit, "reserved_memory_max": maximum})
+            continue
         if (directory / "success-terminal.json").exists():
             proof = read_json(directory / "success-terminal.json")
             if not _valid_success_receipt(proof, intent):

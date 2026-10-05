@@ -9164,7 +9164,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
     _launch_argv=_worker_launch_command(unit,workspace,inner)
     if PRODUCTION_POLICY:
         from skcapstone.fleet.production_admission import (
-            AdmissionDeferredError, AdmissionError, reserve_launch)
+            AdmissionDeferredError, AdmissionError, reserve_launch, start_reserved)
 
         try:
             _launch_argv=reserve_launch(
@@ -9181,7 +9181,15 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         except AdmissionError:
             log(d,"NODE_ADMISSION_CUSTODY_REQUIRED|%s|%s"%(HOST,cid))
             continue
-    r=subprocess.run(_launch_argv,capture_output=True,text=True)
+    if PRODUCTION_POLICY:
+        try:
+            r=start_reserved(Path(HOME)/".skcapstone",HOST,_launch_argv,
+                             lambda argv: subprocess.run(argv,capture_output=True,text=True))
+        except AdmissionError:
+            log(d,"NODE_ADMISSION_CUSTODY_REQUIRED|%s|%s"%(HOST,cid))
+            continue
+    else:
+        r=subprocess.run(_launch_argv,capture_output=True,text=True)
     ok = r.returncode==0
     launch_identity=(
         _launch_claim_fields(name,claimed_revision,ok)
