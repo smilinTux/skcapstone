@@ -27,6 +27,26 @@ from .production_tests import (
 )
 
 
+def candidate_pythonpath(workspace: Path) -> str:
+    """Resolve bounded monorepo imports inside the existing read-only source mount."""
+    roots = sorted(
+        {
+            path
+            for pattern in ("packages/**/src", "services/*/src", "vendor/*/src")
+            for path in workspace.glob(pattern)
+        }
+    )
+    if len(roots) > 64:
+        raise TestEvidenceError("candidate Python source roots exceed bound")
+    paths = ["/work/src"]
+    for path in roots:
+        relative = path.relative_to(workspace)
+        if not path.is_dir() or path.resolve() != workspace.resolve() / relative:
+            raise TestEvidenceError("candidate Python source root is redirected")
+        paths.append("/work/" + relative.as_posix())
+    return ":".join(paths)
+
+
 def sandbox_command(
     workspace: Path, output: Path, argv: list[str], profile: dict | None = None
 ) -> list[str]:
@@ -74,7 +94,7 @@ def sandbox_command(
         "/tmp",
         "--setenv",
         "PYTHONPATH",
-        "/work/src",
+        candidate_pythonpath(workspace),
         "--setenv",
         "PYTHONPYCACHEPREFIX",
         "/tmp/pycache",
