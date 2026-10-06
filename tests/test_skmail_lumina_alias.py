@@ -124,3 +124,65 @@ def test_each_name_keeps_its_own_cursor(tmp_path: Path) -> None:
     )
     assert "SHARED" not in _read(tmp_path, "lumina-nor", rec)
     assert "SHARED" in _read(tmp_path, "lumina", rec)
+
+
+def _rec_from(ts: str, sender: str, to: str, re: str) -> dict[str, object]:
+    rec = _rec(ts, to, re)
+    rec["from"] = sender
+    return rec
+
+
+def _read_box(coord: Path, me: str, records: list[dict[str, object]], box: str) -> str:
+    """Write records into a named writer box, so `from` can vary per test."""
+    path = coord / "skmail.d" / box
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(r) + "\n" for r in records))
+    env = os.environ.copy()
+    env["SKMAIL_DIR"] = str(coord)
+    return subprocess.run(
+        [str(SCRIPT), "read", me], check=True, capture_output=True, env=env, text=True
+    ).stdout
+
+
+def test_own_broadcast_does_not_come_back_as_unread(tmp_path: Path) -> None:
+    """`lumina -> all` must not land in lumina's own inbox."""
+    out = _read_box(
+        tmp_path,
+        "lumina",
+        [_rec_from(AFTER, "lumina", "all", "MYOWNBROADCAST")],
+        "lumina@chiap01.jsonl",
+    )
+    assert "MYOWNBROADCAST" not in out
+
+
+def test_own_broadcast_skipped_across_the_alias(tmp_path: Path) -> None:
+    """One agent, so lumina-nor is not an audience for lumina's broadcast."""
+    out = _read_box(
+        tmp_path,
+        "lumina-nor",
+        [_rec_from(AFTER, "lumina", "all", "ALIASBROADCAST")],
+        "lumina@chiap01.jsonl",
+    )
+    assert "ALIASBROADCAST" not in out
+
+
+def test_note_addressed_directly_to_self_is_kept(tmp_path: Path) -> None:
+    """The real NVFP4-MTP-TEST-BLOCKED-NEEDS-CHEF pattern must survive."""
+    out = _read_box(
+        tmp_path,
+        "lumina",
+        [_rec_from(AFTER, "lumina", "lumina", "NOTETOSELF")],
+        "lumina@chiap01.jsonl",
+    )
+    assert "NOTETOSELF" in out
+
+
+def test_other_agents_still_receive_that_broadcast(tmp_path: Path) -> None:
+    """Skipping the sender must not suppress the broadcast for anyone else."""
+    out = _read_box(
+        tmp_path,
+        "jarvis",
+        [_rec_from(AFTER, "lumina", "all", "EVERYONEELSE")],
+        "lumina@chiap01.jsonl",
+    )
+    assert "EVERYONEELSE" in out

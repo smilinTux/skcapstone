@@ -202,10 +202,40 @@ if cmd == "tail":
 # only for mail sent after FLEET_SINCE, so that backlog does not flood every
 # reader at once; it was set aside for a human to skim instead.
 FLEET_SINCE = datetime.datetime(2026, 10, 3, 14, 30, tzinfo=datetime.timezone.utc)
-def for_me(to, stamp):
+
+# The Lumina agent answers to two addresses: `lumina` was the original chi
+# name and `lumina-nor` the noroc2027 one. One agent, but the reader matched
+# only its own exact name, so draining one name never touched the other. 5,876
+# messages were unread on `lumina` and 4,363 on `lumina-nor` when this was found
+# (both retired 2026-10-06, skip counts in .skmail-ack-before.log), and Jarvis
+# had taken to sending every message to BOTH names to work around it.
+#
+# Same containment as `fleet` above: cross-name delivery is honoured only for
+# mail sent after LUMINA_SINCE, so neither backlog can flood the live channel
+# of the other name. An EXACT match is never gated, so every existing cursor
+# keeps behaving exactly as it did. Each name also keeps its OWN cursor on
+# purpose: the alias widens which mail is eligible and deliberately does not
+# merge two read positions, because collapsing them would hand one name the
+# read cursor of the other and silently re-deliver or bury mail.
+IDENTITY_ALIASES = {"lumina": "lumina", "lumina-nor": "lumina"}
+LUMINA_SINCE = datetime.datetime(2026, 10, 6, 20, 30, tzinfo=datetime.timezone.utc)
+def identity(name):
+    return IDENTITY_ALIASES.get(name.lower(), name.lower())
+def for_me(to, stamp, sender=""):
     to = to.lower()
-    return to in (me.lower(), "all") or (to == "fleet" and stamp is not None and stamp > FLEET_SINCE)
-mine = [(stamp, record) for stamp, record in valid if for_me(record["to"], stamp)]
+    broadcast = to == "all" or (to == "fleet" and stamp is not None and stamp > FLEET_SINCE)
+    # A reader is not an audience for its own broadcast. Every `lumina -> all`
+    # came straight back as unread mail for the sender, a large share of a
+    # human mailbox that buries the traffic actually addressed to them. Mail a
+    # reader sends DIRECTLY to itself is kept on purpose: leaving a note in your
+    # own mailbox is a real pattern here, as in NVFP4-MTP-TEST-BLOCKED-NEEDS-CHEF.
+    if broadcast and identity(sender) == identity(me):
+        return False
+    if to == me.lower() or broadcast:
+        return True
+    return identity(to) == identity(me) and stamp is not None and stamp > LUMINA_SINCE
+mine = [(stamp, record) for stamp, record in valid
+        if for_me(record["to"], stamp, record.get("from") or "")]
 # READ CAP and SAFE ACK (2026-10-03). A large backlog (10,791 messages, 7 MB for
 # jarvis on chiap08) cannot be read at once, so read shows the OLDEST unread mail
 # up to SKMAIL_READ_MAX_BYTES (default 8192) and says how many remain. Ack then
@@ -261,8 +291,8 @@ if cmd == "ack":
     print("acked up to %s (%s). %d still unread." % (target, why, left))
     raise SystemExit(0)
 for item in invalid:
-    if (me.lower() in item["recipients"] or "all" in item["recipients"]
-            or ("fleet" in item["recipients"] and item["parsed"] is not None and item["parsed"] > FLEET_SINCE)) and (item["parsed"] is None or item["parsed"] > cut):
+    if (any(for_me(r, item["parsed"], item["from"]) for r in item["recipients"])
+            and (item["parsed"] is None or item["parsed"] > cut)):
         show_invalid(item)
 if flag("--summary"):
     from collections import Counter
