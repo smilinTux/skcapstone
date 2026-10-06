@@ -226,7 +226,16 @@ def _historical_acceptance(home, context, historical, inspect):
             raise ReviewEvidenceError("historical raw test output changed")
     name = "vitest.xml" if is_node(profile) else "pytest.xml"
     raw_junit = read_private(directory / name)
-    counts = junit_counts(raw_junit, profile)
+    selection = None
+    if profile is not None and not is_node(profile):
+        from .production_pytest_recipe import requires_selection
+
+        if requires_selection(profile["recipe"]):
+            raw_selection = read_private(directory / "selection.json")
+            if receipt.get("selection_sha256") != sha(raw_selection):
+                raise ReviewEvidenceError("historical pytest selection changed")
+            selection = json.loads(raw_selection)
+    counts = junit_counts(raw_junit, profile, selection=selection)
     if (
         receipt.get("junit_sha256") != sha(raw_junit)
         or receipt.get("counts") != counts
