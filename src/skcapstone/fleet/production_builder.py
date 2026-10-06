@@ -216,6 +216,29 @@ def review_worker_path(home: Path, inherited: str) -> str:
     return os.pathsep.join((str(home / ".skenv/bin"), str(home / ".local/bin"), inherited))
 
 
+def review_wrapper_path() -> str:
+    """Resolve the wrapper installed beside this process before consulting PATH."""
+    import shutil
+    import sys
+
+    name = "skfleet-worker-wrapper.py"
+    venv_path = Path(sys.executable).parent / name
+    if venv_path.is_file():
+        return str(venv_path)
+
+    search_path = os.environ.get("PATH", os.defpath)
+    wrapper = shutil.which(name, path=search_path)
+    if wrapper and Path(wrapper).is_file():
+        return wrapper
+
+    searched = [str(venv_path)]
+    searched.extend(
+        os.path.abspath(os.path.join(directory or os.curdir, name))
+        for directory in search_path.split(os.pathsep)
+    )
+    raise ValueError("managed review wrapper unavailable; tried: " + ", ".join(searched))
+
+
 def launch_review(paths, home, request, card, handoff, workspace, *, launcher=None):
     """Launch the existing production wrapper under destination-native custody."""
     import shutil
@@ -235,11 +258,9 @@ def launch_review(paths, home, request, card, handoff, workspace, *, launcher=No
     host, lane = bound["host"], bound["family"]
     unit = "skfleet-worker-" + lane + "-" + card.id + ".service"
     worker = os.environ.get("SKFLEET_PI") or shutil.which("pi")
-    wrapper = shutil.which("skfleet-worker-wrapper.py") or str(
-        Path(__file__).resolve().parents[3] / "scripts/fleet/skfleet-worker-wrapper.py"
-    )
-    if not worker or not Path(wrapper).is_file():
-        raise ValueError("managed review worker runtime unavailable")
+    wrapper = review_wrapper_path()
+    if not worker:
+        raise ValueError("managed review worker runtime unavailable: pi not found")
     brief = production_source_review_brief(
         card_id=card.id,
         owner=owner,
