@@ -1,0 +1,1 @@
+- Resolve the fleet review wrapper beside the running interpreter before searching `PATH`, and fail closed with the searched paths when it is unavailable.
