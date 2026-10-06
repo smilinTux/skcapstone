@@ -1,0 +1,1 @@
+- Card `e37a5a0d`: Review prestart retirement now excludes the private admission lock from reservation inventory. Previously, the supported lock file made every affected inventory appear ambiguous; unsafe lock files still fail closed.

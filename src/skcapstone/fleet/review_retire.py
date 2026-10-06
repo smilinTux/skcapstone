@@ -196,6 +196,10 @@ def _admission_inventory(
         raise ValueError("resource admission inventory is ambiguous")
     rows = []
     for directory in sorted(root.iterdir()):
+        if directory.name == ".lock":
+            if not admission._private_lock_stat(directory.lstat()):
+                raise ValueError("resource admission lock is unsafe")
+            continue
         if directory.is_symlink() or not directory.is_dir() or not SHA.fullmatch(directory.name):
             raise ValueError("resource admission inventory is ambiguous")
         intent_path = directory / "intent.json"
