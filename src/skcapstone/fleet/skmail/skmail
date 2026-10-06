@@ -217,7 +217,11 @@ FLEET_SINCE = datetime.datetime(2026, 10, 3, 14, 30, tzinfo=datetime.timezone.ut
 # purpose: the alias widens which mail is eligible and deliberately does not
 # merge two read positions, because collapsing them would hand one name the
 # read cursor of the other and silently re-deliver or bury mail.
-IDENTITY_ALIASES = {"lumina": "lumina", "lumina-nor": "lumina"}
+# `lumina-nor` is the canonical address on chi going forward (Chef, 2026-10-06):
+# one name, so senders stop dual-sending. `lumina` stays a live alias rather
+# than an error, because years of mail is addressed to it and Jarvis still has
+# it wired in several places.
+IDENTITY_ALIASES = {"lumina": "lumina-nor", "lumina-nor": "lumina-nor"}
 LUMINA_SINCE = datetime.datetime(2026, 10, 6, 20, 30, tzinfo=datetime.timezone.utc)
 def identity(name):
     return IDENTITY_ALIASES.get(name.lower(), name.lower())
