@@ -56,10 +56,19 @@ def proof(paths, request, status, evidence):
         events = [json.loads(line) for line in raw.splitlines()]
         first, last = events[0], events[-1]
         message = last["message"]
-        error_text = message["errorMessage"]
-        if not error_text.startswith("413: "):
-            raise ValueError("terminal gateway413 required")
-        error = json.loads(error_text[5:])
+        error = message.get("gatewayError")
+        if error is not None:
+            if (
+                not isinstance(error, dict)
+                or type(error.get("http_status")) is not int
+                or error["http_status"] != 413
+            ):
+                raise ValueError("terminal gateway413 required")
+        else:
+            error_text = message["errorMessage"]
+            if not error_text.startswith("413: "):
+                raise ValueError("terminal gateway413 required")
+            error = json.loads(error_text[5:])
         if (
             first["type"] != "session"
             or first["id"] != evidence["session"].split("_", 1)[1][:-6]

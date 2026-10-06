@@ -1,0 +1,1 @@
+- Card `075c9d2e`: keep Pi workers alive across transient gateway bucket 503 and upstream 504 responses with an audited four-attempt, six-minute request budget. Client errors and partial streams remain terminal; native 413 proof accepts the structured transport metadata.

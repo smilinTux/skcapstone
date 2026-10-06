@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import gatewayRetry from "./pi-gateway-retry.mjs";
 
 const MUTATION = /(?:>>?|\b(?:chmod|chown|cp|install|ln|mv|rm|tee|touch|truncate)\b|\bsed\s+[^\n]*-[^\s]*i|\.(?:write|write_text|unlink|rename|replace)\s*\()/;
 const EVENT_PATH = /\.skcapstone\/(?:cards\/[^\s/"';&|<>]+\/events\/[^\s/"';&|<>]+|coordination\/card_events\/[^\s/"';&|<>]+)\.jsonl/;
@@ -37,6 +38,7 @@ export function isCurrentFleetCardReclaim(command, cardId = process.env.SKFLEET_
 }
 
 export default function cardStoreGuard(pi) {
+  gatewayRetry(pi);
   pi.on("tool_call", async (event) => {
     if (
       (event.toolName === "write" || event.toolName === "edit") &&
