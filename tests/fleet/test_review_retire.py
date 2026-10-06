@@ -318,3 +318,31 @@ def test_prestart_retirement_refuses_when_status_or_launch_exists(tmp_path, monk
             actor="jarvis",
             reason="bounded test",
         )
+
+
+def test_prestart_retirement_refuses_matching_resource_intent(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    reservation = home / "fleet/resource-admission/chiap03" / ("a" * 64)
+    reservation.mkdir(parents=True)
+    (reservation / "intent.json").write_text("{}")
+    intent = {
+        "binding": {
+            "card_id": "c60a542e",
+            "owner": "pi-seraph-chiap03-c60a542e",
+            "claim_revision": "b" * 32,
+            "request_id": "c" * 64,
+        }
+    }
+    from skcapstone.fleet import production_admission
+
+    monkeypatch.setattr(production_admission, "read_json", lambda _path: intent)
+    monkeypatch.setattr(production_admission, "_reservation_id", lambda _intent: "a" * 64)
+    with pytest.raises(ValueError, match="matching resource admission intent exists"):
+        review_retire._admission_inventory(
+            home,
+            "chiap03",
+            "c60a542e",
+            "pi-seraph-chiap03-c60a542e",
+            "b" * 32,
+            "c" * 64,
+        )

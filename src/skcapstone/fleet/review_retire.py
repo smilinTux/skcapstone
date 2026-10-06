@@ -93,6 +93,7 @@ def retired_offers(home: Path, card: str, events: list[dict]) -> set[str]:
                 and proof_value.get("unit_state", {}).get("LoadState") == "not-found"
                 and proof_value.get("matching_sessions") == 0
                 and proof_value.get("dispatch_status_absent") is True
+                and SHA.fullmatch(proof_value.get("admission_inventory_sha256", ""))
                 and value.get("prestart_sha256") == event.get("prestart_sha256")
                 and source_bundle._sha(proof) == event.get("prestart_sha256")
                 and source_bundle._sha(raw_receipt) == event.get("receipt_sha256")
@@ -180,6 +181,38 @@ def _prestart_state(unit: str, host: str, card: str) -> dict:
         "session_inventory_sha256": source_bundle._sha(result.stdout.encode()),
         "matching_sessions": 0,
     }
+
+
+def _admission_inventory(
+    home: Path, host: str, card: str, owner: str, claim: str, request_id: str
+):
+    """Hash the host's intent inventory and refuse the exact review generation."""
+    from . import production_admission as admission
+
+    root = Path(home) / "fleet/resource-admission" / host
+    if not os.path.lexists(root):
+        return source_bundle._sha(b"[]")
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError("resource admission inventory is ambiguous")
+    rows = []
+    for directory in sorted(root.iterdir()):
+        if directory.is_symlink() or not directory.is_dir() or not SHA.fullmatch(directory.name):
+            raise ValueError("resource admission inventory is ambiguous")
+        intent_path = directory / "intent.json"
+        if intent_path.is_symlink() or not intent_path.is_file():
+            raise ValueError("resource admission intent inventory is incomplete")
+        intent = admission.read_json(intent_path)
+        if not isinstance(intent, dict) or admission._reservation_id(intent) != directory.name:
+            raise ValueError("resource admission intent identity is invalid")
+        binding = intent.get("binding", {})
+        if binding.get("request_id") == request_id or (
+            binding.get("card_id") == card
+            and binding.get("owner") == owner
+            and binding.get("claim_revision") == claim
+        ):
+            raise ValueError("matching resource admission intent exists")
+        rows.append([directory.name, source_bundle._sha(_raw(intent_path))])
+    return source_bundle._sha(json.dumps(rows, separators=(",", ":")).encode())
 
 
 def retire_prestart(
@@ -302,13 +335,24 @@ def retire_prestart(
         host = production_builder.node_binding(paths, node, policy)["host"]
         if request.get("production", {}).get("host") != host:
             raise ValueError("sealed review destination changed")
+        admission_inventory_sha256 = _admission_inventory(
+            home, host, card, previous_owner, previous_claim_revision, request_id
+        )
         unit = "skfleet-worker-" + request["production"]["family"] + "-" + card + ".service"
         proof = _prestart_state(unit, host, card)
+        proof["admission_inventory_sha256"] = admission_inventory_sha256
         proof["dispatch_status_absent"] = not os.path.lexists(status_path)
         if not proof["dispatch_status_absent"]:
             raise ValueError("status appeared during prestart check")
         if os.path.lexists(status_path) or request_path.read_bytes() != raw_request:
             raise ValueError("review request changed during prestart check")
+        if (
+            _admission_inventory(
+                home, host, card, previous_owner, previous_claim_revision, request_id
+            )
+            != admission_inventory_sha256
+        ):
+            raise ValueError("resource admission inventory changed during prestart check")
         binding = {
             "schema": PRESTART_SCHEMA,
             "card_id": card,
