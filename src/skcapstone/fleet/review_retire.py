@@ -112,7 +112,71 @@ def retired_offers(home: Path, card: str, events: list[dict]) -> set[str]:
             archived = _raw(receipt.parent / "request.json")
             archived_request = json.loads(archived)
             archived_status = _raw(receipt.parent / "status.json")
-            archived_exit = _raw(receipt.parent / "worker-exit.json")
+        except (OSError, ValueError):
+            continue
+        exit_source = value.get("exit_source", "worker-exit")
+        try:
+            if exit_source == "worker-exit":
+                archived_exit = _raw(receipt.parent / "worker-exit.json")
+                exit_value = json.loads(archived_exit)
+                status_value = json.loads(archived_status)
+                exit_proven = (
+                    exit_value.get("card_id") == card
+                    and exit_value.get("owner") == status_value.get("owner")
+                    and exit_value.get("claim_revision") == status_value.get("claim_revision")
+                    and exit_value.get("host") == status_value.get("execution", {}).get("host")
+                    and type(exit_value.get("child_exit_code")) is int
+                    and exit_value.get("child_exit_code") != 0
+                )
+            elif exit_source == "systemd-terminal":
+                archived_exit = _raw(receipt.parent / "systemd-terminal.json")
+                exit_value = json.loads(archived_exit)
+                status_value = json.loads(archived_status)
+                execution = status_value.get("execution") or {}
+                expected_unit = (
+                    "skfleet-worker-"
+                    + str(archived_request.get("production", {}).get("family", ""))
+                    + "-"
+                    + card
+                    + ".service"
+                )
+                journal = exit_value.get("journal")
+                if journal is None:
+                    exit_proven = (
+                        exit_value.get("InvocationID") == execution.get("invocation")
+                        and exit_value.get("InvocationID") == value.get("invocation")
+                        and value.get("unit") == expected_unit
+                        and exit_value.get("LoadState") == "loaded"
+                        and exit_value.get("ActiveState") == "failed"
+                        and exit_value.get("SubState") == "failed"
+                        and exit_value.get("MainPID") == "0"
+                        and exit_value.get("ControlPID") == "0"
+                        and exit_value.get("Result") not in {None, "", "success"}
+                        and exit_value.get("ExecMainStatus") not in {None, "", "0"}
+                    )
+                else:
+                    absence = exit_value.get("absence") or {}
+                    exit_proven = (
+                        value.get("unit") == expected_unit
+                        and exit_value.get("invocation") == execution.get("invocation")
+                        and journal.get("schema") == "skfleet.collected-worker-terminal/v1"
+                        and journal.get("unit") == expected_unit
+                        and journal.get("host") == execution.get("host")
+                        and journal.get("card_id") == card
+                        and journal.get("owner") == status_value.get("owner")
+                        and journal.get("claim_revision") == status_value.get("claim_revision")
+                        and journal.get("request_id") == request_id
+                        and journal.get("started_at_usec", 0)
+                        <= journal.get("completed_at_usec", -1)
+                        and SHA.fullmatch(str(journal.get("started_message_sha256", "")))
+                        and SHA.fullmatch(str(journal.get("completed_message_sha256", "")))
+                        and absence.get("unit_state", {}).get("LoadState") == "not-found"
+                        and absence.get("matching_sessions") == 0
+                        and SHA.fullmatch(exit_value.get("admission_inventory_sha256", ""))
+                    )
+            else:
+                continue
+            exit_digest = source_bundle._sha(archived_exit)
         except (OSError, ValueError):
             continue
         offers = [
@@ -134,7 +198,13 @@ def retired_offers(home: Path, card: str, events: list[dict]) -> set[str]:
             and production_builder.digest(archived_request) == event.get("offer_request_sha256")
             and value.get("status_sha256") == event.get("status_sha256")
             and source_bundle._sha(archived_status) == event.get("status_sha256")
-            and source_bundle._sha(archived_exit) == value.get("exit_sha256")
+            and exit_digest == value.get("exit_sha256")
+            and exit_proven
+            and event.get("exit_sha256", value.get("exit_sha256")) == value.get("exit_sha256")
+            and event.get("exit_source", value.get("exit_source", "worker-exit"))
+            == value.get("exit_source", "worker-exit")
+            and event.get("unit", value.get("unit")) == value.get("unit")
+            and event.get("invocation", value.get("invocation")) == value.get("invocation")
             and source_bundle._sha(raw_receipt) == event.get("receipt_sha256")
         ):
             retired.add(request_id)
@@ -183,8 +253,92 @@ def _prestart_state(unit: str, host: str, card: str) -> dict:
     }
 
 
+def _journal_terminal(
+    unit: str, host: str, card: str, owner: str, claim: str, request_id: str, invocation: str
+):
+    """Bind one collected transient unit run to its sealed review request."""
+    import subprocess
+
+    command = ["journalctl", "--user", "--unit", unit, "--no-pager", "--output=json"]
+    if host != socket.gethostname().split(".")[0].lower():
+        command = [
+            "ssh",
+            "-oBatchMode=yes",
+            "-oStrictHostKeyChecking=yes",
+            "-oConnectTimeout=5",
+            host,
+            *command,
+        ]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    if result.returncode not in {0, 1}:
+        raise ValueError("worker journal inventory unavailable")
+    try:
+        records = [json.loads(line) for line in result.stdout.splitlines() if line]
+    except ValueError as exc:
+        raise ValueError("worker journal inventory malformed") from exc
+    exact = [
+        row
+        for row in records
+        if row.get("USER_UNIT") == unit
+        and row.get("USER_INVOCATION_ID") == invocation
+        and row.get("_HOSTNAME") == host
+    ]
+    started = [
+        row
+        for row in exact
+        if row.get("CODE_FUNC") == "job_emit_done_message"
+        and row.get("JOB_TYPE") == "start"
+        and row.get("JOB_RESULT") == "done"
+    ]
+    completed = [
+        row
+        for row in exact
+        if row.get("CODE_FUNC") == "unit_log_resources"
+        and str(row.get("MESSAGE", "")).startswith(unit + ": Consumed ")
+    ]
+    if len(started) != 1 or len(completed) != 1:
+        raise ValueError("one exact collected worker invocation required")
+    try:
+        started_at = int(started[0]["__REALTIME_TIMESTAMP"])
+        completed_at = int(completed[0]["__REALTIME_TIMESTAMP"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("worker journal timestamps are missing") from exc
+    if completed_at < started_at:
+        raise ValueError("worker terminal record predates its start")
+    return {
+        "schema": "skfleet.collected-worker-terminal/v1",
+        "unit": unit,
+        "host": host,
+        "card_id": card,
+        "owner": owner,
+        "claim_revision": claim,
+        "request_id": request_id,
+        "invocation": invocation,
+        "started_at_usec": started_at,
+        "started_message_sha256": source_bundle._sha(
+            json.dumps(
+                {
+                    key: started[0].get(key)
+                    for key in ("USER_UNIT", "USER_INVOCATION_ID", "JOB_TYPE", "JOB_RESULT")
+                },
+                sort_keys=True,
+            ).encode()
+        ),
+        "completed_at_usec": completed_at,
+        "completed_message_sha256": source_bundle._sha(completed[0]["MESSAGE"].encode()),
+    }
+
+
 def _admission_inventory(
-    home: Path, host: str, card: str, owner: str, claim: str, request_id: str
+    home: Path,
+    host: str,
+    card: str,
+    owner: str,
+    claim: str,
+    request_id: str,
+    *,
+    terminal: dict | None = None,
+    unit: str | None = None,
 ):
     """Hash the host's intent inventory and refuse the exact review generation."""
     from . import production_admission as admission
@@ -209,12 +363,41 @@ def _admission_inventory(
         if not isinstance(intent, dict) or admission._reservation_id(intent) != directory.name:
             raise ValueError("resource admission intent identity is invalid")
         binding = intent.get("binding", {})
-        if binding.get("request_id") == request_id or (
+        matching = binding.get("request_id") == request_id or (
             binding.get("card_id") == card
             and binding.get("owner") == owner
             and binding.get("claim_revision") == claim
-        ):
-            raise ValueError("matching resource admission intent exists")
+        )
+        if matching:
+            start_path = directory / "start.json"
+            try:
+                start = admission.read_json(start_path)
+            except (OSError, ValueError):
+                start = None
+            if not (
+                terminal
+                and intent.get("host") == host
+                and intent.get("unit") == unit
+                and binding.get("card_id") == card
+                and binding.get("owner") == owner
+                and binding.get("claim_revision") == claim
+                and binding.get("request_id") == request_id
+                and binding.get("work_kind") == "review"
+                and start
+                == {
+                    "schema": "skfleet.resource-start/v1",
+                    "reservation_id": directory.name,
+                    "binding": binding,
+                    "argv_sha256": intent.get("argv_sha256"),
+                }
+                and terminal.get("unit") == unit
+                and terminal.get("host") == host
+                and terminal.get("card_id") == card
+                and terminal.get("owner") == owner
+                and terminal.get("claim_revision") == claim
+                and terminal.get("request_id") == request_id
+            ):
+                raise ValueError("matching resource admission intent exists")
         rows.append([directory.name, source_bundle._sha(_raw(intent_path))])
     return source_bundle._sha(json.dumps(rows, separators=(",", ":")).encode())
 
@@ -339,10 +522,10 @@ def retire_prestart(
         host = production_builder.node_binding(paths, node, policy)["host"]
         if request.get("production", {}).get("host") != host:
             raise ValueError("sealed review destination changed")
+        unit = "skfleet-worker-" + request["production"]["family"] + "-" + card + ".service"
         admission_inventory_sha256 = _admission_inventory(
             home, host, card, previous_owner, previous_claim_revision, request_id
         )
-        unit = "skfleet-worker-" + request["production"]["family"] + "-" + card + ".service"
         proof = _prestart_state(unit, host, card)
         proof["admission_inventory_sha256"] = admission_inventory_sha256
         proof["dispatch_status_absent"] = not os.path.lexists(status_path)
@@ -542,15 +725,69 @@ def retire(
                 and value["child_exit_code"] != 0
             ):
                 exits.append((raw_exit, path))
-        if len(exits) != 1:
+        if len(exits) > 1:
             raise ValueError("one exact failed worker exit required")
         unit = unit_terminal(execution["unit"], execution["invocation"], host=host)
+        systemd_failure = (
+            not exits
+            and unit.get("InvocationID") == execution["invocation"]
+            and unit.get("LoadState") == "loaded"
+            and unit.get("ActiveState") == "failed"
+            and unit.get("SubState") == "failed"
+            and unit.get("MainPID") == "0"
+            and unit.get("ControlPID") == "0"
+            and unit.get("Result") not in {None, "", "success"}
+            and unit.get("ExecMainStatus") not in {None, "", "0"}
+        )
+        journal_terminal = None
+        absence = None
+        admission_inventory_sha256 = None
+        if not exits and not systemd_failure and unit.get("LoadState") == "not-found":
+            absence = _prestart_state(execution["unit"], host, card)
+            journal_terminal = _journal_terminal(
+                execution["unit"],
+                host,
+                card,
+                status["owner"],
+                status["claim_revision"],
+                request_id,
+                execution["invocation"],
+            )
+            admission_inventory_sha256 = _admission_inventory(
+                home,
+                host,
+                card,
+                status["owner"],
+                status["claim_revision"],
+                request_id,
+                terminal=journal_terminal,
+                unit=execution["unit"],
+            )
+        if not exits and not systemd_failure:
+            if journal_terminal is None:
+                raise ValueError("one exact failed worker exit required")
         if (
             review_state_revision(store.fold(card)) != card_sha256
             or _raw(request_path) != raw_request
             or _raw(status_path) != raw_status
         ):
             raise ValueError("review generation changed during terminal check")
+        exit_source = "worker-exit" if exits else "systemd-terminal"
+        if exits:
+            exit_evidence = exits[0][0]
+        elif journal_terminal is not None:
+            exit_evidence = json.dumps(
+                {
+                    "unit": execution["unit"],
+                    "invocation": execution["invocation"],
+                    "journal": journal_terminal,
+                    "absence": absence,
+                    "admission_inventory_sha256": admission_inventory_sha256,
+                },
+                sort_keys=True,
+            ).encode()
+        else:
+            exit_evidence = json.dumps(unit, sort_keys=True).encode()
         binding = dict(
             schema=SCHEMA,
             card_id=card,
@@ -560,7 +797,8 @@ def retire(
             status_sha256=status_sha256,
             offer_request_sha256=production_builder.digest(request),
             card_sha256=card_sha256,
-            exit_sha256=source_bundle._sha(exits[0][0]),
+            exit_sha256=source_bundle._sha(exit_evidence),
+            exit_source=exit_source,
             unit=execution["unit"],
             invocation=execution["invocation"],
             unit_state=unit,
@@ -572,7 +810,8 @@ def retire(
         receipt = _receipt_path(home, card, request_id)
         source_bundle._once(receipt.parent / "request.json", raw_request)
         source_bundle._once(receipt.parent / "status.json", raw_status)
-        source_bundle._once(receipt.parent / "worker-exit.json", exits[0][0])
+        exit_name = "worker-exit.json" if exits else "systemd-terminal.json"
+        source_bundle._once(receipt.parent / exit_name, exit_evidence)
         source_bundle._once(receipt, json.dumps(binding, sort_keys=True).encode())
         store.append_event(
             card,
@@ -584,6 +823,10 @@ def retire(
             offer_request_sha256=production_builder.digest(request),
             status_sha256=status_sha256,
             card_sha256=card_sha256,
+            exit_sha256=source_bundle._sha(exit_evidence),
+            exit_source=exit_source,
+            unit=execution["unit"],
+            invocation=execution["invocation"],
             actor=actor,
             reason=reason.strip(),
             receipt_sha256=source_bundle._sha(_raw(receipt)),

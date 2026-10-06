@@ -1,18 +1,84 @@
 """Failed remote review retirement preserves exact evidence before reoffer."""
 
 import json
+import subprocess
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from skcapstone.fleet import review_dispatch, review_retire
+from skcapstone.fleet import production_admission, review_dispatch, review_retire
 from skcapstone.fleet.paths import FleetPaths
 
 
+def test_collected_worker_journal_binds_one_exact_review_invocation(monkeypatch):
+    unit = "skfleet-worker-codex-c60a542e.service"
+    request_id = "a" * 64
+    start = (
+        "Started "
+        + unit
+        + " --card c60a542e --owner pi-seraph-chiap03-c60a542e"
+        + " --claim-revision "
+        + "b" * 32
+        + " --host chiap03 --stdout /private/"
+        + request_id
+        + ".log"
+    )
+    rows = [
+        {
+            "MESSAGE": start,
+            "__REALTIME_TIMESTAMP": "100",
+            "_HOSTNAME": "chiap03",
+            "USER_UNIT": unit,
+            "USER_INVOCATION_ID": "c" * 32,
+            "CODE_FUNC": "job_emit_done_message",
+            "JOB_TYPE": "start",
+            "JOB_RESULT": "done",
+        },
+        {
+            "MESSAGE": unit + ": Consumed 22s CPU time.",
+            "__REALTIME_TIMESTAMP": "200",
+            "_HOSTNAME": "chiap03",
+            "USER_UNIT": unit,
+            "USER_INVOCATION_ID": "c" * 32,
+            "CODE_FUNC": "unit_log_resources",
+        },
+    ]
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0, stdout="\n".join(json.dumps(row) for row in rows)
+        ),
+    )
+    evidence = review_retire._journal_terminal(
+        unit,
+        "chiap03",
+        "c60a542e",
+        "pi-seraph-chiap03-c60a542e",
+        "b" * 32,
+        request_id,
+        "c" * 32,
+    )
+    assert evidence["request_id"] == request_id
+    assert evidence["started_at_usec"] == 100
+    assert evidence["completed_at_usec"] == 200
+    with pytest.raises(ValueError, match="one exact collected worker invocation"):
+        review_retire._journal_terminal(
+            unit,
+            "chiap03",
+            "c60a542e",
+            "pi-seraph-chiap03-c60a542e",
+            "b" * 32,
+            request_id,
+            "d" * 32,
+        )
+
+
+@pytest.mark.parametrize("exit_mode", ["worker-exit", "systemd-terminal", "journal-terminal"])
 def test_failed_review_retirement_requires_proof_and_archives_before_reoffer(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, exit_mode
 ):
     home = tmp_path / "home"
     paths = FleetPaths(home / "fleet")
@@ -25,6 +91,7 @@ def test_failed_review_retirement_requires_proof_and_archives_before_reoffer(
         "node": node,
         "request_id": request_id,
         "reviewer": owner,
+        "production": {"host": "chiap03", "family": "glm"},
     }
     status = {
         "schema": "skfleet.builder-dispatch-status/v1",
@@ -48,18 +115,19 @@ def test_failed_review_retirement_requires_proof_and_archives_before_reoffer(
     review_retire.source_bundle._once(request_path, json.dumps(request).encode())
     review_retire.source_bundle._once(status_path, json.dumps(status).encode())
     exit_path = home / "evidence/worker-exits" / (card + "-" + "d" * 16 + ".json")
-    review_retire.source_bundle._once(
-        exit_path,
-        json.dumps(
-            {
-                "card_id": card,
-                "owner": owner,
-                "claim_revision": "b" * 32,
-                "host": "chiap03",
-                "child_exit_code": 1,
-            }
-        ).encode(),
-    )
+    if exit_mode == "worker-exit":
+        review_retire.source_bundle._once(
+            exit_path,
+            json.dumps(
+                {
+                    "card_id": card,
+                    "owner": owner,
+                    "claim_revision": "b" * 32,
+                    "host": "chiap03",
+                    "child_exit_code": 1,
+                }
+            ).encode(),
+        )
     events = [
         {
             "action": "remote_review_offer",
@@ -125,13 +193,14 @@ def test_failed_review_retirement_requires_proof_and_archives_before_reoffer(
             apply=True,
             **{**kwargs, "request_sha256": "f" * 64},
         )
-    failed_exit = exit_path.read_bytes()
-    exit_value = json.loads(failed_exit)
-    exit_value["child_exit_code"] = 0
-    exit_path.write_text(json.dumps(exit_value))
-    with pytest.raises(ValueError, match="failed worker exit required"):
-        review_retire.retire(paths, home, node, card, apply=True, **kwargs)
-    exit_path.write_bytes(failed_exit)
+    if exit_mode == "worker-exit":
+        failed_exit = exit_path.read_bytes()
+        exit_value = json.loads(failed_exit)
+        exit_value["child_exit_code"] = 0
+        exit_path.write_text(json.dumps(exit_value))
+        with pytest.raises(ValueError, match="failed worker exit required"):
+            review_retire.retire(paths, home, node, card, apply=True, **kwargs)
+        exit_path.write_bytes(failed_exit)
 
     def live_unit(*_args, **_kwargs):
         raise ValueError("exact managed worker death unproven")
@@ -140,9 +209,56 @@ def test_failed_review_retirement_requires_proof_and_archives_before_reoffer(
     with pytest.raises(ValueError, match="death unproven"):
         review_retire.retire(paths, home, node, card, apply=True, **kwargs)
     assert request_path.exists() and status_path.exists()
-    monkeypatch.setattr(
-        review_retire, "unit_terminal", lambda *_args, **_kw: {"ActiveState": "inactive"}
+    unit_state = (
+        {
+            "LoadState": "loaded",
+            "ActiveState": "failed",
+            "SubState": "failed",
+            "MainPID": "0",
+            "ControlPID": "0",
+            "InvocationID": "c" * 32,
+            "Result": "exit-code",
+            "ExecMainStatus": "143",
+        }
+        if exit_mode == "systemd-terminal"
+        else (
+            {"LoadState": "not-found", "ActiveState": "inactive"}
+            if exit_mode == "journal-terminal"
+            else {"ActiveState": "inactive"}
+        )
     )
+    monkeypatch.setattr(review_retire, "unit_terminal", lambda *_args, **_kw: unit_state)
+    if exit_mode == "journal-terminal":
+        monkeypatch.setattr(
+            review_retire,
+            "_prestart_state",
+            lambda unit, host, card: {
+                "unit": unit,
+                "unit_state": {"LoadState": "not-found"},
+                "matching_sessions": 0,
+            },
+        )
+        monkeypatch.setattr(
+            review_retire, "_admission_inventory", lambda *_args, **_kwargs: "f" * 64
+        )
+        monkeypatch.setattr(
+            review_retire,
+            "_journal_terminal",
+            lambda unit, host, card, owner, claim, request_id, invocation: {
+                "schema": "skfleet.collected-worker-terminal/v1",
+                "unit": unit,
+                "host": host,
+                "card_id": card,
+                "owner": owner,
+                "claim_revision": claim,
+                "request_id": request_id,
+                "invocation": invocation,
+                "started_at_usec": 10,
+                "started_message_sha256": "a" * 64,
+                "completed_at_usec": 20,
+                "completed_message_sha256": "b" * 64,
+            },
+        )
     assert (
         review_retire.retire(paths, home, node, card, **kwargs)["state"] == "qualified-check-only"
     )
@@ -150,13 +266,16 @@ def test_failed_review_retirement_requires_proof_and_archives_before_reoffer(
     result = review_retire.retire(paths, home, node, card, apply=True, **kwargs)
     assert result["state"] == "retired"
     assert not request_path.exists() and not status_path.exists()
+    archive = Path(result["receipt"]).parent
+    assert (
+        archive / ("worker-exit.json" if exit_mode == "worker-exit" else "systemd-terminal.json")
+    ).exists()
     assert review_retire.retired_offers(home, card, events) == {request_id}
     assert (
         review_retire.retire(paths, home, node, card, apply=True, **kwargs)["state"]
         == "already-retired"
     )
     # Interrupted cleanup retains its exact event and can remove remaining pointers.
-    archive = Path(result["receipt"]).parent
     request_path.write_bytes((archive / "request.json").read_bytes())
     request_path.chmod(0o600)
     assert (
@@ -289,7 +408,7 @@ def test_prestart_retirement_requires_exact_release_and_absent_native_start(tmp_
     assert request_path.exists() and not status_path.exists()
     result = review_retire.retire_prestart(paths, home, node, card, apply=True, **kwargs)
     assert result["state"] == "retired-prestart"
-    assert not request_path.exists()
+    assert not request_path.exists() and not status_path.exists()
     assert review_retire.retired_offers(home, card, events) == {request_id}
 
 
@@ -382,3 +501,72 @@ def test_prestart_inventory_rejects_unsafe_admission_lock(tmp_path):
             "b" * 32,
             "c" * 64,
         )
+
+
+def test_admission_inventory_accepts_only_exact_journal_proven_review_intent(tmp_path):
+    home = tmp_path / "home"
+    host, card, owner, claim = "chiap03", "c60a542e", "reviewer", "b" * 32
+    request_id, request_sha = "a" * 64, "c" * 64
+    binding = {
+        "card_id": card,
+        "owner": owner,
+        "claim_revision": claim,
+        "request_id": request_id,
+        "request_sha256": request_sha,
+        "work_kind": "review",
+    }
+    unit = "skfleet-worker-glm-" + card + ".service"
+    intent = {
+        "schema": "skfleet.resource-admission/v1",
+        "host": host,
+        "unit": unit,
+        "binding": binding,
+        "resources": {"memory_max_bytes": 1024},
+        "argv_sha256": "d" * 64,
+    }
+    identity = production_admission._reservation_id(intent)
+    directory = home / "fleet/resource-admission" / host / identity
+    directory.mkdir(parents=True)
+    private_paths = (
+        home,
+        home / "fleet",
+        home / "fleet/resource-admission",
+        directory.parent,
+        directory,
+    )
+    for path in private_paths:
+        path.chmod(0o700)
+    intent_path = directory / "intent.json"
+    intent_path.write_text(json.dumps(intent))
+    start_path = directory / "start.json"
+    start_path.write_text(
+        json.dumps(
+            {
+                "schema": "skfleet.resource-start/v1",
+                "reservation_id": identity,
+                "binding": binding,
+                "argv_sha256": intent["argv_sha256"],
+            }
+        )
+    )
+    intent_path.chmod(0o600)
+    start_path.chmod(0o600)
+    proof = {
+        "schema": "skfleet.collected-worker-terminal/v1",
+        "unit": unit,
+        "host": host,
+        "card_id": card,
+        "owner": owner,
+        "claim_revision": claim,
+        "request_id": request_id,
+    }
+    assert (
+        len(
+            review_retire._admission_inventory(
+                home, host, card, owner, claim, request_id, terminal=proof, unit=unit
+            )
+        )
+        == 64
+    )
+    with pytest.raises(ValueError, match="matching resource admission intent"):
+        review_retire._admission_inventory(home, host, card, owner, claim, request_id)
