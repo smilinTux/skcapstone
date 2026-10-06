@@ -12,14 +12,13 @@ import time
 from pathlib import Path
 from xml.etree import ElementTree
 
+from . import production_test_composite as composite
 from . import production_test_node as node
 from . import production_test_plan as test_plan
-from .production_pytest_recipe import requires_selection, validate_source
 from .production_tests import (
     MAX_OUTPUT,
     PREFIX,
     TestEvidenceError,
-    junit_counts,
     load_plan,
     read_json,
     read_private,
@@ -69,6 +68,7 @@ def sandbox_command(
     workspace: Path, output: Path, argv: list[str], profile: dict | None = None
 ) -> list[str]:
     """Expose only source/runtime read-only plus private tmp and one output directory."""
+    profile = composite.command_profile(profile, argv)
     command = [
         "/usr/bin/bwrap",
         "--unshare-all",
@@ -260,12 +260,12 @@ def execute(plan_path: Path, directory: Path) -> int:
     try:
         receipt["source_before"] = source_state(workspace, binding)
         profile = plan.get("profile")
-        if node.is_node(profile):
-            node.validate_environment(profile["node_environment"], workspace)
-        elif profile:
-            validate_source(profile["recipe"], workspace)
+        if profile:
+            composite.validate_source(profile, workspace)
         for check in plan["checks"]:
-            if node.is_node(profile) and check["id"] == "typecheck":
+            if (node.is_node(profile) or composite.is_composite(profile)) and check[
+                "id"
+            ] == "typecheck":
                 # Earlier candidate tests cannot seed an incremental cache that
                 # suppresses the independent typecheck. Existing output fails closed.
                 fd = os.open(
@@ -287,16 +287,19 @@ def execute(plan_path: Path, directory: Path) -> int:
                 break
         receipt["source_after"] = source_state(workspace, binding)
         load_plan(home, binding)
-        if node.is_node(profile):
-            node.validate_environment(profile["node_environment"], workspace)
-        name = "vitest.xml" if node.is_node(profile) else "pytest.xml"
-        raw = read_private(directory / "output" / name)
-        fd = os.open(directory / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-        with os.fdopen(fd, "wb") as output:
-            output.write(raw)
-        receipt["junit_sha256"] = sha(raw)
+        if profile:
+            composite.validate_source(profile, workspace)
+        reports = {}
+        for name in composite.report_names(profile):
+            raw = read_private(directory / "output" / name)
+            fd = os.open(
+                directory / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+            )
+            with os.fdopen(fd, "wb") as output:
+                output.write(raw)
+            reports[name] = raw
         selection = None
-        if profile and not node.is_node(profile) and requires_selection(profile["recipe"]):
+        if composite.python_selection(profile):
             selection_raw = read_private(directory / "output/selection.json")
             fd = os.open(
                 directory / "selection.json",
@@ -307,7 +310,9 @@ def execute(plan_path: Path, directory: Path) -> int:
                 output.write(selection_raw)
             receipt["selection_sha256"] = sha(selection_raw)
             selection = read_json(directory / "selection.json")
-        receipt["counts"] = junit_counts(raw, plan.get("profile"), selection=selection)
+        receipt["junit_sha256"], receipt["counts"] = composite.evidence(
+            reports, profile, selection
+        )
     except (OSError, ValueError, subprocess.SubprocessError, ElementTree.ParseError) as exc:
         receipt["failure"] = {"type": type(exc).__name__, "message": str(exc)[:1000]}
     write_once(directory / "receipt.json", receipt)

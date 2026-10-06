@@ -10,7 +10,6 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 from . import production_builder
-from . import production_test_node as node
 from .production_admission import (
     AdmissionError,
     finalize_successful_launch,
@@ -95,12 +94,10 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
     receipt = read_json(directory / "receipt.json")
     terminal = read_json(directory / "terminal.json")
     expected = source_state(workspace, binding)
-    if node.is_node(plan.get("profile")):
-        node.validate_environment(plan["profile"]["node_environment"], workspace)
-    elif plan.get("profile"):
-        from .production_pytest_recipe import validate_source
+    from . import production_test_composite as composite
 
-        validate_source(plan["profile"]["recipe"], workspace)
+    if plan.get("profile"):
+        composite.validate_source(plan["profile"], workspace)
     unit = production_builder.unit_name(launch, 1)
     policy = launch.get("policy", {})
     expected_argv = service_argv(
@@ -165,19 +162,20 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
             or result.get("output_sha256") != sha(read_private(directory / (check["id"] + ".log")))
         ):
             raise TestEvidenceError("native command or raw output mismatch")
-    name = "vitest.xml" if node.is_node(plan.get("profile")) else "pytest.xml"
-    raw = read_private(directory / name)
+    reports = {
+        name: read_private(directory / name)
+        for name in composite.report_names(plan.get("profile"))
+    }
     selection = None
-    from .production_pytest_recipe import requires_selection
 
     profile = plan.get("profile")
-    if profile and not node.is_node(profile) and requires_selection(profile["recipe"]):
+    if composite.python_selection(profile):
         selection_raw = read_private(directory / "selection.json")
         if receipt.get("selection_sha256") != sha(selection_raw):
             raise TestEvidenceError("native selection evidence changed")
         selection = read_json(directory / "selection.json")
-    counts = junit_counts(raw, profile, selection=selection)
-    if receipt.get("junit_sha256") != sha(raw) or receipt.get("counts") != counts:
+    report_digest, counts = composite.evidence(reports, profile, selection)
+    if receipt.get("junit_sha256") != report_digest or receipt.get("counts") != counts:
         raise TestEvidenceError("native JUnit evidence mismatch")
     return {
         "plan_sha256": plan_sha,

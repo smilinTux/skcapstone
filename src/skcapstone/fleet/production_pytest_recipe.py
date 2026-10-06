@@ -68,7 +68,14 @@ def requires_selection(recipe: dict) -> bool:
 def recipe_checks(recipe: dict) -> list[dict]:
     """Compile operator-approved bounded inputs to fixed command argv."""
     if isinstance(recipe, dict) and "vitest" in recipe:
-        return node.checks(recipe)
+        if set(recipe) == {"vitest"}:
+            return node.checks(recipe)
+        python = recipe_checks({key: value for key, value in recipe.items() if key != "vitest"})
+        python = [
+            {**check, "id": "python-lint" if check["id"] == "lint" else check["id"]}
+            for check in python
+        ]
+        return [*node.checks({"vitest": recipe["vitest"]}), *python]
     if (
         not isinstance(recipe, dict)
         or not BASE_FIELDS <= recipe.keys()

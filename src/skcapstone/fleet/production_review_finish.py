@@ -139,11 +139,10 @@ def steps(context, acceptance):
 
 def _historical_acceptance(home, context, historical, inspect):
     """Read immutable accepted proof anchored in both completed native cards."""
-    from .production_test_node import is_node
+    from . import production_test_composite as composite
     from .production_test_plan import (
         approved_checks,
         check_binding,
-        junit_counts,
         read_private,
         sha,
     )
@@ -224,11 +223,16 @@ def _historical_acceptance(home, context, historical, inspect):
             or sha(read_private(directory / (check["id"] + ".log"))) != check.get("output_sha256")
         ):
             raise ReviewEvidenceError("historical raw test output changed")
-    name = "vitest.xml" if is_node(profile) else "pytest.xml"
-    raw_junit = read_private(directory / name)
-    counts = junit_counts(raw_junit, profile)
+    reports = {name: read_private(directory / name) for name in composite.report_names(profile)}
+    selection = None
+    if composite.python_selection(profile):
+        selection_raw = read_private(directory / "selection.json")
+        if receipt.get("selection_sha256") != sha(selection_raw):
+            raise ReviewEvidenceError("historical selection proof changed")
+        selection = json.loads(selection_raw)
+    report_digest, counts = composite.evidence(reports, profile, selection)
     if (
-        receipt.get("junit_sha256") != sha(raw_junit)
+        receipt.get("junit_sha256") != report_digest
         or receipt.get("counts") != counts
         or acceptance.get("counts") != counts
     ):

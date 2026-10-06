@@ -1,0 +1,1 @@
+- Card `3ada7aff`: support explicit, source-bound Node and Python native test phases. Preserve both raw JUnit reports and require both independently verified phase results instead of rejecting complete frontend/API qualification recipes.

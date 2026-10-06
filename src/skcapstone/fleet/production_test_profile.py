@@ -10,6 +10,7 @@ from pathlib import Path
 
 from skcoord.card_store import CardStore, card_mutation_lock
 
+from . import production_test_composite as composite
 from . import production_test_node as node
 from . import production_test_plan as plan
 from .production_builder import digest
@@ -63,9 +64,13 @@ def contract(core: dict) -> dict:
 
 def _validate_shape(value: dict) -> None:
     """Check each historical generation without requalifying its old environment."""
-    node_profile = node.is_node(value)
+    node_profile = node.is_node(value) or composite.is_composite(value)
     fields = FIELDS | {"node_environment"} if node_profile else FIELDS
-    schema = node.SCHEMA if node_profile else SCHEMA
+    schema = (
+        composite.SCHEMA
+        if composite.is_composite(value)
+        else (node.SCHEMA if node_profile else SCHEMA)
+    )
     if (
         not isinstance(value, dict)
         or set(value) != fields
@@ -87,6 +92,10 @@ def _validate_shape(value: dict) -> None:
     recipe_checks(value["recipe"])
     if ("vitest" in value["recipe"]) != node_profile:
         raise plan.TestEvidenceError("test recipe and profile variant disagree")
+    if ("vitest" in value["recipe"] and "pytest" in value["recipe"]) != composite.is_composite(
+        value
+    ):
+        raise plan.TestEvidenceError("test phases and profile variant disagree")
 
 
 def validate_profile(value: dict, expected: dict, policy: dict, *, environment=True) -> dict:
@@ -98,7 +107,7 @@ def validate_profile(value: dict, expected: dict, policy: dict, *, environment=T
         or value["host"] != policy["authority_host"]
     ):
         raise plan.TestEvidenceError("qualified test profile is missing, stale or conflicting")
-    node_profile = node.is_node(value)
+    node_profile = node.is_node(value) or composite.is_composite(value)
     if node_profile and environment:
         node.validate_environment(value["node_environment"])
     if environment and (
@@ -133,7 +142,10 @@ def qualify_profile(
         "host": socket.gethostname().split(".")[0].lower(),
     }
     if node_environment is not None:
-        value.update(schema=node.SCHEMA, node_environment=node_environment)
+        value.update(
+            schema=composite.SCHEMA if "pytest" in recipe else node.SCHEMA,
+            node_environment=node_environment,
+        )
     validate_profile(value, contract(core), policy)
     directory = home / "fleet/test-profiles"
     plan.private_dir(directory, create=True)
@@ -263,7 +275,10 @@ def supersede_profile(
             "host": socket.gethostname().split(".")[0].lower(),
         }
         if node_environment is not None:
-            value.update(schema=node.SCHEMA, node_environment=node_environment)
+            value.update(
+                schema=composite.SCHEMA if "pytest" in recipe else node.SCHEMA,
+                node_environment=node_environment,
+            )
         validate_profile(value, expected, policy)
         directory = home / "fleet/test-profiles" / expected["card"]
         plan.private_dir(directory, create=True)

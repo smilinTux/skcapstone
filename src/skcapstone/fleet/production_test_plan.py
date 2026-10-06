@@ -59,6 +59,7 @@ HARNESS_MODULES = (
     "production_test_profile.py",
     "production_test_worker.py",
     "production_test_node.py",
+    "production_test_composite.py",
     "production_tests.py",
     "production_admission.py",
     "production_builder.py",
@@ -341,14 +342,10 @@ def _seal_plan(
         )
         value["profile"] = profile
         value["checks"] = recipe_checks(profile["recipe"])
-        from . import production_test_node as node
 
-        if node.is_node(profile):
-            node.validate_environment(profile["node_environment"], workspace)
-        else:
-            from .production_pytest_recipe import validate_source
+        from .production_test_composite import validate_source
 
-            validate_source(profile["recipe"], workspace)
+        validate_source(profile, workspace)
     if (
         not qualified_by
         or not re.fullmatch(r"[0-9a-f]{64}", qualification_sha256)
@@ -452,8 +449,9 @@ def _validate_plan(home: Path, binding: dict, plan: dict, *, successor: bool) ->
             raise TestEvidenceError("candidate test profile changed")
         expected_checks = recipe_checks(profile["recipe"])
         from . import production_test_node as node
+        from .production_test_composite import is_composite
 
-        if node.is_node(profile):
+        if node.is_node(profile) or is_composite(profile):
             node.validate_environment(profile["node_environment"])
     if (
         set(plan) != required
