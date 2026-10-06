@@ -375,7 +375,8 @@ def test_production_dispatch_timeout_reaps_child_process_group():
         child_state = state.read_text().split()[2]
     except (FileNotFoundError, ProcessLookupError):
         child_state = None
-    assert child_state in {None, "Z"}
+    # A dying task can briefly remain visible as X (dead) before collection.
+    assert child_state in {None, "Z", "X"}
 
 
 def control(path: Path) -> None:
