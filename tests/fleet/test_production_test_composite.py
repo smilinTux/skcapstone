@@ -2,6 +2,7 @@
 
 import copy
 import json
+import os
 
 import pytest
 
@@ -222,7 +223,11 @@ def test_native_executor_requires_every_phase_and_preserves_raw_reports(
         return int(name == failed)
 
     monkeypatch.setattr(worker, "capture", capture)
-    assert worker.execute(plan_path, directory) == int(failed is not None)
+    original_umask = os.umask(0o077)
+    try:
+        assert worker.execute(plan_path, directory) == int(failed is not None)
+    finally:
+        os.umask(original_umask)
     receipt = plan.read_json(directory / "receipt.json")
     if failed is None:
         assert ran == [check["id"] for check in checks]
