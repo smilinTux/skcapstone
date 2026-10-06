@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from skcapstone.fleet import review_retire
+from skcapstone.fleet import review_dispatch, review_retire
 from skcapstone.fleet.paths import FleetPaths
 
 
@@ -185,3 +185,136 @@ def test_retirement_without_archive_cannot_release_historical_offer(tmp_path):
         },
     ]
     assert review_retire.retired_offers(tmp_path, card, events) == set()
+
+
+def test_prestart_retirement_requires_exact_release_and_absent_native_start(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    paths = FleetPaths(home / "fleet")
+    card, node = "c60a542e", "node-chiap03"
+    owner, claim, request_id = "pi-seraph-chiap03-c60a542e", "b" * 32, "a" * 64
+    source = {"card": "3f9eaa96", "head": "c" * 40, "claim": "d" * 32}
+    core = dict(
+        title="[REVIEW] exact source",
+        description="review exact candidate",
+        acceptance_criteria=["verify exact bytes"],
+        dependencies=[],
+        links={"repository": "smilinTux/sklegal"},
+        labels=["review", "source-only", "seat-seraph"],
+    )
+    request = {
+        "schema": "skfleet.builder-dispatch/v2",
+        "work_kind": "review",
+        "card_id": card,
+        "node": node,
+        "request_id": request_id,
+        "reviewer": owner,
+        "review_revision": "e" * 64,
+        "source": source,
+        "criteria_sha256": review_retire.production_builder.digest(core),
+        "production": {"host": "chiap03", "family": "codex"},
+        "labels": core["labels"],
+    }
+    request_path = review_retire.dispatch.request_path(paths, node, card)
+    status_path = review_retire.dispatch.status_path(paths, node, card)
+    review_retire.source_bundle._once(request_path, json.dumps(request).encode())
+    raw_request = request_path.read_bytes()
+    offer_digest = review_retire.production_builder.digest(request)
+    events = [
+        {
+            "action": "remote_review_offer",
+            "request_id": request_id,
+            "request_sha256": offer_digest,
+        },
+        {
+            "action": "release_claim",
+            "writer": "jarvis",
+            "released_owner": owner,
+            "expected_claim_revision": claim,
+        },
+    ]
+    current = SimpleNamespace(
+        archived=False,
+        owner=None,
+        meta={},
+        **core,
+    )
+    current.model_dump = lambda **_kwargs: core
+
+    class FakeStore:
+        def __init__(self, _home):
+            pass
+
+        def fold(self, _card):
+            return current
+
+        def _read_events(self, _card):
+            return events
+
+        def append_event(self, _card, action, writer, **payload):
+            events.append(dict(action=action, writer=writer, **payload))
+
+    monkeypatch.setattr(review_retire, "CardStore", FakeStore)
+    monkeypatch.setattr(review_retire, "card_mutation_lock", lambda *_: nullcontext())
+    monkeypatch.setattr(review_retire, "governed_review_assignment_ready", lambda *_: True)
+    monkeypatch.setattr(review_retire, "review_state_revision", lambda *_: "f" * 64)
+    monkeypatch.setattr(
+        review_retire.production_builder, "policy", lambda: {"authority_host": "chiap08"}
+    )
+    monkeypatch.setattr(
+        review_retire.production_builder, "node_binding", lambda *_args: {"host": "chiap03"}
+    )
+    monkeypatch.setattr(review_retire.socket, "gethostname", lambda: "chiap08")
+    monkeypatch.setattr(
+        review_retire,
+        "_prestart_state",
+        lambda *_args: {
+            "unit": "skfleet-worker-codex-c60a542e.service",
+            "unit_state": {"LoadState": "not-found"},
+            "matching_sessions": 0,
+        },
+    )
+    monkeypatch.setattr(review_dispatch, "_source", lambda *_args: source)
+    kwargs = dict(
+        request_sha256=review_retire.source_bundle._sha(raw_request),
+        card_sha256="f" * 64,
+        previous_owner=owner,
+        previous_claim_revision=claim,
+        actor="jarvis",
+        reason="retained sealed offer never reached native launch",
+    )
+    assert (
+        review_retire.retire_prestart(paths, home, node, card, **kwargs)["state"]
+        == "qualified-check-only"
+    )
+    assert request_path.exists() and not status_path.exists()
+    result = review_retire.retire_prestart(paths, home, node, card, apply=True, **kwargs)
+    assert result["state"] == "retired-prestart"
+    assert not request_path.exists()
+    assert review_retire.retired_offers(home, card, events) == {request_id}
+
+
+def test_prestart_retirement_refuses_when_status_or_launch_exists(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    paths = FleetPaths(home / "fleet")
+    card, node = "c60a542e", "node-chiap03"
+    status = review_retire.dispatch.status_path(paths, node, card)
+    status.parent.mkdir(parents=True)
+    status.write_text("{}")
+    monkeypatch.setattr(
+        review_retire.production_builder, "policy", lambda: {"authority_host": "chiap08"}
+    )
+    monkeypatch.setattr(review_retire.socket, "gethostname", lambda: "chiap08")
+    monkeypatch.setattr(review_retire, "card_mutation_lock", lambda *_: nullcontext())
+    with pytest.raises(ValueError, match="status already exists"):
+        review_retire.retire_prestart(
+            paths,
+            home,
+            node,
+            card,
+            request_sha256="a" * 64,
+            card_sha256="b" * 64,
+            previous_owner="pi-seraph-chiap03-c60a542e",
+            previous_claim_revision="c" * 32,
+            actor="jarvis",
+            reason="bounded test",
+        )

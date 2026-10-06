@@ -23,7 +23,7 @@ from . import builder_dispatch as dispatch
 from . import production_builder as production
 from . import store
 from .production_policy import require_destination, validate_execution_policy
-from .production_review import producer_family, provider_family
+from .production_review import producer_family, provider_family, review_family_allowed
 from .production_review_finish import native_command, read_json
 from .source_bundle import _binding, _review_manifest
 
@@ -62,7 +62,7 @@ def validate_contract(request, policy, *, host, historical=False):
         or canonical_principal(source["owner"]) == canonical_principal(request["reviewer"])
         or provider_family(bound["family"]) != provider_family(bound["provider_family"])
         or provider_family(bound["capacity_domain"]) != provider_family(bound["family"])
-        or provider_family(bound["family"]) in {None, family}
+        or not review_family_allowed(family, bound["family"], request["labels"])
         or bound["provider"] != "skgateway"
         or bound["host"] != host
         or bound["authority"] != policy["authority_host"]
@@ -267,7 +267,7 @@ def offer_review(paths, home, card_id, *, writer):
         route = "sk-" + (card_required_size(card) or "").lower()
         routes = production.production_routes.candidates(policy, route, card.labels)
         family = producer_family(source["owner"], source["family"])
-        routes = [r for r in routes if provider_family(r["family"]) not in {None, family}]
+        routes = [r for r in routes if review_family_allowed(family, r["family"], card.labels)]
         nodes = production.ready_nodes(paths, dispatch._ready_builders(paths), policy, card_id)
         nodes = [
             v
@@ -413,6 +413,8 @@ def consume_review(paths, home, node, request, *, launcher=None):
     if prior:
         return reconcile_review(paths, home, request, prior)
     card = validate_request(paths, home, node, request)
+    production.review_runtime()
+    dispatch._guard_path()
     host, owner = request["production"]["host"], request["reviewer"]
     ready, _ = local_worker_admission(request["policy"], host, active_resource_units(home))
     if not ready:

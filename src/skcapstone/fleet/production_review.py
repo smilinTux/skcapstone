@@ -28,6 +28,18 @@ def provider_family(provider: object) -> str | None:
     return _ALIASES.get(provider.strip().lower()) if isinstance(provider, str) else None
 
 
+def review_family_allowed(source: str, reviewer: str, labels) -> bool:
+    """Keep cross-family default; explicit GLM review cards require distinct agents."""
+    source, reviewer = provider_family(source), provider_family(reviewer)
+    if source is None or reviewer is None:
+        return False
+    if "glm-only" in labels and reviewer != "zai":
+        return False
+    if source != reviewer:
+        return True
+    return source == "zai" and {"review", "glm-only", "review-distinct-agent"} <= set(labels)
+
+
 def producer_family(identity: str, provider: str | None = None) -> str:
     """Resolve source evidence supplied by the authoritative source-card caller.
 

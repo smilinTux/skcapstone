@@ -13,7 +13,7 @@ from skcoord.card_store import CardStore
 from ..review_verdict import _source_only_applicability, is_review_card
 from ..seraph_review_cardstore import LiveCardStoreGateway, _latest_outcome
 from .production_receipts import production_receipt_allowed
-from .production_review import producer_family, provider_family
+from .production_review import producer_family, review_family_allowed
 from .production_review_custody import read_exit, unit_terminal
 from .production_review_evidence import ReviewEvidenceError, inspect_proposal
 from .production_review_finish import artifacts, finish_pair, native_state, once, read_json
@@ -218,7 +218,9 @@ def collect(home, policy, card, claim, *, process_check):
         raise ReviewEvidenceError("exact sealed independent review launch missing")
     domain = launches[0]["route_identity"]["capacity_domains"][0]
     source_terminal = _producer_terminal(home, source, manifest)
-    if producer_family(source.owner, source_terminal["family"]) == provider_family(domain):
+    if not review_family_allowed(
+        producer_family(source.owner, source_terminal["family"]), domain, review.labels
+    ):
         raise ReviewEvidenceError("review family is not independent")
     review_workspace = Path(terminal["workspace"])
     if launches[0].get("schema") == "skfleet.review-assignment-launch/v3":

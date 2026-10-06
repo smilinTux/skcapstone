@@ -239,9 +239,19 @@ def review_wrapper_path() -> str:
     raise ValueError("managed review wrapper unavailable; tried: " + ", ".join(searched))
 
 
+def review_runtime() -> tuple[str, str]:
+    """Fail before claiming unless Pi and the installed worker wrapper resolve."""
+    import shutil
+
+    worker = os.environ.get("SKFLEET_PI") or shutil.which("pi")
+    wrapper = review_wrapper_path()
+    if not worker or not Path(worker).is_file():
+        raise ValueError("managed review worker runtime unavailable: pi not found")
+    return worker, wrapper
+
+
 def launch_review(paths, home, request, card, handoff, workspace, *, launcher=None):
     """Launch the existing production wrapper under destination-native custody."""
-    import shutil
     import sys
     import time
 
@@ -257,10 +267,7 @@ def launch_review(paths, home, request, card, handoff, workspace, *, launcher=No
     bound = request["production"]
     host, lane = bound["host"], bound["family"]
     unit = "skfleet-worker-" + lane + "-" + card.id + ".service"
-    worker = os.environ.get("SKFLEET_PI") or shutil.which("pi")
-    wrapper = review_wrapper_path()
-    if not worker:
-        raise ValueError("managed review worker runtime unavailable: pi not found")
+    worker, wrapper = review_runtime()
     brief = production_source_review_brief(
         card_id=card.id,
         owner=owner,
