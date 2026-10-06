@@ -2,6 +2,7 @@
 
 import copy
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from xml.etree import ElementTree
 
@@ -27,16 +28,41 @@ def accepted(setup, monkeypatch, request):  # noqa: F811
             profile, root = specimen()
             raw_junit = ElementTree.tostring(root)
             junit_name = "vitest.xml"
+            selection = None
         else:
+            deselect = [native.TEST_FILES[0] + "::test_baseline"]
             profile = {
                 "recipe": {
                     "pytest": dict.fromkeys(native.TEST_FILES, 1),
                     "compile": [],
                     "lint": [],
                     "changelog": False,
+                    "deselect": deselect,
                 }
             }
-            raw_junit = (s.directory / "pytest.xml").read_bytes()
+            selection = {
+                "schema": "skfleet.pytest-selection/v1",
+                "baseline": deselect,
+                "deselected": deselect,
+                "selected": sorted(path + "::test_0" for path in native.TEST_FILES),
+            }
+            root = ElementTree.Element("testsuites")
+            suite = ElementTree.SubElement(
+                root,
+                "testsuite",
+                tests=str(len(native.TEST_FILES)),
+                failures="0",
+                errors="0",
+                skipped="0",
+            )
+            for path in native.TEST_FILES:
+                ElementTree.SubElement(
+                    suite,
+                    "testcase",
+                    classname="tests." + Path(path).stem,
+                    name="test_0",
+                )
+            raw_junit = ElementTree.tostring(root)
             junit_name = "pytest.xml"
         s.plan.update(profile=profile, checks=recipe_checks(profile["recipe"]))
         s.plan_path.write_text(json.dumps(s.plan))
@@ -53,8 +79,14 @@ def accepted(setup, monkeypatch, request):  # noqa: F811
         path = s.directory / junit_name
         path.write_bytes(raw_junit)
         path.chmod(0o600)
+        if selection is not None:
+            selection_path = s.directory / "selection.json"
+            native.write_once(selection_path, selection)
+            selection_raw = selection_path.read_bytes()
+            receipt["selection_sha256"] = plan.sha(selection_raw)
         receipt.update(
-            junit_sha256=plan.sha(raw_junit), counts=plan.junit_counts(raw_junit, profile)
+            junit_sha256=plan.sha(raw_junit),
+            counts=plan.junit_counts(raw_junit, profile, selection=selection),
         )
         native.write_once(s.directory / "receipt.json", receipt)
         audit.update(
@@ -290,6 +322,44 @@ def test_historical_receipt_requires_exact_checks_and_binding(accepted, mutation
     for row in a.rows.values():
         row.links["test_acceptance"] = json.dumps(audit)
     with pytest.raises(ValueError):
+        finish._historical_acceptance(
+            a.s.home, a.context, a.historical, lambda home, card: a.states[card]
+        )
+
+
+@pytest.mark.parametrize("corruption", ["missing", "changed-selection", "changed-hash"])
+def test_historical_selection_is_required_and_bound(accepted, corruption):
+    a = accepted
+    profile = a.s.plan.get("profile")
+    if profile is None:
+        return
+    from skcapstone.fleet.production_pytest_recipe import requires_selection
+
+    if not requires_selection(profile["recipe"]):
+        return
+
+    selection_path = a.s.directory / "selection.json"
+    receipt_path = a.s.directory / "receipt.json"
+    if corruption == "missing":
+        selection_path.unlink()
+    else:
+        receipt = json.loads(receipt_path.read_bytes())
+        if corruption == "changed-selection":
+            selection = json.loads(selection_path.read_bytes())
+            selection["baseline"] = []
+            selection_path.write_text(json.dumps(selection, sort_keys=True, separators=(",", ":")))
+            selection_path.chmod(0o600)
+            receipt["selection_sha256"] = plan.sha(selection_path.read_bytes())
+        else:
+            receipt["selection_sha256"] = "0" * 64
+        receipt_path.write_text(json.dumps(receipt))
+        receipt_path.chmod(0o600)
+        audit = a.historical["test_receipt"]
+        audit["receipt_sha256"] = plan.sha(receipt_path.read_bytes())
+        for row in a.rows.values():
+            row.links["test_acceptance"] = json.dumps(audit)
+
+    with pytest.raises((OSError, ValueError)):
         finish._historical_acceptance(
             a.s.home, a.context, a.historical, lambda home, card: a.states[card]
         )
