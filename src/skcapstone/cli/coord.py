@@ -14,7 +14,11 @@ from rich.text import Text
 
 from ..agent_projection import display_state
 from ._common import AGENT_HOME, console
-from ._validators import validate_agent_name, validate_task_id
+from ._validators import (
+    validate_agent_name,
+    validate_canonical_task_id,
+    validate_task_id,
+)
 
 
 def register_coord_commands(main: click.Group) -> None:
@@ -439,6 +443,8 @@ def register_coord_commands(main: click.Group) -> None:
         from ..coordination import Board, Task, TaskPriority
 
         labels = {str(value).strip().lower() for value in tag}
+        if task_id:
+            validate_canonical_task_id(task_id)
         governed_review = "review" in labels or any(
             marker in title.upper() for marker in ("[REVIEW]", "[REREVIEW]")
         )

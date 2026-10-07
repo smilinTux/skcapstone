@@ -24,6 +24,7 @@ _AGENT_NAME_RE = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?$")
 # kept deliberately narrow (three lowercase letters) so this stays a validator,
 # not an open door.
 _TASK_ID_RE = re.compile(r"^(?:[a-z]{3}-)?[0-9a-fA-F\-]+$")
+_CANONICAL_TASK_ID_RE = re.compile(r"^[0-9a-f]{8}$")
 _SOUL_NAME_RE = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9\-_]*[a-zA-Z0-9])?$")
 
 
@@ -56,6 +57,15 @@ def validate_task_id(task_id: str) -> str:
         raise click.BadParameter(
             f"Task ID '{task_id}' is invalid. Use hex characters (0-9, a-f) and "
             "hyphens, optionally after a three-letter kind prefix such as inc- or prb-."
+        )
+    return task_id
+
+
+def validate_canonical_task_id(task_id: str) -> str:
+    """Validate the canonical eight-character IDs assigned to new cards."""
+    if not isinstance(task_id, str) or not _CANONICAL_TASK_ID_RE.fullmatch(task_id):
+        raise click.BadParameter(
+            "New task IDs must be exactly eight lowercase hexadecimal characters."
         )
     return task_id
 

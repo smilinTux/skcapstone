@@ -7405,13 +7405,20 @@ def _pool_v2_fingerprint(admission):
                                      separators=(",", ":")).encode()).hexdigest()
 
 
+def _pool_v2_card_id_shape_reason(card_id):
+    """Name the selector exclusion for legacy IDs POOL_V2 cannot address."""
+    if not isinstance(card_id, str) or not re.fullmatch(r"[0-9a-f]{8}", card_id):
+        return "card-id-shape"
+    return ""
+
+
 def _pool_v2_candidate_allowed(admission):
     """Apply card-shape and seat authority fences once for every pool path."""
     if not isinstance(admission, dict):
         return False
     cid = admission.get("card_id")
     labels = admission.get("labels")
-    if not isinstance(cid, str) or not re.fullmatch(r"[0-9a-f]{8}", cid):
+    if _pool_v2_card_id_shape_reason(cid):
         return False
     if not isinstance(labels, list):
         return False
@@ -7709,6 +7716,9 @@ def _shadow_pool_v2():
             sorted("skcoord:" + name for name, ids in class_ids.items() if cid in ids)
         )
         try:
+            shape_reason = _pool_v2_card_id_shape_reason(cid)
+            if shape_reason:
+                log(d, "POOL_V2_EXCLUDED|%s|reason=%s" % (cid, shape_reason))
             lifecycle = lifecycle_state(cid)
             claimability = authoritative_claimability(cid, core)
             reason = str(claimability.get("reason") or "")

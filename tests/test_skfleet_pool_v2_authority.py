@@ -22,6 +22,7 @@ ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 
 def _load_helpers(*names: str) -> dict[str, object]:
     requested = set(names)
+    requested.add("_pool_v2_card_id_shape_reason")
     if "_pool_v2_dispatchable" in requested:
         requested.add("_pool_v2_candidate_allowed")
     tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
@@ -31,7 +32,9 @@ def _load_helpers(*names: str) -> dict[str, object]:
         if isinstance(node, ast.FunctionDef) and node.name in requested
     }
     assert set(functions) == requested
-    ordered = ["_pool_v2_candidate_allowed", *names]
+    ordered = list(
+        dict.fromkeys(["_pool_v2_card_id_shape_reason", "_pool_v2_candidate_allowed", *names])
+    )
     module = ast.Module(
         body=[functions[name] for name in ordered if name in functions], type_ignores=[]
     )
@@ -276,6 +279,19 @@ def test_malformed_review_stale_drift_and_unknown_fail_closed() -> None:
 
     assert ready_ids(decisions, admissions) == set()
     assert ready_ids(decisions, admissions, failed=True) == set()
+
+
+def test_pool_v2_names_legacy_card_id_shape_exclusion() -> None:
+    """Suffix IDs get a clear exclusion reason while canonical IDs pass."""
+    helpers = _load_helpers("_pool_v2_card_id_shape_reason", "_pool_v2_candidate_allowed")
+    shape_reason = helpers["_pool_v2_card_id_shape_reason"]
+    allowed = helpers["_pool_v2_candidate_allowed"]
+
+    assert shape_reason("a8100002") == ""
+    assert shape_reason("a8100002-2") == "card-id-shape"
+    assert allowed(_admission("a8100002")) is True
+    assert allowed(_admission("a8100002-2")) is False
+    assert "POOL_V2_EXCLUDED|%s|reason=%s" in ROTATE.read_text(encoding="utf-8")
 
 
 def test_canonical_review_card_enters_seraph_or_elastic_codex_selector() -> None:
