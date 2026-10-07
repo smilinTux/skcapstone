@@ -191,7 +191,7 @@ jobs:
         run: |
           python scripts/ci/test_environment.py
           python -m pip install --force-reinstall --no-deps --no-cache-dir \
-            --only-binary=:all: "skcoord==0.1.82"
+            --only-binary=:all: "skcoord==0.1.84"
           python -m pip show skcoord
           python - <<'PY'
           import os
@@ -212,7 +212,7 @@ jobs:
           from skcoord.coordination import Board
           from skcoord.lifecycle import audit_lifecycle, repair_lifecycle, transition_task
 
-          assert Version(version("skcoord")) == Version("0.1.82")
+          assert Version(version("skcoord")) == Version("0.1.84")
           assert callable(scan_overlay_records)
           assert callable(plan_overlay_recovery)
           assert callable(save_recovery_plan)
