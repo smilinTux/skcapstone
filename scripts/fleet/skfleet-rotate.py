@@ -3137,6 +3137,7 @@ def _fold_key(k):
 _evidence_events = None
 _outcomes = None
 _label_events = None
+_cardstore_label_cache = {}
 
 def _load_evidence_events():
     global _evidence_events
@@ -3341,7 +3342,23 @@ def _load_label_events():
     return _label_events
 
 def folded_labels(cid,core):
-    labels=[str(x) for x in (core.get("initial_labels") or [])]
+    if cid not in _cardstore_label_cache:
+        try:
+            card = CardStore(Path(HOME) / ".skcapstone").fold(cid)
+            _cardstore_label_cache[cid] = (
+                None if card is None else tuple(str(x) for x in card.labels)
+            )
+        except Exception as exc:
+            log(d, "CARD_LABEL_FOLD_FAILED|%s|%s|%s" % (
+                HOST, cid, type(exc).__name__
+            ))
+            _cardstore_label_cache[cid] = None
+    stored_labels = _cardstore_label_cache[cid]
+    labels = list(stored_labels) if stored_labels is not None else [
+        str(x) for x in (core.get("initial_labels") or [])
+    ]
+    if stored_labels is None and "do-not-claim" not in labels:
+        labels.append("do-not-claim")
     for event in _load_label_events().get(cid,[]):
         label=_label_value(event)
         if not label: continue
