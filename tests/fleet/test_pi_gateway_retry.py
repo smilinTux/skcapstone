@@ -59,7 +59,7 @@ const t = gatewayTransport(async (url, options) => {{
 const response = await t.fetch('http://fixture.invalid/completion',original);
 assert.equal(response.status,200);
 assert.equal(requests.length,3);
-assert.deepEqual(waits,[30000,60000]);
+assert.deepEqual(waits,[10000,20000]);
 assert(requests.every(r=>r.body===original.body && r.headers===original.headers));
 assert.deepEqual(records.map(r=>r.event),['retry','retry','result']);
 assert.equal(records[0].http_status,{status});
@@ -74,7 +74,7 @@ let clock=0,calls=0;const records=[],waits=[];
 const t=gatewayTransport(async()=>{calls++;return refused(503);},e=>records.push(e),
   {now:()=>clock,wait:async ms=>{waits.push(ms);clock+=ms;}});
 assert.equal((await t.fetch('http://fixture.invalid')).status,503);
-assert.equal(calls,4);assert.deepEqual(waits,[30000,60000,120000]);
+assert.equal(calls,4);assert.deepEqual(waits,[10000,20000,30000]);
 assert.deepEqual(records.map(r=>r.attempt),[1,2,3,4]);
 assert.equal(t.state.terminal.retryable,false);
 """)
@@ -115,10 +115,10 @@ assert.equal(t.state.terminal.retryable,false);
 """)
 
 
-def test_retry_budget_reserves_a_final_attempt_after_504_and_bucket_503s():
+def test_retry_budget_reserves_a_final_attempt_inside_pi_deadline():
     node_check("""
 let clock=0,calls=0;const records=[],waits=[];
-const durations=[180000,30000,60000,1000];
+const durations=[180000,30000,30000,1000];
 const t=gatewayTransport(async()=>{
   const duration=durations[calls++];clock+=duration;
   return calls<4?refused(calls===1?504:503):new Response('ok');
@@ -126,7 +126,7 @@ const t=gatewayTransport(async()=>{
 const response=await t.fetch('http://fixture.invalid');
 assert.equal(response.status,200);
 assert.equal(calls,4);
-assert.deepEqual(waits,[30000,60000,0]);
+assert.deepEqual(waits,[10000,20000,0]);
 assert.deepEqual(records.map(r=>r.http_status),[504,503,503,200]);
 assert.deepEqual(records.map(r=>r.event),['retry','retry','retry','result']);
 """)

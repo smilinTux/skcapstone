@@ -1,9 +1,9 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
 const MAX_ATTEMPTS = 4;
-const BUDGET_MS = 390_000;
+const BUDGET_MS = 300_000;
 const MIN_ATTEMPT_WINDOW_MS = 30_000;
-const DELAYS_MS = [30_000, 60_000, 120_000];
+const DELAYS_MS = [10_000, 20_000, 30_000];
 
 async function errorFields(response) {
   if (response.status !== 503 && response.status !== 413) return {};

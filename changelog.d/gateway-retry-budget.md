@@ -1,1 +1,1 @@
-- Reserve a final 30-second gateway attempt when earlier timeouts and exponential backoff exhaust the remaining retry budget.
+- Keep bounded gateway retries inside Pi's five-minute request deadline and reserve 30 seconds for a final attempt after a 180-second timeout.
