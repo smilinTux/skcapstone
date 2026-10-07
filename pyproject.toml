@@ -71,7 +71,9 @@ dependencies = [
     # CardEvent append validation and doctor diagnostics. SKCapstone now
     # requires that published floor so recovery is resolvable from the public
     # wheel instead of an unreleased branch only.
-    "skcoord>=0.1.82",
+    # Bumped 2026-10-07: skcoord 0.1.84 adds the governed exact-canonical
+    # successor path needed to replace legacy repair card IDs.
+    "skcoord>=0.1.84",
     "skmemory>=0.5.0",
     "skskills>=0.1.1",
 ]
