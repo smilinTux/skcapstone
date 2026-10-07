@@ -12,7 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 
 
-def _load_folded_labels(home: Path, evidence_labels: dict[str, list[dict]]):
+def _load_folded_labels(
+    home: Path,
+    evidence_labels: dict[str, list[dict]],
+    card_store: type[CardStore] = CardStore,
+):
     tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
     function = next(
         node
@@ -20,12 +24,13 @@ def _load_folded_labels(home: Path, evidence_labels: dict[str, list[dict]]):
         if isinstance(node, ast.FunctionDef) and node.name == "folded_labels"
     )
     namespace = {
-        "CardStore": CardStore,
+        "CardStore": card_store,
         "Path": Path,
         "HOME": str(home),
         "_load_label_events": lambda: evidence_labels,
         "_label_value": lambda event: event.get("label"),
         "_cardstore_label_cache": {},
+        "_cardstore_label_store": None,
     }
     exec(compile(ast.Module(body=[function], type_ignores=[]), str(ROTATE), "exec"), namespace)
     return namespace["folded_labels"]
@@ -70,3 +75,25 @@ def test_folded_labels_uses_governed_cardstore_and_keeps_legacy_evidence_labels(
     monkeypatch.setenv("SKFLEET_PRODUCTION_POLICY", "/policy")
     assert builder_dispatch.logical_route(labels) == "sk-m"
     assert builder_dispatch.eligible({"id": "a1b2c3d4"}, labels)
+
+
+def test_folded_labels_reuses_cardstore_legacy_snapshot(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    cards_home = home / ".skcapstone"
+    cards_home.mkdir(mode=0o700, parents=True)
+    store = CardStore(cards_home)
+    for card_id in ("a1b2c3d4", "b2c3d4e5"):
+        store.create(CardCore(id=card_id, title="synthetic builder card"))
+
+    instances = []
+
+    class CountingCardStore(CardStore):
+        def __init__(self, card_home: Path):
+            instances.append(card_home)
+            super().__init__(card_home)
+
+    fold = _load_folded_labels(home, {}, CountingCardStore)
+    fold("a1b2c3d4", {})
+    fold("b2c3d4e5", {})
+
+    assert instances == [cards_home]

@@ -3326,6 +3326,7 @@ _evidence_events = None
 _outcomes = None
 _label_events = None
 _cardstore_label_cache = {}
+_cardstore_label_store = None
 
 def _load_evidence_events():
     global _evidence_events
@@ -3530,9 +3531,12 @@ def _load_label_events():
     return _label_events
 
 def folded_labels(cid,core):
+    global _cardstore_label_store
     if cid not in _cardstore_label_cache:
         try:
-            card = CardStore(Path(HOME) / ".skcapstone").fold(cid)
+            if _cardstore_label_store is None:
+                _cardstore_label_store = CardStore(Path(HOME) / ".skcapstone")
+            card = _cardstore_label_store.fold(cid)
             _cardstore_label_cache[cid] = (
                 None if card is None else tuple(str(x) for x in card.labels)
             )
