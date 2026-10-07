@@ -2861,8 +2861,18 @@ def _role_seat_metadata(core, seat):
 
 def _strict_card_events(cid, fresh=False):
     """Read one native CardStore stream, failing closed on malformed data."""
+    global _production_native_store
     if not fresh and cid in _claim_rows:
         return _claim_rows[cid]
+    if globals().get("PRODUCTION_POLICY"):
+        if _production_native_store is None or fresh:
+            _production_native_store = _cache_card_store_event_reads(
+                CardStore(Path(HOME) / ".skcapstone")
+            )
+        rows = _production_native_store._read_events(cid)
+        if not fresh:
+            _claim_rows[cid] = rows
+        return rows
     path = os.path.join(CARDS, cid, "events")
     rows = []
     if os.path.isdir(path):
@@ -2882,6 +2892,20 @@ def _strict_card_events(cid, fresh=False):
     if not fresh:
         _claim_rows[cid] = rows
     return rows
+
+
+def _cache_card_store_event_reads(store):
+    """Share validated event reads across this dispatcher's read-only folds."""
+    read_events = store._read_events
+    cache = {}
+
+    def read_events_once(card_id):
+        if card_id not in cache:
+            cache[card_id] = read_events(card_id)
+        return list(cache[card_id])
+
+    store._read_events = read_events_once
+    return store
 
 
 def _legacy_claimability_events(fresh=False):
@@ -3222,8 +3246,6 @@ def _authoritative_card_snapshot(cid, core=None, fresh=False):
     legacy_owners = _legacy_projection_owners(cid, fresh=fresh)
     state = _fold_claimability(core, rows)
     if globals().get("PRODUCTION_POLICY"):
-        if _production_native_store is None or fresh:
-            _production_native_store=CardStore(Path(HOME)/".skcapstone")
         state=authoritative_owner_state(_production_native_store,cid,state)
     state["legacy_owners"] = legacy_owners
     source_revision = hashlib.sha256(json.dumps(
