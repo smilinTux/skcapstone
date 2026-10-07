@@ -35,6 +35,7 @@ def _load_claimability() -> dict[str, object]:
         "_governed_review_metadata",
         "_pool_v2_admission",
         "_pool_v2_authority_rows",
+        "_pool_v2_card_id_shape_reason",
         "_pool_v2_candidate_allowed",
         "_pool_v2_dispatchable",
         "_pool_v2_ready_ids",
