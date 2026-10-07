@@ -115,6 +115,23 @@ assert.equal(t.state.terminal.retryable,false);
 """)
 
 
+def test_retry_budget_reserves_a_final_attempt_after_504_and_bucket_503s():
+    node_check("""
+let clock=0,calls=0;const records=[],waits=[];
+const durations=[180000,30000,60000,1000];
+const t=gatewayTransport(async()=>{
+  const duration=durations[calls++];clock+=duration;
+  return calls<4?refused(calls===1?504:503):new Response('ok');
+},e=>records.push(e),{now:()=>clock,wait:async ms=>{waits.push(ms);clock+=ms;}});
+const response=await t.fetch('http://fixture.invalid');
+assert.equal(response.status,200);
+assert.equal(calls,4);
+assert.deepEqual(waits,[30000,60000,0]);
+assert.deepEqual(records.map(r=>r.http_status),[504,503,503,200]);
+assert.deepEqual(records.map(r=>r.event),['retry','retry','retry','result']);
+""")
+
+
 def test_abort_during_backoff_preserves_cancellation_and_makes_no_second_call():
     node_check("""
 const abort=new AbortController();let calls=0;const records=[];

@@ -1,7 +1,8 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
 const MAX_ATTEMPTS = 4;
-const BUDGET_MS = 360_000;
+const BUDGET_MS = 390_000;
+const MIN_ATTEMPT_WINDOW_MS = 30_000;
 const DELAYS_MS = [30_000, 60_000, 120_000];
 
 async function errorFields(response) {
@@ -61,9 +62,12 @@ export function gatewayTransport(fetcher, record, { now = Date.now, wait = sleep
           const transient = response.status === 504 || (
             response.status === 503 && fields.type === "bucket_no_eligible_member"
           );
-          const delay = DELAYS_MS[attempt - 1];
+          const requestedDelay = DELAYS_MS[attempt - 1];
           const remaining = BUDGET_MS - (now() - started);
-          const retry = transient && replayable && attempt < MAX_ATTEMPTS && remaining > delay;
+          const retry = transient && replayable && attempt < MAX_ATTEMPTS
+            && remaining >= MIN_ATTEMPT_WINDOW_MS;
+          const delay = retry && remaining > requestedDelay + MIN_ATTEMPT_WINDOW_MS
+            ? requestedDelay : 0;
           record({
             event: retry ? "retry" : "result", attempt, http_status: response.status,
             elapsed_ms: now() - started, delay_ms: retry ? delay : 0,

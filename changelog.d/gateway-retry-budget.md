@@ -1,0 +1,1 @@
+- Reserve a final 30-second gateway attempt when earlier timeouts and exponential backoff exhaust the remaining retry budget.
