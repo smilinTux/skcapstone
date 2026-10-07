@@ -49,6 +49,42 @@ def _card() -> dict:
     }
 
 
+@pytest.mark.parametrize(
+    ("repository", "authenticated"),
+    [
+        ("https://github.com/example/private.git", True),
+        ("https://source.example/private.git", False),
+    ],
+)
+def test_materialize_source_uses_only_host_scoped_github_credentials(
+    monkeypatch, tmp_path, repository, authenticated
+) -> None:
+    calls = []
+    auth_home = tmp_path / "auth-home"
+
+    def run(command, *, env, **_kwargs):
+        calls.append((command, env))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(builder_dispatch.subprocess, "run", run)
+    monkeypatch.setattr(builder_dispatch.Path, "home", lambda: auth_home)
+    builder_dispatch.materialize_source(
+        {"repository": repository, "base_revision": "a" * 40}, tmp_path / "workspace"
+    )
+
+    fetch_command, fetch_environment = calls[2]
+    assert repository in calls[1][0]
+    if authenticated:
+        assert "credential.helper=" in fetch_command
+        assert "credential.https://github.com.helper=!gh auth git-credential" in fetch_command
+        assert fetch_environment["HOME"] == str(auth_home)
+    else:
+        assert not any("credential.https://github.com.helper" in part for part in fetch_command)
+        assert fetch_environment["HOME"] == "/nonexistent"
+    assert fetch_environment["GIT_CONFIG_GLOBAL"] == "/dev/null"
+    assert "GH_TOKEN" not in fetch_environment
+
+
 def _folded(**values):
     defaults = {
         "id": "24b00003",

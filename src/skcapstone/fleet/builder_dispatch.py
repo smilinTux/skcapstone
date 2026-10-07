@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlsplit
 
 from skcoord.card_store import CardStore
 from skcoord.coordination import TaskUnclaimable
@@ -1175,6 +1176,18 @@ def materialize_source(request: dict, workspace: Path) -> Path:
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_TERMINAL_PROMPT": "0",
     }
+    if urlsplit(request["repository"]).hostname == "github.com":
+        # Only this trusted prelaunch fetch can consult the host's GitHub auth;
+        # global Git config stays disabled, and the worker never gets the token.
+        environment["HOME"] = str(Path.home())
+        git.extend(
+            [
+                "-c",
+                "credential.helper=",
+                "-c",
+                "credential.https://github.com.helper=!gh auth git-credential",
+            ]
+        )
     if workspace.exists():
         head = subprocess.run(
             [*git, "rev-parse", "HEAD"],
