@@ -118,7 +118,7 @@ assert.equal(t.state.terminal.retryable,false);
 def test_retry_budget_reserves_a_final_attempt_inside_pi_deadline():
     node_check("""
 let clock=0,calls=0;const records=[],waits=[];
-const durations=[180000,30000,30000,1000];
+const durations=[180000,30000,60000,1000];
 const t=gatewayTransport(async()=>{
   const duration=durations[calls++];clock+=duration;
   return calls<4?refused(calls===1?504:503):new Response('ok');
@@ -188,17 +188,41 @@ def test_hook_preserves_native_provider_metadata_and_ships_beside_guard():
     program = f"""
 import assert from 'node:assert/strict';
 import gatewayRetry from {json.dumps(helper.as_uri())};
-let start,registered;
+let start,registered,configured;
 const original={{id:'skgateway',auth:{{apiKey:'synthetic'}},baseUrl:'http://fixture.invalid',
  getModels:()=>['original'],streamSimple:()=>{{}}}};
-gatewayRetry({{on(name,fn){{assert.equal(name,'session_start');start=fn;}},
- registerProvider(p){{registered=p;}},appendEntry(){{}}}});
+ gatewayRetry({{on(name,fn){{assert.equal(name,'session_start');start=fn;}},
+ registerProvider(p){{registered=p;}},appendEntry(){{}}}},
+ {{configureIdleTimeout:async()=>{{configured=390000;}}}});
 await start({{}},{{modelRegistry:{{getProvider(name){{
  assert.equal(name,'skgateway');return original;}}}}}});
 assert.equal(registered.auth,original.auth);
 assert.equal(registered.baseUrl,original.baseUrl);
 assert.equal(registered.getModels,original.getModels);
 assert.notEqual(registered.streamSimple,original.streamSimple);
+assert.equal(configured,390000);
+"""
+    subprocess.run(
+        ["node", "--input-type=module", "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+
+def test_pi_idle_timeout_configures_running_entrypoint_dispatcher():
+    helper = ROOT / "scripts/fleet/pi-gateway-retry.mjs"
+    program = f"""
+import assert from 'node:assert/strict';
+import {{ configurePiHttpIdleTimeout }} from {json.dumps(helper.as_uri())};
+let imported,configured;
+await configurePiHttpIdleTimeout({{entrypoint:process.execPath,importer:async specifier=>{{
+ imported=specifier;return {{configureHttpDispatcher:ms=>{{configured=ms;}}}};
+}}}});
+assert(imported.startsWith('file:'));
+assert(imported.endsWith('/core/http-dispatcher.js'));
+assert.equal(configured,390000);
 """
     subprocess.run(
         ["node", "--input-type=module", "-e", program],

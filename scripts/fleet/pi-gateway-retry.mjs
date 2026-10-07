@@ -1,9 +1,31 @@
+import { realpathSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const MAX_ATTEMPTS = 4;
-const BUDGET_MS = 300_000;
+const BUDGET_MS = 360_000;
 const MIN_ATTEMPT_WINDOW_MS = 30_000;
 const DELAYS_MS = [10_000, 20_000, 30_000];
+const HTTP_IDLE_TIMEOUT_MS = 390_000;
+
+export async function configurePiHttpIdleTimeout({
+  entrypoint = process.argv[1],
+  importer = (specifier) => import(specifier),
+} = {}) {
+  if (typeof entrypoint !== "string" || !entrypoint) {
+    throw new Error("Fleet gateway retry requires the running Pi entrypoint");
+  }
+  const piEntrypoint = realpathSync(entrypoint);
+  const dispatcher = pathToFileURL(
+    resolve(dirname(piEntrypoint), "../core/http-dispatcher.js"),
+  ).href;
+  const { configureHttpDispatcher } = await importer(dispatcher);
+  if (typeof configureHttpDispatcher !== "function") {
+    throw new Error("Running Pi does not expose its HTTP dispatcher configuration");
+  }
+  configureHttpDispatcher(HTTP_IDLE_TIMEOUT_MS);
+}
 
 async function errorFields(response) {
   if (response.status !== 503 && response.status !== 413) return {};
@@ -141,7 +163,10 @@ export function wrapGatewayProvider(provider, record) {
   return wrapped;
 }
 
-export default function gatewayRetry(pi) {
+export default function gatewayRetry(
+  pi,
+  { configureIdleTimeout = configurePiHttpIdleTimeout } = {},
+) {
   let installed = false;
   pi.on("session_start", async (_event, context) => {
     if (installed) return;
@@ -150,6 +175,7 @@ export default function gatewayRetry(pi) {
     if (typeof provider.streamSimple !== "function") {
       throw new Error("Fleet gateway provider transport is unavailable");
     }
+    await configureIdleTimeout();
     pi.registerProvider(wrapGatewayProvider(provider, (entry) => {
       pi.appendEntry("skfleet.gateway_transport_retry", entry);
     }));

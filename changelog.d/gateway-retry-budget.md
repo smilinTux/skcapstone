@@ -1,1 +1,1 @@
-- Keep bounded gateway retries inside Pi's five-minute request deadline and reserve 30 seconds for a final attempt after a 180-second timeout.
+- Set the worker-local Pi HTTP idle timeout to 390 seconds so the transport can use a 360-second bounded retry budget with 10, 20 and 30-second backoffs and reserve a final 30-second attempt after a 180-second gateway timeout.
