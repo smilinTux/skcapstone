@@ -1,0 +1,1 @@
+- Keep an unstarted source review valid when its only later change is the sanctioned append-only native GLM readback overlay.

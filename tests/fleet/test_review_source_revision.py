@@ -57,6 +57,48 @@ def test_allows_only_late_native_readback_link_before_review_launch(tmp_path):
     assert _revision_drift_is_supplemental(home, review, source, pinned, current)
 
 
+def test_allows_late_legacy_projection_copy_of_native_readback(tmp_path, monkeypatch):
+    home = tmp_path / ".skcapstone"
+    home.mkdir()
+    store, source, review, pinned = _open_review(home)
+    store.append_event(
+        source.id,
+        "link",
+        "jarvis",
+        link_key="native_glm_readback",
+        link_value="synthetic readback sha256=" + "f" * 64,
+    )
+    current = LiveCardStoreGateway(home).read_card(source.id).revision
+    source_events = store._read_events(source.id)
+    readback = next(
+        event for event in source_events if event.get("link_key") == "native_glm_readback"
+    )
+    legacy_copy = {
+        key: readback[key] for key in ("action", "link_key", "link_value", "ts", "writer")
+    }
+    legacy_copy.update(origin="legacy-overlay", seq=0)
+    original_read = CardStore._read_events
+    original_legacy = CardStore._legacy_events
+
+    def read_events(cards, card_id):
+        events = original_read(cards, card_id)
+        if card_id == source.id:
+            return [event for event in events if event.get("link_key") != "native_glm_readback"]
+        return events
+
+    def legacy_events(cards, card_id):
+        events = original_legacy(cards, card_id)
+        if card_id == source.id:
+            return [*events, legacy_copy]
+        return events
+
+    monkeypatch.setattr(CardStore, "_read_events", read_events)
+    monkeypatch.setattr(CardStore, "_legacy_events", legacy_events)
+
+    assert current != pinned
+    assert _revision_drift_is_supplemental(home, review, source, pinned, current)
+
+
 def test_rejects_other_source_changes_and_started_reviews(tmp_path):
     home = tmp_path / ".skcapstone"
     home.mkdir()

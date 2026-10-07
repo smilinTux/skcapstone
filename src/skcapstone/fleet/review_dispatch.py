@@ -80,15 +80,28 @@ def _revision_drift_is_supplemental(home, review, source, pinned_revision, curre
     unique_events = {}
     for event in source_events:
         event_id = event.get("event_id")
-        if not isinstance(event_id, str) or not event_id:
+        if isinstance(event_id, str) and event_id:
+            identity = ("native", event_id)
+        elif (
+            event.get("origin") == "legacy-overlay"
+            and isinstance(event.get("ts"), str)
+            and isinstance(event.get("writer"), str)
+            and type(event.get("seq")) is int
+            and event["seq"] >= 0
+        ):
+            # The sanctioned append-only overlay uses (ts, writer, seq), not
+            # event_id. Its legacy projection must participate in the same
+            # source-generation check as native CardStore events.
+            identity = ("legacy-overlay", event["ts"], event["writer"], event["seq"])
+        else:
             return False
-        prior = unique_events.get(event_id)
+        prior = unique_events.get(identity)
         if prior is not None and any(
             prior.get(key) != event.get(key)
             for key in ("action", "link_key", "link_value", "ts", "writer")
         ):
             return False
-        unique_events[event_id] = event
+        unique_events[identity] = event
     later = []
     for event in unique_events.values():
         stamp = event.get("ts")
