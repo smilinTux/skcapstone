@@ -16,6 +16,17 @@ from skcapstone.fleet.staged_rollout import _DEPLOY_STEPS, _ROLLBACK_STEPS
 pytestmark = pytest.mark.usefixtures("sandbox_prerequisites")
 
 
+def test_skcoord_floor_includes_voided_projection_claim_recovery():
+    root = Path(__file__).resolve().parents[2]
+    config = tomllib.loads((root / "pyproject.toml").read_text())
+    requirements = [
+        Requirement(item) for item in config["project"]["dependencies"]
+    ]
+    skcoord = next(item for item in requirements if item.name == "skcoord")
+    assert skcoord.specifier.contains("0.1.86")
+    assert not skcoord.specifier.contains("0.1.85")
+
+
 def test_packaging_extra_covers_fingerprinted_tools_and_both_install_directions():
     root = Path(__file__).resolve().parents[2]
     config = tomllib.loads((root / "pyproject.toml").read_text())

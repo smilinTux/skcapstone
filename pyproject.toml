@@ -75,7 +75,9 @@ dependencies = [
     # successor path needed to replace legacy repair card IDs.
     # Bumped again 2026-10-07: skcoord 0.1.85 (#133) accepts legacy cores that
     # omit optional exit_gates/non_goals/spec_version in that successor check.
-    "skcoord>=0.1.85",
+    # Bumped 2026-10-07: skcoord 0.1.86 skips stale projections to voided tasks
+    # during claim, avoiding a terminal-card demotion that blocks new claims.
+    "skcoord>=0.1.86",
     "skmemory>=0.5.0",
     "skskills>=0.1.1",
 ]
