@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import replace
@@ -30,6 +31,7 @@ from skcapstone.fleet.workspace_lifecycle import (
     cleanup_decision,
     cleanup_worktree,
     decide_terminal_state,
+    quarantine_and_reissue,
     recovery_manifest,
     transition,
     write_manifest,
@@ -375,6 +377,79 @@ def test_successful_cleanup_writes_receipt_and_retry_is_idempotent(tmp_path: Pat
 def test_cleaned_is_terminal() -> None:
     with pytest.raises(ValueError, match="invalid workspace transition"):
         transition(WorkspaceState.CLEANED, WorkspaceState.ACTIVE)
+
+
+def test_quarantine_preserves_dirty_bytes_and_reissues_clean_worktree(tmp_path: Path) -> None:
+    item, repository, _ = authoritative_proof(tmp_path)
+    source = Path(item.workspace)
+    (source / "uncommitted.txt").write_bytes(b"keep these exact bytes\x00\n")
+    os.chmod(source / "uncommitted.txt", 0o640)
+    (source / "relative-link").symlink_to("uncommitted.txt")
+    quarantine = tmp_path / "private-quarantine"
+    target = tmp_path / "reissued" / "8c4a9e21-clean"
+    result = quarantine_and_reissue(
+        item,
+        repository=repository,
+        quarantine_root=quarantine,
+        reissue_path=target,
+        base_revision=item.head,
+        execute=True,
+        process_counter=lambda _: 0,
+    )
+    assert result["state"] == "REISSUED"
+    saved = Path(str(result["quarantine"]))
+    assert (saved / "uncommitted.txt").read_bytes() == b"keep these exact bytes\x00\n"
+    assert (saved / "uncommitted.txt").stat().st_mode & 0o777 == 0o640
+    assert (saved / "relative-link").is_symlink()
+    assert os.readlink(saved / "relative-link") == "uncommitted.txt"
+    manifest = json.loads((saved / "QUARANTINE-MANIFEST.json").read_text())
+    assert any(
+        row["path"] == "uncommitted.txt" and row["sha256"] == _sha(source / "uncommitted.txt")
+        for row in manifest["entries"]
+    )
+    assert (source / "uncommitted.txt").read_bytes() == b"keep these exact bytes\x00\n"
+    assert (
+        subprocess.run(
+            ["git", "-C", str(target), "status", "--porcelain"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        == ""
+    )
+    retry = quarantine_and_reissue(
+        item,
+        repository=repository,
+        quarantine_root=quarantine,
+        reissue_path=target,
+        base_revision=item.head,
+        execute=True,
+        process_counter=lambda _: 0,
+    )
+    assert retry["state"] == "REISSUED" and retry["retry"] is True
+
+
+def test_quarantine_refuses_live_process_escape_links_and_collisions(tmp_path: Path) -> None:
+    item, repository, _ = authoritative_proof(tmp_path)
+    source = Path(item.workspace)
+    common = {
+        "repository": repository,
+        "quarantine_root": tmp_path / "quarantine",
+        "reissue_path": tmp_path / "reissued",
+        "base_revision": item.head,
+        "execute": True,
+    }
+    with pytest.raises(ValueError, match="live processes"):
+        quarantine_and_reissue(item, **common, process_counter=lambda _: 1)
+    (source / "escape").symlink_to("/etc/passwd")
+    with pytest.raises(ValueError, match="escapes root"):
+        quarantine_and_reissue(item, **common, process_counter=lambda _: 0)
+    (source / "escape").unlink()
+    Path(common["quarantine_root"]).mkdir()
+    (Path(common["quarantine_root"]) / item.card_id).mkdir()
+    (Path(common["quarantine_root"]) / item.card_id / item.claim_revision).mkdir()
+    with pytest.raises(ValueError, match="collision"):
+        quarantine_and_reissue(item, **common, process_counter=lambda _: 0)
 
 
 def test_workspace_proof_has_no_review_required_field(tmp_path: Path) -> None:

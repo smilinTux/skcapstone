@@ -41,7 +41,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -433,3 +435,270 @@ def cleanup_worktree(
     if state is WorkspaceState.CLEANED:
         write_manifest(receipt_path, payload)
     return payload
+
+
+def quarantine_and_reissue(
+    proof: WorkspaceProof,
+    *,
+    repository: Path,
+    quarantine_root: Path,
+    reissue_path: Path,
+    base_revision: str,
+    execute: bool = False,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    process_counter: Callable[[Path], int] = _workspace_process_count,
+) -> dict[str, object]:
+    """Preserve one exact inactive worktree, verify it, then make a clean one.
+
+    The source is never changed or removed. Quarantine is a private mirrored
+    tree plus an immutable content manifest. Only regular files, directories,
+    and relative symlinks that remain inside the workspace are representable;
+    special files and escaping links fail closed. ``execute=False`` validates
+    identity and reports the exact plan without writing or invoking Git.
+    """
+    if (
+        not re.fullmatch(r"[0-9a-f]{8}", proof.card_id)
+        or not proof.claim_revision
+        or not proof.branch
+        or not _valid_hash(proof.head)
+        or not _valid_hash(base_revision)
+    ):
+        raise ValueError("workspace identity or source revision is invalid")
+    repo = repository.resolve(strict=True)
+    source = Path(proof.workspace).resolve(strict=True)
+    quarantine = (
+        Path(quarantine_root).expanduser().absolute() / proof.card_id / proof.claim_revision
+    )
+    target = Path(reissue_path).expanduser().absolute()
+    for candidate in (quarantine, target):
+        if candidate == source or source in candidate.parents or candidate in source.parents:
+            raise ValueError("source and destination paths must be disjoint")
+    if quarantine == target or quarantine in target.parents or target in quarantine.parents:
+        raise ValueError("quarantine and reissue paths must be disjoint")
+    code, worktrees = _registered_worktrees(runner, repo)
+    if code:
+        raise ValueError("repository worktree registry is unreadable")
+    record = worktrees.get(source)
+    if (
+        record is None
+        or record.get("HEAD") != proof.head
+        or record.get("branch", "").removeprefix("refs/heads/") != proof.branch
+    ):
+        raise ValueError("workspace worktree identity changed")
+    if process_counter(source) != 0:
+        raise ValueError("workspace has live processes")
+    entries: list[dict[str, object]] = []
+
+    def inspect_tree(root: Path) -> list[dict[str, object]]:
+        found: list[dict[str, object]] = []
+        for current, dirs, files in os.walk(root, topdown=True, followlinks=False):
+            current_path = Path(current)
+            for name in sorted(dirs + files):
+                path = current_path / name
+                rel = path.relative_to(root).as_posix()
+                info = path.lstat()
+                mode = info.st_mode
+                if os.path.islink(path):
+                    link = os.readlink(path)
+                    if os.path.isabs(link) or os.path.commonpath(
+                        (str(root), os.path.realpath(path))
+                    ) != str(root):
+                        raise ValueError(f"workspace symlink escapes root: {rel}")
+                    found.append(
+                        {"path": rel, "type": "symlink", "mode": mode & 0o777, "target": link}
+                    )
+                    if name in dirs:
+                        dirs.remove(name)
+                elif os.path.isdir(path):
+                    found.append({"path": rel, "type": "directory", "mode": mode & 0o777})
+                elif os.path.isfile(path):
+                    found.append(
+                        {
+                            "path": rel,
+                            "type": "file",
+                            "mode": mode & 0o777,
+                            "sha256": _sha256(path),
+                        }
+                    )
+                else:
+                    raise ValueError(f"unsupported special file in workspace: {rel}")
+        return sorted(found, key=lambda row: str(row["path"]))
+
+    entries = inspect_tree(source)
+    if any(row["path"] == "QUARANTINE-MANIFEST.json" for row in entries):
+        raise ValueError("workspace uses reserved quarantine manifest path")
+    if not execute:
+        if (
+            quarantine.exists()
+            or quarantine.is_symlink()
+            or target.exists()
+            or target.is_symlink()
+        ):
+            raise ValueError("quarantine or reissue destination already exists")
+        return {
+            "state": "READY",
+            "source": str(source),
+            "quarantine": str(quarantine),
+            "reissue": str(target),
+            "executed": False,
+        }
+    if quarantine.is_symlink():
+        raise ValueError("quarantine destination collision")
+    if quarantine.exists():
+        if not (quarantine / "QUARANTINE-MANIFEST.json").is_file():
+            raise ValueError("quarantine destination collision")
+        try:
+            stored = json.loads(
+                (quarantine / "QUARANTINE-MANIFEST.json").read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ValueError("existing quarantine is unreadable") from exc
+        digest = stored.pop("content_sha256", None)
+        canonical = json.dumps(stored, sort_keys=True, separators=(",", ":")).encode()
+        if (
+            digest != hashlib.sha256(canonical).hexdigest()
+            or stored.get("card_id") != proof.card_id
+            or stored.get("claim_revision") != proof.claim_revision
+            or stored.get("head") != proof.head
+            or stored.get("branch") != proof.branch
+            or stored.get("base_revision") != base_revision
+            or stored.get("entries") != entries
+        ):
+            raise ValueError("existing quarantine does not match this workspace generation")
+        readback = [
+            row for row in inspect_tree(quarantine) if row["path"] != "QUARANTINE-MANIFEST.json"
+        ]
+        if readback != entries:
+            raise ValueError("existing quarantine failed hash readback")
+    else:
+        quarantine.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(quarantine.parent, 0o700)
+        staging = Path(tempfile.mkdtemp(prefix=f".{proof.claim_revision}.", dir=quarantine.parent))
+        try:
+            for entry in entries:
+                rel = str(entry["path"])
+                original = source / rel
+                copied = staging / rel
+                kind = entry["type"]
+                if kind == "directory":
+                    copied.mkdir(mode=int(entry["mode"]))
+                    os.chmod(copied, int(entry["mode"]))
+                elif kind == "symlink":
+                    copied.parent.mkdir(parents=True, exist_ok=True)
+                    copied.symlink_to(str(entry["target"]))
+                else:
+                    copied.parent.mkdir(parents=True, exist_ok=True)
+                    with original.open("rb") as src, copied.open("xb") as dst:
+                        shutil.copyfileobj(src, dst)
+                    os.chmod(copied, int(entry["mode"]))
+            manifest = {
+                "schema": "skcapstone.workspace-quarantine/v1",
+                "card_id": proof.card_id,
+                "claim_revision": proof.claim_revision,
+                "source": str(source),
+                "head": proof.head,
+                "branch": proof.branch,
+                "base_revision": base_revision,
+                "entries": entries,
+            }
+            canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+            manifest["content_sha256"] = hashlib.sha256(canonical).hexdigest()
+            manifest_path = staging / "QUARANTINE-MANIFEST.json"
+            manifest_path.write_text(
+                json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            os.chmod(manifest_path, 0o600)
+            readback = [
+                row for row in inspect_tree(staging) if row["path"] != "QUARANTINE-MANIFEST.json"
+            ]
+            if readback != entries:
+                raise ValueError("quarantine readback did not match source")
+            if inspect_tree(source) != entries:
+                raise ValueError("workspace changed during quarantine")
+            os.replace(staging, quarantine)
+        except Exception:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+
+    if target.exists() or target.is_symlink():
+        head = runner(
+            ["git", "-C", str(target), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        status = runner(
+            ["git", "-C", str(target), "status", "--porcelain=v1"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if (
+            not head.returncode
+            and head.stdout.strip() == base_revision
+            and not status.returncode
+            and not status.stdout.strip()
+        ):
+            return {
+                "state": "REISSUED",
+                "quarantine": str(quarantine),
+                "reissue": str(target),
+                "manifest_sha256": _sha256(quarantine / "QUARANTINE-MANIFEST.json"),
+                "executed": True,
+                "retry": True,
+            }
+        raise ValueError("reissue destination exists with mismatched identity")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    result = runner(
+        ["git", "-C", str(repo), "worktree", "add", "--detach", str(target), base_revision],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode:
+        return {
+            "state": "QUARANTINED_REISSUE_FAILED",
+            "quarantine": str(quarantine),
+            "reason": (result.stderr or result.stdout or "git worktree add failed").strip()[:240],
+            "executed": True,
+        }
+    head = runner(
+        ["git", "-C", str(target), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    status = runner(
+        ["git", "-C", str(target), "status", "--porcelain=v1"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if (
+        head.returncode
+        or head.stdout.strip() != base_revision
+        or status.returncode
+        or status.stdout.strip()
+    ):
+        return {
+            "state": "QUARANTINED_REISSUE_FAILED",
+            "quarantine": str(quarantine),
+            "reissue": str(target),
+            "reason": "new worktree failed clean base verification",
+            "executed": True,
+        }
+    return {
+        "state": "REISSUED",
+        "quarantine": str(quarantine),
+        "reissue": str(target),
+        "manifest_sha256": _sha256(quarantine / "QUARANTINE-MANIFEST.json"),
+        "executed": True,
+    }
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
