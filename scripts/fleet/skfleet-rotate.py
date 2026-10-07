@@ -6560,7 +6560,8 @@ def _production_review_plan(parent, outcome_ts, candidate, store=None):
                     home, parent, outcome_ts, candidate,
                     policy=PRODUCTION_POLICY,
                     process_check=_card_process_snapshot,
-                    store=store)):
+                    store=store,
+                    verify_fresh=False)):
             return None
         source = store.fold(parent)
         producer, path, digest, commit, tree, ref = candidate

@@ -22,6 +22,7 @@ def reviewable_source_candidate(
     policy: dict,
     process_check,
     store=None,
+    verify_fresh=True,
 ) -> bool:
     """Admit only an exact stopped production handoff, without releasing custody."""
     from ..seraph_review_cardstore import LiveCardStoreGateway
@@ -108,6 +109,8 @@ def reviewable_source_candidate(
         if process.get("sessions") != [] or process.get("units") != []:
             return False
         unit_terminal(terminal["unit"], terminal["invocation"], host=terminal["host"])
+        if not verify_fresh:
+            return True
         # Re-read with a new store so the check notices events appended while
         # the shared inspection snapshot was in use.
         return gateway.read_card(card_id).revision == snapshot.revision
