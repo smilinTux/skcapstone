@@ -60,9 +60,11 @@ def candidates(value: dict, route: str, labels: list[str], *, observed=None) -> 
         }
         probe_routes = resolve_production_routes(
             [
-                {**row, "state": "healthy"}
-                if isinstance(row, dict) and row.get("state") == "unknown"
-                else row
+                (
+                    {**row, "state": "healthy"}
+                    if isinstance(row, dict) and row.get("state") == "unknown"
+                    else row
+                )
                 for row in raw_routes
             ],
             policy=value,
