@@ -10,6 +10,7 @@ Fixes two defects found 03:50Z:
 """
 import bisect,json,os,glob,subprocess,sys,time,fcntl,datetime,hashlib,collections,re,importlib.util,shlex
 import importlib.metadata
+import stat
 import shutil
 import copy
 from pathlib import Path
@@ -2497,34 +2498,221 @@ if free==0:
 
 # ---- assignable pool: unclaimed, not human, not drift, DEPENDENCIES SATISFIED
 # Cards that were launched before and never produced a claim event cannot be
-# claimed by a worker (closed ITIL incident, id namespace the board rejects, or
-# already assigned elsewhere). Without this, the same card is relaunched every
-# cycle forever: measured 78 of 162 launches wasted, 48 percent, before this gate.
-_launched=collections.Counter()
-_launched_at={}
-_wake_launch_times=collections.defaultdict(list)
-_strong_launched_at={}
-for _f in glob.glob(os.path.join(EVID,"*","actions.log")):
+# claimed by a worker. Cache the immutable-by-cycle launch history by file
+# metadata: the fleet currently has tens of thousands of action logs, most of
+# which do not change after their cycle ends. Reading every historical byte on
+# every rotation delayed selection by minutes. Changed, appended, or replaced
+# logs are reparsed; deleting or corrupting the cache safely triggers a rebuild.
+def _scan_launch_history_log(path, epoch, strong_model):
+    """Return launch summary rows from one action log."""
+    rows = []
     try:
-        _launch_epoch=datetime.datetime.strptime(Path(_f).parent.name,"%Y%m%dT%H%M%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()
-    except ValueError:
-        _launch_epoch=0
+        with open(path, encoding="utf-8", errors="replace") as source:
+            for line in source:
+                if not line.startswith("LAUNCHED|"):
+                    continue
+                parts = line.strip().split("|")
+                if len(parts) < 4:
+                    continue
+                wake = False
+                if len(parts) == 8:
+                    fields = [part.partition("=") for part in parts[4:]]
+                    wake = (
+                        [(key, sep) for key, sep, _value in fields]
+                        == [("lane", "="), ("model", "="), ("owner", "="),
+                            ("claim_revision", "=")]
+                        and all(value for _key, _sep, value in fields)
+                    )
+                rows.append([parts[3], wake, "model=%s" % strong_model in parts])
+    except OSError:
+        return None
+    return rows
+
+
+def _aggregate_launch_history(records):
+    """Build the three launch lookup tables from cached per-file rows."""
+    launched_at = {}
+    wake_launch_times = collections.defaultdict(list)
+    strong_launched_at = {}
+    for record in records.values():
+        epoch = record.get("epoch", 0)
+        for row in record.get("rows", []):
+            if (not isinstance(row, list) or len(row) != 3
+                    or not isinstance(row[0], str)
+                    or not isinstance(row[1], bool)
+                    or not isinstance(row[2], bool)):
+                continue
+            card_id, wake, strong = row
+            launched_at[card_id] = max(launched_at.get(card_id, 0), epoch)
+            if wake:
+                wake_launch_times[card_id].append(epoch)
+            if strong:
+                strong_launched_at[card_id] = max(
+                    strong_launched_at.get(card_id, 0), epoch
+                )
+    return launched_at, wake_launch_times, strong_launched_at
+
+
+def _scan_launch_history_full(evidence_root, strong_model):
+    """Rebuild launch lookup tables without using the optional cache."""
+    records = {}
     try:
-        for _l in open(_f,encoding="utf-8",errors="replace"):
-            if _l.startswith("LAUNCHED|"):
-                _p=_l.strip().split("|")
-                if len(_p)>=4:
-                    _launched[_p[3]]+=1
-                    _launched_at[_p[3]]=max(_launched_at.get(_p[3],0),_launch_epoch)
-                    if len(_p)==8:
-                        _fields=[part.partition("=") for part in _p[4:]]
-                        if [(key,sep) for key,sep,_value in _fields]==[
-                                ("lane","="),("model","="),("owner","="),
-                                ("claim_revision","=")] and all(value for _key,_sep,value in _fields):
-                            _wake_launch_times[_p[3]].append(_launch_epoch)
-                    if "model=%s"%ESC_MODEL in _p:
-                        _strong_launched_at[_p[3]]=max(_strong_launched_at.get(_p[3],0),_launch_epoch)
-    except OSError: pass
+        entries = sorted(os.scandir(evidence_root), key=lambda entry: entry.name)
+    except OSError:
+        entries = []
+    for entry in entries:
+        if not entry.is_dir(follow_symlinks=False):
+            continue
+        log_path = os.path.join(entry.path, "actions.log")
+        try:
+            metadata = os.stat(log_path, follow_symlinks=False)
+            if not stat.S_ISREG(metadata.st_mode):
+                continue
+        except OSError:
+            continue
+        try:
+            epoch = datetime.datetime.strptime(entry.name, "%Y%m%dT%H%M%SZ").replace(
+                tzinfo=datetime.timezone.utc
+            ).timestamp()
+        except ValueError:
+            epoch = 0
+        rows = _scan_launch_history_log(log_path, epoch, strong_model)
+        if rows is not None:
+            records[entry.name] = {"epoch": epoch, "rows": rows}
+    return _aggregate_launch_history(records)
+
+
+def _load_launch_history(evidence_root, cache_path, strong_model):
+    """Load launch timestamps, reparsing only log files that changed."""
+    cache_path = Path(cache_path)
+    cache_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lock_path = cache_path.with_name(cache_path.name + ".lock")
+    lock_fd = os.open(
+        lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600
+    )
+    try:
+        lock_stat = os.fstat(lock_fd)
+        if (not stat.S_ISREG(lock_stat.st_mode) or lock_stat.st_uid != os.getuid()
+                or lock_stat.st_nlink != 1):
+            raise PermissionError("unsafe launch-history cache lock")
+        os.fchmod(lock_fd, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        records = {}
+        try:
+            cache_stat = os.stat(cache_path, follow_symlinks=False)
+            if (stat.S_ISREG(cache_stat.st_mode)
+                    and cache_stat.st_uid == os.getuid()
+                    and cache_stat.st_mode & 0o077 == 0
+                    and cache_stat.st_size <= 64 * 1024 * 1024):
+                with cache_path.open(encoding="utf-8") as source:
+                    cache = json.load(source)
+                files = cache.get("files")
+                if (cache.get("schema_version") == 1
+                        and cache.get("evidence_root") == os.path.abspath(evidence_root)
+                        and cache.get("strong_model") == strong_model
+                        and isinstance(files, dict)):
+                    valid = all(
+                        isinstance(name, str)
+                        and isinstance(record, dict)
+                        and isinstance(record.get("signature"), list)
+                        and len(record["signature"]) == 4
+                        and all(isinstance(value, int) for value in record["signature"])
+                        and isinstance(record.get("epoch"), (int, float))
+                        and isinstance(record.get("rows"), list)
+                        and all(
+                            isinstance(row, list) and len(row) == 3
+                            and isinstance(row[0], str)
+                            and isinstance(row[1], bool)
+                            and isinstance(row[2], bool)
+                            for row in record["rows"]
+                        )
+                        for name, record in files.items()
+                    )
+                    if valid:
+                        records = files
+        except (OSError, ValueError, TypeError, AttributeError):
+            records = {}
+
+        current = {}
+        changed = records == {}
+        try:
+            entries = sorted(os.scandir(evidence_root), key=lambda entry: entry.name)
+        except OSError:
+            entries = []
+        for entry in entries:
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+            log_path = os.path.join(entry.path, "actions.log")
+            try:
+                metadata = os.stat(log_path, follow_symlinks=False)
+                if not stat.S_ISREG(metadata.st_mode):
+                    continue
+            except OSError:
+                continue
+            signature = (metadata.st_ino, metadata.st_size,
+                         metadata.st_mtime_ns, metadata.st_ctime_ns)
+            old = records.get(entry.name)
+            if (isinstance(old, dict)
+                    and tuple(old.get("signature", ())) == signature
+                    and isinstance(old.get("rows"), list)):
+                current[entry.name] = old
+                continue
+            try:
+                epoch = datetime.datetime.strptime(entry.name, "%Y%m%dT%H%M%SZ").replace(
+                    tzinfo=datetime.timezone.utc
+                ).timestamp()
+            except ValueError:
+                epoch = 0
+            rows = _scan_launch_history_log(log_path, epoch, strong_model)
+            if rows is None:
+                if isinstance(old, dict):
+                    current[entry.name] = old
+                continue
+            current[entry.name] = {
+                "signature": list(signature), "rows": rows, "epoch": epoch,
+            }
+            changed = True
+        if set(current) != set(records):
+            changed = True
+
+        launched_at, wake_launch_times, strong_launched_at = _aggregate_launch_history(current)
+
+        if changed:
+            temporary = cache_path.with_name(cache_path.name + ".%d.new" % os.getpid())
+            fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as target:
+                    json.dump({
+                        "schema_version": 1,
+                        "evidence_root": os.path.abspath(evidence_root),
+                        "strong_model": strong_model,
+                        "files": current,
+                    }, target,
+                              sort_keys=True, separators=(",", ":"))
+                    target.write("\n")
+                    target.flush()
+                    os.fsync(target.fileno())
+                os.replace(temporary, cache_path)
+            finally:
+                try:
+                    os.unlink(temporary)
+                except FileNotFoundError:
+                    pass
+        return launched_at, wake_launch_times, strong_launched_at
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+
+try:
+    _launched_at, _wake_launch_times, _strong_launched_at = _load_launch_history(
+        EVID, Path(HOME) / ".cache/skcapstone/fleet/launch-history-v1.json", ESC_MODEL,
+    )
+except OSError as _cache_error:
+    log(d, "LAUNCH_HISTORY_CACHE_BYPASS|%s|%s" % (HOST, type(_cache_error).__name__))
+    _launched_at, _wake_launch_times, _strong_launched_at = _scan_launch_history_full(
+        EVID, ESC_MODEL
+    )
 # A card claimed and then RELEASED is open again and must be assignable. The prior
 # filter excluded any card with a claim action anywhere in history, making
 # release_claim a one-way door: every card a worker released became permanently
