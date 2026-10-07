@@ -24,6 +24,8 @@ def _load_helpers(*names: str) -> dict[str, object]:
     requested = set(names)
     if "_pool_v2_dispatchable" in requested:
         requested.add("_pool_v2_candidate_allowed")
+    if "_pool_v2_candidate_allowed" in requested:
+        requested.add("_pool_v2_card_id_shape_reason")
     tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
     functions = {
         node.name: node
@@ -31,7 +33,7 @@ def _load_helpers(*names: str) -> dict[str, object]:
         if isinstance(node, ast.FunctionDef) and node.name in requested
     }
     assert set(functions) == requested
-    ordered = ["_pool_v2_candidate_allowed", *names]
+    ordered = ["_pool_v2_card_id_shape_reason", "_pool_v2_candidate_allowed", *names]
     module = ast.Module(
         body=[functions[name] for name in ordered if name in functions], type_ignores=[]
     )
@@ -62,6 +64,15 @@ def _admission(card_id: str, *, claimable: object = True) -> dict[str, object]:
         "overlay": {},
         "source_revision": "a" * 64,
     }
+
+
+def test_pool_v2_reports_noncanonical_card_id_shape() -> None:
+    helpers = _load_helpers("_pool_v2_candidate_allowed")
+    admission = _admission("a8100002-2")
+    assert helpers["_pool_v2_card_id_shape_reason"](admission) == "card-id-shape"
+    assert helpers["_pool_v2_candidate_allowed"](admission) is False
+    canonical = _admission("a8100002")
+    assert helpers["_pool_v2_card_id_shape_reason"](canonical) is None
 
 
 def test_pool_v2_dispatchable_refuses_backoff_overlay() -> None:
