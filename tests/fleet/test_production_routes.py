@@ -67,6 +67,7 @@ def qualification(monkeypatch, tmp_path):
     )
     routes._PREFLIGHTS.clear()
     routes._CATALOGS.clear()
+    routes._BOOTSTRAP_PROBES.clear()
     monkeypatch.setattr(routes, "materialize_gateway_catalog", lambda *args: {})
     return value, snapshot, catalog
 
@@ -193,6 +194,45 @@ def test_preflight_exact_requested_served_backend_and_short_cache(qualification,
     )
     with pytest.raises(ValueError):
         routes.preflight(value, bound)
+
+
+def test_unknown_route_gets_one_synthetic_probe_then_requires_healthy_refresh(
+    qualification, monkeypatch
+):
+    value, observed, _ = qualification
+    unknown = json.loads(json.dumps(observed))
+    for row in unknown["routes"]:
+        row["state"] = "unknown"
+    refreshed = json.loads(json.dumps(observed))
+    snapshots = iter((refreshed,))
+    monkeypatch.setattr(routes, "snapshot", lambda _policy: next(snapshots))
+    probes = []
+
+    def probe(gateway, model):
+        probes.append((gateway, model))
+        return RoutePreflight(model, model, "zai")
+
+    monkeypatch.setattr(routes, "resolve_and_preflight", probe)
+
+    selected = routes.candidates(value, "sk-m", ["glm-only"], observed=unknown)
+
+    assert probes == [("http://gateway:18790", "glm-exact")]
+    assert [row["model"] for row in selected] == ["glm-exact"]
+
+
+def test_failed_unknown_route_probe_does_not_admit_unknown_route(qualification, monkeypatch):
+    value, observed, _ = qualification
+    unknown = json.loads(json.dumps(observed))
+    for row in unknown["routes"]:
+        row["state"] = "unknown"
+    monkeypatch.setattr(routes, "snapshot", lambda _policy: unknown)
+    monkeypatch.setattr(
+        routes,
+        "resolve_and_preflight",
+        lambda *_args: (_ for _ in ()).throw(ValueError("probe failed")),
+    )
+
+    assert routes.candidates(value, "sk-m", ["glm-only"], observed=unknown) == []
 
 
 @pytest.mark.parametrize("kind", ["missing", "fuzzy", "duplicate", "endpoint"])

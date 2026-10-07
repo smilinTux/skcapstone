@@ -14,6 +14,7 @@ from .review_capacity import acquire_review_route_snapshot
 _SNAPSHOTS: dict = {}
 _PREFLIGHTS: dict = {}
 _CATALOGS: dict = {}
+_BOOTSTRAP_PROBES: dict = {}
 FRESH_SECONDS = 30
 
 
@@ -42,12 +43,72 @@ def candidates(value: dict, route: str, labels: list[str], *, observed=None) -> 
         or not 0 <= time.time() - observed.get("observed_at", 0) <= FRESH_SECONDS
     ):
         return []
+    required_size = route.removeprefix("sk-").upper()
+    raw_routes = observed.get("routes", [])
     routes = resolve_production_routes(
-        observed.get("routes", []),
-        policy=value,
-        required_size=route.removeprefix("sk-").upper(),
-        labels=labels,
+        raw_routes, policy=value, required_size=required_size, labels=labels
     )
+    if not routes:
+        # Unknown health is not admission. Use the normal resolver with only
+        # unknown health values replaced to find one exact, policy-compatible
+        # probe target. The target is never returned: admission uses only the
+        # fresh snapshot taken after the bounded synthetic request succeeds.
+        unknown_models = {
+            row.get("model_or_bucket")
+            for row in raw_routes
+            if isinstance(row, dict) and row.get("state") == "unknown"
+        }
+        probe_routes = resolve_production_routes(
+            [
+                {**row, "state": "healthy"}
+                if isinstance(row, dict) and row.get("state") == "unknown"
+                else row
+                for row in raw_routes
+            ],
+            policy=value,
+            required_size=required_size,
+            labels=labels,
+        )
+        targets = [row for row in probe_routes if row["model_or_bucket"] in unknown_models]
+        targets = [
+            row
+            for row in targets
+            if sum(
+                candidate["model_or_bucket"] == row["model_or_bucket"]
+                for candidate in probe_routes
+            )
+            == 1
+        ]
+        if targets:
+            target = targets[0]
+            key = (value["gateway_url"], target["model_or_bucket"], target["provider"])
+            now = time.time()
+            prior = _BOOTSTRAP_PROBES.get(key)
+            if prior is None or not 0 <= now - prior < FRESH_SECONDS:
+                _BOOTSTRAP_PROBES[key] = now
+                try:
+                    probe = resolve_and_preflight(value["gateway_url"], target["model_or_bucket"])
+                    if (
+                        probe.requested_identity != target["model_or_bucket"]
+                        or probe.provider != target["provider"]
+                    ):
+                        return []
+                except (OSError, RuntimeError, ValueError):
+                    return []
+                _PREFLIGHTS[key] = {**probe.to_dict(), "observed_at": time.time()}
+                _SNAPSHOTS.pop(value["gateway_url"], None)
+                observed = snapshot(value)
+                if (
+                    observed.get("error") is not None
+                    or not 0 <= time.time() - observed.get("observed_at", 0) <= FRESH_SECONDS
+                ):
+                    return []
+                routes = resolve_production_routes(
+                    observed.get("routes", []),
+                    policy=value,
+                    required_size=required_size,
+                    labels=labels,
+                )
     result = []
     for found in routes:
         if sum(row["model_or_bucket"] == found["model_or_bucket"] for row in routes) != 1:

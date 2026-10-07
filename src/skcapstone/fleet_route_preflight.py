@@ -116,6 +116,8 @@ def resolve_and_preflight(
             ).encode("utf-8"),
             headers={
                 "Content-Type": "application/json",
+                "X-Sk-Context": "public",
+                "X-Sk-Probe": "synthetic",
                 # The gateway forwards the CALLER's User-Agent upstream, and the
                 # kimi upstream's edge rejects python-urllib's default with HTTP
                 # 403. Measured on chiap01 2026-09-18: the identical request body

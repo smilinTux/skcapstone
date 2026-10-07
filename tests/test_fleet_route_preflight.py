@@ -55,6 +55,8 @@ def test_alias_change_uses_current_logical_route_and_records_identities():
         "provider": "local-qwen",
     }
     assert len(calls) == 2
+    assert calls[1][0].get_header("X-sk-context") == "public"
+    assert calls[1][0].get_header("X-sk-probe") == "synthetic"
 
 
 @pytest.mark.parametrize(
