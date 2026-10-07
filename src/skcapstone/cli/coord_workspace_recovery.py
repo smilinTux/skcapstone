@@ -20,7 +20,7 @@ def register_coord_workspace_recovery(coord: click.Group) -> None:
 
     @coord.command("workspace-quarantine-reissue")
     @click.argument("task_id")
-    @click.option("--agent", required=True, help="Exact current card owner.")
+    @click.option("--agent", required=True, help="Explicit operator identity.")
     @click.option("--claim-revision", required=True, help="Exact current claim generation.")
     @click.option("--workspace", required=True, type=click.Path(path_type=Path))
     @click.option("--repository", required=True, type=click.Path(path_type=Path))
@@ -30,6 +30,10 @@ def register_coord_workspace_recovery(coord: click.Group) -> None:
     @click.option("--quarantine-root", required=True, type=click.Path(path_type=Path))
     @click.option("--reissue-path", required=True, type=click.Path(path_type=Path))
     @click.option("--home", default=AGENT_HOME, type=click.Path(path_type=Path))
+    @click.option(
+        "--expected-card-sha256",
+        help="Required for an unowned backlog/ready card; hash of its canonical folded snapshot.",
+    )
     @click.option(
         "--execute", is_flag=True, help="Write quarantine and create the clean worktree."
     )
@@ -45,24 +49,38 @@ def register_coord_workspace_recovery(coord: click.Group) -> None:
         quarantine_root,
         reissue_path,
         home,
+        expected_card_sha256,
         execute,
     ):
         """Preserve one inactive worktree and create a clean pinned reissue.
 
-        This command never changes the card or claim. The card must still be
-        doing under the exact agent and claim revision supplied by the caller.
+        This command never changes the card or claim. It accepts the exact
+        active claim, or an unowned backlog/ready card fenced by its full
+        canonical card snapshot hash.
         """
         validate_task_id(task_id)
         validate_agent_name(agent)
         card = CardStore(Path(home).expanduser()).fold(task_id)
         if card is None:
             raise click.ClickException(f"No card {task_id}.")
-        if (
-            card.owner != agent
-            or str(card.meta.get("_claim_revision") or "") != claim_revision
-            or str(card.status.value) != "doing"
-        ):
-            raise click.ClickException("card owner, claim revision, or doing status changed")
+        status = str(card.status.value)
+        active_claim = (
+            card.owner == agent
+            and str(card.meta.get("_claim_revision") or "") == claim_revision
+            and status == "doing"
+        )
+        snapshot = json.dumps(card.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+        snapshot_sha256 = hashlib.sha256(snapshot.encode()).hexdigest()
+        unowned_recovery = (
+            card.owner is None
+            and status in {"backlog", "ready"}
+            and expected_card_sha256 == snapshot_sha256
+        )
+        if not (active_claim or unowned_recovery):
+            raise click.ClickException(
+                "card claim changed; unowned recovery requires the exact "
+                "backlog/ready card snapshot hash"
+            )
         try:
             status = subprocess.run(
                 ["git", "-C", str(workspace), "status", "--porcelain=v1", "-z"],
