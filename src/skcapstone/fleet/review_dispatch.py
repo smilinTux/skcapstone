@@ -25,10 +25,37 @@ from . import store
 from .production_policy import require_destination, validate_execution_policy
 from .production_review import producer_family, provider_family, review_family_allowed
 from .production_review_finish import native_command, read_json
-from .source_bundle import _binding, _review_manifest
+from .source_bundle import SourceBundleError, _binding, _review_manifest
 
 SCHEMA = "skfleet.builder-dispatch/v2"
 CAPABILITY = "remote-review-v1"
+_REVIEW_SOURCE_HOLD_REASONS = {
+    "review source metadata malformed",
+    "review source binding conflict",
+    "review source head binding invalid",
+    "review source manifest is not an object",
+    "review source manifest binding mismatch",
+    "review source manifest hash invalid",
+    "review source manifest reference invalid",
+    "review source candidate binding mismatch",
+    "review source bundle digest mismatch",
+    "review source artifacts unavailable or invalid",
+    "review source workspace already exists",
+    "review source object import failed",
+    "review bundle advertised head differs",
+    "review source tree differs",
+    "review source workspace appeared during import",
+    "review source import refused",
+}
+
+
+def hold_reason(error: BaseException) -> str:
+    """Expose only fixed source-bundle reason codes in dispatcher evidence."""
+    name = type(error).__name__
+    detail = str(error)
+    if isinstance(error, SourceBundleError) and detail in _REVIEW_SOURCE_HOLD_REASONS:
+        return name + ":" + detail.replace(" ", "-")
+    return name
 
 
 def partition_remote_reviews(owned, rollout):

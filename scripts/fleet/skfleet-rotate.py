@@ -7984,7 +7984,7 @@ if PRODUCTION_POLICY and PRODUCTION_POLICY.get("remote_review", {}).get("enabled
                     log(d, "REVIEW_REMOTE_DEFERRED|%s|%s" % (HOST, _candidate[2]))
             except (OSError, ValueError, KeyError, TypeError) as _exc:
                 log(d, "REVIEW_REMOTE_HELD|%s|%s|reason=%s" %
-                    (HOST, _candidate[2], type(_exc).__name__))
+                    (HOST, _candidate[2], review_dispatch.hold_reason(_exc)))
 
 owned, _builder_withheld_ids, _builder_returned_ids = _builder_partition(
     owned, _builder_candidate_ids, _builder_held_ids

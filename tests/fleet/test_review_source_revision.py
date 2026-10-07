@@ -4,7 +4,8 @@ from pathlib import Path
 
 from skcoord.card_store import CardCore, CardStore
 
-from skcapstone.fleet.review_dispatch import _revision_drift_is_supplemental
+from skcapstone.fleet.review_dispatch import _revision_drift_is_supplemental, hold_reason
+from skcapstone.fleet.source_bundle import SourceBundleError
 from skcapstone.seraph_review_cardstore import LiveCardStoreGateway
 
 
@@ -126,3 +127,12 @@ def test_rejects_other_source_changes_and_started_reviews(tmp_path):
     )
     current2 = LiveCardStoreGateway(home2).read_card(source2.id).revision
     assert not _revision_drift_is_supplemental(home2, review2, source2, pinned2, current2)
+
+
+def test_hold_reason_exposes_only_fixed_source_bundle_detail():
+    assert (
+        hold_reason(SourceBundleError("review source bundle digest mismatch"))
+        == "SourceBundleError:review-source-bundle-digest-mismatch"
+    )
+    assert hold_reason(ValueError("/private/path")) == "ValueError"
+    assert hold_reason(SourceBundleError("/private/path")) == "SourceBundleError"
