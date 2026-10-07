@@ -26,8 +26,9 @@ FUNCTIONS = {
 def _namespace() -> dict[str, object]:
     """Extract the launch-history helpers without executing the rotator."""
     tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
-    nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef)
-             and node.name in FUNCTIONS]
+    nodes = [
+        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in FUNCTIONS
+    ]
     namespace = {
         "collections": collections,
         "datetime": datetime,
@@ -65,16 +66,22 @@ def test_cold_build_aggregates_launch_timestamps_and_classifications(tmp_path: P
     first = "20261001T000000Z"
     second = "20261002T000000Z"
     _write(root, first, _launch("a0000001"))
-    _write(root, second, _launch("a0000001", "gpt-5.6-sol"),
-           "LAUNCHED|chiap02|owner|a0000002|legacy\n")
+    _write(
+        root,
+        second,
+        _launch("a0000001", "gpt-5.6-sol"),
+        "LAUNCHED|chiap02|owner|a0000002|legacy\n",
+    )
 
     launched, wake, strong = ns["_load_launch_history"](
         root, tmp_path / "cache" / "history.json", "gpt-5.6-sol"
     )
 
-    epoch = lambda stamp: datetime.datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(
-        tzinfo=datetime.timezone.utc
-    ).timestamp()
+    epoch = (
+        lambda stamp: datetime.datetime.strptime(stamp, "%Y%m%dT%H%M%SZ")
+        .replace(tzinfo=datetime.timezone.utc)
+        .timestamp()
+    )
     assert launched == {"a0000001": epoch(second), "a0000002": epoch(second)}
     assert dict(wake) == {"a0000001": [epoch(first), epoch(second)]}
     assert strong == {"a0000001": epoch(second)}
@@ -100,17 +107,14 @@ def test_appended_launch_updates_only_changed_file(tmp_path: Path) -> None:
     second = _write(root, "20261002T000000Z", _launch("a0000002"))
     cache = tmp_path / "cache" / "history.json"
     ns["_load_launch_history"](root, cache, "gpt-5.6-sol")
-    second.write_text(second.read_text(encoding="utf-8") + _launch("a0000002"),
-                      encoding="utf-8")
+    second.write_text(second.read_text(encoding="utf-8") + _launch("a0000002"), encoding="utf-8")
     parsed: list[str] = []
     scan = ns["_scan_launch_history_log"]
     ns["_scan_launch_history_log"] = lambda path, epoch, model: (
         parsed.append(str(path)) or scan(path, epoch, model)
     )
 
-    launched, wake, _strong = ns["_load_launch_history"](
-        root, cache, "gpt-5.6-sol"
-    )
+    launched, wake, _strong = ns["_load_launch_history"](root, cache, "gpt-5.6-sol")
 
     assert set(launched) == {"a0000001", "a0000002"}
     assert len(wake["a0000002"]) == 2
@@ -166,9 +170,7 @@ def test_strong_model_change_reclassifies_cached_history(tmp_path: Path) -> None
         parsed.append(str(path)) or scan(path, epoch, model)
     )
 
-    _launched, _wake, strong = ns["_load_launch_history"](
-        root, cache, "gpt-5.6-sol"
-    )
+    _launched, _wake, strong = ns["_load_launch_history"](root, cache, "gpt-5.6-sol")
 
     assert parsed == [str(root / "20261001T000000Z" / "actions.log")]
     assert set(strong) == {"a0000001"}
