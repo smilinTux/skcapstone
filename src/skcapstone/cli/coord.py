@@ -77,11 +77,13 @@ def register_coord_commands(main: click.Group) -> None:
     register_historical_pr_command(coord)
     from .coord_mail_cmd import register_coord_mail_commands
     from .coord_review_work import register_coord_review_work
+    from .coord_workspace_recovery import register_coord_workspace_recovery
     from .portfolio_plan_cmd import register_portfolio_plan_command
 
     register_coord_amend_commands(coord)
     register_coord_mail_commands(coord)
     register_coord_review_work(coord)
+    register_coord_workspace_recovery(coord)
     register_portfolio_plan_command(coord)
 
     @coord.command("status")
