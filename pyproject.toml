@@ -73,7 +73,9 @@ dependencies = [
     # wheel instead of an unreleased branch only.
     # Bumped 2026-10-07: skcoord 0.1.84 adds the governed exact-canonical
     # successor path needed to replace legacy repair card IDs.
-    "skcoord>=0.1.84",
+    # Bumped again 2026-10-07: skcoord 0.1.85 (#133) accepts legacy cores that
+    # omit optional exit_gates/non_goals/spec_version in that successor check.
+    "skcoord>=0.1.85",
     "skmemory>=0.5.0",
     "skskills>=0.1.1",
 ]
