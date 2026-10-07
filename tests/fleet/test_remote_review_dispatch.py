@@ -8,8 +8,11 @@ from datetime import datetime, timezone
 import pytest
 
 from skcapstone.fleet import builder_dispatch as builder
-from tests.fleet.test_remote_review_policy import remote_policy  # noqa: F401
-from tests.fleet.test_production_review_evidence import proposal  # noqa: F401
+
+pytest_plugins = (
+    "tests.fleet.test_production_review_evidence",
+    "tests.fleet.test_remote_review_policy",
+)
 
 
 @pytest.fixture
@@ -66,6 +69,24 @@ def test_review_contract_keeps_role_and_independent_family(
 ):
     dispatch.validate_contract(request_record, remote_policy, host="chiap03")
     assert request_record["labels"] == ["review", "seat-seraph", "source-only"]
+
+
+def test_explicit_glm_review_contract_allows_a_distinct_same_family_reviewer(
+    dispatch, request_record, remote_policy
+):
+    request_record["labels"].extend(["glm-only", "review-distinct-agent"])
+    request_record["source"].update(owner="pi-glm-builder-node-chiap01-source1", family="glm")
+    request_record["production"].update(family="glm", provider_family="glm", capacity_domain="glm")
+    dispatch.validate_contract(request_record, remote_policy, host="chiap03")
+
+
+def test_same_family_glm_without_both_explicit_labels_is_refused(
+    dispatch, request_record, remote_policy
+):
+    request_record["source"].update(owner="pi-glm-builder-node-chiap01-source1", family="glm")
+    request_record["production"].update(family="glm", provider_family="glm", capacity_domain="glm")
+    with pytest.raises(ValueError):
+        dispatch.validate_contract(request_record, remote_policy, host="chiap03")
 
 
 def test_remote_partition_keeps_legacy_reviews_on_the_existing_seat(dispatch):

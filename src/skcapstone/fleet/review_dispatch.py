@@ -23,7 +23,7 @@ from . import builder_dispatch as dispatch
 from . import production_builder as production
 from . import store
 from .production_policy import require_destination, validate_execution_policy
-from .production_review import producer_family, provider_family
+from .production_review import producer_family, provider_family, review_family_allowed
 from .production_review_finish import native_command, read_json
 from .source_bundle import _binding, _review_manifest
 
@@ -41,6 +41,71 @@ def partition_remote_reviews(owned, rollout):
     ]
     remote_ids = {row[2] for row in remote}
     return remote, [row for row in owned if row[2] not in remote_ids]
+
+
+def _revision_drift_is_supplemental(home, review, source, pinned_revision, current_revision):
+    """Allow only an unstarted review to absorb a later native readback link."""
+    if pinned_revision == current_revision:
+        return True
+    if review.status.value != "review" or review.owner or review.meta.get("claim_conflicts"):
+        return False
+
+    cards = CardStore(home)
+    review_events = cards._read_events(review.id)
+    candidate_digest = _binding(review.model_dump(mode="json"), "candidate_evidence_sha256")
+    recommendations = [
+        event
+        for event in review_events
+        if event.get("action") == "review_assignment_recommendation"
+        and event.get("recommendation_id") == "link-review-" + review.id
+        and event.get("evidence_sha256") == candidate_digest
+    ]
+    if len(recommendations) != 1:
+        return False
+    opened_at = recommendations[0].get("ts")
+    if not isinstance(opened_at, str):
+        return False
+    try:
+        opened = datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if opened.tzinfo is None:
+        return False
+
+    started_actions = {"claim", "remote_review_offer", "review_assignment_launch", "verdict"}
+    if any(event.get("action") in started_actions for event in review_events):
+        return False
+
+    source_events = cards._read_events(source.id) + cards._legacy_events(source.id)
+    unique_events = {}
+    for event in source_events:
+        event_id = event.get("event_id")
+        if not isinstance(event_id, str) or not event_id:
+            return False
+        prior = unique_events.get(event_id)
+        if prior is not None and any(
+            prior.get(key) != event.get(key)
+            for key in ("action", "link_key", "link_value", "ts", "writer")
+        ):
+            return False
+        unique_events[event_id] = event
+    later = []
+    for event in unique_events.values():
+        stamp = event.get("ts")
+        if not isinstance(stamp, str):
+            return False
+        try:
+            occurred = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if occurred.tzinfo is None:
+            return False
+        if occurred > opened:
+            later.append(event)
+    return bool(later) and all(
+        event.get("action") == "link" and event.get("link_key") == "native_glm_readback"
+        for event in later
+    )
 
 
 def validate_contract(request, policy, *, host, historical=False):
@@ -62,7 +127,7 @@ def validate_contract(request, policy, *, host, historical=False):
         or canonical_principal(source["owner"]) == canonical_principal(request["reviewer"])
         or provider_family(bound["family"]) != provider_family(bound["provider_family"])
         or provider_family(bound["capacity_domain"]) != provider_family(bound["family"])
-        or provider_family(bound["family"]) in {None, family}
+        or not review_family_allowed(family, bound["family"], request["labels"])
         or bound["provider"] != "skgateway"
         or bound["host"] != host
         or bound["authority"] != policy["authority_host"]
@@ -119,7 +184,9 @@ def _source(home, card):
         or manifest["owner"] != source.owner
         or manifest["claim_revision"] != source.meta.get("_claim_revision")
         or _binding(core, "producer_identity") != source.owner
-        or _binding(core, "source_revision") != revision
+        or not _revision_drift_is_supplemental(
+            home, card, source, _binding(core, "source_revision"), revision
+        )
         or {"hold", "do-not-claim"}.intersection(source.labels)
     ):
         raise ValueError("review source generation changed")
@@ -267,7 +334,7 @@ def offer_review(paths, home, card_id, *, writer):
         route = "sk-" + (card_required_size(card) or "").lower()
         routes = production.production_routes.candidates(policy, route, card.labels)
         family = producer_family(source["owner"], source["family"])
-        routes = [r for r in routes if provider_family(r["family"]) not in {None, family}]
+        routes = [r for r in routes if review_family_allowed(family, r["family"], card.labels)]
         nodes = production.ready_nodes(paths, dispatch._ready_builders(paths), policy, card_id)
         nodes = [
             v
@@ -413,6 +480,8 @@ def consume_review(paths, home, node, request, *, launcher=None):
     if prior:
         return reconcile_review(paths, home, request, prior)
     card = validate_request(paths, home, node, request)
+    production.review_runtime()
+    dispatch._guard_path()
     host, owner = request["production"]["host"], request["reviewer"]
     ready, _ = local_worker_admission(request["policy"], host, active_resource_units(home))
     if not ready:

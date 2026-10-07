@@ -225,6 +225,49 @@ def review_retire_cmd(
     click.echo(jsonlib.dumps(result, sort_keys=True))
 
 
+@fleet.command("review-prestart-retire")
+@click.argument("card_id")
+@click.option("--node", required=True)
+@click.option("--request-sha256", required=True)
+@click.option("--card-sha256", required=True)
+@click.option("--previous-owner", required=True)
+@click.option("--previous-claim-revision", required=True)
+@click.option("--agent", required=True)
+@click.option("--reason", required=True)
+@click.option("--apply", is_flag=True, help="Retire exact unlaunched offer; default checks only.")
+def review_prestart_retire_cmd(
+    card_id,
+    node,
+    request_sha256,
+    card_sha256,
+    previous_owner,
+    previous_claim_revision,
+    agent,
+    reason,
+    apply,
+):
+    """Retire one exact remote review offer proven to have never started."""
+    from .review_retire import retire_prestart
+
+    try:
+        result = retire_prestart(
+            default_paths(),
+            Path.home() / ".skcapstone",
+            node,
+            card_id,
+            request_sha256=request_sha256,
+            card_sha256=card_sha256,
+            previous_owner=previous_owner,
+            previous_claim_revision=previous_claim_revision,
+            actor=agent,
+            reason=reason,
+            apply=apply,
+        )
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(jsonlib.dumps(result, sort_keys=True))
+
+
 @fleet.command("describe")
 @click.argument("kind")
 @click.argument("name")

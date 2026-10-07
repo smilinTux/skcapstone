@@ -1,6 +1,7 @@
 """Preclaim retirement preserves source and refuses hidden execution custody."""
 
 import json
+import shutil
 from types import SimpleNamespace
 
 import pytest
@@ -74,6 +75,46 @@ def test_preclaim_check_apply_and_replay_preserve_exact_source(preclaim):
     assert retire.archive_inventory(root / "workspace.tar.gz") == before[2]
     assert json.loads((root / "retirement.json").read_text())["proof"]["preclaim"] is True
     assert run(c, apply=True)["state"] == "already-retired"
+
+
+def test_preclaim_failure_before_workspace_creation_records_absence(preclaim, monkeypatch):
+    c = preclaim
+    shutil.rmtree(c.workspace)
+    monkeypatch.setattr(
+        retire.source_bundle,
+        "_inspect",
+        lambda *_: pytest.fail("an absent workspace must not be inspected"),
+    )
+
+    checked = run(c)
+    assert checked["state"] == "qualified-check-only"
+    proof = checked["proof"]
+    assert proof["preclaim"] is True
+    assert proof["workspace_absent"] is True
+    assert proof["archive_sha256"] is None
+
+    assert run(c, apply=True)["state"] == "retired"
+    root = retire.directory(c.home, c.request["card_id"], c.request["request_id"])
+    assert not (root / "workspace.tar.gz").exists()
+    inventory = json.loads((root / "inventory.json").read_text())
+    assert inventory == {"workspace": "absent"}
+    receipt = json.loads((root / "retirement.json").read_text())
+    assert receipt["proof"]["workspace_absent"] is True
+    assert run(c, apply=True)["state"] == "already-retired"
+
+
+def test_preclaim_missing_workspace_refuses_leftover_reconstruction_staging(preclaim):
+    c = preclaim
+    shutil.rmtree(c.workspace)
+    staging = c.workspace.parent / f".{c.workspace.name}.interrupted"
+    staging.mkdir()
+    before = c.req.read_bytes(), c.sts.read_bytes()
+
+    with pytest.raises(ValueError, match="source reconstruction staging remains"):
+        run(c)
+
+    assert (c.req.read_bytes(), c.sts.read_bytes()) == before
+    assert not (c.home / "evidence").exists()
 
 
 @pytest.mark.parametrize(

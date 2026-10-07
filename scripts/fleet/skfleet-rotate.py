@@ -10,6 +10,7 @@ Fixes two defects found 03:50Z:
 """
 import bisect,json,os,glob,subprocess,sys,time,fcntl,datetime,hashlib,collections,re,importlib.util,shlex
 import importlib.metadata
+import stat
 import shutil
 import copy
 from pathlib import Path
@@ -550,14 +551,15 @@ _cycle_started=time.monotonic()
 PRODUCTION_POLICY=production_policy_from_environment(os.environ, HOST)
 _SCAN_BUDGET=int((PRODUCTION_POLICY or {}).get("scan_budget", 256))
 os.environ["SKFLEET_EVIDENCE_HOST"]=HOST
-# The worker fleet is ESTATE configuration, not a property of this script. Card
-# ownership is partitioned by hashing across this tuple, so its membership and
-# its order together decide which host may claim which card. An estate names its
-# own roster once, as rotation_hosts in its estate record (config/estate.json,
-# else cluster.json), or through SKFLEET_ROTATION_HOSTS on a host that is
-# bootstrapping before that record has synced. Declaring nothing keeps the chi
-# fleet this file has always carried, unchanged in value and in order.
-ROTATION_HOSTS=_resolve_rotation_hosts(declared=_estate_rotation_hosts())
+# The worker fleet is ESTATE configuration, not a property of this script. It
+# remains the full roster for reports, placement, and worker-owner validation.
+# An estate names it as rotation_hosts in estate.json (else cluster.json), or
+# through SKFLEET_ROTATION_HOSTS while bootstrapping before that record syncs.
+# Declaring nothing keeps the historic chi fleet unchanged and in the same order.
+FLEET_WORKER_HOSTS=_resolve_rotation_hosts(declared=_estate_rotation_hosts())
+# ROTATION_HOSTS is the scheduler authority roster. In production, the one
+# authority publishes and partitions; it must not narrow worker visibility.
+ROTATION_HOSTS=FLEET_WORKER_HOSTS
 # The reconciliation publisher is the same kind of estate configuration, so it
 # is declared the same way and resolved in the same order: authority_host in the
 # estate record, SKFLEET_AUTHORITY_HOST for a host bootstrapping ahead of it.
@@ -2435,7 +2437,7 @@ def reporting_capacity():
 def live_report_health(expected_hosts=None, now=None):
     """Return fleet reports plus per-host transport and freshness faults."""
     now = time.time() if now is None else now
-    expected = tuple(expected_hosts or ROTATION_HOSTS)
+    expected = tuple(expected_hosts or FLEET_WORKER_HOSTS)
     stamps = []
     running = set()
     reporting = set()
@@ -2497,34 +2499,221 @@ if free==0:
 
 # ---- assignable pool: unclaimed, not human, not drift, DEPENDENCIES SATISFIED
 # Cards that were launched before and never produced a claim event cannot be
-# claimed by a worker (closed ITIL incident, id namespace the board rejects, or
-# already assigned elsewhere). Without this, the same card is relaunched every
-# cycle forever: measured 78 of 162 launches wasted, 48 percent, before this gate.
-_launched=collections.Counter()
-_launched_at={}
-_wake_launch_times=collections.defaultdict(list)
-_strong_launched_at={}
-for _f in glob.glob(os.path.join(EVID,"*","actions.log")):
+# claimed by a worker. Cache the immutable-by-cycle launch history by file
+# metadata: the fleet currently has tens of thousands of action logs, most of
+# which do not change after their cycle ends. Reading every historical byte on
+# every rotation delayed selection by minutes. Changed, appended, or replaced
+# logs are reparsed; deleting or corrupting the cache safely triggers a rebuild.
+def _scan_launch_history_log(path, epoch, strong_model):
+    """Return launch summary rows from one action log."""
+    rows = []
     try:
-        _launch_epoch=datetime.datetime.strptime(Path(_f).parent.name,"%Y%m%dT%H%M%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()
-    except ValueError:
-        _launch_epoch=0
+        with open(path, encoding="utf-8", errors="replace") as source:
+            for line in source:
+                if not line.startswith("LAUNCHED|"):
+                    continue
+                parts = line.strip().split("|")
+                if len(parts) < 4:
+                    continue
+                wake = False
+                if len(parts) == 8:
+                    fields = [part.partition("=") for part in parts[4:]]
+                    wake = (
+                        [(key, sep) for key, sep, _value in fields]
+                        == [("lane", "="), ("model", "="), ("owner", "="),
+                            ("claim_revision", "=")]
+                        and all(value for _key, _sep, value in fields)
+                    )
+                rows.append([parts[3], wake, "model=%s" % strong_model in parts])
+    except OSError:
+        return None
+    return rows
+
+
+def _aggregate_launch_history(records):
+    """Build the three launch lookup tables from cached per-file rows."""
+    launched_at = {}
+    wake_launch_times = collections.defaultdict(list)
+    strong_launched_at = {}
+    for record in records.values():
+        epoch = record.get("epoch", 0)
+        for row in record.get("rows", []):
+            if (not isinstance(row, list) or len(row) != 3
+                    or not isinstance(row[0], str)
+                    or not isinstance(row[1], bool)
+                    or not isinstance(row[2], bool)):
+                continue
+            card_id, wake, strong = row
+            launched_at[card_id] = max(launched_at.get(card_id, 0), epoch)
+            if wake:
+                wake_launch_times[card_id].append(epoch)
+            if strong:
+                strong_launched_at[card_id] = max(
+                    strong_launched_at.get(card_id, 0), epoch
+                )
+    return launched_at, wake_launch_times, strong_launched_at
+
+
+def _scan_launch_history_full(evidence_root, strong_model):
+    """Rebuild launch lookup tables without using the optional cache."""
+    records = {}
     try:
-        for _l in open(_f,encoding="utf-8",errors="replace"):
-            if _l.startswith("LAUNCHED|"):
-                _p=_l.strip().split("|")
-                if len(_p)>=4:
-                    _launched[_p[3]]+=1
-                    _launched_at[_p[3]]=max(_launched_at.get(_p[3],0),_launch_epoch)
-                    if len(_p)==8:
-                        _fields=[part.partition("=") for part in _p[4:]]
-                        if [(key,sep) for key,sep,_value in _fields]==[
-                                ("lane","="),("model","="),("owner","="),
-                                ("claim_revision","=")] and all(value for _key,_sep,value in _fields):
-                            _wake_launch_times[_p[3]].append(_launch_epoch)
-                    if "model=%s"%ESC_MODEL in _p:
-                        _strong_launched_at[_p[3]]=max(_strong_launched_at.get(_p[3],0),_launch_epoch)
-    except OSError: pass
+        entries = sorted(os.scandir(evidence_root), key=lambda entry: entry.name)
+    except OSError:
+        entries = []
+    for entry in entries:
+        if not entry.is_dir(follow_symlinks=False):
+            continue
+        log_path = os.path.join(entry.path, "actions.log")
+        try:
+            metadata = os.stat(log_path, follow_symlinks=False)
+            if not stat.S_ISREG(metadata.st_mode):
+                continue
+        except OSError:
+            continue
+        try:
+            epoch = datetime.datetime.strptime(entry.name, "%Y%m%dT%H%M%SZ").replace(
+                tzinfo=datetime.timezone.utc
+            ).timestamp()
+        except ValueError:
+            epoch = 0
+        rows = _scan_launch_history_log(log_path, epoch, strong_model)
+        if rows is not None:
+            records[entry.name] = {"epoch": epoch, "rows": rows}
+    return _aggregate_launch_history(records)
+
+
+def _load_launch_history(evidence_root, cache_path, strong_model):
+    """Load launch timestamps, reparsing only log files that changed."""
+    cache_path = Path(cache_path)
+    cache_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lock_path = cache_path.with_name(cache_path.name + ".lock")
+    lock_fd = os.open(
+        lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600
+    )
+    try:
+        lock_stat = os.fstat(lock_fd)
+        if (not stat.S_ISREG(lock_stat.st_mode) or lock_stat.st_uid != os.getuid()
+                or lock_stat.st_nlink != 1):
+            raise PermissionError("unsafe launch-history cache lock")
+        os.fchmod(lock_fd, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        records = {}
+        try:
+            cache_stat = os.stat(cache_path, follow_symlinks=False)
+            if (stat.S_ISREG(cache_stat.st_mode)
+                    and cache_stat.st_uid == os.getuid()
+                    and cache_stat.st_mode & 0o077 == 0
+                    and cache_stat.st_size <= 64 * 1024 * 1024):
+                with cache_path.open(encoding="utf-8") as source:
+                    cache = json.load(source)
+                files = cache.get("files")
+                if (cache.get("schema_version") == 1
+                        and cache.get("evidence_root") == os.path.abspath(evidence_root)
+                        and cache.get("strong_model") == strong_model
+                        and isinstance(files, dict)):
+                    valid = all(
+                        isinstance(name, str)
+                        and isinstance(record, dict)
+                        and isinstance(record.get("signature"), list)
+                        and len(record["signature"]) == 4
+                        and all(isinstance(value, int) for value in record["signature"])
+                        and isinstance(record.get("epoch"), (int, float))
+                        and isinstance(record.get("rows"), list)
+                        and all(
+                            isinstance(row, list) and len(row) == 3
+                            and isinstance(row[0], str)
+                            and isinstance(row[1], bool)
+                            and isinstance(row[2], bool)
+                            for row in record["rows"]
+                        )
+                        for name, record in files.items()
+                    )
+                    if valid:
+                        records = files
+        except (OSError, ValueError, TypeError, AttributeError):
+            records = {}
+
+        current = {}
+        changed = records == {}
+        try:
+            entries = sorted(os.scandir(evidence_root), key=lambda entry: entry.name)
+        except OSError:
+            entries = []
+        for entry in entries:
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+            log_path = os.path.join(entry.path, "actions.log")
+            try:
+                metadata = os.stat(log_path, follow_symlinks=False)
+                if not stat.S_ISREG(metadata.st_mode):
+                    continue
+            except OSError:
+                continue
+            signature = (metadata.st_ino, metadata.st_size,
+                         metadata.st_mtime_ns, metadata.st_ctime_ns)
+            old = records.get(entry.name)
+            if (isinstance(old, dict)
+                    and tuple(old.get("signature", ())) == signature
+                    and isinstance(old.get("rows"), list)):
+                current[entry.name] = old
+                continue
+            try:
+                epoch = datetime.datetime.strptime(entry.name, "%Y%m%dT%H%M%SZ").replace(
+                    tzinfo=datetime.timezone.utc
+                ).timestamp()
+            except ValueError:
+                epoch = 0
+            rows = _scan_launch_history_log(log_path, epoch, strong_model)
+            if rows is None:
+                if isinstance(old, dict):
+                    current[entry.name] = old
+                continue
+            current[entry.name] = {
+                "signature": list(signature), "rows": rows, "epoch": epoch,
+            }
+            changed = True
+        if set(current) != set(records):
+            changed = True
+
+        launched_at, wake_launch_times, strong_launched_at = _aggregate_launch_history(current)
+
+        if changed:
+            temporary = cache_path.with_name(cache_path.name + ".%d.new" % os.getpid())
+            fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as target:
+                    json.dump({
+                        "schema_version": 1,
+                        "evidence_root": os.path.abspath(evidence_root),
+                        "strong_model": strong_model,
+                        "files": current,
+                    }, target,
+                              sort_keys=True, separators=(",", ":"))
+                    target.write("\n")
+                    target.flush()
+                    os.fsync(target.fileno())
+                os.replace(temporary, cache_path)
+            finally:
+                try:
+                    os.unlink(temporary)
+                except FileNotFoundError:
+                    pass
+        return launched_at, wake_launch_times, strong_launched_at
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+
+try:
+    _launched_at, _wake_launch_times, _strong_launched_at = _load_launch_history(
+        EVID, Path(HOME) / ".cache/skcapstone/fleet/launch-history-v1.json", ESC_MODEL,
+    )
+except OSError as _cache_error:
+    log(d, "LAUNCH_HISTORY_CACHE_BYPASS|%s|%s" % (HOST, type(_cache_error).__name__))
+    _launched_at, _wake_launch_times, _strong_launched_at = _scan_launch_history_full(
+        EVID, ESC_MODEL
+    )
 # A card claimed and then RELEASED is open again and must be assignable. The prior
 # filter excluded any card with a claim action anywhere in history, making
 # release_claim a one-way door: every card a worker released became permanently
@@ -2672,8 +2861,18 @@ def _role_seat_metadata(core, seat):
 
 def _strict_card_events(cid, fresh=False):
     """Read one native CardStore stream, failing closed on malformed data."""
+    global _production_native_store
     if not fresh and cid in _claim_rows:
         return _claim_rows[cid]
+    if globals().get("PRODUCTION_POLICY"):
+        if _production_native_store is None or fresh:
+            _production_native_store = _cache_card_store_event_reads(
+                CardStore(Path(HOME) / ".skcapstone")
+            )
+        rows = _production_native_store._read_events(cid)
+        if not fresh:
+            _claim_rows[cid] = rows
+        return rows
     path = os.path.join(CARDS, cid, "events")
     rows = []
     if os.path.isdir(path):
@@ -2693,6 +2892,20 @@ def _strict_card_events(cid, fresh=False):
     if not fresh:
         _claim_rows[cid] = rows
     return rows
+
+
+def _cache_card_store_event_reads(store):
+    """Share validated event reads across this dispatcher's read-only folds."""
+    read_events = store._read_events
+    cache = {}
+
+    def read_events_once(card_id):
+        if card_id not in cache:
+            cache[card_id] = read_events(card_id)
+        return list(cache[card_id])
+
+    store._read_events = read_events_once
+    return store
 
 
 def _legacy_claimability_events(fresh=False):
@@ -3033,8 +3246,6 @@ def _authoritative_card_snapshot(cid, core=None, fresh=False):
     legacy_owners = _legacy_projection_owners(cid, fresh=fresh)
     state = _fold_claimability(core, rows)
     if globals().get("PRODUCTION_POLICY"):
-        if _production_native_store is None or fresh:
-            _production_native_store=CardStore(Path(HOME)/".skcapstone")
         state=authoritative_owner_state(_production_native_store,cid,state)
     state["legacy_owners"] = legacy_owners
     source_revision = hashlib.sha256(json.dumps(
@@ -3137,6 +3348,8 @@ def _fold_key(k):
 _evidence_events = None
 _outcomes = None
 _label_events = None
+_cardstore_label_cache = {}
+_cardstore_label_store = None
 
 def _load_evidence_events():
     global _evidence_events
@@ -3341,7 +3554,26 @@ def _load_label_events():
     return _label_events
 
 def folded_labels(cid,core):
-    labels=[str(x) for x in (core.get("initial_labels") or [])]
+    global _cardstore_label_store
+    if cid not in _cardstore_label_cache:
+        try:
+            if _cardstore_label_store is None:
+                _cardstore_label_store = CardStore(Path(HOME) / ".skcapstone")
+            card = _cardstore_label_store.fold(cid)
+            _cardstore_label_cache[cid] = (
+                None if card is None else tuple(str(x) for x in card.labels)
+            )
+        except Exception as exc:
+            log(d, "CARD_LABEL_FOLD_FAILED|%s|%s|%s" % (
+                HOST, cid, type(exc).__name__
+            ))
+            _cardstore_label_cache[cid] = None
+    stored_labels = _cardstore_label_cache[cid]
+    labels = list(stored_labels) if stored_labels is not None else [
+        str(x) for x in (core.get("initial_labels") or [])
+    ]
+    if stored_labels is None and "do-not-claim" not in labels:
+        labels.append("do-not-claim")
     for event in _load_label_events().get(cid,[]):
         label=_label_value(event)
         if not label: continue
@@ -4703,7 +4935,7 @@ def outcome_lifecycle_bucket(lifecycle, historical_review):
 # ever used for membership, but dict.fromkeys says so rather than leaving a
 # reader to work it out.
 KNOWN_HOSTS = tuple(dict.fromkeys(
-    ROTATION_HOSTS + ("chiap04", "chiap08", "chiwk11", "chiwk12", "noroc2027")))
+    FLEET_WORKER_HOSTS + ("chiwk11", "chiwk12", "noroc2027")))
 
 def host_pin(core,labels):
     """Host this card must run on, or None to leave it unpinned."""
@@ -4713,7 +4945,7 @@ def host_pin(core,labels):
     if len(named) != 1:
         return None                      # ambiguous or unnamed
     only = named.pop()
-    return only if only in ROTATION_HOSTS else None   # never strand
+    return only if only in FLEET_WORKER_HOSTS else None   # never strand
 
 # A launch only counts as EVIDENCE that a card is unclaimable if the worker
 # actually got far enough to report. Two failure modes were being conflated:
@@ -5104,7 +5336,7 @@ def _parse_worker_owner(owner, cid, expected_seat=None):
     cid = str(cid or "")
     if not re.fullmatch(r"[0-9a-f]{8}", cid):
         return None
-    for host in ROTATION_HOSTS:
+    for host in FLEET_WORKER_HOSTS:
         for lane in ("codex", "glm", "deepseek", "qwen", "kimi", "escalate"):
             if owner == "pi-%s-%s-%s" % (lane, host, cid):
                 return "lane", lane, host
@@ -5422,7 +5654,7 @@ def _fleet_launch_provenance(cid, owner, claim_revision):
                             launch_owner, launch_cid, expected_seats[launch_cid]
                         )
                         if (
-                            parts[1] not in ROTATION_HOSTS
+                            parts[1] not in FLEET_WORKER_HOSTS
                             or session_prefix is None
                             or parts[2] != session_prefix + parts[3]
                             or parsed_owner is None
@@ -6310,7 +6542,7 @@ def _provisional_candidate(parent, outcome_ts, token):
     return producer, verified[0][0], verified[0][1], commit, tree, ref
 
 
-def _production_review_plan(parent, outcome_ts, candidate):
+def _production_review_plan(parent, outcome_ts, candidate, store=None):
     """Bind the qualified native review identity to exact retained source custody."""
     try:
         from skcoord.card_store import CardStore
@@ -6320,14 +6552,18 @@ def _production_review_plan(parent, outcome_ts, candidate):
         from skcapstone.seraph_review_cardstore import LiveCardStoreGateway
 
         home = Path(CARDS).parent
+        store = store or CardStore(home)
         gateway = LiveCardStoreGateway(home)
-        snapshot = gateway.read_card(parent)
+        snapshot = gateway.read_card(parent, _store=store)
         if (HOST != PRODUCTION_POLICY["authority_host"] or
                 not reviewable_source_candidate(
                     home, parent, outcome_ts, candidate,
-                    policy=PRODUCTION_POLICY, process_check=_card_process_snapshot)):
+                    policy=PRODUCTION_POLICY,
+                    process_check=_card_process_snapshot,
+                    store=store,
+                    verify_fresh=False)):
             return None
-        source = CardStore(home).fold(parent)
+        source = store.fold(parent)
         producer, path, digest, commit, tree, ref = candidate
         lineage = replacement_binding(home, parent, commit)
         review_id = lineage.pop("review_card_id")
@@ -6345,6 +6581,8 @@ def _production_review_plan(parent, outcome_ts, candidate):
                 "candidate_tree": tree, "candidate_ref": ref, **lineage,
             },
         }
+        # Compare against an independent current read before accepting the
+        # shared per-plan snapshot.
         if gateway.read_card(parent).revision == snapshot.revision:
             return plan
     except (ImportError, OSError, ValueError, KeyError, TypeError, AttributeError):
@@ -6411,7 +6649,23 @@ def _eligible_provisional_reviews(capacity):
         return []
     reviews = _reviews_by_parent()
     selected = []
-    for parent, (outcome_ts, raw_verdict) in sorted(_load_outcomes().items()):
+    review_store = None
+    if globals().get("PRODUCTION_POLICY"):
+        try:
+            from skcoord.card_store import CardStore
+
+            # Candidate planning is read-only. Reuse CardStore's validated
+            # legacy-event snapshot across this bounded scan; each plan and
+            # each eventual write still performs a fresh independent read.
+            review_store = CardStore(Path(CARDS).parent)
+        except (ImportError, OSError, ValueError):
+            return []
+    provisional = (
+        (parent, outcome_ts, raw_verdict)
+        for parent, (outcome_ts, raw_verdict) in _load_outcomes().items()
+        if _PROVISIONAL_PASS_RE.match(str(raw_verdict or ""))
+    )
+    for parent, outcome_ts, raw_verdict in sorted(provisional):
         if len(selected) >= budget:
             break
         parent_state = lifecycle_state(parent)
@@ -6420,8 +6674,7 @@ def _eligible_provisional_reviews(capacity):
         if parent_state == "claimed" and not globals().get("PRODUCTION_POLICY"):
             continue
         match = _PROVISIONAL_PASS_RE.match(str(raw_verdict or ""))
-        if not match:
-            continue
+        assert match is not None
         if any(lifecycle_state(cid) in {"open", "claimed"}
                for cid in reviews.get(parent, ())):
             continue
@@ -6458,7 +6711,9 @@ def _eligible_provisional_reviews(capacity):
             continue
         plan = None
         if globals().get("PRODUCTION_POLICY"):
-            plan = _production_review_plan(parent, str(outcome_ts or ""), generation[1:])
+            plan = _production_review_plan(
+                parent, str(outcome_ts or ""), generation[1:], store=review_store
+            )
             if not plan:
                 continue
             review_id = plan["review_id"]

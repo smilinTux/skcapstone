@@ -1,0 +1,1 @@
+- Allow governed retirement of source reconstruction failures with no workspace, recording verified absence and refusing leftover staging directories.

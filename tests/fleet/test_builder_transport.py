@@ -96,6 +96,20 @@ def test_exact_native_transport_failure_has_only_hashed_public_metadata(transcri
     assert "message" not in result and "errorMessage" not in result
 
 
+@pytest.mark.parametrize("status", [413, 503, "413", 413.0])
+def test_audited_pi_gateway_metadata_keeps_native413_proof_strict(transcript, status):
+    a = transcript
+    message = a.events[-1]["message"]
+    error = json.loads(message["errorMessage"][5:])
+    message["gatewayError"] = {"http_status": status, **error}
+    message["errorMessage"] = "Fleet gateway request ended. See session transport evidence."
+    if type(status) is int and status == 413:
+        assert transport.proof(a.paths, a.request, a.status, a.write())["actual_bytes"] == 2000010
+    else:
+        with pytest.raises(ValueError, match="gateway413"):
+            transport.proof(a.paths, a.request, a.status, a.write())
+
+
 @pytest.mark.parametrize(
     "change",
     [

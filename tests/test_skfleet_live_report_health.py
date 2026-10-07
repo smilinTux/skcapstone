@@ -30,7 +30,8 @@ def _load_health(live: Path):
         "LIVE": str(live),
         "LIVE_FRESH": 1_800,
         "LIVE_TIMER_CYCLE": 360,
-        "ROTATION_HOSTS": HOSTS,
+        "FLEET_WORKER_HOSTS": HOSTS,
+        "ROTATION_HOSTS": ("chiap08",),
     }
     exec(compile(ast.Module(body=[function], type_ignores=[]), str(SCRIPT), "exec"), namespace)
     return namespace["live_report_health"]

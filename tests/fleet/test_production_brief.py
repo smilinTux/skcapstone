@@ -223,9 +223,16 @@ def test_identity_cannot_inject_completion_commands(field, value):
 
 def test_small_fixed_prompt_preserves_card_authorization_and_criteria(source):
     text = prompt(source)
+    normalized = " ".join(text.split())
     assert len(text) < 8000
     assert "Local commit authorized; no push." in text
     assert "1. Actual required fixture checks pass" in text
+    assert "smallest tests required by the card's TDD" in normalized
+    assert (
+        "Do not run the full repository suite unless the TDD explicitly requires it" in normalized
+    )
+    assert "Run each test command once" in normalized
+    assert "without repeating it unchanged" in normalized
     assert "git push" not in text and "coord complete" not in text
     assert "Record a typed verdict, not only a verdict link" in text
     assert "no new commit is required or authorized" in text

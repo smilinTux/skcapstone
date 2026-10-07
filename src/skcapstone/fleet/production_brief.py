@@ -141,6 +141,10 @@ echo the hash. Stop immediately on inconsistent tool output. After the second
 auto-compaction write .handoff.md, finish the current step and stop for a fresh
 session. Use bounded card/TDD-referenced reads and rg; never scan/hash the estate.
 {mail_instructions}
+Run only the smallest tests required by the card's TDD. Do not run the full
+repository suite unless the TDD explicitly requires it. Run each test command
+once; if it times out or has no terminal result, preserve its output and report
+the exact command without repeating it unchanged.
 Implement only the criteria and run their required tests. Report actual commands,
 results, limitations and rollback needs; never invent CI, tests or approval.
 Write docs/evidence/agents/{card_id}/COMPLETION-EVIDENCE.md and include it in the

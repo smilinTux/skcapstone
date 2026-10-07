@@ -87,7 +87,7 @@ def review_candidate(source, monkeypatch):  # noqa: F811
     return source
 
 
-def candidate_allowed(value, process=None):
+def candidate_allowed(value, process=None, store=None):
     """Exercise the exact native eligibility helper used by the fleet opener."""
     from skcapstone.fleet.production_custody import reviewable_source_candidate
 
@@ -107,6 +107,7 @@ def candidate_allowed(value, process=None):
         ),
         policy=value["policy"],
         process_check=process or (lambda card: {"sessions": [], "units": []}),
+        store=store,
     )
 
 
@@ -154,6 +155,34 @@ def test_exact_production_candidate_retains_claim_and_enters_existing_opener(
     harness.states["1234abcd"] = "claimed"
     assert harness.ns["_eligible_provisional_reviews"](1) == []
     assert value["store"]._read_events(value["card"]) == before
+
+
+@pytest.mark.parametrize("source", ["https"], indirect=True)
+@pytest.mark.host_systemd
+def test_review_custody_reuses_one_snapshot_and_rechecks_fresh_state(
+    review_candidate, monkeypatch
+):
+    import skcoord.card_store as card_store_module
+
+    value = review_candidate
+    original = card_store_module.load_legacy_mutations
+    legacy_reads = 0
+
+    def counted(home):
+        nonlocal legacy_reads
+        legacy_reads += 1
+        return original(home)
+
+    monkeypatch.setattr(card_store_module, "load_legacy_mutations", counted)
+    assert candidate_allowed(value)
+    # The fold, custody, and gateway reads share one overlay snapshot. The
+    # final comparison still uses a fresh store for concurrency safety.
+    assert 0 < legacy_reads <= 3
+
+    stale_store = CardStore(value["home"])
+    assert candidate_allowed(value, store=stale_store)
+    value["store"].append_event(value["card"], "add_label", "operator", label="new-event")
+    assert not candidate_allowed(value, store=stale_store)
 
 
 @pytest.mark.parametrize("source", ["https"], indirect=True)

@@ -177,6 +177,7 @@ where = ["src"]
 [tool.setuptools]
 script-files = [
     "scripts/fleet/pi-cardstore-guard.mjs",
+    "scripts/fleet/pi-gateway-retry.mjs",
     "scripts/fleet/link-lineage.py",
     "scripts/fleet/skfleet-link-producer.py",
     "scripts/fleet/skfleet-pi-model-catalog.py",

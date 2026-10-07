@@ -154,6 +154,25 @@ def preserve(workspace, target, *, apply):
     return {"inventory_sha256": digest, "archive_sha256": archive_sha}
 
 
+def preserve_absent_workspace(workspace, target, *, apply):
+    """Record that failed preclaim reconstruction left no workspace to archive."""
+    if workspace.exists() or workspace.is_symlink() or workspace.resolve() != workspace:
+        raise ValueError("preclaim workspace is no longer absent")
+    parent = workspace.parent
+    if parent.exists():
+        info = parent.stat()
+        if parent.resolve() != parent or not parent.is_dir() or info.st_uid != os.getuid():
+            raise ValueError("preclaim workspace parent is unsafe")
+        if next(parent.glob(f".{workspace.name}.*"), None) is not None:
+            raise ValueError("source reconstruction staging remains")
+    inventory = {"workspace": "absent"}
+    digest = sha(encoded(inventory))
+    if apply:
+        private_directory(target)
+        source_bundle._once(target / "inventory.json", encoded(inventory))
+    return {"inventory_sha256": digest, "archive_sha256": None, "workspace_absent": True}
+
+
 def prove_dead(status):
     """Require exact process death, distinguishing denied and absent PIDs."""
     if status.get("production") is not None:
@@ -382,23 +401,30 @@ assert not git('status','--porcelain','--untracked-files=all')
 assert not git('ls-files','--others','--ignored','--exclude-standard')
 print(json.dumps({'head':base,'tree':git('rev-parse','HEAD^{tree}').decode().strip()}))
 """
-        source = source_bundle._inspect(
-            workspace,
-            inspection,
-            card,
-            request["base_revision"],
-            "unused",
-            "unused",
-            request["repository"] if preclaim else "unused",
-        )
-        if preclaim and source.get("head") != request["base_revision"]:
-            raise ValueError("preclaim source is not the exact clean base")
-        proof = preserve(workspace, target, apply=payload["apply"])
+        workspace_absent = preclaim and not workspace.exists() and not workspace.is_symlink()
+        if workspace_absent:
+            source = {"workspace": "absent"}
+            proof = preserve_absent_workspace(workspace, target, apply=payload["apply"])
+        else:
+            source = source_bundle._inspect(
+                workspace,
+                inspection,
+                card,
+                request["base_revision"],
+                "unused",
+                "unused",
+                request["repository"] if preclaim else "unused",
+            )
+            if preclaim and source.get("head") != request["base_revision"]:
+                raise ValueError("preclaim source is not the exact clean base")
+            proof = preserve(workspace, target, apply=payload["apply"])
         proof["source"] = source
         if preclaim:
             check_card(home, card, request, payload["card_sha256"])
             if prove_preclaim(home, request) != absence:
                 raise ValueError("preclaim absence proof changed")
+            if workspace_absent:
+                preserve_absent_workspace(workspace, target, apply=False)
             proof.update(preclaim=True, **absence)
         else:
             builder_terminal.prove(home, status)
@@ -510,7 +536,11 @@ def retire(
             or proof.get("request_sha256") != request_sha256
             or proof.get("status_sha256") != status_sha256
             or not re.fullmatch(r"[0-9a-f]{64}", str(proof.get("inventory_sha256", "")))
-            or (apply and not re.fullmatch(r"[0-9a-f]{64}", str(proof.get("archive_sha256", ""))))
+            or (
+                apply
+                and proof.get("workspace_absent") is not True
+                and not re.fullmatch(r"[0-9a-f]{64}", str(proof.get("archive_sha256", "")))
+            )
             or (
                 preclaim
                 and any(

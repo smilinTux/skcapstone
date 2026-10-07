@@ -1,0 +1,233 @@
+"""The worker's existing Pi extension must own transient gateway recovery."""
+
+import json
+import subprocess
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_existing_worker_guard_registers_a_gateway_transport_hook():
+    guard = ROOT / "scripts/fleet/pi-cardstore-guard.mjs"
+    program = f"""
+import assert from 'node:assert/strict';
+import guard from {json.dumps(guard.as_uri())};
+const hooks = new Map();
+guard({{on(name, hook) {{ hooks.set(name, hook); }}}});
+assert.equal(typeof hooks.get('session_start'), 'function');
+assert.equal(typeof hooks.get('tool_call'), 'function');
+"""
+    subprocess.run(
+        ["node", "--input-type=module", "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+
+def node_check(body):
+    """Run deterministic transport contracts without Pi, credentials or real hosts."""
+    helper = ROOT / "scripts/fleet/pi-gateway-retry.mjs"
+    prefix = f"""
+import assert from 'node:assert/strict';
+import {{ gatewayTransport, wrapGatewayProvider }} from {json.dumps(helper.as_uri())};
+const refused = (status, type='bucket_no_eligible_member') => new Response(
+  JSON.stringify({{error:{{type,message:'synthetic response text'}}}}), {{status}});
+"""
+    subprocess.run(
+        ["node", "--input-type=module", "-e", prefix + body],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+
+@pytest.mark.parametrize("status", [503, 504])
+def test_transient_request_recovers_with_same_body_and_audited_backoff(status):
+    node_check(f"""
+let clock = 0;
+const records=[], waits=[], requests=[];
+const original = {{body:'synthetic request',headers:{{authorization:'synthetic fixture'}}}};
+const t = gatewayTransport(async (url, options) => {{
+  requests.push({{url,body:options.body,headers:options.headers}});
+  return requests.length < 3 ? refused({status}) : new Response('ok');
+}}, e=>records.push(e), {{now:()=>clock,wait:async ms=>{{waits.push(ms);clock+=ms;}}}});
+const response = await t.fetch('http://fixture.invalid/completion',original);
+assert.equal(response.status,200);
+assert.equal(requests.length,3);
+assert.deepEqual(waits,[10000,20000]);
+assert(requests.every(r=>r.body===original.body && r.headers===original.headers));
+assert.deepEqual(records.map(r=>r.event),['retry','retry','result']);
+assert.equal(records[0].http_status,{status});
+assert(!JSON.stringify(records).includes('synthetic request'));
+assert(!JSON.stringify(records).includes('authorization'));
+""")
+
+
+def test_four_attempts_maximum_then_terminal_with_full_retry_evidence():
+    node_check("""
+let clock=0,calls=0;const records=[],waits=[];
+const t=gatewayTransport(async()=>{calls++;return refused(503);},e=>records.push(e),
+  {now:()=>clock,wait:async ms=>{waits.push(ms);clock+=ms;}});
+assert.equal((await t.fetch('http://fixture.invalid')).status,503);
+assert.equal(calls,4);assert.deepEqual(waits,[10000,20000,30000]);
+assert.deepEqual(records.map(r=>r.attempt),[1,2,3,4]);
+assert.equal(t.state.terminal.retryable,false);
+""")
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 408, 413, 429])
+def test_every_client_error_is_terminal_without_wait(status):
+    node_check(f"""
+let calls=0;const records=[];
+const t=gatewayTransport(async()=>{{calls++;return refused({status});}},e=>records.push(e),
+  {{wait:()=>assert.fail('4xx backoff')}});
+assert.equal((await t.fetch('http://fixture.invalid')).status,{status});
+assert.equal(calls,1);assert.equal(records[0].event,'result');
+assert.equal(t.state.terminal.http_status,{status});
+""")
+
+
+@pytest.mark.parametrize(
+    "payload", ["not json", '{"error":{"type":"other_failure"}}', "x" * 70000]
+)
+def test_unrelated_or_malformed_503_does_not_retry(payload):
+    node_check(f"""
+let calls=0;const t=gatewayTransport(async()=>{{
+ calls++;return new Response({json.dumps(payload)},{{status:503}});}},
+ ()=>{{}},{{wait:()=>assert.fail('unqualified503 retry')}});
+assert.equal((await t.fetch('http://fixture.invalid')).status,503);assert.equal(calls,1);
+""")
+
+
+def test_budget_prevents_another_attempt_after_slow_gateway_requests():
+    node_check("""
+let clock=0,calls=0;const records=[];
+const t=gatewayTransport(async()=>{calls++;clock+=180000;return refused(504);},e=>records.push(e),
+ {now:()=>clock,wait:async ms=>{clock+=ms;}});
+await t.fetch('http://fixture.invalid');
+assert.equal(calls,2);assert.equal(records.at(-1).event,'result');
+assert.equal(t.state.terminal.retryable,false);
+""")
+
+
+def test_retry_budget_reserves_a_final_attempt_inside_pi_deadline():
+    node_check("""
+let clock=0,calls=0;const records=[],waits=[];
+const durations=[180000,30000,60000,1000];
+const t=gatewayTransport(async()=>{
+  const duration=durations[calls++];clock+=duration;
+  return calls<4?refused(calls===1?504:503):new Response('ok');
+},e=>records.push(e),{now:()=>clock,wait:async ms=>{waits.push(ms);clock+=ms;}});
+const response=await t.fetch('http://fixture.invalid');
+assert.equal(response.status,200);
+assert.equal(calls,4);
+assert.deepEqual(waits,[10000,20000,0]);
+assert.deepEqual(records.map(r=>r.http_status),[504,503,503,200]);
+assert.deepEqual(records.map(r=>r.event),['retry','retry','retry','result']);
+""")
+
+
+def test_abort_during_backoff_preserves_cancellation_and_makes_no_second_call():
+    node_check("""
+const abort=new AbortController();let calls=0;const records=[];
+const t=gatewayTransport(async()=>{calls++;return refused(503);},e=>records.push(e),
+ {wait:async()=>{abort.abort();throw new DOMException('cancelled','AbortError');}});
+await assert.rejects(t.fetch('http://fixture.invalid',{signal:abort.signal}),{name:'AbortError'});
+assert.equal(calls,1);assert.equal(records.at(-1).reason,'cancelled');
+""")
+
+
+def test_terminal_client_error_does_not_enter_pi_outer_retry_round():
+    node_check("""
+let got;const records=[];const provider={id:'skgateway',auth:{apiKey:'fixture'},
+ getModels:()=>['unchanged'],streamSimple(model,context,options){
+  got=options;
+  const result=(async()=>{await options.fetch('http://fixture.invalid');return {
+   stopReason:'error',errorMessage:'429: rate limit',content:[]};})();
+  return {result:()=>result,async *[Symbol.asyncIterator]() {
+    yield {type:'error',error:await result};}};
+ }};
+const wrapped=wrapGatewayProvider(provider,e=>records.push(e));
+assert.equal(wrapped.auth,provider.auth);assert.equal(wrapped.getModels,provider.getModels);
+const stream=wrapped.streamSimple({provider:'skgateway',id:'sk-glm-m'},{},
+ {fetch:async()=>refused(429),maxRetries:99});
+const events=[];for await(const e of stream)events.push(e);
+const result=await stream.result();
+assert.equal(got.maxRetries,0);assert.equal(result.gatewayError.http_status,429);
+assert(!/429|rate.?limit|503|504/.test(result.errorMessage));
+assert.equal(events[0].error,result);assert.equal(records[0].provider,'skgateway');
+""")
+
+
+def test_partial_stream_failure_is_not_replayed():
+    node_check("""
+const message={stopReason:'error',errorMessage:'504: server error',content:['partial']};
+const provider={id:'skgateway',streamSimple(){return {
+ async *[Symbol.asyncIterator](){yield {type:'text_delta',delta:'partial'};
+   yield {type:'error',error:message};},
+ result:async()=>message};}};
+const stream=wrapGatewayProvider(provider,()=>{}).streamSimple(
+ {provider:'skgateway',id:'sk-glm-m'},{});
+for await(const event of stream){}
+assert.equal((await stream.result()).gatewayError.reason,'partial_stream');
+assert(!message.errorMessage.includes('504'));
+""")
+
+
+def test_hook_preserves_native_provider_metadata_and_ships_beside_guard():
+    import tomllib
+
+    package = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    assert "scripts/fleet/pi-gateway-retry.mjs" in package["tool"]["setuptools"]["script-files"]
+    helper = ROOT / "scripts/fleet/pi-gateway-retry.mjs"
+    program = f"""
+import assert from 'node:assert/strict';
+import gatewayRetry from {json.dumps(helper.as_uri())};
+let start,registered,configured;
+const original={{id:'skgateway',auth:{{apiKey:'synthetic'}},baseUrl:'http://fixture.invalid',
+ getModels:()=>['original'],streamSimple:()=>{{}}}};
+ gatewayRetry({{on(name,fn){{assert.equal(name,'session_start');start=fn;}},
+ registerProvider(p){{registered=p;}},appendEntry(){{}}}},
+ {{configureIdleTimeout:async()=>{{configured=390000;}}}});
+await start({{}},{{modelRegistry:{{getProvider(name){{
+ assert.equal(name,'skgateway');return original;}}}}}});
+assert.equal(registered.auth,original.auth);
+assert.equal(registered.baseUrl,original.baseUrl);
+assert.equal(registered.getModels,original.getModels);
+assert.notEqual(registered.streamSimple,original.streamSimple);
+assert.equal(configured,390000);
+"""
+    subprocess.run(
+        ["node", "--input-type=module", "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+
+def test_pi_idle_timeout_configures_running_entrypoint_dispatcher():
+    helper = ROOT / "scripts/fleet/pi-gateway-retry.mjs"
+    program = f"""
+import assert from 'node:assert/strict';
+import {{ configurePiHttpIdleTimeout }} from {json.dumps(helper.as_uri())};
+let imported,configured;
+await configurePiHttpIdleTimeout({{entrypoint:process.execPath,importer:async specifier=>{{
+ imported=specifier;return {{configureHttpDispatcher:ms=>{{configured=ms;}}}};
+}}}});
+assert(imported.startsWith('file:'));
+assert(imported.endsWith('/core/http-dispatcher.js'));
+assert.equal(configured,390000);
+"""
+    subprocess.run(
+        ["node", "--input-type=module", "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )

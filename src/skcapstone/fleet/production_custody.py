@@ -14,7 +14,15 @@ from .source_bundle import MAX_EVIDENCE, _binding, _read
 
 
 def reviewable_source_candidate(
-    home: Path, card_id: str, outcome_ts: str, candidate: tuple, *, policy: dict, process_check
+    home: Path,
+    card_id: str,
+    outcome_ts: str,
+    candidate: tuple,
+    *,
+    policy: dict,
+    process_check,
+    store=None,
+    verify_fresh=True,
 ) -> bool:
     """Admit only an exact stopped production handoff, without releasing custody."""
     from ..seraph_review_cardstore import LiveCardStoreGateway
@@ -28,7 +36,7 @@ def reviewable_source_candidate(
 
     try:
         producer, path, evidence_sha, head, tree, ref = candidate
-        store = CardStore(home)
+        store = store or CardStore(home)
         card = store.fold(card_id)
         if (
             not policy
@@ -42,11 +50,12 @@ def reviewable_source_candidate(
                 producer,
                 card.meta.get("_claim_revision"),
                 fleet_paths=FleetPaths(home / "fleet"),
+                store=store,
             )
         ):
             return False
         gateway = LiveCardStoreGateway(home)
-        snapshot = gateway.read_card(card_id)
+        snapshot = gateway.read_card(card_id, _store=store)
         outcome = _current_outcome(store, card)
         expected = {
             "action": "verdict",
@@ -100,6 +109,10 @@ def reviewable_source_candidate(
         if process.get("sessions") != [] or process.get("units") != []:
             return False
         unit_terminal(terminal["unit"], terminal["invocation"], host=terminal["host"])
+        if not verify_fresh:
+            return True
+        # Re-read with a new store so the check notices events appended while
+        # the shared inspection snapshot was in use.
         return gateway.read_card(card_id).revision == snapshot.revision
     except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
         return False
@@ -127,7 +140,13 @@ def source_binding(card) -> dict:
 
 
 def retains_source_custody(
-    home: Path, card_id: str, owner: str, claim: str, *, fleet_paths: FleetPaths
+    home: Path,
+    card_id: str,
+    owner: str,
+    claim: str,
+    *,
+    fleet_paths: FleetPaths,
+    store=None,
 ) -> bool:
     """Require current native ownership plus a real production launch generation.
 
@@ -138,7 +157,7 @@ def retains_source_custody(
     if not re.fullmatch(r"[0-9a-f]{8}", card_id):
         return False
     try:
-        store = CardStore(home)
+        store = store or CardStore(home)
         card = store.fold(card_id)
         if (
             card is None

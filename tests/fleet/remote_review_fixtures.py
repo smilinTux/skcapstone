@@ -103,7 +103,14 @@ def execution(source, remote_policy, monkeypatch):
     policy_path.write_text(json.dumps(remote_policy))
     monkeypatch.setenv("SKFLEET_PRODUCTION_POLICY", str(policy_path))
     monkeypatch.setenv("SKFLEET_AUTHORITY_HOST", "chiap08")
-    monkeypatch.setenv("SKFLEET_PI", "/test/pi")
+    runtime_dir = home / "test-runtime"
+    runtime_dir.mkdir()
+    pi = runtime_dir / "pi"
+    pi.write_text("#!/bin/sh\nexit 0\n")
+    wrapper = runtime_dir / "skfleet-worker-wrapper.py"
+    wrapper.write_text("# synthetic review wrapper\n")
+    monkeypatch.setenv("SKFLEET_PI", str(pi))
+    monkeypatch.setattr(production, "review_wrapper_path", lambda: str(wrapper))
     monkeypatch.setattr(review, "_activation", lambda *args: "a" * 64)
     monkeypatch.setattr(review, "process_snapshot", lambda card: dict(sessions=[], units=[]))
     monkeypatch.setattr(builder, "_guard_path", lambda: "/test/guard")

@@ -67,7 +67,43 @@ def test_unset_configuration_reproduces_the_original_tuple_exactly() -> None:
     assert resolve({"SKFLEET_ROTATION_HOSTS": ""}, None) == FROZEN_DEFAULT
     assert resolve({}, ()) == FROZEN_DEFAULT
     source = ROTATE.read_text(encoding="utf-8")
-    assert "ROTATION_HOSTS=_resolve_rotation_hosts(declared=_estate_rotation_hosts())" in source
+    assert (
+        "FLEET_WORKER_HOSTS=_resolve_rotation_hosts(declared=_estate_rotation_hosts())" in source
+    )
+
+
+def test_production_keeps_authority_and_worker_rosters_separate() -> None:
+    """One publisher authority must retain visibility of the full worker fleet."""
+    tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
+    fleet_assignments = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "FLEET_WORKER_HOSTS"
+            for target in node.targets
+        )
+    ]
+    assert len(fleet_assignments) == 1
+    value = fleet_assignments[0].value
+    assert isinstance(value, ast.Call)
+    assert isinstance(value.func, ast.Name)
+    assert value.func.id == "_resolve_rotation_hosts"
+    assert "ROTATION_HOSTS=(AUTHORITY_HOST,)" in ROTATE.read_text(encoding="utf-8")
+
+
+def test_production_host_pin_accepts_a_remote_worker_host() -> None:
+    """Authority-only rotation must not erase valid estate worker placement."""
+    host_pin = _load_functions("host_pin")["host_pin"]
+    host_pin.__globals__.update(
+        {
+            "KNOWN_HOSTS": FROZEN_DEFAULT,
+            "FLEET_WORKER_HOSTS": FROZEN_DEFAULT,
+            "ROTATION_HOSTS": ("chiap08",),
+            "json": __import__("json"),
+        }
+    )
+    assert host_pin({"title": "work"}, ["host-pin:chiap04"]) == "chiap04"
 
 
 def test_default_partitioning_is_unchanged_for_known_card_ids() -> None:

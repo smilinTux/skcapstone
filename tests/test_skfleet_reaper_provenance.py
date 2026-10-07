@@ -80,6 +80,7 @@ def _load_functions(*names: str) -> dict[str, object]:
         "json": json,
         "os": os,
         "re": re,
+        "FLEET_WORKER_HOSTS": ("chiap01", "chiap02", "chiap03", "chiap04", "chiap08"),
         "ROTATION_HOSTS": ("chiap01", "chiap02", "chiap03", "chiap04", "chiap08"),
         "DISPATCH_AGENT": "niobe",
     }
@@ -505,10 +506,23 @@ def test_worker_owner_parser_rejects_broad_or_mismatched_names(owner: str) -> No
     parser.__globals__.update(
         {
             "ROTATION_HOSTS": ("chiap01", "chiap02"),
+            "FLEET_WORKER_HOSTS": ("chiap01", "chiap02"),
             "_SEAT_RE": re.compile(r"^[a-z][a-z0-9-]{0,31}$"),
         }
     )
     assert parser(owner, "deadbeef", "link") is None
+
+
+def test_worker_owner_parser_recognizes_remote_host_with_single_authority() -> None:
+    parser = _load_functions("_parse_worker_owner")["_parse_worker_owner"]
+    parser.__globals__.update(
+        {
+            "ROTATION_HOSTS": ("chiap08",),
+            "FLEET_WORKER_HOSTS": ("chiap01", "chiap02", "chiap03", "chiap04", "chiap08"),
+            "_SEAT_RE": re.compile(r"^[a-z][a-z0-9-]{0,31}$"),
+        }
+    )
+    assert parser("pi-glm-chiap02-deadbeef", "deadbeef") == ("lane", "glm", "chiap02")
 
 
 def test_launch_provenance_resolves_seat_for_each_card(tmp_path: Path) -> None:
@@ -529,6 +543,8 @@ def test_launch_provenance_resolves_seat_for_each_card(tmp_path: Path) -> None:
     other = tmp_path / "cards" / "feedface"
     other.mkdir()
     (other / "core.json").write_text('{"initial_labels": []}\n', encoding="utf-8")
+    namespace["ROTATION_HOSTS"] = ("chiap08",)
+    namespace["FLEET_WORKER_HOSTS"] = ("chiap01", "chiap02", "chiap03", "chiap04", "chiap08")
 
     assert namespace["_fleet_launch_provenance"](
         "deadbeef", "pi-link-chiap02-deadbeef", "link-revision"
@@ -637,6 +653,7 @@ def test_invalid_live_report_timestamp_cannot_bypass_claim_grace(
             "LIVE_FRESH": 1800,
             "LIVE_TIMER_CYCLE": 360,
             "ROTATION_HOSTS": ("chiap01", "chiap02", "chiap03"),
+            "FLEET_WORKER_HOSTS": ("chiap01", "chiap02", "chiap03"),
             "time": time,
         }
     )
@@ -668,6 +685,7 @@ def test_live_report_health_names_missing_and_stale_reporters(tmp_path: Path) ->
             "LIVE_FRESH": 1800,
             "LIVE_TIMER_CYCLE": 360,
             "ROTATION_HOSTS": ("chiap01", "chiap02"),
+            "FLEET_WORKER_HOSTS": ("chiap01", "chiap02"),
             "time": time,
         }
     )

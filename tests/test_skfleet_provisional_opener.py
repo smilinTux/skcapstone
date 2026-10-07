@@ -364,6 +364,21 @@ def test_dry_run_bounds_batch_by_free_slots_and_eligible_sources(tmp_path: Path)
     assert sum("WOULD_OPEN_REVIEW" in row for row in board.logs) == 2
 
 
+def test_non_provisional_outcomes_skip_lifecycle_folding(tmp_path: Path) -> None:
+    board = OpenerHarness(tmp_path)
+    board.outcomes.update(
+        {
+            "a0000001": ("2026-09-01T12:00:00Z", "PASS"),
+            "a0000002": ("2026-09-01T12:00:00Z", "FAIL"),
+        }
+    )
+    lifecycle_calls: list[str] = []
+    board.ns["lifecycle_state"] = lambda card_id: lifecycle_calls.append(card_id) or "open"
+
+    assert board.ns["_eligible_provisional_reviews"](1) == []
+    assert lifecycle_calls == []
+
+
 def test_mixed_eligibility_excludes_existing_nonterminal_review(tmp_path: Path) -> None:
     board = OpenerHarness(tmp_path)
     board.outcome("a0000001")
