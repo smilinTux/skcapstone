@@ -6411,7 +6411,12 @@ def _eligible_provisional_reviews(capacity):
         return []
     reviews = _reviews_by_parent()
     selected = []
-    for parent, (outcome_ts, raw_verdict) in sorted(_load_outcomes().items()):
+    provisional = (
+        (parent, outcome_ts, raw_verdict)
+        for parent, (outcome_ts, raw_verdict) in _load_outcomes().items()
+        if _PROVISIONAL_PASS_RE.match(str(raw_verdict or ""))
+    )
+    for parent, outcome_ts, raw_verdict in sorted(provisional):
         if len(selected) >= budget:
             break
         parent_state = lifecycle_state(parent)
@@ -6420,8 +6425,7 @@ def _eligible_provisional_reviews(capacity):
         if parent_state == "claimed" and not globals().get("PRODUCTION_POLICY"):
             continue
         match = _PROVISIONAL_PASS_RE.match(str(raw_verdict or ""))
-        if not match:
-            continue
+        assert match is not None
         if any(lifecycle_state(cid) in {"open", "claimed"}
                for cid in reviews.get(parent, ())):
             continue
