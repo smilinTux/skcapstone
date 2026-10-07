@@ -6542,7 +6542,7 @@ def _provisional_candidate(parent, outcome_ts, token):
     return producer, verified[0][0], verified[0][1], commit, tree, ref
 
 
-def _production_review_plan(parent, outcome_ts, candidate):
+def _production_review_plan(parent, outcome_ts, candidate, store=None):
     """Bind the qualified native review identity to exact retained source custody."""
     try:
         from skcoord.card_store import CardStore
@@ -6552,14 +6552,17 @@ def _production_review_plan(parent, outcome_ts, candidate):
         from skcapstone.seraph_review_cardstore import LiveCardStoreGateway
 
         home = Path(CARDS).parent
+        store = store or CardStore(home)
         gateway = LiveCardStoreGateway(home)
-        snapshot = gateway.read_card(parent)
+        snapshot = gateway.read_card(parent, _store=store)
         if (HOST != PRODUCTION_POLICY["authority_host"] or
                 not reviewable_source_candidate(
                     home, parent, outcome_ts, candidate,
-                    policy=PRODUCTION_POLICY, process_check=_card_process_snapshot)):
+                    policy=PRODUCTION_POLICY,
+                    process_check=_card_process_snapshot,
+                    store=store)):
             return None
-        source = CardStore(home).fold(parent)
+        source = store.fold(parent)
         producer, path, digest, commit, tree, ref = candidate
         lineage = replacement_binding(home, parent, commit)
         review_id = lineage.pop("review_card_id")
@@ -6577,6 +6580,8 @@ def _production_review_plan(parent, outcome_ts, candidate):
                 "candidate_tree": tree, "candidate_ref": ref, **lineage,
             },
         }
+        # Compare against an independent current read before accepting the
+        # shared per-plan snapshot.
         if gateway.read_card(parent).revision == snapshot.revision:
             return plan
     except (ImportError, OSError, ValueError, KeyError, TypeError, AttributeError):
@@ -6643,6 +6648,17 @@ def _eligible_provisional_reviews(capacity):
         return []
     reviews = _reviews_by_parent()
     selected = []
+    review_store = None
+    if globals().get("PRODUCTION_POLICY"):
+        try:
+            from skcoord.card_store import CardStore
+
+            # Candidate planning is read-only. Reuse CardStore's validated
+            # legacy-event snapshot across this bounded scan; each plan and
+            # each eventual write still performs a fresh independent read.
+            review_store = CardStore(Path(CARDS).parent)
+        except (ImportError, OSError, ValueError):
+            return []
     provisional = (
         (parent, outcome_ts, raw_verdict)
         for parent, (outcome_ts, raw_verdict) in _load_outcomes().items()
@@ -6694,7 +6710,9 @@ def _eligible_provisional_reviews(capacity):
             continue
         plan = None
         if globals().get("PRODUCTION_POLICY"):
-            plan = _production_review_plan(parent, str(outcome_ts or ""), generation[1:])
+            plan = _production_review_plan(
+                parent, str(outcome_ts or ""), generation[1:], store=review_store
+            )
             if not plan:
                 continue
             review_id = plan["review_id"]
