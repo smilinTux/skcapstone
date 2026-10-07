@@ -43,6 +43,71 @@ def partition_remote_reviews(owned, rollout):
     return remote, [row for row in owned if row[2] not in remote_ids]
 
 
+def _revision_drift_is_supplemental(home, review, source, pinned_revision, current_revision):
+    """Allow only an unstarted review to absorb a later native readback link."""
+    if pinned_revision == current_revision:
+        return True
+    if review.status.value != "review" or review.owner or review.meta.get("claim_conflicts"):
+        return False
+
+    cards = CardStore(home)
+    review_events = cards._read_events(review.id)
+    candidate_digest = _binding(review.model_dump(mode="json"), "candidate_evidence_sha256")
+    recommendations = [
+        event
+        for event in review_events
+        if event.get("action") == "review_assignment_recommendation"
+        and event.get("recommendation_id") == "link-review-" + review.id
+        and event.get("evidence_sha256") == candidate_digest
+    ]
+    if len(recommendations) != 1:
+        return False
+    opened_at = recommendations[0].get("ts")
+    if not isinstance(opened_at, str):
+        return False
+    try:
+        opened = datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if opened.tzinfo is None:
+        return False
+
+    started_actions = {"claim", "remote_review_offer", "review_assignment_launch", "verdict"}
+    if any(event.get("action") in started_actions for event in review_events):
+        return False
+
+    source_events = cards._read_events(source.id) + cards._legacy_events(source.id)
+    unique_events = {}
+    for event in source_events:
+        event_id = event.get("event_id")
+        if not isinstance(event_id, str) or not event_id:
+            return False
+        prior = unique_events.get(event_id)
+        if prior is not None and any(
+            prior.get(key) != event.get(key)
+            for key in ("action", "link_key", "link_value", "ts", "writer")
+        ):
+            return False
+        unique_events[event_id] = event
+    later = []
+    for event in unique_events.values():
+        stamp = event.get("ts")
+        if not isinstance(stamp, str):
+            return False
+        try:
+            occurred = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if occurred.tzinfo is None:
+            return False
+        if occurred > opened:
+            later.append(event)
+    return bool(later) and all(
+        event.get("action") == "link" and event.get("link_key") == "native_glm_readback"
+        for event in later
+    )
+
+
 def validate_contract(request, policy, *, host, historical=False):
     """Reject ambiguous role, placement, generation or independence bindings."""
     validate_execution_policy(policy)
@@ -119,7 +184,9 @@ def _source(home, card):
         or manifest["owner"] != source.owner
         or manifest["claim_revision"] != source.meta.get("_claim_revision")
         or _binding(core, "producer_identity") != source.owner
-        or _binding(core, "source_revision") != revision
+        or not _revision_drift_is_supplemental(
+            home, card, source, _binding(core, "source_revision"), revision
+        )
         or {"hold", "do-not-claim"}.intersection(source.labels)
     ):
         raise ValueError("review source generation changed")
