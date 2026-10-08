@@ -304,6 +304,37 @@ def test_actual_review_capacity_gate_requires_an_independent_family():
     assert unknown["reason"] == "source-provider-evidence-required"
 
 
+def test_actual_review_capacity_gate_passes_explicit_glm_distinct_agent_policy():
+    ns = helpers("evaluate_review_capacity", policy_value=policy())
+    glm = {
+        "logical_route": "sk-zai-m",
+        "model_or_bucket": "sk-zai-m",
+        "capacity_domain": "zai",
+        "provider": "zai",
+        "free": 3,
+    }
+    ns.update(
+        {
+            "_evaluate_review_capacity": lambda *args, **kwargs: {
+                "reason": "eligible",
+                "routes": [glm],
+                "available": 3,
+            },
+            "aggregate_review_capacity": aggregate_review_capacity,
+            "independent_review_routes": independent_review_routes,
+        }
+    )
+    result = ns["evaluate_review_capacity"](
+        {},
+        "M",
+        ["review", "glm-only", "review-distinct-agent"],
+        "jarvis",
+        "pi-seraph-chiap08-1234abcd",
+    )
+    assert result["reason"] == "eligible"
+    assert result["routes"] == [glm]
+
+
 def test_old_seat_pin_does_not_poison_other_production_seats(tmp_path):
     path = tmp_path / "seats.json"
     path.write_text(

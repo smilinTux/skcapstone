@@ -79,6 +79,45 @@ def test_two_healthy_families_never_admit_producer_family():
     )
 
 
+def test_explicit_glm_distinct_agent_policy_admits_glm_for_untyped_source():
+    routes = [route("sk-zai-m", "zai"), route("gpt-5.6-sol", "codex")]
+    assert independent_review_routes(
+        routes,
+        policy=policy(),
+        producer_identity="jarvis",
+        reviewer_identity="pi-seraph-chiap08-1234abcd",
+        labels=["review", "glm-only", "review-distinct-agent"],
+    ) == [routes[0]]
+
+
+def test_explicit_glm_distinct_agent_policy_rejects_same_principal():
+    routes = [route("sk-zai-m", "zai")]
+    assert (
+        independent_review_routes(
+            routes,
+            policy=policy(),
+            producer_identity="pi-glm-builder-chiap08-1234abcd",
+            reviewer_identity="pi-glm-builder-chiap08-1234abcd",
+            labels=["review", "glm-only", "review-distinct-agent"],
+        )
+        == []
+    )
+
+
+def test_explicit_glm_distinct_agent_policy_admits_known_glm_source():
+    routes = [route("sk-zai-m", "zai")]
+    assert (
+        independent_review_routes(
+            routes,
+            policy=policy(),
+            producer_identity="pi-glm-builder-chiap08-1234abcd",
+            reviewer_identity="pi-seraph-chiap08-1234abcd",
+            labels=["review", "glm-only", "review-distinct-agent"],
+        )
+        == routes
+    )
+
+
 def test_qwen_replica_change_is_not_provider_independence():
     routes = [
         route("qwen-model", "chiap01-qwen38"),

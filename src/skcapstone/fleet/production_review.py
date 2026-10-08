@@ -21,6 +21,7 @@ _ALIASES = {
     "chiap08-qwen38": "qwen",
 }
 _IDENTITY = re.compile(r"pi-(codex|glm|zai|deepseek|qwen|escalate)-[a-z0-9][a-z0-9._-]*\Z")
+_GLM_DISTINCT_REVIEW_LABELS = {"review", "glm-only", "review-distinct-agent"}
 
 
 def provider_family(provider: object) -> str | None:
@@ -71,20 +72,40 @@ def independent_review_routes(
     policy: Mapping[str, Any],
     producer_identity: str,
     producer_provider: str | None = None,
+    reviewer_identity: str | None = None,
+    labels: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
-    """Keep qualified gateway routes from different enabled provider families.
+    """Keep qualified routes from independent families or explicit GLM reviews.
 
     ``routes`` must already pass the current sealed gateway health, capability,
     capacity and card policy gates. This filter neither creates qualification
     nor changes source, claim, candidate or reviewer-principal authorization.
-    There is no automatic same-family fallback, even when all alternatives are
-    busy or unavailable. Independent model hosts within Qwen remain one family.
+    Same-family routing is allowed only for an explicitly GLM-only review whose
+    producer and reviewer principals differ. Independent model hosts within
+    Qwen remain one family.
     """
+    from ..seat_boundaries import canonical_principal
     from .production_dispatch import enabled_family_routes
 
-    source = producer_family(producer_identity, producer_provider)
+    normalized_labels = {str(label).strip().lower() for label in labels}
+    explicit_glm_review = _GLM_DISTINCT_REVIEW_LABELS <= normalized_labels
+    distinct_principals = reviewer_identity is not None and canonical_principal(
+        producer_identity
+    ) != canonical_principal(reviewer_identity)
+    allow_glm = explicit_glm_review and distinct_principals
+    try:
+        source = producer_family(producer_identity, producer_provider)
+    except ValueError:
+        if not allow_glm or producer_provider is not None:
+            raise
+        source = None
+
+    def is_independent(route: Mapping[str, Any]) -> bool:
+        family = provider_family(route["provider"])
+        if source is None:
+            return family == "zai"
+        return family != source or (allow_glm and source == "zai" and family == "zai")
+
     return [
-        route
-        for route in enabled_family_routes(routes, policy=policy)
-        if provider_family(route["provider"]) != source
+        route for route in enabled_family_routes(routes, policy=policy) if is_independent(route)
     ]

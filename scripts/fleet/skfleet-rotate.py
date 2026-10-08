@@ -131,7 +131,8 @@ def evaluate_review_capacity(snapshot, required_size, labels, producer, reviewer
         return result
     try:
         routes=independent_review_routes(
-            result["routes"],policy=PRODUCTION_POLICY,producer_identity=producer)
+            result["routes"],policy=PRODUCTION_POLICY,producer_identity=producer,
+            reviewer_identity=reviewer,labels=labels)
         reason="eligible" if routes else "independent-provider-unavailable"
     except ValueError:
         routes=[]
