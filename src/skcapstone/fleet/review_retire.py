@@ -6,6 +6,7 @@ import json
 import os
 import re
 import socket
+from datetime import datetime, timezone
 from pathlib import Path
 
 from skcoord.card_store import CardStore, card_mutation_lock
@@ -74,9 +75,44 @@ def retired_offers(home: Path, card: str, events: list[dict]) -> set[str]:
                 + card
                 + ".service"
             )
+            unclaimed = value.get("retirement_mode") == "expired-unclaimed"
+            offer_at = str(offers[0].get("ts") or "") if len(offers) == 1 else ""
+            claim_activity = [
+                row
+                for row in events
+                if row.get("action") in {"claim", "release_claim"}
+                and str(row.get("ts") or "") >= offer_at
+                and offer_at
+            ]
+            launches = [
+                row
+                for row in events
+                if row.get("action") == "review_assignment_launch"
+                and row.get("recommendation_id") == request_id
+            ]
+            try:
+                lease_expiry = datetime.fromisoformat(
+                    str(archived_request.get("lease_expires_at") or "").replace("Z", "+00:00")
+                )
+                retired_at = datetime.fromisoformat(
+                    str(proof_value.get("retired_at") or "").replace("Z", "+00:00")
+                )
+                expired_unclaimed = (
+                    lease_expiry.tzinfo is not None
+                    and retired_at.tzinfo is not None
+                    and lease_expiry <= retired_at
+                    and retired_at <= datetime.now(timezone.utc)
+                    and bool(offer_at)
+                    and not claim_activity
+                    and not launches
+                    and not releases
+                )
+            except ValueError:
+                expired_unclaimed = False
+            lifecycle_proven = expired_unclaimed if unclaimed else len(releases) == 1
             if (
                 len(offers) == 1
-                and len(releases) == 1
+                and lifecycle_proven
                 and event.get("writer") == event.get("actor")
                 and dispatch.valid_name(event.get("actor", ""))
                 and value.get("schema") == PRESTART_SCHEMA
@@ -85,6 +121,7 @@ def retired_offers(home: Path, card: str, events: list[dict]) -> set[str]:
                 and value.get("request_sha256") == event.get("request_sha256")
                 and value.get("previous_owner") == event.get("previous_owner")
                 and value.get("previous_claim_revision") == event.get("previous_claim_revision")
+                and value.get("retirement_mode") == event.get("retirement_mode")
                 and source_bundle._sha(archived) == event.get("request_sha256")
                 and production_builder.digest(archived_request)
                 == event.get("offer_request_sha256")
@@ -410,13 +447,13 @@ def retire_prestart(
     *,
     request_sha256: str,
     card_sha256: str,
-    previous_owner: str,
-    previous_claim_revision: str,
+    previous_owner: str | None,
+    previous_claim_revision: str | None,
     actor: str,
     reason: str,
     apply: bool = False,
 ) -> dict:
-    """Archive an exact stale offer only after its reviewer claim was released."""
+    """Archive an exact unused offer after claim release or lease expiry."""
     home = Path(home)
     policy = production_builder.policy()
     if not policy or policy["authority_host"] != socket.gethostname().split(".")[0].lower():
@@ -424,8 +461,14 @@ def retire_prestart(
     if (
         not dispatch.valid_name(node)
         or not CARD.fullmatch(card)
-        or not dispatch.valid_name(previous_owner)
-        or not re.fullmatch(r"[0-9a-f]{32}", previous_claim_revision)
+        or (previous_owner is None) != (previous_claim_revision is None)
+        or (
+            previous_owner is not None
+            and (
+                not dispatch.valid_name(previous_owner)
+                or not re.fullmatch(r"[0-9a-f]{32}", str(previous_claim_revision))
+            )
+        )
         or not re.fullmatch(r"[a-z][a-z0-9-]{0,95}", actor)
         or not 1 <= len(reason.strip()) <= 1024
         or not SHA.fullmatch(request_sha256)
@@ -446,6 +489,19 @@ def retire_prestart(
             raise ValueError("sealed request hash changed")
         request = json.loads(raw_request)
         request_id = request.get("request_id")
+        unclaimed = previous_owner is None
+        if unclaimed:
+            previous_owner = request.get("reviewer")
+            if not dispatch.valid_name(str(previous_owner or "")):
+                raise ValueError("exact sealed review request required")
+            try:
+                lease_expiry = datetime.fromisoformat(
+                    str(request.get("lease_expires_at") or "").replace("Z", "+00:00")
+                )
+            except ValueError as exc:
+                raise ValueError("expired offer lease is invalid") from exc
+            if lease_expiry.tzinfo is None or lease_expiry > datetime.now(timezone.utc):
+                raise ValueError("offer has not expired")
         if (
             request.get("schema") != "skfleet.builder-dispatch/v2"
             or request.get("work_kind") != "review"
@@ -457,6 +513,7 @@ def retire_prestart(
         ):
             raise ValueError("exact sealed review request required")
         events = CardStore(home)._read_events(card)
+        offer_digest = production_builder.digest(request)
         releases = [
             row
             for row in events
@@ -478,7 +535,21 @@ def retire_prestart(
             if row.get("action") == "review_assignment_launch"
             and row.get("recommendation_id") == request_id
         ]
-        if len(releases) != 1 or len(offers) != 1 or launches:
+        offer_at = str(offers[0].get("ts") or "") if len(offers) == 1 else ""
+        claim_activity = [
+            row
+            for row in events
+            if row.get("action") in {"claim", "release_claim"}
+            and offer_at
+            and str(row.get("ts") or "") >= offer_at
+        ]
+        if (
+            len(offers) != 1
+            or offers[0].get("request_sha256") != offer_digest
+            or launches
+            or (unclaimed and (not offer_at or releases or claim_activity))
+            or (not unclaimed and len(releases) != 1)
+        ):
             raise ValueError("exact release and unused offer proof required")
         store = CardStore(home)
         current = store.fold(card)
@@ -513,18 +584,22 @@ def retire_prestart(
         if review_dispatch._source(home, current) != request.get("source"):
             raise ValueError("source changed after offer")
         exit_path = (
-            Path(home)
-            / "evidence/production-review-exits"
-            / (f"{card}-{previous_claim_revision}.json")
+            (
+                Path(home)
+                / "evidence/production-review-exits"
+                / (f"{card}-{previous_claim_revision}.json")
+            )
+            if previous_claim_revision
+            else None
         )
-        if exit_path.exists():
+        if exit_path is not None and exit_path.exists():
             raise ValueError("review exit exists; prestart retirement refused")
         host = production_builder.node_binding(paths, node, policy)["host"]
         if request.get("production", {}).get("host") != host:
             raise ValueError("sealed review destination changed")
         unit = "skfleet-worker-" + request["production"]["family"] + "-" + card + ".service"
         admission_inventory_sha256 = _admission_inventory(
-            home, host, card, previous_owner, previous_claim_revision, request_id
+            home, host, card, previous_owner, previous_claim_revision or "", request_id
         )
         proof = _prestart_state(unit, host, card)
         proof["admission_inventory_sha256"] = admission_inventory_sha256
@@ -535,11 +610,13 @@ def retire_prestart(
             raise ValueError("review request changed during prestart check")
         if (
             _admission_inventory(
-                home, host, card, previous_owner, previous_claim_revision, request_id
+                home, host, card, previous_owner, previous_claim_revision or "", request_id
             )
             != admission_inventory_sha256
         ):
             raise ValueError("resource admission inventory changed during prestart check")
+        retirement_mode = "expired-unclaimed" if unclaimed else "released-claim"
+        proof["retired_at"] = datetime.now(timezone.utc).isoformat()
         binding = {
             "schema": PRESTART_SCHEMA,
             "card_id": card,
@@ -549,6 +626,7 @@ def retire_prestart(
             "card_sha256": card_sha256,
             "previous_owner": previous_owner,
             "previous_claim_revision": previous_claim_revision,
+            "retirement_mode": retirement_mode,
             "prestart_sha256": source_bundle._sha(json.dumps(proof, sort_keys=True).encode()),
             "actor": actor,
             "reason": reason.strip(),
@@ -572,6 +650,7 @@ def retire_prestart(
             card_sha256=card_sha256,
             previous_owner=previous_owner,
             previous_claim_revision=previous_claim_revision,
+            retirement_mode=retirement_mode,
             actor=actor,
             reason=reason.strip(),
             receipt_sha256=source_bundle._sha(_raw(receipt)),

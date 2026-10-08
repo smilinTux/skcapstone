@@ -230,8 +230,8 @@ def review_retire_cmd(
 @click.option("--node", required=True)
 @click.option("--request-sha256", required=True)
 @click.option("--card-sha256", required=True)
-@click.option("--previous-owner", required=True)
-@click.option("--previous-claim-revision", required=True)
+@click.option("--previous-owner")
+@click.option("--previous-claim-revision")
 @click.option("--agent", required=True)
 @click.option("--reason", required=True)
 @click.option("--apply", is_flag=True, help="Retire exact unlaunched offer; default checks only.")
@@ -246,7 +246,7 @@ def review_prestart_retire_cmd(
     reason,
     apply,
 ):
-    """Retire one exact remote review offer proven to have never started."""
+    """Retire one exact released or expired-unclaimed review offer."""
     from .review_retire import retire_prestart
 
     try:

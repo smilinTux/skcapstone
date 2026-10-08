@@ -452,6 +452,39 @@ def test_quarantine_refuses_live_process_escape_links_and_collisions(tmp_path: P
         quarantine_and_reissue(item, **common, process_counter=lambda _: 0)
 
 
+def test_quarantine_preserves_systemd_mask_symlink_without_following_it(tmp_path: Path) -> None:
+    item, repository, _ = authoritative_proof(tmp_path)
+    source = Path(item.workspace)
+    mask = source / "systemd/production/skfleet-fiber-dispatch.service"
+    mask.parent.mkdir(parents=True)
+    mask.symlink_to("/dev/null")
+    quarantine = tmp_path / "private-quarantine"
+    target = tmp_path / "reissued" / "8c4a9e21-clean"
+
+    result = quarantine_and_reissue(
+        item,
+        repository=repository,
+        quarantine_root=quarantine,
+        reissue_path=target,
+        base_revision=item.head,
+        execute=True,
+        process_counter=lambda _: 0,
+    )
+
+    assert result["state"] == "REISSUED"
+    saved = Path(str(result["quarantine"])) / "systemd/production/skfleet-fiber-dispatch.service"
+    assert saved.is_symlink()
+    assert os.readlink(saved) == "/dev/null"
+    assert mask.is_symlink() and os.readlink(mask) == "/dev/null"
+    manifest = json.loads((saved.parents[2] / "QUARANTINE-MANIFEST.json").read_text())
+    assert any(
+        row["path"] == "systemd/production/skfleet-fiber-dispatch.service"
+        and row["type"] == "symlink"
+        and row["target"] == "/dev/null"
+        for row in manifest["entries"]
+    )
+
+
 def test_workspace_proof_has_no_review_required_field(tmp_path: Path) -> None:
     """review_required used to be hardcoded True by every real caller.
 

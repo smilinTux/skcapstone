@@ -306,7 +306,13 @@ def test_retirement_without_archive_cannot_release_historical_offer(tmp_path):
     assert review_retire.retired_offers(tmp_path, card, events) == set()
 
 
-def test_prestart_retirement_requires_exact_release_and_absent_native_start(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "retirement_mode",
+    ["released", "expired-unclaimed", "unexpired-unclaimed", "claimed-after-offer"],
+)
+def test_prestart_retirement_requires_exact_release_or_expired_unclaimed_offer(
+    tmp_path, monkeypatch, retirement_mode
+):
     home = tmp_path / "home"
     paths = FleetPaths(home / "fleet")
     card, node = "c60a542e", "node-chiap03"
@@ -327,6 +333,11 @@ def test_prestart_retirement_requires_exact_release_and_absent_native_start(tmp_
         "node": node,
         "request_id": request_id,
         "reviewer": owner,
+        "lease_expires_at": (
+            "2000-01-01T00:00:00Z"
+            if retirement_mode in {"expired-unclaimed", "claimed-after-offer"}
+            else "2999-01-01T00:00:00Z"
+        ),
         "review_revision": "e" * 64,
         "source": source,
         "criteria_sha256": review_retire.production_builder.digest(core),
@@ -343,14 +354,37 @@ def test_prestart_retirement_requires_exact_release_and_absent_native_start(tmp_
             "action": "remote_review_offer",
             "request_id": request_id,
             "request_sha256": offer_digest,
-        },
-        {
-            "action": "release_claim",
-            "writer": "jarvis",
-            "released_owner": owner,
-            "expected_claim_revision": claim,
+            "ts": "2026-10-08T12:00:00+00:00",
         },
     ]
+    if retirement_mode == "released":
+        events.append(
+            {
+                "action": "release_claim",
+                "writer": "jarvis",
+                "released_owner": owner,
+                "expected_claim_revision": claim,
+            }
+        )
+    elif retirement_mode == "claimed-after-offer":
+        events.extend(
+            [
+                {
+                    "action": "claim",
+                    "writer": owner,
+                    "owner": owner,
+                    "claim_revision": claim,
+                    "ts": "2026-10-08T12:01:00+00:00",
+                },
+                {
+                    "action": "release_claim",
+                    "writer": owner,
+                    "released_owner": owner,
+                    "expected_claim_revision": claim,
+                    "ts": "2026-10-08T12:02:00+00:00",
+                },
+            ]
+        )
     current = SimpleNamespace(
         archived=False,
         owner=None,
@@ -396,11 +430,19 @@ def test_prestart_retirement_requires_exact_release_and_absent_native_start(tmp_
     kwargs = dict(
         request_sha256=review_retire.source_bundle._sha(raw_request),
         card_sha256="f" * 64,
-        previous_owner=owner,
-        previous_claim_revision=claim,
+        previous_owner=owner if retirement_mode == "released" else None,
+        previous_claim_revision=claim if retirement_mode == "released" else None,
         actor="jarvis",
         reason="retained sealed offer never reached native launch",
     )
+    if retirement_mode == "unexpired-unclaimed":
+        with pytest.raises(ValueError, match="offer has not expired"):
+            review_retire.retire_prestart(paths, home, node, card, **kwargs)
+        return
+    if retirement_mode == "claimed-after-offer":
+        with pytest.raises(ValueError, match="exact release and unused offer proof"):
+            review_retire.retire_prestart(paths, home, node, card, **kwargs)
+        return
     assert (
         review_retire.retire_prestart(paths, home, node, card, **kwargs)["state"]
         == "qualified-check-only"

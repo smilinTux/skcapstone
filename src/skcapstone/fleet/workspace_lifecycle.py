@@ -452,9 +452,10 @@ def quarantine_and_reissue(
 
     The source is never changed or removed. Quarantine is a private mirrored
     tree plus an immutable content manifest. Only regular files, directories,
-    and relative symlinks that remain inside the workspace are representable;
-    special files and escaping links fail closed. ``execute=False`` validates
-    identity and reports the exact plan without writing or invoking Git.
+    internal relative symlinks, and systemd service masks pointing to
+    ``/dev/null`` are representable; other escaping links and special files
+    fail closed. ``execute=False`` validates identity and reports the exact
+    plan without writing or invoking Git.
     """
     if (
         not re.fullmatch(r"[0-9a-f]{8}", proof.card_id)
@@ -500,9 +501,15 @@ def quarantine_and_reissue(
                 mode = info.st_mode
                 if os.path.islink(path):
                     link = os.readlink(path)
-                    if os.path.isabs(link) or os.path.commonpath(
-                        (str(root), os.path.realpath(path))
-                    ) != str(root):
+                    systemd_mask = (
+                        rel.startswith("systemd/")
+                        and rel.endswith(".service")
+                        and link == "/dev/null"
+                    )
+                    if not systemd_mask and (
+                        os.path.isabs(link)
+                        or os.path.commonpath((str(root), os.path.realpath(path))) != str(root)
+                    ):
                         raise ValueError(f"workspace symlink escapes root: {rel}")
                     found.append(
                         {"path": rel, "type": "symlink", "mode": mode & 0o777, "target": link}
