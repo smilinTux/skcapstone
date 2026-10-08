@@ -77,7 +77,28 @@ git fetch origin && git log --oneline -1 origin/main
 
 If CI fails, fix on the same branch and push again. Auto-merge stays armed.
 
-**5. Deploy from main with `skcapstone fleet rollout`.** Dry run first, then
+**5. Deploy from main: automatic.** On the chi estate the
+`skfleet-auto-rollout.timer` on the authority host (chiap08) checks origin
+every 2 minutes and, when main moved, rolls it host by host with the same
+`skcapstone fleet rollout --apply` gates (canary chiap08 first), restarts
+`sknoded`, and skmails jarvis and lumina-nor `ROLLED <sha>`. It stops at the
+first host whose gate fails, leaves later hosts on the previous main, exits
+nonzero (the `skcapstone-alert@` hook fires) and skmails `HALTED at <host>`.
+You normally do nothing here: merge, then watch for the `ROLLED` mail.
+
+Why a timer and not a person or a chat-session loop: on 2026-10-07 a merged
+dispatcher fix (#970) sat undeployed for about nine hours because the loop
+deploying it lived in an operator's chat session and had ended. Install and
+ownership notes are in `scripts/fleet/systemd/skfleet-auto-rollout.service`.
+Exactly one host runs it.
+
+Dependency floors: rollout installs the repo and keeps any dependency that
+already satisfies its floor. When a fix ships in a new skcoord (or another
+SK* package) release, raise the floor in `pyproject.toml` (and the matching
+CI pin in `.github/workflows/pytest.yml`) in its own PR, or the fleet keeps
+the old version. Example: #980, #983, #985 for skcoord 0.1.84 to 0.1.86.
+
+**5b. Deploy by hand (canary, emergencies, or with the timer stopped).** Dry run first, then
 one canary host, then the rest. Rollout pulls main on each host, installs,
 converges, and stops at the first host that fails its gate. Details in
 [`rollout-drift.md`](rollout-drift.md) section 4.

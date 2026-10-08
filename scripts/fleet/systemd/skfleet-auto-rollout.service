@@ -1,0 +1,29 @@
+# Auto-rollout: deploy merged main to the fleet on a timer.
+#
+# Hand-installed on exactly ONE authority host (chiap08 on the chi estate),
+# the same pattern as skfleet-merged-vs-running. Two deployers race, so never
+# enable this on more than one host.
+#
+# Install (from the deploy checkout on main):
+#   cp scripts/fleet/systemd/skfleet-auto-rollout.{service,timer} ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now skfleet-auto-rollout.timer
+#
+# Adjust SKFLEET_AUTO_ROLLOUT_HOSTS (canary first) and the repo path below to
+# the authority host. A halted rollout exits nonzero, which fires the estate's
+# skcapstone-alert@ hook and skmails jarvis and lumina-nor.
+[Unit]
+Description=Auto-rollout: deploy merged skcapstone main to the fleet
+Documentation=https://github.com/smilinTux/skcapstone/blob/main/docs/fleet/DEPLOY-FROM-MAIN.md
+OnFailure=skcapstone-alert@skfleet-auto-rollout.service
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=SKFLEET_AUTO_ROLLOUT_REPO=%h/deploy/skcapstone
+Environment="SKFLEET_AUTO_ROLLOUT_HOSTS=chiap08 chiap03 chiap01 chiap02 chiap04"
+ExecStart=/usr/bin/env bash %h/deploy/skcapstone/scripts/fleet/skfleet-auto-rollout.sh
+TimeoutStartSec=1800
+
+[Install]
+WantedBy=default.target

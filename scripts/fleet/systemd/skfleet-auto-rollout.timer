@@ -1,0 +1,11 @@
+[Unit]
+Description=Auto-rollout: check for newly merged skcapstone main every 2 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=2min
+AccuracySec=15s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

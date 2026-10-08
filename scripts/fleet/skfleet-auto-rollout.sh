@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# skfleet-auto-rollout: deploy merged main to the fleet without a human or a
+# chat session holding a loop open.
+#
+# Why this exists (2026-10-08): rollout ran from a polling loop inside an
+# operator chat session. When that loop ended or the session paused, merged
+# fixes sat undeployed for hours (#970 waited about nine hours while the fleet
+# dispatched nothing), and two overlapping loops once raced each other.
+#
+# One run: take a lock, fetch origin, and if the deploy checkout is behind
+# origin/main, fast-forward it and roll each host in order with
+# `skcapstone fleet rollout --apply`. A host whose gate does not pass is
+# retried after a readiness refresh; if it still fails the run stops there
+# (later hosts keep the previous main) and exits nonzero so the unit's
+# OnFailure alert fires. Up-to-date runs are a quiet no-op.
+#
+# Hand-installed on exactly ONE authority host (see
+# scripts/fleet/systemd/skfleet-auto-rollout.service). Do not enable it on
+# more than one host: two deployers race.
+set -uo pipefail
+
+REPO="${SKFLEET_AUTO_ROLLOUT_REPO:-$HOME/deploy/skcapstone}"
+HOSTS="${SKFLEET_AUTO_ROLLOUT_HOSTS:-chiap08 chiap03 chiap01 chiap02 chiap04}"
+SKCAPSTONE="${SKCAPSTONE_BIN:-skcapstone}"
+SSH="${SSH_BIN:-ssh}"
+SKMAIL="${SKMAIL_BIN:-skmail}"
+NOTIFY="${SKFLEET_AUTO_ROLLOUT_NOTIFY:-jarvis lumina-nor}"
+LOCK="${SKFLEET_AUTO_ROLLOUT_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/skfleet-auto-rollout.lock}"
+ATTEMPTS="${SKFLEET_AUTO_ROLLOUT_ATTEMPTS:-3}"
+READY_WAIT="${SKFLEET_AUTO_ROLLOUT_READY_WAIT:-150}"
+
+log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*"; }
+
+notify() {
+  local subject="$1" body="$2" to
+  command -v "$SKMAIL" >/dev/null 2>&1 || return 0
+  for to in $NOTIFY; do
+    "$SKMAIL" send skfleet-auto-rollout "$to" normal "$subject" "$body" >/dev/null 2>&1 || true
+  done
+}
+
+exec 9>"$LOCK"
+if ! flock -n 9; then
+  log "another auto-rollout holds $LOCK; skipping"
+  exit 0
+fi
+
+if ! git -C "$REPO" fetch -q origin main; then
+  log "fetch failed; will retry next tick"
+  exit 0
+fi
+head=$(git -C "$REPO" rev-parse HEAD)
+target=$(git -C "$REPO" rev-parse origin/main)
+if [ "$head" = "$target" ]; then
+  exit 0
+fi
+if ! git -C "$REPO" merge-base --is-ancestor "$head" "$target"; then
+  log "deploy checkout $head is not an ancestor of origin/main $target; refusing (fix the checkout by hand)"
+  notify "auto-rollout refused: diverged checkout" "deploy checkout $head is not an ancestor of origin/main $target on $(hostname)"
+  exit 1
+fi
+git -C "$REPO" merge -q --ff-only "$target" || { log "fast-forward failed"; exit 1; }
+subject=$(git -C "$REPO" log -1 --format=%s "$target")
+log "rolling main ${target:0:8} ($subject) from ${head:0:8} to: $HOSTS"
+
+rolled=()
+for host in $HOSTS; do
+  ok=0
+  for attempt in $(seq 1 "$ATTEMPTS"); do
+    out=$("$SKCAPSTONE" fleet rollout --node "$host" --repo-root "$REPO" --remote-repo-root "~/deploy/skcapstone" --apply 2>&1 | tail -1)
+    log "$host try$attempt: $out"
+    if printf '%s' "$out" | grep -q "gate passed"; then ok=1; break; fi
+    # The gate reads a synced readiness verdict; refresh it and give syncthing a scan.
+    "$SSH" -o BatchMode=yes "$host" 'systemctl --user start skfleet-readiness.service; k=$(grep -o "<apikey>[^<]*" ~/.config/syncthing/config.xml ~/.local/state/syncthing/config.xml 2>/dev/null | head -1 | cut -d">" -f2); curl -s -o /dev/null -X POST -H "X-API-Key: $k" "http://127.0.0.1:8384/rest/db/scan?folder=skcapstone&sub=fleet/status/node-$(hostname)/readiness"' >/dev/null 2>&1 || true
+    sleep $(( READY_WAIT / ATTEMPTS ))
+  done
+  if [ "$ok" != 1 ]; then
+    log "HALT: $host did not pass its gate after $ATTEMPTS tries; later hosts keep the previous main"
+    notify "auto-rollout HALTED at $host" "main ${target:0:8} ($subject) rolled to: ${rolled[*]:-none}; $host failed its gate. Later hosts not touched."
+    exit 1
+  fi
+  "$SSH" -o BatchMode=yes "$host" 'systemctl --user daemon-reload; systemctl --user restart sknoded.service' >/dev/null 2>&1 || log "$host: sknoded restart reported an error"
+  rolled+=("$host")
+done
+
+log "ROLLED main ${target:0:8} to: ${rolled[*]}"
+notify "ROLLED main ${target:0:8}" "$subject -> ${rolled[*]} (gates passed)"
+exit 0
