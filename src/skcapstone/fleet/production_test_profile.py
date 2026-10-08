@@ -227,9 +227,11 @@ def qualify_profile(
         value["source_sha256"] = source_sha256
     if node_environment is not None:
         value.update(
-            schema=(composite.SCHEMA if "pytest" in recipe else node.SCHEMA)
-            if source_sha256 is not None
-            else (composite.SCHEMA_V2 if "pytest" in recipe else node.SCHEMA_V2),
+            schema=(
+                (composite.SCHEMA if "pytest" in recipe else node.SCHEMA)
+                if source_sha256 is not None
+                else (composite.SCHEMA_V2 if "pytest" in recipe else node.SCHEMA_V2)
+            ),
             node_environment=node_environment,
         )
     validate_profile(value, contract(core), policy)
@@ -369,9 +371,11 @@ def supersede_profile(
             expected["source_sha256"] = source_sha256
         if node_environment is not None:
             value.update(
-                schema=(composite.SCHEMA if "pytest" in recipe else node.SCHEMA)
-                if source_sha256 is not None
-                else (composite.SCHEMA_V2 if "pytest" in recipe else node.SCHEMA_V2),
+                schema=(
+                    (composite.SCHEMA if "pytest" in recipe else node.SCHEMA)
+                    if source_sha256 is not None
+                    else (composite.SCHEMA_V2 if "pytest" in recipe else node.SCHEMA_V2)
+                ),
                 node_environment=node_environment,
             )
         validate_profile(value, expected, policy)
