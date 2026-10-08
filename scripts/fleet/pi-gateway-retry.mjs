@@ -188,7 +188,13 @@ export default function gatewayRetry(
     compactionPending = true;
     context.compact({
       customInstructions: "Keep the active card contract, source revision, current step, test results, and unresolved blockers. Condense completed exploration and verbose command output.",
-      onComplete: () => { compactionPending = false; },
+      onComplete: () => {
+        compactionPending = false;
+        pi.sendUserMessage(
+          "Continue the original task from the compacted session. Resume at the first unfinished step, preserve completed work, and finish with the required evidence and report.",
+          { deliverAs: "followUp" },
+        );
+      },
       onError: () => { compactionPending = false; },
     });
   });
