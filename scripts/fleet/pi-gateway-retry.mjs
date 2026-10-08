@@ -38,7 +38,7 @@ export async function configurePiHttpIdleTimeout({
 }
 
 async function errorFields(response) {
-  if (response.status !== 503 && response.status !== 413) return {};
+  if (![502, 503, 413].includes(response.status)) return {};
   const reader = response.clone().body?.getReader();
   if (!reader) return {};
   const chunks = [];
@@ -54,8 +54,12 @@ async function errorFields(response) {
     const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
     const value = parsed.error ?? parsed;
     const fields = {};
-    if (value.type === "bucket_no_eligible_member") fields.type = value.type;
-    if (value.code === "request_too_large") fields.code = value.code;
+    if (["bucket_no_eligible_member", "malformed_response"].includes(value.type)) {
+      fields.type = value.type;
+    }
+    if (["request_too_large", "empty_upstream_response"].includes(value.code)) {
+      fields.code = value.code;
+    }
     if (value.param === "body") fields.param = "body";
     for (const name of ["actual_bytes", "limit_bytes"]) {
       if (Number.isSafeInteger(value[name]) && value[name] >= 0) fields[name] = value[name];
@@ -97,6 +101,9 @@ export function gatewayTransport(
           const fields = await errorFields(response);
           const transient = response.status === 504 || (
             response.status === 503 && fields.type === "bucket_no_eligible_member"
+          ) || (
+            response.status === 502
+            && (fields.type === "malformed_response" || fields.code === "empty_upstream_response")
           );
           const requestedDelay = DELAYS_MS[attempt - 1];
           const remaining = budgetMs - (now() - started);

@@ -70,6 +70,58 @@ assert(!JSON.stringify(records).includes('authorization'));
 """)
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"error": {"type": "malformed_response", "code": "empty_upstream_response"}},
+        {"error": {"code": "empty_upstream_response"}},
+    ],
+)
+def test_malformed_upstream_502_retries_with_bounded_audit(payload):
+    node_check(f"""
+let calls=0;const records=[],waits=[];
+const t=gatewayTransport(async()=>{{
+  calls++;
+  return calls<3
+    ? new Response(JSON.stringify({json.dumps(payload)}),{{status:502}})
+    : new Response('ok');
+}},e=>records.push(e),{{wait:async ms=>waits.push(ms)}});
+assert.equal((await t.fetch('http://fixture.invalid')).status,200);
+assert.equal(calls,3);assert.deepEqual(waits,[10000,20000]);
+assert.deepEqual(records.map(r=>r.event),['retry','retry','result']);
+assert.equal(records[0].http_status,502);
+""")
+
+
+def test_malformed_upstream_502_is_bounded_to_four_attempts():
+    node_check("""
+let calls=0;const records=[],waits=[];
+const response=()=>new Response(JSON.stringify({error:{
+  type:'malformed_response',code:'empty_upstream_response'}}),{status:502});
+const t=gatewayTransport(async()=>{calls++;return response();},e=>records.push(e),
+  {wait:async ms=>waits.push(ms)});
+assert.equal((await t.fetch('http://fixture.invalid')).status,502);
+assert.equal(calls,4);assert.deepEqual(waits,[10000,20000,30000]);
+assert.deepEqual(records.map(r=>r.attempt),[1,2,3,4]);
+assert.equal(records[0].code,'empty_upstream_response');
+assert.equal(records[0].type,'malformed_response');
+assert.equal(t.state.terminal.retryable,false);
+""")
+
+
+def test_unrelated_502_is_terminal_without_retry():
+    node_check("""
+let calls=0;
+const t=gatewayTransport(async()=>{
+ calls++;
+ return new Response(JSON.stringify({error:{type:'bad_gateway',code:'upstream_unavailable'}}),
+  {status:502});
+},()=>{},{wait:()=>assert.fail('unqualified502 retry')});
+assert.equal((await t.fetch('http://fixture.invalid')).status,502);
+assert.equal(calls,1);
+""")
+
+
 def test_four_attempts_maximum_then_terminal_with_full_retry_evidence():
     node_check("""
 let clock=0,calls=0;const records=[],waits=[];
