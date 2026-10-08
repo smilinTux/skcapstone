@@ -22,6 +22,7 @@ FUNCTIONS = {
     "_load_evidence_events",
     "_native_outcome_value",
     "_load_outcomes",
+    "_superseding_outcome_event",
     "_ts_epoch",
     "_label_value",
     "_blocked_reason",
@@ -251,7 +252,10 @@ def test_regression_c4ef2a90_native_blocked_event_is_authoritative(
     assert namespace["blocked_backoff"](card) is True
 
 
-def test_outcome_supersession_releases_stale_pass_for_fresh_ready_run(tmp_path: Path) -> None:
+@pytest.mark.parametrize("legacy_supersession", [False, True])
+def test_outcome_supersession_releases_stale_pass_for_fresh_ready_run(
+    tmp_path: Path, legacy_supersession: bool
+) -> None:
     card = "c60a542f"
     prior = {
         "event_id": "a" * 32,
@@ -276,7 +280,9 @@ def test_outcome_supersession_releases_stale_pass_for_fresh_ready_run(tmp_path: 
         "link_key": "verdict_superseded",
         "link_value": "SUPERSEDED prior_event=" + "a" * 32 + " reason=custody lost",
     }
-    namespace = _native_namespace(tmp_path, {card: [prior, ready]}, [superseded])
+    native_events = [prior, ready] if legacy_supersession else [prior, ready, superseded]
+    legacy_events = [superseded] if legacy_supersession else None
+    namespace = _native_namespace(tmp_path, {card: native_events}, legacy_events)
     namespace.update(
         {
             "_launched_at": {card: 1.0},

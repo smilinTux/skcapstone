@@ -3426,10 +3426,34 @@ def _native_outcome_value(event):
     return "BLOCKED blocked_on=%s %s"%(
         reason[0]," ".join("referent="+item for item in reason[1]))
 
+def _superseding_outcome_event(events, event_id, outcome_ts):
+    """Return the later governed link that supersedes this exact outcome event."""
+    if not event_id:
+        return None
+    for event in events:
+        if (
+            event.get("action") != "link"
+            or event.get("link_key", event.get("key")) != "verdict_superseded"
+        ):
+            continue
+        match = re.fullmatch(
+            r"SUPERSEDED prior_event=([0-9a-f]{32}) reason=.{1,512}",
+            str(event.get("link_value", event.get("value", ""))),
+        )
+        if (
+            match
+            and match.group(1) == event_id
+            and _ts_epoch(event.get("ts")) > _ts_epoch(outcome_ts)
+        ):
+            return event
+    return None
+
+
 def _load_outcomes():
     global _outcomes
     if _outcomes is not None: return _outcomes
     _outcomes = {}
+    outcome_event_ids = {}
     orders={}
 
     def record(cid,event,value,source_rank):
@@ -3439,6 +3463,7 @@ def _load_outcomes():
         if cid not in orders or order>orders[cid]:
             orders[cid]=order
             _outcomes[cid]=(ts,value)
+            outcome_event_ids[cid]=str(event.get("event_id") or "")
 
     for cid,rows in _load_evidence_events().items():
         blocked_parts={}
@@ -3454,6 +3479,11 @@ def _load_outcomes():
             # A consumer may copy its dependency's result for audit. That is
             # not the consumer's own outcome and must not park it in review.
             if fk=="review_verdict" and has_independent_review:
+                continue
+            # A supersession is only valid when its exact prior outcome event
+            # is present and newer ordering is proved below against CardStore.
+            if fk=="verdict_superseded":
+                blocked_parts.clear()
                 continue
             if any(o in fk for o in _OUTCOME_KEYS):
                 blocked_parts.clear()
@@ -3508,7 +3538,15 @@ def _load_outcomes():
                       if os.path.isdir(path))
     for cid in sorted(native_ids):
         identities=collections.defaultdict(list)
-        for event in event_rows(cid):
+        events=event_rows(cid)
+        events.extend(
+            event
+            for event in _load_evidence_events().get(cid, [])
+            if event.get("action") == "link"
+            and _fold_key(event.get("link_key", event.get("key")))
+            == "verdict_superseded"
+        )
+        for event in events:
             identity=(str(event.get("ts") or ""),str(event.get("writer") or ""),
                       str(event.get("event_id") or ""))
             identities[identity].append(event)
@@ -3530,6 +3568,25 @@ def _load_outcomes():
             value=(_native_outcome_value(verdicts[0]) if len(signatures)==1
                    else _INVALID_NATIVE_OUTCOME)
             record(cid,verdicts[0],value,1)
+        current=_outcomes.get(cid)
+        supersession = (
+            _superseding_outcome_event(
+                events, outcome_event_ids.get(cid), current[0]
+            )
+            if current and re.match(
+                r"^\s*(?:PASS_FOR_[A-Z_]+|PASS_READY_[A-Z_]+)\b",
+                str(current[1] or ""),
+                re.I,
+            )
+            else None
+        )
+        if supersession is not None:
+            record(
+                cid,
+                supersession,
+                str(supersession.get("link_value", supersession.get("value", ""))),
+                2,
+            )
     return _outcomes
 
 def _ts_epoch(value):
