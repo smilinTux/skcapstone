@@ -1976,6 +1976,82 @@ def register_coord_commands(main: click.Group) -> None:
             return
         console.print(f"\n  [green]Linked {task_id}: {key} = {value}.[/]\n")
 
+    @coord.command("outcome-supersede")
+    @click.argument("task_id")
+    @click.argument("reason")
+    @click.option("--expected-outcome-event", required=True)
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--agent", required=True, help="Authorized operator recording the supersession.")
+    def coord_outcome_supersede(task_id, reason, expected_outcome_event, home, agent):
+        """Supersede one stale PASS_FOR_REVIEW before a fresh producer run."""
+        import re
+
+        from skcoord.card_store import CardStore, card_mutation_lock
+
+        from ..blocked_verdict import is_outcome_key
+        from ..card import CardEvent, CardEventLog
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        if not re.fullmatch(r"[0-9a-f]{32}", expected_outcome_event):
+            raise click.ClickException("--expected-outcome-event must be a 32-character event id")
+        if not reason.strip() or len(reason.strip()) > 512 or "\n" in reason:
+            raise click.ClickException("reason must be one line of 1 to 512 characters")
+        authorize_coord_mutation(agent, Action.LINK_CARD, task_id, None, None)
+        home_path = Path(home).expanduser()
+        try:
+            with card_mutation_lock(home_path, task_id):
+                store = CardStore(home_path)
+                card = store.fold(task_id)
+                if (
+                    card is None
+                    or card.archived
+                    or card.owner is not None
+                    or card.status.value != "ready"
+                ):
+                    raise ValueError("outcome supersession requires an unowned, active READY card")
+                outcomes = [
+                    event
+                    for event in store._read_events(task_id) + store._legacy_events(task_id)
+                    if event.get("action") == "verdict"
+                    or (
+                        event.get("action") == "link"
+                        and is_outcome_key(event.get("link_key") or event.get("key"))
+                    )
+                ]
+                latest = max(
+                    outcomes,
+                    key=lambda event: (
+                        event.get("ts", ""),
+                        event.get("writer", ""),
+                        event.get("seq", 0),
+                    ),
+                    default={},
+                )
+                value = (
+                    latest.get("verdict")
+                    if latest.get("action") == "verdict"
+                    else latest.get("link_value", latest.get("value"))
+                )
+                if latest.get("event_id") != expected_outcome_event or not re.match(
+                    r"^\s*PASS_FOR_REVIEW(?:\b|_)", str(value or ""), re.I
+                ):
+                    raise ValueError("current outcome is not the expected PASS_FOR_REVIEW")
+                event = CardEvent(
+                    card_id=task_id,
+                    action="link",
+                    link_key="verdict_superseded",
+                    link_value=(
+                        f"SUPERSEDED prior_event={expected_outcome_event} "
+                        f"reason={reason.strip()}"
+                    ),
+                    writer=agent,
+                )
+                CardEventLog(home_path).append(event)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from None
+        console.print(f"\n  [green]Superseded {task_id} outcome {expected_outcome_event}.[/]\n")
+
     @coord.command("recover-overlay")
     @click.argument("operation", type=click.Choice(("plan", "apply", "rollback")))
     @click.option("--home", default=AGENT_HOME, type=click.Path())

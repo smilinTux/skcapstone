@@ -3333,10 +3333,10 @@ def lifecycle_state(cid):
 _EVID_DIR = os.path.join(HOME, ".skcapstone/coordination/card_events")
 _OUTCOME_KEYS = ("verdict", "result", "disposition", "review_decision")
 _OUTCOME_VALUE_RE = re.compile(
-    r"^\s*(BLOCKED|PASS(?:_FOR_[A-Z_]+)?|FAIL|DENY|HOLD|VOID|WORKER_DIED|APPROVE(?:D)?)"
+    r"^\s*(BLOCKED|PASS(?:_FOR_[A-Z_]+)?|SUPERSEDED|FAIL|DENY|HOLD|VOID|WORKER_DIED|APPROVE(?:D)?)"
     r"(?:\b|_)", re.I)
 _PIPE_OUTCOME_RE = re.compile(
-    r"(?:^|\|)\s*(BLOCKED|PASS(?:_FOR_[A-Z_]+)?|FAIL|DENY|HOLD|VOID|WORKER_DIED|APPROVE(?:D)?)"
+    r"(?:^|\|)\s*(BLOCKED|PASS(?:_FOR_[A-Z_]+)?|SUPERSEDED|FAIL|DENY|HOLD|VOID|WORKER_DIED|APPROVE(?:D)?)"
     r"\s*(?:\||$)", re.I)
 _INVALID_NATIVE_OUTCOME = "BLOCKED native_outcome_invalid=true"
 

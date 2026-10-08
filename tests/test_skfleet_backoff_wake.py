@@ -251,6 +251,47 @@ def test_regression_c4ef2a90_native_blocked_event_is_authoritative(
     assert namespace["blocked_backoff"](card) is True
 
 
+def test_outcome_supersession_releases_stale_pass_for_fresh_ready_run(tmp_path: Path) -> None:
+    card = "c60a542f"
+    prior = {
+        "event_id": "a" * 32,
+        "ts": "2026-10-08T12:00:00+00:00",
+        "writer": "glm-worker",
+        "action": "verdict",
+        "verdict": "PASS_FOR_REVIEW",
+    }
+    ready = {
+        "event_id": "b" * 32,
+        "ts": "2026-10-08T12:02:00+00:00",
+        "writer": "jarvis",
+        "action": "move",
+        "column": "ready",
+    }
+    superseded = {
+        "event_id": "c" * 32,
+        "card_id": card,
+        "ts": "2026-10-08T12:01:00+00:00",
+        "writer": "jarvis",
+        "action": "link",
+        "link_key": "verdict_superseded",
+        "link_value": "SUPERSEDED prior_event=" + "a" * 32 + " reason=custody lost",
+    }
+    namespace = _native_namespace(tmp_path, {card: [prior, ready]}, [superseded])
+    namespace.update(
+        {
+            "_launched_at": {card: 1.0},
+            "launch_attempts": lambda cid: 3,
+            "_transport_retry_held": lambda cid: False,
+            "_completion_retry_held": lambda cid: False,
+        }
+    )
+
+    assert namespace["_load_outcomes"]()[card][1].startswith("SUPERSEDED")
+    assert namespace["awaiting_review"](card) is False
+    assert namespace["_explicit_ready_requeue_after"](card, 1.0) is True
+    assert namespace["blocked_backoff"](card) is False
+
+
 def test_regression_cd4f9506_split_blocked_evidence_and_reopen(tmp_path: Path) -> None:
     card = "cd4f9506"
     links = [
