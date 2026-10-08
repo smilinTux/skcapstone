@@ -15,8 +15,8 @@ from skcoord.card_store import CardStore, card_mutation_lock
 from ..blocked_verdict import is_outcome_key
 from ..seraph_review_cardstore import LiveCardStoreGateway, card_revision
 from ..seraph_review_contracts import _digest
-from .production_review_evidence import ReviewEvidenceError
 from . import production_test_plan
+from .production_review_evidence import ReviewEvidenceError
 from .source_bundle import MAX_EVIDENCE, _once, _read, _sha
 
 
