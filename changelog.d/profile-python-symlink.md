@@ -1,1 +1,2 @@
 - Fix native test profile fingerprints for virtual environments whose Python executable links to the system interpreter.
+- Preserve the exact claim for an unfinished native profile qualification from the generic worker liveness reaper.

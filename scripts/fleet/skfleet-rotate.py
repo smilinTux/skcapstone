@@ -5975,6 +5975,24 @@ def reap_dead_claims():
                                       fleet_paths=default_fleet_paths()):
                 log(d,"REAP_PRESERVED_PRODUCTION_CUSTODY|%s|%s|%s"%(HOST,cid,fresh_owner))
                 continue
+            from skcapstone.fleet.profile_requalification import retains_pending_claim
+            try:
+                if retains_pending_claim(
+                    Path(HOME) / ".skcapstone", cid, fresh_owner, fresh_revision
+                ):
+                    log(
+                        d,
+                        "REAP_PRESERVED_PROFILE_REQUALIFICATION|%s|%s|%s"
+                        % (HOST, cid, fresh_owner),
+                    )
+                    continue
+            except (OSError, ValueError, TypeError) as exc:
+                log(
+                    d,
+                    "REAP_PROFILE_REQUALIFICATION_STATE_UNAVAILABLE|%s|%s|%s"
+                    % (HOST, cid, str(exc)[:120]),
+                )
+                continue
         # Launch provenance is useful attribution, not a liveness gate. The old
         # code handed every unproven dead worker to a "stale-claim path" that did
         # not exist. Quorum plus absence from every report is the proof required

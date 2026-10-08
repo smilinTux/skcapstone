@@ -45,6 +45,24 @@ def _records(root: Path):
             yield path, value
 
 
+def retains_pending_claim(home: Path, card_id: str, owner: str, claim_revision: str) -> bool:
+    """Preserve only the exact card claim bound to an unfinished refresh job."""
+    root = Path(home) / "fleet/profile-requalifications"
+    try:
+        plan.private_dir(root)
+    except FileNotFoundError:
+        return False
+    for _, job in _records(root):
+        if (
+            job.get("schema") == "skfleet.profile-requalification/v1"
+            and job.get("card") == card_id
+            and job.get("owner") == owner
+            and job.get("claim_revision") == claim_revision
+        ):
+            return True
+    return False
+
+
 def requalify_or_advance(
     home: Path,
     policy: dict,
