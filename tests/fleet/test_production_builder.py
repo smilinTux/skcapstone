@@ -38,6 +38,12 @@ def production_setup(paths, operator, monkeypatch, tmp_path, qualified_runtime):
             for name in ("codex", "glm", "deepseek", "qwen")
         },
         "node_quotas": {
+            "control": {
+                "cpu_quota_percent": 100,
+                "memory_max_bytes": 1024**3,
+                "tasks_max": 128,
+                "runtime_max_seconds": 600,
+            },
             "worker": {
                 "cpu_quota_percent": 100,
                 "memory_max_bytes": 1024**3,
@@ -181,7 +187,7 @@ def test_production_offers_above_old_count_cap_and_enforces_readiness(paths, pro
 
 def test_missing_node_quota_never_invents_a_limit(paths, production_setup):
     p = production_setup
-    p.policy["node_quotas"].clear()
+    p.policy["node_quotas"].pop("worker")
     p.path.write_text(json.dumps(p.policy))
     assert builder.offer(paths, _card(), ["sk-m", "source-only"], writer=p.writer) is None
 

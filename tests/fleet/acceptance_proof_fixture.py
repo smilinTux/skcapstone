@@ -23,7 +23,17 @@ def retained_proof(home, source, workspace, criteria_sha256):
         home,
         binding,
         workspace,
-        {"authority_host": socket.gethostname().split(".")[0].lower()},
+        {
+            "authority_host": socket.gethostname().split(".")[0].lower(),
+            "node_quotas": {
+                socket.gethostname().split(".")[0].lower(): {
+                    "cpu_quota_percent": 100,
+                    "memory_max_bytes": 1024**3,
+                    "tasks_max": 128,
+                    "runtime_max_seconds": 600,
+                }
+            },
+        },
         "synthetic-test-operator",
         "b" * 64,
     )

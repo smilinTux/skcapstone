@@ -71,7 +71,7 @@ def test_no_dispatch_site_hardcodes_the_jarvis_writer() -> None:
     assert '"--agent", "jarvis"' not in source
     assert '"--agent","jarvis"' not in source
     resolved = source.count('"--agent", DISPATCH_AGENT') + source.count('"--agent",DISPATCH_AGENT')
-    assert resolved == 6, f"expected 6 DISPATCH_AGENT release sites, found {resolved}"
+    assert resolved == 8, f"expected 8 DISPATCH_AGENT release sites, found {resolved}"
     assert "run_production_cycle(agent=_dispatch_writer())" in source
 
 

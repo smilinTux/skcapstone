@@ -27,7 +27,17 @@ def stopped_pair(pair, source, monkeypatch, request):  # noqa: F811
     manifest = json.loads(
         (home / "evidence/work" / parent["card"] / "source-bundles" / (head + ".json")).read_text()
     )
-    policy = {"authority_host": "control"}
+    policy = {
+        "authority_host": "control",
+        "node_quotas": {
+            "control": {
+                "cpu_quota_percent": 100,
+                "memory_max_bytes": 1024**3,
+                "tasks_max": 128,
+                "runtime_max_seconds": 600,
+            }
+        },
+    }
     request = {
         "card_id": parent["card"],
         "request_id": "d" * 64,
