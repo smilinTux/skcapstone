@@ -1,0 +1,1 @@
+- Accept exact private direct-seat terminal receipts when collecting a source-only review, and record explicit invocation metadata for future receipts.

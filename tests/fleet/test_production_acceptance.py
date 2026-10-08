@@ -123,6 +123,70 @@ def test_collected_producer_terminal_can_enter_independent_review(stopped_pair):
         acceptance._producer_terminal(home, source_card, status["source_artifact"])
 
 
+def test_direct_seat_terminal_receipt_can_enter_review_and_is_rechecked(stopped_pair, monkeypatch):
+    home, _, _, status_path, _, store = stopped_pair
+    status = json.loads(status_path.read_text())
+    status_path.unlink()
+    source_card = store.fold(status["card_id"])
+    monkeypatch.setattr(acceptance.socket, "gethostname", lambda: "worker")
+    receipt = {
+        "schema": "skfleet.direct-seat/v1",
+        "card": source_card.id,
+        "owner": source_card.owner,
+        "claim_revision": source_card.meta["_claim_revision"],
+        "completion_state": "awaiting-review",
+        "host": "worker",
+        "lane": "glm",
+        "unit": f"skfleet-worker-glm-{source_card.id}.service",
+        "invocation": "e" * 32,
+        "exit_code": 0,
+        "pid": 123,
+        "route_schema": "skfleet.runtime-route/v1",
+        "logical_route": "sk-s",
+        "provider": "skgateway",
+        "capacity_domains": ["zai"],
+        "model_or_bucket": "glm-4.5",
+        "source_disposition": {
+            "state": "awaiting-review",
+            "claim_released": False,
+            "process_terminal": True,
+            "source_artifact": status["source_artifact"],
+        },
+    }
+    path = home / "fleet/direct-seats" / f"{source_card.owner}.json"
+    once(path, receipt)
+    path.chmod(0o600)
+
+    terminal = acceptance._producer_terminal(home, source_card, status["source_artifact"])
+    assert terminal["receipt_kind"] == "direct-seat"
+    assert terminal["family"] == "zai"
+    context = {
+        "source": {
+            "card": source_card.id,
+            "owner": source_card.owner,
+            "terminal": terminal,
+        },
+        "review": {
+            "card": "review-card",
+            "terminal": {
+                "unit": "review.service",
+                "invocation": "f" * 32,
+                "host": "control",
+            },
+        },
+    }
+    acceptance.terminal_guard(
+        home, context, lambda card: {"sessions": [], "units": []}
+    )
+
+    receipt["completion_state"] = "running"
+    path.write_text(json.dumps(receipt))
+    with pytest.raises(acceptance.ReviewEvidenceError, match="receipt changed"):
+        acceptance.terminal_guard(
+            home, context, lambda card: {"sessions": [], "units": []}
+        )
+
+
 @pytest.mark.parametrize(
     "kind",
     [

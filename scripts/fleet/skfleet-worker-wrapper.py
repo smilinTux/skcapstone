@@ -10,6 +10,7 @@ import json
 import os
 import re
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -153,9 +154,15 @@ def write_process_record(
 ) -> None:
     """Publish bounded identity evidence for direct-seat execution."""
     record = {
+        "schema": "skfleet.direct-seat/v1",
         "card": args.card,
         "owner": args.owner,
         "claim_revision": args.claim_revision,
+        "host": socket.gethostname().split(".")[0].lower(),
+        "lane": args.lane,
+        "unit": f"skfleet-worker-{args.lane}-{args.card}.service",
+        "invocation": os.environ.get("INVOCATION_ID"),
+        "exit_code": getattr(args, "production_child_exit_code", None),
         "heartbeat_at": heartbeat_at or datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "completion_state": completion_state,
         "pid": pid,

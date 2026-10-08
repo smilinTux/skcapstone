@@ -1,5 +1,6 @@
 """Production exit retains source/review custody while preserving legacy exits."""
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -186,6 +187,32 @@ def test_production_wrapper_bypasses_generic_release_for_pending_source(exit_cas
     )
     wrapper.finalize_worker_exit(args, child)
     assert records == [{"pid": 123, "completion_state": "awaiting-review"}]
+
+
+def test_direct_seat_receipt_records_exact_terminal_runtime(monkeypatch, tmp_path, exit_case):
+    args, _ = exit_case
+    wrapper = _wrapper()
+    args.lane = "glm"
+    args.production_child_exit_code = 0
+    args.production_source_disposition = {
+        "state": "awaiting-review",
+        "process_terminal": True,
+        "claim_released": False,
+    }
+    monkeypatch.setattr(wrapper.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(wrapper.socket, "gethostname", lambda: "worker.example")
+    monkeypatch.setenv("INVOCATION_ID", "e" * 32)
+    wrapper.write_process_record(args, pid=123, completion_state="awaiting-review")
+
+    receipt = json.loads(
+        (tmp_path / ".skcapstone/fleet/direct-seats" / f"{args.owner}.json").read_text()
+    )
+    assert receipt["schema"] == "skfleet.direct-seat/v1"
+    assert receipt["host"] == "worker"
+    assert receipt["lane"] == args.lane
+    assert receipt["unit"] == f"skfleet-worker-{args.lane}-{args.card}.service"
+    assert receipt["invocation"] == "e" * 32
+    assert receipt["exit_code"] == 0
 
 
 def test_production_reviewer_retains_claim_instead_of_legacy_release(exit_case, monkeypatch):

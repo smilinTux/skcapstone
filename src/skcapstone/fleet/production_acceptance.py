@@ -1,10 +1,12 @@
 """Authority-only bridge from stopped independent review to tested completion."""
 
 import base64
+import hashlib
 import json
 import os
 import re
 import socket
+import stat
 import subprocess
 from pathlib import Path
 
@@ -87,9 +89,86 @@ def _producer_terminal(home, source, manifest):
                 "node": status["node"],
             }
         )
+    if not matches:
+        return _direct_seat_terminal(home, source, manifest)
     if len(matches) != 1:
         raise ReviewEvidenceError("one native producer terminal receipt required")
     return matches[0]
+
+
+def _direct_seat_terminal(home, source, manifest):
+    """Validate a completed direct worker's exact native source receipt."""
+    path = Path(home) / "fleet/direct-seats" / (source.owner + ".json")
+    try:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) & 0o077:
+            raise ReviewEvidenceError("direct producer terminal receipt is not private")
+        raw = path.read_bytes()
+        if len(raw) > 262144:
+            raise ReviewEvidenceError("direct producer terminal receipt is oversized")
+        receipt = json.loads(raw)
+        disposition = receipt.get("source_disposition") or {}
+        schema = receipt.get("schema")
+        explicit_receipt = schema == "skfleet.direct-seat/v1"
+        parts = source.owner.split("-")
+        owner_host = parts[-2] if len(parts) >= 4 else ""
+        host = str(receipt.get("host") or owner_host)
+        domains = receipt.get("capacity_domains")
+        if (
+            schema not in (None, "skfleet.direct-seat/v1")
+            or receipt.get("card") != source.id
+            or receipt.get("owner") != source.owner
+            or receipt.get("claim_revision") != source.meta.get("_claim_revision")
+            or receipt.get("completion_state") != "awaiting-review"
+            or type(receipt.get("pid")) is not int
+            or receipt["pid"] <= 0
+            or host != owner_host
+            or host != socket.gethostname().split(".")[0].lower()
+            or disposition.get("state") != "awaiting-review"
+            or disposition.get("claim_released") is not False
+            or disposition.get("process_terminal") is not True
+            or disposition.get("source_artifact") != manifest
+            or receipt.get("route_schema") != "skfleet.runtime-route/v1"
+            or not receipt.get("logical_route")
+            or not receipt.get("provider")
+            or not isinstance(domains, list)
+            or not domains
+            or any(not isinstance(domain, str) or not domain for domain in domains)
+            or not receipt.get("model_or_bucket")
+            or ("exit_code" in receipt and receipt["exit_code"] != 0)
+            or (
+                explicit_receipt
+                and (receipt.get("exit_code") != 0 or not receipt.get("invocation"))
+            )
+        ):
+            raise ReviewEvidenceError("direct producer terminal custody differs")
+        invocation = str(receipt.get("invocation") or "")
+        if invocation and not re.fullmatch(r"[0-9a-f]{32}", invocation):
+            raise ReviewEvidenceError("direct producer invocation invalid")
+        lane = str(receipt.get("lane") or (parts[1] if len(parts) >= 4 else ""))
+        unit = str(receipt.get("unit") or f"skfleet-worker-{lane}-{source.id}.service")
+        if (
+            unit != f"skfleet-worker-{lane}-{source.id}.service"
+            or explicit_receipt and (receipt.get("host") != host or receipt.get("lane") != lane)
+        ):
+            raise ReviewEvidenceError("direct producer unit differs")
+        return {
+            "receipt_kind": "direct-seat",
+            "receipt_path": str(path),
+            "receipt_sha256": hashlib.sha256(raw).hexdigest(),
+            "card": source.id,
+            "owner": source.owner,
+            "claim_revision": source.meta.get("_claim_revision"),
+            "pid": receipt["pid"],
+            "unit": unit,
+            "invocation": invocation or None,
+            "host": host,
+            "family": domains[0],
+        }
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        if isinstance(exc, ReviewEvidenceError):
+            raise
+        raise ReviewEvidenceError("direct producer terminal receipt unavailable") from exc
 
 
 def _current_outcome(store, row):
@@ -112,7 +191,7 @@ def _current_outcome(store, row):
     return outcome
 
 
-def terminal_guard(context, process_check):
+def terminal_guard(home, context, process_check):
     """Recheck exact recorded workers; no receipt grants permission to stop them."""
     for role in ("source", "review"):
         item = context[role]
@@ -120,7 +199,34 @@ def terminal_guard(context, process_check):
         if process.get("sessions") or process.get("units"):
             raise ReviewEvidenceError("native worker remains active")
         terminal = item["terminal"]
-        unit_terminal(terminal["unit"], terminal["invocation"], host=terminal["host"])
+        if terminal.get("receipt_kind") == "direct-seat" and role == "source":
+            path = Path(home) / "fleet/direct-seats" / (item["owner"] + ".json")
+            try:
+                raw = path.read_bytes()
+            except OSError as exc:
+                raise ReviewEvidenceError(
+                    "direct producer terminal receipt disappeared"
+                ) from exc
+            if (
+                str(path) != terminal.get("receipt_path")
+                or hashlib.sha256(raw).hexdigest() != terminal.get("receipt_sha256")
+            ):
+                raise ReviewEvidenceError("direct producer terminal receipt changed")
+            receipt = json.loads(raw)
+            disposition = receipt.get("source_disposition") or {}
+            if (
+                receipt.get("card") != terminal.get("card")
+                or receipt.get("owner") != terminal.get("owner")
+                or receipt.get("claim_revision") != terminal.get("claim_revision")
+                or receipt.get("pid") != terminal.get("pid")
+                or disposition.get("process_terminal") is not True
+                or disposition.get("claim_released") is not False
+            ):
+                raise ReviewEvidenceError("direct producer terminal receipt changed")
+            if terminal.get("invocation"):
+                unit_terminal(terminal["unit"], terminal["invocation"], host=terminal["host"])
+        else:
+            unit_terminal(terminal["unit"], terminal["invocation"], host=terminal["host"])
 
 
 def collect(home, policy, card, claim, *, process_check):
@@ -318,7 +424,7 @@ def collect(home, policy, card, claim, *, process_check):
         "test_binding": binding,
         "source_workspace": str(workspace),
     }
-    terminal_guard(context, process_check)
+    terminal_guard(home, context, process_check)
     if (
         gateway.read_card(parent).revision != source_snapshot.revision
         or gateway.read_card(card).revision != review_snapshot.revision
@@ -367,7 +473,7 @@ def reconcile(home, policy, *, process_check):
                 raise ReviewEvidenceError("acceptance operational policy changed")
 
             def guard():
-                return terminal_guard(context, process_check)
+                return terminal_guard(home, context, process_check)
 
             if not (directory / "finish-intent.json").exists():
                 guard()
