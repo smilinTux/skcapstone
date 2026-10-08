@@ -43,6 +43,21 @@ def _launches(home: Path, intent: dict) -> list[dict]:
     ]
 
 
+def _claim_event(home: Path, intent: dict) -> dict | None:
+    """Return the unique exact claim event that must precede a fenced start."""
+    binding = intent["binding"]
+    claims = [
+        event
+        for event in CardStore(home)._read_events(binding["card_id"])
+        if event.get("action") == "claim"
+        and event.get("writer") == binding["owner"]
+        and event.get("owner") == binding["owner"]
+        and event.get("node") == intent["host"]
+        and event.get("claim_revision") == binding["claim_revision"]
+    ]
+    return claims[0] if len(claims) == 1 else None
+
+
 def _fenced_claim(directory: Path, home: Path, intent: dict, *, current=True) -> list[dict]:
     """A consumed claim fence is evidence, never a synthetic launch event."""
     binding = intent["binding"]
@@ -177,14 +192,21 @@ def _launch_time(event: dict) -> int:
     return int(stamp.timestamp() * 1_000_000)
 
 
-def _valid(proof: dict, intent: dict, launches: list[dict], *, fenced=False) -> bool:
+def _valid(
+    proof: dict,
+    intent: dict,
+    launches: list[dict],
+    *,
+    fenced=False,
+    start_anchor: dict | None = None,
+) -> bool:
     """Bind cached terminal evidence to the immutable native launch generation."""
     try:
         if len(launches) != 1:
             return False
         start = int(proof["start_realtime_us"])
         terminal = int(proof["terminal_realtime_us"])
-        anchor = _launch_time(launches[0])
+        anchor = _launch_time(start_anchor if fenced else launches[0])
         return (
             proof.get("schema")
             == (
@@ -249,9 +271,12 @@ def reconcile_legacy_assignment(
         # Historical resource discharge survives later legitimate card handoff.
         # A fresh recovery still requires the unchanged current native claim.
         launches = _fenced_claim(directory, home, intent, current=not path.exists())
+        start_anchor = _claim_event(home, intent)
+    else:
+        start_anchor = None
 
     def valid(proof):
-        return _valid(proof, intent, launches, fenced=fenced) and (
+        return _valid(proof, intent, launches, fenced=fenced, start_anchor=start_anchor) and (
             not fenced
             or proof.get("start_receipt_sha256")
             == admission._digest(read_json(directory / "start.json"))

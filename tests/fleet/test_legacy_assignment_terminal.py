@@ -2,7 +2,7 @@
 
 import json
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -174,7 +174,9 @@ def _review_generation(legacy, monkeypatch, *, started=True, recommendation=True
             "recommendation_id": recommendation_id,
             "observed_state_revision": observed_revision,
             "claim_revision": revision,
-            "ts": now.isoformat(),
+            # The systemd start entry is emitted before the scheduler records
+            # the launch receipt, so this event can follow the actual start.
+            "ts": (now + timedelta(seconds=2)).isoformat(),
         }
         if remote:
             launch["execution"] = {
