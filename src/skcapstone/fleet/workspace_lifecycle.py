@@ -452,7 +452,7 @@ def quarantine_and_reissue(
 
     The source is never changed or removed. Quarantine is a private mirrored
     tree plus an immutable content manifest. Only regular files, directories,
-    internal relative symlinks, and systemd service masks pointing to
+    internal relative symlinks, and systemd unit masks pointing to
     ``/dev/null`` are representable; other escaping links and special files
     fail closed. ``execute=False`` validates identity and reports the exact
     plan without writing or invoking Git.
@@ -503,7 +503,7 @@ def quarantine_and_reissue(
                     link = os.readlink(path)
                     systemd_mask = (
                         rel.startswith("systemd/")
-                        and rel.endswith(".service")
+                        and rel.endswith((".service", ".timer"))
                         and link == "/dev/null"
                     )
                     if not systemd_mask and (

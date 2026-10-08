@@ -445,6 +445,12 @@ def test_quarantine_refuses_live_process_escape_links_and_collisions(tmp_path: P
     with pytest.raises(ValueError, match="escapes root"):
         quarantine_and_reissue(item, **common, process_counter=lambda _: 0)
     (source / "escape").unlink()
+    unsafe_mask = source / "systemd/production/not-a-unit.conf"
+    unsafe_mask.parent.mkdir(parents=True)
+    unsafe_mask.symlink_to("/dev/null")
+    with pytest.raises(ValueError, match="escapes root"):
+        quarantine_and_reissue(item, **common, process_counter=lambda _: 0)
+    unsafe_mask.unlink()
     Path(common["quarantine_root"]).mkdir()
     (Path(common["quarantine_root"]) / item.card_id).mkdir()
     (Path(common["quarantine_root"]) / item.card_id / item.claim_revision).mkdir()
@@ -456,8 +462,10 @@ def test_quarantine_preserves_systemd_mask_symlink_without_following_it(tmp_path
     item, repository, _ = authoritative_proof(tmp_path)
     source = Path(item.workspace)
     mask = source / "systemd/production/skfleet-fiber-dispatch.service"
+    timer_mask = source / "systemd/production/skfleet-fiber-dispatch.timer"
     mask.parent.mkdir(parents=True)
     mask.symlink_to("/dev/null")
+    timer_mask.symlink_to("/dev/null")
     quarantine = tmp_path / "private-quarantine"
     target = tmp_path / "reissued" / "8c4a9e21-clean"
 
@@ -475,10 +483,20 @@ def test_quarantine_preserves_systemd_mask_symlink_without_following_it(tmp_path
     saved = Path(str(result["quarantine"])) / "systemd/production/skfleet-fiber-dispatch.service"
     assert saved.is_symlink()
     assert os.readlink(saved) == "/dev/null"
+    saved_timer = saved.with_suffix(".timer")
+    assert saved_timer.is_symlink()
+    assert os.readlink(saved_timer) == "/dev/null"
     assert mask.is_symlink() and os.readlink(mask) == "/dev/null"
+    assert timer_mask.is_symlink() and os.readlink(timer_mask) == "/dev/null"
     manifest = json.loads((saved.parents[2] / "QUARANTINE-MANIFEST.json").read_text())
     assert any(
         row["path"] == "systemd/production/skfleet-fiber-dispatch.service"
+        and row["type"] == "symlink"
+        and row["target"] == "/dev/null"
+        for row in manifest["entries"]
+    )
+    assert any(
+        row["path"] == "systemd/production/skfleet-fiber-dispatch.timer"
         and row["type"] == "symlink"
         and row["target"] == "/dev/null"
         for row in manifest["entries"]
