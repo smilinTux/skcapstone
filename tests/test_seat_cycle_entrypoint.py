@@ -413,6 +413,19 @@ def test_inactive_host_refuses_before_operation(tmp_path: Path) -> None:
     assert "inactive_host_refused" in health
 
 
+def test_inactive_host_entrypoint_exits_successfully(tmp_path: Path, monkeypatch, capsys) -> None:
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    monkeypatch.setattr(seat_entrypoint.socket, "gethostname", lambda: "chiap03")
+
+    result = seat_entrypoint.main(
+        ["--seat", "atlas", "--home", str(tmp_path / "home"), "--control-plane", str(control_path)]
+    )
+
+    assert result == 0
+    assert json.loads(capsys.readouterr().out)["result"] == "inactive_host_refused"
+
+
 def test_dry_run_is_fenced_and_bounded(tmp_path: Path) -> None:
     control_path = tmp_path / "control.json"
     control(control_path)

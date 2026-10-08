@@ -1282,7 +1282,7 @@ def main(argv: list[str] | None = None) -> int:
         operation=operation,
     )
     print(json.dumps(_condensed_receipt_payload(asdict(summary)), sort_keys=True))
-    return 0 if summary.result not in {"inactive_host_refused"} else 75
+    return 0
 
 
 if __name__ == "__main__":
