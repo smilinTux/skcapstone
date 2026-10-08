@@ -1,0 +1,1 @@
+- Remote reviews now skip destinations whose request directories cannot safely accept immutable offers.

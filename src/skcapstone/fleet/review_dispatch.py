@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 import socket
+import stat
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -319,6 +321,20 @@ def _capable(paths, node):
     return CAPABILITY in spec.get("spec", {}).get("capabilities", [])
 
 
+def _offer_directory_safe(paths, node, card_id):
+    """Skip offer targets whose request parent the sealed writer rejects."""
+    directory = dispatch.request_path(paths, node, card_id).parent
+    try:
+        if directory.resolve() != directory:
+            return False
+        info = directory.stat()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and not info.st_mode & 0o022
+
+
 def _recorded(home, request):
     events = CardStore(home)._read_events(request["card_id"])
     matches = [
@@ -381,6 +397,7 @@ def offer_review(paths, home, card_id, *, writer):
             for v in nodes
             if _capable(paths, v.name)
             and production.node_binding(paths, v.name, policy)["host"] in rollout["destinations"]
+            and _offer_directory_safe(paths, v.name, card_id)
         ]
         if not routes or not nodes:
             return None

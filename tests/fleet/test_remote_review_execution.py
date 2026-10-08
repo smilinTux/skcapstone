@@ -63,6 +63,56 @@ def test_destination_capacity_loss_does_not_claim_or_burn_attempt(execution):
     assert review.offer_review(e["paths"], e["home"], e["card"], writer=e["writer"]) is None
 
 
+def test_remote_offer_skips_least_loaded_node_with_unsafe_request_directory(
+    execution, monkeypatch
+):
+    from skcapstone.fleet.node_controller import NodeView
+
+    e = execution
+    store.write_spec(
+        e["paths"],
+        "node",
+        "node-chiap02",
+        {
+            "role": "builder-standby",
+            "actuate": True,
+            "cordoned": False,
+            "capabilities": ["remote-review-v1"],
+        },
+        writer=store.Writer(role="operator", node="fixture", identity="fixture"),
+        labels={"host": "chiap02"},
+    )
+    monkeypatch.setattr(
+        builder,
+        "node_views",
+        lambda _paths: [
+            NodeView(
+                "node-chiap02",
+                "Ready",
+                role="builder-standby",
+                labels={"host": "chiap02"},
+                capacity={"cores": 24, "ram_gb": 31},
+                allocatable={"cores": 20, "ram_gb": 20},
+            ),
+            NodeView(
+                "node-chiap03",
+                "Ready",
+                role="builder-standby",
+                labels={"host": "chiap03"},
+                capacity={"cores": 24, "ram_gb": 31},
+                allocatable={"cores": 20, "ram_gb": 20},
+            ),
+        ],
+    )
+    unsafe = builder.request_path(e["paths"], "node-chiap02", e["card"]).parent
+    unsafe.mkdir(parents=True, exist_ok=True)
+    unsafe.chmod(0o775)
+
+    request = review.offer_review(e["paths"], e["home"], e["card"], writer=e["writer"])
+
+    assert request["node"] == "node-chiap03"
+
+
 @pytest.mark.host_systemd
 def test_remote_review_consumes_the_native_start_fence_once(execution):
     e = execution

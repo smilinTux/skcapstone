@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import pytest
 
 from skcapstone.fleet import builder_dispatch as builder
+from skcapstone.fleet.paths import FleetPaths
 
 pytest_plugins = (
     "tests.fleet.test_production_review_evidence",
@@ -100,6 +101,18 @@ def test_remote_partition_keeps_legacy_reviews_on_the_existing_seat(dispatch):
     assert remote == [native]
     assert local == [legacy, producer]
     assert dispatch.partition_remote_reviews(rows, {"card_ids": [legacy[2]]}) == ([], rows)
+
+
+def test_offer_destination_skips_group_writable_request_directory(dispatch, tmp_path):
+    paths = FleetPaths(tmp_path / "fleet")
+    directory = builder.request_path(paths, "node-chiap04", "8f4b04d4").parent
+    directory.mkdir(parents=True)
+    directory.chmod(0o775)
+
+    assert not dispatch._offer_directory_safe(paths, "node-chiap04", "8f4b04d4")
+
+    directory.chmod(0o700)
+    assert dispatch._offer_directory_safe(paths, "node-chiap04", "8f4b04d4")
 
 
 @pytest.mark.parametrize(
