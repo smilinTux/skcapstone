@@ -26,7 +26,9 @@ def retained_proof(home, source, workspace, criteria_sha256):
         {
             "authority_host": socket.gethostname().split(".")[0].lower(),
             "node_quotas": {
-                socket.gethostname().split(".")[0].lower(): {
+                socket.gethostname()
+                .split(".")[0]
+                .lower(): {
                     "cpu_quota_percent": 100,
                     "memory_max_bytes": 1024**3,
                     "tasks_max": 128,

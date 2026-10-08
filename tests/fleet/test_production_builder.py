@@ -49,7 +49,7 @@ def production_setup(paths, operator, monkeypatch, tmp_path, qualified_runtime):
                 "memory_max_bytes": 1024**3,
                 "tasks_max": 128,
                 "runtime_max_seconds": 600,
-            }
+            },
         },
     }
     value["lanes"]["kimi"] = {"enabled": False}
