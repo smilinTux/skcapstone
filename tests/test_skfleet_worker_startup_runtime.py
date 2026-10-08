@@ -658,6 +658,7 @@ def test_actual_launcher_shell_preserves_workspace_and_beat_identity(
         workspace=str(workspace),
         PI=str(pi),
         model="fake",
+        _LANE={"name": "glm"},
         pi_tools="bash",
         bf=str(brief),
         shlex=shlex,
@@ -672,6 +673,7 @@ def test_actual_launcher_shell_preserves_workspace_and_beat_identity(
     )
     assert namespace["_bi"] == (override or "60")
     assert f"sleep {override or '60'} & wait $!" in namespace["child"]
+    assert "SKFLEET_LANE=glm" in namespace["child"]
     result = subprocess.run(
         ["bash", "-c", namespace["child"]],
         capture_output=True,
@@ -722,6 +724,7 @@ def test_wrapper_completion_reaps_long_heartbeat_sleeper_and_closes_pipes(tmp_pa
         workspace=str(tmp_path),
         PI=str(pi),
         model="fake",
+        _LANE={"name": "glm"},
         pi_tools="bash",
         bf=str(brief),
         shlex=shlex,
