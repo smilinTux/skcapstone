@@ -103,7 +103,7 @@ def validate_profile(value: dict, expected: dict, policy: dict, *, environment=T
     _validate_shape(value)
     if (
         any(value.get(k) != v for k, v in expected.items())
-        or value["policy_sha256"] != digest(policy)
+        or value["policy_sha256"] != plan.execution_policy_fingerprint(policy)
         or value["host"] != policy["authority_host"]
     ):
         raise plan.TestEvidenceError("qualified test profile is missing, stale or conflicting")
@@ -138,7 +138,7 @@ def qualify_profile(
         "qualification_sha256": qualification_sha256,
         "python_sha256": plan.sha((plan.PREFIX / "bin/python").read_bytes()),
         "runtime_sha256": plan.runtime_fingerprint(),
-        "policy_sha256": digest(policy),
+        "policy_sha256": plan.execution_policy_fingerprint(policy),
         "host": socket.gethostname().split(".")[0].lower(),
     }
     if node_environment is not None:
@@ -271,7 +271,7 @@ def supersede_profile(
             "qualification_sha256": qualification_sha256,
             "python_sha256": plan.sha((plan.PREFIX / "bin/python").read_bytes()),
             "runtime_sha256": runtime_sha256,
-            "policy_sha256": digest(policy),
+            "policy_sha256": plan.execution_policy_fingerprint(policy),
             "host": socket.gethostname().split(".")[0].lower(),
         }
         if node_environment is not None:
@@ -316,7 +316,7 @@ def seal_candidate(
     predecessor_sha256 = None
     try:
         existing, _, predecessor_sha256 = plan.load_plan(home, binding, allow_completed=True)
-        if existing["policy_sha256"] == digest(policy):
+        if existing["policy_sha256"] == plan.execution_policy_fingerprint(policy):
             return
     except FileNotFoundError:
         pass

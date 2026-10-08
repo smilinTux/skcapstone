@@ -15,7 +15,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from xml.etree import ElementTree
 
-from . import production_builder
 from .production_policy import _unique_object
 from .qualified_runtime import TOOL_PACKAGES
 
@@ -143,6 +142,17 @@ class TestEvidenceError(ValueError):
 def sha(raw: bytes) -> str:
     """Hash exact persisted bytes."""
     return hashlib.sha256(raw).hexdigest()
+
+
+def execution_policy_fingerprint(policy: dict) -> str:
+    """Bind test evidence only to the host and limits that execute its tests."""
+    host = policy.get("authority_host")
+    quotas = policy.get("node_quotas")
+    resources = quotas.get(host) if isinstance(quotas, dict) else None
+    if not isinstance(host, str) or not host or not isinstance(resources, dict):
+        raise TestEvidenceError("test execution policy is incomplete")
+    value = {"authority_host": host, "resources": resources}
+    return sha(json.dumps(value, sort_keys=True, separators=(",", ":")).encode())
 
 
 def private_dir(path: Path, *, create=False) -> None:
@@ -328,7 +338,7 @@ def _seal_plan(
         "python_sha256": sha((PREFIX / "bin/python").read_bytes()),
         "runtime_sha256": runtime_fingerprint(),
         "host": socket.gethostname().split(".")[0].lower(),
-        "policy_sha256": production_builder.digest(policy),
+        "policy_sha256": execution_policy_fingerprint(policy),
     }
     if predecessor_sha256 is not None:
         value["predecessor_sha256"] = predecessor_sha256

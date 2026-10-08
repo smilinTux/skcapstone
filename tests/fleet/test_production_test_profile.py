@@ -78,7 +78,18 @@ def qualified(tmp_path, monkeypatch):
     (prefix / "bin/python").write_bytes(b"qualified interpreter")
     monkeypatch.setattr(plan, "PREFIX", prefix)
     monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "a" * 64)
-    policy = {"authority_host": socket.gethostname().split(".")[0].lower()}
+    host = socket.gethostname().split(".")[0].lower()
+    policy = {
+        "authority_host": host,
+        "node_quotas": {
+            host: {
+                "cpu_quota_percent": 200,
+                "memory_max_bytes": 3 * 1024**3,
+                "tasks_max": 256,
+                "runtime_max_seconds": 3600,
+            }
+        },
+    }
     core = {
         "id": "abcd1234",
         "meta": {"repository": "https://example.org/public.git"},
@@ -123,6 +134,23 @@ def test_hosted_and_review_lanes_do_not_require_new_profile(qualified):
     home, _, policy, _, _ = qualified
     assert profile.preflight(home, {}, [], policy) is None
     assert profile.preflight(home, {}, ["source-only", "review"], policy) is None
+
+
+def test_unrelated_policy_changes_do_not_stale_profile(qualified):
+    home, core, policy, _, _ = qualified
+    changed = copy.deepcopy(policy)
+    changed["remote_review"] = {"enabled": True, "card_ids": ["deadbeef"]}
+    assert profile.preflight(home, core, ["source-only"], changed)
+    changed["node_quotas"] = {
+        changed["authority_host"]: {
+            "cpu_quota_percent": 200,
+            "memory_max_bytes": 2 * 1024**3,
+            "tasks_max": 256,
+            "runtime_max_seconds": 3600,
+        }
+    }
+    with pytest.raises(plan.TestEvidenceError, match="stale"):
+        profile.preflight(home, core, ["source-only"], changed)
 
 
 def test_hyphenated_targets_preserve_fixed_argv():

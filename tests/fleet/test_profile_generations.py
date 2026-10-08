@@ -333,7 +333,13 @@ def test_policy_change_requires_requalification_before_plan_successor(setup):  #
     original = profile.qualify_profile(s.home, core, s.policy, recipe, "operator", "b" * 64)
     profile.seal_candidate(s.home, binding, s.workspace, s.policy, core["meta"]["repository"])
     _, path, fingerprint = plan.load_plan(s.home, binding)
-    changed_policy = dict(s.policy, remote_review={"enabled": True})
+    unrelated_policy = dict(s.policy, remote_review={"enabled": True})
+    profile.seal_candidate(
+        s.home, binding, s.workspace, unrelated_policy, core["meta"]["repository"]
+    )
+    assert plan.load_plan(s.home, binding)[2] == fingerprint
+    changed_policy = json.loads(json.dumps(s.policy))
+    changed_policy["node_quotas"][changed_policy["authority_host"]]["memory_max_bytes"] += 1
     with pytest.raises(plan.TestEvidenceError, match="profile"):
         profile.seal_candidate(
             s.home, binding, s.workspace, changed_policy, core["meta"]["repository"]
@@ -355,7 +361,7 @@ def test_policy_change_requires_requalification_before_plan_successor(setup):  #
     )
     latest, _, _ = plan.load_plan(s.home, binding)
     assert latest["predecessor_sha256"] == fingerprint
-    assert latest["policy_sha256"] == profile.digest(changed_policy)
+    assert latest["policy_sha256"] == plan.execution_policy_fingerprint(changed_policy)
 
 
 def test_runtime_successor_restores_preflight_without_repinning(qualified, monkeypatch):

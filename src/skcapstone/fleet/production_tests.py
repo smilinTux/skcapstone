@@ -10,6 +10,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 from . import production_builder
+from . import production_test_plan as test_plan
 from .production_admission import (
     AdmissionError,
     finalize_successful_launch,
@@ -121,7 +122,7 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
         or launch.get("workspace") != str(workspace.resolve())
         or launch.get("unit") != unit
         or launch.get("attempt") != 1
-        or production_builder.digest(policy) != plan["policy_sha256"]
+        or test_plan.execution_policy_fingerprint(policy) != plan["policy_sha256"]
         or launch.get("production")
         != {"resources": policy.get("node_quotas", {}).get(plan["host"])}
         or launch.get("service_argv") != expected_argv
@@ -317,7 +318,7 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
         plan, plan_path, plan_sha = load_plan(home, binding, allow_completed=True)
     except FileNotFoundError:
         return None
-    if plan["policy_sha256"] != production_builder.digest(policy):
+    if plan["policy_sha256"] != test_plan.execution_policy_fingerprint(policy):
         raise TestEvidenceError("test quota policy changed after qualification")
     workspace = workspace.resolve()
     source_state(workspace, binding)
