@@ -248,6 +248,40 @@ def test_real_git_preserves_source_and_rejects_dirty_or_stale(setup):
     assert native.source_state(setup.workspace, setup.binding) == before
 
 
+def test_source_state_allows_only_owned_generated_test_caches(setup):
+    before = native.source_state(setup.workspace, setup.binding)
+    exclude = setup.workspace / ".git/info/exclude"
+    exclude.write_text("/.pytest_cache/\n/.ruff_cache/\n**/__pycache__/\n/.coverage\n")
+    caches = {
+        ".pytest_cache/v/cache/nodeids": "{}\n",
+        ".ruff_cache/0.16.3/cache": "cache\n",
+        "tests/__pycache__/parser.pyc": "bytecode\n",
+    }
+    for relative, contents in caches.items():
+        path = setup.workspace / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(contents)
+
+    assert native.source_state(setup.workspace, setup.binding) == before
+
+    (setup.workspace / ".coverage").write_text("unexpected test artifact")
+    with pytest.raises(native.TestEvidenceError, match="source"):
+        native.source_state(setup.workspace, setup.binding)
+
+
+def test_source_state_rejects_symlinks_inside_generated_cache_paths(setup):
+    exclude = setup.workspace / ".git/info/exclude"
+    exclude.write_text("**/__pycache__/\n")
+    cache = setup.workspace / "tests/__pycache__"
+    cache.mkdir(parents=True)
+    target = setup.workspace.parent / "outside-cache-target"
+    target.write_text("must not be followed")
+    (cache / "unsafe.pyc").symlink_to(target)
+
+    with pytest.raises(native.TestEvidenceError, match="source"):
+        native.source_state(setup.workspace, setup.binding)
+
+
 @pytest.mark.parametrize("key", sorted(native.BINDING_KEYS))
 def test_wrong_binding_is_rejected(setup, key):
     binding = {**setup.binding, key: "d" * len(setup.binding[key])}

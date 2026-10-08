@@ -721,8 +721,47 @@ def _validate_current_plan(plan: dict) -> None:
         raise TestEvidenceError("operator test plan is invalid or stale")
 
 
+def _safe_generated_cache(workspace: Path, relative: str) -> bool:
+    """Allow only owned, nonsymlink files under inert test-tool cache paths."""
+    parts = Path(relative).parts
+    if (
+        not parts
+        or Path(relative).is_absolute()
+        or any(part in {"", ".", ".."} for part in parts)
+        or not (parts[0] in {".pytest_cache", ".ruff_cache"} or "__pycache__" in parts)
+    ):
+        return False
+    current = Path(workspace)
+    for index, part in enumerate(parts):
+        current = current / part
+        try:
+            info = current.lstat()
+        except OSError:
+            return False
+        if info.st_uid != os.getuid():
+            return False
+        if index < len(parts) - 1:
+            if not stat.S_ISDIR(info.st_mode):
+                return False
+        elif not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
+            return False
+    return True
+
+
+def _source_status_is_clean(workspace: Path, output: str) -> bool:
+    """Reject source edits and unknown files while tolerating inert test caches."""
+    records = [record for record in output.split("\0") if record]
+    for record in records:
+        if len(record) < 4:
+            return False
+        status, relative = record[:2], record[3:]
+        if status not in {"??", "!!"} or not _safe_generated_cache(workspace, relative):
+            return False
+    return True
+
+
 def source_state(workspace: Path, binding: dict) -> dict:
-    """Check actual Git source, including ignored/untracked files and linked worktrees."""
+    """Check Git source, permitting only inert generated test caches."""
 
     def git(*args):
         result = subprocess.run(
@@ -742,12 +781,18 @@ def source_state(workspace: Path, binding: dict) -> dict:
                 "GIT_CONFIG_VALUE_0": "false",
             },
         )
-        return result.stdout.strip()
+        return result.stdout
 
-    state = {"head": git("rev-parse", "HEAD"), "tree": git("rev-parse", "HEAD^{tree}")}
+    state = {
+        "head": git("rev-parse", "HEAD").strip(),
+        "tree": git("rev-parse", "HEAD^{tree}").strip(),
+    }
     if (
         state != {"head": binding["source_head"], "tree": binding["source_tree"]}
-        or git("status", "--porcelain", "--untracked-files=all", "--ignored")
+        or not _source_status_is_clean(
+            workspace,
+            git("status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored"),
+        )
         or git("ls-files", "--stage").find("160000 ") >= 0
     ):
         raise TestEvidenceError("test source is changed, dirty, or contains submodules")
