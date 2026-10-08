@@ -154,3 +154,23 @@ def test_units_install_a_two_minute_oneshot_with_failure_alert():
     assert "OnFailure=skcapstone-alert@skfleet-auto-rollout.service" in service
     assert "scripts/fleet/skfleet-auto-rollout.sh" in service
     assert "OnUnitActiveSec=2min" in timer
+
+
+def test_merge_during_run_supersedes_quietly_instead_of_halting(fleet):
+    """A newer main landing mid-run is handed to the next tick, not reported as a HALT."""
+    _advance_origin(fleet["origin"])
+    fleet["fail_host"].write_text("h2")
+    # The fake skcapstone fails h2's gate; simulate the merge that caused it.
+    hook = fleet["deploy"].parent / "bin" / "skcapstone"
+    hook.write_text(
+        hook.read_text()
+        + f'if [ "$host" = h2 ]; then cd {fleet["origin"]} && echo 3 > f && git commit -qam third; fi\n'
+    )
+    result = _run(fleet["env"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "superseded at h2" in result.stdout
+    assert not any("HALTED" in c for c in _calls(fleet["calls"]))
+    hosts = [
+        c.split("--node ")[1].split()[0] for c in _calls(fleet["calls"]) if c.startswith("rollout")
+    ]
+    assert hosts == ["h1", "h2"]

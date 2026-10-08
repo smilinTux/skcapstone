@@ -70,6 +70,13 @@ for host in $HOSTS; do
     out=$("$SKCAPSTONE" fleet rollout --node "$host" --repo-root "$REPO" --remote-repo-root "~/deploy/skcapstone" --apply 2>&1 | tail -1)
     log "$host try$attempt: $out"
     if printf '%s' "$out" | grep -q "gate passed"; then ok=1; break; fi
+    # A merge during the run makes the host pull a newer main than the
+    # manifest this run built, so its gate reports git_sha drift. That is not
+    # a fault: stand down quietly and let the next tick roll the newer main.
+    if git -C "$REPO" fetch -q origin main && [ "$(git -C "$REPO" rev-parse origin/main)" != "$target" ]; then
+      log "main moved to $(git -C "$REPO" rev-parse --short=8 origin/main) during this run; superseded at $host, next tick rolls it"
+      exit 0
+    fi
     # The gate reads a synced readiness verdict; refresh it and give syncthing a scan.
     "$SSH" -o BatchMode=yes "$host" 'systemctl --user start skfleet-readiness.service; k=$(grep -o "<apikey>[^<]*" ~/.config/syncthing/config.xml ~/.local/state/syncthing/config.xml 2>/dev/null | head -1 | cut -d">" -f2); curl -s -o /dev/null -X POST -H "X-API-Key: $k" "http://127.0.0.1:8384/rest/db/scan?folder=skcapstone&sub=fleet/status/node-$(hostname)/readiness"' >/dev/null 2>&1 || true
     sleep $(( READY_WAIT / ATTEMPTS ))
