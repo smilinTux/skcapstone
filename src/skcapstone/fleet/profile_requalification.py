@@ -79,8 +79,9 @@ def harvest_completed(home: Path, policy: dict, card_id: str | None = None) -> s
         for path in sorted(root.glob("*.job.json")):
             try:
                 job = json.loads(plan.read_private(path))
-                if (job.get("schema") != "skfleet.profile-requalification/v1"
-                        or (card_id is not None and job.get("card") != card_id)):
+                if job.get("schema") != "skfleet.profile-requalification/v1" or (
+                    card_id is not None and job.get("card") != card_id
+                ):
                     continue
                 binding = job["binding"]
                 workspace = Path(job["workspace"])
@@ -100,24 +101,33 @@ def harvest_completed(home: Path, policy: dict, card_id: str | None = None) -> s
                     sealed.get("profile_requalification") is not True
                     or sealed.get("profile_predecessor_sha256") != predecessor
                     or sealed.get("runtime_sha256") != plan.runtime_fingerprint()
-                    or sealed.get("policy_sha256")
-                    != plan.execution_policy_fingerprint(policy)
+                    or sealed.get("policy_sha256") != plan.execution_policy_fingerprint(policy)
                 ):
                     continue
                 plan.source_state(workspace, binding)
                 receipt = tests.validate_test_receipt(home, binding, workspace)
                 if not profile.fingerprint_only_stale(
-                    current, {"card": job["card"], "criteria_sha256": binding["criteria_sha256"],
-                              "repository": current["repository"]},
-                    policy, source_sha256=job.get("source_sha256")
+                    current,
+                    {
+                        "card": job["card"],
+                        "criteria_sha256": binding["criteria_sha256"],
+                        "repository": current["repository"],
+                    },
+                    policy,
+                    source_sha256=job.get("source_sha256"),
                 ):
                     continue
                 profile.supersede_profile(
-                    home, card.model_dump(mode="json"), policy, current["recipe"],
-                    current["qualified_by"], receipt["receipt_sha256"],
+                    home,
+                    card.model_dump(mode="json"),
+                    policy,
+                    current["recipe"],
+                    current["qualified_by"],
+                    receipt["receipt_sha256"],
                     predecessor_sha256=predecessor,
                     runtime_sha256=plan.runtime_fingerprint(),
-                    source_sha256=job.get("source_sha256"), unclaimed=True,
+                    source_sha256=job.get("source_sha256"),
+                    unclaimed=True,
                 )
                 refreshed_sha = profile.read_profile(home, job["card"])[1]
                 plan.write_once(
