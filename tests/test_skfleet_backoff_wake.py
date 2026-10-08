@@ -498,9 +498,7 @@ def test_governed_ready_move_after_pass_requeues_fresh_producer(tmp_path: Path) 
         ]
     }
     namespace = _native_namespace(tmp_path, native)
-    assert namespace["_explicit_ready_requeue_after"](
-        card, "2026-08-29T01:00:00+00:00"
-    ) is True
+    assert namespace["_explicit_ready_requeue_after"](card, "2026-08-29T01:00:00+00:00") is True
     assert namespace["awaiting_review"](card) is False
     assert namespace["blocked_backoff"](card) is False
 
