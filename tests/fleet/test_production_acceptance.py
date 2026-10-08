@@ -175,16 +175,12 @@ def test_direct_seat_terminal_receipt_can_enter_review_and_is_rechecked(stopped_
             },
         },
     }
-    acceptance.terminal_guard(
-        home, context, lambda card: {"sessions": [], "units": []}
-    )
+    acceptance.terminal_guard(home, context, lambda card: {"sessions": [], "units": []})
 
     receipt["completion_state"] = "running"
     path.write_text(json.dumps(receipt))
     with pytest.raises(acceptance.ReviewEvidenceError, match="receipt changed"):
-        acceptance.terminal_guard(
-            home, context, lambda card: {"sessions": [], "units": []}
-        )
+        acceptance.terminal_guard(home, context, lambda card: {"sessions": [], "units": []})
 
 
 @pytest.mark.parametrize(

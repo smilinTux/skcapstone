@@ -149,7 +149,8 @@ def _direct_seat_terminal(home, source, manifest):
         unit = str(receipt.get("unit") or f"skfleet-worker-{lane}-{source.id}.service")
         if (
             unit != f"skfleet-worker-{lane}-{source.id}.service"
-            or explicit_receipt and (receipt.get("host") != host or receipt.get("lane") != lane)
+            or explicit_receipt
+            and (receipt.get("host") != host or receipt.get("lane") != lane)
         ):
             raise ReviewEvidenceError("direct producer unit differs")
         return {
@@ -204,13 +205,10 @@ def terminal_guard(home, context, process_check):
             try:
                 raw = path.read_bytes()
             except OSError as exc:
-                raise ReviewEvidenceError(
-                    "direct producer terminal receipt disappeared"
-                ) from exc
-            if (
-                str(path) != terminal.get("receipt_path")
-                or hashlib.sha256(raw).hexdigest() != terminal.get("receipt_sha256")
-            ):
+                raise ReviewEvidenceError("direct producer terminal receipt disappeared") from exc
+            if str(path) != terminal.get("receipt_path") or hashlib.sha256(
+                raw
+            ).hexdigest() != terminal.get("receipt_sha256"):
                 raise ReviewEvidenceError("direct producer terminal receipt changed")
             receipt = json.loads(raw)
             disposition = receipt.get("source_disposition") or {}
