@@ -41,6 +41,32 @@ _BUNDLED_GUARD = Path(__file__).resolve().parents[3] / "scripts/fleet/pi-cardsto
 
 logger = logging.getLogger(__name__)
 
+# (request_id, reason) pairs already logged by this process, so a held request
+# polled every actuation tick is reported once rather than every 30 seconds.
+_REVIEW_CONSUME_FAILURES_LOGGED: set[tuple[str, str]] = set()
+
+
+def _log_review_consume_failure(node: str, request: dict, exc: BaseException) -> None:
+    """Log a refused remote review request once per (request, reason).
+
+    Args:
+        node: Node that tried to consume the request.
+        request: The remote review request that was refused.
+        exc: The exception consume_review raised.
+    """
+    reason = f"{type(exc).__name__}: {str(exc)[:240]}"
+    key = (str(request.get("request_id") or ""), reason)
+    if key in _REVIEW_CONSUME_FAILURES_LOGGED:
+        return
+    _REVIEW_CONSUME_FAILURES_LOGGED.add(key)
+    logger.warning(
+        "REVIEW_CONSUME_REFUSED|%s|%s|request=%s|%s",
+        node,
+        request.get("card_id"),
+        key[0][:16],
+        reason,
+    )
+
 
 class BuilderDispatchError(ValueError):
     """A remote dispatch request failed a governance fence."""
@@ -1272,8 +1298,11 @@ def _consume_available(
                 result = review_dispatch.consume_review(
                     paths, coordination_home, node, request, launcher=launcher
                 )
-            except (OSError, ValueError, KeyError, TypeError):
+            except (OSError, ValueError, KeyError, TypeError) as exc:
                 # Request/claim/intent stays held for exact evidence or recovery.
+                # Say why, once per request and reason: a silent skip here hid
+                # every remote review refusal on builder nodes (2026-10-08).
+                _log_review_consume_failure(node, request, exc)
                 continue
     active_cards: set[str] = set()
     reconciled_orphans: set[str] = set()
