@@ -4779,15 +4779,11 @@ def blocked_backoff(cid):
     # evidence past a TTL, which is exactly the right test here.
     #
     # A card that RECORDED A PASS has something to show, and the counter above is
-    # explicitly about having nothing to show. Measured 2026-08-27: 8 cards whose
-    # latest outcome was PASS_FOR_REVIEW were parked here at exactly 3 launches,
-    # reported to the operator inside blocked_backoff as though they had refused.
-    # They had not refused, they had succeeded and were waiting on review. Parking
-    # them is right, since re-running finished work wastes a slot; calling them
-    # blocked is not, because it hides completed candidates in a bucket the
-    # operator reads as failures.
+    # explicitly about having nothing to show. Keep it parked for review unless
+    # an operator moved it back to READY after that outcome, which explicitly
+    # requests a fresh producer generation.
     if ts and _PASS_RE.match(str(val or "")):
-        return True
+        return awaiting_review(cid)
     # A pure pre-agent gateway failure is not card work, but retrying on every
     # timer tick would hammer the same unhealthy lane. Wait one bounded circuit
     # interval, then allow exactly one recovery probe. A failed probe writes a
@@ -4813,6 +4809,8 @@ def blocked_backoff(cid):
         # A material change is a real, authored event: a dependency added,
         # removed or completed, or a label applied. It is not free: something
         # must actually happen to the card to buy it another attempt.
+        if _explicit_ready_requeue_after(cid, _launched_at.get(cid, 0)):
+            return False
         change = _material_change_since(cid, _launched_at.get(cid, 0))
         if not change:
             return True
@@ -4839,7 +4837,34 @@ def awaiting_review(cid):
     counted as work that refused.
     """
     ts, val = _load_outcomes().get(cid, (None, None))
-    return bool(ts and _PASS_RE.match(str(val or "")))
+    return bool(
+        ts
+        and _PASS_RE.match(str(val or ""))
+        and not _explicit_ready_requeue_after(cid, _ts_epoch(ts))
+    )
+
+
+def _explicit_ready_requeue_after(cid, threshold):
+    """Recognize a governed READY move as a fresh dispatch request.
+
+    A prior PASS remains parked until an operator moves the producer back to
+    READY after that outcome. This lets a superseded review generation stay
+    retired while the producer runs again; older READY history cannot wake it.
+    """
+    try:
+        boundary = (
+            float(threshold)
+            if isinstance(threshold, (int, float))
+            else _ts_epoch(threshold)
+        )
+    except (TypeError, ValueError):
+        return False
+    return any(
+        event.get("action") == "move"
+        and str(event.get("column") or "").strip().lower() == "ready"
+        and _ts_epoch(event.get("ts")) > boundary
+        for event in event_rows(cid)
+    )
 
 def terminal_review_verdict(cid, core=None):
     """True when an independent review card already recorded PASS or FAIL."""

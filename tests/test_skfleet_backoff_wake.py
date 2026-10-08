@@ -40,6 +40,7 @@ FUNCTIONS = {
     "_work_epochs",
     "_work_between",
     "_claim_ceiling_hit",
+    "_explicit_ready_requeue_after",
     "acts",
     "blocked_backoff",
     "_material_change_since",
@@ -478,6 +479,63 @@ def test_native_pass_remains_awaiting_review(tmp_path: Path) -> None:
     namespace = _native_namespace(tmp_path, native)
     assert namespace["awaiting_review"](card) is True
     assert namespace["blocked_backoff"](card) is True
+
+
+def test_governed_ready_move_after_pass_requeues_fresh_producer(tmp_path: Path) -> None:
+    card = "dddddddd"
+    native = {
+        card: [
+            {
+                "ts": "2026-08-29T01:00:00+00:00",
+                "action": "verdict",
+                "payload": {"verdict": "PASS_FOR_REVIEW"},
+            },
+            {
+                "ts": "2026-08-29T02:00:00+00:00",
+                "action": "move",
+                "column": "ready",
+            },
+        ]
+    }
+    namespace = _native_namespace(tmp_path, native)
+    assert namespace["_explicit_ready_requeue_after"](
+        card, "2026-08-29T01:00:00+00:00"
+    ) is True
+    assert namespace["awaiting_review"](card) is False
+    assert namespace["blocked_backoff"](card) is False
+
+
+def test_ready_move_before_pass_does_not_requeue(tmp_path: Path) -> None:
+    card = "eeeeeeee"
+    native = {
+        card: [
+            {
+                "ts": "2026-08-29T01:00:00+00:00",
+                "action": "move",
+                "column": "ready",
+            },
+            {
+                "ts": "2026-08-29T02:00:00+00:00",
+                "action": "verdict",
+                "payload": {"verdict": "PASS_FOR_REVIEW"},
+            },
+        ]
+    }
+    namespace = _native_namespace(tmp_path, native)
+    assert namespace["awaiting_review"](card) is True
+    assert namespace["blocked_backoff"](card) is True
+
+
+def test_governed_ready_move_retries_silent_infrastructure_attempts(
+    board: BackoffHarness,
+) -> None:
+    card = "ffffffff"
+    board.attempts[card] = 3
+    board.ns["_launched_at"][card] = board.epoch("2026-08-29T01:00:00Z")
+    board.ns["_transport_retry_held"] = lambda _cid: False
+    board.ns["_completion_retry_held"] = lambda _cid: False
+    board.event(card, "2026-08-29T02:00:00Z", "move", column="ready")
+    assert board.blocked(card) is False
 
 
 def test_consumer_review_verdict_is_dependency_metadata(tmp_path: Path) -> None:
