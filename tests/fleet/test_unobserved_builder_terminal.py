@@ -187,6 +187,57 @@ def test_reusable_worker_unit_is_not_recovered_from_inferred_invocation(collecte
     assert calls == []
 
 
+def test_native_qualification_binding_is_recovered_from_exact_journal(collected, monkeypatch):
+    home, root, directory, state, entries, calls, old_unit = collected
+    import shutil
+
+    shutil.rmtree(directory)
+    binding = dict(
+        card_id="12345678",
+        owner="fixture",
+        claim_revision="a" * 32,
+        plan_sha256="d" * 64,
+    )
+    unit = f"skfleet-builder-{binding['card_id']}-{binding['plan_sha256']}-1.service"
+    state["Id"] = unit
+    for entry in entries:
+        entry["USER_UNIT"] = unit
+    policy = {
+        "node_quotas": {
+            "fixture": dict(
+                cpu_quota_percent=200,
+                memory_max_bytes=1024,
+                tasks_max=256,
+                runtime_max_seconds=3600,
+            )
+        }
+    }
+    command = [
+        "systemd-run",
+        "--user",
+        "--unit=" + unit,
+        "--property=CPUQuota=200%",
+        "--property=MemoryMax=1024",
+        "--property=TasksMax=256",
+        "--property=RuntimeMaxSec=3600",
+        "--",
+        "/bin/true",
+    ]
+    argv = admission.reserve_launch(home, policy, "fixture", unit, binding, command)
+    admission.start_reserved(home, "fixture", argv, lambda argv: None)
+
+    assert admission._occupancy(root, home) == []
+    reservation = next(path for path in root.iterdir() if path.is_dir())
+    observed = admission.read_json(reservation / "observed.json")
+    proof = admission.read_json(reservation / "journal-terminal.json")
+    assert observed["invocation"] == "c" * 32
+    assert proof["unit"] == unit
+    assert proof["reservation_id"] == admission._reservation_id(
+        admission.read_json(reservation / "intent.json")
+    )
+    assert len(calls) == 1
+
+
 def test_next_native_offer_is_admitted_without_releasing_source_claim(collected, monkeypatch):
     home, root, directory, state, entries, calls, unit = collected
     monkeypatch.setattr(

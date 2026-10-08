@@ -1,0 +1,1 @@
+- Reconcile completed native test qualification units from their exact admission journal so a claim handoff does not keep a dead worker charged against node capacity.

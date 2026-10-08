@@ -364,7 +364,12 @@ def _valid_journal_terminal(proof: dict, intent: dict, observed: dict) -> bool:
 def _recover_unobserved_builder(directory: Path, intent: dict) -> bool:
     """Recover a unique consumed builder start that systemd collected before observation."""
     binding = intent["binding"]
-    card, request, attempt = (binding.get(key) for key in ("card_id", "request_id", "attempt"))
+    card = binding.get("card_id")
+    request, attempt = binding.get("request_id"), binding.get("attempt")
+    if "request_id" not in binding and "attempt" not in binding:
+        plan_sha256 = binding.get("plan_sha256")
+        if re.fullmatch(r"[0-9a-f]{64}", str(plan_sha256)):
+            request, attempt = plan_sha256, 1
     if (
         not re.fullmatch(r"[0-9a-f]{8}", str(card))
         or not re.fullmatch(r"[0-9a-f]{64}", str(request))
