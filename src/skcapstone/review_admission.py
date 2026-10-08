@@ -176,8 +176,8 @@ def reviewer_capacity_evaluation(
     }
     size = (
         title_sizes[0]
-        if title and len(title_sizes) == 1
-        else next(iter(label_sizes)) if not title and len(label_sizes) == 1 else None
+        if len(title_sizes) == 1
+        else next(iter(label_sizes)) if not title_sizes and len(label_sizes) == 1 else None
     )
     host = (os.environ.get("SKFLEET_EVIDENCE_HOST") or os.uname().nodename).split(".")[0].lower()
     if not re.fullmatch(r"[a-z0-9-]+", host):

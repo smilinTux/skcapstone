@@ -421,6 +421,48 @@ def test_coord_gates_rejects_capacity_bytes_that_do_not_match_revision(
     assert report["capacity"]["reason"] == "route-snapshot-ambiguity"
 
 
+def test_coord_gates_uses_one_size_label_when_title_has_no_size_marker(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    _write_gateway_capacity(tmp_path, maximum=3)
+    CardStore(tmp_path).create(
+        CardCore(
+            id="aabb0011",
+            title="Work Queue isolate per-matter fetch failures",
+            created_by="scheduler",
+            initial_labels=["sk-s", "glm-only", "dispatch-approved"],
+        )
+    )
+
+    result = CliRunner().invoke(main, ["coord", "gates", "aabb0011", "--home", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert report["capacity"]["reason"] == "eligible"
+    assert report["capacity"]["available"] == 3
+
+
+def test_coord_gates_keeps_ambiguous_size_labels_ineligible(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    _write_gateway_capacity(tmp_path, maximum=3)
+    CardStore(tmp_path).create(
+        CardCore(
+            id="aabb0012",
+            title="Work Queue isolate per-matter fetch failures",
+            created_by="scheduler",
+            initial_labels=["sk-s", "sk-m", "glm-only", "dispatch-approved"],
+        )
+    )
+
+    result = CliRunner().invoke(main, ["coord", "gates", "aabb0012", "--home", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert report["capacity"]["reason"] == "route-exhaustion"
+    assert report["capacity"]["available"] == 0
+
+
 def test_coord_gates_reports_do_not_claim_exclusion(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
     CardStore(tmp_path).create(
