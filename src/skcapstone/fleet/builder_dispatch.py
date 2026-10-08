@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 # (request_id, reason) pairs already logged by this process, so a held request
 # polled every actuation tick is reported once rather than every 30 seconds.
 _REVIEW_CONSUME_FAILURES_LOGGED: set[tuple[str, str]] = set()
+_REVIEW_POLICY_DRIFT_LOGGED: set[tuple[str, str, str]] = set()
 
 
 def _log_review_consume_failure(node: str, request: dict, exc: BaseException) -> None:
@@ -65,6 +66,28 @@ def _log_review_consume_failure(node: str, request: dict, exc: BaseException) ->
         request.get("card_id"),
         key[0][:16],
         reason,
+    )
+
+
+def _log_review_policy_drift(node: str, request: dict, current_policy: dict) -> None:
+    """Log a review offer held because its captured policy is stale."""
+    offered = request.get("policy")
+    if not isinstance(offered, dict):
+        return
+    request_id = str(request.get("request_id") or "")
+    offered_digest = production_builder.digest(offered)
+    current_digest = production_builder.digest(current_policy)
+    key = (request_id, offered_digest, current_digest)
+    if key in _REVIEW_POLICY_DRIFT_LOGGED:
+        return
+    _REVIEW_POLICY_DRIFT_LOGGED.add(key)
+    logger.warning(
+        "POLICY_DRIFT_HELD|%s|%s|request=%s|offered=%s|current=%s",
+        node,
+        request.get("card_id"),
+        request_id[:16],
+        offered_digest,
+        current_digest,
     )
 
 
@@ -1294,6 +1317,19 @@ def _consume_available(
         if request.get("schema") != review_dispatch.SCHEMA or request.get("node") != node:
             continue
         with _request_exclusion(path):
+            try:
+                current_policy = production_builder.policy()
+            except (OSError, ValueError, KeyError, TypeError):
+                current_policy = None
+            if (
+                current_policy is not None
+                and isinstance(request.get("policy"), dict)
+                and request["policy"] != current_policy
+            ):
+                # Keep stale offers and their custody untouched. The authority
+                # can retire and reoffer them through the governed lifecycle.
+                _log_review_policy_drift(node, request, current_policy)
+                continue
             try:
                 result = review_dispatch.consume_review(
                     paths, coordination_home, node, request, launcher=launcher
