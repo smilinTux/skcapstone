@@ -14,7 +14,9 @@ UNITS = ROOT / "scripts/fleet/systemd"
 
 
 def _git(cwd: Path, *args: str) -> str:
-    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+    return subprocess.run(
+        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+    ).stdout.strip()
 
 
 def _write_exe(path: Path, body: str) -> None:
@@ -66,7 +68,9 @@ def _advance_origin(origin: Path) -> str:
 
 
 def _run(env: dict) -> subprocess.CompletedProcess:
-    return subprocess.run(["bash", str(SCRIPT)], env=env, capture_output=True, text=True, timeout=60)
+    return subprocess.run(
+        ["bash", str(SCRIPT)], env=env, capture_output=True, text=True, timeout=60
+    )
 
 
 def _calls(path: Path) -> list[str]:
@@ -86,7 +90,10 @@ def test_new_main_rolls_every_host_in_order_and_notifies(fleet):
     assert _git(fleet["deploy"], "rev-parse", "HEAD") == target
     rollouts = [c for c in _calls(fleet["calls"]) if c.startswith("rollout")]
     assert [c.split("--node ")[1].split()[0] for c in rollouts] == ["h1", "h2", "h3"]
-    assert any(c.startswith("skmail send skfleet-auto-rollout") and "ROLLED" in c for c in _calls(fleet["calls"]))
+    assert any(
+        c.startswith("skmail send skfleet-auto-rollout") and "ROLLED" in c
+        for c in _calls(fleet["calls"])
+    )
     # a second tick finds nothing new and touches nothing
     before = len(_calls(fleet["calls"]))
     assert _run(fleet["env"]).returncode == 0
@@ -98,7 +105,9 @@ def test_failed_gate_halts_before_later_hosts_and_exits_nonzero(fleet):
     fleet["fail_host"].write_text("h2")
     result = _run(fleet["env"])
     assert result.returncode == 1
-    hosts = [c.split("--node ")[1].split()[0] for c in _calls(fleet["calls"]) if c.startswith("rollout")]
+    hosts = [
+        c.split("--node ")[1].split()[0] for c in _calls(fleet["calls"]) if c.startswith("rollout")
+    ]
     assert hosts == ["h1", "h2", "h2"]  # h2 retried, h3 never touched
     assert any("HALTED at h2" in c for c in _calls(fleet["calls"]))
 
@@ -121,7 +130,17 @@ def test_concurrent_run_skips_while_lock_is_held(fleet):
 def test_diverged_checkout_is_refused(fleet):
     _advance_origin(fleet["origin"])
     (fleet["deploy"] / "f").write_text("local")
-    _git(fleet["deploy"], "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-am", "local hand edit")
+    _git(
+        fleet["deploy"],
+        "-c",
+        "user.email=t@example.com",
+        "-c",
+        "user.name=t",
+        "commit",
+        "-q",
+        "-am",
+        "local hand edit",
+    )
     result = _run(fleet["env"])
     assert result.returncode == 1
     assert "not an ancestor" in result.stdout

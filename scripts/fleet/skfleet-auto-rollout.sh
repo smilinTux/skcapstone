@@ -15,7 +15,7 @@
 # OnFailure alert fires. Up-to-date runs are a quiet no-op.
 #
 # Hand-installed on exactly ONE authority host (see
-# scripts/fleet/systemd/skfleet-auto-rollout.service). Do not enable it on
+# the auto-rollout unit files in scripts/fleet/systemd/). Do not enable it on
 # more than one host: two deployers race.
 set -uo pipefail
 
