@@ -97,6 +97,22 @@ def test_toolchain_fingerprint_accepts_venv_python_symlink(
     assert plan.toolchain_fingerprint() != before
 
 
+def test_toolchain_fingerprint_rejects_python_symlink_outside_base_prefix(
+    qualified_runtime, tmp_path, monkeypatch
+):
+    python = qualified_runtime / "bin/python"
+    python.unlink()
+    outside = tmp_path / "outside-python"
+    outside.write_bytes(b"untrusted interpreter bytes\n")
+    python.symlink_to(outside)
+    base_prefix = tmp_path / "base-python"
+    base_prefix.mkdir()
+    monkeypatch.setattr(plan.sys, "base_prefix", str(base_prefix))
+
+    with pytest.raises(plan.TestEvidenceError, match="interpreter escapes its base prefix"):
+        plan.toolchain_fingerprint()
+
+
 @pytest.fixture
 def qualified(tmp_path, monkeypatch):
     home = tmp_path / "home"
