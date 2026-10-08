@@ -466,7 +466,15 @@ def test_prestart_retirement_requires_exact_release_or_expired_unclaimed_offer(
             "matching_sessions": 0,
         },
     )
-    monkeypatch.setattr(review_dispatch, "_source", lambda *_args: source)
+    if retirement_mode == "archived-orphaned-claim":
+
+        def unavailable_source(*_args):
+            raise ValueError("original source custody unavailable")
+
+        monkeypatch.setattr(review_dispatch, "_source", unavailable_source)
+        monkeypatch.setattr(review_retire, "_superseded_source_matches", lambda *_args: True)
+    else:
+        monkeypatch.setattr(review_dispatch, "_source", lambda *_args: source)
     kwargs = dict(
         request_sha256=review_retire.source_bundle._sha(raw_request),
         card_sha256="f" * 64,
@@ -656,3 +664,96 @@ def test_admission_inventory_accepts_only_exact_journal_proven_review_intent(tmp
     )
     with pytest.raises(ValueError, match="matching resource admission intent"):
         review_retire._admission_inventory(home, host, card, owner, claim, request_id)
+
+
+def test_superseded_archived_offer_source_matches_exact_prior_candidate(tmp_path, monkeypatch):
+    parent, head, owner, claim = (
+        "9b5acdd3",
+        "5cd8c90b1eceb6d02e4ef17c3cd277c96235a5e6",
+        "pi-codex-builder-node-chiap03-9b5acdd3",
+        "ed5db482601c42db9d9391d626dca8fb",
+    )
+    manifest = {
+        "schema": "skfleet.source-bundle/v1",
+        "card": parent,
+        "head": head,
+        "owner": owner,
+        "claim_revision": claim,
+        "tree": "a7f1d198473f847858cbd8172edbc2dbdb1030ea",
+        "evidence_sha256": "a723bef1e7671e801cd3cf5ce08ba0ac9380660feadf2078cb971b86b6542292",
+        "ref": "refs/heads/feat/9b5acdd3-bound-git-bundle-threads",
+    }
+    core = {
+        "meta": {
+            "link_source_card": parent,
+            "link_head_revision": head,
+            "producer_identity": owner,
+            "candidate_evidence_sha256": manifest["evidence_sha256"],
+            "source_revision": "955ebc15c4d291aefd11b22b6a43119453b6f023291336562715233f4184588a",
+        },
+        "links": {"repository": "https://github.com/smilinTux/skcapstone"},
+    }
+    request_source = {
+        "card": parent,
+        "claim": claim,
+        "evidence_sha256": manifest["evidence_sha256"],
+        "family": "codex",
+        "head": head,
+        "manifest_sha256": review_retire.production_builder.digest(manifest),
+        "owner": owner,
+        "revision": core["meta"]["source_revision"],
+        "tree": manifest["tree"],
+    }
+    prior = {
+        "event_id": "a" * 32,
+        "ts": "2026-10-08T16:43:00+00:00",
+        "action": "verdict",
+        "verdict": "PASS_FOR_REVIEW",
+        "writer": owner,
+        "expected_claim_revision": claim,
+        "candidate_commit": head,
+        "candidate_tree": manifest["tree"],
+        "candidate_sha256": manifest["evidence_sha256"],
+        "candidate_ref": manifest["ref"],
+    }
+    supersession = {
+        "ts": "2026-10-08T17:03:00+00:00",
+        "action": "link",
+        "link_key": "verdict_superseded",
+        "link_value": "SUPERSEDED prior_event=" + "a" * 32 + " reason=custody lost",
+    }
+    events = [prior, supersession]
+    source_card = SimpleNamespace(
+        archived=False,
+        owner="pi-glm-builder-node-chiap03-9b5acdd3",
+        status=SimpleNamespace(value="doing"),
+    )
+
+    class FakeStore:
+        def __init__(self, _home):
+            pass
+
+        def fold(self, card_id):
+            return source_card if card_id == parent else None
+
+        def _read_events(self, _card_id):
+            return events
+
+        def _legacy_events(self, _card_id):
+            return []
+
+    monkeypatch.setattr(review_retire, "CardStore", FakeStore)
+    monkeypatch.setattr(
+        review_retire.source_bundle,
+        "_review_manifest",
+        lambda *_args: (manifest, tmp_path / "source.bundle"),
+    )
+    review_card = SimpleNamespace(model_dump=lambda **_kwargs: core)
+    assert review_retire._superseded_source_matches(
+        tmp_path, review_card, {"source": request_source}
+    )
+
+    prior["candidate_tree"] = "0" * 40
+    assert not review_retire._superseded_source_matches(
+        tmp_path, review_card, {"source": request_source}
+    )

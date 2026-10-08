@@ -65,6 +65,92 @@ def _archived_orphaned_claim(events: list[dict], offer_at: str, owner: str, clai
     )
 
 
+def _superseded_source_matches(home: Path, review_card, request: dict) -> bool:
+    """Verify an archived offer's source after its exact PASS was superseded."""
+    from ..blocked_verdict import is_outcome_key
+
+    source = request.get("source")
+    if not isinstance(source, dict):
+        return False
+    core = review_card.model_dump(mode="json")
+    parent = source_bundle._binding(core, "link_source_card")
+    head = source_bundle._binding(core, "link_head_revision")
+    repository = source_bundle._binding(core, "repository")
+    if parent != source.get("card") or not isinstance(repository, str):
+        return False
+    selected = source_bundle._review_manifest(core, repository, head or "")
+    if selected is None:
+        return False
+    manifest, _ = selected
+    if (
+        source.get("head") != manifest.get("head")
+        or source.get("owner") != manifest.get("owner")
+        or source.get("claim") != manifest.get("claim_revision")
+        or not str(manifest.get("owner", "")).startswith(
+            "pi-" + str(source.get("family", "")) + "-builder-"
+        )
+        or source.get("tree") != manifest.get("tree")
+        or source.get("evidence_sha256") != manifest.get("evidence_sha256")
+        or source.get("manifest_sha256") != production_builder.digest(manifest)
+        or source.get("revision") != source_bundle._binding(core, "source_revision")
+    ):
+        return False
+    store = CardStore(home)
+    producer = store.fold(parent)
+    if producer is None or producer.archived:
+        return False
+    events = store._read_events(parent) + store._legacy_events(parent)
+    supersessions = [
+        event
+        for event in events
+        if event.get("action") == "link"
+        and event.get("link_key", event.get("key")) == "verdict_superseded"
+    ]
+    if len(supersessions) != 1:
+        return False
+    supersession = supersessions[0]
+    match = re.fullmatch(
+        r"SUPERSEDED prior_event=([0-9a-f]{32}) reason=.{1,512}",
+        str(supersession.get("link_value", supersession.get("value", ""))),
+    )
+    if not match:
+        return False
+    prior = [
+        event
+        for event in events
+        if event.get("event_id") == match.group(1)
+        and event.get("action") == "verdict"
+        and str(event.get("verdict", "")).startswith("PASS_FOR_REVIEW")
+        and event.get("writer") == manifest.get("owner")
+        and event.get("candidate_commit") == manifest.get("head")
+        and event.get("candidate_tree") == manifest.get("tree")
+        and event.get("candidate_sha256") == manifest.get("evidence_sha256")
+        and event.get("candidate_ref") == manifest.get("ref")
+        and event.get("expected_claim_revision") in (None, manifest.get("claim_revision"))
+    ]
+    if len(prior) != 1:
+        return False
+    outcomes = [
+        event
+        for event in events
+        if event.get("action") == "verdict"
+        or (
+            event.get("action") == "link"
+            and is_outcome_key(event.get("link_key", event.get("key")) or "")
+        )
+    ]
+    latest = max(
+        outcomes,
+        key=lambda event: (
+            event.get("ts", ""),
+            event.get("writer", ""),
+            event.get("seq", 0),
+        ),
+        default={},
+    )
+    return latest is supersession
+
+
 def _raw(path: Path) -> bytes:
     return source_bundle._read(path, source_bundle.MAX_EVIDENCE)
 
@@ -660,8 +746,18 @@ def retire_prestart(
             raise ValueError("review criteria changed after offer")
         from . import review_dispatch
 
-        if review_dispatch._source(home, current) != request.get("source"):
-            raise ValueError("source changed after offer")
+        try:
+            current_source = review_dispatch._source(home, current)
+        except ValueError as exc:
+            if (
+                not archived_orphaned
+                or str(exc) != "original source custody unavailable"
+                or not _superseded_source_matches(home, current, request)
+            ):
+                raise
+        else:
+            if current_source != request.get("source"):
+                raise ValueError("source changed after offer")
         exit_path = (
             (
                 Path(home)
