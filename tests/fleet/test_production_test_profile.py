@@ -12,7 +12,7 @@ import pytest
 
 from skcapstone.fleet import production_test_plan as plan
 from skcapstone.fleet import production_test_profile as profile
-from tests.fleet.test_production_tests import setup  # noqa: F401
+from tests.fleet.test_production_tests import setup  # noqa: F401,F811
 
 
 def _site(prefix: Path) -> Path:
@@ -69,6 +69,16 @@ def test_runtime_fingerprint_tracks_test_tool_metadata(qualified_runtime):
     assert plan.runtime_fingerprint() != before
 
 
+def test_toolchain_fingerprint_tracks_tools_not_executor(qualified_runtime):
+    before = plan.toolchain_fingerprint()
+    site = _site(qualified_runtime)
+    (site / "skcapstone").mkdir(exist_ok=True)
+    (site / "skcapstone/unrelated.py").write_text("application change\n")
+    assert plan.toolchain_fingerprint() == before
+    (site / "pytest/__init__.py").write_text("# changed test runner\n")
+    assert plan.toolchain_fingerprint() != before
+
+
 @pytest.fixture
 def qualified(tmp_path, monkeypatch):
     home = tmp_path / "home"
@@ -78,6 +88,7 @@ def qualified(tmp_path, monkeypatch):
     (prefix / "bin/python").write_bytes(b"qualified interpreter")
     monkeypatch.setattr(plan, "PREFIX", prefix)
     monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "a" * 64)
+    monkeypatch.setattr(plan, "toolchain_fingerprint", lambda: "e" * 64)
     host = socket.gethostname().split(".")[0].lower()
     policy = {
         "authority_host": host,
@@ -101,7 +112,9 @@ def qualified(tmp_path, monkeypatch):
         "lint": [],
         "changelog": False,
     }
-    path = profile.qualify_profile(home, core, policy, recipe, "operator", "b" * 64)
+    path = profile.qualify_profile(
+        home, core, policy, recipe, "operator", "b" * 64, source_sha256="f" * 64
+    )
     return home, core, policy, recipe, path
 
 
@@ -149,8 +162,38 @@ def test_unrelated_policy_changes_do_not_stale_profile(qualified):
             "runtime_max_seconds": 3600,
         }
     }
-    with pytest.raises(plan.TestEvidenceError, match="stale"):
+    with pytest.raises(profile.ProfileRequalificationRequired):
         profile.preflight(home, core, ["source-only"], changed)
+
+
+def test_only_execution_fingerprint_drift_is_eligible_for_native_refresh(qualified, monkeypatch):
+    home, core, policy, _, _ = qualified
+    value, _ = profile.read_profile(home, core["id"])
+    monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "c" * 64)
+    assert profile.fingerprint_only_stale(value, profile.contract(core), policy)
+    monkeypatch.setattr(plan, "toolchain_fingerprint", lambda: "f" * 64)
+    assert not profile.fingerprint_only_stale(value, profile.contract(core), policy)
+
+
+def test_source_drift_is_not_eligible_for_automatic_requalification(qualified, monkeypatch):
+    home, core, policy, _, _ = qualified
+    value, _ = profile.read_profile(home, core["id"])
+    monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "c" * 64)
+    assert not profile.fingerprint_only_stale(
+        value, profile.contract(core), policy, source_sha256="0" * 64
+    )
+
+
+def test_legacy_profile_without_source_binding_requires_full_qualification(qualified):
+    home, core, policy, _, path = qualified
+    value = json.loads(path.read_text())
+    value.pop("toolchain_sha256")
+    value.pop("source_sha256")
+    value["schema"] = profile.SCHEMA_V1
+    path.write_text(json.dumps(value))
+    with pytest.raises(profile.ProfileRequalificationRequired, match="full native qualification"):
+        profile.preflight(home, core, ["source-only"], policy)
+    assert not profile.fingerprint_only_stale(value, profile.contract(core), policy)
 
 
 def test_hyphenated_targets_preserve_fixed_argv():
@@ -308,7 +351,8 @@ def test_junit_requires_each_qualified_file_without_failures_or_skips(qualified)
 
 
 def test_auto_seals_clean_exact_candidate_and_refuses_profile_drift(
-    setup, monkeypatch  # noqa: F811
+    setup,  # noqa: F811
+    monkeypatch,  # noqa: F811
 ):  # noqa:F811
     s = setup
     s.plan_path.unlink()  # Fixture-only removal of the legacy one-candidate plan.
@@ -324,7 +368,17 @@ def test_auto_seals_clean_exact_candidate_and_refuses_profile_drift(
         "lint": ["src/parser-case.py"],
         "changelog": False,
     }
-    path = profile.qualify_profile(s.home, core, s.policy, recipe, "operator", "b" * 64)
+    path = profile.qualify_profile(
+        s.home,
+        core,
+        s.policy,
+        recipe,
+        "operator",
+        "b" * 64,
+        source_sha256=plan.source_fingerprint(
+            core["meta"]["repository"], s.binding["source_head"], s.binding["source_tree"]
+        ),
+    )
     profile.seal_candidate(
         s.home, binding, s.workspace, s.policy, "https://example.org/public.git"
     )
@@ -371,8 +425,8 @@ def test_actual_local_preclaim_block_reads_current_contract(qualified, changed):
             "core": current,
             "labels": ["source-only"],
         },
-        "test_preflight": lambda ignored, value, labels, config: profile.preflight(
-            home, value, labels, config
+        "test_preflight": lambda ignored, value, labels, config, **kw: profile.preflight(
+            home, value, labels, config, **kw
         ),
         "log": lambda *args: calls.append("withheld"),
         "calls": calls,
@@ -395,7 +449,8 @@ def test_actual_local_preclaim_block_reads_current_contract(qualified, changed):
 
 
 def test_acceptance_hook_seals_before_tests_and_does_not_self_complete(
-    setup, monkeypatch  # noqa: F811
+    setup,  # noqa: F811
+    monkeypatch,  # noqa: F811
 ):  # noqa:F811
     from skcapstone.fleet import production_acceptance as acceptance
     from skcapstone.fleet import production_tests
@@ -415,6 +470,9 @@ def test_acceptance_hook_seals_before_tests_and_does_not_self_complete(
         {"pytest": {"tests/test_any.py": 1}, "compile": [], "lint": [], "changelog": False},
         "operator",
         "b" * 64,
+        source_sha256=plan.source_fingerprint(
+            core["meta"]["repository"], s.binding["source_head"], s.binding["source_tree"]
+        ),
     )
     review, claim = "abcd9876", "d" * 32
     exits = s.home / "evidence/production-review-exits"

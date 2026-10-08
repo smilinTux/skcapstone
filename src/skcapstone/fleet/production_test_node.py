@@ -12,7 +12,9 @@ from xml.etree import ElementTree
 
 from . import production_test_plan as plan
 
-SCHEMA = "skfleet.qualified-node-test-profile/v1"
+SCHEMA_V1 = "skfleet.qualified-node-test-profile/v1"
+SCHEMA_V2 = "skfleet.qualified-node-test-profile/v2"
+SCHEMA = "skfleet.qualified-node-test-profile/v3"
 
 
 def system_node(root: Path = Path("/")) -> Path:
@@ -36,7 +38,7 @@ SOURCE_FILES = (
 
 def is_node(profile: dict | None) -> bool:
     """Identify the explicit variant, leaving Python profiles unchanged."""
-    return isinstance(profile, dict) and profile.get("schema") == SCHEMA
+    return isinstance(profile, dict) and profile.get("schema") in {SCHEMA_V1, SCHEMA_V2, SCHEMA}
 
 
 def checks(recipe: dict) -> list[dict]:

@@ -8304,6 +8304,17 @@ for _kimi_model in (() if PRODUCTION_POLICY else ("kimi-for-coding", "k3")):
         _health_lanes.append({"name":"kimi","model":_kimi_model})
 _cycle_id=new_cycle_id(HOST,STAMP)
 if PRODUCTION_POLICY:
+    try:
+        from skcapstone.fleet.profile_requalification import requalify_or_advance
+
+        _requal_state = requalify_or_advance(
+            Path(HOME) / ".skcapstone", PRODUCTION_POLICY, SKC, DISPATCH_AGENT
+        )
+        if _requal_state not in {"idle", "not-authority"}:
+            log(d, "PROFILE_REQUALIFICATION|%s|state=%s" % (HOST, _requal_state))
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        log(d, "PROFILE_REQUALIFICATION_BLOCKED|%s|%s" % (HOST, str(exc)[:180]))
+if PRODUCTION_POLICY:
     _health_lanes=[{**lane,"model":route["model_or_bucket"]}
         for lane in LANES for route in routes_for_lane(
             (_review_route_snapshot or {}).get("routes",[]),lane)]
@@ -8674,6 +8685,7 @@ _cycle_deadline = (
 #: Per-cycle cache: equivalent logical routes are resolved and prefilled exactly once.
 _route_preflight_cache = {}
 for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
+    _profile_requalify = False
     if launched>=MAX_LAUNCH:
         break
     if time.monotonic() >= _cycle_deadline:
@@ -9150,8 +9162,16 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             test_preflight(Path(HOME)/".skcapstone", dict(fresh_claimability["core"], id=cid),
                            fresh_claimability["labels"], PRODUCTION_POLICY)
     except (OSError,ValueError) as exc:
-        log(d,"TEST_PROFILE_BLOCKED|%s|%s|%s"%(HOST,cid,exc))
-        _record_workspace_cooldown(cid)
+        from skcapstone.fleet.production_test_profile import ProfileRequalificationRequired
+        if isinstance(exc, ProfileRequalificationRequired):
+            _profile_requalify = True
+            log(d,"TEST_PROFILE_REQUALIFICATION_REQUIRED|%s|%s|%s"%(HOST,cid,exc))
+        else:
+            log(d,"TEST_PROFILE_BLOCKED|%s|%s|%s"%(HOST,cid,exc))
+            _record_workspace_cooldown(cid)
+            continue
+    if _profile_requalify and HOST != PRODUCTION_POLICY.get("authority_host"):
+        log(d,"TEST_PROFILE_REQUALIFICATION_DEFERRED|%s|%s|reason=authority-host-only"%(HOST,cid))
         continue
     # Link's recommendation appends evidence. Compare the bounded admission
     # after lane health so no event mutates the card before the final preclaim.
@@ -9265,11 +9285,28 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             fresh_claimability["core"], fresh_claimability["labels"]) is None:
         try:
             _test_current=authoritative_claimability(cid, fresh=True)
-            test_preflight(Path(HOME)/".skcapstone", dict(_test_current["core"], id=cid),
-                           _test_current["labels"], PRODUCTION_POLICY)
+            _test_source_sha = None
+            if "_source_spec" in globals() and _source_spec is not None:
+                from skcapstone.fleet.production_test_plan import workspace_source_fingerprint
+
+                _test_source_sha = workspace_source_fingerprint(
+                    _source_spec[0], Path(workspace)
+                )
+            test_preflight(
+                Path(HOME) / ".skcapstone",
+                dict(_test_current["core"], id=cid),
+                _test_current["labels"],
+                PRODUCTION_POLICY,
+                source_sha256=_test_source_sha,
+            )
         except (OSError,ValueError) as exc:
-            log(d,"PRECLAIM_DEFERRED|%s|%s|reason=test-profile-%s"%(HOST,cid,exc))
-            continue
+            from skcapstone.fleet.production_test_profile import ProfileRequalificationRequired
+            if isinstance(exc, ProfileRequalificationRequired):
+                _profile_requalify = True
+                log(d,"TEST_PROFILE_REQUALIFICATION_REQUIRED|%s|%s|%s"%(HOST,cid,exc))
+            else:
+                log(d,"PRECLAIM_DEFERRED|%s|%s|reason=test-profile-%s"%(HOST,cid,exc))
+                continue
     claim=subprocess.run([SKC,"coord","claim",cid,"--agent",name],capture_output=True,text=True)
     claimed_owner,_claimed_at,claimed_revision=_current_claim_identity_fresh(cid)
     claim_outcome=_classify_claim_outcome(
@@ -9281,6 +9318,37 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         claim_refused += 1
         detail=_claim_failure_detail(claim.stdout, claim.stderr)[:140]
         log(d,"CLAIM_REFUSED|%s|%s|%s|owner=%s|%s"%(HOST,sess,cid,claimed_owner,detail))
+        continue
+    if _profile_requalify:
+        try:
+            from skcapstone.fleet.profile_requalification import requalify_or_advance
+
+            _requal_state = requalify_or_advance(
+                Path(HOME) / ".skcapstone",
+                PRODUCTION_POLICY,
+                SKC,
+                DISPATCH_AGENT,
+                card_id=cid,
+                core=dict(fresh_claimability["core"], id=cid),
+                workspace=workspace,
+                owner=name,
+                claim_revision=claimed_revision,
+            )
+            log(d,"PROFILE_REQUALIFICATION|%s|%s|state=%s"%(HOST,cid,_requal_state))
+            if (
+                _requal_state in {"busy", "ineligible", "not-authority"}
+                or _requal_state.startswith("blocked:")
+            ):
+                subprocess.run(
+                    [SKC,"coord","release-claim",cid,"--owner",name,
+                     "--expected-claim-revision",claimed_revision,"--agent",DISPATCH_AGENT,
+                     "--abandon-reason","not-abandoned"],
+                    capture_output=True,text=True,timeout=15)
+                subprocess.run(
+                    [SKC,"coord","move",cid,"ready","--agent",DISPATCH_AGENT],
+                    capture_output=True,text=True,timeout=15)
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            log(d,"PROFILE_REQUALIFICATION_BLOCKED|%s|%s|%s"%(HOST,cid,str(exc)[:180]))
         continue
     if PRODUCTION_POLICY and _review_seat is None and _source_spec is not None:
         brief=production_worker_brief(

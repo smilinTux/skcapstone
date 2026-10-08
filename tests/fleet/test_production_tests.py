@@ -15,8 +15,11 @@ from skcoord.card_store import CardCore, CardStore
 
 from skcapstone.fleet import production_admission as admission
 from skcapstone.fleet import production_resources as resources
+from skcapstone.fleet import production_test_plan as plan
+from skcapstone.fleet import production_test_profile as profile
 from skcapstone.fleet import production_test_worker as worker
 from skcapstone.fleet import production_tests as native
+from skcapstone.fleet.production_builder import digest as policy_digest
 
 
 def private_bytes(path, raw):
@@ -84,6 +87,7 @@ def setup(tmp_path, monkeypatch, qualified_runtime):
             ["git", "-C", str(workspace), "rev-parse", ref], text=True
         ).strip()
 
+    criteria = ["Run the source parser checks."]
     binding = {
         "source_card": "89508f83",
         "source_owner": "producer",
@@ -91,7 +95,7 @@ def setup(tmp_path, monkeypatch, qualified_runtime):
         "source_head": revision("HEAD"),
         "source_tree": revision("HEAD^{tree}"),
         "source_revision": "revision",
-        "criteria_sha256": "c" * 64,
+        "criteria_sha256": policy_digest(criteria),
     }
     home = tmp_path / "home"
     (home / "fleet").mkdir(parents=True)
@@ -99,6 +103,8 @@ def setup(tmp_path, monkeypatch, qualified_runtime):
         CardCore(
             id=binding["source_card"],
             title="Synthetic native test producer",
+            acceptance_criteria=criteria,
+            meta={"repository": "https://example.invalid/repo"},
             initial_owner=binding["source_owner"],
             initial_claim_revision=binding["source_claim_revision"],
         )
@@ -263,6 +269,50 @@ def test_plan_must_be_private_immutable_and_fixed(setup):
     private_bytes(setup.plan_path, json.dumps(changed).encode())
     with pytest.raises(native.TestEvidenceError, match="plan"):
         native.load_plan(setup.home, setup.binding)
+
+
+def test_stale_executor_plan_runs_under_same_recipe_for_requalification(setup, monkeypatch):
+    from skcoord.card_store import CardStore
+
+    card = CardStore(setup.home).fold(setup.binding["source_card"])
+    core = card.model_dump(mode="json")
+    recipe = {"pytest": {"tests/test_parser.py": 1}, "compile": [], "lint": [], "changelog": False}
+    original = profile.qualify_profile(
+        setup.home,
+        core,
+        setup.policy,
+        recipe,
+        "operator",
+        "b" * 64,
+        source_sha256=plan.source_fingerprint(
+            core["meta"]["repository"],
+            setup.binding["source_head"],
+            setup.binding["source_tree"],
+        ),
+    )
+    value, predecessor = profile.read_profile(setup.home, core["id"])
+    _, _, plan_predecessor = plan.load_plan(setup.home, setup.binding)
+    monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "d" * 64)
+    assert profile.fingerprint_only_stale(value, profile.contract(core), setup.policy)
+    path = plan.seal_plan(
+        setup.home,
+        setup.binding,
+        setup.workspace,
+        setup.policy,
+        value["qualified_by"],
+        value["qualification_sha256"],
+        profile=value,
+        predecessor_sha256=plan_predecessor,
+        requalification=True,
+        profile_predecessor_sha256=predecessor,
+    )
+    sealed, _, _ = plan.load_plan(setup.home, setup.binding)
+    assert sealed["profile_requalification"] is True
+    assert sealed["profile_predecessor_sha256"] == predecessor
+    assert sealed["profile"] == value
+    assert sealed["checks"] == profile.recipe_checks(recipe)
+    assert original.exists()
+    assert path.exists()
 
 
 def test_missing_plan_never_launches(tmp_path):

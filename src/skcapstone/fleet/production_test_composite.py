@@ -3,12 +3,14 @@
 from . import production_test_node as node
 from . import production_test_plan as plan
 
-SCHEMA = "skfleet.qualified-composite-test-profile/v1"
+SCHEMA_V1 = "skfleet.qualified-composite-test-profile/v1"
+SCHEMA_V2 = "skfleet.qualified-composite-test-profile/v2"
+SCHEMA = "skfleet.qualified-composite-test-profile/v3"
 
 
 def is_composite(profile: dict | None) -> bool:
     """Recognize only the explicit combined profile variant."""
-    return isinstance(profile, dict) and profile.get("schema") == SCHEMA
+    return isinstance(profile, dict) and profile.get("schema") in {SCHEMA_V1, SCHEMA_V2, SCHEMA}
 
 
 def phase(profile: dict | None, language: str) -> dict | None:
@@ -22,7 +24,7 @@ def phase(profile: dict | None, language: str) -> dict | None:
         raise plan.TestEvidenceError("invalid test phase")
     return {
         **{key: value for key, value in profile.items() if key != "node_environment"},
-        "schema": "skfleet.qualified-test-profile/v1",
+        "schema": "skfleet.qualified-test-profile/v3",
         "recipe": {key: value for key, value in recipe.items() if key != "vitest"},
     }
 

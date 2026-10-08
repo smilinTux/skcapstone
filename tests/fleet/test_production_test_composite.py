@@ -111,8 +111,10 @@ def test_profile_variant_cannot_omit_or_disguise_a_language():
                 "criteria_sha256",
                 "qualification_sha256",
                 "python_sha256",
+                "toolchain_sha256",
                 "runtime_sha256",
                 "policy_sha256",
+                "source_sha256",
             ]
         }
     )

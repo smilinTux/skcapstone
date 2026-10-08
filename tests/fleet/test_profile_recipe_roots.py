@@ -278,7 +278,17 @@ def test_candidate_sealing_rejects_missing_qualified_source_target(setup):
         criteria_sha256=profile.contract(core)["criteria_sha256"],
     )
     approved = recipe({"v1/tests/test_missing.py": 1})
-    path = profile.qualify_profile(setup.home, core, setup.policy, approved, "operator", "b" * 64)
+    path = profile.qualify_profile(
+        setup.home,
+        core,
+        setup.policy,
+        approved,
+        "operator",
+        "b" * 64,
+        source_sha256=plan.source_fingerprint(
+            core["meta"]["repository"], binding["source_head"], binding["source_tree"]
+        ),
+    )
     qualified_profile, _ = profile.read_profile(setup.home, core["id"])
     with pytest.raises(plan.TestEvidenceError, match="source"):
         plan.seal_plan(

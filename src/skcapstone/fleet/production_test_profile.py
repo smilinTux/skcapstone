@@ -16,7 +16,9 @@ from . import production_test_plan as plan
 from .production_builder import digest
 from .production_pytest_recipe import recipe_checks
 
-SCHEMA = "skfleet.qualified-test-profile/v1"
+SCHEMA_V1 = "skfleet.qualified-test-profile/v1"
+SCHEMA_V2 = "skfleet.qualified-test-profile/v2"
+SCHEMA = "skfleet.qualified-test-profile/v3"
 FIELDS = {
     "schema",
     "card",
@@ -26,6 +28,8 @@ FIELDS = {
     "qualified_by",
     "qualification_sha256",
     "python_sha256",
+    "toolchain_sha256",
+    "source_sha256",
     "runtime_sha256",
     "policy_sha256",
     "host",
@@ -66,26 +70,38 @@ def _validate_shape(value: dict) -> None:
     """Check each historical generation without requalifying its old environment."""
     node_profile = node.is_node(value) or composite.is_composite(value)
     fields = FIELDS | {"node_environment"} if node_profile else FIELDS
-    schema = (
-        composite.SCHEMA
-        if composite.is_composite(value)
-        else (node.SCHEMA if node_profile else SCHEMA)
+    schema = value.get("schema") if isinstance(value, dict) else None
+    legacy_v1 = schema in {SCHEMA_V1, node.SCHEMA_V1, composite.SCHEMA_V1}
+    legacy_v2 = schema in {SCHEMA_V2, node.SCHEMA_V2, composite.SCHEMA_V2}
+    if legacy_v1:
+        fields = fields - {"toolchain_sha256"}
+    if legacy_v1 or legacy_v2:
+        fields = fields - {"source_sha256"}
+    expected_schemas = {SCHEMA, node.SCHEMA, composite.SCHEMA}
+    if legacy_v1:
+        expected_schemas |= {SCHEMA_V1, node.SCHEMA_V1, composite.SCHEMA_V1}
+    if legacy_v2:
+        expected_schemas |= {SCHEMA_V2, node.SCHEMA_V2, composite.SCHEMA_V2}
+    hash_fields = (
+        (
+            "qualification_sha256",
+            "python_sha256",
+            "runtime_sha256",
+            "criteria_sha256",
+            "policy_sha256",
+        )
+        + (() if legacy_v1 else ("toolchain_sha256",))
+        + (() if legacy_v1 or legacy_v2 else ("source_sha256",))
     )
     if (
         not isinstance(value, dict)
         or set(value) != fields
-        or value["schema"] != schema
+        or value["schema"] not in expected_schemas
         or not isinstance(value["qualified_by"], str)
         or not value["qualified_by"]
         or any(
             not isinstance(value[k], str) or not re.fullmatch(r"[0-9a-f]{64}", value[k])
-            for k in (
-                "qualification_sha256",
-                "python_sha256",
-                "runtime_sha256",
-                "criteria_sha256",
-                "policy_sha256",
-            )
+            for k in hash_fields
         )
     ):
         raise plan.TestEvidenceError("qualified test profile is missing, stale or conflicting")
@@ -105,6 +121,7 @@ def validate_profile(value: dict, expected: dict, policy: dict, *, environment=T
         any(value.get(k) != v for k, v in expected.items())
         or value["policy_sha256"] != plan.execution_policy_fingerprint(policy)
         or value["host"] != policy["authority_host"]
+        or value["schema"] in {SCHEMA_V1, node.SCHEMA_V1, composite.SCHEMA_V1}
     ):
         raise plan.TestEvidenceError("qualified test profile is missing, stale or conflicting")
     node_profile = node.is_node(value) or composite.is_composite(value)
@@ -113,10 +130,73 @@ def validate_profile(value: dict, expected: dict, policy: dict, *, environment=T
     if environment and (
         value["host"] != socket.gethostname().split(".")[0].lower()
         or value["runtime_sha256"] != plan.runtime_fingerprint()
+        or value["toolchain_sha256"] != plan.toolchain_fingerprint()
         or value["python_sha256"] != plan.sha((plan.PREFIX / "bin/python").read_bytes())
     ):
         raise plan.TestEvidenceError("qualified test execution environment changed")
     return value
+
+
+def fingerprint_only_stale(
+    value: dict, expected: dict, policy: dict, *, source_sha256: str | None = None
+) -> bool:
+    """Allow automatic requalification only when recipe and test tools still match."""
+    _validate_shape(value)
+    if (
+        value["schema"]
+        in {
+            SCHEMA_V1,
+            SCHEMA_V2,
+            node.SCHEMA_V1,
+            node.SCHEMA_V2,
+            composite.SCHEMA_V1,
+            composite.SCHEMA_V2,
+        }
+        or any(
+            value.get(key) != expected.get(key)
+            for key in ("card", "repository", "criteria_sha256")
+        )
+        or value["host"] != policy.get("authority_host")
+        or value["host"] != socket.gethostname().split(".")[0].lower()
+        or value["python_sha256"] != plan.sha((plan.PREFIX / "bin/python").read_bytes())
+        or value["toolchain_sha256"] != plan.toolchain_fingerprint()
+        or (source_sha256 is not None and value["source_sha256"] != source_sha256)
+    ):
+        return False
+    if node.is_node(value) or composite.is_composite(value):
+        node.validate_environment(value["node_environment"])
+    return value["runtime_sha256"] != plan.runtime_fingerprint() or value[
+        "policy_sha256"
+    ] != plan.execution_policy_fingerprint(policy)
+
+
+def legacy_full_qualification_required(value: dict, expected: dict, policy: dict) -> bool:
+    """Require a one-time full run when a legacy profile lacks safe bindings."""
+    _validate_shape(value)
+    legacy_v1 = value["schema"] in {SCHEMA_V1, node.SCHEMA_V1, composite.SCHEMA_V1}
+    legacy_v2 = value["schema"] in {SCHEMA_V2, node.SCHEMA_V2, composite.SCHEMA_V2}
+    if (
+        not (legacy_v1 or legacy_v2)
+        or any(value.get(key) != expected.get(key) for key in expected)
+        or value["host"] != policy.get("authority_host")
+        or value["host"] != socket.gethostname().split(".")[0].lower()
+        or value["python_sha256"] != plan.sha((plan.PREFIX / "bin/python").read_bytes())
+    ):
+        return False
+    if node.is_node(value) or composite.is_composite(value):
+        node.validate_environment(value["node_environment"])
+    return (
+        legacy_v1
+        or value["runtime_sha256"] != plan.runtime_fingerprint()
+        or value["policy_sha256"] != plan.execution_policy_fingerprint(policy)
+        or value.get("toolchain_sha256") != plan.toolchain_fingerprint()
+    )
+
+
+class ProfileRequalificationRequired(plan.TestEvidenceError):
+    """A stored recipe needs fresh native qualification before dispatch."""
+
+    __test__ = False
 
 
 def qualify_profile(
@@ -127,23 +207,29 @@ def qualify_profile(
     qualified_by: str,
     qualification_sha256: str,
     *,
+    source_sha256: str | None = None,
     node_environment: dict | None = None,
 ) -> Path:
     """Operator API after actual recipe qualification; no worker calls this API."""
     value = {
-        "schema": SCHEMA,
+        "schema": SCHEMA if source_sha256 is not None else SCHEMA_V2,
         **contract(core),
         "recipe": recipe,
         "qualified_by": qualified_by,
         "qualification_sha256": qualification_sha256,
         "python_sha256": plan.sha((plan.PREFIX / "bin/python").read_bytes()),
+        "toolchain_sha256": plan.toolchain_fingerprint(),
         "runtime_sha256": plan.runtime_fingerprint(),
         "policy_sha256": plan.execution_policy_fingerprint(policy),
         "host": socket.gethostname().split(".")[0].lower(),
     }
+    if source_sha256 is not None:
+        value["source_sha256"] = source_sha256
     if node_environment is not None:
         value.update(
-            schema=composite.SCHEMA if "pytest" in recipe else node.SCHEMA,
+            schema=(composite.SCHEMA if "pytest" in recipe else node.SCHEMA)
+            if source_sha256 is not None
+            else (composite.SCHEMA_V2 if "pytest" in recipe else node.SCHEMA_V2),
             node_environment=node_environment,
         )
     validate_profile(value, contract(core), policy)
@@ -217,6 +303,7 @@ def supersede_profile(
     *,
     predecessor_sha256: str,
     runtime_sha256: str,
+    source_sha256: str | None = None,
     source_claim: dict | None = None,
     unclaimed: bool = False,
     node_environment: dict | None = None,
@@ -259,24 +346,32 @@ def supersede_profile(
         ):
             raise plan.TestEvidenceError("profile source claim changed")
         predecessor, current = read_profile(home, expected["card"])
+        if source_sha256 is None:
+            source_sha256 = predecessor.get("source_sha256")
         if current != predecessor_sha256:
             raise plan.TestEvidenceError("profile predecessor changed")
         if qualification_sha256 == predecessor.get("qualification_sha256"):
             raise plan.TestEvidenceError("profile successor requires fresh qualification evidence")
         value = {
-            "schema": SCHEMA,
+            "schema": SCHEMA if source_sha256 is not None else SCHEMA_V2,
             **expected,
             "recipe": recipe,
             "qualified_by": qualified_by,
             "qualification_sha256": qualification_sha256,
             "python_sha256": plan.sha((plan.PREFIX / "bin/python").read_bytes()),
+            "toolchain_sha256": plan.toolchain_fingerprint(),
             "runtime_sha256": runtime_sha256,
             "policy_sha256": plan.execution_policy_fingerprint(policy),
             "host": socket.gethostname().split(".")[0].lower(),
         }
+        if source_sha256 is not None:
+            value["source_sha256"] = source_sha256
+            expected["source_sha256"] = source_sha256
         if node_environment is not None:
             value.update(
-                schema=composite.SCHEMA if "pytest" in recipe else node.SCHEMA,
+                schema=(composite.SCHEMA if "pytest" in recipe else node.SCHEMA)
+                if source_sha256 is not None
+                else (composite.SCHEMA_V2 if "pytest" in recipe else node.SCHEMA_V2),
                 node_environment=node_environment,
             )
         validate_profile(value, expected, policy)
@@ -296,7 +391,14 @@ def supersede_profile(
         return path
 
 
-def preflight(home: Path, core: dict, labels, policy: dict) -> dict | None:
+def preflight(
+    home: Path,
+    core: dict,
+    labels,
+    policy: dict,
+    *,
+    source_sha256: str | None = None,
+) -> dict | None:
     """Withhold only new source-only producers without a supported trusted contract."""
     labels = {str(label).lower() for label in labels}
     if "source-only" not in labels or "review" in labels or "seat-seraph" in labels:
@@ -306,6 +408,18 @@ def preflight(home: Path, core: dict, labels, policy: dict) -> dict | None:
         value, _ = read_profile(home, expected["card"])
     except FileNotFoundError:
         raise plan.TestEvidenceError("required-test-profile-unqualified") from None
+    if (
+        source_sha256 is not None
+        and "source_sha256" in value
+        and value["source_sha256"] != source_sha256
+    ):
+        raise plan.TestEvidenceError("qualified test source changed")
+    if fingerprint_only_stale(value, expected, policy, source_sha256=source_sha256):
+        raise ProfileRequalificationRequired(
+            "profile fingerprints changed; native requalification required"
+        )
+    if legacy_full_qualification_required(value, expected, policy):
+        raise ProfileRequalificationRequired("legacy profile requires a full native qualification")
     return validate_profile(value, expected, policy)
 
 
@@ -330,6 +444,10 @@ def seal_candidate(
         "criteria_sha256": binding["criteria_sha256"],
     }
     value, _ = read_profile(home, expected["card"])
+    if "source_sha256" in value:
+        expected["source_sha256"] = plan.source_fingerprint(
+            repository, binding["source_head"], binding["source_tree"]
+        )
     validate_profile(value, expected, policy)
     plan.seal_plan(
         home,

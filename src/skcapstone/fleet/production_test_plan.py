@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from xml.etree import ElementTree
 
+from . import production_builder  # noqa: F401
 from .production_policy import _unique_object
 from .qualified_runtime import TOOL_PACKAGES
 
@@ -49,6 +50,7 @@ BINDING_KEYS = frozenset(
     }
 )
 _RUNTIME_CACHE = {}
+_TOOLCHAIN_CACHE = {}
 HARNESS_ROOT = Path(__file__).resolve().parent
 HARNESS_MODULES = (
     "qualified_runtime.py",
@@ -131,6 +133,107 @@ def runtime_fingerprint() -> str:
     for path in harness:
         add(path, "harness/" + path.name, HARNESS_ROOT)
     return sha(json.dumps(rows, separators=(",", ":")).encode())
+
+
+def toolchain_fingerprint() -> str:
+    """Pin test tools and Python startup files separately from executor code."""
+    site = (
+        PREFIX
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+    )
+    files = {PREFIX / "bin/ruff", PREFIX / "bin/python"}
+    for package in TOOL_PACKAGES:
+        directory = site / package
+        if not directory.is_dir():
+            raise TestEvidenceError("qualified runtime dependency is missing: " + package)
+        files.update(
+            path for path in directory.rglob("*") if path.suffix in {".py", ".so", ".pyd"}
+        )
+    for tool in ("pytest", "pytest_asyncio", "ruff", "pluggy", "iniconfig", "packaging"):
+        files.update(site.glob(tool + "-*.dist-info/METADATA"))
+    files.update(
+        path for path in (site / "sitecustomize.py", site / "usercustomize.py") if path.exists()
+    )
+    startup = sorted(site.glob("*.pth"))
+    if len(files) + len(startup) > 10000:
+        raise TestEvidenceError("qualified toolchain fingerprint exceeds file bound")
+    rows, total = [], 0
+    for path in sorted(files) + startup:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or not path.resolve().is_relative_to(PREFIX.resolve()):
+            raise TestEvidenceError("qualified runtime contains redirected modules")
+        total += info.st_size
+        if total > 64 * 1024 * 1024:
+            raise TestEvidenceError("qualified toolchain fingerprint exceeds byte bound")
+        key = (str(path), info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+        digest = _TOOLCHAIN_CACHE.get(key)
+        if digest is None:
+            digest = sha(path.read_bytes())
+            _TOOLCHAIN_CACHE[key] = digest
+        label = str(path.relative_to(PREFIX))
+        if path.suffix == ".pth":
+            name = path.name
+            if name.startswith("__editable__."):
+                package, separator, version = name[:-4].rpartition("-")
+                if separator and version[:1].isdigit():
+                    name = package + ".pth"
+            label = "startup/" + name
+        rows.append((label, digest))
+    return sha(json.dumps(rows, separators=(",", ":")).encode())
+
+
+def source_fingerprint(repository: str, head: str, tree: str) -> str:
+    """Bind a profile to the exact repository tree whose recipe was qualified."""
+    if (
+        not isinstance(repository, str)
+        or not repository.startswith("https://")
+        or "@" in repository
+    ):
+        raise TestEvidenceError("test repository binding is invalid")
+    if not re.fullmatch(r"[0-9a-f]{40,64}", str(head)) or not re.fullmatch(
+        r"[0-9a-f]{40,64}", str(tree)
+    ):
+        raise TestEvidenceError("qualified source state is invalid")
+    return sha(
+        json.dumps(
+            {"repository": repository, "head": head, "tree": tree},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    )
+
+
+def workspace_source_fingerprint(repository: str, workspace: Path) -> str:
+    """Hash a clean checkout without trusting a caller-supplied revision."""
+    try:
+        head = subprocess.run(
+            ["git", "-C", str(workspace), "rev-parse", "--verify", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout.strip()
+        tree = subprocess.run(
+            ["git", "-C", str(workspace), "rev-parse", "--verify", "HEAD^{tree}"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout.strip()
+        dirty = subprocess.run(
+            ["git", "-C", str(workspace), "status", "--porcelain", "--untracked-files=all"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise TestEvidenceError("qualified source state is unavailable") from exc
+    if dirty:
+        raise TestEvidenceError("qualified source is dirty")
+    return source_fingerprint(repository, head, tree)
 
 
 class TestEvidenceError(ValueError):
@@ -261,6 +364,8 @@ def seal_plan(
     *,
     profile: dict | None = None,
     predecessor_sha256: str | None = None,
+    requalification: bool = False,
+    profile_predecessor_sha256: str | None = None,
 ) -> Path:
     """Seal an explicitly qualified legacy or reusable profile for one candidate."""
     if predecessor_sha256 is not None:
@@ -276,6 +381,8 @@ def seal_plan(
                 qualification_sha256,
                 profile,
                 predecessor_sha256,
+                requalification,
+                profile_predecessor_sha256,
             )
     return _seal_plan(
         home,
@@ -286,6 +393,8 @@ def seal_plan(
         qualification_sha256,
         profile,
         predecessor_sha256,
+        requalification,
+        profile_predecessor_sha256,
     )
 
 
@@ -302,6 +411,24 @@ def _plan_run_lock(home: Path, fingerprint: str):
         yield
 
 
+def _plan_base(home: Path, binding: dict) -> Path:
+    """Keep each exact claim revision's native test-plan chain separate."""
+    revision = sha(binding["source_revision"].encode())[:16]
+    return (
+        home
+        / "fleet/test-plans"
+        / (binding["source_card"] + "-" + binding["source_head"] + "-" + revision + ".json")
+    )
+
+
+def _legacy_plan_base(home: Path, binding: dict) -> Path:
+    return (
+        home
+        / "fleet/test-plans"
+        / (binding["source_card"] + "-" + binding["source_head"] + ".json")
+    )
+
+
 def _seal_plan(
     home: Path,
     binding: dict,
@@ -311,25 +438,35 @@ def _seal_plan(
     qualification_sha256: str,
     profile: dict | None,
     predecessor_sha256: str | None,
+    requalification: bool,
+    profile_predecessor_sha256: str | None,
 ) -> Path:
     check_binding(binding)
     source_state(workspace, binding)
     directory = home / "fleet/test-plans"
     private_dir(directory, create=True)
-    base = directory / (binding["source_card"] + "-" + binding["source_head"] + ".json")
+    base = _plan_base(home, binding)
     path = base
     if predecessor_sha256 is not None:
-        previous, _, current = load_plan(home, binding, require_current=False)
+        previous, previous_path, current = load_plan(home, binding, require_current=False)
         if current != predecessor_sha256:
             raise TestEvidenceError("test plan predecessor changed")
         if (run_directory(home, current) / "launch.json").exists():
             raise TestEvidenceError("prior test plan already launched")
-        path = base.with_name(base.stem + "." + current + ".json")
+        path = previous_path.with_name(previous_path.stem + "." + current + ".json")
     value = {
         "schema": (
-            "skfleet.native-test-plan/v2"
-            if predecessor_sha256 is not None
-            else "skfleet.native-test-plan/v1"
+            "skfleet.native-test-plan/v4"
+            if predecessor_sha256 is not None and requalification
+            else (
+                "skfleet.native-test-plan/v3"
+                if requalification
+                else (
+                    "skfleet.native-test-plan/v2"
+                    if predecessor_sha256 is not None
+                    else "skfleet.native-test-plan/v1"
+                )
+            )
         ),
         "binding": binding,
         "checks": approved_checks(),
@@ -343,13 +480,52 @@ def _seal_plan(
     if predecessor_sha256 is not None:
         value["predecessor_sha256"] = predecessor_sha256
     if profile is not None:
-        from .production_test_profile import recipe_checks, validate_profile
-
-        validate_profile(
-            profile,
-            {"card": binding["source_card"], "criteria_sha256": binding["criteria_sha256"]},
-            policy,
+        from .production_test_profile import (
+            fingerprint_only_stale,
+            legacy_full_qualification_required,
+            read_profile,
+            recipe_checks,
+            validate_profile,
         )
+
+        expected_profile = {
+            "card": binding["source_card"],
+            "criteria_sha256": binding["criteria_sha256"],
+        }
+        if requalification:
+            current, current_sha = read_profile(home, binding["source_card"], pinned=profile)
+            stale = fingerprint_only_stale(
+                current,
+                {**expected_profile, "repository": current["repository"]},
+                policy,
+                source_sha256=(
+                    source_fingerprint(
+                        current["repository"], binding["source_head"], binding["source_tree"]
+                    )
+                    if "source_sha256" in current
+                    else None
+                ),
+            ) or legacy_full_qualification_required(
+                current, {**expected_profile, "repository": current["repository"]}, policy
+            )
+            if (
+                profile_predecessor_sha256 != current_sha
+                or qualified_by != current["qualified_by"]
+                or qualification_sha256 != current["qualification_sha256"]
+                or not stale
+            ):
+                raise TestEvidenceError("profile is not eligible for native requalification")
+            value["profile_requalification"] = True
+            value["profile_predecessor_sha256"] = current_sha
+        else:
+            expected = dict(expected_profile)
+            if "source_sha256" in profile:
+                expected["source_sha256"] = source_fingerprint(
+                    profile["repository"],
+                    binding["source_head"],
+                    binding["source_tree"],
+                )
+            validate_profile(profile, expected, policy)
         value["profile"] = profile
         value["checks"] = recipe_checks(profile["recipe"])
 
@@ -376,11 +552,16 @@ def load_plan(
 ) -> tuple[dict, Path, str]:
     """Read an append-only plan chain and bind its latest approved environment."""
     check_binding(binding)
-    base = (
-        home
-        / "fleet/test-plans"
-        / (binding["source_card"] + "-" + binding["source_head"] + ".json")
-    )
+    base = _plan_base(home, binding)
+    if not base.exists():
+        legacy = _legacy_plan_base(home, binding)
+        if legacy.exists():
+            try:
+                prior = read_json(legacy)
+            except (OSError, ValueError):
+                prior = None
+            if isinstance(prior, dict) and prior.get("binding") == binding:
+                base = legacy
     path = base
     raw = read_private(path)
     seen = set()
@@ -434,13 +615,46 @@ def _validate_plan(home: Path, binding: dict, plan: dict, *, successor: bool) ->
     }
     if successor:
         required.add("predecessor_sha256")
+    requalification = plan.get("profile_requalification") is True
+    if requalification:
+        required.update({"profile_requalification", "profile_predecessor_sha256"})
+    elif "profile_predecessor_sha256" in plan:
+        raise TestEvidenceError("operator test plan is invalid or stale")
     expected_checks = approved_checks()
     if "profile" in plan:
         from .production_test_profile import read_profile, recipe_checks
 
         required.add("profile")
-        profile, _ = read_profile(home, binding["source_card"], pinned=plan["profile"])
-        if (
+        profile, profile_sha = read_profile(home, binding["source_card"], pinned=plan["profile"])
+        if requalification:
+            if (
+                profile != plan["profile"]
+                or profile_sha != plan["profile_predecessor_sha256"]
+                or profile.get("card") != binding["source_card"]
+                or profile.get("criteria_sha256") != binding["criteria_sha256"]
+                or profile.get("host") != plan.get("host")
+                or profile.get("python_sha256") != plan.get("python_sha256")
+                or (
+                    "toolchain_sha256" in profile
+                    and profile.get("toolchain_sha256") != toolchain_fingerprint()
+                )
+                or (
+                    "source_sha256" in profile
+                    and profile["source_sha256"]
+                    != source_fingerprint(
+                        profile.get("repository", ""),
+                        binding["source_head"],
+                        binding["source_tree"],
+                    )
+                )
+                or (
+                    profile.get("runtime_sha256") == plan.get("runtime_sha256")
+                    and profile.get("policy_sha256") == plan.get("policy_sha256")
+                    and not str(profile.get("schema", "")).endswith("/v1")
+                )
+            ):
+                raise TestEvidenceError("candidate test profile changed")
+        elif (
             profile != plan["profile"]
             or profile.get("card") != binding["source_card"]
             or profile.get("criteria_sha256") != binding["criteria_sha256"]
@@ -455,6 +669,15 @@ def _validate_plan(home: Path, binding: dict, plan: dict, *, successor: bool) ->
                     "host",
                 )
             )
+            or (
+                "source_sha256" in profile
+                and profile["source_sha256"]
+                != source_fingerprint(
+                    profile.get("repository", ""),
+                    binding["source_head"],
+                    binding["source_tree"],
+                )
+            )
         ):
             raise TestEvidenceError("candidate test profile changed")
         expected_checks = recipe_checks(profile["recipe"])
@@ -466,7 +689,17 @@ def _validate_plan(home: Path, binding: dict, plan: dict, *, successor: bool) ->
     if (
         set(plan) != required
         or plan["schema"]
-        != ("skfleet.native-test-plan/v2" if successor else "skfleet.native-test-plan/v1")
+        != (
+            "skfleet.native-test-plan/v4"
+            if successor and requalification
+            else (
+                "skfleet.native-test-plan/v3"
+                if requalification
+                else (
+                    "skfleet.native-test-plan/v2" if successor else "skfleet.native-test-plan/v1"
+                )
+            )
+        )
         or plan["binding"] != binding
         or plan["checks"] != expected_checks
         or not isinstance(plan["qualified_by"], str)

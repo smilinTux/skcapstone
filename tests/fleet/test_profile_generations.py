@@ -209,7 +209,17 @@ def test_sealed_plan_keeps_old_pin_and_refuses_changed_runtime(setup, monkeypatc
         criteria_sha256=profile.contract(core)["criteria_sha256"],
     )
     recipe = {"pytest": {"tests/test_parser.py": 1}, "compile": [], "lint": [], "changelog": False}
-    original = profile.qualify_profile(s.home, core, s.policy, recipe, "operator", "b" * 64)
+    original = profile.qualify_profile(
+        s.home,
+        core,
+        s.policy,
+        recipe,
+        "operator",
+        "b" * 64,
+        source_sha256=plan.source_fingerprint(
+            core["meta"]["repository"], binding["source_head"], binding["source_tree"]
+        ),
+    )
     profile.seal_candidate(s.home, binding, s.workspace, s.policy, core["meta"]["repository"])
     sealed, path, fingerprint = plan.load_plan(s.home, binding)
     profile.supersede_profile(
@@ -271,7 +281,17 @@ def test_launched_prior_plan_cannot_be_superseded(setup, monkeypatch):  # noqa: 
         criteria_sha256=profile.contract(core)["criteria_sha256"],
     )
     recipe = {"pytest": {"tests/test_parser.py": 1}, "compile": [], "lint": [], "changelog": False}
-    original = profile.qualify_profile(s.home, core, s.policy, recipe, "operator", "b" * 64)
+    original = profile.qualify_profile(
+        s.home,
+        core,
+        s.policy,
+        recipe,
+        "operator",
+        "b" * 64,
+        source_sha256=plan.source_fingerprint(
+            core["meta"]["repository"], binding["source_head"], binding["source_tree"]
+        ),
+    )
     profile.seal_candidate(s.home, binding, s.workspace, s.policy, core["meta"]["repository"])
     _, path, fingerprint = plan.load_plan(s.home, binding)
     run = plan.run_directory(s.home, fingerprint)
@@ -330,7 +350,17 @@ def test_policy_change_requires_requalification_before_plan_successor(setup):  #
         criteria_sha256=profile.contract(core)["criteria_sha256"],
     )
     recipe = {"pytest": {"tests/test_parser.py": 1}, "compile": [], "lint": [], "changelog": False}
-    original = profile.qualify_profile(s.home, core, s.policy, recipe, "operator", "b" * 64)
+    original = profile.qualify_profile(
+        s.home,
+        core,
+        s.policy,
+        recipe,
+        "operator",
+        "b" * 64,
+        source_sha256=plan.source_fingerprint(
+            core["meta"]["repository"], binding["source_head"], binding["source_tree"]
+        ),
+    )
     profile.seal_candidate(s.home, binding, s.workspace, s.policy, core["meta"]["repository"])
     _, path, fingerprint = plan.load_plan(s.home, binding)
     unrelated_policy = dict(s.policy, remote_review={"enabled": True})
@@ -369,7 +399,7 @@ def test_runtime_successor_restores_preflight_without_repinning(qualified, monke
     custody(home, core)
     old = original.read_bytes()
     monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "d" * 64)
-    with pytest.raises(plan.TestEvidenceError, match="environment changed"):
+    with pytest.raises(profile.ProfileRequalificationRequired):
         profile.preflight(home, core, ["source-only"], policy)
     successor(qualified, runtime_sha256="d" * 64)
     assert profile.preflight(home, core, ["source-only"], policy)["runtime_sha256"] == "d" * 64
