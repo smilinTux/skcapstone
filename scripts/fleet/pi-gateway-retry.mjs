@@ -4,13 +4,20 @@ import { pathToFileURL } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const MAX_ATTEMPTS = 4;
-const BUDGET_MS = 360_000;
 const MIN_ATTEMPT_WINDOW_MS = 30_000;
 const DELAYS_MS = [10_000, 20_000, 30_000];
-const HTTP_IDLE_TIMEOUT_MS = 390_000;
+// 50k tokens is roughly 200 KB of prompt text and leaves room before slow turns.
+const GLM_COMPACT_TOKENS = 50_000;
+
+export function requestPolicyForLane(lane) {
+  return lane === "glm"
+    ? { budgetMs: 570_000, idleTimeoutMs: 600_000 }
+    : { budgetMs: 360_000, idleTimeoutMs: 390_000 };
+}
 
 export async function configurePiHttpIdleTimeout({
   entrypoint = process.argv[1],
+  timeoutMs = 390_000,
   importer = (specifier) => import(specifier),
 } = {}) {
   if (typeof entrypoint !== "string" || !entrypoint) {
@@ -24,7 +31,7 @@ export async function configurePiHttpIdleTimeout({
   if (typeof configureHttpDispatcher !== "function") {
     throw new Error("Running Pi does not expose its HTTP dispatcher configuration");
   }
-  configureHttpDispatcher(HTTP_IDLE_TIMEOUT_MS);
+  configureHttpDispatcher(timeoutMs);
 }
 
 async function errorFields(response) {
@@ -58,7 +65,11 @@ async function errorFields(response) {
   }
 }
 
-export function gatewayTransport(fetcher, record, { now = Date.now, wait = sleep } = {}) {
+export function gatewayTransport(
+  fetcher,
+  record,
+  { now = Date.now, wait = sleep, budgetMs = 360_000 } = {},
+) {
   if (typeof record !== "function") throw new Error("Session retry evidence is required");
   const state = { terminal: null };
   return {
@@ -66,7 +77,7 @@ export function gatewayTransport(fetcher, record, { now = Date.now, wait = sleep
     async fetch(input, options = {}) {
       const started = now();
       const controller = new AbortController();
-      const budget = setTimeout(() => controller.abort(), BUDGET_MS);
+      const budget = setTimeout(() => controller.abort(), budgetMs);
       const external = options.signal ?? (input instanceof Request ? input.signal : undefined);
       const signal = external ? AbortSignal.any([external, controller.signal]) : controller.signal;
       const original = input instanceof Request ? input.clone() : input;
@@ -85,7 +96,7 @@ export function gatewayTransport(fetcher, record, { now = Date.now, wait = sleep
             response.status === 503 && fields.type === "bucket_no_eligible_member"
           );
           const requestedDelay = DELAYS_MS[attempt - 1];
-          const remaining = BUDGET_MS - (now() - started);
+          const remaining = budgetMs - (now() - started);
           const retry = transient && replayable && attempt < MAX_ATTEMPTS
             && remaining >= MIN_ATTEMPT_WINDOW_MS;
           const delay = retry && remaining > requestedDelay + MIN_ATTEMPT_WINDOW_MS
@@ -105,7 +116,7 @@ export function gatewayTransport(fetcher, record, { now = Date.now, wait = sleep
           }
           await response.body?.cancel();
           await wait(delay, undefined, { signal });
-          if (now() - started >= BUDGET_MS) {
+          if (now() - started >= budgetMs) {
             state.terminal = { http_status: response.status, ...fields, retryable: false };
             throw new Error("Fleet gateway recovery budget ended");
           }
@@ -125,14 +136,14 @@ export function gatewayTransport(fetcher, record, { now = Date.now, wait = sleep
   };
 }
 
-export function wrapGatewayProvider(provider, record) {
+export function wrapGatewayProvider(provider, record, { budgetMs = 360_000 } = {}) {
   const wrapped = { ...provider };
   for (const method of ["stream", "streamSimple"]) {
     if (typeof provider[method] !== "function") continue;
     wrapped[method] = function (model, context, options = {}) {
       const transport = gatewayTransport(options.fetch ?? globalThis.fetch, (entry) => {
         record({ ...entry, provider: model.provider, model: model.id });
-      });
+      }, { budgetMs });
       const source = provider[method].call(provider, model, context, {
         ...options, fetch: transport.fetch, maxRetries: 0,
       });
@@ -168,6 +179,19 @@ export default function gatewayRetry(
   { configureIdleTimeout = configurePiHttpIdleTimeout } = {},
 ) {
   let installed = false;
+  let compactionPending = false;
+  const policy = requestPolicyForLane(process.env.SKFLEET_LANE);
+  const isGlm = process.env.SKFLEET_LANE === "glm";
+  pi.on("turn_end", (_event, context) => {
+    const tokens = context.getContextUsage()?.tokens;
+    if (!isGlm || compactionPending || tokens == null || tokens < GLM_COMPACT_TOKENS) return;
+    compactionPending = true;
+    context.compact({
+      customInstructions: "Keep the active card contract, source revision, current step, test results, and unresolved blockers. Condense completed exploration and verbose command output.",
+      onComplete: () => { compactionPending = false; },
+      onError: () => { compactionPending = false; },
+    });
+  });
   pi.on("session_start", async (_event, context) => {
     if (installed) return;
     const provider = context.modelRegistry.getProvider("skgateway");
@@ -175,10 +199,10 @@ export default function gatewayRetry(
     if (typeof provider.streamSimple !== "function") {
       throw new Error("Fleet gateway provider transport is unavailable");
     }
-    await configureIdleTimeout();
+    await configureIdleTimeout({ timeoutMs: policy.idleTimeoutMs });
     pi.registerProvider(wrapGatewayProvider(provider, (entry) => {
       pi.appendEntry("skfleet.gateway_transport_retry", entry);
-    }));
+    }, { budgetMs: policy.budgetMs }));
     installed = true;
   });
 }

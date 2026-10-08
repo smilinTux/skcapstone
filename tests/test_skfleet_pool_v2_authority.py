@@ -454,6 +454,8 @@ def test_worker_runtime_contract_is_unchanged() -> None:
     assert '"provider":"skgateway"' in source
     assert 'model=_selected_route["model_or_bucket"]' in source
     assert 'qwen_suitable(fresh_claimability["core"],fresh_claimability["labels"])' in source
+    assert "SKFLEET_LANE=%s SKFLEET_WORKSPACE=%s" in source
+    assert '_LANE["name"]' in source
     assert "SKFLEET_CARD_ID=%s SKFLEET_CLAIM_REVISION=%s SKFLEET_SESSION_ID=%s" in source
     assert '"--session",sess,"--worker-executable",PI,' in source
     assert "actor=name," in source

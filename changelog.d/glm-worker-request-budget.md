@@ -1,0 +1,1 @@
+- GLM workers now keep the Pi request deadline at 600 seconds, align gateway retries to a 570-second budget, and compact at 50,000 context tokens (about 200 KB of prompt text). Other lanes keep the existing timeout and retry budget.

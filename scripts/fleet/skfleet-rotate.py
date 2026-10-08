@@ -9382,7 +9382,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         "stop_beat() { kill $BEAT 2>/dev/null || true; wait $BEAT 2>/dev/null || true; }; "
         'trap "stop_beat; exit 143" HUP INT TERM; '
         'trap "stop_beat" EXIT; '
-        "env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_WORKSPACE=%s "
+        "env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_LANE=%s SKFLEET_WORKSPACE=%s "
         "SKFLEET_CARD_ID=%s SKFLEET_CLAIM_REVISION=%s SKFLEET_SESSION_ID=%s "
         "SKFLEET_FANOUT_REQUEST_ID=%s SKFLEET_FANOUT_REQUESTER=%s "
         "SKFLEET_FANOUT_ROUTE=%s "
@@ -9393,7 +9393,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         % (name, cid, claimed_revision, sess,
            _bf_path, _bf_path, _bf_path,
            _bi,
-           name, name, shlex.quote(workspace), cid, shlex.quote(claimed_revision),
+           name, name, _LANE["name"], shlex.quote(workspace), cid, shlex.quote(claimed_revision),
            shlex.quote(sess), *(shlex.quote(value) for value in
                                 globals().get("_fanout_env", ("", "", ""))),
            shlex.quote(PI),

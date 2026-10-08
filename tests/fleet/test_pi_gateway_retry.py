@@ -15,8 +15,10 @@ def test_existing_worker_guard_registers_a_gateway_transport_hook():
 import assert from 'node:assert/strict';
 import guard from {json.dumps(guard.as_uri())};
 const hooks = new Map();
+process.env.SKFLEET_LANE='codex';
 guard({{on(name, hook) {{ hooks.set(name, hook); }}}});
 assert.equal(typeof hooks.get('session_start'), 'function');
+assert.equal(typeof hooks.get('turn_end'), 'function');
 assert.equal(typeof hooks.get('tool_call'), 'function');
 """
     subprocess.run(
@@ -132,6 +134,92 @@ assert.deepEqual(records.map(r=>r.event),['retry','retry','retry','result']);
 """)
 
 
+def test_glm_lane_gets_600_second_request_window_and_570_second_retry_budget():
+    helper = ROOT / "scripts/fleet/pi-gateway-retry.mjs"
+    program = f"""
+import assert from 'node:assert/strict';
+import gatewayRetry, {{
+  gatewayTransport, requestPolicyForLane,
+}} from {json.dumps(helper.as_uri())};
+let hooks=new Map(),configured;
+process.env.SKFLEET_LANE='glm';
+assert.deepEqual(requestPolicyForLane('glm'),{{budgetMs:570000,idleTimeoutMs:600000}});
+assert.deepEqual(requestPolicyForLane('codex'),{{budgetMs:360000,idleTimeoutMs:390000}});
+gatewayRetry({{on:(name,fn)=>hooks.set(name,fn),registerProvider:()=>{{}},
+ appendEntry:()=>{{}}}},{{configureIdleTimeout:async options=>{{configured=options.timeoutMs;}}}});
+const original={{id:'skgateway',streamSimple(){{}}}};
+await hooks.get('session_start')({{}},{{modelRegistry:{{getProvider:()=>original}}}});
+assert.equal(configured,600000);
+let clock=0,calls=0;const delays=[];
+const transport=gatewayTransport(async()=>{{
+ calls++;clock+=calls===1?216000:calls===2?144000:180000;
+ return new Response('slow',{{status:504}});
+}},()=>{{}},{{now:()=>clock,wait:async ms=>{{delays.push(ms);clock+=ms;}},budgetMs:570000}});
+assert.equal((await transport.fetch('http://fixture.invalid')).status,504);
+assert.equal(calls,3);
+assert.deepEqual(delays,[10000,20000]);
+"""
+    subprocess.run(
+        ["node", "--input-type=module", "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+
+def test_glm_compacts_at_roughly_200kb_before_the_next_request():
+    helper = ROOT / "scripts/fleet/pi-gateway-retry.mjs"
+    program = f"""
+import assert from 'node:assert/strict';
+import gatewayRetry from {json.dumps(helper.as_uri())};
+const hooks=new Map();
+process.env.SKFLEET_LANE='glm';
+gatewayRetry({{on:(name,fn)=>hooks.set(name,fn),registerProvider:()=>{{}},appendEntry:()=>{{}}}});
+let compacted=0,complete;
+const ctx={{getContextUsage:()=>({{tokens:50000}}),compact:options=>{{
+ compacted++;complete=options.onComplete;
+}}}};
+hooks.get('turn_end')({{}},ctx);
+hooks.get('turn_end')({{}},ctx);
+assert.equal(compacted,1);
+complete({{}});
+hooks.get('turn_end')({{}},ctx);
+assert.equal(compacted,2);
+"""
+    subprocess.run(
+        ["node", "--input-type=module", "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+
+def test_non_glm_lane_keeps_existing_timeout_and_does_not_auto_compact():
+    helper = ROOT / "scripts/fleet/pi-gateway-retry.mjs"
+    program = f"""
+import assert from 'node:assert/strict';
+import gatewayRetry from {json.dumps(helper.as_uri())};
+const hooks=new Map();let configured,compacted=0;
+process.env.SKFLEET_LANE='codex';
+gatewayRetry({{on:(name,fn)=>hooks.set(name,fn),registerProvider:()=>{{}},appendEntry:()=>{{}}}},
+ {{configureIdleTimeout:async options=>{{configured=options.timeoutMs;}}}});
+const original={{id:'skgateway',streamSimple(){{}}}};
+await hooks.get('session_start')({{}},{{modelRegistry:{{getProvider:()=>original}}}});
+hooks.get('turn_end')({{}},{{getContextUsage:()=>({{tokens:50000}}),compact:()=>compacted++}});
+assert.equal(configured,390000);
+assert.equal(compacted,0);
+"""
+    subprocess.run(
+        ["node", "--input-type=module", "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+
 def test_abort_during_backoff_preserves_cancellation_and_makes_no_second_call():
     node_check("""
 const abort=new AbortController();let calls=0;const records=[];
@@ -188,13 +276,14 @@ def test_hook_preserves_native_provider_metadata_and_ships_beside_guard():
     program = f"""
 import assert from 'node:assert/strict';
 import gatewayRetry from {json.dumps(helper.as_uri())};
-let start,registered,configured;
+let hooks=new Map(),registered,configured;
+process.env.SKFLEET_LANE='codex';
 const original={{id:'skgateway',auth:{{apiKey:'synthetic'}},baseUrl:'http://fixture.invalid',
  getModels:()=>['original'],streamSimple:()=>{{}}}};
- gatewayRetry({{on(name,fn){{assert.equal(name,'session_start');start=fn;}},
+ gatewayRetry({{on(name,fn){{hooks.set(name,fn);}},
  registerProvider(p){{registered=p;}},appendEntry(){{}}}},
  {{configureIdleTimeout:async()=>{{configured=390000;}}}});
-await start({{}},{{modelRegistry:{{getProvider(name){{
+await hooks.get('session_start')({{}},{{modelRegistry:{{getProvider(name){{
  assert.equal(name,'skgateway');return original;}}}}}});
 assert.equal(registered.auth,original.auth);
 assert.equal(registered.baseUrl,original.baseUrl);
