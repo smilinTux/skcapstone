@@ -3,6 +3,7 @@
 import json
 import subprocess
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 from skcoord.card_store import CardCore, CardStore
@@ -97,6 +98,164 @@ def legacy(tmp_path, monkeypatch):
         ),
     )
     return tmp_path, root, directory, state, events, entries
+
+
+def _review_generation(
+    legacy, monkeypatch, *, started=True, recommendation=True, remote=False
+):
+    """Turn the reserved fixture into one exact native review assignment."""
+    home, root, directory, state, events, entries = legacy
+    intent = json.loads((directory / "intent.json").read_text())
+    binding = intent["binding"]
+    owner = (
+        "pi-seraph-fixture-12345678"
+        if remote
+        else "pi-glm-review-fixture-12345678"
+    )
+    binding["owner"] = owner
+    recommendation_id = "link-review-12345678"
+    if remote:
+        binding.update(
+            request_id=recommendation_id,
+            request_sha256="a" * 64,
+            policy_sha256="b" * 64,
+            work_kind="review",
+        )
+    reservation_id = admission._reservation_id(intent)
+    review_directory = root / reservation_id
+    directory.rename(review_directory)
+    (review_directory / "intent.json").write_text(json.dumps(intent))
+    (review_directory / "start.json").write_text(
+        json.dumps(
+            {
+                "schema": "skfleet.resource-start/v1",
+                "reservation_id": reservation_id,
+                "binding": binding,
+                "argv_sha256": intent["argv_sha256"],
+            }
+        )
+    )
+    (review_directory / "start.json").chmod(0o600)
+    (review_directory / "fenced-start-required.json").write_text(
+        json.dumps({"reservation_id": reservation_id, "claim_fenced": True})
+    )
+    (review_directory / "fenced-start-required.json").chmod(0o600)
+
+    now = datetime.now(timezone.utc)
+    revision = binding["claim_revision"]
+    observed_revision = "e" * 64
+    review_events = [
+        {
+            "action": "claim",
+            "writer": owner,
+            "owner": owner,
+            "node": "fixture",
+            "claim_revision": revision,
+            "ts": now.isoformat(),
+        }
+    ]
+    if recommendation:
+        review_events.append(
+            {
+                "action": "review_assignment_recommendation",
+                "writer": "link",
+                "reviewer": owner,
+                "recommendation_id": recommendation_id,
+                "observed_state_revision": observed_revision,
+                "evidence_sha256": "f" * 64,
+            }
+        )
+    if started:
+        launch = {
+                "action": "review_assignment_launch",
+                "schema": (
+                    "skfleet.review-assignment-launch/v3"
+                    if remote
+                    else "skfleet.review-assignment-launch/v2"
+                ),
+                "launched": True,
+                "writer": owner,
+                "reviewer": owner,
+                "node": "fixture",
+                "recommendation_id": recommendation_id,
+                "observed_state_revision": observed_revision,
+                "claim_revision": revision,
+                "ts": now.isoformat(),
+            }
+        if remote:
+            launch["execution"] = {
+                "request_id": recommendation_id,
+                "request_sha256": binding["request_sha256"],
+                "policy_sha256": binding["policy_sha256"],
+                "work_kind": "review",
+                "unit": intent["unit"],
+                "admission_id": reservation_id,
+                "admission_sha256": admission._digest(intent),
+            }
+        review_events.append(launch)
+    events[:] = review_events
+    entries[0]["__REALTIME_TIMESTAMP"] = str(int(now.timestamp() * 1_000_000) + 1_000_000)
+    entries[1]["__REALTIME_TIMESTAMP"] = str(int(now.timestamp() * 1_000_000) + 30_000_000)
+    entries[0]["MESSAGE"] = (
+        f"Started {intent['unit']} - /venv/bin/python /venv/bin/skfleet-worker-wrapper.py "
+        f"--card 12345678 --owner {owner} --claim-revision {revision} "
+        "--host fixture --lane glm -- /bin/true"
+    )
+    monkeypatch.setattr(
+        CardStore,
+        "fold",
+        lambda self, card_id: SimpleNamespace(
+            status=SimpleNamespace(value="doing"),
+            archived=False,
+            meta={"_claim_revision": revision},
+            owner=owner,
+        ),
+    )
+    return home, root, review_directory, state, events, entries
+
+
+@pytest.mark.parametrize("remote", [False, True])
+def test_terminal_review_assignment_releases_only_capacity(legacy, monkeypatch, remote):
+    home, root, directory, state, events, entries = _review_generation(
+        legacy, monkeypatch, remote=remote
+    )
+    before = list(events)
+    assert admission._occupancy(root, home, strict_terminal=True) == []
+    assert (directory / "fenced-assignment-terminal.json").is_file()
+    assert events == before
+
+
+@pytest.mark.parametrize(
+    ("started", "recommendation", "loaded", "missing_terminal"),
+    [
+        (False, True, False, False),
+        (True, False, False, False),
+        (True, True, True, False),
+        (True, True, False, True),
+    ],
+)
+def test_incomplete_review_assignment_stays_charged(
+    legacy, monkeypatch, started, recommendation, loaded, missing_terminal
+):
+    home, root, directory, state, events, entries = _review_generation(
+        legacy, monkeypatch, started=started, recommendation=recommendation
+    )
+    if loaded:
+        state["LoadState"] = "loaded"
+    if missing_terminal:
+        entries.pop()
+    assert len(admission._occupancy(root, home, strict_terminal=True)) == 1
+    assert not (directory / "fenced-assignment-terminal.json").exists()
+
+
+def test_remote_review_request_mismatch_stays_charged(legacy, monkeypatch):
+    home, root, directory, state, events, entries = _review_generation(
+        legacy, monkeypatch, remote=True
+    )
+    launch = next(event for event in events if event["action"] == "review_assignment_launch")
+    launch["execution"]["request_sha256"] = "f" * 64
+    assert len(admission._occupancy(root, home, strict_terminal=True)) == 1
+    assert not (directory / "fenced-assignment-terminal.json").exists()
 
 
 def test_terminal_assignment_releases_only_capacity(legacy, monkeypatch):

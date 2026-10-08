@@ -49,10 +49,20 @@ def _fenced_claim(directory: Path, home: Path, intent: dict, *, current=True) ->
     match = re.fullmatch(
         r"skfleet-worker-(codex|glm|deepseek)-([0-9a-f]{8})\.service", intent["unit"]
     )
+    builder_owner = (
+        f"pi-{match[1]}-{intent['host']}-{match[2]}" if match else ""
+    )
+    lane_reviewer_owner = (
+        f"pi-{match[1]}-review-{intent['host']}-{match[2]}" if match else ""
+    )
+    seraph_owner = f"pi-seraph-{intent['host']}-{match[2]}" if match else ""
+    review_assignment = bool(
+        match and binding["owner"] in {lane_reviewer_owner, seraph_owner}
+    )
     if (
         not match
         or match[2] != binding["card_id"]
-        or binding["owner"] != f"pi-{match[1]}-{intent['host']}-{match[2]}"
+        or binding["owner"] not in {builder_owner, lane_reviewer_owner, seraph_owner}
         or not (directory / "start.json").exists()
         or read_json(directory / "start.json")
         != dict(
@@ -77,15 +87,65 @@ def _fenced_claim(directory: Path, home: Path, intent: dict, *, current=True) ->
             or card.meta.get("_claim_revision") != binding["claim_revision"]
         ):
             return []
-    return [
+    events = store._read_events(binding["card_id"])
+    claims = [
         event
-        for event in store._read_events(binding["card_id"])
+        for event in events
         if event.get("action") == "claim"
         and event.get("writer") == binding["owner"]
         and event.get("owner") == binding["owner"]
         and event.get("node") == intent["host"]
         and event.get("claim_revision") == binding["claim_revision"]
     ]
+    if not review_assignment:
+        return claims
+
+    launches = [
+        event
+        for event in events
+        if event.get("action") == "review_assignment_launch"
+        and event.get("schema")
+        in {
+            "skfleet.review-assignment-launch/v1",
+            "skfleet.review-assignment-launch/v2",
+            "skfleet.review-assignment-launch/v3",
+        }
+        and event.get("launched") is True
+        and event.get("writer") == binding["owner"]
+        and event.get("reviewer") == binding["owner"]
+        and event.get("node") == intent["host"]
+        and event.get("claim_revision") == binding["claim_revision"]
+        and isinstance(event.get("recommendation_id"), str)
+        and event.get("recommendation_id")
+    ]
+    if len(claims) != 1 or len(launches) != 1:
+        return []
+    launch = launches[0]
+    if binding.get("request_id"):
+        execution = launch.get("execution")
+        if (
+            binding["request_id"] != launch["recommendation_id"]
+            or not isinstance(execution, dict)
+            or execution.get("request_id") != binding["request_id"]
+            or execution.get("request_sha256") != binding.get("request_sha256")
+            or execution.get("policy_sha256") != binding.get("policy_sha256")
+            or execution.get("work_kind") != binding.get("work_kind")
+            or execution.get("unit") != intent["unit"]
+            or execution.get("admission_id") != admission._reservation_id(intent)
+            or execution.get("admission_sha256") != admission._digest(intent)
+        ):
+            return []
+    recommendations = [
+        event
+        for event in events
+        if event.get("action") == "review_assignment_recommendation"
+        and event.get("recommendation_id") == launch["recommendation_id"]
+        and event.get("writer") == "link"
+        and event.get("reviewer") == binding["owner"]
+        and event.get("observed_state_revision") == launch.get("observed_state_revision")
+        and re.fullmatch(r"[0-9a-f]{64}", str(event.get("evidence_sha256", "")))
+    ]
+    return [launch] if len(recommendations) == 1 else []
 
 
 def _wrapper_binding(entry: dict, intent: dict) -> bool:
