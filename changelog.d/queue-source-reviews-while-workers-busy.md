@@ -1,0 +1,1 @@
+- Fixed source review handoff so completed candidates can enter the bounded review queue even when all worker lanes are occupied.

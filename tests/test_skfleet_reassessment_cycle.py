@@ -138,3 +138,11 @@ def test_existing_mutations_remain_after_assessment_and_dry_fenced():
     claims = source.index('claim=subprocess.run([SKC,"coord","claim"', reviews)
     assert assessment < dry < reap < reviews < claims
     assert 'raise RuntimeError("lifecycle reassessment module unavailable")' in source
+
+
+def test_source_review_queue_is_not_limited_by_free_worker_slots():
+    """Completed candidates can queue review while every execution lane is busy."""
+    source = ROTATE.read_text(encoding="utf-8")
+    review_call = source.index("open_provisional_reviews(review_capacity, dry_run=DRY)")
+    assignment = source.rfind("review_capacity =", 0, review_call)
+    assert source[assignment:review_call].strip() == "review_capacity = MAX_LAUNCH"

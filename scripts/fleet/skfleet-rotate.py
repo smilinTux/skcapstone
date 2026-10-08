@@ -7186,8 +7186,11 @@ def _legacy_selector_decision(cid, core_p):
         return {"eligible": False, "reason": "selector_excluded"}
     return {"eligible": True, "reason": "ready", "decision": decision, "core": core}
 
-review_capacity = min(MAX_LAUNCH, sum(
-    lane["free"] for lane in LANES if lane["name"] != "escalate"))
+# Opening a source-bound review card only queues work; it does not launch a
+# worker. Keep this bounded by the cycle's normal batch limit, independently
+# of currently free execution lanes, so completed producers cannot be stranded
+# behind a full worker pool.
+review_capacity = MAX_LAUNCH
 open_provisional_reviews(review_capacity, dry_run=DRY)
 if not DRY:
     if PRODUCTION_POLICY and HOST == AUTHORITY_HOST:
