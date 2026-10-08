@@ -309,3 +309,68 @@ def test_cached_terminal_never_removes_reused_live_unit(collected, monkeypatch):
     live = dict(unit=unit, reserved_memory_max=2048)
     monkeypatch.setattr(admission, "active_resource_units", lambda home: [live])
     assert admission._occupancy(root, home, strict_terminal=True) == [live]
+
+
+def _as_worker(collected):
+    """Turn the synthetic builder reservation into one exact worker start."""
+    home, root, directory, state, entries, calls, _ = collected
+    intent = admission.read_json(directory / "intent.json")
+    unit = "skfleet-worker-codex-12345678.service"
+    intent["unit"] = unit
+    intent["binding"] = {
+        "card_id": "12345678",
+        "owner": "fixture",
+        "claim_revision": "a" * 32,
+    }
+    identity = admission._reservation_id(intent)
+    worker_directory = root / identity
+    directory.rename(worker_directory)
+    (worker_directory / "intent.json").write_text(json.dumps(intent))
+    (worker_directory / "start.json").write_text(
+        json.dumps(
+            {
+                "schema": "skfleet.resource-start/v1",
+                "reservation_id": identity,
+                "binding": intent["binding"],
+                "argv_sha256": intent["argv_sha256"],
+            }
+        )
+    )
+    (worker_directory / "fenced-start-required.json").write_text(
+        json.dumps({"reservation_id": identity, "claim_fenced": True})
+    )
+    state["Id"] = unit
+    for event in entries:
+        event["USER_UNIT"] = unit
+    return home, root, worker_directory, state, entries, calls, unit
+
+
+def test_exact_unobserved_worker_start_and_terminal_free_only_ram(collected):
+    home, root, directory, state, entries, calls, unit = _as_worker(collected)
+
+    assert admission._occupancy(root, home, strict_terminal=True) == []
+    observed = admission.read_json(directory / "observed.json")
+    assert observed["unit"] == unit
+    assert observed["invocation"] == "c" * 32
+    proof = admission.read_json(directory / "journal-terminal.json")
+    assert proof["message_id"] == TERMINAL
+    assert len(proof["start_entry_sha256"]) == 64
+    assert (directory / "intent.json").exists() and (directory / "start.json").exists()
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("defect", ["missing-terminal", "wrong-invocation", "duplicate-start"])
+def test_uncertain_unobserved_worker_start_keeps_charge(collected, defect):
+    home, root, directory, state, entries, calls, unit = _as_worker(collected)
+    if defect == "missing-terminal":
+        entries.pop()
+    elif defect == "wrong-invocation":
+        entries[1]["USER_INVOCATION_ID"] = "f" * 32
+    elif defect == "duplicate-start":
+        entries.append(dict(entries[0]))
+
+    assert admission._occupancy(root, home, strict_terminal=True) == [
+        {"unit": unit, "reserved_memory_max": 1024}
+    ]
+    assert not (directory / "observed.json").exists()
+    assert not (directory / "journal-terminal.json").exists()
