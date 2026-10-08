@@ -701,7 +701,8 @@ def _worker_launch_command(unit, workspace, inner):
     return [
         "systemd-run", "--user", "--quiet", "--collect", "--service-type=exec",
         "--unit", unit, "--property=KillMode=control-group",
-        *(worker_resource_properties(PRODUCTION_POLICY, HOST)
+        *(worker_resource_properties(PRODUCTION_POLICY, HOST, "glm"
+                                     if unit.startswith("skfleet-worker-glm-") else None)
           if globals().get("PRODUCTION_POLICY") else []),
         *production_env,
         "--working-directory", workspace, "--", *child_argv,

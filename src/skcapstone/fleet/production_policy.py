@@ -22,6 +22,7 @@ LEGACY_CEILING_VARIABLES = frozenset(
 )
 _HOST = re.compile(r"[a-z0-9][a-z0-9.-]{0,252}\Z")
 _MAX_BYTES = 1024 * 1024
+_MAX_LANE_RUNTIME_SECONDS = 5400
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict:
@@ -64,6 +65,7 @@ def load_production_policy(path: Path, *, host: str) -> dict:
             "worker_destinations",
             "remote_review",
             "node_admission",
+            "lane_runtime_max_seconds",
         }
     ):
         raise ValueError("production policy fields are invalid")
@@ -121,6 +123,15 @@ def load_production_policy(path: Path, *, host: str) -> dict:
             or any(type(number) is not int or number <= 0 for number in limits.values())
         ):
             raise ValueError("production policy worker resources are invalid")
+    lane_runtime = value.get("lane_runtime_max_seconds", {})
+    if not isinstance(lane_runtime, dict) or any(
+        lane not in LANES
+        or type(seconds) is not int
+        or seconds <= 0
+        or seconds > _MAX_LANE_RUNTIME_SECONDS
+        for lane, seconds in lane_runtime.items()
+    ):
+        raise ValueError("production policy lane runtime limits are invalid")
     for key in ("cycle_budget_seconds", "scan_budget"):
         if key in value and (type(value[key]) is not int or value[key] <= 0):
             raise ValueError("production policy cycle budget is invalid")

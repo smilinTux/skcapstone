@@ -45,17 +45,18 @@ def production_lanes(policy, scan_budget):
     return lanes
 
 
-def worker_resource_properties(policy, host):
+def worker_resource_properties(policy, host, lane=None):
     """Enforce the measured node's per-worker limits on the actual child cgroup."""
     if policy is None:
         return []
     quota = policy["node_quotas"][host]
+    runtime = policy.get("lane_runtime_max_seconds", {}).get(lane, quota["runtime_max_seconds"])
     return [
         "--property=UMask=0077",
         "--property=CPUQuota=%d%%" % quota["cpu_quota_percent"],
         "--property=MemoryMax=%d" % quota["memory_max_bytes"],
         "--property=TasksMax=%d" % quota["tasks_max"],
-        "--property=RuntimeMaxSec=%d" % quota["runtime_max_seconds"],
+        "--property=RuntimeMaxSec=%d" % runtime,
     ]
 
 

@@ -76,6 +76,9 @@
       "runtime_max_seconds": 3600
     }
   },
+  "lane_runtime_max_seconds": {
+    "glm": 5400
+  },
   "worker_destinations": [
     "chiap01",
     "chiap02",

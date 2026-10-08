@@ -73,6 +73,17 @@ def test_policy_rejects_invalid_authority_or_local_ceiling(tmp_path, policy, cha
 
 
 @pytest.mark.parametrize(
+    "runtime_limits",
+    [{"other": 5400}, {"glm": True}, {"glm": 5401}, []],
+)
+def test_policy_validates_bounded_lane_runtime_limits(tmp_path, policy, runtime_limits):
+    path = tmp_path / "production.json"
+    path.write_text(json.dumps(policy | {"lane_runtime_max_seconds": runtime_limits}))
+    with pytest.raises(ValueError, match="lane runtime limits"):
+        load_production_policy(path, host="chiap08")
+
+
+@pytest.mark.parametrize(
     "url",
     [
         "https://user:secret@example.invalid",

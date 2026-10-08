@@ -1,0 +1,1 @@
+- GLM direct-seat workers now have a bounded 90-minute runtime for qualification tasks that explicitly require the full suite; other lanes retain their configured host runtime.

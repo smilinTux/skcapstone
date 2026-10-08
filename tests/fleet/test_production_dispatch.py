@@ -82,11 +82,12 @@ def test_controller_requires_current_policy_and_own_resource_quota(tmp_path):
 
 def test_actual_launch_keeps_child_argv_and_enforces_node_quota(monkeypatch):
     monkeypatch.setenv("SKFLEET_PRODUCTION_POLICY", "/private/production.json")
-    ns = helpers("_worker_launch_command", policy_value=policy())
+    policy_value = policy() | {"lane_runtime_max_seconds": {"glm": 5400}}
+    ns = helpers("_worker_launch_command", policy_value=policy_value)
     ns["os"] = __import__("os")
     launch = ns["_worker_launch_command"]
     argv = ["python", "wrapper.py", "--", "bash", "-lc", "printf '%s' '$HOME'"]
-    command = launch("worker.service", "/workspace", argv)
+    command = launch("skfleet-worker-glm-24b00001.service", "/workspace", argv)
     assert command[-len(argv) :] == argv
     assert "--setenv=SKFLEET_PRODUCTION_POLICY=/private/production.json" in command
     assert "--setenv=SKFLEET_AUTHORITY_HOST=controller" in command
@@ -94,9 +95,17 @@ def test_actual_launch_keeps_child_argv_and_enforces_node_quota(monkeypatch):
         "CPUQuota=200%",
         "MemoryMax=3221225472",
         "TasksMax=256",
-        "RuntimeMaxSec=3600",
+        "RuntimeMaxSec=5400",
     ):
         assert "--property=" + expected in command
+
+
+def test_lane_runtime_override_does_not_extend_other_lanes():
+    policy_value = policy() | {"lane_runtime_max_seconds": {"glm": 5400}}
+    glm = worker_resource_properties(policy_value, "controller", "glm")
+    codex = worker_resource_properties(policy_value, "controller", "codex")
+    assert "--property=RuntimeMaxSec=5400" in glm
+    assert "--property=RuntimeMaxSec=3600" in codex
 
 
 def test_production_review_rails_preserve_candidate_and_truthful_checks():
