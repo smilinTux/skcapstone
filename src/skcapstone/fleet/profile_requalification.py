@@ -218,6 +218,32 @@ def _advance(home, policy, skc, actor, path, job):
             requalification=True,
             profile_predecessor_sha256=predecessor,
         )
+    except plan.TestEvidenceError as exc:
+        if str(exc) != "operator test plan is invalid or stale":
+            raise
+        current_plan, _, plan_predecessor = plan.load_plan(
+            home, job["binding"], require_current=False
+        )
+        if (
+            current_plan.get("profile_requalification") is not True
+            or current_plan.get("profile_predecessor_sha256") != job["profile_sha256"]
+        ):
+            raise plan.TestEvidenceError("another test plan owns this source revision") from exc
+        value, profile_predecessor = profile.read_profile(home, job["card"])
+        if profile_predecessor != job["profile_sha256"]:
+            raise plan.TestEvidenceError("profile predecessor changed") from exc
+        plan.seal_plan(
+            home,
+            job["binding"],
+            workspace,
+            policy,
+            value["qualified_by"],
+            value["qualification_sha256"],
+            profile=value,
+            predecessor_sha256=plan_predecessor,
+            requalification=True,
+            profile_predecessor_sha256=profile_predecessor,
+        )
     receipt = tests.run_or_read_tests(home, job["binding"], workspace, policy)
     if receipt is None:
         return "pending"

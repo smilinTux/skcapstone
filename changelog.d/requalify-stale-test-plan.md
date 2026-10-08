@@ -1,0 +1,1 @@
+- Automatic profile requalification now appends a fresh native test-plan generation when an unlaunched plan is stale only by runtime or interpreter fingerprint.

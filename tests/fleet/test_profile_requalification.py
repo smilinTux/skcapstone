@@ -2,8 +2,13 @@
 
 import ast
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from skcapstone.fleet import production_test_plan as plan
+from skcapstone.fleet import production_test_profile as profile
+from skcapstone.fleet import production_tests as tests
 from skcapstone.fleet import profile_requalification as refresh
 
 
@@ -103,3 +108,101 @@ def test_existing_refresh_keeps_the_single_slot_ahead_of_new_work(tmp_path, monk
 
     assert state == "busy"
     assert advanced == ["1234abcd"]
+
+
+def test_stale_plan_appends_current_requalification_successor(tmp_path, monkeypatch):
+    binding = {
+        "source_card": "1234abcd",
+        "source_owner": "producer",
+        "source_claim_revision": "claim-1",
+        "source_head": "a" * 40,
+        "source_tree": "b" * 40,
+        "source_revision": "c" * 64,
+        "criteria_sha256": "d" * 64,
+    }
+    profile_value = {
+        "qualified_by": "operator",
+        "qualification_sha256": "e" * 64,
+        "recipe": {"kind": "python"},
+    }
+    job = {
+        "card": "1234abcd",
+        "owner": "producer",
+        "claim_revision": "claim-1",
+        "workspace": str(tmp_path),
+        "binding": binding,
+        "profile_sha256": "f" * 64,
+    }
+    card = SimpleNamespace(
+        status=SimpleNamespace(value="doing"),
+        owner="producer",
+        meta={"_claim_revision": "claim-1"},
+    )
+    monkeypatch.setattr(
+        refresh, "CardStore", lambda home: SimpleNamespace(fold=lambda card_id: card)
+    )
+    monkeypatch.setattr(plan, "source_state", lambda workspace, expected: None)
+    monkeypatch.setattr(
+        profile,
+        "read_profile",
+        lambda home, card_id: (profile_value, job["profile_sha256"]),
+    )
+    previous = {
+        "profile_requalification": True,
+        "profile_predecessor_sha256": job["profile_sha256"],
+    }
+    load_calls = []
+
+    def load_plan(home, expected, **kwargs):
+        load_calls.append(kwargs)
+        if kwargs.get("require_current") is False:
+            return previous, tmp_path / "prior-plan.json", "a" * 64
+        raise plan.TestEvidenceError("operator test plan is invalid or stale")
+
+    sealed = []
+    monkeypatch.setattr(plan, "load_plan", load_plan)
+    monkeypatch.setattr(plan, "seal_plan", lambda *args, **kwargs: sealed.append(kwargs))
+    monkeypatch.setattr(tests, "run_or_read_tests", lambda *args: None)
+
+    assert refresh._advance(tmp_path, {}, "/test/skcapstone", "niobe", tmp_path / "job", job) == (
+        "pending"
+    )
+    assert load_calls == [{"allow_completed": True}, {"require_current": False}]
+    assert sealed == [
+        {
+            "profile": profile_value,
+            "predecessor_sha256": "a" * 64,
+            "requalification": True,
+            "profile_predecessor_sha256": job["profile_sha256"],
+        }
+    ]
+
+
+def test_stale_plan_recovery_does_not_hide_other_plan_errors(tmp_path, monkeypatch):
+    binding = {"source_card": "1234abcd"}
+    job = {
+        "card": "1234abcd",
+        "owner": "producer",
+        "claim_revision": "claim-1",
+        "workspace": str(tmp_path),
+        "binding": binding,
+    }
+    card = SimpleNamespace(
+        status=SimpleNamespace(value="doing"),
+        owner="producer",
+        meta={"_claim_revision": "claim-1"},
+    )
+    monkeypatch.setattr(
+        refresh, "CardStore", lambda home: SimpleNamespace(fold=lambda card_id: card)
+    )
+    monkeypatch.setattr(plan, "source_state", lambda workspace, expected: None)
+    monkeypatch.setattr(
+        plan,
+        "load_plan",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            plan.TestEvidenceError("test plan chain is disconnected")
+        ),
+    )
+
+    with pytest.raises(plan.TestEvidenceError, match="test plan chain is disconnected"):
+        refresh._advance(tmp_path, {}, "/test/skcapstone", "niobe", tmp_path / "job", job)
