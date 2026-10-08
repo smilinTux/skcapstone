@@ -18,7 +18,7 @@ const hooks = new Map();
 process.env.SKFLEET_LANE='codex';
 guard({{on(name, hook) {{ hooks.set(name, hook); }}}});
 assert.equal(typeof hooks.get('session_start'), 'function');
-assert.equal(typeof hooks.get('turn_end'), 'function');
+    assert.equal(hooks.has('turn_end'), false);
 assert.equal(typeof hooks.get('tool_call'), 'function');
 """
     subprocess.run(
@@ -168,24 +168,22 @@ assert.deepEqual(delays,[10000,20000]);
     )
 
 
-def test_glm_compacts_at_roughly_200kb_before_the_next_request():
+def test_glm_leaves_compaction_and_resume_to_pi():
     helper = ROOT / "scripts/fleet/pi-gateway-retry.mjs"
     program = f"""
 import assert from 'node:assert/strict';
 import gatewayRetry from {json.dumps(helper.as_uri())};
-const hooks=new Map();
+const hooks=new Map();let continuations=0;
 process.env.SKFLEET_LANE='glm';
-gatewayRetry({{on:(name,fn)=>hooks.set(name,fn),sendUserMessage:()=>{{}},registerProvider:()=>{{}},appendEntry:()=>{{}}}});
-let compacted=0,complete;
-const ctx={{getContextUsage:()=>({{tokens:50000}}),compact:options=>{{
- compacted++;complete=options.onComplete;
-}}}};
-hooks.get('turn_end')({{}},ctx);
-hooks.get('turn_end')({{}},ctx);
-assert.equal(compacted,1);
-complete({{}});
-hooks.get('turn_end')({{}},ctx);
-assert.equal(compacted,2);
+gatewayRetry({{
+ on:(name,fn)=>hooks.set(name,fn),
+ sendUserMessage:()=>continuations++,
+ registerProvider:()=>{{}},appendEntry:()=>{{}},
+}});
+assert.equal(hooks.has('turn_end'),false);
+// Even an over-threshold GLM session cannot trigger a detached compaction
+// after turn_end; Pi's native compaction runs inside and resumes the run.
+assert.equal(continuations,0);
 """
     subprocess.run(
         ["node", "--input-type=module", "-e", program],
@@ -196,51 +194,19 @@ assert.equal(compacted,2);
     )
 
 
-def test_glm_compaction_queues_a_continuation_after_compacting():
-    helper = ROOT / "scripts/fleet/pi-gateway-retry.mjs"
-    program = f"""
-import assert from 'node:assert/strict';
-import gatewayRetry from {json.dumps(helper.as_uri())};
-const hooks=new Map();let compactOptions,continuations=[];
-process.env.SKFLEET_LANE='glm';
-gatewayRetry({{
- on:(name,fn)=>hooks.set(name,fn),
- sendUserMessage:(text,options)=>continuations.push({{text,options}}),
- registerProvider:()=>{{}},appendEntry:()=>{{}},
-}});
-hooks.get('turn_end')({{}},{{
- getContextUsage:()=>({{tokens:50000}}),
- compact:options=>{{compactOptions=options;}},
-}});
-assert.equal(continuations.length,0);
-compactOptions.onComplete({{}});
-assert.equal(continuations.length,1);
-assert.match(continuations[0].text,/continue/i);
-assert.equal(continuations[0].options.deliverAs,'followUp');
-"""
-    result = subprocess.run(
-        ["node", "--input-type=module", "-e", program],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    assert result.returncode == 0, result.stderr
-
-
 def test_non_glm_lane_keeps_existing_timeout_and_does_not_auto_compact():
     helper = ROOT / "scripts/fleet/pi-gateway-retry.mjs"
     program = f"""
 import assert from 'node:assert/strict';
 import gatewayRetry from {json.dumps(helper.as_uri())};
-const hooks=new Map();let configured,compacted=0;
+const hooks=new Map();let configured;
 process.env.SKFLEET_LANE='codex';
 gatewayRetry({{on:(name,fn)=>hooks.set(name,fn),registerProvider:()=>{{}},appendEntry:()=>{{}}}},
  {{configureIdleTimeout:async options=>{{configured=options.timeoutMs;}}}});
 const original={{id:'skgateway',streamSimple(){{}}}};
 await hooks.get('session_start')({{}},{{modelRegistry:{{getProvider:()=>original}}}});
-hooks.get('turn_end')({{}},{{getContextUsage:()=>({{tokens:50000}}),compact:()=>compacted++}});
 assert.equal(configured,390000);
-assert.equal(compacted,0);
+assert.equal(hooks.has('turn_end'),false);
 """
     subprocess.run(
         ["node", "--input-type=module", "-e", program],

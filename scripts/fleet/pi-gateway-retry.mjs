@@ -6,9 +6,6 @@ import { setTimeout as sleep } from "node:timers/promises";
 const MAX_ATTEMPTS = 4;
 const MIN_ATTEMPT_WINDOW_MS = 30_000;
 const DELAYS_MS = [10_000, 20_000, 30_000];
-// 50k tokens is roughly 200 KB of prompt text and leaves room before slow turns.
-const GLM_COMPACT_TOKENS = 50_000;
-
 export function requestPolicyForLane(lane) {
   return lane === "glm"
     ? { budgetMs: 570_000, idleTimeoutMs: 600_000 }
@@ -179,25 +176,12 @@ export default function gatewayRetry(
   { configureIdleTimeout = configurePiHttpIdleTimeout } = {},
 ) {
   let installed = false;
-  let compactionPending = false;
   const policy = requestPolicyForLane(process.env.SKFLEET_LANE);
-  const isGlm = process.env.SKFLEET_LANE === "glm";
-  pi.on("turn_end", (_event, context) => {
-    const tokens = context.getContextUsage()?.tokens;
-    if (!isGlm || compactionPending || tokens == null || tokens < GLM_COMPACT_TOKENS) return;
-    compactionPending = true;
-    context.compact({
-      customInstructions: "Keep the active card contract, source revision, current step, test results, and unresolved blockers. Condense completed exploration and verbose command output.",
-      onComplete: () => {
-        compactionPending = false;
-        pi.sendUserMessage(
-          "Continue the original task from the compacted session. Resume at the first unfinished step, preserve completed work, and finish with the required evidence and report.",
-          { deliverAs: "followUp" },
-        );
-      },
-      onError: () => { compactionPending = false; },
-    });
-  });
+  // Pi owns compaction and resumes the same agent run after it. Triggering
+  // ctx.compact() from turn_end is fire-and-forget: the turn can settle and
+  // print mode can exit while compaction is still running, aborting the worker.
+  // Keep native auto-compaction enabled in Pi settings; do not queue a second
+  // prompt to simulate a resume.
   pi.on("session_start", async (_event, context) => {
     if (installed) return;
     const provider = context.modelRegistry.getProvider("skgateway");
