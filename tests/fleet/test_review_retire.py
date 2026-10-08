@@ -308,7 +308,13 @@ def test_retirement_without_archive_cannot_release_historical_offer(tmp_path):
 
 @pytest.mark.parametrize(
     "retirement_mode",
-    ["released", "expired-unclaimed", "unexpired-unclaimed", "claimed-after-offer"],
+    [
+        "released",
+        "expired-unclaimed",
+        "unexpired-unclaimed",
+        "claimed-after-offer",
+        "archived-orphaned-claim",
+    ],
 )
 def test_prestart_retirement_requires_exact_release_or_expired_unclaimed_offer(
     tmp_path, monkeypatch, retirement_mode
@@ -335,7 +341,8 @@ def test_prestart_retirement_requires_exact_release_or_expired_unclaimed_offer(
         "reviewer": owner,
         "lease_expires_at": (
             "2000-01-01T00:00:00Z"
-            if retirement_mode in {"expired-unclaimed", "claimed-after-offer"}
+            if retirement_mode
+            in {"expired-unclaimed", "claimed-after-offer", "archived-orphaned-claim"}
             else "2999-01-01T00:00:00Z"
         ),
         "review_revision": "e" * 64,
@@ -385,10 +392,43 @@ def test_prestart_retirement_requires_exact_release_or_expired_unclaimed_offer(
                 },
             ]
         )
+    elif retirement_mode == "archived-orphaned-claim":
+        events.extend(
+            [
+                {
+                    "action": "claim",
+                    "writer": owner,
+                    "owner": owner,
+                    "claim_revision": "e" * 32,
+                    "ts": "2026-10-08T12:01:00+00:00",
+                },
+                {
+                    "action": "release_claim",
+                    "writer": owner,
+                    "released_owner": owner,
+                    "expected_claim_revision": "e" * 32,
+                    "ts": "2026-10-08T12:02:00+00:00",
+                },
+                {
+                    "action": "void",
+                    "writer": "jarvis",
+                    "reason": "stale custody",
+                    "ts": "2026-10-08T12:03:00+00:00",
+                },
+                {"action": "archive", "writer": "jarvis", "ts": "2026-10-08T12:04:00+00:00"},
+                {
+                    "action": "claim",
+                    "writer": owner,
+                    "owner": owner,
+                    "claim_revision": claim,
+                    "ts": "2026-10-08T12:05:00+00:00",
+                },
+            ]
+        )
     current = SimpleNamespace(
-        archived=False,
+        archived=retirement_mode == "archived-orphaned-claim",
         owner=None,
-        meta={},
+        meta={"voided": True} if retirement_mode == "archived-orphaned-claim" else {},
         **core,
     )
     current.model_dump = lambda **_kwargs: core
@@ -430,8 +470,12 @@ def test_prestart_retirement_requires_exact_release_or_expired_unclaimed_offer(
     kwargs = dict(
         request_sha256=review_retire.source_bundle._sha(raw_request),
         card_sha256="f" * 64,
-        previous_owner=owner if retirement_mode == "released" else None,
-        previous_claim_revision=claim if retirement_mode == "released" else None,
+        previous_owner=(
+            owner if retirement_mode in {"released", "archived-orphaned-claim"} else None
+        ),
+        previous_claim_revision=(
+            claim if retirement_mode in {"released", "archived-orphaned-claim"} else None
+        ),
         actor="jarvis",
         reason="retained sealed offer never reached native launch",
     )

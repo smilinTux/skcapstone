@@ -22,6 +22,49 @@ SHA = re.compile(r"[0-9a-f]{64}")
 CARD = re.compile(r"[0-9a-f]{8}")
 
 
+def _archived_orphaned_claim(events: list[dict], offer_at: str, owner: str, claim: str) -> bool:
+    """Prove one post-archive claim is inert after an expired offer."""
+    voids = [
+        row
+        for row in events
+        if row.get("action") == "void"
+        and str(row.get("ts") or "") >= offer_at
+        and str(row.get("reason") or "").strip()
+    ]
+    archives = [
+        row
+        for row in events
+        if row.get("action") == "archive"
+        and len(voids) == 1
+        and str(row.get("ts") or "") >= str(voids[0].get("ts") or "")
+    ]
+    if len(voids) != 1 or len(archives) != 1:
+        return False
+    archived_at = str(archives[0].get("ts") or "")
+    claims = [
+        row
+        for row in events
+        if row.get("action") == "claim" and str(row.get("ts") or "") >= offer_at
+    ]
+    releases = [
+        row
+        for row in events
+        if row.get("action") == "release_claim" and str(row.get("ts") or "") >= offer_at
+    ]
+    released = {
+        (row.get("released_owner"), row.get("expected_claim_revision")) for row in releases
+    }
+    active = [
+        row for row in claims if (row.get("owner"), row.get("claim_revision")) not in released
+    ]
+    return bool(
+        len(active) == 1
+        and active[0].get("owner") == owner
+        and active[0].get("claim_revision") == claim
+        and str(active[0].get("ts") or "") > archived_at
+    )
+
+
 def _raw(path: Path) -> bytes:
     return source_bundle._read(path, source_bundle.MAX_EVIDENCE)
 
@@ -75,7 +118,7 @@ def retired_offers(home: Path, card: str, events: list[dict]) -> set[str]:
                 + card
                 + ".service"
             )
-            unclaimed = value.get("retirement_mode") == "expired-unclaimed"
+            retirement_mode = value.get("retirement_mode")
             offer_at = str(offers[0].get("ts") or "") if len(offers) == 1 else ""
             claim_activity = [
                 row
@@ -97,19 +140,36 @@ def retired_offers(home: Path, card: str, events: list[dict]) -> set[str]:
                 retired_at = datetime.fromisoformat(
                     str(proof_value.get("retired_at") or "").replace("Z", "+00:00")
                 )
-                expired_unclaimed = (
+                expired_before_retirement = (
                     lease_expiry.tzinfo is not None
                     and retired_at.tzinfo is not None
                     and lease_expiry <= retired_at
                     and retired_at <= datetime.now(timezone.utc)
                     and bool(offer_at)
+                )
+                expired_unclaimed = (
+                    expired_before_retirement
                     and not claim_activity
                     and not launches
                     and not releases
                 )
             except ValueError:
+                expired_before_retirement = False
                 expired_unclaimed = False
-            lifecycle_proven = expired_unclaimed if unclaimed else len(releases) == 1
+            archived_orphaned = retirement_mode == "archived-orphaned-claim" and (
+                _archived_orphaned_claim(
+                    events,
+                    offer_at,
+                    str(value.get("previous_owner") or ""),
+                    str(value.get("previous_claim_revision") or ""),
+                )
+            )
+            if retirement_mode == "expired-unclaimed":
+                lifecycle_proven = expired_unclaimed
+            elif retirement_mode == "archived-orphaned-claim":
+                lifecycle_proven = expired_before_retirement and archived_orphaned
+            else:
+                lifecycle_proven = len(releases) == 1
             if (
                 len(offers) == 1
                 and lifecycle_proven
@@ -512,7 +572,9 @@ def retire_prestart(
             or not SHA.fullmatch(request_id)
         ):
             raise ValueError("exact sealed review request required")
-        events = CardStore(home)._read_events(card)
+        store = CardStore(home)
+        current = store.fold(card)
+        events = store._read_events(card)
         offer_digest = production_builder.digest(request)
         releases = [
             row
@@ -536,6 +598,25 @@ def retire_prestart(
             and row.get("recommendation_id") == request_id
         ]
         offer_at = str(offers[0].get("ts") or "") if len(offers) == 1 else ""
+        archived_orphaned = bool(
+            previous_owner is not None
+            and current is not None
+            and current.archived
+            and current.owner is None
+            and current.meta.get("voided") is True
+            and _archived_orphaned_claim(
+                events, offer_at, previous_owner, previous_claim_revision or ""
+            )
+        )
+        if archived_orphaned:
+            try:
+                lease_expiry = datetime.fromisoformat(
+                    str(request.get("lease_expires_at") or "").replace("Z", "+00:00")
+                )
+            except ValueError as exc:
+                raise ValueError("expired offer lease is invalid") from exc
+            if lease_expiry.tzinfo is None or lease_expiry > datetime.now(timezone.utc):
+                raise ValueError("offer has not expired")
         claim_activity = [
             row
             for row in events
@@ -548,14 +629,12 @@ def retire_prestart(
             or offers[0].get("request_sha256") != offer_digest
             or launches
             or (unclaimed and (not offer_at or releases or claim_activity))
-            or (not unclaimed and len(releases) != 1)
+            or (not unclaimed and not archived_orphaned and len(releases) != 1)
         ):
             raise ValueError("exact release and unused offer proof required")
-        store = CardStore(home)
-        current = store.fold(card)
         if (
             current is None
-            or current.archived
+            or (current.archived and not archived_orphaned)
             or current.owner is not None
             or current.meta.get("claim_conflicts")
             or not governed_review_assignment_ready(current)
@@ -615,7 +694,11 @@ def retire_prestart(
             != admission_inventory_sha256
         ):
             raise ValueError("resource admission inventory changed during prestart check")
-        retirement_mode = "expired-unclaimed" if unclaimed else "released-claim"
+        retirement_mode = (
+            "expired-unclaimed"
+            if unclaimed
+            else "archived-orphaned-claim" if archived_orphaned else "released-claim"
+        )
         proof["retired_at"] = datetime.now(timezone.utc).isoformat()
         binding = {
             "schema": PRESTART_SCHEMA,
