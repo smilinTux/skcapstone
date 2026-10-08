@@ -63,6 +63,81 @@ def retains_pending_claim(home: Path, card_id: str, owner: str, claim_revision: 
     return False
 
 
+def harvest_completed(home: Path, policy: dict, card_id: str | None = None) -> str:
+    """Publish one fully validated completed refresh while its card is unclaimed."""
+    home = Path(home)
+    if socket.gethostname().split(".")[0].lower() != policy.get("authority_host"):
+        return "not-authority"
+    root = home / "fleet/profile-requalifications"
+    try:
+        plan.private_dir(root)
+    except FileNotFoundError:
+        return "idle"
+    with _lock(root) as acquired:
+        if not acquired:
+            return "busy"
+        for path in sorted(root.glob("*.job.json")):
+            try:
+                job = json.loads(plan.read_private(path))
+                if (job.get("schema") != "skfleet.profile-requalification/v1"
+                        or (card_id is not None and job.get("card") != card_id)):
+                    continue
+                binding = job["binding"]
+                workspace = Path(job["workspace"])
+                sealed, plan_path, plan_sha = plan.load_plan(home, binding, allow_completed=True)
+                directory = plan.run_directory(home, plan_sha)
+                if not (directory / "receipt.json").is_file():
+                    continue
+                card = CardStore(home).fold(job["card"])
+                if card is None or card.status.value not in {"backlog", "ready"} or card.owner:
+                    if card_id is not None:
+                        return "held:card-owned-or-not-ready"
+                    continue
+                current, predecessor = profile.read_profile(home, job["card"])
+                if predecessor != job["profile_sha256"]:
+                    continue
+                if (
+                    sealed.get("profile_requalification") is not True
+                    or sealed.get("profile_predecessor_sha256") != predecessor
+                    or sealed.get("runtime_sha256") != plan.runtime_fingerprint()
+                    or sealed.get("policy_sha256")
+                    != plan.execution_policy_fingerprint(policy)
+                ):
+                    continue
+                plan.source_state(workspace, binding)
+                receipt = tests.validate_test_receipt(home, binding, workspace)
+                if not profile.fingerprint_only_stale(
+                    current, {"card": job["card"], "criteria_sha256": binding["criteria_sha256"],
+                              "repository": current["repository"]},
+                    policy, source_sha256=job.get("source_sha256")
+                ):
+                    continue
+                profile.supersede_profile(
+                    home, card.model_dump(mode="json"), policy, current["recipe"],
+                    current["qualified_by"], receipt["receipt_sha256"],
+                    predecessor_sha256=predecessor,
+                    runtime_sha256=plan.runtime_fingerprint(),
+                    source_sha256=job.get("source_sha256"), unclaimed=True,
+                )
+                refreshed_sha = profile.read_profile(home, job["card"])[1]
+                plan.write_once(
+                    path.with_name(path.stem + ".done.json"),
+                    {
+                        "schema": "skfleet.profile-requalification-receipt/v1",
+                        "card": job["card"],
+                        "profile_sha256": refreshed_sha,
+                        "test_receipt_sha256": receipt["receipt_sha256"],
+                        "harvested": True,
+                    },
+                )
+                return "qualified:" + job["card"]
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                if card_id is not None:
+                    return "blocked:" + str(exc)[:160]
+                continue
+    return "idle"
+
+
 def requalify_or_advance(
     home: Path,
     policy: dict,
@@ -97,7 +172,7 @@ def requalify_or_advance(
                         "reason": str(exc)[:240],
                     },
                 )
-                state = "failed"
+                state = "failed:" + str(exc)[:160]
             if card_id is not None and card_id != job["card"]:
                 return "busy"
             return state
@@ -118,7 +193,7 @@ def requalify_or_advance(
                             "reason": str(exc)[:240],
                         },
                     )
-                    return "failed"
+                    return "failed:" + str(exc)[:160]
             return "blocked:" + str(exc)[:180]
 
 

@@ -206,3 +206,92 @@ def test_stale_plan_recovery_does_not_hide_other_plan_errors(tmp_path, monkeypat
 
     with pytest.raises(plan.TestEvidenceError, match="test plan chain is disconnected"):
         refresh._advance(tmp_path, {}, "/test/skcapstone", "niobe", tmp_path / "job", job)
+def test_harvest_publishes_only_valid_receipt_before_any_new_claim(tmp_path, monkeypatch):
+    root = tmp_path / "fleet/profile-requalifications"
+    root.parent.mkdir(mode=0o700)
+    plan.private_dir(root, create=True)
+    job_path = root / ("a" * 64 + ".job.json")
+    job = {
+        "schema": "skfleet.profile-requalification/v1",
+        "card": "1234abcd",
+        "owner": "old-owner",
+        "claim_revision": "old-claim",
+        "binding": {"source_card": "1234abcd", "criteria_sha256": "b" * 64},
+        "workspace": str(tmp_path / "workspace"),
+        "profile_sha256": "c" * 64,
+        "source_sha256": "d" * 64,
+    }
+    plan.write_once(job_path, job)
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "receipt.json").write_text("{}")
+    state = {"profile_sha": "c" * 64, "published": False}
+    monkeypatch.setattr(refresh.socket, "gethostname", lambda: "chiap08")
+    monkeypatch.setattr(refresh.plan, "load_plan", lambda *_a, **_k: (
+        {"profile_requalification": True, "profile_predecessor_sha256": "c" * 64,
+         "runtime_sha256": "runtime", "policy_sha256": "policy"}, tmp_path / "plan", "e" * 64
+    ))
+    monkeypatch.setattr(refresh.plan, "run_directory", lambda *_a: run)
+    monkeypatch.setattr(refresh.plan, "runtime_fingerprint", lambda: "runtime")
+    monkeypatch.setattr(refresh.plan, "execution_policy_fingerprint", lambda _p: "policy")
+    monkeypatch.setattr(refresh.plan, "source_state", lambda *_a: None)
+    monkeypatch.setattr(refresh.tests, "validate_test_receipt", lambda *_a: {
+        "receipt_sha256": "f" * 64
+    })
+    monkeypatch.setattr(refresh.profile, "read_profile", lambda *_a, **_k: (
+        {"repository": "https://example.invalid/r", "recipe": {"pytest": []},
+         "qualified_by": "operator", "qualification_sha256": "old"}, state["profile_sha"]
+    ))
+    monkeypatch.setattr(refresh.profile, "fingerprint_only_stale", lambda *_a, **_k: True)
+    monkeypatch.setattr(refresh.profile, "supersede_profile", lambda *a, **kw: (
+        state.update(profile_sha="9" * 64, published=True) or tmp_path / "profile"
+    ))
+    monkeypatch.setattr(refresh, "CardStore", lambda _home: SimpleNamespace(
+        fold=lambda _card: SimpleNamespace(
+            status=SimpleNamespace(value="ready"), owner=None,
+            model_dump=lambda **_kw: {"id": "1234abcd"},
+        )
+    ))
+
+    assert (
+        refresh.harvest_completed(tmp_path, {"authority_host": "chiap08"})
+        == "qualified:1234abcd"
+    )
+    assert state["published"]
+    assert (root / ("a" * 64 + ".job.done.json")).is_file()
+
+
+def test_harvest_refuses_to_publish_when_card_is_still_owned(tmp_path, monkeypatch):
+    root = tmp_path / "fleet/profile-requalifications"
+    root.parent.mkdir(mode=0o700)
+    plan.private_dir(root, create=True)
+    job_path = root / ("a" * 64 + ".job.json")
+    plan.write_once(job_path, {
+        "schema": "skfleet.profile-requalification/v1", "card": "1234abcd",
+        "binding": {}, "workspace": str(tmp_path),
+    })
+    monkeypatch.setattr(refresh.socket, "gethostname", lambda: "chiap08")
+    monkeypatch.setattr(refresh.plan, "load_plan", lambda *_a, **_k: ({}, tmp_path, "e" * 64))
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "receipt.json").write_text("{}")
+    monkeypatch.setattr(refresh.plan, "run_directory", lambda *_a: run)
+    monkeypatch.setattr(refresh, "CardStore", lambda _home: SimpleNamespace(
+        fold=lambda _card: SimpleNamespace(status=SimpleNamespace(value="doing"), owner="other")
+    ))
+
+    assert (
+        refresh.harvest_completed(
+            tmp_path, {"authority_host": "chiap08"}, "1234abcd"
+        )
+        == "held:card-owned-or-not-ready"
+    )
+
+
+def test_rotate_harvests_before_builder_claim():
+    rotate = Path(__file__).resolve().parents[2] / "scripts/fleet/skfleet-rotate.py"
+    source = rotate.read_text(encoding="utf-8")
+    loop = source.index("for _pick_index")
+    assert source.index("_harvest_state = harvest_completed(", loop) < source.index(
+        'claim=subprocess.run([SKC,"coord","claim"', loop
+    )

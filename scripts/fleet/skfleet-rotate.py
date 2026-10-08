@@ -8394,8 +8394,14 @@ for _kimi_model in (() if PRODUCTION_POLICY else ("kimi-for-coding", "k3")):
 _cycle_id=new_cycle_id(HOST,STAMP)
 if PRODUCTION_POLICY:
     try:
-        from skcapstone.fleet.profile_requalification import requalify_or_advance
+        from skcapstone.fleet.profile_requalification import (
+            harvest_completed,
+            requalify_or_advance,
+        )
 
+        _harvest_state = harvest_completed(Path(HOME) / ".skcapstone", PRODUCTION_POLICY)
+        if _harvest_state != "idle":
+            log(d, "PROFILE_REQUALIFICATION_HARVEST|%s|state=%s" % (HOST, _harvest_state))
         _requal_state = requalify_or_advance(
             Path(HOME) / ".skcapstone", PRODUCTION_POLICY, SKC, DISPATCH_AGENT
         )
@@ -9396,6 +9402,28 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             else:
                 log(d,"PRECLAIM_DEFERRED|%s|%s|reason=test-profile-%s"%(HOST,cid,exc))
                 continue
+    if _profile_requalify:
+        try:
+            from skcapstone.fleet.profile_requalification import harvest_completed
+
+            _harvest_state = harvest_completed(Path(HOME) / ".skcapstone", PRODUCTION_POLICY, cid)
+            if _harvest_state != "idle":
+                log(d, "PROFILE_REQUALIFICATION_HARVEST|%s|%s|state=%s" %
+                    (HOST, cid, _harvest_state))
+            if _harvest_state == "qualified:" + cid:
+                test_preflight(
+                    Path(HOME) / ".skcapstone",
+                    dict(fresh_claimability["core"], id=cid),
+                    fresh_claimability["labels"], PRODUCTION_POLICY,
+                )
+                _profile_requalify = False
+            elif _harvest_state.startswith(("held:", "blocked:")):
+                log(d, "PROFILE_REQUALIFICATION_CLAIM_HELD|%s|%s|reason=%s" %
+                    (HOST, cid, _harvest_state.split(":", 1)[1]))
+                continue
+        except (OSError, ValueError) as exc:
+            log(d, "PROFILE_REQUALIFICATION_HARVEST_BLOCKED|%s|%s|%s" %
+                (HOST, cid, str(exc)[:180]))
     claim=subprocess.run([SKC,"coord","claim",cid,"--agent",name],capture_output=True,text=True)
     claimed_owner,_claimed_at,claimed_revision=_current_claim_identity_fresh(cid)
     claim_outcome=_classify_claim_outcome(
@@ -9424,18 +9452,9 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
                 claim_revision=claimed_revision,
             )
             log(d,"PROFILE_REQUALIFICATION|%s|%s|state=%s"%(HOST,cid,_requal_state))
-            if (
-                _requal_state in {"busy", "ineligible", "not-authority"}
-                or _requal_state.startswith("blocked:")
-            ):
-                subprocess.run(
-                    [SKC,"coord","release-claim",cid,"--owner",name,
-                     "--expected-claim-revision",claimed_revision,"--agent",DISPATCH_AGENT,
-                     "--abandon-reason","not-abandoned"],
-                    capture_output=True,text=True,timeout=15)
-                subprocess.run(
-                    [SKC,"coord","move",cid,"ready","--agent",DISPATCH_AGENT],
-                    capture_output=True,text=True,timeout=15)
+            if _requal_state not in {"pending", "qualified"}:
+                log(d,"PROFILE_REQUALIFICATION_CLAIM_RETAINED|%s|%s|state=%s|claim=%s"%
+                    (HOST,cid,_requal_state,claimed_revision))
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             log(d,"PROFILE_REQUALIFICATION_BLOCKED|%s|%s|%s"%(HOST,cid,str(exc)[:180]))
         continue
