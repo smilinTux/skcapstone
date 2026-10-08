@@ -100,18 +100,12 @@ def legacy(tmp_path, monkeypatch):
     return tmp_path, root, directory, state, events, entries
 
 
-def _review_generation(
-    legacy, monkeypatch, *, started=True, recommendation=True, remote=False
-):
+def _review_generation(legacy, monkeypatch, *, started=True, recommendation=True, remote=False):
     """Turn the reserved fixture into one exact native review assignment."""
     home, root, directory, state, events, entries = legacy
     intent = json.loads((directory / "intent.json").read_text())
     binding = intent["binding"]
-    owner = (
-        "pi-seraph-fixture-12345678"
-        if remote
-        else "pi-glm-review-fixture-12345678"
-    )
+    owner = "pi-seraph-fixture-12345678" if remote else "pi-glm-review-fixture-12345678"
     binding["owner"] = owner
     recommendation_id = "link-review-12345678"
     if remote:
@@ -167,21 +161,21 @@ def _review_generation(
         )
     if started:
         launch = {
-                "action": "review_assignment_launch",
-                "schema": (
-                    "skfleet.review-assignment-launch/v3"
-                    if remote
-                    else "skfleet.review-assignment-launch/v2"
-                ),
-                "launched": True,
-                "writer": owner,
-                "reviewer": owner,
-                "node": "fixture",
-                "recommendation_id": recommendation_id,
-                "observed_state_revision": observed_revision,
-                "claim_revision": revision,
-                "ts": now.isoformat(),
-            }
+            "action": "review_assignment_launch",
+            "schema": (
+                "skfleet.review-assignment-launch/v3"
+                if remote
+                else "skfleet.review-assignment-launch/v2"
+            ),
+            "launched": True,
+            "writer": owner,
+            "reviewer": owner,
+            "node": "fixture",
+            "recommendation_id": recommendation_id,
+            "observed_state_revision": observed_revision,
+            "claim_revision": revision,
+            "ts": now.isoformat(),
+        }
         if remote:
             launch["execution"] = {
                 "request_id": recommendation_id,

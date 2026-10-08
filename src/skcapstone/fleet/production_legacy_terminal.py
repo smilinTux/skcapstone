@@ -49,16 +49,10 @@ def _fenced_claim(directory: Path, home: Path, intent: dict, *, current=True) ->
     match = re.fullmatch(
         r"skfleet-worker-(codex|glm|deepseek)-([0-9a-f]{8})\.service", intent["unit"]
     )
-    builder_owner = (
-        f"pi-{match[1]}-{intent['host']}-{match[2]}" if match else ""
-    )
-    lane_reviewer_owner = (
-        f"pi-{match[1]}-review-{intent['host']}-{match[2]}" if match else ""
-    )
+    builder_owner = f"pi-{match[1]}-{intent['host']}-{match[2]}" if match else ""
+    lane_reviewer_owner = f"pi-{match[1]}-review-{intent['host']}-{match[2]}" if match else ""
     seraph_owner = f"pi-seraph-{intent['host']}-{match[2]}" if match else ""
-    review_assignment = bool(
-        match and binding["owner"] in {lane_reviewer_owner, seraph_owner}
-    )
+    review_assignment = bool(match and binding["owner"] in {lane_reviewer_owner, seraph_owner})
     if (
         not match
         or match[2] != binding["card_id"]
