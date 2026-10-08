@@ -274,6 +274,13 @@ def _builder_partition(owned_rows, candidate_ids, held_ids):
     return [row for row in owned_rows if row[2] not in held], withheld, returned
 
 
+def _builder_restore_for_local_requalification(owned_rows, candidate):
+    """Return a profile-blocked offer to local selection without duplication."""
+    if any(row[2] == candidate[2] for row in owned_rows):
+        return owned_rows
+    return [*owned_rows, candidate]
+
+
 def _full_reassessment_path(host, evidence_root, authority_host=None):
     """Keep exactly one shared full report, written only by its authority host.
 
@@ -8109,6 +8116,13 @@ if not DRY and _is_niobe_builder_host(HOST):
             )
         except (builder_dispatch.BuilderDispatchError, OSError) as _exc:
             log(d, "BUILDER_DISPATCH_BLOCKED|%s|%s|%s" % (HOST, _candidate[2], _exc))
+            if str(_exc) == "required-test-profile-unqualified":
+                owned = _builder_restore_for_local_requalification(owned, _candidate)
+                log(
+                    d,
+                    "BUILDER_PROFILE_REQUALIFICATION_FALLBACK|%s|%s|"
+                    "path=native-local-before-dispatch" % (HOST, _candidate[2]),
+                )
             continue
         if _remote_request is not None:
             log(
