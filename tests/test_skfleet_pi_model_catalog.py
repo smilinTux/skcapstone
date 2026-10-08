@@ -173,6 +173,19 @@ def test_repair_default_model_refuses_concrete_and_downgrade():
         module.repair_default_model({"defaultModel": "sk-s"}, ["sk-s"], required_size="L")
 
 
+def test_native_compaction_is_enabled_with_request_size_reserve():
+    module = _module()
+    source = {"compaction": {"enabled": False, "reserveTokens": 16384, "keepRecentTokens": 12000}}
+    updated, changed = module.configure_native_compaction(source)
+    assert changed
+    assert updated["compaction"] == {
+        "enabled": True,
+        "reserveTokens": 32768,
+        "keepRecentTokens": 12000,
+    }
+    assert module.configure_native_compaction(updated) == (updated, False)
+
+
 def test_fingerprint_changes_when_health_or_metadata_changes_not_only_ids():
     module = _module()
     base = _view()
@@ -315,6 +328,8 @@ def test_cli_repairs_stale_default_using_healthy_logical_routes(tmp_path: Path):
         "sk-l",
     }
     assert saved_settings["defaultModel"] == "sk-s"
+    assert saved_settings["compaction"]["enabled"] is True
+    assert saved_settings["compaction"]["reserveTokens"] == 32768
     source = SCRIPT.read_text(encoding="utf-8")
     assert "chiap01" not in source
     assert "qwen3.8-chiap08" not in source

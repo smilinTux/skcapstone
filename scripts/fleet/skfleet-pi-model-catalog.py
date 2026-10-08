@@ -39,6 +39,7 @@ SIZE_FALLBACK = ("sk-s", "sk-m", "sk-l", "sk-xl")
 LOGICAL_ROUTES = frozenset(SIZE_FALLBACK)
 _SIZE_RANK = {"S": 0, "M": 1, "L": 2, "XL": 3}
 _ROUTE_SIZE = {"sk-s": "S", "sk-m": "M", "sk-l": "L", "sk-xl": "XL"}
+PI_COMPACTION_RESERVE_TOKENS = 32_768
 
 
 def catalog_path() -> Path:
@@ -398,6 +399,17 @@ def repair_default_model(
     return updated, fallback
 
 
+def configure_native_compaction(settings: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """Keep Pi auto-compaction enabled and below the gateway request ceiling."""
+    updated = copy.deepcopy(settings)
+    current = updated.get("compaction")
+    compaction = copy.deepcopy(current) if isinstance(current, dict) else {}
+    compaction["enabled"] = True
+    compaction["reserveTokens"] = PI_COMPACTION_RESERVE_TOKENS
+    updated["compaction"] = compaction
+    return updated, updated != settings
+
+
 def load_json_object(path: Path) -> tuple[dict[str, Any], os.stat_result]:
     info = _secure_regular_file(path)
     with path.open(encoding="utf-8") as handle:
@@ -491,15 +503,21 @@ def main() -> int:
             gateway_revision=revision,
         )
         advertised_ids = [item["id"] for item in updated["providers"]["skgateway"]["models"]]
-        settings_changed = None
+        settings_changed = False
+        settings_detail = "unchanged"
         settings_document = None
         settings_info = None
         if settings.exists():
             settings_document, settings_info = load_json_object(settings)
-            settings_document, settings_changed = repair_default_model(
+            settings_document, settings_changed = configure_native_compaction(settings_document)
+            settings_document, default_model = repair_default_model(
                 settings_document,
                 advertised_ids,
                 required_size=str(args.required_size or "S"),
+            )
+            settings_changed = settings_changed or default_model is not None
+            settings_detail = default_model or (
+                "glm-compaction-updated" if settings_changed else "unchanged"
             )
         if args.apply:
             if changed:
@@ -516,8 +534,8 @@ def main() -> int:
         % (
             state,
             len(advertised_ids),
-            len(changed) + (1 if settings_changed else 0),
-            settings_changed or "unchanged",
+            len(changed) + int(settings_changed),
+            settings_detail,
         )
     )
     return 1 if (changed or settings_changed) and not args.apply else 0

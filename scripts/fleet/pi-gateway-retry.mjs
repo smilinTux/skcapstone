@@ -6,6 +6,12 @@ import { setTimeout as sleep } from "node:timers/promises";
 const MAX_ATTEMPTS = 4;
 const MIN_ATTEMPT_WINDOW_MS = 30_000;
 const DELAYS_MS = [10_000, 20_000, 30_000];
+const GLM_CONTEXT_WINDOW = 128_000;
+
+function isGlmModel(model) {
+  return typeof model?.id === "string"
+    && (/^glm-/i.test(model.id) || /^sk-glm-[sml]$/i.test(model.id));
+}
 export function requestPolicyForLane(lane) {
   return lane === "glm"
     ? { budgetMs: 570_000, idleTimeoutMs: 600_000 }
@@ -184,6 +190,12 @@ export default function gatewayRetry(
   // prompt to simulate a resume.
   pi.on("session_start", async (_event, context) => {
     if (installed) return;
+    if (isGlmModel(context.model) && context.model.contextWindow !== GLM_CONTEXT_WINDOW) {
+      const configured = await pi.setModel({ ...context.model, contextWindow: GLM_CONTEXT_WINDOW });
+      if (configured === false) {
+        throw new Error(`Could not cap GLM context window for ${context.model.id}`);
+      }
+    }
     const provider = context.modelRegistry.getProvider("skgateway");
     if (!provider) return;
     if (typeof provider.streamSimple !== "function") {

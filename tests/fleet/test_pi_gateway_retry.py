@@ -194,6 +194,35 @@ assert.equal(continuations,0);
     )
 
 
+@pytest.mark.parametrize("model_id", ["sk-glm-s", "sk-glm-m", "sk-glm-l", "glm-4.5", "glm-5.3"])
+def test_glm_model_context_is_capped_before_native_compaction(model_id):
+    helper = ROOT / "scripts/fleet/pi-gateway-retry.mjs"
+    program = f"""
+import assert from 'node:assert/strict';
+import gatewayRetry from {json.dumps(helper.as_uri())};
+const hooks=new Map();let selected;
+process.env.SKFLEET_LANE='glm';
+gatewayRetry({{
+ on:(name,fn)=>hooks.set(name,fn),
+ setModel:async model=>{{selected=model;return true;}},
+ registerProvider:()=>{{}},appendEntry:()=>{{}},
+}},{{configureIdleTimeout:async()=>{{}}}});
+await hooks.get('session_start')({{}},{{
+ model:{{id:{json.dumps(model_id)},provider:'skgateway',contextWindow:200000}},
+ modelRegistry:{{getProvider:()=>({{id:'skgateway',streamSimple(){{}}}})}},
+}});
+assert.equal(selected.id,{json.dumps(model_id)});
+assert.equal(selected.contextWindow,128000);
+"""
+    subprocess.run(
+        ["node", "--input-type=module", "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+
 def test_non_glm_lane_keeps_existing_timeout_and_does_not_auto_compact():
     helper = ROOT / "scripts/fleet/pi-gateway-retry.mjs"
     program = f"""
