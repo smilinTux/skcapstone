@@ -1,0 +1,1 @@
+- Fix native test profile fingerprints for virtual environments whose Python executable links to the system interpreter.

@@ -79,6 +79,24 @@ def test_toolchain_fingerprint_tracks_tools_not_executor(qualified_runtime):
     assert plan.toolchain_fingerprint() != before
 
 
+def test_toolchain_fingerprint_accepts_venv_python_symlink(
+    qualified_runtime, tmp_path, monkeypatch
+):
+    python = qualified_runtime / "bin/python"
+    python.unlink()
+    base_prefix = tmp_path / "base-python"
+    base_prefix.mkdir()
+    interpreter = base_prefix / "python3"
+    interpreter.write_bytes(b"base interpreter bytes\n")
+    python.symlink_to(interpreter)
+    monkeypatch.setattr(plan.sys, "base_prefix", str(base_prefix))
+
+    before = plan.toolchain_fingerprint()
+    interpreter.write_bytes(b"updated base interpreter bytes\n")
+
+    assert plan.toolchain_fingerprint() != before
+
+
 @pytest.fixture
 def qualified(tmp_path, monkeypatch):
     home = tmp_path / "home"

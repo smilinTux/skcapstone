@@ -162,7 +162,16 @@ def toolchain_fingerprint() -> str:
     rows, total = [], 0
     for path in sorted(files) + startup:
         info = path.lstat()
-        if not stat.S_ISREG(info.st_mode) or not path.resolve().is_relative_to(PREFIX.resolve()):
+        content_path = path
+        resolved = path.resolve()
+        if path == PREFIX / "bin/python" and stat.S_ISLNK(info.st_mode):
+            info = resolved.stat()
+            if not stat.S_ISREG(info.st_mode) or not resolved.is_relative_to(
+                Path(sys.base_prefix).resolve()
+            ):
+                raise TestEvidenceError("qualified interpreter escapes its base prefix")
+            content_path = resolved
+        elif not stat.S_ISREG(info.st_mode) or not resolved.is_relative_to(PREFIX.resolve()):
             raise TestEvidenceError("qualified runtime contains redirected modules")
         total += info.st_size
         if total > 64 * 1024 * 1024:
@@ -170,7 +179,7 @@ def toolchain_fingerprint() -> str:
         key = (str(path), info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
         digest = _TOOLCHAIN_CACHE.get(key)
         if digest is None:
-            digest = sha(path.read_bytes())
+            digest = sha(content_path.read_bytes())
             _TOOLCHAIN_CACHE[key] = digest
         label = str(path.relative_to(PREFIX))
         if path.suffix == ".pth":
