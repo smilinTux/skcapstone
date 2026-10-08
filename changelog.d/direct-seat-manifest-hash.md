@@ -1,0 +1,1 @@
+- Direct-seat review collection now compares source-artifact bundle fields to the manifest and verifies the separately recorded manifest path and digest.

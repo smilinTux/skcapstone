@@ -20,8 +20,10 @@ from .production_review_custody import read_exit, unit_terminal
 from .production_review_evidence import ReviewEvidenceError, inspect_proposal
 from .production_review_finish import artifacts, finish_pair, native_state, once, read_json
 from .source_bundle import (
+    MAX_EVIDENCE,
     _binding,
     _once,
+    _read,
     _review_manifest,
     _root,
     _sha,
@@ -108,6 +110,7 @@ def _direct_seat_terminal(home, source, manifest):
             raise ReviewEvidenceError("direct producer terminal receipt is oversized")
         receipt = json.loads(raw)
         disposition = receipt.get("source_disposition") or {}
+        artifact = disposition.get("source_artifact") or {}
         schema = receipt.get("schema")
         explicit_receipt = schema == "skfleet.direct-seat/v1"
         parts = source.owner.split("-")
@@ -127,7 +130,8 @@ def _direct_seat_terminal(home, source, manifest):
             or disposition.get("state") != "awaiting-review"
             or disposition.get("claim_released") is not False
             or disposition.get("process_terminal") is not True
-            or disposition.get("source_artifact") != manifest
+            or not isinstance(artifact, dict)
+            or any(artifact.get(key) != value for key, value in manifest.items())
             or receipt.get("route_schema") != "skfleet.runtime-route/v1"
             or not receipt.get("logical_route")
             or not receipt.get("provider")
@@ -153,6 +157,17 @@ def _direct_seat_terminal(home, source, manifest):
             and (receipt.get("host") != host or receipt.get("lane") != lane)
         ):
             raise ReviewEvidenceError("direct producer unit differs")
+        artifact_path = artifact.get("manifest")
+        artifact_sha256 = artifact.get("manifest_sha256")
+        if bool(artifact_path) != bool(artifact_sha256):
+            raise ReviewEvidenceError("direct producer manifest reference differs")
+        if artifact_path:
+            expected_path = _root(home, source.id) / (manifest["head"] + ".json")
+            if artifact_path != str(expected_path):
+                raise ReviewEvidenceError("direct producer manifest path differs")
+            raw_manifest = _read(expected_path, MAX_EVIDENCE)
+            if hashlib.sha256(raw_manifest).hexdigest() != artifact_sha256:
+                raise ReviewEvidenceError("direct producer manifest digest differs")
         return {
             "receipt_kind": "direct-seat",
             "receipt_path": str(path),

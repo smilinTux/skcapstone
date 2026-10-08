@@ -1,5 +1,6 @@
 """Native proposal collection joins real Git, exact claims and terminal custody."""
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -129,6 +130,18 @@ def test_direct_seat_terminal_receipt_can_enter_review_and_is_rechecked(stopped_
     status_path.unlink()
     source_card = store.fold(status["card_id"])
     monkeypatch.setattr(acceptance.socket, "gethostname", lambda: "worker")
+    manifest_path = (
+        home
+        / "evidence/work"
+        / source_card.id
+        / "source-bundles"
+        / f"{status['source_artifact']['head']}.json"
+    )
+    artifact = {
+        **status["source_artifact"],
+        "manifest": str(manifest_path),
+        "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+    }
     receipt = {
         "schema": "skfleet.direct-seat/v1",
         "card": source_card.id,
@@ -150,7 +163,7 @@ def test_direct_seat_terminal_receipt_can_enter_review_and_is_rechecked(stopped_
             "state": "awaiting-review",
             "claim_released": False,
             "process_terminal": True,
-            "source_artifact": status["source_artifact"],
+            "source_artifact": artifact,
         },
     }
     path = home / "fleet/direct-seats" / f"{source_card.owner}.json"
@@ -177,6 +190,14 @@ def test_direct_seat_terminal_receipt_can_enter_review_and_is_rechecked(stopped_
     }
     acceptance.terminal_guard(home, context, lambda card: {"sessions": [], "units": []})
 
+    receipt["source_disposition"]["source_artifact"]["manifest_sha256"] = "0" * 64
+    path.write_text(json.dumps(receipt))
+    with pytest.raises(acceptance.ReviewEvidenceError, match="manifest digest differs"):
+        acceptance._producer_terminal(home, source_card, status["source_artifact"])
+
+    receipt["source_disposition"]["source_artifact"]["manifest_sha256"] = artifact[
+        "manifest_sha256"
+    ]
     receipt["completion_state"] = "running"
     path.write_text(json.dumps(receipt))
     with pytest.raises(acceptance.ReviewEvidenceError, match="receipt changed"):
