@@ -7,6 +7,8 @@ import os
 import platform
 import re
 import stat
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -80,8 +82,44 @@ def checks(recipe: dict) -> list[dict]:
     ]
 
 
+#: Successful digests remembered inside one artifact_digest_memo() scope.
+_DIGEST_MEMO: dict[str, str] | None = None
+
+
+@contextmanager
+def artifact_digest_memo() -> Iterator[None]:
+    """Hash each Node artifact at most once inside one bounded batch.
+
+    Profile harvest validates every sealed plan, and every Node plan rehashes
+    the same content-addressed dependency tree (~1.6s each): measured on
+    chiap08 2026-10-09, 41 rehashes of the same artifacts in one harvest.
+    Inside this scope a path that hashed successfully returns that digest; a
+    failure is never remembered, so it is recomputed and raised again. Outside
+    any scope nothing is remembered. Scopes nest; the outermost one owns it.
+    """
+    global _DIGEST_MEMO
+    outer = _DIGEST_MEMO
+    if outer is None:
+        _DIGEST_MEMO = {}
+    try:
+        yield
+    finally:
+        _DIGEST_MEMO = outer
+
+
 def artifact_digest(path: Path) -> str:
     """Hash bounded immutable owned content, allowing only internal relative links."""
+    memo = _DIGEST_MEMO
+    if memo is not None:
+        key = os.fspath(path)
+        if key not in memo:
+            memo[key] = _artifact_digest(path)
+        return memo[key]
+    return _artifact_digest(path)
+
+
+def _artifact_digest(path: Path) -> str:
+    """Walk and hash one artifact tree; see artifact_digest."""
     rows, total = [], 0
     if path.is_symlink() or not path.is_dir():
         raise plan.TestEvidenceError("Node artifact is not a real directory")

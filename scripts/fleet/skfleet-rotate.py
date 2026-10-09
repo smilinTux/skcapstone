@@ -5071,6 +5071,57 @@ def host_pin(core,labels):
 #      retried instead of being banned for the lifetime of the estate.
 _LAUNCH_TTL_H = float(os.environ.get("SKFLEET_LAUNCH_TTL_H", "6"))
 _LOGDIR = os.path.join(HOME, ".skcapstone/fleet/logs")
+
+#: One listing per directory per cycle instead of one per card. The candidate
+#: scan asked the worker log directory and the worker exit directory for
+#: "<cid>-*" once per card, so each probe re-listed every file in them.
+#: Measured on chiap08 2026-10-09 (8341 cards): 9266 os.listdir calls on the
+#: log directory and 2076 glob calls on the exit directory cost ~19s of a ~46s
+#: profiled pool fold. Only the listing is reused, never a file's contents.
+_DIR_LISTINGS = {}
+_RACY_DIR_NS = 2_000_000_000
+
+
+def _prefixed_names(directory, prefix, suffix):
+    """Return entry names in directory that start with prefix and end with suffix.
+
+    Same answer as filtering os.listdir(directory), and raises OSError the same
+    way. A listing is reused only while the directory still has the identity and
+    timestamps it had when listed AND that modification time was already two
+    seconds old. Directory timestamps are coarse (one kernel tick), so an entry
+    added in the same tick as a listing could leave the timestamp unchanged; such
+    a racy listing is never reused (the racy-git rule), it is re-listed each time.
+    """
+    info = os.stat(directory)
+    key = (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns)
+    cached = _DIR_LISTINGS.get(directory)
+    if cached is None or cached[0] != key:
+        names = os.listdir(directory)
+        index = {}
+        for name in names:
+            index.setdefault(name.split("-", 1)[0], []).append(name)
+        cached = (key, names, index)
+        if time.time_ns() - info.st_mtime_ns > _RACY_DIR_NS:
+            _DIR_LISTINGS[directory] = cached
+        else:
+            _DIR_LISTINGS.pop(directory, None)
+    _key, names, index = cached
+    if prefix.endswith("-") and "-" not in prefix[:-1]:
+        names = index.get(prefix[:-1], ())
+    minimum = len(prefix) + len(suffix)
+    return [name for name in names
+            if len(name) >= minimum and name.startswith(prefix) and name.endswith(suffix)]
+
+
+def _worker_exit_paths(cid):
+    """Same paths as glob(<exit dir>/<cid>-*.json), from the shared listing."""
+    try:
+        names = _prefixed_names(_WORKER_EXIT_DIR, cid + "-", ".json")
+    except OSError:
+        return []
+    # glob skips hidden names unless the pattern itself starts with a dot.
+    return [os.path.join(_WORKER_EXIT_DIR, name) for name in names
+            if not name.startswith(".")]
 _TRANSPORT_RETRY_COOLDOWN_S = float(
     os.environ.get("SKFLEET_TRANSPORT_RETRY_COOLDOWN_S", "60")
 )
@@ -5148,8 +5199,10 @@ def _local_launch_evidence(cid):
     reports = 0
     latest_transport = 0
     cutoff = time.time() - _LAUNCH_TTL_H * 3600
+    lister = globals().get("_prefixed_names")
     try:
-        filenames = os.listdir(_LOGDIR)
+        filenames = (lister(_LOGDIR, cid + "-", ".log") if callable(lister)
+                     else os.listdir(_LOGDIR))
     except OSError:
         return seen, reports, latest_transport
     for filename in filenames:
@@ -5204,7 +5257,9 @@ def _latest_transport_failure_epoch(cid, generation=""):
     """
     latest = 0.0
     resolve_generation = None
-    for path in glob.glob(os.path.join(_WORKER_EXIT_DIR, cid + "-*.json")):
+    exit_paths = globals().get("_worker_exit_paths")
+    for path in (exit_paths(cid) if callable(exit_paths)
+                 else glob.glob(os.path.join(_WORKER_EXIT_DIR, cid + "-*.json"))):
         try:
             event = json.load(open(path, encoding="utf-8"))
         except (OSError, TypeError, ValueError):
@@ -5226,7 +5281,9 @@ def _latest_transport_failure_epoch(cid, generation=""):
 def _transport_failure_logs(cid):
     """Return local stdout logs classified as pre-agent transport failures."""
     logs = set()
-    for path in glob.glob(os.path.join(_WORKER_EXIT_DIR, cid + "-*.json")):
+    exit_paths = globals().get("_worker_exit_paths")
+    for path in (exit_paths(cid) if callable(exit_paths)
+                 else glob.glob(os.path.join(_WORKER_EXIT_DIR, cid + "-*.json"))):
         try:
             event = json.load(open(path, encoding="utf-8"))
             if event.get("card_id") == cid and event.get("transport_failure"):
@@ -5249,7 +5306,9 @@ def _transport_retry_held(cid):
 def _completion_retry_held(cid):
     """Hold an ineffective zero-output exit for one bounded retry interval."""
     latest = 0.0
-    for path in glob.glob(os.path.join(_WORKER_EXIT_DIR, cid + "-*.json")):
+    exit_paths = globals().get("_worker_exit_paths")
+    for path in (exit_paths(cid) if callable(exit_paths)
+                 else glob.glob(os.path.join(_WORKER_EXIT_DIR, cid + "-*.json"))):
         try:
             event = json.load(open(path, encoding="utf-8"))
             if (
@@ -5266,8 +5325,10 @@ def _reporting_launches(cid):
     n = 0
     transport_logs = _transport_failure_logs(cid)
     cutoff = time.time() - _LAUNCH_TTL_H * 3600
+    lister = globals().get("_prefixed_names")
     try:
-        for f in os.listdir(_LOGDIR):
+        for f in (lister(_LOGDIR, cid + "-", ".log") if callable(lister)
+                  else os.listdir(_LOGDIR)):
             if not f.startswith(cid + "-") or not f.endswith(".log"):
                 continue
             fp = os.path.join(_LOGDIR, f)
