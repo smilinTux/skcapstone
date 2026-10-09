@@ -298,7 +298,15 @@ def test_harvest_discovers_completed_plan_without_job_record(tmp_path, monkeypat
     plan.private_dir(plans, create=True)
     workspace = tmp_path / "fleet/workspaces/producer"
     workspace.mkdir(parents=True)
-    binding = {"source_card": "1234abcd", "source_owner": "producer", "criteria_sha256": "b" * 64}
+    binding = {
+        "source_card": "1234abcd",
+        "source_owner": "producer",
+        "source_claim_revision": "ended-claim",
+        "source_head": "a" * 40,
+        "source_tree": "b" * 40,
+        "source_revision": "c" * 64,
+        "criteria_sha256": "d" * 64,
+    }
     plan_path = plans / "1234abcd-completed.json"
     plan.write_once(plan_path, {"binding": binding, "profile_requalification": True})
     run = tmp_path / "run"
@@ -356,6 +364,68 @@ def test_harvest_discovers_completed_plan_without_job_record(tmp_path, monkeypat
     )
     assert published and published[0]["unclaimed"] is True
     assert (root / ("harvested-" + "e" * 64 + ".json")).is_file()
+
+
+def test_harvest_does_not_publish_orphan_plan_with_invalid_receipt(tmp_path, monkeypatch):
+    root = tmp_path / "fleet/profile-requalifications"
+    plans = tmp_path / "fleet/test-plans"
+    root.parent.mkdir(mode=0o700)
+    plan.private_dir(root, create=True)
+    plan.private_dir(plans, create=True)
+    binding = {"source_card": "1234abcd", "source_owner": "producer"}
+    plan.write_once(
+        plans / "1234abcd-invalid.json",
+        {"binding": binding, "profile_requalification": True},
+    )
+    card = SimpleNamespace(
+        status=SimpleNamespace(value="ready"),
+        owner=None,
+        model_dump=lambda **_kwargs: {"id": "1234abcd"},
+    )
+    monkeypatch.setattr(refresh.socket, "gethostname", lambda: "chiap08")
+    monkeypatch.setattr(
+        refresh.plan,
+        "load_plan",
+        lambda *_args, **_kwargs: (
+            {
+                "profile_requalification": True,
+                "profile_predecessor_sha256": "c" * 64,
+                "runtime_sha256": "runtime",
+                "policy_sha256": "policy",
+            },
+            plans / "plan.json",
+            "e" * 64,
+        ),
+    )
+    monkeypatch.setattr(refresh.plan, "run_directory", lambda *_args: plans)
+    monkeypatch.setattr(refresh.plan, "runtime_fingerprint", lambda: "runtime")
+    monkeypatch.setattr(refresh.plan, "execution_policy_fingerprint", lambda _policy: "policy")
+    monkeypatch.setattr(refresh.plan, "source_state", lambda *_args: None)
+    (plans / "receipt.json").write_text("{}")
+    validated = []
+    monkeypatch.setattr(
+        refresh.tests,
+        "validate_test_receipt",
+        lambda *_args: validated.append(True)
+        or (_ for _ in ()).throw(plan.TestEvidenceError("receipt custody invalid")),
+    )
+    monkeypatch.setattr(
+        refresh.profile, "read_profile", lambda *_args, **_kwargs: ({"repository": "r"}, "c" * 64)
+    )
+    monkeypatch.setattr(refresh.profile, "fingerprint_only_stale", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        refresh,
+        "CardStore",
+        lambda _home: SimpleNamespace(fold=lambda _card: card),
+    )
+    published = []
+    monkeypatch.setattr(
+        refresh.profile, "supersede_profile", lambda *args, **kwargs: published.append(args)
+    )
+
+    assert refresh.harvest_completed(tmp_path, {"authority_host": "chiap08"}) == "idle"
+    assert validated
+    assert not published
 
 
 def test_harvest_refuses_to_publish_when_card_is_still_owned(tmp_path, monkeypatch):
