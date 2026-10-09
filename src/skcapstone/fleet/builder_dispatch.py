@@ -179,17 +179,20 @@ def logical_route(labels: list[str] | tuple[str, ...]) -> str | None:
 
 
 def eligible(core: dict, labels: list[str] | tuple[str, ...]) -> bool:
-    """Return whether a card is a bounded provider-neutral source workload."""
+    """Return whether a card is eligible for governed remote source dispatch."""
     normalized = {str(label).strip().lower() for label in labels}
-    excluded = {"host-pin"}
-    if "SKFLEET_PRODUCTION_POLICY" not in os.environ:
+    production = "SKFLEET_PRODUCTION_POLICY" in os.environ
+    excluded = {"host-pin", "do-not-claim"}
+    if not production:
         excluded.update({"codex-only", "qwen-only", "glm-only"})
+    remote_source_work = "source-only" in normalized or (
+        production and {"glm-only", "dispatch-approved"} <= normalized
+    )
     return (
         logical_route(labels) is not None
-        and "source-only" in normalized
+        and remote_source_work
         and not any(label.startswith("seat-") for label in normalized)
         and not any(label.startswith("parked-") for label in normalized)
-        and "do-not-claim" not in normalized
         and not normalized.intersection(excluded)
         and isinstance(core.get("id"), str)
     )
@@ -335,33 +338,7 @@ def _production_ready(paths, ready, policy, card, *, exclude=None):
 
     result = []
     for view in ready:
-        statuses = _dispatch_statuses(paths, view.name)
-        directory = paths.root / "dispatch" / view.name
-        requests = {path.stem: _load(path) or {} for path in directory.glob("*.json")}
-        cores, ram, unknown = 0.0, 0.0, False
-        for candidate in set(requests) | set(statuses):
-            if candidate == exclude:
-                continue
-            request, status = requests.get(candidate, {}), statuses.get(candidate, {})
-            same = request.get("request_id") == status.get("request_id")
-            if same and status.get("state") in TERMINAL_STATES | {"awaiting-evidence"}:
-                continue
-            if not status and _lease_expired(request, _now()):
-                continue
-            if not request and status.get("state") in TERMINAL_STATES | {"awaiting-evidence"}:
-                continue
-            resources = (status.get("production") or request.get("production") or {}).get(
-                "resources"
-            )
-            if not isinstance(resources, dict):
-                unknown = True
-                break
-            cpu, memory = resources.get("cpu_quota_percent"), resources.get("memory_max_bytes")
-            if type(cpu) is not int or cpu <= 0 or type(memory) is not int or memory <= 0:
-                unknown = True
-                break
-            cores += cpu / 100
-            ram += memory / 1024**3
+        cores, ram, unknown = _production_usage(paths, view.name, exclude=exclude)
         if unknown:
             continue
         remaining = dict(view.allocatable)
@@ -373,6 +350,59 @@ def _production_ready(paths, ready, policy, card, *, exclude=None):
             )
         )
     return result
+
+
+def _production_usage(paths, node: str, *, exclude=None):
+    """Sum exact active dispatch reservations, failing closed on unknown size."""
+    statuses = _dispatch_statuses(paths, node)
+    directory = paths.root / "dispatch" / node
+    requests = {path.stem: _load(path) or {} for path in directory.glob("*.json")}
+    cores, ram = 0.0, 0.0
+    for candidate in set(requests) | set(statuses):
+        if candidate == exclude:
+            continue
+        request, status = requests.get(candidate, {}), statuses.get(candidate, {})
+        same = request.get("request_id") == status.get("request_id")
+        if same and status.get("state") in TERMINAL_STATES | {"awaiting-evidence"}:
+            continue
+        if not status and _lease_expired(request, _now()):
+            continue
+        if not request and status.get("state") in TERMINAL_STATES | {"awaiting-evidence"}:
+            continue
+        resources = (status.get("production") or request.get("production") or {}).get("resources")
+        if not isinstance(resources, dict):
+            return 0.0, 0.0, True
+        cpu, memory = resources.get("cpu_quota_percent"), resources.get("memory_max_bytes")
+        if type(cpu) is not int or cpu <= 0 or type(memory) is not int or memory <= 0:
+            return 0.0, 0.0, True
+        cores += cpu / 100
+        ram += memory / 1024**3
+    return cores, ram, False
+
+
+def production_load_key(paths: FleetPaths, view: NodeView, policy: dict) -> tuple[float, int, str]:
+    """Rank hosts by reserved CPU and memory against their production quotas."""
+    cores, ram, unknown = _production_usage(paths, view.name)
+    binding = production_builder.node_binding(paths, view.name, policy)
+    quota = policy.get("node_quotas", {}).get(binding["host"], {})
+    cpu_quota = quota.get("cpu_quota_percent")
+    memory_quota = quota.get("memory_max_bytes")
+    total_cores = float(view.capacity.get("cores", 0))
+    free_cores = float(view.allocatable.get("cores", 0))
+    total_ram = float(view.capacity.get("ram_gb", 0))
+    free_ram = float(view.allocatable.get("ram_gb", 0))
+    if (
+        unknown
+        or type(cpu_quota) is not int
+        or type(memory_quota) is not int
+        or min(total_cores, total_ram) <= 0
+    ):
+        utilization = float("inf")
+    else:
+        cpu_used = max(0.0, total_cores - free_cores) * 100 + cores * 100
+        ram_used = (max(0.0, total_ram - free_ram) + ram) * 1024**3
+        utilization = max(cpu_used / cpu_quota, ram_used / memory_quota)
+    return utilization, _node_load(paths, view.name, production=True), view.name
 
 
 def _lease_expired(request: dict, now: datetime) -> bool:
@@ -591,7 +621,7 @@ def _offer(paths, core, labels, *, writer, now=None):
             # repeatedly select the same large machine. This is no count cap.
             builders = sorted(
                 builders,
-                key=lambda view: (_node_load(paths, view.name, production=True), view.name),
+                key=lambda view: production_load_key(paths, view, production),
             )
             if not builders:
                 return None

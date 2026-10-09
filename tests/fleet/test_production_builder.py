@@ -26,6 +26,58 @@ def test_production_family_exclusive_eligibility_preserves_legacy_and_host_exclu
     assert not builder.eligible({"id": "24b00001"}, labels + ["seat-seraph"])
 
 
+def test_production_glm_dispatch_approved_work_is_remote_eligible(monkeypatch):
+    core = {"id": "24b00001"}
+    labels = ["sk-m", "glm-only", "dispatch-approved"]
+
+    monkeypatch.delenv("SKFLEET_PRODUCTION_POLICY", raising=False)
+    assert not builder.eligible(core, labels)
+
+    monkeypatch.setenv("SKFLEET_PRODUCTION_POLICY", "/reviewed/policy.json")
+    assert builder.eligible(core, labels)
+    assert not builder.eligible(core, labels + ["do-not-claim"])
+    assert not builder.eligible(core, labels + ["host-pin"])
+
+
+def test_production_offer_selects_least_loaded_quota_normalized_node(
+    paths, operator, production_setup, monkeypatch
+):
+    p = production_setup
+    large = NodeView(
+        "node-z-large",
+        "Ready",
+        role="builder-standby",
+        labels={"host": "large"},
+        capacity={"cores": 32, "ram_gb": 64},
+        allocatable={"cores": 32, "ram_gb": 64},
+    )
+    store.write_spec(
+        paths,
+        "node",
+        large.name,
+        {"role": "builder-standby", "actuate": True, "cordoned": False},
+        writer=operator,
+        labels=large.labels,
+    )
+    p.policy["node_quotas"]["large"] = {
+        "cpu_quota_percent": 400,
+        "memory_max_bytes": 6 * 1024**3,
+        "tasks_max": 128,
+        "runtime_max_seconds": 600,
+    }
+    p.path.write_text(json.dumps(p.policy))
+    monkeypatch.setattr(builder, "node_views", lambda _paths: [p.view, large])
+
+    request = builder.offer(
+        paths,
+        _card() | {"id": "24b0007f"},
+        ["sk-m", "glm-only", "dispatch-approved"],
+        writer=p.writer,
+    )
+
+    assert request["node"] == "node-z-large"
+
+
 @pytest.fixture
 def production_setup(paths, operator, monkeypatch, tmp_path, qualified_runtime):
     value = {

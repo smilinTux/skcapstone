@@ -61,11 +61,14 @@ def hold_reason(error: BaseException) -> str:
 
 
 def partition_remote_reviews(owned, rollout):
-    """Keep legacy provisional reviews on their existing local seat path."""
+    """Send native reviews and explicitly distinct GLM reviews remotely."""
     remote = [
         row
         for row in owned
-        if {"review", "seat-seraph", "source-only"} <= set(row[4])
+        if (
+            {"review", "seat-seraph"} <= set(row[4])
+            and ("source-only" in row[4] or {"glm-only", "review-distinct-agent"} <= set(row[4]))
+        )
         and (rollout["card_ids"] is None or row[2] in rollout["card_ids"])
     ]
     remote_ids = {row[2] for row in remote}
@@ -399,9 +402,16 @@ def offer_review(paths, home, card_id, *, writer):
             and production.node_binding(paths, v.name, policy)["host"] in rollout["destinations"]
             and _offer_directory_safe(paths, v.name, card_id)
         ]
+        nodes = dispatch._production_ready(paths, nodes, policy, card_id)
         if not routes or not nodes:
             return None
-        node = min(nodes, key=lambda v: (dispatch._node_load(paths, v.name), v.name)).name
+        primary = [
+            v
+            for v in nodes
+            if production.node_binding(paths, v.name, policy)["host"] != policy["authority_host"]
+        ]
+        candidates = primary or nodes
+        node = min(candidates, key=lambda v: dispatch.production_load_key(paths, v, policy)).name
         bound = {**production.node_binding(paths, node, policy), **routes[0]}
         core = card.model_dump(mode="json")
         request = dict(

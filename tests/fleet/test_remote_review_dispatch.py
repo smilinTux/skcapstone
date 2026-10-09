@@ -93,13 +93,21 @@ def test_same_family_glm_without_both_explicit_labels_is_refused(
 def test_remote_partition_keeps_legacy_reviews_on_the_existing_seat(dispatch):
     native = (0, "review", "a1b2c3d4", {}, ["review", "seat-seraph", "source-only"])
     legacy = (1, "review", "e5f6a7b8", {}, ["review", "seat-seraph"])
-    producer = (2, "ready", "a9b8c7d6", {}, ["source-only"])
-    rows = [native, legacy, producer]
+    glm = (
+        2,
+        "review",
+        "a9b8c7d6",
+        {},
+        ["review", "seat-seraph", "glm-only", "review-distinct-agent"],
+    )
+    same_family_unsafe = (3, "review", "a9b8c7d7", {}, ["review", "seat-seraph", "glm-only"])
+    producer = (4, "ready", "a9b8c7d8", {}, ["source-only"])
+    rows = [native, legacy, glm, same_family_unsafe, producer]
 
     remote, local = dispatch.partition_remote_reviews(rows, {"card_ids": None})
 
-    assert remote == [native]
-    assert local == [legacy, producer]
+    assert remote == [native, glm]
+    assert local == [legacy, same_family_unsafe, producer]
     assert dispatch.partition_remote_reviews(rows, {"card_ids": [legacy[2]]}) == ([], rows)
 
 
