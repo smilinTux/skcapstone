@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Callable
 
 MAX_RESPONSE_BYTES = 65_536
-DEFAULT_TIMEOUT_SECONDS = 12.0
+DEFAULT_TIMEOUT_SECONDS = 30.0
 
 
 @dataclass(frozen=True)

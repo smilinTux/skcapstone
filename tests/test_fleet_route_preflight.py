@@ -59,6 +59,14 @@ def test_alias_change_uses_current_logical_route_and_records_identities():
     assert calls[1][0].get_header("X-sk-probe") == "synthetic"
 
 
+def test_default_preflight_timeout_allows_normal_upstream_tail_latency():
+    calls, open_ = opener([{"id": "sk-qwen"}])
+
+    resolve_and_preflight("http://gateway", "sk-qwen", opener=open_)
+
+    assert [timeout for _request, timeout in calls] == [30.0, 30.0]
+
+
 @pytest.mark.parametrize(
     "catalog",
     [
