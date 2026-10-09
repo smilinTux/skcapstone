@@ -310,3 +310,53 @@ def test_native_card_and_node_preservation_integration(case, monkeypatch):
     assert native.fold("1234abcd").model_dump(mode="json") == original
     assert (workspace / "original").read_bytes() == b"unstaged"
     assert run(c, apply=True)["state"] == "already-retired"
+
+
+def test_ready_unclaimed_card_can_retire_terminal_offer(case, monkeypatch):
+    c = case
+    c.card.status.value = "ready"
+    monkeypatch.setattr(
+        retire.builder,
+        "_source",
+        lambda _core: tuple(c.request[key] for key in ("repository", "base_ref", "base_revision")),
+    )
+    retire.check_card(c.home, "1234abcd", c.request, "d" * 64)
+
+
+def test_every_post_offer_claim_must_have_exact_release(monkeypatch, tmp_path):
+    from datetime import datetime, timezone
+
+    offered = datetime(2026, 10, 8, 3, 30, tzinfo=timezone.utc)
+    events = [
+        {
+            "action": "claim",
+            "ts": "2026-10-08T03:31:00Z",
+            "owner": "pi-glm-chiap08-52f7c2a5",
+            "claim_revision": "a" * 32,
+        },
+        {
+            "action": "release_claim",
+            "ts": "2026-10-08T03:32:00Z",
+            "released_owner": "pi-glm-chiap08-52f7c2a5",
+            "expected_claim_revision": "a" * 32,
+        },
+        {
+            "action": "claim",
+            "ts": "2026-10-08T03:33:00Z",
+            "owner": "pi-glm-chiap08-52f7c2a5",
+            "claim_revision": "b" * 32,
+        },
+        {
+            "action": "release_claim",
+            "ts": "2026-10-08T03:34:00Z",
+            "released_owner": "pi-glm-chiap08-52f7c2a5",
+            "expected_claim_revision": "b" * 32,
+        },
+    ]
+    monkeypatch.setattr(retire.CardStore, "_read_events", lambda *_args: events)
+    request = {"card_id": "52f7c2a5", "offered_at": offered.isoformat()}
+
+    assert retire.claims_released_since_offer(tmp_path, request) == 2
+    events.pop()
+    with pytest.raises(ValueError, match="post-offer claim lacks one exact release"):
+        retire.claims_released_since_offer(tmp_path, request)

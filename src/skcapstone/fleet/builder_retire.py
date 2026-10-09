@@ -217,27 +217,60 @@ def preclaim_source_failure(request, status):
     )
 
 
-def no_claim_since_offer(home, request):
-    """A missing status owner never erases a native claim event."""
+def claims_released_since_offer(home, request):
+    """Require every claim after this offer to have an exact release event."""
     try:
         offered = datetime.fromisoformat(request["offered_at"].replace("Z", "+00:00"))
         if offered.tzinfo is None or offered > datetime.now(timezone.utc):
             raise ValueError("offer time unavailable")
+        claims = []
+        releases = []
         for event in CardStore(home)._read_events(request["card_id"]):
-            if event.get("action") != "claim":
+            action = event.get("action")
+            if action not in {"claim", "release_claim"}:
                 continue
-            claimed = datetime.fromisoformat(event["ts"].replace("Z", "+00:00"))
-            if claimed.tzinfo is None or claimed >= offered:
-                raise ValueError("native claim exists after offer")
+            at = datetime.fromisoformat(event["ts"].replace("Z", "+00:00"))
+            if at.tzinfo is None:
+                raise ValueError("claim history unavailable")
+            if action == "claim" and at >= offered:
+                owner = event.get("owner")
+                revision = event.get("claim_revision", event.get("event_id"))
+                if (
+                    not isinstance(owner, str)
+                    or not owner
+                    or not isinstance(revision, str)
+                    or not revision
+                ):
+                    raise ValueError("claim history unavailable")
+                claims.append((owner, revision, at))
+            elif action == "release_claim" and at >= offered:
+                releases.append(
+                    (
+                        event.get("released_owner"),
+                        event.get("expected_claim_revision"),
+                        at,
+                    )
+                )
+        for owner, revision, claimed_at in claims:
+            matches = [
+                released_at
+                for released_owner, expected_revision, released_at in releases
+                if released_owner == owner
+                and expected_revision == revision
+                and released_at > claimed_at
+            ]
+            if len(matches) != 1:
+                raise ValueError("post-offer claim lacks one exact release")
     except (AttributeError, KeyError, TypeError) as exc:
         raise ValueError("claim history unavailable") from exc
+    return len(claims)
 
 
 def prove_preclaim(home, request):
-    """Require no claim, service history or admission intent for either attempt."""
+    """Require resolved claims and no service history or admission intent."""
     from . import production_admission as admission
 
-    no_claim_since_offer(home, request)
+    released_claims = claims_released_since_offer(home, request)
     units = [
         builder.production_builder.unit_name(request, attempt)
         for attempt in range(1, builder.MAX_ATTEMPTS + 1)
@@ -295,7 +328,11 @@ def prove_preclaim(home, request):
                 ):
                     raise ValueError("preclaim admission intent exists or is unavailable")
     return dict(
-        units_absent=units, journal_empty=True, no_admission_intent=True, no_claim_since_offer=True
+        units_absent=units,
+        journal_empty=True,
+        no_admission_intent=True,
+        claims_resolved_since_offer=True,
+        released_claim_generations=released_claims,
     )
 
 
@@ -345,7 +382,7 @@ def check_card(home, card, request, expected):
         or row.owner
         or row.archived
         or row.meta.get("claim_conflicts")
-        or row.status.value != "backlog"
+        or row.status.value not in {"backlog", "ready"}
         or card_revision(row) != expected
         or sorted(row.labels) != request.get("labels")
         or builder._source({"meta": row.meta, "links": row.links})
@@ -527,7 +564,7 @@ def retire(
         check_card(home, card, request, card_sha256)
         preclaim = preclaim_source_failure(request, status)
         if preclaim:
-            no_claim_since_offer(home, request)
+            claims_released_since_offer(home, request)
         host = builder.production_builder.node_binding(paths, node, policy)["host"]
         payload = dict(binding, host=host, apply=apply)
         proof = probe(host, payload)
@@ -549,7 +586,7 @@ def retire(
                         "preclaim",
                         "journal_empty",
                         "no_admission_intent",
-                        "no_claim_since_offer",
+                        "claims_resolved_since_offer",
                     )
                 )
             )
@@ -557,7 +594,7 @@ def retire(
             raise ValueError("exact node source custody proof required")
         check_card(home, card, request, card_sha256)
         if preclaim:
-            no_claim_since_offer(home, request)
+            claims_released_since_offer(home, request)
         read_attempt(paths, node, card, request_sha256, status_sha256)
         if not apply:
             return {"state": "qualified-check-only", "binding": binding, "proof": proof}
