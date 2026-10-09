@@ -88,12 +88,17 @@ fleet-qualify = [
     "skharness @ git+https://github.com/smilinTux/skharness.git@7409a1ab28f9c8fed87cd40226f4c031ca9e3f6e",
     "ansible-core==2.21.3; python_version >= '3.12'",
     "ansible-core==2.19.5; python_version < '3.12'",
-    "pytest>=7.0",
-    "pytest-asyncio>=0.23",
-    "ruff>=0.3",
-    "pluggy>=1.0",
-    "iniconfig>=1.0",
-    "packaging>=23.0",
+    # Exact pins, not floors: remote qualification seals the authority's
+    # runtime_sha256 (ruff + these packages) into the plan, and the executing
+    # builder refuses it unless its own fingerprint is identical. Floors let
+    # rollout keep whatever each host had, so chiap01-04 drifted to four
+    # different runtimes (2026-10-09). Versions match chiap08, the authority.
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "ruff==0.16.3",
+    "pluggy==1.6.0",
+    "iniconfig==2.3.0",
+    "packaging==26.3",
 ]
 dashboard = [
     "starlette>=0.40",

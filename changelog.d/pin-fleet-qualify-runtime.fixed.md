@@ -1,0 +1,1 @@
+The `fleet-qualify` extra pins the qualified test runtime (pytest, pytest-asyncio, ruff, pluggy, iniconfig, packaging) to exact versions so every builder matches the authority runtime fingerprint that remote qualification plans are sealed with.
