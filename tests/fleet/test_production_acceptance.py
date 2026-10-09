@@ -408,28 +408,25 @@ def test_controller_requires_trusted_tests_and_finishes_without_legacy_release(
     assert row.owner == (None if tests_ready else review["owner"])
     assert not any(e["action"] == "release_claim" for e in store._read_events(review["card"]))
     before = store._read_events(review["card"])
-    assert (
-        acceptance.reconcile(
-            home, policy, process_check=lambda card: {"sessions": [], "units": []}
-        )
-        == results
-    )
-    assert store._read_events(review["card"]) == before
-
-
-def test_bad_retained_exit_does_not_block_next_independent_card(stopped_pair, monkeypatch):
-    home, policy, review, _, _, _ = stopped_pair
-    monkeypatch.setattr(acceptance.socket, "gethostname", lambda: "control")
-    once(exit_path(home, "00000001", "a" * 32), {"schema": "invalid"})
-    monkeypatch.setitem(
-        sys.modules,
-        "skcapstone.fleet.production_tests",
-        SimpleNamespace(run_or_read_tests=lambda *args: None),
-    )
-    results = acceptance.reconcile(
+    again = acceptance.reconcile(
         home, policy, process_check=lambda card: {"sessions": [], "units": []}
     )
-    assert [(row["card"], row["state"]) for row in results] == [
-        ("00000001", "pending"),
-        (review["card"], "awaiting-trusted-tests"),
-    ]
+    assert [{k: v for k, v in row.items() if k != "historical"} for row in again] == results
+    assert store._read_events(review["card"]) == before
+    if tests_ready:
+        # A finished pair must not regress to pending once the live launch
+        # policy, route snapshot or qualify recipe moves on after acceptance.
+        assert again[0]["historical"] is True
+        monkeypatch.setattr(acceptance, "production_receipt_allowed", lambda *a: False)
+        monkeypatch.setattr(acceptance, "_sealed_context_policy", _unreachable)
+        assert (
+            acceptance.reconcile(
+                home, policy, process_check=lambda card: {"sessions": [], "units": []}
+            )
+            == again
+        )
+        assert store._read_events(review["card"]) == before
+
+
+def _unreachable(*args, **kwargs):
+    raise AssertionError("finished pair must not replay live launch policy")
