@@ -2179,3 +2179,29 @@ def test_capacity_label_changes_node_launch_gate(
 
     assert len(launches) == 6
     assert len(set(launches)) == 6
+
+
+@pytest.mark.parametrize(
+    "state, charged",
+    [
+        ("running", True),
+        ("awaiting-review-acceptance", False),
+        ("review-fail", False),
+        ("review-blocked", False),
+        ("awaiting-evidence", False),
+        ("awaiting-review", False),
+    ],
+)
+def test_finished_work_holds_no_builder_capacity(monkeypatch, tmp_path, state, charged) -> None:
+    """chiap03 2026-10-09: three finished reviews held 9 of 10.4 GiB."""
+    resources = {"cpu_quota_percent": 200, "memory_max_bytes": 3 * 1024**3}
+    monkeypatch.setattr(
+        builder_dispatch,
+        "_dispatch_statuses",
+        lambda _paths, _node: {
+            "6a38222e": {"state": state, "request_id": "r", "production": {"resources": resources}}
+        },
+    )
+    (tmp_path / "dispatch" / "node-chiap03").mkdir(parents=True)
+    usage = builder_dispatch._production_usage(SimpleNamespace(root=tmp_path), "node-chiap03")
+    assert usage == ((2.0, 3.0, False) if charged else (0.0, 0.0, False))
