@@ -1260,6 +1260,13 @@ def worker_command(request: dict, owner: str, claim_revision: str, workspace: Pa
     ]
 
 
+# Hosts whose exact source fetch must use SSH with the host key. Transport only:
+# the repository stays the registered HTTPS URL and the commit stays pinned.
+SSH_SOURCE_TRANSPORTS = {
+    "skgit.skstack01.douno.it": "ssh://git@skgit.skstack01.douno.it:222/",
+}
+
+
 def materialize_source(request: dict, workspace: Path) -> Path:
     """Reconstruct and verify exact source without inheriting host Git settings."""
     # Match preseed custody literally; host insteadOf or Git environment must
@@ -1284,6 +1291,21 @@ def materialize_source(request: dict, workspace: Path) -> Path:
                 "credential.https://github.com.helper=!gh auth git-credential",
             ]
         )
+    # Private Forgejo (skgit) serves Git over SSH only to the host key; anonymous
+    # HTTPS answers 401, so every SKLegal card on skgit failed reconstruction
+    # (2026-10-09, 14 cards in cycle 1101ab03). Pin the same transport rewrite
+    # the hosts already use, in code rather than from host config, and apply it
+    # to the fetch alone: origin stays the registered HTTPS URL, and the fetch
+    # is still bound to the exact base_revision.
+    fetch_transport = []
+    ssh_base = SSH_SOURCE_TRANSPORTS.get(urlsplit(request["repository"]).hostname or "")
+    if ssh_base:
+        environment["HOME"] = str(Path.home())
+        environment["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
+        fetch_transport = [
+            "-c",
+            f"url.{ssh_base}.insteadOf=https://{urlsplit(request['repository']).hostname}/",
+        ]
     if workspace.exists():
         head = subprocess.run(
             [*git, "rev-parse", "HEAD"],
@@ -1313,7 +1335,15 @@ def materialize_source(request: dict, workspace: Path) -> Path:
         commands = (
             [*git, "init", "--quiet", str(temporary)],
             [*git, "remote", "add", "origin", request["repository"]],
-            [*git, "fetch", "--quiet", "--depth=1", "origin", request["base_revision"]],
+            [
+                *git,
+                *fetch_transport,
+                "fetch",
+                "--quiet",
+                "--depth=1",
+                "origin",
+                request["base_revision"],
+            ],
             [*git, "checkout", "--quiet", "--detach", request["base_revision"]],
         )
         for command in commands:
