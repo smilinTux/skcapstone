@@ -122,6 +122,7 @@ def test_card_specific_refresh_skips_stale_claim_generations(tmp_path, monkeypat
         )
     advanced = []
     monkeypatch.setattr(refresh.socket, "gethostname", lambda: "chiap08")
+    monkeypatch.setattr(refresh, "_claim_is_current", lambda *_args: True)
     monkeypatch.setattr(
         refresh,
         "_advance",
@@ -140,6 +141,39 @@ def test_card_specific_refresh_skips_stale_claim_generations(tmp_path, monkeypat
 
     assert state == "pending"
     assert advanced == ["b" * 64 + ".job.json"]
+
+
+def test_authority_advances_four_current_remote_jobs_per_cycle(tmp_path, monkeypatch):
+    root = tmp_path / "fleet/profile-requalifications"
+    root.parent.mkdir(mode=0o700)
+    plan.private_dir(root, create=True)
+    cards = ["1234abcd", "2345bcde", "3456cdef", "4567def0", "5678ef01"]
+    for index, card_id in enumerate(cards):
+        plan.write_once(
+            root / (str(index) * 64 + ".job.json"),
+            {
+                "card": card_id,
+                "owner": "niobe",
+                "claim_revision": str(index),
+            },
+        )
+    advanced = []
+    monkeypatch.setattr(refresh.socket, "gethostname", lambda: "chiap08")
+    monkeypatch.setattr(refresh, "_claim_is_current", lambda *_args: True)
+    monkeypatch.setattr(
+        refresh,
+        "_advance",
+        lambda _home, _policy, _skc, _actor, _path, job: (
+            advanced.append(job["card"]) or "pending"
+        ),
+    )
+
+    state = refresh.requalify_or_advance(
+        tmp_path, {"authority_host": "chiap08"}, "/test/skcapstone", "niobe"
+    )
+
+    assert advanced == cards[:4]
+    assert state == "batch:" + ",".join(f"{card}=pending" for card in cards[:4])
 
 
 def test_stale_profile_candidate_queues_under_governed_claim(tmp_path, monkeypatch):

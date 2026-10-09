@@ -108,6 +108,16 @@ def retains_pending_claim(home: Path, card_id: str, owner: str, claim_revision: 
     return False
 
 
+def _claim_is_current(home: Path, job: dict) -> bool:
+    card = CardStore(home).fold(job.get("card"))
+    return bool(
+        card is not None
+        and card.status.value == "doing"
+        and card.owner == job.get("owner")
+        and card.meta.get("_claim_revision") == job.get("claim_revision")
+    )
+
+
 def harvest_completed(
     home: Path, policy: dict, card_id: str | None = None, *, limit: int = 4
 ) -> str:
@@ -328,7 +338,7 @@ def requalify_or_advance(
     with _lock(root) as acquired:
         if not acquired:
             return "busy"
-        pending = list(_records(root))
+        pending = [(path, job) for path, job in _records(root) if _claim_is_current(home, job)]
         pending_job = next(
             (
                 (path, job)
@@ -340,20 +350,25 @@ def requalify_or_advance(
             None,
         )
         if pending_job is not None:
-            path, job = pending_job
-            try:
-                state = _advance(home, policy, skc, actor, path, job)
-            except (OSError, ValueError) as exc:
-                plan.write_once(
-                    path.with_name(path.stem + ".failed.json"),
-                    {
-                        "schema": "skfleet.profile-requalification-failure/v1",
-                        "card": job.get("card"),
-                        "reason": str(exc)[:240],
-                    },
-                )
-                state = "failed:" + str(exc)[:160]
-            return state
+            targets = [pending_job] if card_id is not None else pending[:4]
+            states = []
+            for path, job in targets:
+                try:
+                    state = _advance(home, policy, skc, actor, path, job)
+                except (OSError, ValueError) as exc:
+                    plan.write_once(
+                        path.with_name(path.stem + ".failed.json"),
+                        {
+                            "schema": "skfleet.profile-requalification-failure/v1",
+                            "card": job.get("card"),
+                            "reason": str(exc)[:240],
+                        },
+                    )
+                    state = "failed:" + str(exc)[:160]
+                states.append(str(job.get("card")) + "=" + state)
+            if card_id is not None:
+                return states[0].split("=", 1)[1]
+            return "batch:" + ",".join(states)
         if card_id is None or not all((core, workspace, owner, claim_revision)):
             return "idle"
         try:
