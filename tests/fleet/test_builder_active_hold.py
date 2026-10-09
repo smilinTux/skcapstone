@@ -119,24 +119,6 @@ def _rotate_partition():
     return namespace["_builder_partition"]
 
 
-def _rotate_requalification_restore():
-    """Lift the native profile fallback from the shipped rotation script."""
-    tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
-    functions = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "_builder_restore_for_local_requalification"
-    ]
-    assert functions, "the rotation script must restore profile-blocked candidates"
-    namespace: dict = {}
-    exec(  # noqa: S102 - lifting the shipped source is the point of this test
-        compile(ast.Module(body=functions, type_ignores=[]), str(ROTATE), "exec"),
-        namespace,
-    )
-    return namespace["_builder_restore_for_local_requalification"]
-
-
 def _row(card_id: str) -> tuple:
     """Return a pool row shaped like the rotation's, card id at index 2."""
     return (0, "doing", card_id, _card(card_id)["meta"], ["sk-m", "source-only"])
@@ -400,18 +382,13 @@ def test_the_rotation_never_withholds_a_non_candidate() -> None:
     assert [row[2] for row in kept] == ["seat-card"]
 
 
-def test_profile_blocked_remote_candidate_reaches_native_requalification_path() -> None:
-    """Remote profile refusal must not strand a READY card outside local selection."""
-    restore = _rotate_requalification_restore()
-    row = _row("24b00009")
-    existing = [_row(RUNNING_CARD)]
-    restored = restore(existing, row)
-    assert [item[2] for item in restored] == [RUNNING_CARD, "24b00009"]
-    assert restore(restored, row) is restored
-
+def test_profile_blocked_candidate_is_queued_remotely_before_local_selection() -> None:
+    """Stale profiles use remote test capacity, not the authority worker slot."""
     source = ROTATE.read_text(encoding="utf-8")
     assert 'str(_exc) == "required-test-profile-unqualified"' in source
-    assert "_builder_restore_for_local_requalification(owned, _candidate)" in source
+    assert "offer_stale_candidate(" in source
+    assert "_profile_requalification_limit = 4" in source
+    assert "BUILDER_PROFILE_REQUALIFICATION_FALLBACK" not in source
 
 
 def test_the_rotation_measured_tick_releases_the_parked_majority() -> None:

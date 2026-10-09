@@ -108,6 +108,109 @@ def test_existing_refresh_does_not_block_another_card_job(tmp_path, monkeypatch)
     assert begun == ["5678abcd"]
 
 
+def test_card_specific_refresh_skips_stale_claim_generations(tmp_path, monkeypatch):
+    root = tmp_path / "fleet/profile-requalifications"
+    root.parent.mkdir(mode=0o700)
+    plan.private_dir(root, create=True)
+    for suffix, owner, revision in (
+        ("a", "old-owner", "old-revision"),
+        ("b", "niobe", "new-revision"),
+    ):
+        plan.write_once(
+            root / (suffix * 64 + ".job.json"),
+            {"card": "1234abcd", "owner": owner, "claim_revision": revision},
+        )
+    advanced = []
+    monkeypatch.setattr(refresh.socket, "gethostname", lambda: "chiap08")
+    monkeypatch.setattr(
+        refresh,
+        "_advance",
+        lambda _home, _policy, _skc, _actor, path, _job: advanced.append(path.name) or "pending",
+    )
+
+    state = refresh.requalify_or_advance(
+        tmp_path,
+        {"authority_host": "chiap08"},
+        "/test/skcapstone",
+        "niobe",
+        card_id="1234abcd",
+        owner="niobe",
+        claim_revision="new-revision",
+    )
+
+    assert state == "pending"
+    assert advanced == ["b" * 64 + ".job.json"]
+
+
+def test_stale_profile_candidate_queues_under_governed_claim(tmp_path, monkeypatch):
+    from skcapstone.fleet import production_test_profile as test_profile
+
+    (tmp_path / "fleet").mkdir(mode=0o700)
+    monkeypatch.setattr(refresh.socket, "gethostname", lambda: "chiap08")
+    monkeypatch.setattr(
+        test_profile,
+        "preflight",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            test_profile.ProfileRequalificationRequired("stale fingerprints")
+        ),
+    )
+    current = {"repository": "https://github.com/example/repo.git"}
+    monkeypatch.setattr(test_profile, "read_profile", lambda *_a, **_k: (current, "p" * 64))
+    monkeypatch.setattr(test_profile, "contract", lambda _core: {"card": "1234abcd"})
+    monkeypatch.setattr(
+        test_profile, "fingerprint_only_stale", lambda *_a, **_k: True
+    )
+    monkeypatch.setattr(refresh.plan, "workspace_source_fingerprint", lambda *_a: "s" * 64)
+    monkeypatch.setattr(refresh, "_execution_host", lambda *_a: "chiap01")
+    card = SimpleNamespace(status=SimpleNamespace(value="ready"), owner=None, meta={})
+    monkeypatch.setattr(refresh.CardStore, "fold", lambda *_a: card)
+    calls = []
+
+    def claim(argv, **_kwargs):
+        calls.append(argv)
+        card.status.value = "doing"
+        card.owner = "niobe"
+        card.meta["_claim_revision"] = "claim-1"
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(
+        "subprocess.run",
+        claim,
+    )
+    monkeypatch.setattr(refresh, "requalify_or_advance", lambda *_a, **_kw: "pending")
+    monkeypatch.setattr(
+        refresh,
+        "_records",
+        lambda _root: iter(
+            [
+                (
+                    Path("job.job.json"),
+                    {
+                        "card": "1234abcd",
+                        "owner": "niobe",
+                        "claim_revision": "claim-1",
+                        "execution_host": "chiap01",
+                    },
+                )
+            ]
+        ),
+    )
+    workspace = tmp_path / "exact-source"
+
+    state = refresh.offer_stale_candidate(
+        tmp_path,
+        {"authority_host": "chiap08"},
+        "/test/skcapstone",
+        "niobe",
+        {"id": "1234abcd"},
+        ["source-only", "glm-only", "sk-m"],
+        lambda _core, _labels: workspace,
+    )
+
+    assert state == "pending:chiap01"
+    assert calls == [["/test/skcapstone", "coord", "claim", "1234abcd", "--agent", "niobe"]]
+
+
 def test_remote_qualification_uses_least_loaded_ready_node(tmp_path, monkeypatch):
     nodes = [SimpleNamespace(name=name) for name in ("node01", "node02", "node03")]
     hosts = {"node01": "chiap01", "node02": "chiap02", "node03": "chiap03"}
@@ -393,6 +496,86 @@ def test_harvest_discovers_completed_plan_without_job_record(tmp_path, monkeypat
     )
     assert published and published[0]["unclaimed"] is True
     assert (root / ("harvested-" + "e" * 64 + ".json")).is_file()
+
+
+def test_harvest_publishes_only_the_bounded_batch(tmp_path, monkeypatch):
+    root = tmp_path / "fleet/profile-requalifications"
+    root.parent.mkdir(mode=0o700)
+    plan.private_dir(root, create=True)
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "receipt.json").write_text("{}")
+    cards = ["1234abcd", "2345bcde", "3456cdef", "4567def0", "5678ef01"]
+    for index, card_id in enumerate(cards):
+        plan.write_once(
+            root / (str(index) * 64 + ".job.json"),
+            {
+                "schema": "skfleet.profile-requalification/v1",
+                "card": card_id,
+                "binding": {"source_card": card_id, "criteria_sha256": "b" * 64},
+                "workspace": str(tmp_path / ("workspace-" + card_id)),
+                "profile_sha256": "c" * 64,
+                "source_sha256": "d" * 64,
+            },
+        )
+    monkeypatch.setattr(refresh.socket, "gethostname", lambda: "chiap08")
+    monkeypatch.setattr(
+        refresh.plan,
+        "load_plan",
+        lambda _home, binding, **_kwargs: (
+            {
+                "profile_requalification": True,
+                "profile_predecessor_sha256": "c" * 64,
+                "runtime_sha256": "runtime",
+                "policy_sha256": "policy",
+            },
+            tmp_path / "plan",
+            (binding["source_card"][0] * 64),
+        ),
+    )
+    monkeypatch.setattr(refresh.plan, "run_directory", lambda *_args: run)
+    monkeypatch.setattr(refresh.plan, "runtime_fingerprint", lambda: "runtime")
+    monkeypatch.setattr(refresh.plan, "execution_policy_fingerprint", lambda *_a: "policy")
+    monkeypatch.setattr(refresh.plan, "source_state", lambda *_args: None)
+    monkeypatch.setattr(refresh.plan, "workspace_source_fingerprint", lambda *_args: "d" * 64)
+    monkeypatch.setattr(
+        refresh.tests, "validate_test_receipt", lambda *_args: {"receipt_sha256": "f" * 64}
+    )
+    monkeypatch.setattr(
+        refresh.profile,
+        "read_profile",
+        lambda _home, card_id: (
+            {
+                "repository": "https://example.invalid/r",
+                "recipe": {"pytest": []},
+                "qualified_by": "operator",
+            },
+            "c" * 64,
+        ),
+    )
+    monkeypatch.setattr(refresh.profile, "fingerprint_only_stale", lambda *_a, **_k: True)
+    published = []
+    monkeypatch.setattr(
+        refresh.profile,
+        "supersede_profile",
+        lambda _home, card, *_args, **_kwargs: published.append(card["id"]),
+    )
+    monkeypatch.setattr(
+        refresh,
+        "CardStore",
+        lambda _home: SimpleNamespace(
+            fold=lambda card_id: SimpleNamespace(
+                status=SimpleNamespace(value="ready"),
+                owner=None,
+                model_dump=lambda **_kwargs: {"id": card_id},
+            )
+        ),
+    )
+
+    state = refresh.harvest_completed(tmp_path, {"authority_host": "chiap08"}, limit=3)
+
+    assert state == "qualified:" + ",".join(cards[:3])
+    assert published == cards[:3]
 
 
 def test_harvest_does_not_publish_orphan_plan_with_invalid_receipt(tmp_path, monkeypatch):

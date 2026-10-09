@@ -275,13 +275,6 @@ def _builder_partition(owned_rows, candidate_ids, held_ids):
     return [row for row in owned_rows if row[2] not in held], withheld, returned
 
 
-def _builder_restore_for_local_requalification(owned_rows, candidate):
-    """Return a profile-blocked offer to local selection without duplication."""
-    if any(row[2] == candidate[2] for row in owned_rows):
-        return owned_rows
-    return [*owned_rows, candidate]
-
-
 def _full_reassessment_path(host, evidence_root, authority_host=None):
     """Keep exactly one shared full report, written only by its authority host.
 
@@ -8122,6 +8115,8 @@ log(
 # The remote node claims the card itself, so the CardStore fence remains the
 # authority and this scheduler never impersonates a remote worker.
 if not DRY and _is_niobe_builder_host(HOST):
+    _profile_requalifications_offered = 0
+    _profile_requalification_limit = 4
     for _candidate in tuple(_builder_candidates)[:MAX_CANDIDATE_SCAN]:
         if PRODUCTION_POLICY and time.monotonic() - _cycle_started >= _production_cycle_budget:
             break
@@ -8138,12 +8133,45 @@ if not DRY and _is_niobe_builder_host(HOST):
         except (builder_dispatch.BuilderDispatchError, OSError) as _exc:
             log(d, "BUILDER_DISPATCH_BLOCKED|%s|%s|%s" % (HOST, _candidate[2], _exc))
             if str(_exc) == "required-test-profile-unqualified":
-                owned = _builder_restore_for_local_requalification(owned, _candidate)
-                log(
-                    d,
-                    "BUILDER_PROFILE_REQUALIFICATION_FALLBACK|%s|%s|"
-                    "path=native-local-before-dispatch" % (HOST, _candidate[2]),
-                )
+                if _profile_requalifications_offered >= _profile_requalification_limit:
+                    log(d, "PROFILE_REQUALIFICATION_DEFERRED|%s|%s|reason=cycle-offer-limit" %
+                        (HOST, _candidate[2]))
+                    continue
+                try:
+                    from skcapstone.fleet.profile_requalification import offer_stale_candidate
+
+                    def _profile_workspace(core, labels):
+                        repository, base_ref, revision = builder_dispatch._source(core)
+                        destination = (
+                            Path(HOME) / ".skcapstone/fleet/workspaces" /
+                            ("niobe-profile-requal-%s-%s" %
+                             (core["id"], revision[:12]))
+                        )
+                        return builder_dispatch.materialize_source(
+                            {
+                                "repository": repository,
+                                "base_ref": base_ref,
+                                "base_revision": revision,
+                            },
+                            destination,
+                        )
+
+                    _requal_state = offer_stale_candidate(
+                        Path(HOME) / ".skcapstone",
+                        PRODUCTION_POLICY,
+                        SKC,
+                        DISPATCH_AGENT,
+                        dict(_candidate[3], id=_candidate[2]),
+                        _candidate[4],
+                        _profile_workspace,
+                    )
+                    log(d, "PROFILE_REQUALIFICATION_OFFER|%s|%s|state=%s" %
+                        (HOST, _candidate[2], _requal_state))
+                    if _requal_state.startswith("pending:"):
+                        _profile_requalifications_offered += 1
+                except (OSError, ValueError, subprocess.SubprocessError) as _requal_exc:
+                    log(d, "PROFILE_REQUALIFICATION_OFFER_BLOCKED|%s|%s|%s" %
+                        (HOST, _candidate[2], str(_requal_exc)[:160]))
             continue
         if _remote_request is not None:
             log(

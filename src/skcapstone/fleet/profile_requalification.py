@@ -108,8 +108,10 @@ def retains_pending_claim(home: Path, card_id: str, owner: str, claim_revision: 
     return False
 
 
-def harvest_completed(home: Path, policy: dict, card_id: str | None = None) -> str:
-    """Publish one fully validated completed refresh while its card is unclaimed."""
+def harvest_completed(
+    home: Path, policy: dict, card_id: str | None = None, *, limit: int = 4
+) -> str:
+    """Publish a bounded batch of validated completed refreshes."""
     home = Path(home)
     if socket.gethostname().split(".")[0].lower() != policy.get("authority_host"):
         return "not-authority"
@@ -119,6 +121,8 @@ def harvest_completed(home: Path, policy: dict, card_id: str | None = None) -> s
     except FileNotFoundError:
         return "idle"
     held_state = None
+    qualified = []
+    limit = 1 if card_id is not None else max(1, limit)
     with _lock(root) as acquired:
         if not acquired:
             return "busy"
@@ -193,7 +197,10 @@ def harvest_completed(home: Path, policy: dict, card_id: str | None = None) -> s
                         "harvested": True,
                     },
                 )
-                return "qualified:" + job["card"]
+                qualified.append(job["card"])
+                if len(qualified) >= limit:
+                    return "qualified:" + ",".join(qualified)
+                continue
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 if card_id is not None:
                     return "blocked:" + str(exc)[:160]
@@ -289,10 +296,15 @@ def harvest_completed(home: Path, policy: dict, card_id: str | None = None) -> s
                             "harvested": True,
                         },
                     )
-                    return "qualified:" + candidate_id
+                    qualified.append(candidate_id)
+                    if len(qualified) >= limit:
+                        return "qualified:" + ",".join(qualified)
+                    continue
                 except (OSError, ValueError, KeyError, TypeError) as exc:
                     if card_id is not None:
                         return "blocked:" + str(exc)[:160]
+    if qualified:
+        return "qualified:" + ",".join(qualified)
     return held_state or "idle"
 
 
@@ -318,7 +330,14 @@ def requalify_or_advance(
             return "busy"
         pending = list(_records(root))
         pending_job = next(
-            ((path, job) for path, job in pending if card_id in (None, job.get("card"))), None
+            (
+                (path, job)
+                for path, job in pending
+                if card_id in (None, job.get("card"))
+                and (owner is None or job.get("owner") == owner)
+                and (claim_revision is None or job.get("claim_revision") == claim_revision)
+            ),
+            None,
         )
         if pending_job is not None:
             path, job = pending_job
@@ -354,6 +373,125 @@ def requalify_or_advance(
                     )
                     return "failed:" + str(exc)[:160]
             return "blocked:" + str(exc)[:180]
+
+
+def offer_stale_candidate(
+    home: Path,
+    policy: dict,
+    skc: str,
+    actor: str,
+    core: dict,
+    labels: list[str] | tuple[str, ...],
+    prepare_workspace,
+) -> str:
+    """Claim and queue one stale profile for remote native qualification."""
+    home = Path(home)
+    if socket.gethostname().split(".")[0].lower() != policy.get("authority_host"):
+        return "not-authority"
+    from . import production_test_profile as profile
+
+    card_id = str(core.get("id") or "").lower()
+    try:
+        profile.preflight(home, dict(core, id=card_id), labels, policy)
+    except profile.ProfileRequalificationRequired:
+        pass
+    except (OSError, ValueError) as exc:
+        return "ineligible:" + str(exc)[:120]
+    else:
+        return "current"
+
+    root = home / "fleet/profile-requalifications"
+    card = CardStore(home).fold(card_id)
+    if card is None or card.status.value != "ready" or card.owner:
+        return "deferred:card-not-ready-or-owned"
+    try:
+        current, _predecessor = profile.read_profile(home, card_id)
+        repository = current["repository"]
+        workspace = Path(prepare_workspace(core, labels))
+        source_sha = plan.workspace_source_fingerprint(repository, workspace)
+        expected = profile.contract(dict(core, id=card_id))
+        if not (
+            profile.fingerprint_only_stale(
+                current, expected, policy, source_sha256=source_sha
+            )
+            or profile.legacy_full_qualification_required(current, expected, policy)
+        ):
+            return "ineligible:source-or-contract-changed"
+        if _execution_host(home, policy, card_id) == policy["authority_host"]:
+            return "deferred:no-ready-remote-host"
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return "ineligible:" + str(exc)[:120]
+
+    import subprocess
+
+    claim = subprocess.run(
+        [skc, "coord", "claim", card_id, "--agent", actor],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    card = CardStore(home).fold(card_id)
+    claim_revision = (card.meta or {}).get("_claim_revision") if card else None
+    if claim.returncode or card is None or card.owner != actor or not claim_revision:
+        return "deferred:claim-refused"
+    state = requalify_or_advance(
+        home,
+        policy,
+        skc,
+        actor,
+        card_id=card_id,
+        core=dict(core, id=card_id),
+        workspace=str(workspace),
+        owner=actor,
+        claim_revision=claim_revision,
+    )
+    if state == "pending":
+        target = next(
+            (
+                job.get("execution_host")
+                for _, job in _records(root)
+                if job.get("card") == card_id
+                and job.get("owner") == actor
+                and job.get("claim_revision") == claim_revision
+            ),
+            "unknown-host",
+        )
+        return "pending:" + str(target)
+    if state not in {"pending", "qualified"}:
+        latest = CardStore(home).fold(card_id)
+        if (
+            latest is not None
+            and latest.owner == actor
+            and latest.meta.get("_claim_revision") == claim_revision
+        ):
+            released = subprocess.run(
+                [
+                    skc,
+                    "coord",
+                    "release-claim",
+                    card_id,
+                    "--owner",
+                    actor,
+                    "--expected-claim-revision",
+                    claim_revision,
+                    "--agent",
+                    actor,
+                    "--abandon-reason",
+                    "not-abandoned",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            after = CardStore(home).fold(card_id)
+            if (
+                released.returncode
+                or after is None
+                or after.owner == actor
+                and after.meta.get("_claim_revision") == claim_revision
+            ):
+                return "blocked:qualification-failed-claim-release-refused"
+    return state
 
 
 def _begin(home, policy, skc, actor, card_id, core, workspace, owner, claim_revision):
