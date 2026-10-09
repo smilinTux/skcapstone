@@ -25,6 +25,8 @@ def qualified_runtime(tmp_path, monkeypatch):
     (prefix / "bin").mkdir(parents=True)
     for executable in ("python", "ruff"):
         (prefix / "bin" / executable).write_bytes(b"synthetic runtime bytes\n")
+    # The clean qualification prefix always carries its build manifest.
+    (prefix / plan.STATE_NAME).write_text('{"schema":"synthetic"}\n')
     site = (
         prefix
         / "lib"
@@ -44,6 +46,14 @@ def qualified_runtime(tmp_path, monkeypatch):
         monkeypatch.setattr(module, "PREFIX", prefix)
     monkeypatch.setattr(plan, "_RUNTIME_CACHE", {})
     return prefix
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_legacy_toolchain(tmp_path, monkeypatch):
+    """Never fingerprint the operator's real ~/.skenv as the legacy toolchain."""
+    from skcapstone.fleet import production_test_plan as plan
+
+    monkeypatch.setattr(plan, "LEGACY_PREFIX", tmp_path / "no-legacy-skenv")
 
 
 @pytest.fixture(autouse=True)
