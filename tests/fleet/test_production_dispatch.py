@@ -427,6 +427,7 @@ def test_builder_offers_are_bounded_and_do_not_stop_after_first_success():
         "default_fleet_paths": lambda: None,
         "log": lambda *args: None,
         "d": None,
+        "_record_offer_state": lambda *args: None,
     }
     exec(compile(ast.Module(body=[block], type_ignores=[]), str(ROTATE), "exec"), ns)
     assert offers == ["0", "1", "2"]

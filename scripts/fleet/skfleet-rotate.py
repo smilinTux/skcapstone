@@ -8129,10 +8129,22 @@ log(
 # 2026-10-09 and was never offered (CYCLE_DEADLINE_REACHED processed=22,
 # deferred=107). sorted() is stable, so pool priority holds within each group.
 _qualified_profiles = Path(HOME) / ".skcapstone/fleet/test-profiles"
-_builder_candidates = sorted(
+from skcapstone.fleet import builder_offer_memory as _offer_memory
+
+_OFFER_MEMORY_PATH = Path(HOME) / ".skcapstone/fleet/builder-offer-memory.json"
+_builder_candidates = _offer_memory.order(
     _builder_candidates,
-    key=lambda _c: not (_qualified_profiles / (str(_c[2]) + ".json")).is_file(),
+    _offer_memory.load(_OFFER_MEMORY_PATH),
+    lambda _cid: (_qualified_profiles / (str(_cid) + ".json")).is_file(),
 )
+
+
+def _record_offer_state(card_id, state):
+    try:
+        _offer_memory.record(_OFFER_MEMORY_PATH, card_id, state)
+    except OSError:
+        pass
+
 
 # Niobe offers source cards to Ready builders within the shared cycle budget.
 # The remote node claims the card itself, so the CardStore fence remains the
@@ -8142,6 +8154,7 @@ if not DRY and _is_niobe_builder_host(HOST):
     _profile_requalification_limit = 4
     for _candidate in tuple(_builder_candidates)[:MAX_CANDIDATE_SCAN]:
         if PRODUCTION_POLICY and time.monotonic() - _cycle_started >= _production_cycle_budget:
+            log(d, "BUILDER_OFFER_BUDGET_EXHAUSTED|%s|next=%s" % (HOST, _candidate[2]))
             break
         _remote_core = dict(_candidate[3], id=_candidate[2])
         try:
@@ -8190,6 +8203,7 @@ if not DRY and _is_niobe_builder_host(HOST):
                     )
                     log(d, "PROFILE_REQUALIFICATION_OFFER|%s|%s|state=%s" %
                         (HOST, _candidate[2], _requal_state))
+                    _record_offer_state(_candidate[2], _requal_state)
                     if _requal_state.startswith("pending:"):
                         _profile_requalifications_offered += 1
                 except (OSError, ValueError, subprocess.SubprocessError) as _requal_exc:
