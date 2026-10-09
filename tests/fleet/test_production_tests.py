@@ -390,6 +390,40 @@ def test_remote_initial_profile_plan_is_sealed_without_publishing_profile(setup,
     assert path.exists()
 
 
+def test_initial_profile_plan_preserves_an_existing_unstarted_plan(setup):
+    card = CardStore(setup.home).fold(setup.binding["source_card"])
+    core = card.model_dump(mode="json")
+    recipe = {"pytest": {"tests/test_parser.py": 1}, "compile": [], "lint": [], "changelog": False}
+    source_sha = plan.workspace_source_fingerprint(core["meta"]["repository"], setup.workspace)
+    provisional = profile.profile_value(
+        core,
+        setup.policy,
+        recipe,
+        "niobe",
+        "b" * 64,
+        source_sha256=source_sha,
+    )
+    existing = setup.plan_path.read_bytes()
+
+    initial_path = plan.seal_plan(
+        setup.home,
+        setup.binding,
+        setup.workspace,
+        setup.policy,
+        "niobe",
+        "b" * 64,
+        profile=provisional,
+        initial_profile_qualification=True,
+    )
+
+    sealed, loaded_path, _ = plan.load_plan(setup.home, setup.binding)
+
+    assert setup.plan_path.read_bytes() == existing
+    assert loaded_path == initial_path
+    assert sealed["initial_profile_qualification"] is True
+    assert sealed["profile"] == provisional
+
+
 def test_missing_plan_never_launches(tmp_path):
     binding = {
         "source_card": "89508f83",

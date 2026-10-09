@@ -444,6 +444,12 @@ def _plan_base(home: Path, binding: dict) -> Path:
     )
 
 
+def _initial_plan_base(home: Path, binding: dict) -> Path:
+    """Keep initial profile qualification separate from older unstarted plans."""
+    base = _plan_base(home, binding)
+    return base.with_name(base.stem + ".initial.json")
+
+
 def _legacy_plan_base(home: Path, binding: dict) -> Path:
     return (
         home
@@ -473,7 +479,9 @@ def _seal_plan(
     source_state(workspace, binding)
     directory = home / "fleet/test-plans"
     private_dir(directory, create=True)
-    base = _plan_base(home, binding)
+    base = _initial_plan_base(home, binding) if initial_profile_qualification else _plan_base(
+        home, binding
+    )
     path = base
     if predecessor_sha256 is not None:
         previous, previous_path, current = load_plan(home, binding, require_current=False)
@@ -618,7 +626,10 @@ def load_plan(
     """Read an append-only plan chain and bind its latest approved environment."""
     check_binding(binding)
     base = _plan_base(home, binding)
-    if not base.exists():
+    initial = _initial_plan_base(home, binding)
+    if initial.exists():
+        base = initial
+    elif not base.exists():
         legacy = _legacy_plan_base(home, binding)
         if legacy.exists():
             try:
