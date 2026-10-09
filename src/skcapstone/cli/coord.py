@@ -482,6 +482,10 @@ def register_coord_commands(main: click.Group) -> None:
 
         validate_agent_name(by)
         if task_id:
+            if not re.fullmatch(r"[0-9a-f]{8}", task_id):
+                raise click.ClickException(
+                    "task ID must be exactly 8 lowercase hexadecimal characters"
+                )
             validate_task_id(task_id)
         for d in dep:
             validate_task_id(d)

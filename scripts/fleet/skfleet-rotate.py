@@ -7513,13 +7513,20 @@ def _pool_v2_fingerprint(admission):
                                      separators=(",", ":")).encode()).hexdigest()
 
 
+def _pool_v2_card_id_shape_reason(admission):
+    """Return the explicit POOL_V2 reason for noncanonical card IDs."""
+    cid = admission.get("card_id") if isinstance(admission, dict) else None
+    if not isinstance(cid, str) or not re.fullmatch(r"[0-9a-f]{8}", cid):
+        return "card-id-shape"
+    return None
+
+
 def _pool_v2_candidate_allowed(admission):
     """Apply card-shape and seat authority fences once for every pool path."""
     if not isinstance(admission, dict):
         return False
-    cid = admission.get("card_id")
     labels = admission.get("labels")
-    if not isinstance(cid, str) or not re.fullmatch(r"[0-9a-f]{8}", cid):
+    if _pool_v2_card_id_shape_reason(admission):
         return False
     if not isinstance(labels, list):
         return False
@@ -7823,6 +7830,9 @@ def _shadow_pool_v2():
             _POOL_V2_ADMISSIONS[cid] = _pool_v2_admission(
                 cid, core, claimability
             )
+            if _pool_v2_card_id_shape_reason(_POOL_V2_ADMISSIONS[cid]):
+                log(d, "POOL_V2_CANDIDATE_EXCLUDED|%s|%s|reason=card-id-shape" %
+                    (HOST, cid))
             seraph_review_admitted = _POOL_V2_ADMISSIONS[cid].get(
                 "seraph_review_admitted"
             ) is True
