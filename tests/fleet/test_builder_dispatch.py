@@ -1763,6 +1763,54 @@ def test_decline_reason_names_exhausted_attempts(paths, operator, noded41) -> No
     assert "error=exact source reconstruction failed" in reason
 
 
+def test_terminal_source_bundle_refusal_keeps_safe_reason(paths, monkeypatch, tmp_path):
+    from skcapstone.fleet import builder_continue, builder_terminal, production_exit, source_bundle
+
+    request = {
+        "card_id": "24b00003",
+        "node": "node-ziowk01",
+        "request_id": "a" * 64,
+        "production": {"host": "ziowk01"},
+    }
+    status = {
+        "request_id": request["request_id"],
+        "card_id": request["card_id"],
+        "state": "awaiting-evidence",
+        "production": request["production"],
+        "owner": "pi-glm-ziowk01-24b00003",
+        "claim_revision": "b" * 32,
+        "attempt": 1,
+        "exit_code": 1,
+        "unit": "skfleet-builder-24b00003.service",
+    }
+    monkeypatch.setattr(builder_dispatch, "_finalize_builder_admission", lambda *_args: None)
+    monkeypatch.setattr(builder_terminal, "observe", lambda *_args: None)
+    monkeypatch.setattr(
+        builder_continue,
+        "original_outcome_pending",
+        lambda *_args: False,
+    )
+    monkeypatch.setattr(production_exit, "release_blocked", lambda *_args: None)
+    monkeypatch.setattr(
+        source_bundle,
+        "publish_source",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            source_bundle.SourceBundleError("source proposal belongs to another claim")
+        ),
+    )
+    monkeypatch.setattr(
+        builder_dispatch.CardStore,
+        "fold",
+        lambda *_args: SimpleNamespace(status=SimpleNamespace(value="doing"), links={}),
+    )
+
+    result = builder_dispatch._reconcile_running(paths, tmp_path, "node-ziowk01", request, status)
+
+    assert result["state"] == "awaiting-evidence"
+    assert result["claim_released"] is False
+    assert result["error"] == "candidate source rejected: source proposal belongs to another claim"
+
+
 def test_decline_reason_names_missing_ready_builder(paths) -> None:
     """An empty or role-less registry is a named decline, not silence."""
     reason = builder_dispatch.decline_reason(paths, _card(), ["sk-m", "source-only"])

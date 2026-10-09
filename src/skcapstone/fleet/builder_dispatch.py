@@ -1004,9 +1004,10 @@ def _reconcile_running(
                 paths.root / "workspaces" / owner,
                 acknowledged=(status.get("source_artifact") or {}).get("manifest_sha256"),
             )
-        except (SourceBundleError, OSError, ValueError, KeyError):
+        except SourceBundleError as exc:
             # A process exit is not an outcome. Keep original custody for
             # review/recovery rather than replaying implementation work.
+            reason = " ".join(str(exc).split())[:120]
             return _write_status(
                 paths,
                 node,
@@ -1015,7 +1016,19 @@ def _reconcile_running(
                 **common,
                 exit_code=exit_code,
                 claim_released=False,
-                error="exact typed candidate artifacts pending",
+                error=f"candidate source rejected: {reason}",
+            )
+        except (OSError, ValueError, KeyError) as exc:
+            # Do not sync host paths or parser contents into the fleet status.
+            return _write_status(
+                paths,
+                node,
+                request,
+                "awaiting-evidence",
+                **common,
+                exit_code=exit_code,
+                claim_released=False,
+                error=f"candidate source unavailable: {type(exc).__name__}",
             )
         return _write_status(
             paths,
