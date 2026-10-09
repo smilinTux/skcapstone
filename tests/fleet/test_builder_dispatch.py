@@ -1753,12 +1753,14 @@ def test_decline_reason_names_exhausted_attempts(paths, operator, noded41) -> No
         request,
         "failed",
         attempt=builder_dispatch.MAX_ATTEMPTS,
+        error="exact source reconstruction failed",
     )
     assert builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer) is None
     reason = builder_dispatch.decline_reason(paths, _card(), ["sk-m", "source-only"])
     assert reason is not None
     assert "node-ziowk01" in reason
     assert "failed" in reason
+    assert "error=exact source reconstruction failed" in reason
 
 
 def test_decline_reason_names_missing_ready_builder(paths) -> None:

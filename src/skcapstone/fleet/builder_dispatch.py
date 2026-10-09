@@ -719,9 +719,11 @@ def decline_reason(
                     and int(prior.get("attempt") or 1) < MAX_ATTEMPTS
                 )
             ):
+                error = " ".join(str(prior.get("error") or "").split())[:160]
+                detail = f" error={error}" if error else ""
                 return (
                     f"terminal: node={view.name} state={prior.get('state')}"
-                    f" attempt={prior.get('attempt')}"
+                    f" attempt={prior.get('attempt')}{detail}"
                 )
             return None
         if same_generation and prior.get("state") == "running":
