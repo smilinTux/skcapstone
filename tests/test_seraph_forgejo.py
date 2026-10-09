@@ -18,7 +18,11 @@ from skcapstone.seraph_forgejo import (
     attest_private_credential,
     main,
 )
-from skcapstone.seraph_review_cardstore import LiveCardStoreGateway, _candidate
+from skcapstone.seraph_review_cardstore import (
+    LiveCardStoreGateway,
+    _candidate,
+    _current_generation_view,
+)
 from skcapstone.seraph_review_contracts import ConnectorCapabilities, ReviewPublicationError
 from tests.test_seraph_review_publisher import (
     HEAD,
@@ -515,3 +519,50 @@ def test_newer_sibling_outcome_and_nonterminal_pass_remain_unresolved(tmp_path, 
     store.append_event("review02", "link", "seraph", link_key="result", link_value=latest)
     store.append_event("review02", "move", "seraph", column=state)
     assert LiveCardStoreGateway(tmp_path).read_card("review01").unresolved_review
+
+
+def _generation_events(link_ts, claim_ts="2026-10-09T23:27:34", verdict_ts="2026-10-09T23:33:10"):
+    owner = "pi-glm-builder-node-chiap02-56fddc0b"
+    return owner, [
+        {"action": "link", "link_key": "pr", "ts": link_ts, "writer": "old-worker"},
+        {"action": "link", "link_key": "commit", "ts": link_ts, "writer": "old-worker"},
+        {"action": "claim", "ts": claim_ts, "writer": owner},
+        {"action": "verdict", "ts": verdict_ts, "writer": owner, "verdict": "PASS_FOR_REVIEW"},
+    ]
+
+
+def test_prior_generation_candidate_links_do_not_bind_a_new_verdict():
+    """56fddc0b: an old PR link from a previous attempt blocked the new candidate."""
+    card = SimpleNamespace(
+        links={
+            "repository": SKGIT_REPOSITORY,
+            "pr": "https://github.com/smilinTux/sklegal/pull/146",
+            "commit": "e368fce",
+        },
+        meta={},
+    )
+    owner, events = _generation_events("2026-09-01T00:00:00")
+    view = _current_generation_view(card, events, events[-1])
+    assert _candidate(view) == (SKGIT_REPOSITORY, None, None)
+    with pytest.raises(ReviewPublicationError, match="card_pr_repository_mismatch"):
+        _candidate(card)
+
+
+def test_candidate_links_written_during_the_current_claim_still_bind():
+    card = SimpleNamespace(
+        links={
+            "repository": SKGIT_REPOSITORY,
+            "pr": SKGIT_REPOSITORY + "/pulls/2",
+            "commit": HEAD,
+        },
+        meta={},
+    )
+    _, events = _generation_events("2026-10-09T23:30:00")
+    assert _current_generation_view(card, events, events[-1]) is card
+
+
+def test_verdict_without_its_writers_claim_keeps_every_link():
+    card = SimpleNamespace(links={"repository": SKGIT_REPOSITORY, "commit": HEAD}, meta={})
+    _, events = _generation_events("2026-09-01T00:00:00")
+    events = [event for event in events if event["action"] != "claim"]
+    assert _current_generation_view(card, events, events[-1]) is card

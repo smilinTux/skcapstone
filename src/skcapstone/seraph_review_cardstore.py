@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 from skcoord.card_store import CardStore
@@ -81,6 +82,41 @@ def _candidate(card: object) -> tuple[str | None, int | None, str | None]:
     return repository, number, head
 
 
+_GENERATION_CANDIDATE_KEYS = ("pr", "link_head_revision", "head", "head_commit", "commit")
+
+
+def _current_generation_view(card: object, events: list[dict], outcome: dict) -> object:
+    """Hide candidate links an earlier generation left before the verdict's claim.
+
+    A rebuilt card keeps the pr/commit links of its previous attempt, so a new
+    producer's exact typed verdict failed publication as a binding conflict or
+    a PR repository mismatch (56fddc0b, 74c301a1, 2026-10-09). Only links whose
+    last write precedes the verdict writer's own latest claim are hidden; links
+    written during the current claim still bind and still conflict.
+    """
+    writer, verdict_ts = outcome.get("writer"), outcome.get("ts", "")
+    claims = [
+        event.get("ts", "")
+        for event in events
+        if event.get("action") == "claim"
+        and event.get("writer") == writer
+        and event.get("ts", "") <= verdict_ts
+    ]
+    if not writer or not claims:
+        return card
+    started = max(claims)
+    written: dict[str, str] = {}
+    for event in events:
+        key = event.get("link_key") or event.get("key")
+        if event.get("action") == "link" and key in _GENERATION_CANDIDATE_KEYS:
+            written[key] = max(written.get(key, ""), event.get("ts", ""))
+    stale = {key for key, ts in written.items() if ts < started}
+    if not stale:
+        return card
+    links = {key: value for key, value in card.links.items() if key not in stale}
+    return SimpleNamespace(links=links, meta=card.meta)
+
+
 def _latest_outcome(store: CardStore, card_id: str) -> dict:
     """Read native and mediated outcome aliases with the same latest-event rule."""
     rows = store._read_events(card_id) + store._legacy_events(card_id)
@@ -141,7 +177,11 @@ class LiveCardStoreGateway:
             else (outcome.get("link_value", outcome.get("value")))
         )
         writer = outcome.get("writer")
-        repository, number, head = _candidate(card)
+        repository, number, head = _candidate(
+            _current_generation_view(card, events, outcome)
+            if outcome.get("action") == "verdict"
+            else card
+        )
         if outcome.get("action") == "verdict":
             candidate_head = outcome.get("candidate_commit")
             if head is not None and head != candidate_head:
