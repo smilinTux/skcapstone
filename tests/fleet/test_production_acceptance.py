@@ -116,6 +116,39 @@ def test_real_unpublished_candidate_and_committed_review_collect_separately(stop
     assert store.fold(context["source"]["card"]).owner == context["source"]["owner"]
 
 
+def test_sealed_source_collect_survives_producer_claim_release(stopped_pair):
+    home, policy, review, _, _, store = stopped_pair
+    review_row = store.fold(review["card"])
+    review_core = review_row.model_dump(mode="json")
+    source_row = store.fold(acceptance._binding(review_core, "link_source_card"))
+    manifest, _ = acceptance._review_manifest(
+        review_core,
+        acceptance._binding(review_core, "repository"),
+        acceptance._binding(review_core, "link_head_revision"),
+    )
+    store.append_event(
+        source_row.id,
+        "release_claim",
+        "niobe",
+        released_owner=source_row.owner,
+        expected_claim_revision=source_row.meta["_claim_revision"],
+        reason="producer released after sealed source review started",
+    )
+    assert store.fold(source_row.id).owner is None
+
+    context = acceptance.collect(
+        home,
+        policy,
+        review["card"],
+        review["claim"],
+        process_check=lambda card: {"sessions": [], "units": []},
+    )
+
+    assert context["source"]["owner"] == source_row.owner
+    assert context["source"]["claim"] == manifest["claim_revision"]
+    assert context["source"]["head"] == manifest["head"]
+
+
 def test_collected_producer_terminal_can_enter_independent_review(stopped_pair):
     home, _, review, status_path, _, store = stopped_pair
     status = json.loads(status_path.read_text())
@@ -222,6 +255,7 @@ def test_direct_seat_terminal_receipt_can_enter_review_and_is_rechecked(stopped_
         "stale-claim",
         "false-ci",
         "source-change",
+        "source-reclaimed",
         "source-running",
         "same-family",
         "live-review",
@@ -260,7 +294,22 @@ def test_collection_refuses_missing_forged_stale_or_nonindependent_proof(stopped
         )
     elif kind == "source-change":
         parent = store.fold(review["card"]).meta["link_source_card"]
-        store.append_event(parent, "add_label", "operator", label="source-changed")
+        source_row = store.fold(parent)
+        store.append_event(
+            parent,
+            "verdict",
+            source_row.owner,
+            verdict="PASS_FOR_REVIEW",
+            expected_claim_revision=source_row.meta["_claim_revision"],
+            candidate_commit="a" * 40,
+            candidate_tree="b" * 40,
+            candidate_ref="refs/heads/work/new-source",
+            candidate_path=source_row.links.get("evidence", "unused"),
+            candidate_sha256="c" * 64,
+        )
+    elif kind == "source-reclaimed":
+        parent = store.fold(review["card"]).meta["link_source_card"]
+        store.append_event(parent, "claim", "other-producer", owner="other-producer")
     elif kind == "review-hold":
         store.append_event(review["card"], "add_label", "operator", label="do-not-claim")
     elif kind in {"source-running", "same-family"}:
@@ -323,9 +372,9 @@ def test_controller_requires_trusted_tests_and_finishes_without_legacy_release(
         home, policy, process_check=lambda card: {"sessions": [], "units": []}
     )
     assert len(results) == 1
-    assert results[0]["state"] == (
-        "accepted" if tests_ready else "awaiting-trusted-tests"
-    ), results
+    assert results[0]["state"] == ("accepted" if tests_ready else "awaiting-trusted-tests"), (
+        results
+    )
     row = store.fold(review["card"])
     assert row.status.value == ("done" if tests_ready else "doing")
     assert row.owner == (None if tests_ready else review["owner"])

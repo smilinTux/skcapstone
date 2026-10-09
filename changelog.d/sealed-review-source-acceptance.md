@@ -1,0 +1,1 @@
+- Native review acceptance now validates the sealed producer generation and terminal receipt even after the producer claim is released.
