@@ -139,7 +139,11 @@ jobs:
     # deterministic suite, in 268-292s. 30 minutes is roughly six times the
     # slowest observed run, so it absorbs a cold cache or a slow runner while
     # still failing a genuine hang in minutes rather than hours.
-    timeout-minutes: 30
+    # 2026-10-09: the py3.12 suite grew to ~24 minutes (12,567 tests in
+    # 1437-1440s) and the 24m step kill failed green runs on #1041 and #1044.
+    # Step limit 40m and job limit 50m restore headroom; parallelising the
+    # suite is the real fix.
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
@@ -300,7 +304,7 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: |
           set -o pipefail
-          timeout --kill-after=10s 24m python -m pytest tests/ \
+          timeout --kill-after=10s 40m python -m pytest tests/ \
             --strict-markers \
             -m "not integration and not e2e" \
             --durations=40 -o faulthandler_timeout=60 \
@@ -317,7 +321,7 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: |
           set -o pipefail
-          timeout --kill-after=10s 24m scripts/ci/run-python311-compat.sh "$BASE_SHA" "$GITHUB_SHA" \
+          timeout --kill-after=10s 40m scripts/ci/run-python311-compat.sh "$BASE_SHA" "$GITHUB_SHA" \
             > pytest-ci.log 2>&1
       - name: Preserve test diagnostics even when pytest times out
         if: always() && needs.classify.outputs.docs-only != 'true'
