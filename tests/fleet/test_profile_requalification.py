@@ -157,9 +157,7 @@ def test_stale_profile_candidate_queues_under_governed_claim(tmp_path, monkeypat
     current = {"repository": "https://github.com/example/repo.git"}
     monkeypatch.setattr(test_profile, "read_profile", lambda *_a, **_k: (current, "p" * 64))
     monkeypatch.setattr(test_profile, "contract", lambda _core: {"card": "1234abcd"})
-    monkeypatch.setattr(
-        test_profile, "fingerprint_only_stale", lambda *_a, **_k: True
-    )
+    monkeypatch.setattr(test_profile, "fingerprint_only_stale", lambda *_a, **_k: True)
     monkeypatch.setattr(refresh.plan, "workspace_source_fingerprint", lambda *_a: "s" * 64)
     monkeypatch.setattr(refresh, "_execution_host", lambda *_a: "chiap01")
     card = SimpleNamespace(status=SimpleNamespace(value="ready"), owner=None, meta={})

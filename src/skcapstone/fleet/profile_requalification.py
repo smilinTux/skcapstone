@@ -411,9 +411,7 @@ def offer_stale_candidate(
         source_sha = plan.workspace_source_fingerprint(repository, workspace)
         expected = profile.contract(dict(core, id=card_id))
         if not (
-            profile.fingerprint_only_stale(
-                current, expected, policy, source_sha256=source_sha
-            )
+            profile.fingerprint_only_stale(current, expected, policy, source_sha256=source_sha)
             or profile.legacy_full_qualification_required(current, expected, policy)
         ):
             return "ineligible:source-or-contract-changed"
