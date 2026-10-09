@@ -8189,7 +8189,8 @@ def _record_offer_state(card_id, state):
 # then overran the 270s entrypoint limit and exited 70 every time, losing every
 # launch (2026-10-09 18:14-18:33Z). The offer memory serves the least recently
 # tried cards first, so cards past the cap are reached on the next cycle.
-_BUILDER_OFFER_SECONDS = float(os.environ.get("SKFLEET_BUILDER_OFFER_SECONDS", "45"))
+# 45s still left the cycle over its 270s limit (lane selection + launch ~90s).
+_BUILDER_OFFER_SECONDS = float(os.environ.get("SKFLEET_BUILDER_OFFER_SECONDS", "20"))
 
 # Niobe offers source cards to Ready builders within the shared cycle budget.
 # The remote node claims the card itself, so the CardStore fence remains the
