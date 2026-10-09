@@ -1020,3 +1020,74 @@ def test_backlog_cards_are_offered_and_return_to_backlog(tmp_path, monkeypatch):
     assert ["coord", "claim", "1234abcd", "--agent"] in calls
     assert card.status.value == "backlog" and card.owner is None
     assert not any(c[1] == "move" for c in calls)
+
+
+def test_failed_remote_job_releases_its_leaked_claim_back_to_ready(tmp_path, monkeypatch):
+    """A remote executor failure writes .failed.json and nothing else.
+
+    Production 2026-10-09: a69ec3a8, 90abb007 and 2587020f failed on chiap04
+    ("operator test recipe is invalid") and stayed DOING, owned by
+    niobe-requal-<card>, so the legacy selector counted them as claimed and
+    they never reached POOL_V2.
+    """
+    root = tmp_path / "fleet/profile-requalifications"
+    root.parent.mkdir(mode=0o700)
+    plan.private_dir(root, create=True)
+    jobs = {
+        "a": ("a69ec3a8", "niobe-requal-a69ec3a8", "rev-a", True),
+        "b": ("90abb007", "niobe-requal-90abb007", "rev-b", True),
+        "c": ("2587020f", "niobe-requal-2587020f", "rev-c", False),
+    }
+    cards = {}
+    for suffix, (card_id, owner, revision, failed) in jobs.items():
+        path = root / (suffix * 64 + ".job.json")
+        plan.write_once(path, {"card": card_id, "owner": owner, "claim_revision": revision})
+        if failed:
+            plan.write_once(
+                path.with_name(path.stem + ".failed.json"),
+                {"card": card_id, "reason": "operator test recipe is invalid"},
+            )
+        cards[card_id] = SimpleNamespace(
+            status=SimpleNamespace(value="doing"), owner=owner, meta={"_claim_revision": revision}
+        )
+    # 90abb007 was reclaimed by someone else since; its newer claim is not ours.
+    cards["90abb007"].owner = "pi-glm-builder-node-chiap01-90abb007"
+    monkeypatch.setattr(refresh.socket, "gethostname", lambda: "chiap08")
+    monkeypatch.setattr(refresh.CardStore, "fold", lambda _store, cid: cards[cid])
+    monkeypatch.setattr(refresh, "_claim_is_current", lambda *_args: False)
+    calls = []
+
+    def coord(argv, **_kwargs):
+        calls.append(argv[1:4])
+        card = cards[argv[3]]
+        if argv[2] == "release-claim":
+            assert argv[argv.index("--owner") + 1] == card.owner
+            assert argv[argv.index("--expected-claim-revision") + 1] == "rev-a"
+            card.status.value, card.owner = "backlog", None
+        elif argv[2] == "move":
+            card.status.value = argv[4]
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("subprocess.run", coord)
+
+    state = refresh.requalify_or_advance(
+        tmp_path, {"authority_host": "chiap08"}, "/test/skcapstone", "niobe"
+    )
+
+    assert state == "batch:a69ec3a8=released"
+    assert calls == [
+        ["coord", "release-claim", "a69ec3a8"],
+        ["coord", "move", "a69ec3a8"],
+    ]
+    assert cards["a69ec3a8"].status.value == "ready" and cards["a69ec3a8"].owner is None
+    assert cards["90abb007"].owner == "pi-glm-builder-node-chiap01-90abb007"
+    assert cards["2587020f"].owner == "niobe-requal-2587020f"
+    # Idempotent: the next cycle finds nothing left to release.
+    calls.clear()
+    assert (
+        refresh.requalify_or_advance(
+            tmp_path, {"authority_host": "chiap08"}, "/test/skcapstone", "niobe"
+        )
+        == "idle"
+    )
+    assert calls == []
