@@ -85,6 +85,33 @@ def test_materialize_source_uses_only_host_scoped_github_credentials(
     assert "GH_TOKEN" not in fetch_environment
 
 
+def test_materialize_source_fetches_skgit_over_pinned_ssh_transport(monkeypatch, tmp_path):
+    calls = []
+    auth_home = tmp_path / "auth-home"
+
+    def run(command, *, env, **_kwargs):
+        calls.append((command, env))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(builder_dispatch.subprocess, "run", run)
+    monkeypatch.setattr(builder_dispatch.Path, "home", lambda: auth_home)
+    repository = "https://skgit.skstack01.douno.it/smilinTux/sklegal.git"
+    builder_dispatch.materialize_source(
+        {"repository": repository, "base_revision": "a" * 40}, tmp_path / "workspace"
+    )
+
+    remote_add, _ = calls[1]
+    fetch_command, fetch_environment = calls[2]
+    rewrite = (
+        "url.ssh://git@skgit.skstack01.douno.it:222/.insteadOf=https://skgit.skstack01.douno.it/"
+    )
+    assert repository in remote_add and rewrite not in remote_add
+    assert rewrite in fetch_command and "a" * 40 in fetch_command
+    assert fetch_environment["HOME"] == str(auth_home)
+    assert fetch_environment["GIT_SSH_COMMAND"] == "ssh -o BatchMode=yes"
+    assert fetch_environment["GIT_CONFIG_GLOBAL"] == "/dev/null"
+
+
 def _folded(**values):
     defaults = {
         "id": "24b00003",
