@@ -8184,13 +8184,25 @@ def _record_offer_state(card_id, state):
         pass
 
 
+# The builder offer phase gets its own slice. With 63-67 candidates after #1059
+# it took ~93s (each requalification offer materializes source), and the cycle
+# then overran the 270s entrypoint limit and exited 70 every time, losing every
+# launch (2026-10-09 18:14-18:33Z). The offer memory serves the least recently
+# tried cards first, so cards past the cap are reached on the next cycle.
+_BUILDER_OFFER_SECONDS = float(os.environ.get("SKFLEET_BUILDER_OFFER_SECONDS", "45"))
+
 # Niobe offers source cards to Ready builders within the shared cycle budget.
 # The remote node claims the card itself, so the CardStore fence remains the
 # authority and this scheduler never impersonates a remote worker.
 if not DRY and _is_niobe_builder_host(HOST):
     _profile_requalifications_offered = 0
     _profile_requalification_limit = 4
+    _builder_phase_started = time.monotonic()
     for _candidate in tuple(_builder_candidates)[:MAX_CANDIDATE_SCAN]:
+        if time.monotonic() - _builder_phase_started >= _BUILDER_OFFER_SECONDS:
+            log(d, "BUILDER_OFFER_PHASE_CAPPED|%s|next=%s|cap_s=%.0f" % (
+                HOST, _candidate[2], _BUILDER_OFFER_SECONDS))
+            break
         if PRODUCTION_POLICY and time.monotonic() - _cycle_started >= _production_cycle_budget:
             log(d, "BUILDER_OFFER_BUDGET_EXHAUSTED|%s|next=%s" % (HOST, _candidate[2]))
             break
