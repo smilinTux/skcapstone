@@ -186,6 +186,21 @@ def validate_review_execution(home, policy, launch, card, event, *, recorded=Tru
         work_kind="review",
         unit="skfleet-worker-" + request["production"]["family"] + "-" + card.id + ".service",
     )
+    claim_events = [
+        row
+        for row in CardStore(home)._read_events(card.id)
+        if row.get("action") == "claim"
+        and row.get("writer") == launch["owner"]
+        and (row.get("claim_revision") or row.get("event_id")) == launch["revision"]
+    ]
+    source = _source(home, card, historical=True)
+    expected_source = dict(request["source"])
+    observed_source = dict(source)
+    # A release changes the live card revision. The offer's immutable ledger
+    # event binds the source revision; content, producer claim, and bundle are
+    # revalidated against the sealed manifest and PASS_FOR_REVIEW event.
+    expected_source.pop("revision", None)
+    observed_source.pop("revision", None)
     if (
         event.get("schema") != "skfleet.review-assignment-launch/v3"
         or event.get("action") != "review_assignment_launch"
@@ -195,8 +210,10 @@ def validate_review_execution(home, policy, launch, card, event, *, recorded=Tru
         or execution != status.get("execution")
         or launch["host"] != execution["host"]
         or launch["owner"] != request["reviewer"]
-        or launch["owner"] != card.owner
-        or launch["revision"] != card.meta.get("_claim_revision")
+        or len(claim_events) != 1
+        or card.meta.get("claim_conflicts")
+        or (card.owner is not None and launch["owner"] != card.owner)
+        or (card.owner is not None and launch["revision"] != card.meta.get("_claim_revision"))
         or event.get("writer") != launch["owner"]
         or event.get("reviewer") != launch["owner"]
         or event.get("claim_revision") != launch["revision"]
@@ -207,7 +224,7 @@ def validate_review_execution(home, policy, launch, card, event, *, recorded=Tru
         or status.get("writer", {}).get("role") != "sknoded"
         or status.get("writer", {}).get("node") != node
         or not status.get("writer", {}).get("identity")
-        or _source(home, card) != request["source"]
+        or observed_source != expected_source
     ):
         raise ValueError("remote execution provenance differs")
     binding = dict(

@@ -237,6 +237,112 @@ def test_authority_imports_real_remote_review_without_original_workspace(termina
     assert e["source"]["store"].fold(e["source"]["card"]).owner == e["source"]["owner"]
 
 
+@pytest.mark.host_systemd
+def test_acceptance_uses_sealed_review_policy_after_source_and_reviewer_release(
+    terminal_review,
+):
+    from skcapstone.fleet.production_acceptance import collect, digest
+
+    e = terminal_review
+    cards = e["source"]["store"]
+    source = cards.fold(e["source"]["card"])
+    review_card = cards.fold(e["card"])
+    cards.append_event(
+        source.id,
+        "release_claim",
+        "niobe",
+        released_owner=source.owner,
+        expected_claim_revision=source.meta["_claim_revision"],
+        reason="release after review sealed source",
+    )
+    cards.append_event(
+        review_card.id,
+        "release_claim",
+        "niobe",
+        released_owner=review_card.owner,
+        expected_claim_revision=review_card.meta["_claim_revision"],
+        reason="release after terminal review PASS",
+    )
+    from skcapstone.fleet.production_receipts import validate_review_execution
+
+    event = next(
+        row
+        for row in cards._read_events(e["card"])
+        if row.get("action") == "review_assignment_launch"
+    )
+    validate_review_execution(
+        e["home"],
+        e["request"]["policy"],
+        dict(
+            host=e["terminal"]["host"],
+            owner=e["request"]["reviewer"],
+            revision=e["status"]["claim_revision"],
+            model=e["terminal"]["model"],
+            lane=e["terminal"]["lane"],
+        ),
+        cards.fold(e["card"]),
+        event,
+    )
+
+    context = collect(
+        e["home"],
+        e["policy"],
+        e["card"],
+        e["status"]["claim_revision"],
+        process_check=lambda card: dict(sessions=[], units=[]),
+    )
+    e["policy"]["node_quotas"]["chiap03"]["cpu_quota_percent"] += 100
+    e["policy"]["gateway_url"] = "http://gateway.changed"
+    from skcapstone.fleet.production_acceptance import _sealed_context_policy
+
+    assert digest(_sealed_context_policy(e["home"], context, e["policy"])) == digest(
+        e["request"]["policy"]
+    )
+
+    assert context["policy_sha256"] == digest(e["request"]["policy"])
+    assert context["source"]["claim"] == e["request"]["source"]["claim"]
+    assert context["review"]["claim"] == e["status"]["claim_revision"]
+
+
+@pytest.mark.host_systemd
+def test_remote_exit_import_uses_sealed_claims_and_policy_after_release(
+    terminal_review, monkeypatch
+):
+    from skcapstone.fleet.production_review_custody import exit_path, import_remote_exits
+
+    e = terminal_review
+    cards = e["source"]["store"]
+    source = cards.fold(e["source"]["card"])
+    review_card = cards.fold(e["card"])
+    cards.append_event(
+        source.id,
+        "release_claim",
+        "niobe",
+        released_owner=source.owner,
+        expected_claim_revision=source.meta["_claim_revision"],
+        reason="release after review sealed source",
+    )
+    cards.append_event(
+        review_card.id,
+        "release_claim",
+        "niobe",
+        released_owner=review_card.owner,
+        expected_claim_revision=review_card.meta["_claim_revision"],
+        reason="release after terminal review PASS",
+    )
+    path = exit_path(e["home"], e["card"], e["status"]["claim_revision"])
+    path.unlink()
+    e["policy"]["gateway_url"] = "http://gateway.changed"
+    from skcapstone.fleet import production_review_custody as custody
+
+    monkeypatch.setattr(custody, "unit_terminal", lambda *a, **kw: {"ActiveState": "inactive"})
+
+    import_remote_exits(e["home"], e["policy"])
+
+    assert path.is_file()
+    assert json.loads(path.read_text()) == e["terminal"]
+
+
 @pytest.mark.parametrize("change", ["missing-packet", "bundle-hash", "owner", "claim", "live"])
 @pytest.mark.host_systemd
 def test_remote_completion_rejects_bad_transport_or_custody(terminal_review, monkeypatch, change):

@@ -11,6 +11,7 @@ from skcapstone.seat_boundaries import Action, BoundaryError, require_authority
 from skcapstone.seat_runtime import (
     MeroObservation,
     ReviewAssignmentRecommendation,
+    _launch_route_identity,
     append_review_launch_receipt,
     authorize_review_launch,
     governed_review_assignment_ready,
@@ -158,6 +159,47 @@ def test_launch_receipt_rejects_incomplete_route_identity(tmp_path: Path) -> Non
             launched=True,
             route_identity={"provider": "provider-a"},
         )
+
+
+def test_review_launch_seals_and_validates_its_policy_snapshot(tmp_path):
+    from skcapstone.fleet.production_builder import digest
+
+    hosts = ["chiap01", "chiap02", "chiap03", "chiap04", "chiap08"]
+    limits = dict(
+        cpu_quota_percent=200,
+        memory_max_bytes=3 * 1024**3,
+        tasks_max=256,
+        runtime_max_seconds=3600,
+    )
+    policy = dict(
+        schema="skfleet.production/v1",
+        authority_host="chiap08",
+        capacity_authority="skgateway",
+        gateway_url="http://gateway.test",
+        lanes={
+            lane: dict(enabled=True, provider="skgateway")
+            for lane in ("codex", "glm", "deepseek", "qwen")
+        },
+        node_quotas={host: dict(limits) for host in hosts},
+        worker_destinations=hosts,
+        remote_review=dict(enabled=True, destinations=["chiap03"], card_ids=["b4594faa"]),
+        node_admission={"chiap08": dict(max_concurrent_workers=1, memory_floor_bytes=8 * 1024**3)},
+    )
+    policy["lanes"]["kimi"] = dict(enabled=False)
+    route = {
+        "logical_route": "review-medium",
+        "provider": "skgateway",
+        "capacity_domains": ["zai"],
+        "model_or_bucket": "glm-5",
+        "policy_snapshot": policy,
+        "policy_sha256": digest(policy),
+    }
+
+    assert _launch_route_identity(tmp_path, route) == route
+
+    route["policy_sha256"] = "0" * 64
+    with pytest.raises(BoundaryError, match="policy snapshot is invalid"):
+        _launch_route_identity(tmp_path, route)
 
 
 @pytest.mark.parametrize("candidate", ["", " ", "producer", "link"])

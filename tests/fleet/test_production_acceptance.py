@@ -94,6 +94,11 @@ def stopped_pair(pair, source, monkeypatch, request):  # noqa: F811
             launch["model"] == event["route_identity"]["model_or_bucket"]
         ),
     )
+    monkeypatch.setattr(
+        acceptance,
+        "_sealed_review_policy",
+        lambda home, launch, card, event, current_policy: current_policy,
+    )
     monkeypatch.setattr(acceptance, "unit_terminal", lambda *a, **k: {"ActiveState": "inactive"})
     return home, policy, review, status_path, terminal_path, store
 

@@ -9676,6 +9676,11 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         "--","bash","-lc",child,
     ]
     _launch_argv=_worker_launch_command(unit,workspace,inner)
+    if PRODUCTION_POLICY and _review_recommendation is not None:
+        _route_identity["policy_snapshot"] = PRODUCTION_POLICY
+        _route_identity["policy_sha256"] = hashlib.sha256(
+            json.dumps(PRODUCTION_POLICY, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
     if PRODUCTION_POLICY:
         from skcapstone.fleet.production_admission import (
             AdmissionDeferredError, AdmissionError, reserve_launch, start_reserved)

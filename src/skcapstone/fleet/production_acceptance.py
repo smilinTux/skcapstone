@@ -232,6 +232,79 @@ def _sealed_review_outcome(store, row, owner, claim):
     return outcome
 
 
+def _sealed_review_policy(home, launch, card, event, current_policy):
+    """Resolve the exact policy snapshot bound to the completed review launch."""
+    if event.get("schema") == "skfleet.review-assignment-launch/v3":
+        from .builder_dispatch import request_path
+        from .paths import FleetPaths
+        from .review_dispatch import _recorded, validate_contract
+
+        execution = event.get("execution") or {}
+        node = execution.get("node")
+        if not isinstance(node, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", node):
+            raise ReviewEvidenceError("sealed review policy request identity invalid")
+        request = read_json(request_path(FleetPaths(Path(home) / "fleet"), node, card.id))
+        sealed = request.get("policy")
+        policy_sha256 = (request.get("production") or {}).get("policy_sha256")
+        if (
+            request.get("card_id") != card.id
+            or request.get("reviewer") != launch.get("owner")
+            or request.get("request_id") != execution.get("request_id")
+            or digest(request) != execution.get("request_sha256")
+            or not isinstance(sealed, dict)
+            or digest(sealed) != policy_sha256
+            or policy_sha256 != execution.get("policy_sha256")
+        ):
+            raise ReviewEvidenceError("sealed review policy digest differs from launch")
+        _recorded(home, request)
+        validate_contract(request, sealed, host=launch["host"], historical=True)
+        return sealed
+
+    route = event.get("route_identity") or {}
+    sealed = route.get("policy_snapshot")
+    if isinstance(sealed, dict) and route.get("policy_sha256") == digest(sealed):
+        from .production_policy import validate_execution_policy
+
+        try:
+            validate_execution_policy(sealed)
+        except ValueError as exc:
+            raise ReviewEvidenceError("sealed review policy snapshot is invalid") from exc
+        return sealed
+    # Older local reviews did not retain the policy body. They can be replayed
+    # only if the exact policy digest is still the live one.
+    recorded = route.get("policy_sha256")
+    if not isinstance(recorded, str) or recorded != digest(current_policy):
+        raise ReviewEvidenceError("sealed review policy provenance unavailable")
+    return current_policy
+
+
+def _sealed_context_policy(home, context, current_policy):
+    """Revalidate a retained acceptance against the review's own launch policy."""
+    store = CardStore(home)
+    review_item = context["review"]
+    review = store.fold(review_item["card"])
+    terminal = review_item["terminal"]
+    launch = {
+        "host": terminal["host"],
+        "owner": review_item["owner"],
+        "revision": review_item["claim"],
+        "model": terminal["model"],
+        "lane": terminal["lane"],
+    }
+    if review is None:
+        raise ReviewEvidenceError("sealed review card disappeared")
+    event = review_item["launch_event"]
+    sealed = _sealed_review_policy(home, launch, review, event, current_policy)
+    if context.get("schema") == "skfleet.production-acceptance-context/v2":
+        if context.get("policy_sha256") != digest(sealed):
+            raise ReviewEvidenceError("sealed review policy differs from acceptance context")
+    elif context.get("schema") != "skfleet.production-acceptance-context/v1":
+        raise ReviewEvidenceError("acceptance context schema is unsupported")
+    if not production_receipt_allowed(home, sealed, launch, review, event):
+        raise ReviewEvidenceError("sealed review launch receipt is no longer valid")
+    return sealed
+
+
 def _sealed_source_outcome(store, source_id, manifest):
     """Prove the exact producer verdict retained by the sealed review bundle."""
     owner = manifest.get("owner")
@@ -424,9 +497,10 @@ def collect(home, policy, card, claim, *, process_check):
         "model": terminal["model"],
         "lane": terminal["lane"],
     }
-    if len(launches) != 1 or not production_receipt_allowed(
-        home, policy, launch, review, launches[0]
-    ):
+    if len(launches) != 1:
+        raise ReviewEvidenceError("exact sealed independent review launch missing")
+    review_policy = _sealed_review_policy(home, launch, review, launches[0], policy)
+    if not production_receipt_allowed(home, review_policy, launch, review, launches[0]):
         raise ReviewEvidenceError("exact sealed independent review launch missing")
     domain = launches[0]["route_identity"]["capacity_domains"][0]
     source_terminal = _producer_terminal(home, source, manifest)
@@ -522,9 +596,9 @@ def collect(home, policy, card, claim, *, process_check):
         "criteria_sha256": digest(source.acceptance_criteria),
     }
     context = {
-        "schema": "skfleet.production-acceptance-context/v1",
+        "schema": "skfleet.production-acceptance-context/v2",
         "controller": "fleet-review-closer@" + policy["authority_host"],
-        "policy_sha256": digest(policy),
+        "policy_sha256": digest(review_policy),
         "source": source_item,
         "review": review_item,
         "test_binding": binding,
@@ -575,8 +649,7 @@ def reconcile(home, policy, *, process_check):
                 if context_path.exists()
                 else collect(home, policy, card, claim, process_check=process_check)
             )
-            if context["policy_sha256"] != digest(policy):
-                raise ReviewEvidenceError("acceptance operational policy changed")
+            _sealed_context_policy(home, context, policy)
 
             def guard():
                 return terminal_guard(home, context, process_check)

@@ -152,6 +152,7 @@ def import_remote_exits(home, policy):
     """Retain only exact destination terminal evidence validated by authority."""
     from skcoord.card_store import CardStore
 
+    from .production_acceptance import _sealed_review_policy
     from .production_receipts import production_receipt_allowed
 
     for path in (Path(home) / "fleet/status").glob("*/dispatch/*.json"):
@@ -166,6 +167,8 @@ def import_remote_exits(home, policy):
                 continue
             terminal, execution = status["terminal"], status["execution"]
             card = CardStore(home).fold(status["card_id"])
+            if card is None:
+                continue
             events = [
                 event
                 for event in CardStore(home)._read_events(card.id)
@@ -179,16 +182,36 @@ def import_remote_exits(home, policy):
                 lane=terminal["lane"],
                 model=terminal["model"],
             )
+            sealed_policy = (
+                _sealed_review_policy(home, launch, card, events[0], policy)
+                if len(events) == 1
+                else None
+            )
+            claims = [
+                row
+                for row in CardStore(home)._read_events(card.id)
+                if row.get("action") == "claim"
+                and row.get("writer") == launch["owner"]
+                and (row.get("claim_revision") or row.get("event_id")) == launch["revision"]
+            ]
             if (
                 len(events) != 1
+                or len(claims) != 1
+                or card.meta.get("claim_conflicts")
+                or (card.owner is not None and card.owner != launch["owner"])
+                or (
+                    card.owner is not None
+                    and card.meta.get("_claim_revision") != launch["revision"]
+                )
                 or terminal.get("execution") != execution
                 or terminal.get("card") != card.id
-                or terminal.get("owner") != card.owner
+                or terminal.get("owner") != launch["owner"]
                 or terminal.get("claim_revision") != launch["revision"]
                 or any(
                     terminal.get(key) != execution[key] for key in ("host", "unit", "invocation")
                 )
-                or not production_receipt_allowed(home, policy, launch, card, events[0])
+                or sealed_policy is None
+                or not production_receipt_allowed(home, sealed_policy, launch, card, events[0])
             ):
                 continue
             unit_terminal(execution["unit"], execution["invocation"], host=execution["host"])

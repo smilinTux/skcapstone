@@ -275,9 +275,16 @@ def _launch_route_identity(home: Path, route_identity) -> dict:
     if not route:
         return route
     required = {"logical_route", "provider", "capacity_domains", "model_or_bucket"}
+    policy_keys = {"policy_snapshot", "policy_sha256"}
     domains = route.get("capacity_domains")
     if (
-        set(route) not in (required, required | {"production_snapshot"})
+        set(route)
+        not in (
+            required,
+            required | {"production_snapshot"},
+            required | policy_keys,
+            required | policy_keys | {"production_snapshot"},
+        )
         or any(
             not isinstance(route.get(key), str) or not route[key]
             for key in required - {"capacity_domains"}
@@ -299,6 +306,17 @@ def _launch_route_identity(home: Path, route_identity) -> dict:
                 raise ValueError("snapshot is stale")
         except (OSError, ValueError, TypeError, KeyError) as exc:
             raise BoundaryError("production launch snapshot is invalid") from exc
+    if policy_keys.intersection(route):
+        from .fleet.production_builder import digest
+        from .fleet.production_policy import validate_execution_policy
+
+        try:
+            snapshot = route["policy_snapshot"]
+            if not isinstance(snapshot, dict) or digest(snapshot) != route["policy_sha256"]:
+                raise ValueError("policy digest differs")
+            validate_execution_policy(snapshot)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise BoundaryError("review policy snapshot is invalid") from exc
     return route
 
 

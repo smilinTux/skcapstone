@@ -205,7 +205,7 @@ def validate_contract(request, policy, *, host, historical=False):
         raise ValueError("remote review offer expired")
 
 
-def _source(home, card):
+def _source(home, card, *, historical=False):
     """Resolve producer facts from native source custody, not review prose."""
     from ..seraph_review_cardstore import LiveCardStoreGateway
     from .production_acceptance import _current_outcome, _producer_terminal
@@ -216,33 +216,65 @@ def _source(home, card):
     selected = _review_manifest(core, repository, head)
     source = CardStore(home).fold(parent) if parent else None
     if selected is None or source is None or not source.owner or source.archived:
-        raise ValueError("original source custody unavailable")
+        if not historical or selected is None or source is None or source.archived:
+            raise ValueError("original source custody unavailable")
     manifest, _ = selected
-    outcome = _current_outcome(CardStore(home), source)
-    revision = LiveCardStoreGateway(home).read_card(parent).revision
+    store = CardStore(home)
+    gateway = LiveCardStoreGateway(home)
+    if historical:
+        from .production_acceptance import _review_attempt_is_current, _sealed_source_outcome
+
+        if (
+            "source-only" not in source.labels
+            or {"hold", "do-not-claim"}.intersection(source.labels)
+            or source.status.value in {"done", "archived"}
+            or source.meta.get("claim_conflicts")
+            or (
+                source.owner is not None
+                and (
+                    source.owner != manifest["owner"]
+                    or source.meta.get("_claim_revision") != manifest["claim_revision"]
+                )
+            )
+        ):
+            raise ValueError("sealed source has a conflicting live claim or hold")
+        outcome = _sealed_source_outcome(store, parent, manifest)
+        revision = gateway.read_card(parent).revision
+    else:
+        outcome = _current_outcome(store, source)
+        revision = gateway.read_card(parent).revision
     if (
         outcome.get("verdict") != "PASS_FOR_REVIEW"
         or outcome.get("candidate_commit") != head
-        or manifest["owner"] != source.owner
-        or manifest["claim_revision"] != source.meta.get("_claim_revision")
-        or _binding(core, "producer_identity") != source.owner
-        or not _revision_drift_is_supplemental(
-            home, card, source, _binding(core, "source_revision"), revision
+        or (not historical and _binding(core, "producer_identity") != source.owner)
+        or (not historical and manifest["owner"] != source.owner)
+        or (not historical and manifest["claim_revision"] != source.meta.get("_claim_revision"))
+        or (
+            not historical
+            and not _revision_drift_is_supplemental(
+                home, card, source, _binding(core, "source_revision"), revision
+            )
         )
-        or {"hold", "do-not-claim"}.intersection(source.labels)
+        or (historical and _binding(core, "producer_identity") != manifest["owner"])
+        or (not historical and {"hold", "do-not-claim"}.intersection(source.labels))
     ):
         raise ValueError("review source generation changed")
-    from ..review_replacement import current_review_attempt
+    if historical:
+        _review_attempt_is_current(home, card.id, core, parent, head, manifest)
+    else:
+        from ..review_replacement import current_review_attempt
 
-    if current_review_attempt(home, parent, head) != card.id:
-        raise ValueError("review is not the current attempt")
+        if current_review_attempt(home, parent, head) != card.id:
+            raise ValueError("review is not the current attempt")
     terminal = _producer_terminal(Path(home), source, manifest)
-    producer_family(source.owner, terminal["family"])
+    producer = manifest["owner"] if historical else source.owner
+    producer_claim = manifest["claim_revision"] if historical else source.meta["_claim_revision"]
+    producer_family(producer, terminal["family"])
     return dict(
         card=parent,
         revision=revision,
-        claim=source.meta["_claim_revision"],
-        owner=source.owner,
+        claim=producer_claim,
+        owner=producer,
         family=terminal["family"],
         head=head,
         tree=manifest["tree"],
