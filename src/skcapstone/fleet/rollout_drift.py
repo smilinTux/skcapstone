@@ -56,7 +56,7 @@ from .deployment_manifest import (
     production_script_bytes,
 )
 from .paths import paths_for_home, self_node_name
-from .qualified_runtime import missing_dependencies
+from .qualified_runtime import missing_dependencies, qualify_prefix
 from .rollout_artifacts import unit_source_path
 
 #: Not in the shipped systemd/ tree (see the module docstring: the dispatcher
@@ -485,16 +485,29 @@ def detect_drift(manifest: dict[str, Any], home: Path | str, repo_root: Path | s
 
     drifts: list[Drift] = []
     if production:
+        qualify = qualify_prefix(home)
         drifts.extend(
-            Drift(f"qualified-runtime:{name}", "missing", "fleet-qualify", None, host)
-            for name in missing_dependencies(home / ".skenv")
+            Drift(f"qualified-runtime:{name}", "missing", "qualify-env", None, host)
+            for name in missing_dependencies(qualify)
+        )
+        from .qualify_env import QualifyEnvError
+        from .qualify_env import verify as verify_qualify_env
+
+        try:
+            findings = verify_qualify_env(qualify)
+        except (OSError, ValueError, QualifyEnvError) as exc:
+            findings = ["unverifiable: " + str(exc)[:160]]
+        drifts.extend(
+            Drift("qualify-env:" + finding, "changed", "qualify-env", None, host)
+            for finding in findings
+            if not finding.startswith("missing required package: ")
         )
     if production:
         from .sandbox_tools import readiness as sandbox_readiness
 
         drifts.extend(
             Drift("qualification-sandbox:" + finding, "changed", "sandbox-ready", None, host)
-            for finding in sandbox_readiness(str(home / ".skenv/bin/python"))
+            for finding in sandbox_readiness(str(qualify_prefix(home) / "bin/python"))
         )
     scope_cache: dict[str, tuple[bool | None, str | None, str]] = {}
 
