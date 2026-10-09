@@ -893,3 +893,47 @@ def test_failed_qualification_release_returns_the_card_to_ready(tmp_path, monkey
     assert ["coord", "release-claim", "1234abcd"] in calls
     assert calls[-1] == ["coord", "move", "1234abcd"]
     assert card.status.value == "ready" and card.owner is None
+
+
+def test_offer_binds_folded_labels_into_the_initial_recipe_core(tmp_path, monkeypatch):
+    """Authority and builder must derive the recipe from the same labels."""
+    (tmp_path / "fleet").mkdir(mode=0o700)
+    monkeypatch.setattr(refresh.socket, "gethostname", lambda: "chiap08")
+    monkeypatch.setattr(
+        profile,
+        "preflight",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            plan.TestEvidenceError("required-test-profile-unqualified")
+        ),
+    )
+    monkeypatch.setattr(
+        profile,
+        "contract",
+        lambda _core: {
+            "card": "1234abcd",
+            "repository": "https://github.com/example/repo.git",
+            "criteria_sha256": "c" * 64,
+        },
+    )
+    seen = []
+    monkeypatch.setattr(
+        profile,
+        "initial_recipe",
+        lambda core, _ws: seen.append(core) or ({"pytest_all": True}, None),
+    )
+    monkeypatch.setattr(refresh.plan, "workspace_source_fingerprint", lambda *_args: "s" * 64)
+    monkeypatch.setattr(refresh, "_execution_host", lambda *_args: "chiap08")
+    card = SimpleNamespace(
+        status=SimpleNamespace(value="ready"), owner=None, meta={}, labels=["backend", "sklegal"]
+    )
+    monkeypatch.setattr(refresh.CardStore, "fold", lambda *_args: card)
+    refresh.offer_stale_candidate(
+        tmp_path,
+        {"authority_host": "chiap08"},
+        "/test/skcapstone",
+        "niobe",
+        {"id": "1234abcd"},
+        ["sklegal"],
+        lambda _core, _labels: tmp_path / "exact-source",
+    )
+    assert seen and seen[0]["labels"] == ["backend", "sklegal"]

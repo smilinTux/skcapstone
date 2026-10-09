@@ -436,6 +436,13 @@ def offer_stale_candidate(
     card = CardStore(home).fold(card_id)
     if card is None or card.status.value != "ready" or card.owner:
         return "deferred:card-not-ready-or-owned"
+    # The executing builder recomputes the initial recipe from its folded card,
+    # which carries the board labels; the pool core passed in here does not.
+    # Labels are scope (frontend/backend), so the two sides chose different
+    # recipes and the builder failed the job as "remote initial qualification
+    # source recipe changed" (f2ea7759 on chiap03, 2026-10-09). Bind the same
+    # folded labels on this side.
+    core = dict(core, labels=sorted(getattr(card, "labels", None) or []))
     try:
         workspace = Path(prepare_workspace(core, labels))
         expected = profile.contract(dict(core, id=card_id))
