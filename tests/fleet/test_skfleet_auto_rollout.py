@@ -61,6 +61,7 @@ def fleet(tmp_path: Path):
         SKFLEET_AUTO_ROLLOUT_REPO=str(deploy),
         SKFLEET_AUTO_ROLLOUT_HOSTS="h1 h2 h3",
         SKFLEET_AUTO_ROLLOUT_LOCK=str(tmp_path / "lock"),
+        SKFLEET_AUTO_ROLLOUT_STATE=str(tmp_path / "state" / "rolled-main"),
         SKFLEET_AUTO_ROLLOUT_READY_WAIT="0",
         SKFLEET_AUTO_ROLLOUT_ATTEMPTS="2",
         # Pin every tool the script resolves through *_BIN. A host that exports
@@ -233,3 +234,35 @@ def test_fixture_never_inherits_live_tool_binaries(fleet, monkeypatch):
     """Live *_BIN exports must not leak into a run: it would page real agents."""
     for name in ("SKCAPSTONE_BIN", "SKMAIL_BIN", "SSH_BIN", "SYSTEMCTL_BIN"):
         assert fleet["env"][name].startswith(str(fleet["deploy"].parent / "bin"))
+
+
+def test_rolls_when_checkout_head_moved_but_hosts_did_not(fleet):
+    """chiap08's own step pulls main into the deploy checkout; a superseded run
+    used to leave HEAD == origin/main so later ticks never rolled the builders."""
+    old = _git(fleet["deploy"], "rev-parse", "HEAD")
+    state = Path(fleet["env"]["SKFLEET_AUTO_ROLLOUT_STATE"])
+    state.parent.mkdir(parents=True)
+    state.write_text(old + "\n")
+    new = _advance_origin(fleet["origin"])
+    _git(fleet["deploy"], "fetch", "-q", "origin")
+    _git(fleet["deploy"], "merge", "-q", "--ff-only", "origin/main")
+    result = _run(fleet["env"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    hosts = [
+        c.split("--node ")[1].split()[0] for c in _calls(fleet["calls"]) if c.startswith("rollout")
+    ]
+    assert hosts == ["h1", "h2", "h3"]
+    assert state.read_text().strip() == new
+
+
+def test_superseded_run_does_not_record_the_rollout(fleet):
+    _advance_origin(fleet["origin"])
+    fleet["fail_host"].write_text("h2")
+    hook = fleet["deploy"].parent / "bin" / "skcapstone"
+    hook.write_text(
+        hook.read_text()
+        + f'if [ "$host" = h2 ]; then cd {fleet["origin"]} && echo 3 > f && git commit -qam third; fi\n'
+    )
+    _run(fleet["env"])
+    state = Path(fleet["env"]["SKFLEET_AUTO_ROLLOUT_STATE"])
+    assert not state.exists()

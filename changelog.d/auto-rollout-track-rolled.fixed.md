@@ -1,0 +1,1 @@
+skfleet-auto-rollout decides from the last main rolled to every host (recorded in a state file) instead of the deploy checkout HEAD, which chiap08's own deploy step advances; a superseded run no longer strands the builders on an old main.
