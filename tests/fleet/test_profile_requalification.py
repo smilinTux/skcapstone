@@ -944,7 +944,24 @@ def test_recent_failure_on_the_same_source_defers_the_offer(tmp_path):
     root.mkdir(parents=True, mode=0o700)
     job = {"card": "1234abcd", "source_sha256": "s" * 64}
     plan.write_once(root / ("a" * 64 + ".job.json"), job)
-    plan.write_once(root / ("a" * 64 + ".job.failed.json"), {"card": "1234abcd"})
+    plan.write_once(
+        root / ("a" * 64 + ".job.failed.json"),
+        {"card": "1234abcd", "reason": "native unit, source or receipt custody mismatch"},
+    )
     assert refresh._recent_failure(root, "1234abcd", "s" * 64)
     assert not refresh._recent_failure(root, "1234abcd", "t" * 64)
     assert not refresh._recent_failure(root, "9999aaaa", "s" * 64)
+
+
+def test_transient_failures_do_not_back_off(tmp_path):
+    """A deploy that stales an in-flight plan must not park the card for hours."""
+    root = tmp_path / "fleet/profile-requalifications"
+    root.mkdir(parents=True, mode=0o700)
+    plan.write_once(
+        root / ("b" * 64 + ".job.json"), {"card": "1234abcd", "source_sha256": "s" * 64}
+    )
+    plan.write_once(
+        root / ("b" * 64 + ".job.failed.json"),
+        {"card": "1234abcd", "reason": "operator test plan is invalid or stale"},
+    )
+    assert not refresh._recent_failure(root, "1234abcd", "s" * 64)

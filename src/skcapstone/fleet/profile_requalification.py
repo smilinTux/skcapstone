@@ -413,6 +413,13 @@ def requalify_or_advance(
 # offer slots and claim churn (2026-10-09). Wait for the source to change, or
 # for the backoff to expire, before trying the same card again.
 RECENT_FAILURE_SECONDS = 6 * 3600
+DETERMINISTIC_FAILURES = (
+    "custody mismatch",  # the sealed tests ran and failed
+    "recipe is invalid",
+    "test target missing",
+    "no supported initial test recipe",
+    "full pytest suite failed",
+)
 
 
 def _recent_failure(root: Path, card_id: str, source_sha: str) -> bool:
@@ -428,7 +435,15 @@ def _recent_failure(root: Path, card_id: str, source_sha: str) -> bool:
             )
         except (OSError, ValueError):
             continue
-        if job.get("card") == card_id and job.get("source_sha256") == source_sha:
+        if job.get("card") != card_id or job.get("source_sha256") != source_sha:
+            continue
+        try:
+            reason = str(json.loads(plan.read_private(failed)).get("reason") or "")
+        except (OSError, ValueError):
+            continue
+        # Back off only on verdicts the same source will repeat. Plan staleness
+        # after a deploy, claim races and Syncthing lag clear on their own.
+        if any(marker in reason for marker in DETERMINISTIC_FAILURES):
             return True
     return False
 
