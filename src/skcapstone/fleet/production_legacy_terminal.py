@@ -183,7 +183,11 @@ def _wrapper_binding(entry: dict, intent: dict) -> bool:
     """Read only manager-owned description arguments before the shell payload."""
     prefix = "Started " + intent["unit"] + " - "
     message = entry.get("MESSAGE", "")
-    if not message.startswith(prefix) or " -- " not in message:
+    # journalctl -o json emits MESSAGE as null or a byte array for some
+    # entries. #1057 started calling this on every start row, and a null
+    # MESSAGE raised AttributeError through _occupancy, failing every
+    # admission on chiap03 (2026-10-09). Such an entry is never a wrapper start.
+    if not isinstance(message, str) or not message.startswith(prefix) or " -- " not in message:
         return False
     try:
         words = shlex.split(message[len(prefix) :].split(" -- ", 1)[0])

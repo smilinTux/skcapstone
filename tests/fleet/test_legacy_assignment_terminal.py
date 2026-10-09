@@ -656,3 +656,11 @@ def test_fenced_recovery_ignores_older_generation_of_reused_unit(fenced_without_
     assert admission._occupancy(root, home, strict_terminal=True) == []
     proof = admission.read_json(directory / "fenced-assignment-terminal.json")
     assert proof["invocation"] == "c" * 32
+
+
+def test_wrapper_binding_ignores_non_text_journal_messages():
+    from skcapstone.fleet import production_legacy_terminal as legacy
+
+    intent = {"unit": "skfleet-worker-x.service", "binding": {"card_id": "1234abcd"}}
+    for message in (None, [83, 116, 97, 114, 116], b"Started"):
+        assert legacy._wrapper_binding({"MESSAGE": message}, intent) is False
