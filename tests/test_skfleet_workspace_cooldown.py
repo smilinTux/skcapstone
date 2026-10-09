@@ -181,3 +181,69 @@ def test_the_pool_filter_runs_after_every_rebuild_of_pool():
         "and not _remote_review_cooldown_exempt(row, PRODUCTION_POLICY)"
         in source[source.index(skip) - 600 : source.index(owned)]
     ), "remote review must bypass the local workspace cooldown in the actual pool filter"
+
+
+def test_builder_offers_ignore_the_local_workspace_cooldown():
+    """Remote builders materialize their own source; a local cooldown must not hide a card.
+
+    Measured on chiap08 2026-10-09: the local lane loop logged
+    TEST_PROFILE_BLOCKED required-test-profile-unqualified and cooled 38-65 ready
+    source cards per cycle, so the builder (which requalifies those profiles)
+    saw only 7-15 of ~60 eligible cards while processing every one it saw.
+    """
+    source = ROTATE.read_text(encoding="utf-8")
+    snapshot = "_builder_offer_pool = list(pool)"
+    skip = "pool = [row for row in pool if row[2] not in _cooling_set]"
+    owned = "owned=[x for x in pool if owns(x[2])]"
+    candidates = (
+        "_builder_candidates = [\n    candidate\n    for candidate in _builder_offer_pool\n"
+    )
+    for needle in (snapshot, skip, owned, candidates):
+        assert needle in source, needle
+    assert source.index(snapshot) < source.index(skip) < source.index(owned)
+    assert source.index(owned) < source.index(candidates)
+    # Local lanes still only see the cooled pool: the partition keys on owned.
+    assert "_builder_partition(\n    owned, _builder_candidate_ids, _builder_held_ids\n)" in source
+
+
+def test_phase_timing_marks_every_major_phase_and_never_raises():
+    source = ROTATE.read_text(encoding="utf-8")
+    phases = [
+        "startup_slots",
+        "pool_fold",
+        "pool_v2_authority",
+        "remote_review_offers",
+        "builder_offers",
+        "lane_selection",
+        "review_withheld",
+        "lane_launch",
+    ]
+    positions = [source.index('_phase_timing("%s")' % name) for name in phases]
+    assert positions == sorted(positions)
+    tree = ast.parse(source)
+    helper = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_phase_timing"
+    )
+    lines = []
+    namespace = {
+        "time": time,
+        "_PHASE_MARK": [None],
+        "_cycle_started": time.monotonic() - 5,
+        "HOST": "fixture",
+        "d": "unused",
+        "log": lambda d, msg: lines.append(msg),
+    }
+    exec(compile(ast.Module(body=[helper], type_ignores=[]), "rotate", "exec"), namespace)
+    namespace["_phase_timing"]("pool_fold")
+    namespace["_phase_timing"]("builder_offers")
+    assert lines[0].startswith("PHASE_TIMING|fixture|phase=pool_fold|elapsed_s=5.")
+    assert lines[1].startswith("PHASE_TIMING|fixture|phase=builder_offers|elapsed_s=5.")
+    assert lines[1].endswith("|phase_s=0.0")
+
+    def broken(d, msg):
+        raise OSError("disk full")
+
+    namespace["log"] = broken
+    namespace["_phase_timing"]("lane_launch")

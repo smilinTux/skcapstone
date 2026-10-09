@@ -1755,6 +1755,25 @@ def log(d,msg):
     print("  "+msg)
 
 
+#: actions.log carries no timestamps, so a cycle that hit CYCLE_DEADLINE_REACHED
+#: could not say which phase spent the budget (measured 2026-10-09: one Niobe
+#: cycle reached its lane loop with processed=0 after ~238s). One line per phase
+#: boundary, monotonic seconds since _cycle_started and since the prior mark.
+_PHASE_MARK=[None]
+
+
+def _phase_timing(phase):
+    """Log one PHASE_TIMING line. Never raises: timing must not stop a cycle."""
+    try:
+        now=time.monotonic()
+        prior=_PHASE_MARK[0] if _PHASE_MARK[0] is not None else _cycle_started
+        _PHASE_MARK[0]=now
+        log(d,"PHASE_TIMING|%s|phase=%s|elapsed_s=%.1f|phase_s=%.1f"%(
+            HOST,phase,now-_cycle_started,now-prior))
+    except Exception:
+        pass
+
+
 def _log_once_per_hour(d, event, cid, message, state_dir=None, now=None):
     """Emit one repeated per-card diagnostic in each UTC hour bucket.
 
@@ -2090,6 +2109,7 @@ if ONLY_SEAT:
     _codex["target"]=SEAT_TARGET
 free=sum(_L["free"] for _L in LANES)
 log(d, "SLOTS|%s|%s" % (HOST, _slot_summary(LANES)))
+_phase_timing("startup_slots")
 try:
     WORKER_MAIL_RECIPIENTS = _worker_mail_routing()
 except ValueError as exc:
@@ -7483,6 +7503,7 @@ for cd in glob.glob(CARDS+"/*"):
         unblocks[str(dep)]=unblocks.get(str(dep),0)+1
 for row in pool: row.append(unblocks.get(row[2],0))
 pool_ids=",".join(sorted(row[2] for row in pool)) or "-"
+_phase_timing("pool_fold")
 log(d,"POOL_IDS|%s|ids=%s"%(HOST,pool_ids))
 # lane, then most-unblocking first, then priority, then stable id
 pool.sort(key=lambda x:(x[0],-x[5],x[1],x[2]))
@@ -7995,6 +8016,7 @@ for _source_head in sorted(_DUPLICATE_SERAPH_SOURCE_HEADS):
     )
 log(d, "POOL_AUTHORITY|%s|source=POOL_V2|ready=%d|legacy_ready=%d" %
     (HOST, len(pool), _legacy_ready))
+_phase_timing("pool_v2_authority")
 
 # Partition the CARD SPACE by hash, not by pool index. Index striding assumes all
 # three hosts see an identical pool at the same instant; ~/.skcapstone is Syncthing
@@ -8023,6 +8045,13 @@ def owns(cid):
 # Filtering earlier is silently undone: measured 2026-09-21, the filter logged
 # WORKSPACE_COOLDOWN_SKIPPED for four cards and all four were still attempted in
 # the same cycle, because the legacy pool it had filtered was thrown away.
+# Remote builders materialize their own source, so a LOCAL workspace or test
+# preflight cooldown must not hide a card from the builder offer path. Measured
+# on chiap08 2026-10-09: TEST_PROFILE_BLOCKED required-test-profile-unqualified
+# in the local lane loop put 38-65 ready source cards into the 1h cooldown each
+# cycle, and the builder (which is what requalifies those profiles) then saw
+# only 7-15 candidates of ~60 eligible while it processed every one it saw.
+_builder_offer_pool = list(pool)
 _workspace_cooldown_table = _load_workspace_cooldown()
 if _workspace_cooldown_table:
     _cooling = sorted(
@@ -8058,12 +8087,21 @@ owned=[x for x in pool if owns(x[2])]
 # what held_card_ids() reports as held.
 _builder_candidates = [
     candidate
-    for candidate in pool
+    for candidate in _builder_offer_pool
     if builder_dispatch.eligible(
         dict(candidate[3], id=candidate[2]), candidate[4]
     )
 ]
 _builder_candidate_ids = {candidate[2] for candidate in _builder_candidates}
+log(
+    d,
+    "BUILDER_CANDIDATES|%s|count=%d|local_cooldown=%d"
+    % (
+        HOST,
+        len(_builder_candidates),
+        len(_builder_candidate_ids - {row[2] for row in pool}),
+    ),
+)
 try:
     _builder_held_ids = builder_dispatch.held_card_ids(default_fleet_paths())
 except (builder_dispatch.BuilderDispatchError, OSError) as _exc:
@@ -8106,6 +8144,7 @@ if PRODUCTION_POLICY and PRODUCTION_POLICY.get("remote_review", {}).get("enabled
                 log(d, "REVIEW_REMOTE_HELD|%s|%s|reason=%s" %
                     (HOST, _candidate[2], review_dispatch.hold_reason(_exc)))
 
+_phase_timing("remote_review_offers")
 owned, _builder_withheld_ids, _builder_returned_ids = _builder_partition(
     owned, _builder_candidate_ids, _builder_held_ids
 )
@@ -8235,6 +8274,8 @@ if not DRY and _is_niobe_builder_host(HOST):
             "BUILDER_DISPATCH_IDLE|%s|%s|reason=%s"
             % (HOST, _candidate[2], _idle_reason or "offerable-not-offered"),
         )
+
+_phase_timing("builder_offers")
 
 # Never steal another host's hash slice without an authoritative shared lock.
 # Syncthing propagation is not a compare-and-swap primitive. Measured 2026-08-28:
@@ -8726,6 +8767,8 @@ if _esc_waiting:
     log(d,"ESCALATE_QUEUED|%s|%d card(s) need the stronger model; escalate lane full"
         %(HOST,_esc_waiting))
 
+_phase_timing("lane_selection")
+
 _review_withheld=[]
 for _cid,_admission in sorted(_POOL_V2_ADMISSIONS.items()):
     _labels=_admission.get("labels") or ()
@@ -8871,6 +8914,7 @@ def _observe_assigned_reviews():
             log(d, "MERO_OBSERVATION_FAILED|%s|%s|%s" % (HOST, cid, exc))
 
 
+_phase_timing("review_withheld")
 if not picks:
     _observe_assigned_reviews()
     detail = _selection_diagnostic(
@@ -9945,5 +9989,6 @@ if admission_refused:
     log(d,"ADMISSION_REFUSED_TOTAL|%s|%d launch(es) refused before process "
         "creation: a live authoritative owner already holds the exact card"%(
         HOST,admission_refused))
+_phase_timing("lane_launch")
 log(d,"CYCLE_RECEIPT|%s|seat=%s|launched=%d|attempted=%d|receipts=%d"%
     (HOST,_ONLY_SEAT or "niobe",launched,processed_picks,launch_receipts))
