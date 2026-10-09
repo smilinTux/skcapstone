@@ -219,24 +219,19 @@ def _sealed_source_outcome(store, card_id, owner, claim, head, tree):
         and (event.get("claim_revision") or event.get("event_id")) == claim
         and event.get("owner") == owner
     ]
-    outcomes = [
-        event
-        for event in rows
-        if event.get("action") == "verdict"
-        and event.get("verdict") == "PASS_FOR_REVIEW"
-        and event.get("writer") == owner
-        and event.get("expected_claim_revision") in (None, claim)
-        and event.get("candidate_commit") == head
-        and event.get("candidate_tree") == tree
-    ]
+    outcome = _latest_outcome(store, card_id)
     if (
         len(claims) != 1
-        or len(outcomes) != 1
-        or outcomes[0].get("ts", "") < claims[0].get("ts", "")
-        or _latest_outcome(store, card_id) != outcomes[0]
+        or outcome.get("action") != "verdict"
+        or outcome.get("verdict") != "PASS_FOR_REVIEW"
+        or outcome.get("writer") != owner
+        or outcome.get("expected_claim_revision") not in (None, claim)
+        or outcome.get("candidate_commit") != head
+        or outcome.get("candidate_tree") != tree
+        or outcome.get("ts", "") < claims[0].get("ts", "")
     ):
         raise ReviewEvidenceError("sealed producer outcome is unavailable")
-    return outcomes[0]
+    return outcome
 
 
 def _recorded_remote_review(home, review, claim):
