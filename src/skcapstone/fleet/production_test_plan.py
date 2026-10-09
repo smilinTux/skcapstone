@@ -56,7 +56,28 @@ BINDING_KEYS = frozenset(
 )
 _RUNTIME_CACHE = {}
 _TOOLCHAIN_CACHE = {}
-HARNESS_ROOT = Path(__file__).resolve().parent
+
+
+# The sealed sandbox runs the harness from the qualified prefix, and both the
+# executing worker (qualify-env interpreter) and its validator (sknoded under
+# ~/.skenv) must name the same files. Deriving this from __file__ gave each its
+# own site-packages path, so every pytest-recipe receipt failed validation as
+# "native command or raw output mismatch" although all checks passed
+# (a0834032/ebe42d9e on chiap04, f3484694 on chiap01/02, 2026-10-09).
+def harness_root(prefix: Path, fallback: Path) -> Path:
+    """The qualified prefix's harness directory when installed, else ``fallback``."""
+    candidate = (
+        prefix
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+        / "skcapstone"
+        / "fleet"
+    )
+    return candidate if (candidate / "production_pytest_selection.py").is_file() else fallback
+
+
+HARNESS_ROOT = harness_root(PREFIX, Path(__file__).resolve().parent)
 HARNESS_MODULES = (
     "qualified_runtime.py",
     "production_pytest_recipe.py",
