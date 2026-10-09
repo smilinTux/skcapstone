@@ -32,10 +32,6 @@ SYSTEMCTL="${SYSTEMCTL_BIN:-systemctl}"
 # Dispatcher units on this host that a deploy must not land in the middle of.
 QUIET_UNITS="${SKFLEET_AUTO_ROLLOUT_QUIET_UNITS:-skfleet-seat-cycle.service skfleet-niobe-live.service}"
 QUIET_WAIT="${SKFLEET_AUTO_ROLLOUT_QUIET_WAIT:-600}"
-# Timers that start those units. The seat cycle re-arms 15s after each run, so
-# waiting for a gap is not enough: the next cycle starts mid-rollout. Hold them
-# for the length of the run and restart them on every exit path.
-HOLD_TIMERS="${SKFLEET_AUTO_ROLLOUT_HOLD_TIMERS:-skfleet-seat-cycle.timer}"
 
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*"; }
 
@@ -80,21 +76,11 @@ if ! git -C "$REPO" merge-base --is-ancestor "$head" "$target"; then
   notify "auto-rollout refused: diverged checkout" "deploy checkout $head is not an ancestor of origin/main $target on $(hostname)"
   exit 1
 fi
-held=""
-release_timers() {
-  local t
-  for t in $held; do
-    "$SYSTEMCTL" --user start "$t" >/dev/null 2>&1 || log "could not restart $t; start it by hand"
-  done
-  held=""
-}
-trap release_timers EXIT
-for t in $HOLD_TIMERS; do
-  if [ "$("$SYSTEMCTL" --user is-active "$t" 2>/dev/null)" = active ] \
-    && "$SYSTEMCTL" --user stop "$t" >/dev/null 2>&1; then
-    held="$held $t"
-  fi
-done
+# Do NOT stop skfleet-seat-cycle.timer to hold the cycle off during the run:
+# the chiap08 drift gate requires that timer active and halts on
+# enablement_mismatch (2026-10-09 07:00Z, dbfcc588). The idle gap below is
+# enough because chiap08, the only host whose deploy touches the local cycle,
+# is rolled first and deploys in under 10s, inside the 15s re-arm gap.
 waited=0
 while [ -n "$(busy_units)" ]; do
   if [ "$waited" -ge "$QUIET_WAIT" ]; then
