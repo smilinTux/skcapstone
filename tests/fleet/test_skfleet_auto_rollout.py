@@ -49,6 +49,12 @@ def fleet(tmp_path: Path):
     )
     _write_exe(bins / "ssh", f'echo "ssh $*" >> {calls}\n')
     _write_exe(bins / "skmail", f'echo "skmail $*" >> {calls}\n')
+    # Never touch the real user manager: services report inactive, timers active.
+    _write_exe(
+        bins / "systemctl",
+        f'echo "systemctl $*" >> {calls}\n'
+        'case "$*" in *is-active*.timer) echo active ;; *is-active*) echo inactive ;; esac\n',
+    )
     env = dict(
         os.environ,
         PATH=f"{bins}:{os.environ['PATH']}",
@@ -57,6 +63,7 @@ def fleet(tmp_path: Path):
         SKFLEET_AUTO_ROLLOUT_LOCK=str(tmp_path / "lock"),
         SKFLEET_AUTO_ROLLOUT_READY_WAIT="0",
         SKFLEET_AUTO_ROLLOUT_ATTEMPTS="2",
+        SYSTEMCTL_BIN=str(bins / "systemctl"),
     )
     return dict(origin=origin, deploy=deploy, calls=calls, fail_host=fail_host, env=env)
 
@@ -180,7 +187,7 @@ def test_busy_dispatch_cycle_defers_the_rollout(fleet):
     """A deploy never lands while the local dispatch cycle runs."""
     _advance_origin(fleet["origin"])
     bins = fleet["deploy"].parent / "bin"
-    _write_exe(bins / "systemctl", "echo active\n")
+    _write_exe(bins / "systemctl", f'echo "systemctl $*" >> {fleet["calls"]}\necho active\n')
     env = dict(
         fleet["env"], SYSTEMCTL_BIN=str(bins / "systemctl"), SKFLEET_AUTO_ROLLOUT_QUIET_WAIT="0"
     )
@@ -202,3 +209,40 @@ def test_idle_dispatch_cycle_lets_the_rollout_proceed(fleet):
     assert [
         c.split("--node ")[1].split()[0] for c in _calls(fleet["calls"]) if c.startswith("rollout")
     ] == ["h1", "h2", "h3"]
+
+
+def _timer_calls(calls: Path) -> list[str]:
+    return [
+        c.split()[2] + " " + c.split()[3]
+        for c in _calls(calls)
+        if c.startswith("systemctl --user") and c.split()[2] in ("stop", "start")
+    ]
+
+
+def test_cycle_timer_is_held_for_the_rollout_and_restarted(fleet):
+    """The seat cycle re-arms 15s after each run; hold its timer while hosts roll."""
+    _advance_origin(fleet["origin"])
+    result = _run(fleet["env"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = _calls(fleet["calls"])
+    stop = calls.index("systemctl --user stop skfleet-seat-cycle.timer")
+    start = calls.index("systemctl --user start skfleet-seat-cycle.timer")
+    rollouts = [i for i, c in enumerate(calls) if c.startswith("rollout")]
+    assert stop < rollouts[0] and rollouts[-1] < start
+
+
+def test_cycle_timer_is_restarted_after_a_halt(fleet):
+    _advance_origin(fleet["origin"])
+    fleet["fail_host"].write_text("h2")
+    result = _run(fleet["env"])
+    assert result.returncode != 0
+    assert _timer_calls(fleet["calls"]) == [
+        "stop skfleet-seat-cycle.timer",
+        "start skfleet-seat-cycle.timer",
+    ]
+
+
+def test_up_to_date_checkout_leaves_the_cycle_timer_alone(fleet):
+    result = _run(fleet["env"])
+    assert result.returncode == 0
+    assert _timer_calls(fleet["calls"]) == []
