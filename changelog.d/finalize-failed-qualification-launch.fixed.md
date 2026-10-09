@@ -1,0 +1,1 @@
+A remote test unit that exits non-zero now discharges its admission reservation, so failed qualifications no longer hold their MemoryMax on the builder and block every later launch with memory_available=0.

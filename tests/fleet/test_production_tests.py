@@ -875,3 +875,50 @@ def test_remote_receipt_waits_for_every_synced_file(tmp_path, monkeypatch):
     assert not all(
         (directory / name).is_file() for name in ("launch.json", "terminal.json", "receipt.json")
     )
+
+
+def test_failed_remote_tests_discharge_their_reservation(setup, monkeypatch):
+    """A failed test unit must not keep its MemoryMax charged on the builder forever."""
+    import socket as _socket
+
+    plan = dict(setup.plan, host=_socket.gethostname().split(".")[0].lower())
+    monkeypatch.setattr(native, "load_plan", lambda *a, **k: (plan, setup.plan_path, setup.digest))
+    monkeypatch.setattr(
+        native.test_plan, "execution_policy_fingerprint", lambda *a, **k: plan["policy_sha256"]
+    )
+    monkeypatch.setattr(native, "source_state", lambda *a, **k: None)
+    monkeypatch.setattr(native, "service_argv", lambda *a, **k: ["argv"])
+    monkeypatch.setattr(native, "stop_retained", lambda *a, **k: None)
+    directory = native.run_directory(setup.home, setup.digest)
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    for path in (directory, directory.parent):
+        path.chmod(0o700)
+    private_bytes(
+        directory / "launch.json", json.dumps({"unit": "skfleet-builder-x.service"}).encode()
+    )
+    private_bytes(
+        directory / "terminal.json",
+        json.dumps({"ExecMainStatus": "1", "InvocationID": "a" * 32}).encode(),
+    )
+    calls = []
+    monkeypatch.setattr(native, "finalize_failed_launch", lambda *a, **k: calls.append(k))
+    monkeypatch.setattr(
+        native,
+        "finalize_successful_launch",
+        lambda *a, **k: pytest.fail("success path must not run for a failed unit"),
+    )
+    import skcoord.card_store as card_store
+
+    monkeypatch.setattr(card_store.CardStore, "fold", lambda self, cid: object())
+    import skcapstone.seraph_review_cardstore as seraph
+
+    monkeypatch.setattr(seraph, "card_revision", lambda card: "rev-1")
+
+    def failed_receipt(*a, **k):
+        raise native.TestEvidenceError("native unit, source or receipt custody mismatch")
+
+    monkeypatch.setattr(native, "validate_test_receipt", failed_receipt)
+    with pytest.raises(native.TestEvidenceError, match="custody"):
+        native.run_or_read_tests(setup.home, setup.binding, setup.workspace, setup.policy)
+    assert calls and calls[0]["invocation"] == "a" * 32
+    assert calls[0]["expected_card_revision"] == "rev-1"

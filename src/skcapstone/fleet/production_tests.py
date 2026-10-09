@@ -14,6 +14,7 @@ from . import production_builder
 from . import production_test_plan as test_plan
 from .production_admission import (
     AdmissionError,
+    finalize_failed_launch,
     finalize_successful_launch,
     reserve_launch,
     reserved_command,
@@ -360,12 +361,12 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
             launch = read_json(directory / "launch.json")
             if (directory / "terminal.json").exists() or observe_terminal(directory, launch):
                 terminal = read_json(directory / "terminal.json")
+                from skcoord.card_store import CardStore
+
+                from ..seraph_review_cardstore import card_revision
+
+                card = CardStore(home).fold(binding["source_card"])
                 if terminal.get("ExecMainStatus") == "0":
-                    from skcoord.card_store import CardStore
-
-                    from ..seraph_review_cardstore import card_revision
-
-                    card = CardStore(home).fold(binding["source_card"])
                     if card is None:
                         raise TestEvidenceError("test source claim is unavailable")
                     finalize_successful_launch(
@@ -378,6 +379,27 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
                         invocation=terminal["InvocationID"],
                         expected_card_revision=card_revision(card),
                     )
+                elif card is not None:
+                    # Failed tests used to leave the reservation charged forever:
+                    # each failed remote qualification held its MemoryMax (3-6 GiB)
+                    # on the builder, and after about three failures
+                    # local_worker_admission refused every launch with
+                    # memory_available=0 (chiap01, 2026-10-09). Discharge the
+                    # exact failed unit; the receipt check below still reports
+                    # the failure. A refusal must not hide that verdict.
+                    try:
+                        finalize_failed_launch(
+                            home,
+                            policy,
+                            plan["host"],
+                            launch["unit"],
+                            _admission_binding(binding, plan_sha),
+                            service_argv(launch, plan_path, directory, workspace),
+                            invocation=terminal["InvocationID"],
+                            expected_card_revision=card_revision(card),
+                        )
+                    except (AdmissionError, KeyError, ValueError, OSError):
+                        pass
                 stop_retained(directory, launch)
                 return validate_test_receipt(home, binding, workspace)
             return None
