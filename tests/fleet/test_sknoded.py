@@ -246,3 +246,28 @@ def test_missing_inventory_degrades_to_an_empty_block(paths, monkeypatch) -> Non
     sknoded.run_once(paths, CONTROL_NODE)
     published = store.read_node_file(paths, CONTROL_NODE, "node.json")["status"]["inventory"]
     assert published == {"units": {}, "packages": {}, "truncated": {}}
+
+
+def test_remote_qualification_uses_the_admitted_host_not_the_node_name(paths, monkeypatch):
+    """consume_remote matches the bare hostname; node-chiap02 refused every job."""
+    operator = store.Writer(role="operator", node="op", identity="op")
+    store.write_spec(
+        paths,
+        "node",
+        "node-chiap02",
+        {"cordoned": False, "role": "builder-standby"},
+        writer=operator,
+        labels={"host": "chiap02"},
+    )
+    seen = []
+    monkeypatch.setattr(
+        "skcapstone.fleet.production_builder.policy", lambda: {"authority_host": "chiap08"}
+    )
+    monkeypatch.setattr(
+        "skcapstone.fleet.profile_requalification.consume_remote",
+        lambda home, policy, host: seen.append(host) or ["running:1234abcd"],
+    )
+    monkeypatch.setattr("skcapstone.fleet.builder_dispatch.consume_one", lambda *_a: None)
+    result = sknoded.run_once(paths, "node-chiap02")
+    assert seen == ["chiap02"]
+    assert result["profile_requalification"] == ["running:1234abcd"]
