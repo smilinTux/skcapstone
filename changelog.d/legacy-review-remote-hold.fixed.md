@@ -1,0 +1,1 @@
+Legacy provisional reviews (including distinct GLM reviews without a sealed source manifest) are no longer routed to remote review, where `offer_review` could only refuse them with "original source custody unavailable" while also withholding them from the local seat. `REVIEW_REMOTE_HELD` now logs fixed custody refusal codes instead of a bare `ValueError`.

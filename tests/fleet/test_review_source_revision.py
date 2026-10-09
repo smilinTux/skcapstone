@@ -135,4 +135,8 @@ def test_hold_reason_exposes_only_fixed_source_bundle_detail():
         == "SourceBundleError:review-source-bundle-digest-mismatch"
     )
     assert hold_reason(ValueError("/private/path")) == "ValueError"
+    assert (
+        hold_reason(ValueError("original source custody unavailable"))
+        == "ValueError:original-source-custody-unavailable"
+    )
     assert hold_reason(SourceBundleError("/private/path")) == "SourceBundleError"

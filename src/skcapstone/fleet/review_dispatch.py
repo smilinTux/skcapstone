@@ -51,24 +51,44 @@ _REVIEW_SOURCE_HOLD_REASONS = {
 }
 
 
+# Fixed custody refusals raised by this module. Their text is a constant, never
+# a path or card content, so the dispatcher may log them as reason codes.
+_REVIEW_CUSTODY_HOLD_REASONS = {
+    "original source custody unavailable",
+    "sealed producer generation unavailable",
+    "review source generation changed",
+    "review is not the current attempt",
+    "review product outside active scope",
+    "remote review request contract differs",
+    "remote review generation is malformed",
+    "remote review offer expired",
+}
+
+
 def hold_reason(error: BaseException) -> str:
-    """Expose only fixed source-bundle reason codes in dispatcher evidence."""
+    """Expose only fixed reason codes in dispatcher evidence."""
     name = type(error).__name__
     detail = str(error)
     if isinstance(error, SourceBundleError) and detail in _REVIEW_SOURCE_HOLD_REASONS:
+        return name + ":" + detail.replace(" ", "-")
+    if type(error) is ValueError and detail in _REVIEW_CUSTODY_HOLD_REASONS:
         return name + ":" + detail.replace(" ", "-")
     return name
 
 
 def partition_remote_reviews(owned, rollout):
-    """Send native reviews and explicitly distinct GLM reviews remotely."""
+    """Send only native source-only reviews remotely.
+
+    offer_review() requires a sealed source manifest and collect() requires the
+    source-only label, so a legacy provisional review (even a distinct GLM one)
+    can never be offered. Routing it here only held it forever with
+    "original source custody unavailable" while also removing it from the
+    local seat path. Legacy reviews stay on their existing local seat.
+    """
     remote = [
         row
         for row in owned
-        if (
-            {"review", "seat-seraph"} <= set(row[4])
-            and ("source-only" in row[4] or {"glm-only", "review-distinct-agent"} <= set(row[4]))
-        )
+        if {"review", "seat-seraph", "source-only"} <= set(row[4])
         and (rollout["card_ids"] is None or row[2] in rollout["card_ids"])
     ]
     remote_ids = {row[2] for row in remote}

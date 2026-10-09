@@ -106,8 +106,10 @@ def test_remote_partition_keeps_legacy_reviews_on_the_existing_seat(dispatch):
 
     remote, local = dispatch.partition_remote_reviews(rows, {"card_ids": None})
 
-    assert remote == [native, glm]
-    assert local == [legacy, same_family_unsafe, producer]
+    # A legacy distinct GLM review has no sealed source manifest, so remote
+    # offer can only refuse it; it must stay on the local seat path.
+    assert remote == [native]
+    assert local == [legacy, glm, same_family_unsafe, producer]
     assert dispatch.partition_remote_reviews(rows, {"card_ids": [legacy[2]]}) == ([], rows)
 
 
