@@ -413,6 +413,7 @@ def requalify_or_advance(
 # offer slots and claim churn (2026-10-09). Wait for the source to change, or
 # for the backoff to expire, before trying the same card again.
 RECENT_FAILURE_SECONDS = 6 * 3600
+OFFERABLE_COLUMNS = frozenset({"ready", "backlog"})
 DETERMINISTIC_FAILURES = (
     "custody mismatch",  # the sealed tests ran and failed
     "recipe is invalid",
@@ -479,7 +480,10 @@ def offer_stale_candidate(
 
     root = home / "fleet/profile-requalifications"
     card = CardStore(home).fold(card_id)
-    if card is None or card.status.value != "ready" or card.owner:
+    # POOL_V2 dispatches approved backlog cards as well as ready ones, and local
+    # lanes claim from either; refusing backlog here wasted the offer on nine
+    # dispatchable SKLegal cards every cycle (2026-10-09).
+    if card is None or card.status.value not in OFFERABLE_COLUMNS or card.owner:
         return "deferred:card-not-ready-or-owned"
     # The executing builder recomputes the initial recipe from its folded card,
     # which carries the board labels; the pool core passed in here does not.
@@ -487,6 +491,7 @@ def offer_stale_candidate(
     # recipes and the builder failed the job as "remote initial qualification
     # source recipe changed" (f2ea7759 on chiap03, 2026-10-09). Bind the same
     # folded labels on this side.
+    origin_column = card.status.value
     core = dict(core, labels=sorted(getattr(card, "labels", None) or []))
     try:
         workspace = Path(prepare_workspace(core, labels))
@@ -588,14 +593,12 @@ def offer_stale_candidate(
                 and after.meta.get("_claim_revision") == claim_revision
             ):
                 return "blocked:qualification-failed-claim-release-refused"
-            # release-claim lands the card in backlog, and offers only consider
-            # READY cards, so one failed qualification parked the card for good:
-            # 8 SKLegal cards on 2026-10-09 after the runtime-parity gap. The
-            # offer only claims READY cards, so READY is the column to restore,
-            # exactly as the qualified path below already does.
-            if after.status.value != "ready" and after.owner is None:
+            # release-claim lands the card in backlog, which parked READY cards
+            # for good after one failed qualification (8 SKLegal cards on
+            # 2026-10-09). Restore the column the card was offered from.
+            if after.status.value != origin_column and after.owner is None:
                 subprocess.run(
-                    [skc, "coord", "move", card_id, "ready", "--agent", actor],
+                    [skc, "coord", "move", card_id, origin_column, "--agent", actor],
                     capture_output=True,
                     text=True,
                     timeout=15,

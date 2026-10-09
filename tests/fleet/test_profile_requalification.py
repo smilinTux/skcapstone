@@ -965,3 +965,58 @@ def test_transient_failures_do_not_back_off(tmp_path):
         {"card": "1234abcd", "reason": "operator test plan is invalid or stale"},
     )
     assert not refresh._recent_failure(root, "1234abcd", "s" * 64)
+
+
+def test_backlog_cards_are_offered_and_return_to_backlog(tmp_path, monkeypatch):
+    """POOL_V2 dispatches approved backlog cards; a failure must not promote them."""
+    (tmp_path / "fleet").mkdir(mode=0o700)
+    monkeypatch.setattr(refresh.socket, "gethostname", lambda: "chiap08")
+    monkeypatch.setattr(
+        profile,
+        "preflight",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            plan.TestEvidenceError("required-test-profile-unqualified")
+        ),
+    )
+    monkeypatch.setattr(
+        profile,
+        "contract",
+        lambda _core: {
+            "card": "1234abcd",
+            "repository": "https://github.com/example/repo.git",
+            "criteria_sha256": "c" * 64,
+        },
+    )
+    monkeypatch.setattr(profile, "initial_recipe", lambda *_args: ({"pytest_all": True}, None))
+    monkeypatch.setattr(refresh.plan, "workspace_source_fingerprint", lambda *_args: "s" * 64)
+    monkeypatch.setattr(refresh, "_execution_host", lambda *_args: "chiap01")
+    card = SimpleNamespace(status=SimpleNamespace(value="backlog"), owner=None, meta={})
+    monkeypatch.setattr(refresh.CardStore, "fold", lambda *_args: card)
+    calls = []
+
+    def coord(argv, **_kwargs):
+        calls.append(argv[1:5])
+        if argv[2] == "claim":
+            card.status.value, card.owner = "doing", argv[argv.index("--agent") + 1]
+            card.meta["_claim_revision"] = "claim-1"
+        elif argv[2] == "release-claim":
+            card.status.value, card.owner = "backlog", None
+        elif argv[2] == "move":
+            card.status.value = argv[4]
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("subprocess.run", coord)
+    monkeypatch.setattr(refresh, "requalify_or_advance", lambda *_a, **_k: "failed:tests")
+    state = refresh.offer_stale_candidate(
+        tmp_path,
+        {"authority_host": "chiap08"},
+        "/test/skcapstone",
+        "niobe",
+        {"id": "1234abcd"},
+        ["source-only"],
+        lambda _core, _labels: tmp_path / "exact-source",
+    )
+    assert state == "failed:tests"
+    assert ["coord", "claim", "1234abcd", "--agent"] in calls
+    assert card.status.value == "backlog" and card.owner is None
+    assert not any(c[1] == "move" for c in calls)
