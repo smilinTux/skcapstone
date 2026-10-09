@@ -1,0 +1,1 @@
+- Allow collection of an exact sealed producer result after its claim is released, while refusing it after a newer claim takes ownership.

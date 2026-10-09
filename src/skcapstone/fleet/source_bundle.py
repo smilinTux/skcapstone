@@ -252,12 +252,7 @@ def publish_source(
     with card_mutation_lock(home, card_id):
         store = CardStore(home)
         row = store.fold(card_id)
-        if (
-            row is None
-            or "source-only" not in row.labels
-            or row.owner != owner
-            or row.meta.get("_claim_revision") != claim
-        ):
+        if row is None or "source-only" not in row.labels:
             raise SourceBundleError("source proposal claim changed")
         for key in ("repository", "base_revision"):
             if _binding({"meta": row.meta, "links": row.links}, key) != request.get(key):
@@ -282,6 +277,17 @@ def publish_source(
         ]
         if len(claims) != 1 or str(outcome.get("ts", "")) < str(claims[0].get("ts", "")):
             raise SourceBundleError("source proposal predates its claim")
+        latest_claim = max(
+            (event for event in events if event.get("action") == "claim"),
+            key=lambda event: (event.get("ts", ""), event.get("writer", ""), event.get("seq", 0)),
+            default={},
+        )
+        if (latest_claim.get("claim_revision") or latest_claim.get("event_id")) != claim:
+            raise SourceBundleError("source proposal claim changed")
+        if row.owner not in (None, owner) or (
+            row.owner == owner and row.meta.get("_claim_revision") != claim
+        ):
+            raise SourceBundleError("source proposal claim changed")
         for key in ("candidate_commit", "candidate_tree"):
             if not re.fullmatch(r"[0-9a-f]{40}", str(outcome.get(key, ""))):
                 raise SourceBundleError("source proposal git binding invalid")

@@ -162,6 +162,47 @@ def test_export_refuses_changed_or_untrusted_source(source, kind):
     assert not (source["home"] / "evidence/work" / source["card"] / "source-bundles").exists()
 
 
+def test_released_exact_producer_generation_can_be_collected(source, monkeypatch):
+    from skcapstone.fleet import source_transport
+
+    source["store"].append_event(
+        source["card"],
+        "release_claim",
+        "niobe",
+        released_owner=source["owner"],
+        expected_claim_revision=source["claim"],
+    )
+    monkeypatch.setattr(
+        bundle,
+        "_export",
+        lambda *args: {
+            "bundle_b64": "Y2FuZGlkYXRl",
+            "evidence_sha256": source["outcome"]["candidate_sha256"],
+        },
+    )
+    monkeypatch.setattr(source_transport, "push", lambda *args: None)
+
+    result = publish(source)
+
+    assert result["head"] == source["head"]
+    assert result["claim_revision"] == source["claim"]
+    assert Path(result["manifest"]).is_file()
+
+
+def test_released_producer_generation_refuses_after_new_claim(source):
+    source["store"].append_event(
+        source["card"],
+        "release_claim",
+        "niobe",
+        released_owner=source["owner"],
+        expected_claim_revision=source["claim"],
+    )
+    source["store"].append_event(source["card"], "claim", "another-worker", owner="another-worker")
+
+    with pytest.raises(bundle.SourceBundleError, match="claim changed"):
+        publish(source)
+
+
 @pytest.mark.parametrize(
     "kind", ["digest", "head", "repository", "producer", "evidence", "conflict", "symlink"]
 )
