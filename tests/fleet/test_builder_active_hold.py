@@ -455,3 +455,11 @@ def test_lane_rejects_unqualified_profiles_before_the_fresh_fold() -> None:
     cheap = source.index("test_preflight(Path(HOME)/\".skcapstone\", dict(core, id=cid)")
     fresh = source.index("fresh_claimability=authoritative_claimability(cid,core=_fresh_core")
     assert cheap < fresh
+
+
+def test_lane_stops_at_the_node_occupancy_cap() -> None:
+    """A node-wide cap refusal ends the lane loop instead of churning every pick."""
+    source = ROTATE.read_text(encoding="utf-8")
+    deferred = source.index('log(d,"NODE_ADMISSION_DEFERRED|%s|%s|reason=%s"%(')
+    stop = source.index('"worker occupancy cap reached" in str(_admission_exc)')
+    assert deferred < stop < source.index("break", stop) < source.index("continue", stop)

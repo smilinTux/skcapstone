@@ -9929,6 +9929,12 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
                             "--abandon-reason","error"],capture_output=True,text=True)
             log(d,"NODE_ADMISSION_DEFERRED|%s|%s|reason=%s"%(
                 HOST,cid,str(_admission_exc)[:160]))
+            # The occupancy cap is node-wide, so no later card can be admitted
+            # this cycle. Continuing claimed, prepared and released each one:
+            # 10 cards cost ~120s of lane_launch (chiap08 2026-10-09 21:19Z).
+            if "worker occupancy cap reached" in str(_admission_exc):
+                log(d,"LANE_LAUNCH_STOPPED|%s|reason=node-occupancy-cap"%HOST)
+                break
             continue
         except AdmissionError:
             log(d,"NODE_ADMISSION_CUSTODY_REQUIRED|%s|%s"%(HOST,cid))
