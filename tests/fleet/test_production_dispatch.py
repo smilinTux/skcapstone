@@ -428,6 +428,7 @@ def test_builder_offers_are_bounded_and_do_not_stop_after_first_success():
         "log": lambda *args: None,
         "d": None,
         "_record_offer_state": lambda *args: None,
+        "_BUILDER_OFFER_SECONDS": 45.0,
     }
     exec(compile(ast.Module(body=[block], type_ignores=[]), str(ROTATE), "exec"), ns)
     assert offers == ["0", "1", "2"]
@@ -555,3 +556,43 @@ def test_explicit_exact_pin_preserves_bucket_and_does_not_create_a_route():
     p = policy()
     p["lanes"]["glm"]["enabled"] = False
     assert resolve_production_routes([row], policy=p, required_size="M", labels=[]) == []
+
+
+def test_builder_offer_phase_stops_at_its_own_cap():
+    """The builder phase must not consume the whole cycle (exit 70 at the 270s limit)."""
+    source = ROTATE.read_text()
+    tree = ast.parse(source)
+    block = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.If)
+        and ast.unparse(node.test) == "not DRY and _is_niobe_builder_host(HOST)"
+    )
+    offers = []
+
+    class Builder:
+        def offer(self, paths, core, labels, **kwargs):
+            offers.append(core["id"])
+            return {"node": "node", "request_id": core["id"]}
+
+    ns = {
+        "DRY": False,
+        "HOST": "controller",
+        "_is_niobe_builder_host": lambda host: True,
+        "_builder_candidates": [(0, 0, str(i), {}, []) for i in range(5)],
+        "MAX_CANDIDATE_SCAN": 5,
+        "owned": [],
+        "PRODUCTION_POLICY": policy(),
+        "_cycle_started": 0,
+        "_production_cycle_budget": 250,
+        "time": type("Clock", (), {"monotonic": staticmethod(lambda: 1)}),
+        "builder_dispatch": Builder(),
+        "fleet_store": SimpleNamespace(Writer=lambda **kwargs: kwargs),
+        "default_fleet_paths": lambda: None,
+        "log": lambda *args: None,
+        "d": None,
+        "_record_offer_state": lambda *args: None,
+        "_BUILDER_OFFER_SECONDS": 0.0,
+    }
+    exec(compile(ast.Module(body=[block], type_ignores=[]), str(ROTATE), "exec"), ns)
+    assert offers == []
