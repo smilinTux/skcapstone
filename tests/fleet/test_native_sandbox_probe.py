@@ -73,7 +73,9 @@ def test_diagnostic_entrypoint_runs_existing_full_gate(monkeypatch, capsys):
         sandbox_tools, "readiness", lambda python: calls.append(python) or ["enforcement missing"]
     )
     assert probe.main() == 1
-    assert calls == [sys.executable]
+    # The sandbox binds only the clean qualification prefix, so the probe
+    # must exercise that interpreter, not the caller's own.
+    assert calls == [str(probe.PREFIX / "bin/python")]
     assert json.loads(capsys.readouterr().out)["failures"] == ["enforcement missing"]
 
 

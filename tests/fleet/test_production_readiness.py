@@ -136,6 +136,7 @@ def test_production_observer_skips_only_legacy_caps_preserves_imports_and_other_
     monkeypatch.setattr(
         readiness, "systemd_effective_environment", lambda unit: (environment, None)
     )
+    monkeypatch.setattr(readiness, "qualification_python", lambda: sys.executable)
     result = readiness._run(source, units, sys.executable, None, "skfleet-seat-cycle.service")
     assert result == (1 if broken_import or extra_required else 0)
     output = capsys.readouterr().out

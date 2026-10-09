@@ -6,14 +6,13 @@ import hashlib
 import json
 import re
 import sys
-import tomllib
 from pathlib import Path
 
 import pytest
+import tomllib
 
 from skcapstone.fleet import production_test_plan as plan
-from skcapstone.fleet import qualify_env
-from skcapstone.fleet import staged_rollout
+from skcapstone.fleet import qualify_env, staged_rollout
 from skcapstone.fleet.qualified_runtime import REQUIRED_PACKAGES, STATE_NAME, qualify_prefix
 
 ROOT = Path(__file__).resolve().parents[2]

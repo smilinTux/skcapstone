@@ -117,9 +117,9 @@ def test_production_readiness_reports_the_actual_interpreter_missing_plugin(
     monkeypatch.setattr(readiness, "check_module_imports", imports)
     assert readiness._run(source, units, "/fixture/python", None) == int(missing)
     assert ("FAIL qualified-runtime dependency: " + module in capsys.readouterr().out) == missing
-    assert any(
-        module in modules and interpreter == "/fixture/python" for modules, interpreter in calls
-    )
+    sealed = readiness.qualification_python()
+    assert sealed.endswith(".local/share/skcapstone/qualify-env/bin/python")
+    assert any(module in modules and interpreter == sealed for modules, interpreter in calls)
 
 
 def test_controller_extra_supports_python_311_and_matches_312_source_ci():

@@ -110,6 +110,13 @@ def production_environment_error(
     return None if result.returncode == 0 else "invalid production policy or effective authority"
 
 
+def qualification_python() -> str:
+    """Sealed tests run from the clean qualification prefix, not the dispatcher's."""
+    from skcapstone.fleet.qualified_runtime import qualify_prefix
+
+    return str(qualify_prefix(Path.home()) / "bin/python")
+
+
 def qualification_sandbox_error(python_bin: str) -> str | None:
     """Grade worker context, preserving readiness's nested filesystem sandbox."""
     import uuid
@@ -635,13 +642,15 @@ def _run(
                             lines.append("OK qualification sandbox: native sealed execution")
                     from skcapstone.fleet.qualified_runtime import REQUIRED_PACKAGES
 
-                    qualified = check_module_imports(list(REQUIRED_PACKAGES), python_bin)
+                    qualified = check_module_imports(
+                        list(REQUIRED_PACKAGES), qualification_python()
+                    )
                     for module in REQUIRED_PACKAGES:
                         if not qualified.get(module):
                             ok = False
                             lines.append("FAIL qualified-runtime dependency: " + module)
                     if all(qualified.get(module) for module in REQUIRED_PACKAGES):
-                        lines.append("OK qualified-runtime dependencies: fleet-qualify")
+                        lines.append("OK qualified-runtime dependencies: qualify-env")
             if not mandatory:
                 lines.append("OK required env: dispatcher declares no mandatory env vars")
             for name in sorted(mandatory):
