@@ -247,6 +247,14 @@ def reconcile_review_work(
                 }
             )
         if created:
+            review_labels = [
+                "review",
+                "seat-seraph",
+                "source-only",
+                f"parent-{source_card}",
+            ]
+            if "glm-only" in source.labels:
+                review_labels.extend(("glm-only", "review-distinct-agent"))
             try:
                 store.create(
                     CardCore(
@@ -299,12 +307,7 @@ def reconcile_review_work(
                             if guarded
                             else []
                         ),
-                        initial_labels=[
-                            "review",
-                            "seat-seraph",
-                            "source-only",
-                            f"parent-{source_card}",
-                        ],
+                        initial_labels=review_labels,
                         meta=expected_meta,
                     )
                 )

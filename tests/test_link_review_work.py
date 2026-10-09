@@ -6,6 +6,7 @@ import pytest
 
 import skcapstone.link_review_work as review_work_module
 from skcapstone.card_store import CardCore, CardStore
+from skcapstone.fleet.production_review import review_family_allowed
 from skcapstone.link_review_work import (
     card_generation,
     load_review_work,
@@ -132,6 +133,20 @@ def test_reconcile_is_restart_idempotent_and_launchable(tmp_path):
     assert card.links["repository"] == "https://github.com/org/repo"
     assert card.links["base_ref"] == "main"
     assert "source-only" in card.labels
+
+
+def test_glm_only_source_creates_distinct_glm_review_card(tmp_path):
+    home = _home_with_source(tmp_path)
+    CardStore(home).append_event("source01", "add_label", "builder", label="glm-only")
+    item = _item(home)
+
+    result = reconcile_review_work(home, item, evidence_sha256="a" * 64)
+
+    card = CardStore(home).fold(result.review_card_id)
+    assert result.launchable is True
+    assert card is not None
+    assert {"glm-only", "review-distinct-agent"} <= set(card.labels)
+    assert review_family_allowed("glm", "glm", card.labels)
 
 
 def test_reconcile_converges_for_cross_host_order(tmp_path):
