@@ -3325,11 +3325,21 @@ def authoritative_claimability(cid, core=None, fresh=False):
 
 
 def lifecycle_state(cid):
-    """Return the scheduler lifecycle derived from the authoritative fold."""
-    try:
-        _core, decision = _authoritative_card_state(cid)
-    except Exception:
-        return "ambiguous"
+    """Return the scheduler lifecycle derived from the authoritative fold.
+
+    A fold already validated in this selection pass is read in place: this
+    only reads it, so the defensive deep copy _authoritative_card_snapshot
+    hands other callers is pure cost here (~28k calls per cycle on chiap08).
+    """
+    snapshots = globals().get("_selection_snapshots")
+    cached = snapshots.get(cid) if snapshots else None
+    if cached is not None:
+        decision = cached[1]
+    else:
+        try:
+            _core, decision = _authoritative_card_state(cid)
+        except Exception:
+            return "ambiguous"
     if decision["status"] == "done":
         return "complete"
     if decision["archived"] or decision["voided"]:

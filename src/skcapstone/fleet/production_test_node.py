@@ -96,6 +96,8 @@ def artifact_digest_memo() -> Iterator[None]:
     Inside this scope a path that hashed successfully returns that digest; a
     failure is never remembered, so it is recomputed and raised again. Outside
     any scope nothing is remembered. Scopes nest; the outermost one owns it.
+    The governed Node binary hash (~120MB read per plan) is remembered the
+    same way.
     """
     global _DIGEST_MEMO
     outer = _DIGEST_MEMO
@@ -116,6 +118,17 @@ def artifact_digest(path: Path) -> str:
             memo[key] = _artifact_digest(path)
         return memo[key]
     return _artifact_digest(path)
+
+
+def _node_digest() -> str:
+    """Hash the governed Node binary (~120MB), once per artifact_digest_memo scope."""
+    memo = _DIGEST_MEMO
+    if memo is None:
+        return plan.sha(NODE.read_bytes())
+    key = "\0node\0" + os.fspath(NODE)
+    if key not in memo:
+        memo[key] = plan.sha(NODE.read_bytes())
+    return memo[key]
 
 
 def _artifact_digest(path: Path) -> str:
@@ -200,7 +213,7 @@ def _validate_environment(environment: dict, workspace: Path | None) -> None:
         not isinstance(environment, dict)
         or set(environment) != {"node_sha256", "platform", "artifact_sha256", "source_sha256"}
         or environment["platform"] != [platform.system(), platform.machine()]
-        or environment["node_sha256"] != plan.sha(NODE.read_bytes())
+        or environment["node_sha256"] != _node_digest()
         or not isinstance(environment["source_sha256"], dict)
         or set(environment["source_sha256"]) != set(SOURCE_FILES)
         or any(

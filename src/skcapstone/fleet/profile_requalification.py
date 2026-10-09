@@ -682,9 +682,7 @@ def _release_failed_claims(home: Path, skc: str, actor: str, root: Path, limit: 
         try:
             if store is None:
                 store = CardStore(home)
-            result = _release_exact_claim(
-                home, skc, actor, card_id, owner, revision, store=store
-            )
+            result = _release_exact_claim(home, skc, actor, card_id, owner, revision, store=store)
         except (OSError, ValueError, subprocess.SubprocessError):
             result = False
         if result is not None:
