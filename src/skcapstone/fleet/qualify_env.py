@@ -56,7 +56,9 @@ DATA = Path(__file__).resolve().parents[1] / "data"
 MANIFEST = DATA / "qualify-env.json"
 LOCK = DATA / "qualify-env.lock.txt"
 MANIFEST_SCHEMA = "skfleet.qualify-env/v1"
-STATE_SCHEMA = "skfleet.qualify-env-state/v1"
+# v2: VCS-built direct pins (skharness) get a host-independent version string.
+# Bumping the schema makes every existing prefix rebuild once.
+STATE_SCHEMA = "skfleet.qualify-env-state/v2"
 SOURCE_NAME = "skcapstone-source.json"
 #: Distributions installed outside the hashed lock, by design.
 DIRECT_ONLY = frozenset({"skcapstone"})
@@ -280,8 +282,31 @@ def find_uv() -> str:
     raise QualifyEnvError("uv is not installed")
 
 
-def _run(argv: list[str], timeout: int = 900) -> None:
+# setuptools-scm versions a git build as +g<node>, and the node length follows
+# the host's git config: chiap08 sets core.abbrev=40 globally, so it built
+# skharness 0.3.45.dev30+g7409a1ab2 while chiap01-04 built +g7409a1a, and the
+# installed METADATA (so every qualification fingerprint) differed (2026-10-09).
+# Pin the version per pinned commit instead of trusting host git settings.
+VCS_PRETEND_VERSIONS = {
+    "7409a1ab28f9c8fed87cd40226f4c031ca9e3f6e": (
+        "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_SKHARNESS",
+        "0.3.45.dev30+g7409a1a",
+    ),
+}
+
+
+def _pretend_versions(direct: list[str]) -> dict[str, str]:
+    env = {}
+    for pin in direct:
+        for commit, (name, version) in VCS_PRETEND_VERSIONS.items():
+            if pin.endswith("@" + commit):
+                env[name] = version
+    return env
+
+
+def _run(argv: list[str], timeout: int = 900, extra_env: dict | None = None) -> None:
     env = {k: v for k, v in os.environ.items() if not k.startswith(("VIRTUAL_ENV", "PYTHON"))}
+    env.update(extra_env or {})
     result = subprocess.run(
         argv, capture_output=True, text=True, timeout=timeout, env=env, check=False
     )
@@ -357,7 +382,19 @@ def _build_fresh(uv: str, staging: Path, manifest: dict, lock: Path, source: Pat
         ]
     )
     _run(
-        [uv, "pip", "install", "--no-config", "--python", python, "--no-deps", *manifest["direct"]]
+        # --no-cache: a wheel cached from a pre-fix build carries the old version.
+        [
+            uv,
+            "pip",
+            "install",
+            "--no-config",
+            "--no-cache",
+            "--python",
+            python,
+            "--no-deps",
+            *manifest["direct"],
+        ],
+        extra_env=_pretend_versions(manifest["direct"]),
     )
     _install_skcapstone(uv, staging, source)
     for shim in UV_SHIMS:
@@ -392,7 +429,8 @@ def build(
             try:
                 previous = json.loads((prefix / STATE_NAME).read_bytes())
                 base_ok = (
-                    previous.get("lock_sha256") == manifest["lock_sha256"]
+                    previous.get("schema") == STATE_SCHEMA
+                    and previous.get("lock_sha256") == manifest["lock_sha256"]
                     and previous.get("python_sha256") == manifest["python"]["sha256"]
                     and previous.get("direct") == sorted(manifest["direct"])
                     and previous.get("sklegal_uv_lock_sha256")
