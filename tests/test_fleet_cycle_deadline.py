@@ -70,9 +70,7 @@ def test_route_preflight_cache_key_changes_with_gateway_revision() -> None:
 
     assert key("glm-5", {"capacity_revision": "old"}) == ("glm-5", "old")
     assert key("glm-5", {"capacity_revision": "new"}) == ("glm-5", "new")
-    assert key("glm-5", {"capacity_revision": "old"}) != key(
-        "glm-5", {"capacity_revision": "new"}
-    )
+    assert key("glm-5", {"capacity_revision": "old"}) != key("glm-5", {"capacity_revision": "new"})
     assert "_preflight_key = _route_preflight_cache_key(model, _review_route_snapshot)" in source
     assert "_route_preflight_cache[_preflight_key]" in source
 
