@@ -349,6 +349,56 @@ def test_stale_executor_plan_runs_under_same_recipe_for_requalification(setup, m
     assert path.exists()
 
 
+def test_legacy_toolchain_requalification_plan_loads_on_the_new_prefix(setup, monkeypatch):
+    """The one-time ~/.skenv migration requal must pass the executor's own check.
+
+    Production 2026-10-09: 52f7c2a5 was sealed for migration 32 times and every
+    executor refused it as "candidate test profile changed", because the check
+    demanded the profile toolchain equal the live prefix toolchain.
+    """
+    from skcoord.card_store import CardStore
+
+    card = CardStore(setup.home).fold(setup.binding["source_card"])
+    core = card.model_dump(mode="json")
+    recipe = {"pytest": {"tests/test_parser.py": 1}, "compile": [], "lint": [], "changelog": False}
+    profile.qualify_profile(
+        setup.home,
+        core,
+        setup.policy,
+        recipe,
+        "operator",
+        "b" * 64,
+        source_sha256=plan.source_fingerprint(
+            core["meta"]["repository"],
+            setup.binding["source_head"],
+            setup.binding["source_tree"],
+        ),
+    )
+    value, predecessor = profile.read_profile(setup.home, core["id"])
+    _, _, plan_predecessor = plan.load_plan(setup.home, setup.binding)
+    legacy = value["toolchain_sha256"]
+    monkeypatch.setattr(plan, "toolchain_fingerprint", lambda: "f" * 64)
+    monkeypatch.setattr(plan, "legacy_toolchain_fingerprint", lambda: legacy)
+    assert profile.fingerprint_only_stale(value, profile.contract(core), setup.policy)
+    plan.seal_plan(
+        setup.home,
+        setup.binding,
+        setup.workspace,
+        setup.policy,
+        value["qualified_by"],
+        value["qualification_sha256"],
+        profile=value,
+        predecessor_sha256=plan_predecessor,
+        requalification=True,
+        profile_predecessor_sha256=predecessor,
+    )
+    # The executor's own legacy ~/.skenv differs; only the sealed value counts.
+    monkeypatch.setattr(plan, "legacy_toolchain_fingerprint", lambda: "e" * 64)
+    sealed, _, _ = plan.load_plan(setup.home, setup.binding)
+    assert sealed["legacy_toolchain_sha256"] == legacy
+    assert sealed["profile_requalification"] is True
+
+
 def test_remote_initial_profile_plan_is_sealed_without_publishing_profile(setup, monkeypatch):
     from skcoord.card_store import CardStore
 
