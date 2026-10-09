@@ -452,7 +452,7 @@ def test_lane_rejects_unqualified_profiles_before_the_fresh_fold() -> None:
     chiap08 2026-10-09 21:02Z: 64 such cards took lane_launch to 150s.
     """
     source = ROTATE.read_text(encoding="utf-8")
-    cheap = source.index('test_preflight(Path(HOME)/".skcapstone", dict(core, id=cid)')
+    cheap = source.index('_profile_gate.preflight(Path(HOME)/".skcapstone", dict(core, id=cid)')
     fresh = source.index("fresh_claimability=authoritative_claimability(cid,core=_fresh_core")
     assert cheap < fresh
 

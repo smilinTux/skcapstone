@@ -9343,14 +9343,11 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
     # their shared 1h cooldown expired together (chiap08 2026-10-09 21:02Z).
     # The authoritative preflight on the fresh core still runs further down.
     if PRODUCTION_POLICY and _governed_review_metadata(core, _labels) is None:
-        from skcapstone.fleet.production_test_profile import (
-            ProfileRequalificationRequired,
-            preflight as test_preflight,
-        )
+        from skcapstone.fleet import production_test_profile as _profile_gate
         try:
-            test_preflight(Path(HOME)/".skcapstone", dict(core, id=cid), _labels,
+            _profile_gate.preflight(Path(HOME)/".skcapstone", dict(core, id=cid), _labels,
                            PRODUCTION_POLICY)
-        except ProfileRequalificationRequired:
+        except _profile_gate.ProfileRequalificationRequired:
             pass
         except (OSError,ValueError) as exc:
             log(d,"TEST_PROFILE_BLOCKED|%s|%s|%s"%(HOST,cid,exc))
