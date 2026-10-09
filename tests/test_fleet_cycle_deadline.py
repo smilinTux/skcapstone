@@ -56,6 +56,27 @@ def test_route_preflight_caches_rejected_routes_per_cycle() -> None:
     )
 
 
+def test_route_preflight_cache_key_changes_with_gateway_revision() -> None:
+    source = ROTATE.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    helper = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_route_preflight_cache_key"
+    )
+    namespace: dict[str, object] = {}
+    exec(compile(ast.Module(body=[helper], type_ignores=[]), str(ROTATE), "exec"), namespace)
+    key = namespace["_route_preflight_cache_key"]
+
+    assert key("glm-5", {"capacity_revision": "old"}) == ("glm-5", "old")
+    assert key("glm-5", {"capacity_revision": "new"}) == ("glm-5", "new")
+    assert key("glm-5", {"capacity_revision": "old"}) != key(
+        "glm-5", {"capacity_revision": "new"}
+    )
+    assert "_preflight_key = _route_preflight_cache_key(model, _review_route_snapshot)" in source
+    assert "_route_preflight_cache[_preflight_key]" in source
+
+
 def test_route_preflight_cannot_consume_receipt_reserve_or_reach_launch() -> None:
     source = ROTATE.read_text()
     probe = source.index("_route_preflight=resolve_and_preflight")

@@ -8580,6 +8580,11 @@ def _refresh_review_route_snapshot_if_stale():
     )
 
 
+def _route_preflight_cache_key(model, snapshot):
+    """Scope one route's preflight result to the gateway capacity revision."""
+    return (model, str((snapshot or {}).get("capacity_revision") or "missing"))
+
+
 while _i<len(owned) and _i<len(_candidate_scan):
     _refresh_review_route_snapshot_if_stale()
     _card=_candidate_scan[_i]; _i+=1
@@ -9357,8 +9362,9 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
                 "- request_id=%s\n- requester=%s\n- allowed_route=%s\n"
                 "- Your authority is limited to this route and the card criteria.\n"
                 % _fanout_env)
-    if model in _route_preflight_cache:
-        _route_preflight=_route_preflight_cache[model]
+    _preflight_key = _route_preflight_cache_key(model, _review_route_snapshot)
+    if _preflight_key in _route_preflight_cache:
+        _route_preflight=_route_preflight_cache[_preflight_key]
         if _route_preflight is None:
             log(d,"ROUTE_PREFLIGHT_BLOCKED|%s|%s|requested=%s|reason=cached-failure"%
                 (HOST,cid,model))
@@ -9373,9 +9379,9 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         except ValueError as exc:
             log(d,"ROUTE_PREFLIGHT_BLOCKED|%s|%s|requested=%s|reason=%s"%
                 (HOST,cid,model,str(exc)[:140]))
-            _route_preflight_cache[model]=None
+            _route_preflight_cache[_preflight_key]=None
             continue
-        _route_preflight_cache[model]=_route_preflight
+        _route_preflight_cache[_preflight_key]=_route_preflight
         log(d,"ROUTE_PREFLIGHT_OK|%s|%s|requested=%s|served=%s|provider=%s"%
             (HOST,cid,_route_preflight.requested_identity,
              _route_preflight.served_identity,_route_preflight.provider or "unknown"))
