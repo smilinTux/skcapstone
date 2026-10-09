@@ -109,6 +109,17 @@ def paths_for_home(home: Path | str) -> FleetPaths:
     return FleetPaths(root=Path(home).expanduser() / Path(SOVEREIGN_HOME).name / "fleet")
 
 
+def paths_for_sovereign_home(home: Path | str) -> FleetPaths:
+    """The fleet tree under an already-resolved sovereign home.
+
+    For callers handed the sovereign home itself (``~/.skcapstone``) rather
+    than a user home: ``paths_for_home`` would append the sovereign name a
+    second time and resolve ``~/.skcapstone/.skcapstone/fleet``, a tree with
+    no nodes (profile requalification, 2026-10-09).
+    """
+    return FleetPaths(root=Path(home).expanduser() / "fleet")
+
+
 def self_node_name() -> str:
     """This machine's node name (SKFLEET_NODE override, else hostname).
 

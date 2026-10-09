@@ -60,19 +60,15 @@ def _job_lock(root: Path, job_id: str):
 
 
 def _fleet_paths(home: Path):
-    """The fleet tree under the SOVEREIGN home this module is always handed.
+    """The fleet tree under the SOVEREIGN home every caller of this module passes.
 
-    Every caller passes the sovereign home (``~/.skcapstone``): skfleet-rotate
-    passes ``HOME/.skcapstone`` and sknoded passes ``paths.root.parent``, and the
-    job records here live at ``home/fleet/profile-requalifications``. The paths
-    helper for a USER home appends the sovereign name again, so it resolved
-    ``~/.skcapstone/.skcapstone/fleet``: no nodes, so every offer fell back to
-    the authority as ``deferred:no-ready-remote-host``, and the freeze check
-    read a tree that never exists (2026-10-09, cycle 1101ab03).
+    skfleet-rotate and sknoded both hand in the sovereign home, and the job
+    records here live under it, so the user-home resolver would double the
+    sovereign directory and find no nodes (see paths_for_sovereign_home).
     """
-    from .paths import FleetPaths
+    from .paths import paths_for_sovereign_home
 
-    return FleetPaths(root=Path(home) / "fleet")
+    return paths_for_sovereign_home(home)
 
 
 def _execution_host(home: Path, policy: dict, card_id: str) -> str:
