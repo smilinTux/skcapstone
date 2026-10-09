@@ -1,0 +1,1 @@
+sknoded passes the admitted host label (for example `chiap02`) to remote profile qualification instead of the node name (`node-chiap02`), so builders stop refusing every assigned qualification job as a host mismatch, and refusals are now logged.

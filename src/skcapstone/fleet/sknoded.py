@@ -207,7 +207,18 @@ def run_once(paths: FleetPaths, node: str) -> dict:
 
             policy = production_builder.policy()
             if policy is not None:
-                result_qualifications = consume_remote(paths.root.parent, policy, node)
+                # consume_remote matches the bare HOSTNAME (chiap02), and the
+                # node name here is node-chiap02, so passing it refused every
+                # job as host-mismatch and nothing logged it (2026-10-09: four
+                # jobs sat pending on chiap01-04). Use the admitted host label,
+                # the identity production_builder.node_binding binds work to.
+                host = (spec.get("labels") or {}).get("host") or socket.gethostname()
+                result_qualifications = consume_remote(
+                    paths.root.parent, policy, host.split(".")[0].lower()
+                )
+                refused = [state for state in result_qualifications if state.startswith("refused")]
+                if refused:
+                    logger.warning("remote profile qualification refused on %s: %s", node, refused)
         except (OSError, ValueError) as exc:
             logger.warning("remote profile qualification refused on %s: %s", node, exc)
             result_qualifications = ["refused"]
