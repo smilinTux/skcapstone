@@ -67,9 +67,8 @@ def canonical_opener(review_candidate, qualified_review_api, tmp_path):  # noqa:
 def test_canonical_creation_survives_void_legacy_and_materializes_exact_source(
     canonical_opener, tmp_path, monkeypatch
 ):
-    from skcapstone.review_replacement import current_review_attempt
-
     from skcapstone.fleet.source_bundle import import_review_source
+    from skcapstone.review_replacement import current_review_attempt
 
     board, value = canonical_opener
     before = value["store"]._read_events(value["card"])
@@ -217,7 +216,11 @@ def _review_and_collect(value, review, workspace, monkeypatch):
         owner,
         claim_revision=claim,
         launched=True,
-        route_identity={"capacity_domains": ["deepseek"], "model_or_bucket": "qualified-review"},
+        route_identity={
+            "capacity_domains": ["deepseek"],
+            "model_or_bucket": "qualified-review",
+            "policy_sha256": acceptance.digest(value["policy"]),
+        },
     )
     # External route qualification and real unit liveness have separate focused
     # tests. This synthetic integration exercises every source/lineage join.

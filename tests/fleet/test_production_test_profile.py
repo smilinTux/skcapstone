@@ -509,6 +509,16 @@ def test_acceptance_hook_seals_before_tests_and_does_not_self_complete(
         ),
     )
     review, claim = "abcd9876", "d" * 32
+    from skcoord.card_store import CardCore, CardStore
+
+    CardStore(s.home).create(
+        CardCore(
+            id=review,
+            title="[REVIEW][S] Synthetic acceptance",
+            created_by="r",
+            initial_labels=["review", "source-only", "parent-" + core["id"]],
+        )
+    )
     exits = s.home / "evidence/production-review-exits"
     exits.mkdir(parents=True)
     (exits / f"{review}-{claim}.json").write_text("{}")
@@ -516,6 +526,7 @@ def test_acceptance_hook_seals_before_tests_and_does_not_self_complete(
     directory.mkdir(parents=True)
     (directory / "context.json").write_text("{}")
     context = {
+        "schema": "skfleet.production-acceptance-context/v2",
         "policy_sha256": acceptance.digest(s.policy),
         "test_binding": binding,
         "source_workspace": str(s.workspace),
@@ -526,11 +537,28 @@ def test_acceptance_hook_seals_before_tests_and_does_not_self_complete(
             "claim": "pclaim",
             "repository": core["meta"]["repository"],
         },
-        "review": {"card": review, "revision": "review", "owner": "r", "claim": claim},
+        "review": {
+            "card": review,
+            "revision": "review",
+            "owner": "r",
+            "claim": claim,
+            "terminal": {
+                "host": "control",
+                "model": "qualified-review",
+                "lane": "deepseek",
+                "unit": "skfleet-worker-deepseek-abcd9876.service",
+                "invocation": "f" * 32,
+                "source_head": "a" * 40,
+            },
+            "launch_event": {
+                "route_identity": {"policy_sha256": acceptance.digest(s.policy)},
+            },
+        },
     }
     monkeypatch.setattr(acceptance, "read_json", lambda path: context)
     monkeypatch.setattr(acceptance, "terminal_guard", lambda *args: None)
     monkeypatch.setattr(acceptance, "artifacts", lambda *args: None)
+    monkeypatch.setattr(acceptance, "production_receipt_allowed", lambda *args: True)
     monkeypatch.setattr(
         acceptance,
         "native_state",

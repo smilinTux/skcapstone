@@ -332,14 +332,16 @@ def _sealed_source_outcome(store, source_id, manifest):
         and event.get("candidate_sha256") == manifest.get("evidence_sha256")
     ]
     latest = _latest_outcome(store, source_id)
+    matching_event_ids = {event.get("event_id") for event in outcomes}
     if (
         len(claims) != 1
-        or len(outcomes) != 1
-        or str(outcomes[0].get("ts", "")) < str(claims[0].get("ts", ""))
-        or latest.get("event_id") != outcomes[0].get("event_id")
+        or not outcomes
+        or not latest.get("event_id")
+        or latest.get("event_id") not in matching_event_ids
+        or str(latest.get("ts", "")) < str(claims[0].get("ts", ""))
     ):
         raise ReviewEvidenceError("sealed producer outcome is no longer current")
-    return outcomes[0]
+    return latest
 
 
 def _review_attempt_is_current(home, card, core, parent, head, manifest):
