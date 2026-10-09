@@ -528,6 +528,18 @@ def offer_stale_candidate(
                 and after.meta.get("_claim_revision") == claim_revision
             ):
                 return "blocked:qualification-failed-claim-release-refused"
+            # release-claim lands the card in backlog, and offers only consider
+            # READY cards, so one failed qualification parked the card for good:
+            # 8 SKLegal cards on 2026-10-09 after the runtime-parity gap. The
+            # offer only claims READY cards, so READY is the column to restore,
+            # exactly as the qualified path below already does.
+            if after.status.value != "ready" and after.owner is None:
+                subprocess.run(
+                    [skc, "coord", "move", card_id, "ready", "--agent", actor],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
     return state
 
 
