@@ -211,38 +211,12 @@ def test_idle_dispatch_cycle_lets_the_rollout_proceed(fleet):
     ] == ["h1", "h2", "h3"]
 
 
-def _timer_calls(calls: Path) -> list[str]:
-    return [
-        c.split()[2] + " " + c.split()[3]
-        for c in _calls(calls)
-        if c.startswith("systemctl --user") and c.split()[2] in ("stop", "start")
-    ]
-
-
-def test_cycle_timer_is_held_for_the_rollout_and_restarted(fleet):
-    """The seat cycle re-arms 15s after each run; hold its timer while hosts roll."""
+def test_rollout_never_stops_the_cycle_timer(fleet):
+    """The chiap08 drift gate requires skfleet-seat-cycle.timer active."""
     _advance_origin(fleet["origin"])
     result = _run(fleet["env"])
     assert result.returncode == 0, result.stdout + result.stderr
-    calls = _calls(fleet["calls"])
-    stop = calls.index("systemctl --user stop skfleet-seat-cycle.timer")
-    start = calls.index("systemctl --user start skfleet-seat-cycle.timer")
-    rollouts = [i for i, c in enumerate(calls) if c.startswith("rollout")]
-    assert stop < rollouts[0] and rollouts[-1] < start
-
-
-def test_cycle_timer_is_restarted_after_a_halt(fleet):
-    _advance_origin(fleet["origin"])
-    fleet["fail_host"].write_text("h2")
-    result = _run(fleet["env"])
-    assert result.returncode != 0
-    assert _timer_calls(fleet["calls"]) == [
-        "stop skfleet-seat-cycle.timer",
-        "start skfleet-seat-cycle.timer",
-    ]
-
-
-def test_up_to_date_checkout_leaves_the_cycle_timer_alone(fleet):
-    result = _run(fleet["env"])
-    assert result.returncode == 0
-    assert _timer_calls(fleet["calls"]) == []
+    assert not any(
+        c.startswith("systemctl --user stop") or c.startswith("systemctl --user start")
+        for c in _calls(fleet["calls"])
+    )
