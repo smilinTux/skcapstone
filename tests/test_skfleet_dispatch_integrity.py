@@ -155,6 +155,8 @@ record_for() {
   esac
 }
 ssh() {
+  # Real ssh consumes the program on stdin; avoid a fake pipefail/SIGPIPE.
+  cat >/dev/null
   local arg host=""
   cat >/dev/null
   for arg in "$@"; do
