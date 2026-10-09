@@ -444,3 +444,14 @@ def test_the_selection_diagnostic_reports_both_sides_of_the_split(tmp_path) -> N
     )
     assert "builder_withheld=1" in detail
     assert "builder_returned=1" in detail
+
+
+def test_lane_rejects_unqualified_profiles_before_the_fresh_fold() -> None:
+    """An unqualified card must not pay the ~2.3s fresh claimability re-check.
+
+    chiap08 2026-10-09 21:02Z: 64 such cards took lane_launch to 150s.
+    """
+    source = ROTATE.read_text(encoding="utf-8")
+    cheap = source.index("test_preflight(Path(HOME)/\".skcapstone\", dict(core, id=cid)")
+    fresh = source.index("fresh_claimability=authoritative_claimability(cid,core=_fresh_core")
+    assert cheap < fresh
