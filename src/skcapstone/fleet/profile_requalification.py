@@ -461,15 +461,21 @@ def offer_stale_candidate(
 
     import subprocess
 
+    # One claimant per card. skcoord keeps a single current task per agent and
+    # DEMOTES the previous one to ready on every new claim, so claiming up to
+    # four cards per cycle as plain "niobe" left only the last one in doing;
+    # the builders then refused the rest as "remote qualification claim
+    # changed" (2026-10-09: d0a4c912 demoted 1s after niobe claimed d621aeec).
+    claimant = f"{actor}-requal-{card_id}"
     claim = subprocess.run(
-        [skc, "coord", "claim", card_id, "--agent", actor],
+        [skc, "coord", "claim", card_id, "--agent", claimant],
         capture_output=True,
         text=True,
         timeout=15,
     )
     card = CardStore(home).fold(card_id)
     claim_revision = (card.meta or {}).get("_claim_revision") if card else None
-    if claim.returncode or card is None or card.owner != actor or not claim_revision:
+    if claim.returncode or card is None or card.owner != claimant or not claim_revision:
         return "deferred:claim-refused"
     state = requalify_or_advance(
         home,
@@ -479,7 +485,7 @@ def offer_stale_candidate(
         card_id=card_id,
         core=dict(core, id=card_id),
         workspace=str(workspace),
-        owner=actor,
+        owner=claimant,
         claim_revision=claim_revision,
     )
     if state == "pending":
@@ -488,7 +494,7 @@ def offer_stale_candidate(
                 job.get("execution_host")
                 for _, job in _records(root)
                 if job.get("card") == card_id
-                and job.get("owner") == actor
+                and job.get("owner") == claimant
                 and job.get("claim_revision") == claim_revision
             ),
             "unknown-host",
@@ -498,7 +504,7 @@ def offer_stale_candidate(
         latest = CardStore(home).fold(card_id)
         if (
             latest is not None
-            and latest.owner == actor
+            and latest.owner == claimant
             and latest.meta.get("_claim_revision") == claim_revision
         ):
             released = subprocess.run(
@@ -508,7 +514,7 @@ def offer_stale_candidate(
                     "release-claim",
                     card_id,
                     "--owner",
-                    actor,
+                    claimant,
                     "--expected-claim-revision",
                     claim_revision,
                     "--agent",
@@ -524,7 +530,7 @@ def offer_stale_candidate(
             if (
                 released.returncode
                 or after is None
-                or after.owner == actor
+                or after.owner == claimant
                 and after.meta.get("_claim_revision") == claim_revision
             ):
                 return "blocked:qualification-failed-claim-release-refused"
