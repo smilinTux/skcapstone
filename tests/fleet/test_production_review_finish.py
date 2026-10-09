@@ -270,6 +270,44 @@ def test_real_guarded_native_completion_review_before_source_and_replay_without_
     assert all(store._read_events(context[role]["card"]) == events[role] for role in events)
 
 
+@pytest.mark.host_systemd
+def test_review_completion_accepts_released_producer_claim_from_sealed_source(pair):
+    home, directory, context, store, _, _ = pair
+    producer = context["source"]["owner"]
+    claim = context["source"]["claim"]
+    store.append_event(
+        context["source"]["card"],
+        "release_claim",
+        "operator",
+        released_owner=producer,
+        expected_claim_revision=claim,
+        transition_id="e" * 32,
+        abandon_reason="not-abandoned",
+    )
+    context["source"]["live_revision"] = native_revision(home, context["source"]["card"])
+
+    def debug_command(home, args):
+        import subprocess
+
+        completed = subprocess.run(
+            [sys.executable, "-m", "skcapstone", "coord", *args, "--home", str(home)],
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode:
+            raise AssertionError(completed.stderr + completed.stdout)
+        return json.loads(completed.stdout) if "--json" in args else None
+
+    result = finish.finish_pair(
+        home, directory, context, guard=lambda: None, command=debug_command
+    )
+
+    assert result["accepted"]
+    assert store.fold(context["review"]["card"]).status.value == "done"
+    assert store.fold(context["source"]["card"]).status.value == "done"
+    assert store.fold(context["source"]["card"]).owner is None
+
+
 @pytest.mark.parametrize("lost", ["link", "review-complete", "source-complete"])
 @pytest.mark.host_systemd
 def test_crash_after_successful_native_write_recovers_exactly_once(pair, lost):

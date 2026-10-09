@@ -45,12 +45,14 @@ def review_directory(home, card, claim):
 
 def _producer_terminal(home, source, manifest):
     """Read native sknoded terminal custody for this exact producer generation."""
-    producer = manifest["owner"]
-    claim = manifest["claim_revision"]
+    producer_owner = manifest.get("owner")
+    producer_claim = manifest.get("claim_revision")
+    if not isinstance(producer_owner, str) or not isinstance(producer_claim, str):
+        raise ReviewEvidenceError("sealed producer generation is incomplete")
     matches = []
     for path in (home / "fleet/status").glob("*/dispatch/" + source.id + ".json"):
         status = read_json(path)
-        if status.get("owner") != producer or status.get("claim_revision") != claim:
+        if status.get("owner") != producer_owner or status.get("claim_revision") != producer_claim:
             continue
         artifact = status.get("source_artifact") or {}
         if (
@@ -92,17 +94,15 @@ def _producer_terminal(home, source, manifest):
             }
         )
     if not matches:
-        return _direct_seat_terminal(home, source, manifest)
+        return _direct_seat_terminal(home, source, manifest, producer_owner, producer_claim)
     if len(matches) != 1:
         raise ReviewEvidenceError("one native producer terminal receipt required")
     return matches[0]
 
 
-def _direct_seat_terminal(home, source, manifest):
+def _direct_seat_terminal(home, source, manifest, producer_owner, producer_claim):
     """Validate a completed direct worker's exact native source receipt."""
-    producer = manifest["owner"]
-    claim = manifest["claim_revision"]
-    path = Path(home) / "fleet/direct-seats" / (producer + ".json")
+    path = Path(home) / "fleet/direct-seats" / (producer_owner + ".json")
     try:
         info = path.lstat()
         if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) & 0o077:
@@ -115,15 +115,15 @@ def _direct_seat_terminal(home, source, manifest):
         artifact = disposition.get("source_artifact") or {}
         schema = receipt.get("schema")
         explicit_receipt = schema == "skfleet.direct-seat/v1"
-        parts = producer.split("-")
+        parts = source.owner.split("-")
         owner_host = parts[-2] if len(parts) >= 4 else ""
         host = str(receipt.get("host") or owner_host)
         domains = receipt.get("capacity_domains")
         if (
             schema not in (None, "skfleet.direct-seat/v1")
             or receipt.get("card") != source.id
-            or receipt.get("owner") != producer
-            or receipt.get("claim_revision") != claim
+            or receipt.get("owner") != producer_owner
+            or receipt.get("claim_revision") != producer_claim
             or receipt.get("completion_state") != "awaiting-review"
             or type(receipt.get("pid")) is not int
             or receipt["pid"] <= 0
@@ -175,8 +175,8 @@ def _direct_seat_terminal(home, source, manifest):
             "receipt_path": str(path),
             "receipt_sha256": hashlib.sha256(raw).hexdigest(),
             "card": source.id,
-            "owner": producer,
-            "claim_revision": claim,
+            "owner": producer_owner,
+            "claim_revision": producer_claim,
             "pid": receipt["pid"],
             "unit": unit,
             "invocation": invocation or None,
@@ -209,172 +209,58 @@ def _current_outcome(store, row):
     return outcome
 
 
-def _sealed_review_outcome(store, row, owner, claim):
-    """Prove the terminal reviewer PASS against its original native claim."""
+def _sealed_source_outcome(store, card_id, owner, claim, head, tree):
+    """Find the exact producer PASS bound by the immutable review source bundle."""
+    rows = store._read_events(card_id) + store._legacy_events(card_id)
     claims = [
         event
-        for event in store._read_events(row.id)
+        for event in rows
         if event.get("action") == "claim"
-        and event.get("writer") == owner
         and (event.get("claim_revision") or event.get("event_id")) == claim
-    ]
-    outcome = _latest_outcome(store, row.id)
-    value = str(outcome.get("verdict") or outcome.get("link_value") or "").strip()
-    if (
-        len(claims) != 1
-        or outcome.get("action") not in {"verdict", "link"}
-        or outcome.get("writer") != owner
-        or outcome.get("expected_claim_revision") not in (None, claim)
-        or value.split(maxsplit=1)[0].upper() != "PASS"
-        or str(outcome.get("ts", "")) < str(claims[0].get("ts", ""))
-    ):
-        raise ReviewEvidenceError("sealed independent review outcome is no longer current")
-    return outcome
-
-
-def _sealed_review_policy(home, launch, card, event, current_policy):
-    """Resolve the exact policy snapshot bound to the completed review launch."""
-    if event.get("schema") == "skfleet.review-assignment-launch/v3":
-        from .builder_dispatch import request_path
-        from .paths import FleetPaths
-        from .review_dispatch import _recorded, validate_contract
-
-        execution = event.get("execution") or {}
-        node = execution.get("node")
-        if not isinstance(node, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", node):
-            raise ReviewEvidenceError("sealed review policy request identity invalid")
-        request = read_json(request_path(FleetPaths(Path(home) / "fleet"), node, card.id))
-        sealed = request.get("policy")
-        policy_sha256 = (request.get("production") or {}).get("policy_sha256")
-        if (
-            request.get("card_id") != card.id
-            or request.get("reviewer") != launch.get("owner")
-            or request.get("request_id") != execution.get("request_id")
-            or digest(request) != execution.get("request_sha256")
-            or not isinstance(sealed, dict)
-            or digest(sealed) != policy_sha256
-            or policy_sha256 != execution.get("policy_sha256")
-        ):
-            raise ReviewEvidenceError("sealed review policy digest differs from launch")
-        _recorded(home, request)
-        validate_contract(request, sealed, host=launch["host"], historical=True)
-        return sealed
-
-    route = event.get("route_identity") or {}
-    sealed = route.get("policy_snapshot")
-    if isinstance(sealed, dict) and route.get("policy_sha256") == digest(sealed):
-        from .production_policy import validate_execution_policy
-
-        try:
-            validate_execution_policy(sealed)
-        except ValueError as exc:
-            raise ReviewEvidenceError("sealed review policy snapshot is invalid") from exc
-        return sealed
-    # Older local reviews did not retain the policy body. They can be replayed
-    # only if the exact policy digest is still the live one.
-    recorded = route.get("policy_sha256")
-    if not isinstance(recorded, str) or recorded != digest(current_policy):
-        raise ReviewEvidenceError("sealed review policy provenance unavailable")
-    return current_policy
-
-
-def _sealed_context_policy(home, context, current_policy):
-    """Revalidate a retained acceptance against the review's own launch policy."""
-    store = CardStore(home)
-    review_item = context["review"]
-    review = store.fold(review_item["card"])
-    terminal = review_item["terminal"]
-    launch = {
-        "host": terminal["host"],
-        "owner": review_item["owner"],
-        "revision": review_item["claim"],
-        "model": terminal["model"],
-        "lane": terminal["lane"],
-    }
-    if review is None:
-        raise ReviewEvidenceError("sealed review card disappeared")
-    event = review_item["launch_event"]
-    sealed = _sealed_review_policy(home, launch, review, event, current_policy)
-    if context.get("schema") == "skfleet.production-acceptance-context/v2":
-        if context.get("policy_sha256") != digest(sealed):
-            raise ReviewEvidenceError("sealed review policy differs from acceptance context")
-    elif context.get("schema") != "skfleet.production-acceptance-context/v1":
-        raise ReviewEvidenceError("acceptance context schema is unsupported")
-    if not production_receipt_allowed(home, sealed, launch, review, event):
-        raise ReviewEvidenceError("sealed review launch receipt is no longer valid")
-    return sealed
-
-
-def _sealed_source_outcome(store, source_id, manifest):
-    """Prove the exact producer verdict retained by the sealed review bundle."""
-    owner = manifest.get("owner")
-    claim = manifest.get("claim_revision")
-    if not isinstance(owner, str) or not owner or not re.fullmatch(r"[0-9a-f]{32}", str(claim)):
-        raise ReviewEvidenceError("sealed source claim binding invalid")
-    events = store._read_events(source_id)
-    claims = [
-        event
-        for event in events
-        if event.get("action") == "claim"
-        and event.get("writer") == owner
-        and (event.get("claim_revision") or event.get("event_id")) == claim
+        and event.get("owner") == owner
     ]
     outcomes = [
         event
-        for event in events
+        for event in rows
         if event.get("action") == "verdict"
         and event.get("verdict") == "PASS_FOR_REVIEW"
         and event.get("writer") == owner
         and event.get("expected_claim_revision") in (None, claim)
-        and event.get("candidate_commit") == manifest.get("head")
-        and event.get("candidate_tree") == manifest.get("tree")
-        and event.get("candidate_ref") == manifest.get("ref")
-        and event.get("candidate_sha256") == manifest.get("evidence_sha256")
+        and event.get("candidate_commit") == head
+        and event.get("candidate_tree") == tree
     ]
-    latest = _latest_outcome(store, source_id)
-    matching_event_ids = {event.get("event_id") for event in outcomes}
     if (
         len(claims) != 1
-        or not outcomes
-        or not latest.get("event_id")
-        or latest.get("event_id") not in matching_event_ids
-        or str(latest.get("ts", "")) < str(claims[0].get("ts", ""))
+        or len(outcomes) != 1
+        or outcomes[0].get("ts", "") < claims[0].get("ts", "")
+        or _latest_outcome(store, card_id) != outcomes[0]
     ):
-        raise ReviewEvidenceError("sealed producer outcome is no longer current")
-    return latest
+        raise ReviewEvidenceError("sealed producer outcome is unavailable")
+    return outcomes[0]
 
 
-def _review_attempt_is_current(home, card, core, parent, head, manifest):
-    """Validate deterministic review lineage without requiring live source custody."""
-    from ..review_work_identity import review_card_id
+def _recorded_remote_review(home, review, claim):
+    """Read the exact immutable remote request captured by the review launch."""
+    launches = [
+        event
+        for event in CardStore(home)._read_events(review.id)
+        if event.get("action") == "review_assignment_launch"
+        and event.get("claim_revision") == claim
+        and event.get("launched") is True
+    ]
+    if len(launches) != 1 or launches[0].get("schema") != "skfleet.review-assignment-launch/v3":
+        return (launches[0] if len(launches) == 1 else None), None
+    from .builder_dispatch import request_path
+    from .paths import FleetPaths
 
-    generation = _binding(core, "link_card_generation")
-    attempt = _binding(core, "review_attempt") or ""
-    if (
-        generation
-        and review_card_id(
-            parent, head, generation, manifest["evidence_sha256"], review_attempt=attempt
-        )
-        != card
-    ):
-        raise ReviewEvidenceError("review card does not match sealed source generation")
-    if attempt and not generation:
-        raise ReviewEvidenceError("replacement review source generation missing")
-    try:
-        from ..review_replacement import _record_binding
-    except ModuleNotFoundError as exc:
-        if exc.name != "skcapstone.review_replacement":
-            raise ReviewEvidenceError("review replacement dependency failed") from exc
-        if attempt or _binding(core, "superseded_by"):
-            raise ReviewEvidenceError("review replacement authority dependency missing") from None
-        return
-    if attempt:
-        predecessor = _binding(core, "review_predecessor")
-        lineage = _record_binding(Path(home), predecessor or "", live_source=False)
-        if lineage.get("review_card_id") != card or lineage.get("review_attempt") != attempt:
-            raise ReviewEvidenceError("review replacement lineage is not current")
-    elif _record_binding(Path(home), card, live_source=False).get("review_card_id") != card:
-        raise ReviewEvidenceError("review was superseded by an authorized replacement")
+    event = launches[0]
+    execution = event.get("execution") or {}
+    request = read_json(
+        request_path(FleetPaths(Path(home) / "fleet"), execution["node"], review.id)
+    )
+    if digest(request) != execution.get("request_sha256"):
+        raise ReviewEvidenceError("sealed remote review request changed")
+    return event, request
 
 
 def terminal_guard(home, context, process_check):
@@ -418,14 +304,10 @@ def collect(home, policy, card, claim, *, process_check):
     directory = review_directory(home, card, claim)
     store = CardStore(home)
     review = store.fold(card)
-    terminal = read_exit(home, card, claim)
-    review_owner = terminal.get("owner")
     if (
         review is None
-        or not isinstance(review_owner, str)
-        or not review_owner
-        or (review.owner is not None and review.owner != review_owner)
-        or (review.owner is not None and review.meta.get("_claim_revision") != claim)
+        or not review.owner
+        or review.meta.get("_claim_revision") != claim
         or review.meta.get("claim_conflicts")
         or "source-only" not in review.labels
         or "review" not in review.labels
@@ -438,76 +320,115 @@ def collect(home, policy, card, claim, *, process_check):
     core = review.model_dump(mode="json")
     parent = _binding(core, "link_source_card")
     head = _binding(core, "link_head_revision")
-    source = store.fold(parent) if parent else None
-    if (
-        source is None
-        or source.archived
-        or "source-only" not in source.labels
-        or {"do-not-claim", "hold"}.intersection(source.labels)
-        or source.status.value in {"done", "archived"}
-    ):
-        raise ReviewEvidenceError("original producer custody unavailable")
-    gateway = LiveCardStoreGateway(home)
-    source_snapshot, review_snapshot = gateway.read_card(parent), gateway.read_card(card)
-    review_outcome = _sealed_review_outcome(store, review, review_owner, claim)
     repository = _binding(core, "repository")
     selected = _review_manifest(core, repository, head)
     if selected is None:
         raise ReviewEvidenceError("exact unpublished source bundle required")
     manifest, _ = selected
-    source_revision = _binding(core, "source_revision")
-    if not re.fullmatch(r"[0-9a-f]{64}", str(source_revision or "")):
-        raise ReviewEvidenceError("sealed source snapshot binding invalid")
-    if source.meta.get("claim_conflicts") or (
-        source.owner is not None
-        and (
-            source.owner != manifest["owner"]
-            or source.meta.get("_claim_revision") != manifest["claim_revision"]
-        )
-    ):
-        raise ReviewEvidenceError("a different producer claim is active")
-    _review_attempt_is_current(home, card, core, parent, head, manifest)
-    outcome = _sealed_source_outcome(store, parent, manifest)
+    source = store.fold(parent) if parent else None
+    launch_event, launch_request = _recorded_remote_review(home, review, claim)
     if (
-        source_snapshot.verdict != "PASS_FOR_REVIEW"
-        or source_snapshot.head_sha != head
-        or outcome.get("action") != "verdict"
-        or outcome.get("writer") != manifest["owner"]
-        or _binding(core, "producer_identity") != manifest["owner"]
-        or manifest["owner"] == review_owner
+        source is None
+        or source.archived
+        or source.status.value in {"done", "archived"}
+        or "source-only" not in source.labels
+        or {"do-not-claim", "hold"}.intersection(source.labels)
+        or source.meta.get("claim_conflicts")
+    ):
+        raise ReviewEvidenceError("sealed producer source is unavailable")
+    try:
+        from ..review_replacement import current_review_attempt
+    except ModuleNotFoundError as exc:
+        if exc.name != "skcapstone.review_replacement":
+            raise ReviewEvidenceError("review replacement dependency failed") from exc
+        if review.meta.get("review_attempt") or review.links.get("superseded_by"):
+            raise ReviewEvidenceError("review replacement authority dependency missing") from None
+    else:
+        if review.meta.get("review_attempt"):
+            if current_review_attempt(home, parent, head) != card:
+                raise ReviewEvidenceError("review is not the authorized current attempt")
+        elif _binding(core, "link_card_generation") and _binding(core, "link_evidence_sha256"):
+            from ..link_review_work import review_card_id
+
+            replacement = any(
+                event.get("action") == "review_replacement_authorization"
+                for event in store._read_events(card)
+            )
+            expected = review_card_id(
+                parent,
+                head,
+                _binding(core, "link_card_generation"),
+                _binding(core, "link_evidence_sha256"),
+            )
+            if replacement or expected != card:
+                raise ReviewEvidenceError("review is not the authorized current attempt")
+        elif current_review_attempt(home, parent, head) != card:
+            raise ReviewEvidenceError("review is not the authorized current attempt")
+    gateway = LiveCardStoreGateway(home)
+    review_snapshot = gateway.read_card(card)
+    review_outcome = _current_outcome(store, review)
+    producer_owner = manifest["owner"]
+    producer_claim = manifest["claim_revision"]
+    outcome = _sealed_source_outcome(
+        store, parent, producer_owner, producer_claim, head, manifest["tree"]
+    )
+    source_revision = _binding(core, "source_revision")
+    review_policy = policy
+    if launch_request is not None:
+        bound_source = launch_request.get("source") or {}
+        if (
+            bound_source.get("card") != parent
+            or bound_source.get("owner") != producer_owner
+            or bound_source.get("claim") != producer_claim
+            or bound_source.get("head") != head
+            or bound_source.get("tree") != manifest["tree"]
+            or bound_source.get("revision") != source_revision
+        ):
+            raise ReviewEvidenceError("review source differs from sealed producer generation")
+        review_policy = launch_request.get("policy")
+        if not isinstance(review_policy, dict) or review_policy.get(
+            "authority_host"
+        ) != policy.get("authority_host"):
+            raise ReviewEvidenceError("sealed review policy is unavailable")
+    else:
+        source_snapshot = gateway.read_card(parent)
+        if source_snapshot.revision != source_revision:
+            raise ReviewEvidenceError("legacy review source revision changed")
+    if (
+        outcome.get("action") != "verdict"
+        or outcome.get("writer") != producer_owner
+        or _binding(core, "producer_identity") != producer_owner
         or review_snapshot.verdict != "PASS"
         or review_snapshot.unresolved_review
-        or review_outcome.get("writer") != review_owner
+        or review_outcome.get("writer") != review.owner
         or not _source_only_applicability(card, home)
     ):
         raise ReviewEvidenceError("native proposal or source-only applicability differs")
-    if manifest["tree"] != outcome.get("candidate_tree"):
+    if (
+        not manifest.get("owner")
+        or not manifest.get("claim_revision")
+        or manifest["tree"] != outcome.get("candidate_tree")
+    ):
         raise ReviewEvidenceError("source bundle belongs to another claim")
-    if terminal["owner"] != review_owner or terminal["source_head"] != head:
+    terminal = read_exit(home, card, claim)
+    if terminal["owner"] != review.owner or terminal["source_head"] != head:
         raise ReviewEvidenceError("review terminal binding differs")
-    launches = [
-        event
-        for event in store._read_events(card)
-        if event.get("action") == "review_assignment_launch"
-        and event.get("claim_revision") == claim
-        and event.get("launched") is True
-    ]
+    launches = [launch_event] if launch_event is not None else []
     launch = {
         "host": terminal["host"],
-        "owner": review_owner,
+        "owner": review.owner,
         "revision": claim,
         "model": terminal["model"],
         "lane": terminal["lane"],
     }
-    if len(launches) != 1:
-        raise ReviewEvidenceError("exact sealed independent review launch missing")
-    review_policy = _sealed_review_policy(home, launch, review, launches[0], policy)
-    if not production_receipt_allowed(home, review_policy, launch, review, launches[0]):
+    if len(launches) != 1 or not production_receipt_allowed(
+        home, review_policy, launch, review, launches[0]
+    ):
         raise ReviewEvidenceError("exact sealed independent review launch missing")
     domain = launches[0]["route_identity"]["capacity_domains"][0]
     source_terminal = _producer_terminal(home, source, manifest)
     if not review_family_allowed(
-        producer_family(manifest["owner"], source_terminal["family"]), domain, review.labels
+        producer_family(producer_owner, source_terminal["family"]), domain, review.labels
     ):
         raise ReviewEvidenceError("review family is not independent")
     review_workspace = Path(terminal["workspace"])
@@ -545,7 +466,7 @@ def collect(home, policy, card, claim, *, process_check):
         parent_card=parent,
         source_head=head,
         source_tree=manifest["tree"],
-        reviewer_identity=review_owner,
+        reviewer_identity=review.owner,
     )
     if (
         proposal["proposal"]["verdict"] != "PASS"
@@ -562,9 +483,10 @@ def collect(home, policy, card, claim, *, process_check):
             raise ReviewEvidenceError("exact source test checkout unavailable")
     source_item = {
         "card": parent,
-        "owner": manifest["owner"],
-        "claim": manifest["claim_revision"],
+        "owner": producer_owner,
+        "claim": producer_claim,
         "revision": source_revision,
+        "live_revision": gateway.read_card(parent).revision,
         "head": head,
         "tree": manifest["tree"],
         "ref": manifest["ref"],
@@ -575,7 +497,7 @@ def collect(home, policy, card, claim, *, process_check):
     }
     review_item = {
         "card": card,
-        "owner": review_owner,
+        "owner": review.owner,
         "claim": claim,
         "revision": review_snapshot.revision,
         "terminal": terminal,
@@ -590,28 +512,33 @@ def collect(home, policy, card, claim, *, process_check):
     }
     binding = {
         "source_card": parent,
-        "source_owner": manifest["owner"],
+        "source_owner": producer_owner,
         "source_claim_revision": source_item["claim"],
         "source_head": head,
         "source_tree": manifest["tree"],
-        "source_revision": source_snapshot.revision,
+        "source_revision": source_revision,
         "criteria_sha256": digest(source.acceptance_criteria),
     }
     context = {
-        "schema": "skfleet.production-acceptance-context/v2",
+        "schema": "skfleet.production-acceptance-context/v1",
         "controller": "fleet-review-closer@" + policy["authority_host"],
         "policy_sha256": digest(review_policy),
+        "review_policy": review_policy,
         "source": source_item,
         "review": review_item,
         "test_binding": binding,
         "source_workspace": str(workspace),
     }
     terminal_guard(home, context, process_check)
-    if (
-        gateway.read_card(parent).revision != source_snapshot.revision
-        or gateway.read_card(card).revision != review_snapshot.revision
-    ):
+    if gateway.read_card(card).revision != review_snapshot.revision:
         raise ReviewEvidenceError("native pair changed while collecting proposal")
+    if launch_request is None and gateway.read_card(parent).revision != source_revision:
+        raise ReviewEvidenceError("legacy review source revision changed")
+    if (
+        launch_request is not None
+        and _recorded_remote_review(home, review, claim)[1] != launch_request
+    ):
+        raise ReviewEvidenceError("sealed remote review request changed")
     once(directory / "context.json", context)
     return context
 
@@ -651,7 +578,16 @@ def reconcile(home, policy, *, process_check):
                 if context_path.exists()
                 else collect(home, policy, card, claim, process_check=process_check)
             )
-            _sealed_context_policy(home, context, policy)
+            sealed_policy = context.get("review_policy")
+            if sealed_policy is not None:
+                if (
+                    not isinstance(sealed_policy, dict)
+                    or context["policy_sha256"] != digest(sealed_policy)
+                    or sealed_policy.get("authority_host") != policy.get("authority_host")
+                ):
+                    raise ReviewEvidenceError("sealed review policy changed")
+            elif context["policy_sha256"] != digest(policy):
+                raise ReviewEvidenceError("acceptance operational policy changed")
 
             def guard():
                 return terminal_guard(home, context, process_check)
@@ -661,8 +597,20 @@ def reconcile(home, policy, *, process_check):
                 for role in ("source", "review"):
                     item = context[role]
                     state = native_state(home, item["card"])
-                    if (
-                        state["revision"] != item["revision"]
+                    if role == "source" and state["owner"] is None:
+                        resumable_done = (
+                            state["status"] == "done"
+                            and (directory / "finish-intent.json").exists()
+                        )
+                        if not resumable_done and (
+                            state["status"] not in {"backlog", "ready", "review"}
+                            or state["revision"] != item.get("live_revision", item["revision"])
+                        ):
+                            raise ReviewEvidenceError(
+                                "released source changed before trusted tests"
+                            )
+                    elif (
+                        state["revision"] != item.get("live_revision", item["revision"])
                         or state["owner"] != item["owner"]
                         or state["claim_revision"] != item["claim"]
                     ):

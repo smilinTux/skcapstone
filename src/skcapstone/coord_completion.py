@@ -274,6 +274,30 @@ def owned_revision_guard(home: Path, agent_name: str, task_id: str, revision: st
     return verify
 
 
+def unclaimed_review_revision_guard(home: Path, task_id: str, revision: str):
+    """Guard completion of a released producer using its exact accepted review."""
+    from .card_store import CardStore
+    from .seraph_review_cardstore import LiveCardStoreGateway
+
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{64}", revision):
+        raise ValueError("guarded completion source revision invalid")
+
+    def verify():
+        card = CardStore(home).fold(task_id)
+        if (
+            card is None
+            or card.owner is not None
+            or card.meta.get("_claim_revision")
+            or card.meta.get("claim_conflicts")
+            or card.archived
+            or card.status.value not in {"backlog", "ready", "review"}
+            or LiveCardStoreGateway(home).read_card(task_id).revision != revision
+        ):
+            raise ValueError("unclaimed reviewed source changed")
+
+    return verify
+
+
 def reviewed_source_guard(home, source_id, review_id, revision, stack):
     """Lock and verify the exact completed review during source completion."""
     from .card_store import CardStore, card_mutation_lock
@@ -300,7 +324,7 @@ def reviewed_source_guard(home, source_id, review_id, revision, stack):
             or row.meta.get("claim_conflicts")
             or review.unresolved_review
             or _binding(row, "link_source_card") != source_id
-            or source.verdict != "PASS"
+            or source.verdict not in {"PASS", "PASS_FOR_REVIEW"}
             or source.head_sha != review.head_sha
             or not source.head_sha
             or not source.candidate_evidence_sha256

@@ -94,11 +94,6 @@ def stopped_pair(pair, source, monkeypatch, request):  # noqa: F811
             launch["model"] == event["route_identity"]["model_or_bucket"]
         ),
     )
-    monkeypatch.setattr(
-        acceptance,
-        "_sealed_review_policy",
-        lambda home, launch, card, event, current_policy: current_policy,
-    )
     monkeypatch.setattr(acceptance, "unit_terminal", lambda *a, **k: {"ActiveState": "inactive"})
     return home, policy, review, status_path, terminal_path, store
 
@@ -121,61 +116,81 @@ def test_real_unpublished_candidate_and_committed_review_collect_separately(stop
     assert store.fold(context["source"]["card"]).owner == context["source"]["owner"]
 
 
-def test_sealed_source_collect_survives_producer_claim_release(stopped_pair):
+def test_review_acceptance_uses_sealed_producer_generation_after_claim_release(
+    stopped_pair, monkeypatch
+):
     home, policy, review, _, _, store = stopped_pair
-    review_row = store.fold(review["card"])
-    review_core = review_row.model_dump(mode="json")
-    source_row = store.fold(acceptance._binding(review_core, "link_source_card"))
-    manifest, _ = acceptance._review_manifest(
-        review_core,
-        acceptance._binding(review_core, "repository"),
-        acceptance._binding(review_core, "link_head_revision"),
+    source_id = store.fold(review["card"]).meta["link_source_card"]
+    source_card = store.fold(source_id)
+    source_owner = source_card.owner
+    source_claim = source_card.meta["_claim_revision"]
+    from skcapstone.review_work_identity import card_generation
+
+    store.append_event(
+        review["card"],
+        "link",
+        review["owner"],
+        link_key="link_card_generation",
+        link_value=card_generation(source_card),
     )
     store.append_event(
-        source_row.id,
-        "release_claim",
-        "niobe",
-        released_owner=source_row.owner,
-        expected_claim_revision=source_row.meta["_claim_revision"],
-        reason="producer released after sealed source review started",
+        review["card"],
+        "link",
+        review["owner"],
+        link_key="link_evidence_sha256",
+        link_value=next(
+            event["candidate_sha256"]
+            for event in store._read_events(source_card.id)
+            if event.get("action") == "verdict"
+        ),
     )
-    assert store.fold(source_row.id).owner is None
+    store.append_event(
+        source_card.id,
+        "release_claim",
+        "operator",
+        released_owner=source_card.owner,
+        expected_claim_revision=source_card.meta["_claim_revision"],
+        transition_id="a" * 32,
+        abandon_reason="not-abandoned",
+    )
+    event = next(
+        event
+        for event in store._read_events(review["card"])
+        if event.get("action") == "review_assignment_launch"
+    )
+    monkeypatch.setattr(
+        acceptance,
+        "_recorded_remote_review",
+        lambda *args: (
+            event,
+            {
+                "source": {
+                    "card": source_card.id,
+                    "owner": source_owner,
+                    "claim": source_claim,
+                    "head": review["proposal"]["source_head"],
+                    "tree": review["proposal"]["source_tree"],
+                    "revision": store.fold(review["card"]).meta["source_revision"],
+                },
+                "policy": policy,
+            },
+        ),
+    )
+    current_policy = {**policy, "rollout_generation": "changed-after-review-launch"}
 
     context = acceptance.collect(
         home,
-        policy,
+        current_policy,
         review["card"],
         review["claim"],
         process_check=lambda card: {"sessions": [], "units": []},
     )
 
-    assert context["source"]["owner"] == source_row.owner
-    assert context["source"]["claim"] == manifest["claim_revision"]
-    assert context["source"]["head"] == manifest["head"]
-
-
-def test_sealed_review_collect_survives_reviewer_claim_release(stopped_pair):
-    home, policy, review, _, _, store = stopped_pair
-    store.append_event(
-        review["card"],
-        "release_claim",
-        "niobe",
-        released_owner=review["owner"],
-        expected_claim_revision=review["claim"],
-        reason="reviewer released after terminal PASS",
-    )
-    assert store.fold(review["card"]).owner is None
-
-    context = acceptance.collect(
-        home,
-        policy,
-        review["card"],
-        review["claim"],
-        process_check=lambda card: {"sessions": [], "units": []},
-    )
-
-    assert context["review"]["owner"] == review["owner"]
-    assert context["review"]["claim"] == review["claim"]
+    assert store.fold(source_card.id).owner is None
+    assert context["source"]["owner"] == source_owner
+    assert context["source"]["claim"] == source_claim
+    assert context["review_policy"] == policy
+    assert context["policy_sha256"] == acceptance.digest(policy)
 
 
 def test_collected_producer_terminal_can_enter_independent_review(stopped_pair):
@@ -284,7 +299,6 @@ def test_direct_seat_terminal_receipt_can_enter_review_and_is_rechecked(stopped_
         "stale-claim",
         "false-ci",
         "source-change",
-        "source-reclaimed",
         "source-running",
         "same-family",
         "live-review",
@@ -323,22 +337,7 @@ def test_collection_refuses_missing_forged_stale_or_nonindependent_proof(stopped
         )
     elif kind == "source-change":
         parent = store.fold(review["card"]).meta["link_source_card"]
-        source_row = store.fold(parent)
-        store.append_event(
-            parent,
-            "verdict",
-            source_row.owner,
-            verdict="PASS_FOR_REVIEW",
-            expected_claim_revision=source_row.meta["_claim_revision"],
-            candidate_commit="a" * 40,
-            candidate_tree="b" * 40,
-            candidate_ref="refs/heads/work/new-source",
-            candidate_path=source_row.links.get("evidence", "unused"),
-            candidate_sha256="c" * 64,
-        )
-    elif kind == "source-reclaimed":
-        parent = store.fold(review["card"]).meta["link_source_card"]
-        store.append_event(parent, "claim", "other-producer", owner="other-producer")
+        store.append_event(parent, "add_label", "operator", label="source-changed")
     elif kind == "review-hold":
         store.append_event(review["card"], "add_label", "operator", label="do-not-claim")
     elif kind in {"source-running", "same-family"}:

@@ -111,7 +111,7 @@ def artifacts(context):
         raise ReviewEvidenceError("independent review is not exact PASS")
 
 
-def steps(context, acceptance):
+def steps(context, acceptance, *, source_claim_current=True):
     """Complete reviewer first; source completion joins its exact final revision."""
     source, review = context["source"], context["review"]
     audit = json.dumps(acceptance, sort_keys=True, separators=(",", ":"))
@@ -133,7 +133,8 @@ def steps(context, acceptance):
         ("evidence", source["evidence_path"]),
         ("evidence_sha256", source["evidence_sha256"]),
     ]
-    result.extend(("source", "link", key, value) for key, value in values)
+    if source_claim_current:
+        result.extend(("source", "link", key, value) for key, value in values)
     result.append(("source", "complete", "", ""))
     return result
 
@@ -259,13 +260,41 @@ def finish_pair(home, directory, context, *, guard, command=native_command, insp
             home, context["test_binding"], Path(context["source_workspace"])
         )
     )
-    binding = {
+    binding_base = {
         "controller": context["controller"],
         "context_sha256": _digest(context),
         "test_receipt": acceptance,
     }
-    initial = {name: context[name]["revision"] for name in ("source", "review")}
+    source_before = inspect(home, context["source"]["card"])
+    source_claim_current = (
+        source_before["owner"] == context["source"]["owner"]
+        and source_before["claim_revision"] == context["source"]["claim"]
+    )
+    released_source = (
+        source_before["owner"] is None
+        and source_before["status"] in {"backlog", "ready", "review"}
+        and source_before["revision"]
+        == context["source"].get("live_revision", context["source"]["revision"])
+    )
+    if not source_claim_current and not released_source and source_before["status"] != "done":
+        raise ReviewEvidenceError("source claim changed before review acceptance")
     intent = directory / "finish-intent.json"
+    if intent.exists():
+        prior_binding = read_json(intent)
+        if any(prior_binding.get(key) != value for key, value in binding_base.items()):
+            raise ReviewEvidenceError("historical acceptance intent changed")
+        source_claim_current = prior_binding.get("source_claim_current", True)
+        binding = dict(binding_base)
+        if "source_claim_current" in prior_binding:
+            binding["source_claim_current"] = source_claim_current
+        if prior_binding != binding:
+            raise ReviewEvidenceError("historical acceptance intent changed")
+    else:
+        binding = {**binding_base, "source_claim_current": source_claim_current}
+    initial = {
+        "source": context["source"].get("live_revision", context["source"]["revision"]),
+        "review": context["review"]["revision"],
+    }
     if not intent.exists():
         if historical is not None:
             raise ReviewEvidenceError("historical acceptance intent missing")
@@ -280,7 +309,9 @@ def finish_pair(home, directory, context, *, guard, command=native_command, insp
     else:
         once(intent, binding)
     expected = initial
-    for index, (role, action, key, value) in enumerate(steps(context, acceptance)):
+    for index, (role, action, key, value) in enumerate(
+        steps(context, acceptance, source_claim_current=source_claim_current)
+    ):
         item = context[role]
         other = "review" if role == "source" else "source"
         request = {
@@ -293,7 +324,7 @@ def finish_pair(home, directory, context, *, guard, command=native_command, insp
             "before": expected,
             "card": item["card"],
             "owner": item["owner"],
-            "claim": item["claim"],
+            "claim": item["claim"] if role != "source" or source_claim_current else None,
         }
         step_path = directory / ("step-%02d.intent.json" % index)
         ack_path = directory / ("step-%02d.ack.json" % index)
@@ -306,11 +337,16 @@ def finish_pair(home, directory, context, *, guard, command=native_command, insp
                 raise ReviewEvidenceError("acceptance history incomplete")
             guard()
             before = inspect(home, item["card"])
-            if (
-                before["revision"] != expected[role]
-                or before["owner"] != item["owner"]
-                or before["claim_revision"] != item["claim"]
-            ):
+            current_owner = (
+                before["owner"] == item["owner"] and before["claim_revision"] == item["claim"]
+            )
+            released_owner = (
+                role == "source"
+                and not source_claim_current
+                and before["owner"] is None
+                and before["status"] in {"backlog", "ready", "review"}
+            )
+            if before["revision"] != expected[role] or not (current_owner or released_owner):
                 raise ReviewEvidenceError("acceptance claim or source changed")
             step = dict(request, native_before=before)
             once(step_path, step)
@@ -339,14 +375,9 @@ def finish_pair(home, directory, context, *, guard, command=native_command, insp
         args = [action, item["card"]]
         if action == "link":
             args += [key, value, "--transition-id", _digest(step), "--json"]
-        args += [
-            "--agent",
-            item["owner"],
-            "--expected-source-revision",
-            expected[role],
-            "--expected-claim-revision",
-            item["claim"],
-        ]
+        args += ["--agent", item["owner"], "--expected-source-revision", expected[role]]
+        if role != "source" or source_claim_current:
+            args += ["--expected-claim-revision", item["claim"]]
         if action == "complete" and role == "source":
             args += [
                 "--review-card",

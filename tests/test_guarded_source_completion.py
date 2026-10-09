@@ -79,6 +79,72 @@ def test_source_completion_uses_the_exact_completed_review(tmp_path):
     assert store.fold(review).status.value == "done"
 
 
+def test_reviewed_unclaimed_source_can_complete_against_exact_review(tmp_path):
+    store, source, review, producer, _, _ = accepted_review(tmp_path)
+    current = store.fold(source)
+    store.append_event(
+        source,
+        "release_claim",
+        "operator",
+        released_owner=producer,
+        expected_claim_revision="c" * 32,
+        transition_id="f" * 32,
+        abandon_reason="not-abandoned",
+    )
+    source_revision = LiveCardStoreGateway(tmp_path).read_card(source).revision
+    review_revision = LiveCardStoreGateway(tmp_path).read_card(review).revision
+    args = [
+        "complete",
+        source,
+        "--agent",
+        producer,
+        "--expected-source-revision",
+        source_revision,
+        "--review-card",
+        review,
+        "--expected-review-revision",
+        review_revision,
+    ]
+
+    result = _run(tmp_path, *args)
+
+    assert current.owner == producer
+    assert result.exit_code == 0, result.output
+    assert store.fold(source).status.value == "done"
+    assert store.fold(source).owner is None
+
+
+def test_released_source_cannot_complete_after_review_verdict_changes(tmp_path):
+    store, source, review, producer, reviewer, _ = accepted_review(tmp_path)
+    store.append_event(
+        source,
+        "release_claim",
+        "operator",
+        released_owner=producer,
+        expected_claim_revision="c" * 32,
+        transition_id="a" * 32,
+        abandon_reason="not-abandoned",
+    )
+    store.append_event(review, "link", reviewer, link_key="verdict", link_value="FAIL")
+    args = [
+        "complete",
+        source,
+        "--agent",
+        producer,
+        "--expected-source-revision",
+        LiveCardStoreGateway(tmp_path).read_card(source).revision,
+        "--review-card",
+        review,
+        "--expected-review-revision",
+        LiveCardStoreGateway(tmp_path).read_card(review).revision,
+    ]
+
+    result = _run(tmp_path, *args)
+
+    assert result.exit_code != 0
+    assert store.fold(source).status.value != "done"
+
+
 @pytest.mark.parametrize("change", ["verdict", "receipt", "head", "reopen"])
 def test_changed_review_cannot_close_the_producer(tmp_path, change):
     store, source, review, producer, reviewer, args = accepted_review(tmp_path)

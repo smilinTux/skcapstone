@@ -211,73 +211,70 @@ def validate_contract(request, policy, *, host, historical=False):
 def _source(home, card, *, historical=False):
     """Resolve producer facts from native source custody, not review prose."""
     from ..seraph_review_cardstore import LiveCardStoreGateway
-    from .production_acceptance import _current_outcome, _producer_terminal
+    from .production_acceptance import (
+        _current_outcome,
+        _producer_terminal,
+        _sealed_source_outcome,
+    )
 
     core = card.model_dump(mode="json")
     parent, head = _binding(core, "link_source_card"), _binding(core, "link_head_revision")
     repository = _binding(core, "repository")
     selected = _review_manifest(core, repository, head)
     source = CardStore(home).fold(parent) if parent else None
-    if selected is None or source is None or not source.owner or source.archived:
-        if not historical or selected is None or source is None or source.archived:
-            raise ValueError("original source custody unavailable")
+    if (
+        selected is None
+        or source is None
+        or source.archived
+        or source.status.value
+        in {
+            "done",
+            "archived",
+        }
+    ):
+        raise ValueError("original source custody unavailable")
     manifest, _ = selected
-    store = CardStore(home)
-    gateway = LiveCardStoreGateway(home)
     if historical:
-        from .production_acceptance import _review_attempt_is_current, _sealed_source_outcome
-
-        if (
-            "source-only" not in source.labels
-            or {"hold", "do-not-claim"}.intersection(source.labels)
-            or source.status.value in {"done", "archived"}
-            or source.meta.get("claim_conflicts")
-            or (
-                source.owner is not None
-                and (
-                    source.owner != manifest["owner"]
-                    or source.meta.get("_claim_revision") != manifest["claim_revision"]
-                )
-            )
-        ):
-            raise ValueError("sealed source has a conflicting live claim or hold")
-        outcome = _sealed_source_outcome(store, parent, manifest)
-        revision = gateway.read_card(parent).revision
+        owner, claim = manifest.get("owner"), manifest.get("claim_revision")
+        if not isinstance(owner, str) or not isinstance(claim, str):
+            raise ValueError("sealed producer generation unavailable")
+        outcome = _sealed_source_outcome(
+            CardStore(home), parent, owner, claim, head, manifest["tree"]
+        )
+        revision = _binding(core, "source_revision")
     else:
-        outcome = _current_outcome(store, source)
-        revision = gateway.read_card(parent).revision
+        if not source.owner:
+            raise ValueError("original source custody unavailable")
+        owner, claim = source.owner, source.meta.get("_claim_revision")
+        outcome = _current_outcome(CardStore(home), source)
+        revision = LiveCardStoreGateway(home).read_card(parent).revision
     if (
         outcome.get("verdict") != "PASS_FOR_REVIEW"
         or outcome.get("candidate_commit") != head
-        or (not historical and _binding(core, "producer_identity") != source.owner)
-        or (not historical and manifest["owner"] != source.owner)
-        or (not historical and manifest["claim_revision"] != source.meta.get("_claim_revision"))
+        or manifest["owner"] != owner
+        or manifest["claim_revision"] != claim
+        or _binding(core, "producer_identity") != owner
         or (
             not historical
             and not _revision_drift_is_supplemental(
                 home, card, source, _binding(core, "source_revision"), revision
             )
         )
-        or (historical and _binding(core, "producer_identity") != manifest["owner"])
-        or (not historical and {"hold", "do-not-claim"}.intersection(source.labels))
+        or {"hold", "do-not-claim"}.intersection(source.labels)
     ):
         raise ValueError("review source generation changed")
-    if historical:
-        _review_attempt_is_current(home, card.id, core, parent, head, manifest)
-    else:
+    if not historical:
         from ..review_replacement import current_review_attempt
 
         if current_review_attempt(home, parent, head) != card.id:
             raise ValueError("review is not the current attempt")
     terminal = _producer_terminal(Path(home), source, manifest)
-    producer = manifest["owner"] if historical else source.owner
-    producer_claim = manifest["claim_revision"] if historical else source.meta["_claim_revision"]
-    producer_family(producer, terminal["family"])
+    producer_family(owner, terminal["family"])
     return dict(
         card=parent,
         revision=revision,
-        claim=producer_claim,
-        owner=producer,
+        claim=claim,
+        owner=owner,
         family=terminal["family"],
         head=head,
         tree=manifest["tree"],

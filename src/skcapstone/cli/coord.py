@@ -697,6 +697,7 @@ def register_coord_commands(main: click.Group) -> None:
             complete_coord_task,
             owned_revision_guard,
             reviewed_source_guard,
+            unclaimed_review_revision_guard,
         )
         from ..jarvis_emergency import authorize_coord_mutation
         from ..seat_boundaries import Action
@@ -709,15 +710,30 @@ def register_coord_commands(main: click.Group) -> None:
 
         try:
             guards = (expected_source_revision, expected_claim_revision)
-            if any(value is not None for value in guards) and not all(guards):
-                raise ValueError("guarded completion requires both revisions")
             review_guards = (review_card, expected_review_revision)
-            if any(value is not None for value in review_guards) and not (
-                all(guards) and all(review_guards)
+            unclaimed_reviewed = bool(
+                expected_source_revision and expected_claim_revision is None and all(review_guards)
+            )
+            if (
+                any(value is not None for value in guards)
+                and not all(guards)
+                and not unclaimed_reviewed
             ):
-                raise ValueError("guarded review completion requires all source and review guards")
-            if all(guards):
-                guard = owned_revision_guard(home_path, agent, task_id, *guards)
+                raise ValueError("guarded completion requires both revisions")
+            if any(value is not None for value in review_guards) and not all(review_guards):
+                raise ValueError("guarded review completion requires both review guards")
+            if any(value is not None for value in review_guards) and not (
+                all(guards) or unclaimed_reviewed
+            ):
+                raise ValueError("guarded review completion requires a source revision guard")
+            if all(guards) or unclaimed_reviewed:
+                guard = (
+                    owned_revision_guard(home_path, agent, task_id, *guards)
+                    if all(guards)
+                    else unclaimed_review_revision_guard(
+                        home_path, task_id, expected_source_revision
+                    )
+                )
                 with ExitStack() as stack:
                     related = (
                         reviewed_source_guard(home_path, task_id, *review_guards, stack)
