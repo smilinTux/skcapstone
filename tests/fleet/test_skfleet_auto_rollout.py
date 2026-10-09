@@ -63,7 +63,14 @@ def fleet(tmp_path: Path):
         SKFLEET_AUTO_ROLLOUT_LOCK=str(tmp_path / "lock"),
         SKFLEET_AUTO_ROLLOUT_READY_WAIT="0",
         SKFLEET_AUTO_ROLLOUT_ATTEMPTS="2",
+        # Pin every tool the script resolves through *_BIN. A host that exports
+        # the live SKCAPSTONE_BIN or SKMAIL_BIN would otherwise run the real CLI
+        # and send real HALT alerts from a test (seen 2026-10-09 on chiap08).
+        SKCAPSTONE_BIN=str(bins / "skcapstone"),
+        SKMAIL_BIN=str(bins / "skmail"),
+        SSH_BIN=str(bins / "ssh"),
         SYSTEMCTL_BIN=str(bins / "systemctl"),
+        SKFLEET_AUTO_ROLLOUT_NOTIFY="jarvis lumina-nor",
     )
     return dict(origin=origin, deploy=deploy, calls=calls, fail_host=fail_host, env=env)
 
@@ -220,3 +227,9 @@ def test_rollout_never_stops_the_cycle_timer(fleet):
         c.startswith("systemctl --user stop") or c.startswith("systemctl --user start")
         for c in _calls(fleet["calls"])
     )
+
+
+def test_fixture_never_inherits_live_tool_binaries(fleet, monkeypatch):
+    """Live *_BIN exports must not leak into a run: it would page real agents."""
+    for name in ("SKCAPSTONE_BIN", "SKMAIL_BIN", "SSH_BIN", "SYSTEMCTL_BIN"):
+        assert fleet["env"][name].startswith(str(fleet["deploy"].parent / "bin"))
