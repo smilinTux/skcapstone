@@ -10,7 +10,7 @@ def test_qualified_builder_candidates_are_offered_first():
     window = source[ordering:loop]
 
     assert '".skcapstone/fleet/test-profiles"' in window
-    assert 'key=lambda _c: not (_qualified_profiles / (str(_c[2]) + ".json")).is_file()' in window
+    assert "_builder_candidates = _offer_memory.order(" in window
 
 
 def test_qualified_first_ordering_is_stable():
