@@ -475,6 +475,11 @@ class TestCoordTools:
             create_parsed = _extract_json(create_result)
             assert create_parsed["created"] is True
             task_id = create_parsed["task_id"]
+            assert not list(
+                (initialized_agent_home / "coordination" / "recovery").glob(
+                    "card-creation-attempts*.jsonl"
+                )
+            )
 
             status_result = await call_tool("coord_status", {})
             status_parsed = _extract_json(status_result)
