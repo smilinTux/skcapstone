@@ -339,7 +339,13 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
     if plan["host"] != current_host:
         if not remote_plan or plan.get("authority_host") != current_host:
             raise TestEvidenceError("remote test plan is not authority-readable")
-        if not (directory / "receipt.json").is_file():
+        # The builder writes launch, terminal and receipt separately and Syncthing
+        # delivers them independently; validating on receipt alone raised
+        # FileNotFoundError for terminal.json and failed the job (2026-10-09).
+        if not all(
+            (directory / name).is_file()
+            for name in ("launch.json", "terminal.json", "receipt.json")
+        ):
             return None
         return validate_test_receipt(home, binding, workspace)
     private_dir(root, create=True)

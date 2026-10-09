@@ -7,6 +7,7 @@ import json
 import os
 import socket
 import subprocess
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -16,6 +17,9 @@ from ..seraph_review_cardstore import card_revision
 from . import production_test_plan as plan
 from . import production_test_profile as profile
 from . import production_tests as tests
+
+# Window in which a missing synced file is treated as Syncthing lag, not a failure.
+SYNC_GRACE_SECONDS = 1800
 
 
 def _private_root(home: Path) -> Path:
@@ -904,6 +908,24 @@ def consume_remote(home: Path, policy: dict, host: str) -> list[str]:
                 states.append(
                     "running:" + job["card"] if receipt is None else "receipt:" + job["card"]
                 )
+            except FileNotFoundError as exc:
+                # The authority writes the job, plan and claim; Syncthing can
+                # deliver the job before the plan or the card events. A missing
+                # file inside the sync window is not a verdict: retry next tick
+                # (2026-10-09: jobs failed on missing test-plans/... files).
+                if time.time() - path.stat().st_mtime < SYNC_GRACE_SECONDS:
+                    states.append("waiting-sync:" + str(job.get("card")))
+                    continue
+                plan.write_once(
+                    path.with_name(path.stem + ".failed.json"),
+                    {
+                        "schema": "skfleet.profile-requalification-failure/v1",
+                        "card": job.get("card"),
+                        "host": host,
+                        "reason": str(exc)[:200],
+                    },
+                )
+                states.append("failed:" + str(job.get("card")) + ":" + str(exc)[:100])
             except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
                 plan.write_once(
                     path.with_name(path.stem + ".failed.json"),

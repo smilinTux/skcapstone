@@ -472,7 +472,8 @@ def test_authority_waits_for_remote_requalification_receipt(tmp_path, monkeypatc
     assert native.run_or_read_tests(tmp_path, binding, tmp_path, policy) is None
 
     directory.mkdir()
-    (directory / "receipt.json").write_text("{}")
+    for name in ("launch.json", "terminal.json", "receipt.json"):
+        (directory / name).write_text("{}")
     receipt = {"receipt_sha256": "f" * 64}
     monkeypatch.setattr(native, "validate_test_receipt", lambda *_a: receipt)
     monkeypatch.setattr(
@@ -519,7 +520,8 @@ def test_authority_waits_for_remote_initial_qualification_receipt(tmp_path, monk
     assert native.run_or_read_tests(tmp_path, binding, tmp_path, policy) is None
 
     directory.mkdir()
-    (directory / "receipt.json").write_text("{}")
+    for name in ("launch.json", "terminal.json", "receipt.json"):
+        (directory / name).write_text("{}")
     receipt = {"receipt_sha256": "f" * 64}
     monkeypatch.setattr(native, "validate_test_receipt", lambda *_a: receipt)
     monkeypatch.setattr(
@@ -863,3 +865,13 @@ def test_pending_test_launch_reserves_memory_before_unit_ack(setup, monkeypatch)
         setup.policy, setup.plan["host"], rows, runner=runner
     )
     assert not ready
+
+
+def test_remote_receipt_waits_for_every_synced_file(tmp_path, monkeypatch):
+    """A synced receipt without its terminal file is Syncthing lag, not evidence."""
+    directory = tmp_path / "run"
+    directory.mkdir()
+    (directory / "receipt.json").write_text("{}")
+    assert not all(
+        (directory / name).is_file() for name in ("launch.json", "terminal.json", "receipt.json")
+    )
