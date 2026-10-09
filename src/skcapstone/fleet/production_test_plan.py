@@ -17,9 +17,14 @@ from xml.etree import ElementTree
 
 from . import production_builder  # noqa: F401
 from .production_policy import _unique_object
-from .qualified_runtime import TOOL_PACKAGES
+from .qualified_runtime import STATE_NAME, TOOL_PACKAGES, qualify_prefix
 
-PREFIX = Path.home() / ".skenv"
+#: Sealed test execution runs only from the clean pinned qualification prefix
+#: built by ``qualify_env``; production ~/.skenv is never the test runtime.
+PREFIX = qualify_prefix(Path.home())
+#: The pre-qualify-env runtime. Read only to recognize profiles whose
+#: toolchain was qualified there, so they can be requalified once natively.
+LEGACY_PREFIX = Path.home() / ".skenv"
 MAX_OUTPUT = 4 * 1024 * 1024
 TEST_FILES = tuple(
     "tests/" + name + ".py"
@@ -81,7 +86,10 @@ def runtime_fingerprint() -> str:
         / f"python{sys.version_info.major}.{sys.version_info.minor}"
         / "site-packages"
     )
-    files = {PREFIX / "bin/ruff"}
+    state = PREFIX / STATE_NAME
+    if not state.is_file():
+        raise TestEvidenceError("qualified runtime manifest is missing")
+    files = {PREFIX / "bin/ruff", state}
     for package in TOOL_PACKAGES:
         directory = site / package
         if not directory.is_dir():
@@ -136,14 +144,27 @@ def runtime_fingerprint() -> str:
 
 
 def toolchain_fingerprint() -> str:
-    """Pin test tools and Python startup files separately from executor code."""
+    """Pin test tools and Python startup files separately from executor code.
+
+    The qualification prefix must carry its build manifest, which binds the
+    exact locked distribution set.
+    """
+    return _toolchain_fingerprint(PREFIX, legacy=False)
+
+
+def _toolchain_fingerprint(prefix: Path, *, legacy: bool) -> str:
+    """Hash one prefix's toolchain; ``legacy`` keeps the historical row set."""
     site = (
-        PREFIX
+        prefix
         / "lib"
         / f"python{sys.version_info.major}.{sys.version_info.minor}"
         / "site-packages"
     )
-    files = {PREFIX / "bin/ruff", PREFIX / "bin/python"}
+    files = {prefix / "bin/ruff", prefix / "bin/python"}
+    if not legacy:
+        if not (prefix / STATE_NAME).is_file():
+            raise TestEvidenceError("qualified runtime manifest is missing")
+        files.add(prefix / STATE_NAME)
     for package in TOOL_PACKAGES:
         directory = site / package
         if not directory.is_dir():
@@ -164,14 +185,14 @@ def toolchain_fingerprint() -> str:
         info = path.lstat()
         content_path = path
         resolved = path.resolve()
-        if path == PREFIX / "bin/python" and stat.S_ISLNK(info.st_mode):
+        if path == prefix / "bin/python" and stat.S_ISLNK(info.st_mode):
             info = resolved.stat()
             if not stat.S_ISREG(info.st_mode) or not resolved.is_relative_to(
                 Path(sys.base_prefix).resolve()
             ):
                 raise TestEvidenceError("qualified interpreter escapes its base prefix")
             content_path = resolved
-        elif not stat.S_ISREG(info.st_mode) or not resolved.is_relative_to(PREFIX.resolve()):
+        elif not stat.S_ISREG(info.st_mode) or not resolved.is_relative_to(prefix.resolve()):
             raise TestEvidenceError("qualified runtime contains redirected modules")
         total += info.st_size
         if total > 64 * 1024 * 1024:
@@ -181,7 +202,7 @@ def toolchain_fingerprint() -> str:
         if digest is None:
             digest = sha(content_path.read_bytes())
             _TOOLCHAIN_CACHE[key] = digest
-        label = str(path.relative_to(PREFIX))
+        label = str(path.relative_to(prefix))
         if path.suffix == ".pth":
             name = path.name
             if name.startswith("__editable__."):
@@ -191,6 +212,14 @@ def toolchain_fingerprint() -> str:
             label = "startup/" + name
         rows.append((label, digest))
     return sha(json.dumps(rows, separators=(",", ":")).encode())
+
+
+def legacy_toolchain_fingerprint() -> str | None:
+    """Fingerprint the pre-qualify-env ~/.skenv toolchain, or None when absent."""
+    try:
+        return _toolchain_fingerprint(LEGACY_PREFIX, legacy=True)
+    except (OSError, ValueError):
+        return None
 
 
 def source_fingerprint(repository: str, head: str, tree: str) -> str:

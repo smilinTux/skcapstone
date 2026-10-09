@@ -1,0 +1,19 @@
+{
+  "schema": "skfleet.qualify-env/v1",
+  "python": {
+    "path": "/usr/bin/python3.12",
+    "version": "3.12.3",
+    "sha256": "e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f"
+  },
+  "sklegal": {
+    "repository": "https://skgit.skstack01.douno.it/smilinTux/sklegal.git",
+    "fetch": "ssh://git@skgit.skstack01.douno.it:222/smilinTux/sklegal.git",
+    "revision": "f62f5327e0dc1d3b00e72d7426790e078ec7aa15",
+    "uv_lock_sha256": "b4dbff5b7792e02766e72912f25452d8515a96a9829b7608316d18d52948effa"
+  },
+  "direct": [
+    "skharness @ git+https://github.com/smilinTux/skharness.git@7409a1ab28f9c8fed87cd40226f4c031ca9e3f6e"
+  ],
+  "lock_sha256": "cf358dd7591e11f0fd1dfa3a9e1d13803a38d87f230275592ae37433964c53e2",
+  "platform": "x86_64-manylinux_2_39"
+}

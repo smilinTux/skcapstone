@@ -7,6 +7,21 @@ TOOL_PACKAGES = ("pytest", "_pytest", "pytest_asyncio", "ruff", "pluggy", "inico
 
 REQUIRED_PACKAGES = (*TOOL_PACKAGES, "ansible", "skcapstone", "skharness")
 
+#: The clean qualification prefix, relative to the operator home. It lives
+#: outside the Syncthing-shared estate tree on purpose: every host builds its
+#: own copy from the same pinned lock, and production ~/.skenv is never used
+#: for sealed test execution.
+QUALIFY_PREFIX = Path(".local/share/skcapstone/qualify-env")
+
+#: Deterministic build record written inside the prefix and bound into the
+#: runtime and toolchain fingerprints.
+STATE_NAME = "qualify-manifest.json"
+
+
+def qualify_prefix(home: Path) -> Path:
+    """Return the clean sealed-qualification prefix for one operator home."""
+    return Path(home) / QUALIFY_PREFIX
+
 
 def missing_dependencies(prefix: Path) -> list[str]:
     """Return missing prefix-contained dependencies for governed qualification."""

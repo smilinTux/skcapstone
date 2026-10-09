@@ -275,7 +275,15 @@ def validate_profile(value: dict, expected: dict, policy: dict, *, environment=T
 def fingerprint_only_stale(
     value: dict, expected: dict, policy: dict, *, source_sha256: str | None = None
 ) -> bool:
-    """Allow automatic requalification only when recipe and test tools still match."""
+    """Allow automatic requalification only when recipe and test tools still match.
+
+    One migration exception: a current-schema profile whose toolchain is the
+    exact pre-qualify-env ~/.skenv toolchain on this authority predates the
+    clean qualification prefix. Its recipe is unchanged, so it is offered one
+    full native requalification bound to the new prefix instead of being
+    blocked forever. The legacy fingerprint is recomputed from live bytes, so
+    a ~/.skenv that has since drifted grants nothing.
+    """
     _validate_shape(value)
     if (
         value["schema"]
@@ -294,10 +302,17 @@ def fingerprint_only_stale(
         or value["host"] != policy.get("authority_host")
         or value["host"] != socket.gethostname().split(".")[0].lower()
         or value["python_sha256"] != plan.sha((plan.PREFIX / "bin/python").read_bytes())
-        or value["toolchain_sha256"] != plan.toolchain_fingerprint()
         or (source_sha256 is not None and value["source_sha256"] != source_sha256)
     ):
         return False
+    toolchain = plan.toolchain_fingerprint()
+    if value["toolchain_sha256"] != toolchain:
+        legacy = plan.legacy_toolchain_fingerprint()
+        if legacy is None or legacy == toolchain or value["toolchain_sha256"] != legacy:
+            return False
+        if node.is_node(value) or composite.is_composite(value):
+            node.validate_environment(value["node_environment"])
+        return True
     if node.is_node(value) or composite.is_composite(value):
         node.validate_environment(value["node_environment"])
     return value["runtime_sha256"] != plan.runtime_fingerprint() or value[
