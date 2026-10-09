@@ -28,6 +28,10 @@ NOTIFY="${SKFLEET_AUTO_ROLLOUT_NOTIFY:-jarvis lumina-nor}"
 LOCK="${SKFLEET_AUTO_ROLLOUT_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/skfleet-auto-rollout.lock}"
 ATTEMPTS="${SKFLEET_AUTO_ROLLOUT_ATTEMPTS:-3}"
 READY_WAIT="${SKFLEET_AUTO_ROLLOUT_READY_WAIT:-150}"
+SYSTEMCTL="${SYSTEMCTL_BIN:-systemctl}"
+# Dispatcher units on this host that a deploy must not land in the middle of.
+QUIET_UNITS="${SKFLEET_AUTO_ROLLOUT_QUIET_UNITS:-skfleet-seat-cycle.service skfleet-niobe-live.service}"
+QUIET_WAIT="${SKFLEET_AUTO_ROLLOUT_QUIET_WAIT:-600}"
 
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*"; }
 
@@ -49,6 +53,19 @@ if ! git -C "$REPO" fetch -q origin main; then
   log "fetch failed; will retry next tick"
   exit 0
 fi
+# A deploy that lands while the local dispatch cycle runs crashes that cycle
+# (exit 70/1), and the drift gate then halts on the failed unit: seen
+# 2026-10-09 at 02:32Z and 04:37Z. Wait for the cycle to finish; if it is
+# still busy after QUIET_WAIT, skip this tick and let the next one try.
+busy_units() {
+  local u busy=""
+  for u in $QUIET_UNITS; do
+    case "$("$SYSTEMCTL" --user is-active "$u" 2>/dev/null)" in
+      active|activating|reloading) busy="$busy $u" ;;
+    esac
+  done
+  printf '%s' "${busy# }"
+}
 head=$(git -C "$REPO" rev-parse HEAD)
 target=$(git -C "$REPO" rev-parse origin/main)
 if [ "$head" = "$target" ]; then
@@ -59,6 +76,14 @@ if ! git -C "$REPO" merge-base --is-ancestor "$head" "$target"; then
   notify "auto-rollout refused: diverged checkout" "deploy checkout $head is not an ancestor of origin/main $target on $(hostname)"
   exit 1
 fi
+waited=0
+while [ -n "$(busy_units)" ]; do
+  if [ "$waited" -ge "$QUIET_WAIT" ]; then
+    log "dispatch cycle still busy ($(busy_units)) after ${QUIET_WAIT}s; deferring main ${target:0:8} to the next tick"
+    exit 0
+  fi
+  sleep 10; waited=$((waited + 10))
+done
 git -C "$REPO" merge -q --ff-only "$target" || { log "fast-forward failed"; exit 1; }
 subject=$(git -C "$REPO" log -1 --format=%s "$target")
 log "rolling main ${target:0:8} ($subject) from ${head:0:8} to: $HOSTS"
