@@ -59,12 +59,27 @@ def _job_lock(root: Path, job_id: str):
         yield True
 
 
+def _fleet_paths(home: Path):
+    """The fleet tree under the SOVEREIGN home this module is always handed.
+
+    Every caller passes the sovereign home (``~/.skcapstone``): skfleet-rotate
+    passes ``HOME/.skcapstone`` and sknoded passes ``paths.root.parent``, and the
+    job records here live at ``home/fleet/profile-requalifications``. The paths
+    helper for a USER home appends the sovereign name again, so it resolved
+    ``~/.skcapstone/.skcapstone/fleet``: no nodes, so every offer fell back to
+    the authority as ``deferred:no-ready-remote-host``, and the freeze check
+    read a tree that never exists (2026-10-09, cycle 1101ab03).
+    """
+    from .paths import FleetPaths
+
+    return FleetPaths(root=Path(home) / "fleet")
+
+
 def _execution_host(home: Path, policy: dict, card_id: str) -> str:
     """Choose the least-loaded ready remote test host, with authority fallback."""
     from . import builder_dispatch, production_builder
-    from .paths import paths_for_home
 
-    paths = paths_for_home(home)
+    paths = _fleet_paths(home)
     ready = builder_dispatch._ready_builders(paths)
     candidates = production_builder.ready_nodes(paths, ready, policy, card_id)
     authority = policy["authority_host"]
@@ -797,9 +812,8 @@ def consume_remote(home: Path, policy: dict, host: str) -> list[str]:
         return []
     from . import store
     from .builder_dispatch import materialize_source
-    from .paths import paths_for_home
 
-    if not store.actuation_allowed(paths_for_home(home)):
+    if not store.actuation_allowed(_fleet_paths(home)):
         return ["frozen"]
 
     states = []
