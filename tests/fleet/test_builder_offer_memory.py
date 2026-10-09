@@ -27,3 +27,10 @@ def test_record_is_bounded(tmp_path):
     m.record(path, "stale001", "pending:x", now=0)
     m.record(path, "fresh002", "pending:y", now=m.KEEP_SECONDS + 10)
     assert set(m.load(path)) == {"fresh002"}
+
+
+def test_dead_outcome_skips_even_a_card_with_a_profile_file():
+    memory = {"stale001": {"ts": 990, "state": "ineligible:qualified Node environment changed"}}
+    pool = [(0, 0, cid, {}, []) for cid in ("stale001", "fresh002")]
+    ordered = m.order(pool, memory, lambda cid: True, now=1000)
+    assert [c[2] for c in ordered] == ["fresh002"]
