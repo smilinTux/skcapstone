@@ -516,9 +516,16 @@ def offer_stale_candidate(
     # Labels are scope (frontend/backend), so the two sides chose different
     # recipes and the builder failed the job as "remote initial qualification
     # source recipe changed" (f2ea7759 on chiap03, 2026-10-09). Bind the same
-    # folded labels on this side.
+    # folded labels on this side. The same holds for links: the operator
+    # test_profile_recipe link lives on the folded card only, so the authority
+    # sealed pytest_all while the builder chose the operator recipe and failed
+    # every such job the same way (ead91896, c33a1004, 2026-10-09).
     origin_column = card.status.value
-    core = dict(core, labels=sorted(getattr(card, "labels", None) or []))
+    core = dict(
+        core,
+        labels=sorted(getattr(card, "labels", None) or []),
+        links=dict(core.get("links") or {}, **(getattr(card, "links", None) or {})),
+    )
     try:
         workspace = Path(prepare_workspace(core, labels))
         expected = profile.contract(dict(core, id=card_id))

@@ -925,7 +925,11 @@ def test_offer_binds_folded_labels_into_the_initial_recipe_core(tmp_path, monkey
     monkeypatch.setattr(refresh.plan, "workspace_source_fingerprint", lambda *_args: "s" * 64)
     monkeypatch.setattr(refresh, "_execution_host", lambda *_args: "chiap08")
     card = SimpleNamespace(
-        status=SimpleNamespace(value="ready"), owner=None, meta={}, labels=["backend", "sklegal"]
+        status=SimpleNamespace(value="ready"),
+        owner=None,
+        meta={},
+        labels=["backend", "sklegal"],
+        links={"test_profile_recipe": '{"pytest": {"tests/test_a.py": 1}}'},
     )
     monkeypatch.setattr(refresh.CardStore, "fold", lambda *_args: card)
     refresh.offer_stale_candidate(
@@ -938,6 +942,8 @@ def test_offer_binds_folded_labels_into_the_initial_recipe_core(tmp_path, monkey
         lambda _core, _labels: tmp_path / "exact-source",
     )
     assert seen and seen[0]["labels"] == ["backend", "sklegal"]
+    # The operator recipe link lives on the folded card, not the pool core.
+    assert seen[0]["links"]["test_profile_recipe"] == '{"pytest": {"tests/test_a.py": 1}}'
 
 
 def test_recent_failure_on_the_same_source_defers_the_offer(tmp_path):
