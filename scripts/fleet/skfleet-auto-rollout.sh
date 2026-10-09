@@ -32,6 +32,8 @@ SYSTEMCTL="${SYSTEMCTL_BIN:-systemctl}"
 # Dispatcher units on this host that a deploy must not land in the middle of.
 QUIET_UNITS="${SKFLEET_AUTO_ROLLOUT_QUIET_UNITS:-skfleet-seat-cycle.service skfleet-niobe-live.service}"
 QUIET_WAIT="${SKFLEET_AUTO_ROLLOUT_QUIET_WAIT:-600}"
+# Last main rolled to every host; absent until the first full rollout.
+ROLLED_STATE="${SKFLEET_AUTO_ROLLOUT_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/skfleet-auto-rollout/rolled-main}"
 
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*"; }
 
@@ -68,7 +70,18 @@ busy_units() {
 }
 head=$(git -C "$REPO" rev-parse HEAD)
 target=$(git -C "$REPO" rev-parse origin/main)
-if [ "$head" = "$target" ]; then
+# Decide on the last commit rolled to EVERY host, not the checkout HEAD. The
+# chiap08 step deploys into this same checkout, so a run superseded after
+# chiap08 left HEAD == origin/main and every later tick exited here while
+# chiap01-04 stayed on the old main (2026-10-09 19:02Z: 6dcd5c04 on the
+# builders, 657a839d on chiap08, nothing rolled until a manual run).
+rolled_sha=$(cat "$ROLLED_STATE" 2>/dev/null || true)
+if [ "$rolled_sha" = "$target" ]; then
+  exit 0
+fi
+if [ -z "$rolled_sha" ] && [ "$head" = "$target" ]; then
+  # First run with state tracking: trust the checkout once, then record it.
+  mkdir -p "$(dirname "$ROLLED_STATE")" && printf '%s\n' "$target" > "$ROLLED_STATE"
   exit 0
 fi
 if ! git -C "$REPO" merge-base --is-ancestor "$head" "$target"; then
@@ -89,7 +102,9 @@ while [ -n "$(busy_units)" ]; do
   fi
   sleep 10; waited=$((waited + 10))
 done
-git -C "$REPO" merge -q --ff-only "$target" || { log "fast-forward failed"; exit 1; }
+if [ "$head" != "$target" ]; then
+  git -C "$REPO" merge -q --ff-only "$target" || { log "fast-forward failed"; exit 1; }
+fi
 subject=$(git -C "$REPO" log -1 --format=%s "$target")
 log "rolling main ${target:0:8} ($subject) from ${head:0:8} to: $HOSTS"
 
@@ -120,6 +135,7 @@ for host in $HOSTS; do
   rolled+=("$host")
 done
 
+mkdir -p "$(dirname "$ROLLED_STATE")" && printf '%s\n' "$target" > "$ROLLED_STATE"
 log "ROLLED main ${target:0:8} to: ${rolled[*]}"
 notify "ROLLED main ${target:0:8}" "$subject -> ${rolled[*]} (gates passed)"
 exit 0
