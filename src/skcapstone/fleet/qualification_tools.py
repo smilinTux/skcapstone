@@ -18,6 +18,7 @@ from typing import Callable
 
 from .paths import paths_for_home, valid_name
 from .production_policy import _unique_object
+from .qualified_runtime import qualify_prefix
 from .rollout_artifacts import _write
 
 MAX_ARCHIVE = 32 * 1024 * 1024
@@ -207,8 +208,10 @@ def main() -> None:
     parser.add_argument("--apply", action="store_true", help="Apply the operator host allowlist")
     args = parser.parse_args()
     home = Path.home()
+    # Source-suite tools must sit on the sealed sandbox PATH, which is the
+    # clean qualification prefix's bin, not production ~/.skenv/bin.
     result = provision(
-        home / ".skenv",
+        qualify_prefix(home),
         paths_for_home(home).root / "qualification-tools.json",
         socket.gethostname().split(".")[0].lower(),
         platform.machine(),

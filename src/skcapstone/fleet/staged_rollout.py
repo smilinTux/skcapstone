@@ -163,6 +163,11 @@ _DEPLOY_STEPS: tuple[tuple[str, str], ...] = (
     ("git_pull", "git -C {repo} pull"),
     ("pip_install", "cd {repo} && pip install '.[fleet-qualify]'"),
     (
+        "qualify_env",
+        "if test -f {repo}/src/skcapstone/fleet/qualify_env.py; then "
+        "~/.skenv/bin/python -m skcapstone.fleet.qualify_env build --source {repo}; fi",
+    ),
+    (
         "install_sandbox_profile",
         "~/.skenv/bin/python -m skcapstone.fleet.rollout_artifacts {repo} sandbox-profile",
     ),
@@ -212,6 +217,11 @@ _ROLLBACK_STEPS: tuple[tuple[str, str], ...] = (
         "git -C {repo} reset --hard {git_sha}",
     ),
     ("pip_install", "cd {repo} && pip install '.[fleet-qualify]'"),
+    (
+        "qualify_env",
+        "if test -f {repo}/src/skcapstone/fleet/qualify_env.py; then "
+        "~/.skenv/bin/python -m skcapstone.fleet.qualify_env build --source {repo}; fi",
+    ),
     (
         "install_sandbox_profile",
         "if test -f {repo}/systemd/apparmor/skfleet-bwrap; then "

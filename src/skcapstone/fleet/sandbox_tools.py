@@ -277,9 +277,10 @@ def provision(
             check=True,
             timeout=30,
         )
-    import sys
+    from .production_test_plan import PREFIX
 
-    failures = readiness(sys.executable, root=root, runner=runner)
+    # Probe the interpreter sealed tests actually run, from the clean prefix.
+    failures = readiness(str(PREFIX / "bin/python"), root=root, runner=runner)
     if failures:
         raise ValueError(
             "installed sandbox prerequisites failed verification: " + "; ".join(failures)

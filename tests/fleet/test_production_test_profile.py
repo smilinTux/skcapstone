@@ -377,6 +377,32 @@ def test_legacy_profile_without_source_binding_requires_full_qualification(quali
     assert not profile.fingerprint_only_stale(value, profile.contract(core), policy)
 
 
+def test_profile_on_exact_legacy_skenv_toolchain_is_requalified_once(qualified, monkeypatch):
+    """Switching to the clean prefix must not strand current-schema profiles."""
+    home, core, policy, _, _ = qualified
+    value, _ = profile.read_profile(home, core["id"])
+    monkeypatch.setattr(plan, "toolchain_fingerprint", lambda: "f" * 64)
+    monkeypatch.setattr(plan, "legacy_toolchain_fingerprint", lambda: "e" * 64)
+    assert profile.fingerprint_only_stale(value, profile.contract(core), policy)
+    with pytest.raises(profile.ProfileRequalificationRequired):
+        profile.preflight(home, core, ["source-only"], policy)
+    assert not profile.fingerprint_only_stale(
+        value, profile.contract(core), policy, source_sha256="0" * 64
+    )
+
+
+@pytest.mark.parametrize("legacy", [None, "d" * 64, "f" * 64])
+def test_toolchain_change_without_exact_legacy_match_stays_blocked(qualified, monkeypatch, legacy):
+    home, core, policy, _, _ = qualified
+    value, _ = profile.read_profile(home, core["id"])
+    monkeypatch.setattr(plan, "toolchain_fingerprint", lambda: "f" * 64)
+    monkeypatch.setattr(plan, "legacy_toolchain_fingerprint", lambda: legacy)
+    assert not profile.fingerprint_only_stale(value, profile.contract(core), policy)
+    assert not profile.legacy_full_qualification_required(value, profile.contract(core), policy)
+    with pytest.raises(plan.TestEvidenceError, match="execution environment changed"):
+        profile.preflight(home, core, ["source-only"], policy)
+
+
 def test_hyphenated_targets_preserve_fixed_argv():
     """Accept literal relative paths without changing the approved commands."""
     recipe = {
