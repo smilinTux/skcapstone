@@ -52,7 +52,10 @@ def skip(memory: dict, card: str, now: float | None = None) -> bool:
 def order(candidates, memory: dict, qualified, now: float | None = None) -> list:
     """Qualified first, then never-tried, then least recently tried; drop dead ones."""
     now = time.time() if now is None else now
-    alive = [c for c in candidates if qualified(c[2]) or not skip(memory, c[2], now)]
+    # A recent dead outcome wins over a profile file: a stale Node profile
+    # (dbe7c7b1, bc9e7038) or a not-ready backlog card still has one, and
+    # treating "has a profile" as "qualified" kept them at the head every cycle.
+    alive = [c for c in candidates if not skip(memory, c[2], now)]
     return sorted(alive, key=lambda c: (not qualified(c[2]), _last(memory, c[2])[0]))
 
 
