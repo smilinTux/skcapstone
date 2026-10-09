@@ -46,6 +46,7 @@ from skcapstone.fleet_lane_health import (
 )
 from skcapstone.fleet_route_preflight import preflight_failure_expired, resolve_and_preflight
 from skcapstone.fleet import builder_dispatch, store as fleet_store
+from skcapstone.fleet import builder_offer_memory as _offer_memory
 from skcapstone.fleet.production_dispatch import (
     production_policy_from_environment,
     production_lanes,
@@ -8129,8 +8130,6 @@ log(
 # 2026-10-09 and was never offered (CYCLE_DEADLINE_REACHED processed=22,
 # deferred=107). sorted() is stable, so pool priority holds within each group.
 _qualified_profiles = Path(HOME) / ".skcapstone/fleet/test-profiles"
-from skcapstone.fleet import builder_offer_memory as _offer_memory
-
 _OFFER_MEMORY_PATH = Path(HOME) / ".skcapstone/fleet/builder-offer-memory.json"
 _builder_candidates = _offer_memory.order(
     _builder_candidates,
