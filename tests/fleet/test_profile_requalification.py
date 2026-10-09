@@ -199,7 +199,7 @@ def test_stale_profile_candidate_queues_under_governed_claim(tmp_path, monkeypat
     def claim(argv, **_kwargs):
         calls.append(argv)
         card.status.value = "doing"
-        card.owner = "niobe"
+        card.owner = "niobe-requal-1234abcd"
         card.meta["_claim_revision"] = "claim-1"
         return SimpleNamespace(returncode=0)
 
@@ -217,7 +217,7 @@ def test_stale_profile_candidate_queues_under_governed_claim(tmp_path, monkeypat
                     Path("job.job.json"),
                     {
                         "card": "1234abcd",
-                        "owner": "niobe",
+                        "owner": "niobe-requal-1234abcd",
                         "claim_revision": "claim-1",
                         "execution_host": "chiap01",
                     },
@@ -238,7 +238,9 @@ def test_stale_profile_candidate_queues_under_governed_claim(tmp_path, monkeypat
     )
 
     assert state == "pending:chiap01"
-    assert calls == [["/test/skcapstone", "coord", "claim", "1234abcd", "--agent", "niobe"]]
+    assert calls == [
+        ["/test/skcapstone", "coord", "claim", "1234abcd", "--agent", "niobe-requal-1234abcd"]
+    ]
 
 
 def test_missing_profile_queues_fixed_recipe_as_remote_native_job(tmp_path, monkeypatch):
@@ -276,7 +278,7 @@ def test_missing_profile_queues_fixed_recipe_as_remote_native_job(tmp_path, monk
     def claim(argv, **_kwargs):
         calls.append(argv)
         card.status.value = "doing"
-        card.owner = "niobe"
+        card.owner = "niobe-requal-1234abcd"
         card.meta["_claim_revision"] = "claim-1"
         return SimpleNamespace(returncode=0)
 
@@ -291,7 +293,7 @@ def test_missing_profile_queues_fixed_recipe_as_remote_native_job(tmp_path, monk
                     Path("job.job.json"),
                     {
                         "card": "1234abcd",
-                        "owner": "niobe",
+                        "owner": "niobe-requal-1234abcd",
                         "claim_revision": "claim-1",
                         "execution_host": "chiap01",
                     },
@@ -310,7 +312,9 @@ def test_missing_profile_queues_fixed_recipe_as_remote_native_job(tmp_path, monk
     )
 
     assert state == "pending:chiap01"
-    assert calls == [["/test/skcapstone", "coord", "claim", "1234abcd", "--agent", "niobe"]]
+    assert calls == [
+        ["/test/skcapstone", "coord", "claim", "1234abcd", "--agent", "niobe-requal-1234abcd"]
+    ]
 
 
 def test_remote_qualification_uses_least_loaded_ready_node(tmp_path, monkeypatch):
@@ -864,7 +868,7 @@ def test_failed_qualification_release_returns_the_card_to_ready(tmp_path, monkey
     def coord(argv, **_kwargs):
         calls.append(argv[1:4])
         if argv[2] == "claim":
-            card.status.value, card.owner = "doing", "niobe"
+            card.status.value, card.owner = "doing", argv[argv.index("--agent") + 1]
             card.meta["_claim_revision"] = "claim-1"
         elif argv[2] == "release-claim":
             card.status.value, card.owner = "backlog", None
