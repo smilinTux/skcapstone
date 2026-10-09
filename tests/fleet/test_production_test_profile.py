@@ -155,7 +155,7 @@ def test_initial_recipe_uses_fixed_full_pytest_for_python_scope(tmp_path):
 
 
 def test_initial_recipe_rejects_ambiguous_language_scope():
-    with pytest.raises(plan.TestEvidenceError, match="one language scope"):
+    with pytest.raises(plan.TestEvidenceError, match="mixed test scope"):
         profile.initial_recipe(
             {
                 "description": "Change apps/web/src/page.tsx and src/api.py",
@@ -185,6 +185,59 @@ def test_initial_recipe_uses_only_the_fixed_vitest_suite(tmp_path, monkeypatch):
 
     assert recipe == {"vitest": {"src/pages/Workflow.test.tsx": 1}}
     assert environment == {"artifact": "a" * 64}
+
+
+def test_initial_recipe_builds_composite_for_python_and_frontend_scope(tmp_path, monkeypatch):
+    from skcapstone.fleet import production_test_node as node
+
+    (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+    (tmp_path / "tests").mkdir()
+    target = tmp_path / "apps/web/src/pages/Workflow.test.tsx"
+    target.parent.mkdir(parents=True)
+    target.write_text("export {};\n")
+    (tmp_path / "apps/web/package.json").write_text("{}\n")
+    monkeypatch.setattr(node, "qualified_environment", lambda _workspace: {"artifact": "a" * 64})
+
+    recipe, environment = profile.initial_recipe(
+        {
+            "description": "Run the Python checks and full frontend suite.",
+            "acceptance_criteria": ["Python and frontend acceptance pass."],
+            "links": {"repository": "https://github.com/example/sklegal"},
+        },
+        tmp_path,
+    )
+
+    assert recipe == {"pytest_all": True, "vitest": {"src/pages/Workflow.test.tsx": 1}}
+    assert environment == {"artifact": "a" * 64}
+
+
+def test_initial_recipe_accepts_only_a_validated_operator_recipe(tmp_path):
+    from skcapstone.fleet.production_pytest_recipe import validate_source
+
+    target = tmp_path / "tests/test_gateway.py"
+    target.parent.mkdir()
+    target.write_text("def test_gateway(): pass\n")
+    (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+    recipe = {
+        "pytest": {"tests/test_gateway.py": 1},
+        "compile": [],
+        "lint": [],
+        "changelog": False,
+    }
+    core = {
+        "description": "Run the exact contract tests.",
+        "acceptance_criteria": ["The Python gateway suite passes."],
+        "links": {
+            "repository": "https://github.com/example/sklegal",
+            "test_profile_recipe": json.dumps(recipe, sort_keys=True),
+        },
+    }
+
+    selected, environment = profile.initial_recipe(core, tmp_path)
+
+    assert selected == recipe
+    assert environment is None
+    validate_source(selected, tmp_path)
 
 
 @pytest.fixture
@@ -224,6 +277,26 @@ def qualified(tmp_path, monkeypatch):
         home, core, policy, recipe, "operator", "b" * 64, source_sha256="f" * 64
     )
     return home, core, policy, recipe, path
+
+
+def test_composite_profile_uses_composite_schema(qualified, monkeypatch):
+    from skcapstone.fleet import production_test_composite as composite
+    from skcapstone.fleet import production_test_node as node
+
+    _home, core, policy, _recipe, _path = qualified
+    monkeypatch.setattr(node, "validate_environment", lambda *_args, **_kwargs: None)
+    value = profile.profile_value(
+        core,
+        policy,
+        {"pytest_all": True, "vitest": {"src/pages/Workflow.test.tsx": 1}},
+        "operator",
+        "b" * 64,
+        source_sha256="f" * 64,
+        node_environment={"artifact": "a" * 64},
+    )
+
+    assert value["schema"] == composite.SCHEMA
+    assert composite.is_composite(value)
 
 
 def test_exact_qualified_contract_not_trial_specific(qualified):

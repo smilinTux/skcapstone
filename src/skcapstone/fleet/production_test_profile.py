@@ -67,20 +67,29 @@ def contract(core: dict) -> dict:
 
 
 def initial_recipe(core: dict, workspace: Path) -> tuple[dict, dict | None]:
-    """Choose a fixed full-suite recipe from an explicit card source scope."""
+    """Choose a fixed test recipe from the card scope or operator selection."""
     text = "\n".join(
-        [str(core.get("description") or ""), *(core.get("acceptance_criteria") or [])]
+        [
+            str(core.get("title") or ""),
+            str(core.get("description") or ""),
+            *(core.get("acceptance_criteria") or []),
+        ]
     ).lower()
-    node_scope = "apps/web/" in text or "vitest" in text or ".tsx" in text or ".ts" in text
+    node_scope = (
+        "apps/web/" in text
+        or "vitest" in text
+        or ".tsx" in text
+        or ".ts" in text
+        or "frontend" in text
+    )
     python_scope = ".py" in text or "pytest" in text or "python" in text
     repository = (core.get("links") or {}).get("repository") or (core.get("meta") or {}).get(
         "repository", ""
     )
     python_project = (workspace / "pyproject.toml").is_file() and (workspace / "tests").is_dir()
     node_project = (workspace / "apps/web/package.json").is_file()
-    if node_scope and python_scope:
-        raise plan.TestEvidenceError("initial qualification needs one language scope")
-    if node_scope and node_project:
+
+    def node_recipe():
         from . import production_test_node as node
 
         web = workspace / "apps/web"
@@ -93,12 +102,60 @@ def initial_recipe(core: dict, workspace: Path) -> tuple[dict, dict | None]:
         if (
             not tests
             or len(tests) > 256
-            or any(not path.startswith("src/") or ".test.ts" not in path for path in tests)
+            or any(
+                not path.startswith("src/")
+                or ".test.ts" not in path
+                or (web / path).is_symlink()
+                or not (web / path).resolve().is_relative_to(web.resolve())
+                for path in tests
+            )
         ):
             raise plan.TestEvidenceError("Node source has no bounded Vitest suite")
         recipe = {"vitest": {path: 1 for path in tests}}
-        environment = node.qualified_environment(workspace)
+        return recipe, node.qualified_environment(workspace)
+
+    configured = (core.get("links") or {}).get("test_profile_recipe")
+    if configured is not None:
+        if not isinstance(configured, str) or len(configured) > 16384:
+            raise plan.TestEvidenceError("operator test recipe is invalid")
+        try:
+            recipe = json.loads(configured, object_pairs_hook=plan._unique_object)
+            recipe_checks(recipe)
+            environment = None
+            if "vitest" in recipe:
+                from . import production_test_node as node
+
+                environment = node.qualified_environment(workspace)
+                for path in recipe["vitest"]:
+                    target = workspace / "apps/web" / path
+                    if target.is_symlink() or not target.is_file():
+                        raise plan.TestEvidenceError("Node test target is missing or redirected")
+                if len(recipe) > 1:
+                    composite.validate_source(
+                        {
+                            "schema": composite.SCHEMA,
+                            "recipe": recipe,
+                            "node_environment": environment,
+                        },
+                        workspace,
+                    )
+            else:
+                from .production_pytest_recipe import validate_source
+
+                validate_source(recipe, workspace)
+        except (KeyError, TypeError, ValueError, OSError) as exc:
+            raise plan.TestEvidenceError(
+                "operator test recipe is invalid: " + str(exc)[:120]
+            ) from exc
         return recipe, environment
+
+    if node_scope and python_scope:
+        if not (python_project and node_project):
+            raise plan.TestEvidenceError("mixed test scope needs Python and frontend projects")
+        recipe, environment = node_recipe()
+        return {"pytest_all": True, **recipe}, environment
+    if node_scope and node_project:
+        return node_recipe()
     if python_project and (
         python_scope
         or not node_project
@@ -134,8 +191,12 @@ def profile_value(
     if source_sha256 is not None:
         value["source_sha256"] = source_sha256
     if node_environment is not None:
+        value["schema"] = (
+            (composite.SCHEMA if source_sha256 is not None else composite.SCHEMA_V2)
+            if set(recipe) - {"vitest"}
+            else (node.SCHEMA if source_sha256 is not None else node.SCHEMA_V2)
+        )
         value.update(
-            schema=node.SCHEMA if source_sha256 is not None else node.SCHEMA_V2,
             node_environment=node_environment,
         )
     validate_profile(value, contract(core), policy)
@@ -184,9 +245,7 @@ def _validate_shape(value: dict) -> None:
     recipe_checks(value["recipe"])
     if ("vitest" in value["recipe"]) != node_profile:
         raise plan.TestEvidenceError("test recipe and profile variant disagree")
-    if ("vitest" in value["recipe"] and "pytest" in value["recipe"]) != composite.is_composite(
-        value
-    ):
+    if ("vitest" in value["recipe"] and len(value["recipe"]) > 1) != composite.is_composite(value):
         raise plan.TestEvidenceError("test phases and profile variant disagree")
 
 
