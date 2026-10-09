@@ -73,6 +73,7 @@ from skcapstone.fleet.review_capacity import (
     review_physical_free,
     aggregate_review_capacity,
     _review_capacity_truth_is_current,
+    review_route_snapshot_is_fresh,
     MAX_AGE_SECONDS as ROUTE_MAX_AGE_SECONDS,
 )
 from skcapstone.fleet.paths import default_paths as default_fleet_paths
@@ -8525,7 +8526,54 @@ _candidate_scan = _bounded_candidate_sequence(
     (candidate for candidate in owned
      if _logical_route_for(candidate[3],candidate[4]) is not None),
     MAX_CANDIDATE_SCAN)
+
+
+def _refresh_review_route_snapshot_if_stale():
+    """Refresh gateway capacity when POOL_V2 work outlives its two-minute TTL."""
+    global _review_route_occupancy, _review_route_ambiguous, _review_route_snapshot
+    global _all_review_routes, _elastic_limit, elastic_launch_remaining
+    if not PRODUCTION_POLICY or review_route_snapshot_is_fresh(_review_route_snapshot):
+        return
+    old_revision = str((_review_route_snapshot or {}).get("capacity_revision") or "missing")
+    old_limit = _elastic_limit
+    launched = max(0, old_limit - elastic_launch_remaining)
+    _review_route_occupancy, _review_route_ambiguous = load_route_occupancy(
+        Path(HOME) / ".skcapstone"
+    )
+    _review_route_snapshot = acquire_review_route_snapshot(
+        _GATEWAY_ENDPOINT,
+        Path(HOME) / (".skcapstone/evidence/fleet-review-routes.%s.json" % HOST),
+        new_cycle_id(HOST, STAMP),
+        occupancy=_review_route_occupancy,
+        occupancy_ambiguous=_review_route_ambiguous,
+        physical_maximum=None,
+    )
+    _all_review_routes = (
+        []
+        if _review_route_ambiguous
+        else eligible_gateway_routes(
+            _review_route_snapshot, "S", [], _review_route_occupancy
+        )
+    )
+    _elastic_limit = review_fanout_limit(
+        len(_elastic_rows),
+        review_physical_free(LANES, _all_review_routes, {}, CODEX_PHYSICAL_LIMIT),
+        REVIEW_MAXIMUM,
+    )
+    elastic_launch_remaining = max(0, _elastic_limit - launched)
+    log(
+        d,
+        "REVIEW_ROUTE_SNAPSHOT_REFRESHED|%s|old_revision=%s|new_revision=%s"
+        % (
+            HOST,
+            old_revision,
+            str(_review_route_snapshot.get("capacity_revision") or "missing"),
+        ),
+    )
+
+
 while _i<len(owned) and _i<len(_candidate_scan):
+    _refresh_review_route_snapshot_if_stale()
     _card=_candidate_scan[_i]; _i+=1
     _labels=_card[4]
     _esc=needs_escalation(_card[2], _card[3], _labels)

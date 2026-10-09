@@ -17,6 +17,7 @@ from skcapstone.fleet.review_capacity import (
     evaluate_review_capacity,
     load_route_occupancy,
     review_physical_free,
+    review_route_snapshot_is_fresh,
     seal_review_capacity_truth,
 )
 
@@ -361,6 +362,20 @@ def test_capacity_diagnostics_keep_distinct_failure_causes(tmp_path):
     )
     assert reason(snapshot, physical_free=0) == "eligible"
     assert reason(snapshot, size="XL", physical_free=1) == "route-exhaustion"
+
+
+def test_review_route_snapshot_freshness_uses_admission_ttl():
+    now = 2_000_000_000.0
+
+    assert review_route_snapshot_is_fresh({"observed_at": now}, now=now)
+    assert review_route_snapshot_is_fresh(
+        {"observed_at": now - review_capacity.MAX_AGE_SECONDS}, now=now
+    )
+    assert not review_route_snapshot_is_fresh(
+        {"observed_at": now - review_capacity.MAX_AGE_SECONDS - 1}, now=now
+    )
+    assert not review_route_snapshot_is_fresh({"observed_at": now + 1}, now=now)
+    assert not review_route_snapshot_is_fresh({"observed_at": "invalid"}, now=now)
 
 
 def test_review_launch_lanes_follow_healthy_domains_and_physical_maximum():

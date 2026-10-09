@@ -71,6 +71,19 @@ def _capacity_domain(queue: Mapping[str, Any], provider: str) -> str | None:
     return matches[0] if len(matches) == 1 else None
 
 
+def review_route_snapshot_is_fresh(
+    snapshot: Mapping[str, Any], *, now: float | None = None
+) -> bool:
+    """Return whether a sealed route view is still inside its admission TTL."""
+    observed = snapshot.get("observed_at")
+    current = time.time() if now is None else now
+    return (
+        type(observed) in {int, float}
+        and math.isfinite(observed)
+        and 0 <= current - observed <= MAX_AGE_SECONDS
+    )
+
+
 def acquire_review_route_snapshot(
     base_url: str,
     path: Path,
@@ -342,17 +355,12 @@ def evaluate_review_capacity(
     )
     routes: list[dict[str, Any]] = []
     logical_available = 0
-    observed = snapshot.get("observed_at")
     current = time.time() if now is None else now
     if not _review_capacity_truth_is_current(snapshot) or not valid_occupancy:
         reason = "route-snapshot-ambiguity"
     elif snapshot.get("schema_version") != 1 or snapshot.get("error") is not None:
         reason = "route-snapshot-ambiguity"
-    elif (
-        type(observed) not in {int, float}
-        or not math.isfinite(observed)
-        or not 0 <= current - observed <= MAX_AGE_SECONDS
-    ):
+    elif not review_route_snapshot_is_fresh(snapshot, now=current):
         reason = "route-snapshot-stale"
     else:
         routes = eligible_review_routes(
