@@ -799,3 +799,36 @@ def test_rotate_harvests_before_builder_claim():
     deferred = source[requalify:launch]
     assert "BUILDER_CLAIM_NOT_LAUNCHED|" in deferred
     assert '"coord","release-claim"' not in deferred
+
+
+def test_execution_host_reads_the_fleet_tree_under_the_sovereign_home(tmp_path, monkeypatch):
+    """Callers pass ~/.skcapstone; nodes must be read from ~/.skcapstone/fleet."""
+    seen = []
+    monkeypatch.setattr(refresh, "_records", lambda _root: iter(()))
+
+    def ready(paths):
+        seen.append(paths.root)
+        return []
+
+    monkeypatch.setattr("skcapstone.fleet.builder_dispatch._ready_builders", ready)
+    monkeypatch.setattr("skcapstone.fleet.production_builder.ready_nodes", lambda *_a: [])
+    sovereign = tmp_path / ".skcapstone"
+    refresh._execution_host(sovereign, {"authority_host": "chiap08"}, "1234abcd")
+    assert seen == [sovereign / "fleet"]
+
+
+def test_consume_remote_honours_a_freeze_under_the_sovereign_home(tmp_path, monkeypatch):
+    sovereign = tmp_path / ".skcapstone"
+    checked = []
+    monkeypatch.setattr(refresh.socket, "gethostname", lambda: "chiap01")
+    monkeypatch.setattr(refresh.plan, "private_dir", lambda *_a, **_k: None)
+
+    def allowed(paths):
+        checked.append(paths.root)
+        return False
+
+    monkeypatch.setattr("skcapstone.fleet.store.actuation_allowed", allowed)
+    assert refresh.consume_remote(sovereign, {"authority_host": "chiap08"}, "chiap01") == [
+        "frozen"
+    ]
+    assert checked == [sovereign / "fleet"]
