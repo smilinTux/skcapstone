@@ -14,8 +14,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from skcapstone.review_admission import governed_review_seat, qualified_reviewer_seats
 from skcapstone.coordination import AgentFile, Board
+from skcapstone.review_admission import governed_review_seat, qualified_reviewer_seats
 
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
@@ -836,6 +836,17 @@ def test_sensitive_category_requires_explicit_dispatch_approval() -> None:
     approved = {**core, "initial_labels": ["dispatch-approved"]}
     state = namespace["_fold_claimability"](approved, [])
     assert namespace["_claimability_reason"](approved, state) == "claimable"
+
+
+def test_parked_cards_are_not_claimable_even_without_a_sensitive_category() -> None:
+    namespace = _load_claimability()
+    core = _core(
+        "parked001",
+        labels=["parked-20261008", "dispatch-approved", "source-only", "sk-l"],
+    )
+    state = namespace["_fold_claimability"](core, [])
+
+    assert namespace["_claimability_reason"](core, state) == "parked"
 
 
 def test_refreshed_description_criteria_and_review_links_are_folded() -> None:

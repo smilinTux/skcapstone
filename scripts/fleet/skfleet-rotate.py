@@ -3192,6 +3192,8 @@ def _claimability_reason(core, state):
         return "done"
     if state.get("awaiting_gates"):
         return "awaiting-gates"
+    if any(str(label).strip().lower().startswith("parked-") for label in labels):
+        return "parked"
     if int(core.get("spec_version") or 1) >= 2:
         criteria = " ".join(str(c) for c in (core.get("acceptance_criteria") or []))
         if _GATE_LANGUAGE_RE.search(criteria):

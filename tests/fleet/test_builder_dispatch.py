@@ -472,6 +472,11 @@ def test_ambiguous_or_direct_provider_routes_are_rejected() -> None:
     assert not builder_dispatch.eligible(_card(), ["sk-l", "source-only", "glm-only"])
 
 
+@pytest.mark.parametrize("hold", ["parked-20261008", "do-not-claim"])
+def test_explicitly_held_cards_are_not_builder_eligible(hold) -> None:
+    assert not builder_dispatch.eligible(_card(), ["sk-m", "source-only", hold])
+
+
 def test_worker_command_is_pi_through_gateway_only(monkeypatch) -> None:
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "must-not-cross-boundary")
     command = builder_dispatch.worker_command(

@@ -187,6 +187,8 @@ def eligible(core: dict, labels: list[str] | tuple[str, ...]) -> bool:
         logical_route(labels) is not None
         and "source-only" in normalized
         and not any(label.startswith("seat-") for label in normalized)
+        and not any(label.startswith("parked-") for label in normalized)
+        and "do-not-claim" not in normalized
         and not normalized.intersection(excluded)
         and isinstance(core.get("id"), str)
     )
