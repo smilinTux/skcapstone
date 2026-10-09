@@ -8,9 +8,11 @@ candidate and its sha256, plus the typed commit, tree and ref that bind it to a
 real source revision. That refusal is correct: handing a reviewer a binding that
 never existed is worse than opening nothing.
 
-MEASURED ON THE LIVE chi BOARD, 2026-09-18. ``OPENED_REVIEW`` was 0 across 14
-days and 1,660 rotations. 214 cards logged ``OPEN_REVIEW_EVIDENCE_BLOCKED``
-every cycle, and 242 distinct cards accrued over the 14 days at 4 to 13 a day.
+MEASURED ON THE LIVE chi BOARD, 2026-09-18. ``OPENED_REVIEW`` was 0 across every
+rotation the journal retains (1,716 cycles, back to 2026-09-09); the evidence
+logs put the last one at 2026-09-05T21:25:18Z, so the lane had been dead about
+13 days. 214 cards logged ``OPEN_REVIEW_EVIDENCE_BLOCKED`` every cycle, and 242
+distinct cards accrued at 4 to 13 a day.
 Of the 354 cards ever reported blocked that way:
 
     305   PASS_FOR_REVIEW present ONLY as a kanban overlay ``link`` row
@@ -97,7 +99,7 @@ def validate_provisional_verdict(key: str, value: str) -> None:
         "candidate bytes and the source revision it reviews. A coord link event has "
         "no field for either, so this would record a request nothing can act on: "
         "measured on this fleet, 214 cards did exactly that and no review opened for "
-        "14 days.\n" + REMEDY
+        "about 13 days.\n" + REMEDY
     )
 
 
