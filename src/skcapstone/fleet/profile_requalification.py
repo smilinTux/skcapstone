@@ -14,6 +14,7 @@ from pathlib import Path
 from skcoord.card_store import CardStore
 
 from ..seraph_review_cardstore import card_revision
+from . import production_test_node as node
 from . import production_test_plan as plan
 from . import production_test_profile as profile
 from . import production_tests as tests
@@ -150,7 +151,12 @@ def harvest_completed(
     held_state = None
     qualified = []
     limit = 1 if card_id is not None else max(1, limit)
-    with _lock(root) as acquired:
+    # One CardStore serves this harvest's reads until it publishes. A fresh
+    # store replays the whole shared legacy overlay (~0.5s on chiap08) on its
+    # first fold, and a publication may write the board, so each publication
+    # drops the store and the next read starts fresh.
+    store = None
+    with _lock(root) as acquired, node.artifact_digest_memo():
         if not acquired:
             return "busy"
         for path in sorted(root.glob("*.job.json")):
@@ -168,7 +174,8 @@ def harvest_completed(
                 directory = plan.run_directory(home, plan_sha)
                 if not (directory / "receipt.json").is_file():
                     continue
-                card = CardStore(home).fold(job["card"])
+                store = CardStore(home) if store is None else store
+                card = store.fold(job["card"])
                 if card is None or card.status.value not in {"backlog", "ready"} or card.owner:
                     if card_id is not None:
                         return "held:card-owned-or-not-ready"
@@ -201,6 +208,7 @@ def harvest_completed(
                     source_sha256=job.get("source_sha256"),
                 ):
                     continue
+                store = None
                 profile.supersede_profile(
                     home,
                     card.model_dump(mode="json"),
@@ -261,7 +269,8 @@ def harvest_completed(
                     directory = plan.run_directory(home, plan_sha)
                     if not (directory / "receipt.json").is_file():
                         continue
-                    card = CardStore(home).fold(candidate_id)
+                    store = CardStore(home) if store is None else store
+                    card = store.fold(candidate_id)
                     if card is None or card.status.value not in {"backlog", "ready"} or card.owner:
                         if card_id is not None:
                             return "held:card-owned-or-not-ready"
@@ -299,6 +308,7 @@ def harvest_completed(
                         source_sha256=source_sha,
                     ):
                         continue
+                    store = None
                     profile.supersede_profile(
                         home,
                         card.model_dump(mode="json"),
@@ -573,13 +583,17 @@ def offer_stale_candidate(
     return state
 
 
-def _release_exact_claim(home, skc, actor, card_id, owner, claim_revision, column="ready"):
+def _release_exact_claim(
+    home, skc, actor, card_id, owner, claim_revision, column="ready", store=None
+):
     """Release a qualification claim only while it is still the exact holder.
 
     Returns None when the claim is no longer held (nothing to do), True when it
-    was released, and False when the release was refused.
+    was released, and False when the release was refused. ``store`` serves only
+    the read before any release; the read after a release is always a fresh
+    CardStore, because the release itself changed the board.
     """
-    latest = CardStore(home).fold(card_id)
+    latest = (store if store is not None else CardStore(home)).fold(card_id)
     if (
         latest is None
         or latest.owner != owner
@@ -646,6 +660,13 @@ def _release_failed_claims(home: Path, skc: str, actor: str, root: Path, limit: 
     pool (a69ec3a8, 90abb007, 2587020f on 2026-10-09).
     """
     states = []
+    # Every failed record is re-read each cycle, and nearly all of them no
+    # longer hold their claim. A fresh CardStore per record replays the whole
+    # shared legacy overlay on its first fold: measured on chiap08 2026-10-09,
+    # 64 such folds cost ~33s of the lane selection phase. One store serves the
+    # reads until a release runs; any release attempt (result not None) may
+    # have changed the board, so the next read starts a fresh store.
+    store = None
     for _path, job in _failed_records(root):
         if len(states) >= limit:
             break
@@ -659,10 +680,15 @@ def _release_failed_claims(home: Path, skc: str, actor: str, root: Path, limit: 
         ):
             continue
         try:
-            result = _release_exact_claim(home, skc, actor, card_id, owner, revision)
+            if store is None:
+                store = CardStore(home)
+            result = _release_exact_claim(
+                home, skc, actor, card_id, owner, revision, store=store
+            )
         except (OSError, ValueError, subprocess.SubprocessError):
             result = False
         if result is not None:
+            store = None
             states.append(card_id + "=" + ("released" if result else "release-refused"))
     return states
 

@@ -35,9 +35,17 @@ def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(argv, capture_output=True, text=True, timeout=10)
 
 
-def _claim_revision(home: Path, card_id: str) -> str | None:
-    """Read the authoritative current CardStore claim generation."""
-    card = CardStore(home).fold(card_id)
+def _claim_revision(home: Path, card_id: str, store: CardStore | None = None) -> str | None:
+    """Read the authoritative current CardStore claim generation.
+
+    ``store`` lets one observation pass fold every beat's card from a single
+    CardStore. Each new CardStore replays the whole shared legacy overlay
+    (~100k card_events lines) on its first fold, so one instance per beat cost
+    ~0.55s per beat: measured 17.8s for 33 beats on chiap08 2026-10-09, inside
+    the Niobe startup phase. Authority revalidation still passes no store and
+    reads fresh.
+    """
+    card = (store if store is not None else CardStore(home)).fold(card_id)
     if card is None or card.status not in {"claimed", "doing", "ready", "review"}:
         return None
     return str(getattr(card, "claim_revision", "") or card.meta.get("_claim_revision") or "")
@@ -102,6 +110,7 @@ def collect_observations(
     """Collect conservative host local facts for every managed worker beat."""
     host = socket.gethostname()
     rows = []
+    store: CardStore | None = None
     for beat_path in sorted((home / "fleet" / "beats").glob("*.json")):
         try:
             beat = json.loads(beat_path.read_text(encoding="utf-8"))
@@ -125,7 +134,9 @@ def collect_observations(
             continue
         owner = str(beat.get("agent") or beat.get("owner") or "")
         claim = str(beat.get("claim_revision") or "")
-        current_claim = _claim_revision(home, card_id) if card_id else None
+        if store is None:
+            store = CardStore(home)
+        current_claim = _claim_revision(home, card_id, store) if card_id else None
         if not claim or claim != current_claim:
             continue
         unit = str(beat.get("unit") or "")
