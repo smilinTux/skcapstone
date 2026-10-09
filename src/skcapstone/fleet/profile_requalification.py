@@ -355,6 +355,7 @@ def requalify_or_advance(
     with _lock(root) as acquired:
         if not acquired:
             return "busy"
+        released = _release_failed_claims(home, skc, actor, root) if card_id is None else []
         pending = [(path, job) for path, job in _records(root) if _claim_is_current(home, job)]
         pending_job = next(
             (
@@ -385,7 +386,9 @@ def requalify_or_advance(
                 states.append(str(job.get("card")) + "=" + state)
             if card_id is not None:
                 return states[0].split("=", 1)[1]
-            return "batch:" + ",".join(states)
+            return "batch:" + ",".join(states + released)
+        if released:
+            return "batch:" + ",".join(released)
         if card_id is None or not all((core, workspace, owner, claim_revision)):
             return "idle"
         try:
@@ -560,50 +563,108 @@ def offer_stale_candidate(
         )
         return "pending:" + str(target)
     if state not in {"pending", "qualified"}:
-        latest = CardStore(home).fold(card_id)
         if (
-            latest is not None
-            and latest.owner == claimant
-            and latest.meta.get("_claim_revision") == claim_revision
-        ):
-            released = subprocess.run(
-                [
-                    skc,
-                    "coord",
-                    "release-claim",
-                    card_id,
-                    "--owner",
-                    claimant,
-                    "--expected-claim-revision",
-                    claim_revision,
-                    "--agent",
-                    actor,
-                    "--abandon-reason",
-                    "not-abandoned",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=15,
+            _release_exact_claim(
+                home, skc, actor, card_id, claimant, claim_revision, column=origin_column
             )
-            after = CardStore(home).fold(card_id)
-            if (
-                released.returncode
-                or after is None
-                or after.owner == claimant
-                and after.meta.get("_claim_revision") == claim_revision
-            ):
-                return "blocked:qualification-failed-claim-release-refused"
-            # release-claim lands the card in backlog, which parked READY cards
-            # for good after one failed qualification (8 SKLegal cards on
-            # 2026-10-09). Restore the column the card was offered from.
-            if after.status.value != origin_column and after.owner is None:
-                subprocess.run(
-                    [skc, "coord", "move", card_id, origin_column, "--agent", actor],
-                    capture_output=True,
-                    text=True,
-                    timeout=15,
-                )
+            is False
+        ):
+            return "blocked:qualification-failed-claim-release-refused"
     return state
+
+
+def _release_exact_claim(home, skc, actor, card_id, owner, claim_revision, column="ready"):
+    """Release a qualification claim only while it is still the exact holder.
+
+    Returns None when the claim is no longer held (nothing to do), True when it
+    was released, and False when the release was refused.
+    """
+    latest = CardStore(home).fold(card_id)
+    if (
+        latest is None
+        or latest.owner != owner
+        or latest.meta.get("_claim_revision") != claim_revision
+    ):
+        return None
+    released = subprocess.run(
+        [
+            skc,
+            "coord",
+            "release-claim",
+            card_id,
+            "--owner",
+            owner,
+            "--expected-claim-revision",
+            claim_revision,
+            "--agent",
+            actor,
+            "--abandon-reason",
+            "not-abandoned",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    after = CardStore(home).fold(card_id)
+    if (
+        released.returncode
+        or after is None
+        or after.owner == owner
+        and after.meta.get("_claim_revision") == claim_revision
+    ):
+        return False
+    # release-claim lands the card in backlog, which parked READY cards for
+    # good after one failed qualification (8 SKLegal cards on 2026-10-09).
+    # Restore the column the card was offered from (ready unless known).
+    if after.status.value != column and after.owner is None:
+        subprocess.run(
+            [skc, "coord", "move", card_id, column, "--agent", actor],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    return True
+
+
+def _failed_records(root: Path):
+    for path in sorted(root.glob("*.job.json")):
+        if path.with_name(path.stem + ".failed.json").exists():
+            try:
+                yield path, json.loads(plan.read_private(path))
+            except (OSError, ValueError):
+                continue
+
+
+def _release_failed_claims(home: Path, skc: str, actor: str, root: Path, limit: int = 4):
+    """Return cards whose qualification job failed while still holding their claim.
+
+    A failed job leaves _records(), so neither the reaper (which preserves only
+    unfinished jobs) nor the advance loop ever looked at it again. When the
+    failure was written by the remote executor (consume_remote) or by the
+    batch advance, nothing released the exact claim: the card sat in DOING
+    owned by <actor>-requal-<card> indefinitely and was absent from every
+    pool (a69ec3a8, 90abb007, 2587020f on 2026-10-09).
+    """
+    states = []
+    for _path, job in _failed_records(root):
+        if len(states) >= limit:
+            break
+        card_id, owner, revision = job.get("card"), job.get("owner"), job.get("claim_revision")
+        if not (
+            isinstance(card_id, str)
+            and isinstance(owner, str)
+            and owner.endswith("-requal-" + card_id)
+            and isinstance(revision, str)
+            and revision
+        ):
+            continue
+        try:
+            result = _release_exact_claim(home, skc, actor, card_id, owner, revision)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            result = False
+        if result is not None:
+            states.append(card_id + "=" + ("released" if result else "release-refused"))
+    return states
 
 
 def _begin(home, policy, skc, actor, card_id, core, workspace, owner, claim_revision):
