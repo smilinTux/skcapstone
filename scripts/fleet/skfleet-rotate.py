@@ -8844,6 +8844,12 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             (HOST,len(picks)-_pick_index,_exhausted_ids,_exhausted_omitted))
         break
     processed_picks+=1
+    # Admission runs minutes after the candidate scan in a long cycle. Lane
+    # health below resolves against the shared route snapshot, so a stale one
+    # reads as route-snapshot-stale / no-compatible-healthy-lane:glm while the
+    # gateway is healthy (48 such skips in 12 cycles on 2026-10-09). Refresh it
+    # per pick exactly as the scan loop does.
+    _refresh_review_route_snapshot_if_stale()
     _elastic_review = _POOL_V2_ADMISSIONS.get(cid, {}).get("elastic_review_admitted") is True
     _attempt_escalation=needs_escalation(cid,core,_labels)
     _attempt_health={lane["name"]:_health_for(
