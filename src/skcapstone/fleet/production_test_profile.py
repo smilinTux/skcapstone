@@ -98,10 +98,16 @@ def initial_recipe(core: dict, workspace: Path) -> tuple[dict, dict | None]:
         from . import production_test_node as node
 
         web = workspace / "apps/web"
+        # Only source test modules. Vitest writes snapshot artifacts such as
+        # src/__snapshots__/visual-regression.test.tsx.snap, which contain
+        # ".test." but are not tests; counting one failed every SKLegal Node
+        # recipe with "invalid Node per-file coverage" (2026-10-09).
         test_files = [
             path
             for path in web.rglob("*")
-            if path.is_file() and (".test." in path.name or ".spec." in path.name)
+            if path.is_file()
+            and (".test." in path.name or ".spec." in path.name)
+            and path.suffix in {".ts", ".tsx", ".js", ".jsx"}
         ]
         tests = sorted(path.relative_to(web).as_posix() for path in test_files)
         if (

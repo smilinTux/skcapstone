@@ -800,3 +800,26 @@ def test_initial_recipe_reads_frontend_label_as_node_scope(tmp_path, monkeypatch
         tmp_path,
     )
     assert recipe == {"vitest": {"src/pages/Workflow.test.tsx": 1}}
+
+
+def test_node_recipe_ignores_vitest_snapshot_artifacts(tmp_path, monkeypatch):
+    from skcapstone.fleet import production_test_node as node
+
+    target = tmp_path / "apps/web/src/pages/Workflow.test.tsx"
+    target.parent.mkdir(parents=True)
+    target.write_text("export {};\n")
+    snapshot = tmp_path / "apps/web/src/__snapshots__/visual-regression.test.tsx.snap"
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_text("// snapshot\n")
+    (tmp_path / "apps/web/package.json").write_text("{}\n")
+    monkeypatch.setattr(node, "qualified_environment", lambda _workspace: {"artifact": "a" * 64})
+    recipe, _ = profile.initial_recipe(
+        {
+            "description": "Repair apps/web/src/pages/Workflow.tsx and its tests.",
+            "acceptance_criteria": ["Vitest passes."],
+            "links": {"repository": "https://github.com/example/sklegal"},
+        },
+        tmp_path,
+    )
+    assert recipe == {"vitest": {"src/pages/Workflow.test.tsx": 1}}
+    node.checks(recipe)
