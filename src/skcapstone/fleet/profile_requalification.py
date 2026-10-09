@@ -407,6 +407,32 @@ def requalify_or_advance(
             return "blocked:" + str(exc)[:180]
 
 
+# A qualification that failed on this exact source will fail again: the SKLegal
+# full suite needs Postgres, systemd and real credentials, so pytest_all can
+# never be green in the sandbox. Re-offering it every cycle burned the four
+# offer slots and claim churn (2026-10-09). Wait for the source to change, or
+# for the backoff to expire, before trying the same card again.
+RECENT_FAILURE_SECONDS = 6 * 3600
+
+
+def _recent_failure(root: Path, card_id: str, source_sha: str) -> bool:
+    import time
+
+    now = time.time()
+    for failed in root.glob("*.job.failed.json"):
+        try:
+            if now - failed.stat().st_mtime > RECENT_FAILURE_SECONDS:
+                continue
+            job = json.loads(
+                plan.read_private(failed.with_name(failed.name.replace(".failed", "")))
+            )
+        except (OSError, ValueError):
+            continue
+        if job.get("card") == card_id and job.get("source_sha256") == source_sha:
+            return True
+    return False
+
+
 def offer_stale_candidate(
     home: Path,
     policy: dict,
@@ -456,6 +482,8 @@ def offer_stale_candidate(
         if not isinstance(repository, str):
             return "ineligible:test repository binding is invalid"
         source_sha = plan.workspace_source_fingerprint(repository, workspace)
+        if _recent_failure(root, card_id, source_sha):
+            return "deferred:recent-qualification-failure"
         if initial:
             profile.initial_recipe(core, workspace)
         else:
