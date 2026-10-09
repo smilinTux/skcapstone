@@ -937,3 +937,14 @@ def test_offer_binds_folded_labels_into_the_initial_recipe_core(tmp_path, monkey
         lambda _core, _labels: tmp_path / "exact-source",
     )
     assert seen and seen[0]["labels"] == ["backend", "sklegal"]
+
+
+def test_recent_failure_on_the_same_source_defers_the_offer(tmp_path):
+    root = tmp_path / "fleet/profile-requalifications"
+    root.mkdir(parents=True, mode=0o700)
+    job = {"card": "1234abcd", "source_sha256": "s" * 64}
+    plan.write_once(root / ("a" * 64 + ".job.json"), job)
+    plan.write_once(root / ("a" * 64 + ".job.failed.json"), {"card": "1234abcd"})
+    assert refresh._recent_failure(root, "1234abcd", "s" * 64)
+    assert not refresh._recent_failure(root, "1234abcd", "t" * 64)
+    assert not refresh._recent_failure(root, "9999aaaa", "s" * 64)

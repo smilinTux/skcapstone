@@ -1,0 +1,1 @@
+Initial qualification no longer guesses a whole-suite recipe for cards with no stated scope, and a card whose qualification failed on the same source is not re-offered for six hours, so guaranteed failures stop consuming the per-cycle offer slots.

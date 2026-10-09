@@ -766,20 +766,18 @@ def _both_projects(tmp_path):
     (tmp_path / "apps/web/package.json").write_text("{}\n")
 
 
-def test_initial_recipe_without_stated_scope_runs_both_suites(tmp_path, monkeypatch):
-    from skcapstone.fleet import production_test_node as node
-
+def test_initial_recipe_without_stated_scope_is_refused(tmp_path):
+    """No guessed whole-suite recipe: SKLegal's full suite cannot be green in the sandbox."""
     _both_projects(tmp_path)
-    monkeypatch.setattr(node, "qualified_environment", lambda _workspace: {"artifact": "a" * 64})
-    recipe, _ = profile.initial_recipe(
-        {
-            "title": "Rebase scoped Product Status onto current main",
-            "acceptance_criteria": ["Status page renders the live state."],
-            "links": {"repository": "https://github.com/example/sklegal"},
-        },
-        tmp_path,
-    )
-    assert recipe == {"pytest_all": True, "vitest": {"src/pages/Workflow.test.tsx": 1}}
+    with pytest.raises(plan.TestEvidenceError, match="no supported initial test recipe"):
+        profile.initial_recipe(
+            {
+                "title": "Rebase scoped Product Status onto current main",
+                "acceptance_criteria": ["Status page renders the live state."],
+                "links": {"repository": "https://github.com/example/sklegal"},
+            },
+            tmp_path,
+        )
 
 
 def test_initial_recipe_reads_frontend_label_as_node_scope(tmp_path, monkeypatch):

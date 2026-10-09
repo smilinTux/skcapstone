@@ -160,11 +160,6 @@ def initial_recipe(core: dict, workspace: Path) -> tuple[dict, dict | None]:
             ) from exc
         return recipe, environment
 
-    if not (node_scope or python_scope) and python_project and node_project:
-        # No stated scope in a repository with both suites: qualify against
-        # both rather than refusing. Seven SKLegal cards sat ineligible with
-        # "no supported initial test recipe" every cycle (2026-10-09).
-        node_scope = python_scope = True
     if node_scope and python_scope:
         if not (python_project and node_project):
             raise plan.TestEvidenceError("mixed test scope needs Python and frontend projects")
