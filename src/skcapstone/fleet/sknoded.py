@@ -197,9 +197,20 @@ def run_once(paths: FleetPaths, node: str) -> dict:
         join = build_join_request(paths, node, report["status"]["capacity"], now_iso)
         join_written = store.write_node_file(paths, writer, "join.json", join, if_changed=False)
     dispatch = None
+    result_qualifications = []
     if (spec := store.read_spec(paths, "node", node)) and (
         spec.get("spec", {}).get("role") == "builder-standby"
     ):
+        try:
+            from . import production_builder
+            from .profile_requalification import consume_remote
+
+            policy = production_builder.policy()
+            if policy is not None:
+                result_qualifications = consume_remote(paths.root.parent, policy, node)
+        except (OSError, ValueError) as exc:
+            logger.warning("remote profile qualification refused on %s: %s", node, exc)
+            result_qualifications = ["refused"]
         from .builder_dispatch import consume_one
 
         dispatch = consume_one(paths, paths.root.parent, node)
@@ -210,6 +221,8 @@ def run_once(paths: FleetPaths, node: str) -> dict:
     }
     if dispatch is not None:
         result["dispatch"] = dispatch
+    if result_qualifications:
+        result["profile_requalification"] = result_qualifications
     return result
 
 

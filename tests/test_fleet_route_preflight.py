@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from skcapstone.fleet_route_preflight import resolve_and_preflight
+from skcapstone.fleet_route_preflight import preflight_failure_expired, resolve_and_preflight
 
 ROTATE = Path(__file__).resolve().parents[1] / "scripts" / "fleet" / "skfleet-rotate.py"
 
@@ -112,6 +112,11 @@ def test_preflight_exhausted_deadline_fails_closed_before_dispatch():
         )
 
     assert len(calls) == 1
+
+
+def test_cached_preflight_failure_expires_after_sixty_seconds():
+    assert not preflight_failure_expired(100.0, 159.9)
+    assert preflight_failure_expired(100.0, 160.0)
 
 
 def test_automatic_preflight_precedes_workspace_and_claim():

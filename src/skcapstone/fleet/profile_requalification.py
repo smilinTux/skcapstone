@@ -6,6 +6,7 @@ import fcntl
 import json
 import os
 import socket
+import subprocess
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -43,6 +44,50 @@ def _records(root: Path):
         failed = path.with_name(path.stem + ".failed.json")
         if not done.exists() and not failed.exists():
             yield path, value
+
+
+@contextmanager
+def _job_lock(root: Path, job_id: str):
+    """Serialize one remote qualification without blocking other hosts."""
+    fd = os.open(root / ("." + job_id + ".lock"), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "r+") as stream:
+        try:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        yield True
+
+
+def _execution_host(home: Path, policy: dict, card_id: str) -> str:
+    """Choose the least-loaded ready remote test host, with authority fallback."""
+    from . import builder_dispatch, production_builder
+    from .paths import paths_for_home
+
+    paths = paths_for_home(home)
+    ready = builder_dispatch._ready_builders(paths)
+    candidates = production_builder.ready_nodes(paths, ready, policy, card_id)
+    authority = policy["authority_host"]
+    candidates = [
+        view
+        for view in candidates
+        if production_builder.node_binding(paths, view.name, policy)["host"] != authority
+    ]
+    if not candidates:
+        return authority
+    pending = {}
+    for _, job in _records(home / "fleet/profile-requalifications"):
+        target = job.get("execution_host")
+        if isinstance(target, str):
+            pending[target] = pending.get(target, 0) + 1
+    selected = min(
+        candidates,
+        key=lambda view: (
+            pending.get(production_builder.node_binding(paths, view.name, policy)["host"], 0),
+            builder_dispatch.production_load_key(paths, view, policy),
+        ),
+    )
+    return production_builder.node_binding(paths, selected.name, policy)["host"]
 
 
 def retains_pending_claim(home: Path, card_id: str, owner: str, claim_revision: str) -> bool:
@@ -86,7 +131,9 @@ def harvest_completed(home: Path, policy: dict, card_id: str | None = None) -> s
                     continue
                 binding = job["binding"]
                 workspace = Path(job["workspace"])
-                sealed, plan_path, plan_sha = plan.load_plan(home, binding, allow_completed=True)
+                sealed, plan_path, plan_sha = plan.load_plan(
+                    home, binding, allow_completed=True, allow_remote_host=True
+                )
                 directory = plan.run_directory(home, plan_sha)
                 if not (directory / "receipt.json").is_file():
                     continue
@@ -100,9 +147,14 @@ def harvest_completed(home: Path, policy: dict, card_id: str | None = None) -> s
                     continue
                 if (
                     sealed.get("profile_requalification") is not True
+                    or sealed.get("authority_host", policy["authority_host"])
+                    != policy["authority_host"]
                     or sealed.get("profile_predecessor_sha256") != predecessor
                     or sealed.get("runtime_sha256") != plan.runtime_fingerprint()
-                    or sealed.get("policy_sha256") != plan.execution_policy_fingerprint(policy)
+                    or sealed.get("policy_sha256")
+                    != plan.execution_policy_fingerprint(
+                        policy, sealed.get("host", policy["authority_host"])
+                    )
                 ):
                     continue
                 plan.source_state(workspace, binding)
@@ -165,7 +217,9 @@ def harvest_completed(home: Path, policy: dict, card_id: str | None = None) -> s
                         or (card_id is not None and candidate_id != card_id)
                     ):
                         continue
-                    sealed, _, plan_sha = plan.load_plan(home, binding, allow_completed=True)
+                    sealed, _, plan_sha = plan.load_plan(
+                        home, binding, allow_completed=True, allow_remote_host=True
+                    )
                     done_path = root / ("harvested-" + plan_sha + ".json")
                     if done_path.exists():
                         continue
@@ -185,9 +239,15 @@ def harvest_completed(home: Path, policy: dict, card_id: str | None = None) -> s
                     profile_predecessor = sealed.get("profile_predecessor_sha256")
                     if predecessor != profile_predecessor:
                         continue
-                    if sealed.get("runtime_sha256") != plan.runtime_fingerprint() or sealed.get(
-                        "policy_sha256"
-                    ) != plan.execution_policy_fingerprint(policy):
+                    if (
+                        sealed.get("runtime_sha256") != plan.runtime_fingerprint()
+                        or sealed.get("authority_host", policy["authority_host"])
+                        != policy["authority_host"]
+                        or sealed.get("policy_sha256")
+                        != plan.execution_policy_fingerprint(
+                            policy, sealed.get("host", policy["authority_host"])
+                        )
+                    ):
                         continue
                     plan.source_state(workspace, binding)
                     receipt = tests.validate_test_receipt(home, binding, workspace)
@@ -257,8 +317,11 @@ def requalify_or_advance(
         if not acquired:
             return "busy"
         pending = list(_records(root))
-        if pending:
-            path, job = pending[0]
+        pending_job = next(
+            ((path, job) for path, job in pending if card_id in (None, job.get("card"))), None
+        )
+        if pending_job is not None:
+            path, job = pending_job
             try:
                 state = _advance(home, policy, skc, actor, path, job)
             except (OSError, ValueError) as exc:
@@ -271,8 +334,6 @@ def requalify_or_advance(
                     },
                 )
                 state = "failed:" + str(exc)[:160]
-            if card_id is not None and card_id != job["card"]:
-                return "busy"
             return state
         if card_id is None or not all((core, workspace, owner, claim_revision)):
             return "idle"
@@ -335,6 +396,7 @@ def _begin(home, policy, skc, actor, card_id, core, workspace, owner, claim_revi
         "binding": binding,
         "profile_sha256": predecessor,
         "source_sha256": source_sha256,
+        "execution_host": _execution_host(home, policy, card_id),
     }
     root = _private_root(home)
     job_id = plan.sha(json.dumps(job, sort_keys=True, separators=(",", ":")).encode())
@@ -370,7 +432,9 @@ def _advance(home, policy, skc, actor, path, job):
     workspace = Path(job["workspace"])
     plan.source_state(workspace, job["binding"])
     try:
-        current_plan, _, _ = plan.load_plan(home, job["binding"], allow_completed=True)
+        current_plan, _, _ = plan.load_plan(
+            home, job["binding"], allow_completed=True, allow_remote_host=True
+        )
         if (
             current_plan.get("profile_requalification") is not True
             or current_plan.get("profile_predecessor_sha256") != job["profile_sha256"]
@@ -390,12 +454,13 @@ def _advance(home, policy, skc, actor, path, job):
             profile=value,
             requalification=True,
             profile_predecessor_sha256=predecessor,
+            execution_host=job.get("execution_host"),
         )
     except plan.TestEvidenceError as exc:
         if str(exc) != "operator test plan is invalid or stale":
             raise
         current_plan, _, plan_predecessor = plan.load_plan(
-            home, job["binding"], require_current=False
+            home, job["binding"], require_current=False, allow_remote_host=True
         )
         if (
             current_plan.get("profile_requalification") is not True
@@ -416,7 +481,10 @@ def _advance(home, policy, skc, actor, path, job):
             predecessor_sha256=plan_predecessor,
             requalification=True,
             profile_predecessor_sha256=profile_predecessor,
+            execution_host=job.get("execution_host"),
         )
+    # The authority process also reads the remote worker's sealed receipt.
+    # run_or_read_tests returns pending until that host writes terminal evidence.
     receipt = tests.run_or_read_tests(home, job["binding"], workspace, policy)
     if receipt is None:
         return "pending"
@@ -491,3 +559,75 @@ def _advance(home, policy, skc, actor, path, job):
         },
     )
     return "qualified"
+
+
+def consume_remote(home: Path, policy: dict, host: str) -> list[str]:
+    """Run exact authority-sealed qualification jobs assigned to this host."""
+    if host != socket.gethostname().split(".")[0].lower():
+        return ["refused:host-mismatch"]
+    if host == policy.get("authority_host"):
+        return []
+    root = Path(home) / "fleet/profile-requalifications"
+    try:
+        plan.private_dir(root)
+    except FileNotFoundError:
+        return []
+    from . import store
+    from .builder_dispatch import materialize_source
+    from .paths import paths_for_home
+
+    if not store.actuation_allowed(paths_for_home(home)):
+        return ["frozen"]
+
+    states = []
+    for path, job in _records(root):
+        if job.get("execution_host") != host:
+            continue
+        job_id = path.name.removesuffix(".job.json")
+        with _job_lock(root, job_id) as acquired:
+            if not acquired:
+                continue
+            try:
+                card = CardStore(home).fold(job["card"])
+                if (
+                    card is None
+                    or card.archived
+                    or card.status.value != "doing"
+                    or card.owner != job["owner"]
+                    or card.meta.get("_claim_revision") != job["claim_revision"]
+                ):
+                    raise plan.TestEvidenceError("remote qualification claim changed")
+                sealed, _, _ = plan.load_plan(home, job["binding"])
+                if (
+                    sealed.get("remote_requalification") is not True
+                    or sealed.get("authority_host") != policy.get("authority_host")
+                    or sealed.get("host") != host
+                ):
+                    raise plan.TestEvidenceError("remote qualification plan binding changed")
+                value, predecessor = profile.read_profile(home, job["card"])
+                if predecessor != job["profile_sha256"]:
+                    raise plan.TestEvidenceError("remote qualification profile changed")
+                workspace = Path(job["workspace"])
+                request = {
+                    "repository": value["repository"],
+                    "base_ref": "main",
+                    "base_revision": job["binding"]["source_head"],
+                }
+                materialize_source(request, workspace)
+                plan.source_state(workspace, job["binding"])
+                receipt = tests.run_or_read_tests(home, job["binding"], workspace, policy)
+                states.append(
+                    "running:" + job["card"] if receipt is None else "receipt:" + job["card"]
+                )
+            except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
+                plan.write_once(
+                    path.with_name(path.stem + ".failed.json"),
+                    {
+                        "schema": "skfleet.profile-requalification-failure/v1",
+                        "card": job.get("card"),
+                        "host": host,
+                        "reason": str(exc)[:200],
+                    },
+                )
+                states.append("failed:" + str(job.get("card")) + ":" + str(exc)[:100])
+    return states

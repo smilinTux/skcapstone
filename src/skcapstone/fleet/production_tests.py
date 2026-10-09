@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import os
 import re
+import socket
 import subprocess
 from pathlib import Path
 from xml.etree import ElementTree
@@ -89,7 +90,9 @@ def validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
 
 def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
     """Rehash real output, argv, JUnit, source and independently observed unit exit."""
-    plan, plan_path, plan_sha = load_plan(home, binding, allow_completed=True)
+    plan, plan_path, plan_sha = load_plan(
+        home, binding, allow_completed=True, allow_remote_host=True
+    )
     directory = run_directory(home, plan_sha)
     launch = read_json(directory / "launch.json")
     receipt = read_json(directory / "receipt.json")
@@ -122,7 +125,7 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
         or launch.get("workspace") != str(workspace.resolve())
         or launch.get("unit") != unit
         or launch.get("attempt") != 1
-        or test_plan.execution_policy_fingerprint(policy) != plan["policy_sha256"]
+        or test_plan.execution_policy_fingerprint(policy, plan["host"]) != plan["policy_sha256"]
         or launch.get("production")
         != {"resources": policy.get("node_quotas", {}).get(plan["host"])}
         or launch.get("service_argv") != expected_argv
@@ -315,21 +318,37 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
     The caller owns exact current claim/revision checks before this launch.
     """
     try:
-        plan, plan_path, plan_sha = load_plan(home, binding, allow_completed=True)
+        plan, plan_path, plan_sha = load_plan(
+            home, binding, allow_completed=True, allow_remote_host=True
+        )
     except FileNotFoundError:
         return None
-    if plan["policy_sha256"] != test_plan.execution_policy_fingerprint(policy):
+    if plan["policy_sha256"] != test_plan.execution_policy_fingerprint(policy, plan["host"]):
         raise TestEvidenceError("test quota policy changed after qualification")
+    if plan.get("remote_requalification") is True and plan.get("authority_host") != policy.get(
+        "authority_host"
+    ):
+        raise TestEvidenceError("remote test plan authority differs from production policy")
     workspace = workspace.resolve()
     source_state(workspace, binding)
     root = home / "fleet/test-runs"
-    private_dir(root, create=True)
     directory = run_directory(home, plan_sha)
+    current_host = socket.gethostname().split(".")[0].lower()
+    if plan["host"] != current_host:
+        if (
+            plan.get("remote_requalification") is not True
+            or plan.get("authority_host") != current_host
+        ):
+            raise TestEvidenceError("remote test plan is not authority-readable")
+        if not (directory / "receipt.json").is_file():
+            return None
+        return validate_test_receipt(home, binding, workspace)
+    private_dir(root, create=True)
     private_dir(directory, create=True)
     lock_fd = os.open(directory / ".run.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     with os.fdopen(lock_fd, "r+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        if load_plan(home, binding, allow_completed=True)[2] != plan_sha:
+        if load_plan(home, binding, allow_completed=True, allow_remote_host=True)[2] != plan_sha:
             raise TestEvidenceError("test plan generation changed before launch")
         private_dir(directory, create=True)
         if (directory / "launch.json").exists():

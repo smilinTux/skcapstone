@@ -256,14 +256,22 @@ def sha(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
-def execution_policy_fingerprint(policy: dict) -> str:
+def execution_policy_fingerprint(policy: dict, host: str | None = None) -> str:
     """Bind test evidence only to the host and limits that execute its tests."""
-    host = policy.get("authority_host")
+    host = host or policy.get("authority_host")
     quotas = policy.get("node_quotas")
     resources = quotas.get(host) if isinstance(quotas, dict) else None
-    if not isinstance(host, str) or not host or not isinstance(resources, dict):
+    authority = policy.get("authority_host")
+    if (
+        not isinstance(host, str)
+        or not host
+        or not isinstance(authority, str)
+        or not isinstance(resources, dict)
+    ):
         raise TestEvidenceError("test execution policy is incomplete")
-    value = {"authority_host": host, "resources": resources}
+    value = {"authority_host": authority, "resources": resources}
+    if host != authority:
+        value["execution_host"] = host
     return sha(json.dumps(value, sort_keys=True, separators=(",", ":")).encode())
 
 
@@ -375,6 +383,7 @@ def seal_plan(
     predecessor_sha256: str | None = None,
     requalification: bool = False,
     profile_predecessor_sha256: str | None = None,
+    execution_host: str | None = None,
 ) -> Path:
     """Seal an explicitly qualified legacy or reusable profile for one candidate."""
     if predecessor_sha256 is not None:
@@ -392,6 +401,7 @@ def seal_plan(
                 predecessor_sha256,
                 requalification,
                 profile_predecessor_sha256,
+                execution_host,
             )
     return _seal_plan(
         home,
@@ -404,6 +414,7 @@ def seal_plan(
         predecessor_sha256,
         requalification,
         profile_predecessor_sha256,
+        execution_host,
     )
 
 
@@ -449,8 +460,12 @@ def _seal_plan(
     predecessor_sha256: str | None,
     requalification: bool,
     profile_predecessor_sha256: str | None,
+    execution_host: str | None,
 ) -> Path:
     check_binding(binding)
+    execution_host = execution_host or policy["authority_host"]
+    if execution_host not in policy.get("node_quotas", {}):
+        raise TestEvidenceError("test execution host is not in production policy")
     source_state(workspace, binding)
     directory = home / "fleet/test-plans"
     private_dir(directory, create=True)
@@ -463,17 +478,22 @@ def _seal_plan(
         if (run_directory(home, current) / "launch.json").exists():
             raise TestEvidenceError("prior test plan already launched")
         path = previous_path.with_name(previous_path.stem + "." + current + ".json")
+    remote_requalification = requalification and execution_host != policy["authority_host"]
     value = {
         "schema": (
-            "skfleet.native-test-plan/v4"
-            if predecessor_sha256 is not None and requalification
+            "skfleet.native-test-plan/v5"
+            if remote_requalification
             else (
-                "skfleet.native-test-plan/v3"
-                if requalification
+                "skfleet.native-test-plan/v4"
+                if predecessor_sha256 is not None and requalification
                 else (
-                    "skfleet.native-test-plan/v2"
-                    if predecessor_sha256 is not None
-                    else "skfleet.native-test-plan/v1"
+                    "skfleet.native-test-plan/v3"
+                    if requalification
+                    else (
+                        "skfleet.native-test-plan/v2"
+                        if predecessor_sha256 is not None
+                        else "skfleet.native-test-plan/v1"
+                    )
                 )
             )
         ),
@@ -484,8 +504,12 @@ def _seal_plan(
         "python_sha256": sha((PREFIX / "bin/python").read_bytes()),
         "runtime_sha256": runtime_fingerprint(),
         "host": socket.gethostname().split(".")[0].lower(),
-        "policy_sha256": execution_policy_fingerprint(policy),
+        "policy_sha256": execution_policy_fingerprint(policy, execution_host),
     }
+    if remote_requalification:
+        value["authority_host"] = policy["authority_host"]
+        value["remote_requalification"] = True
+    value["host"] = execution_host
     if predecessor_sha256 is not None:
         value["predecessor_sha256"] = predecessor_sha256
     if profile is not None:
@@ -557,7 +581,12 @@ def _seal_plan(
 
 
 def load_plan(
-    home: Path, binding: dict, *, require_current: bool = True, allow_completed: bool = False
+    home: Path,
+    binding: dict,
+    *,
+    require_current: bool = True,
+    allow_completed: bool = False,
+    allow_remote_host: bool = False,
 ) -> tuple[dict, Path, str]:
     """Read an append-only plan chain and bind its latest approved environment."""
     check_binding(binding)
@@ -580,7 +609,9 @@ def load_plan(
             raise TestEvidenceError("test plan chain repeats")
         seen.add(fingerprint)
         plan = json.loads(raw, object_pairs_hook=_unique_object)
-        _validate_plan(home, binding, plan, successor=generation > 0)
+        _validate_plan(
+            home, binding, plan, successor=generation > 0, allow_remote_host=allow_remote_host
+        )
         next_path = base.with_name(base.stem + "." + fingerprint + ".json")
         try:
             next_raw = read_private(next_path)
@@ -608,7 +639,9 @@ def load_plan(
     raise TestEvidenceError("test plan chain exceeds generation bound")
 
 
-def _validate_plan(home: Path, binding: dict, plan: dict, *, successor: bool) -> None:
+def _validate_plan(
+    home: Path, binding: dict, plan: dict, *, successor: bool, allow_remote_host: bool = False
+) -> None:
     if not isinstance(plan, dict):
         raise TestEvidenceError("operator test plan is invalid or stale")
     required = {
@@ -625,9 +658,24 @@ def _validate_plan(home: Path, binding: dict, plan: dict, *, successor: bool) ->
     if successor:
         required.add("predecessor_sha256")
     requalification = plan.get("profile_requalification") is True
+    remote_requalification = plan.get("remote_requalification") is True
+    if remote_requalification:
+        authority = plan.get("authority_host")
+        if (
+            not requalification
+            or not isinstance(authority, str)
+            or not authority
+            or authority == plan.get("host")
+            or plan.get("schema") != "skfleet.native-test-plan/v5"
+        ):
+            raise TestEvidenceError("remote test plan authority is invalid")
+    elif "authority_host" in plan or "remote_requalification" in plan:
+        raise TestEvidenceError("operator test plan is invalid or stale")
     if requalification:
         required.update({"profile_requalification", "profile_predecessor_sha256"})
-    elif "profile_predecessor_sha256" in plan:
+    if remote_requalification:
+        required.update({"authority_host", "remote_requalification"})
+    elif not requalification and "profile_predecessor_sha256" in plan:
         raise TestEvidenceError("operator test plan is invalid or stale")
     expected_checks = approved_checks()
     if "profile" in plan:
@@ -641,7 +689,7 @@ def _validate_plan(home: Path, binding: dict, plan: dict, *, successor: bool) ->
                 or profile_sha != plan["profile_predecessor_sha256"]
                 or profile.get("card") != binding["source_card"]
                 or profile.get("criteria_sha256") != binding["criteria_sha256"]
-                or profile.get("host") != plan.get("host")
+                or profile.get("host") != plan.get("authority_host", plan.get("host"))
                 or profile.get("python_sha256") != plan.get("python_sha256")
                 or (
                     "toolchain_sha256" in profile
@@ -699,13 +747,19 @@ def _validate_plan(home: Path, binding: dict, plan: dict, *, successor: bool) ->
         set(plan) != required
         or plan["schema"]
         != (
-            "skfleet.native-test-plan/v4"
-            if successor and requalification
+            "skfleet.native-test-plan/v5"
+            if remote_requalification
             else (
-                "skfleet.native-test-plan/v3"
-                if requalification
+                "skfleet.native-test-plan/v4"
+                if successor and requalification
                 else (
-                    "skfleet.native-test-plan/v2" if successor else "skfleet.native-test-plan/v1"
+                    "skfleet.native-test-plan/v3"
+                    if requalification
+                    else (
+                        "skfleet.native-test-plan/v2"
+                        if successor
+                        else "skfleet.native-test-plan/v1"
+                    )
                 )
             )
         )
@@ -717,7 +771,14 @@ def _validate_plan(home: Path, binding: dict, plan: dict, *, successor: bool) ->
             not re.fullmatch(r"[0-9a-f]{64}", str(plan[k]))
             for k in ("qualification_sha256", "python_sha256", "runtime_sha256", "policy_sha256")
         )
-        or plan["host"] != socket.gethostname().split(".")[0].lower()
+        or not isinstance(plan.get("host"), str)
+        or (plan["host"] != socket.gethostname().split(".")[0].lower() and not allow_remote_host)
+        or (
+            allow_remote_host
+            and plan["host"] != socket.gethostname().split(".")[0].lower()
+            and not remote_requalification
+        )
+        or (remote_requalification and plan["host"] == plan["authority_host"])
     ):
         raise TestEvidenceError("operator test plan is invalid or stale")
 

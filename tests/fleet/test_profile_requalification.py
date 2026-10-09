@@ -78,20 +78,18 @@ def test_only_one_unfinished_native_refresh_is_advanced(tmp_path):
     assert [job["card"] for _, job in refresh._records(root)] == ["5678abcd"]
 
 
-def test_existing_refresh_keeps_the_single_slot_ahead_of_new_work(tmp_path, monkeypatch):
+def test_existing_refresh_does_not_block_another_card_job(tmp_path, monkeypatch):
     root = tmp_path / "fleet/profile-requalifications"
     root.parent.mkdir(mode=0o700)
     plan.private_dir(root, create=True)
     first = root / ("a" * 64 + ".job.json")
-    second = root / ("b" * 64 + ".job.json")
     plan.write_once(first, {"card": "1234abcd"})
-    plan.write_once(second, {"card": "5678abcd"})
-    advanced = []
+    begun = []
     monkeypatch.setattr(refresh.socket, "gethostname", lambda: "chiap08")
     monkeypatch.setattr(
         refresh,
-        "_advance",
-        lambda home, policy, skc, actor, path, job: advanced.append(job["card"]) or "pending",
+        "_begin",
+        lambda home, policy, skc, actor, card_id, *args: begun.append(card_id) or "pending",
     )
 
     state = refresh.requalify_or_advance(
@@ -106,8 +104,33 @@ def test_existing_refresh_keeps_the_single_slot_ahead_of_new_work(tmp_path, monk
         claim_revision="claim",
     )
 
-    assert state == "busy"
-    assert advanced == ["1234abcd"]
+    assert state == "pending"
+    assert begun == ["5678abcd"]
+
+
+def test_remote_qualification_uses_least_loaded_ready_node(tmp_path, monkeypatch):
+    nodes = [SimpleNamespace(name=name) for name in ("node01", "node02", "node03")]
+    hosts = {"node01": "chiap01", "node02": "chiap02", "node03": "chiap03"}
+    pending = [
+        (Path("one.job.json"), {"execution_host": "chiap01"}),
+        (Path("two.job.json"), {"execution_host": "chiap01"}),
+        (Path("three.job.json"), {"execution_host": "chiap02"}),
+    ]
+    monkeypatch.setattr(refresh, "_records", lambda _root: iter(pending))
+    monkeypatch.setattr("skcapstone.fleet.builder_dispatch._ready_builders", lambda _paths: nodes)
+    monkeypatch.setattr("skcapstone.fleet.production_builder.ready_nodes", lambda *_a: nodes)
+    monkeypatch.setattr(
+        "skcapstone.fleet.production_builder.node_binding",
+        lambda _paths, node, _policy: {"host": hosts[node]},
+    )
+    monkeypatch.setattr(
+        "skcapstone.fleet.builder_dispatch.production_load_key",
+        lambda _paths, view, _policy: view.name,
+    )
+
+    assert (
+        refresh._execution_host(tmp_path, {"authority_host": "chiap08"}, "1234abcd") == "chiap03"
+    )
 
 
 def test_stale_plan_appends_current_requalification_successor(tmp_path, monkeypatch):
@@ -167,13 +190,17 @@ def test_stale_plan_appends_current_requalification_successor(tmp_path, monkeypa
     assert refresh._advance(tmp_path, {}, "/test/skcapstone", "niobe", tmp_path / "job", job) == (
         "pending"
     )
-    assert load_calls == [{"allow_completed": True}, {"require_current": False}]
+    assert load_calls == [
+        {"allow_completed": True, "allow_remote_host": True},
+        {"require_current": False, "allow_remote_host": True},
+    ]
     assert sealed == [
         {
             "profile": profile_value,
             "predecessor_sha256": "a" * 64,
             "requalification": True,
             "profile_predecessor_sha256": job["profile_sha256"],
+            "execution_host": None,
         }
     ]
 
@@ -245,7 +272,7 @@ def test_harvest_publishes_only_valid_receipt_before_any_new_claim(tmp_path, mon
     )
     monkeypatch.setattr(refresh.plan, "run_directory", lambda *_a: run)
     monkeypatch.setattr(refresh.plan, "runtime_fingerprint", lambda: "runtime")
-    monkeypatch.setattr(refresh.plan, "execution_policy_fingerprint", lambda _p: "policy")
+    monkeypatch.setattr(refresh.plan, "execution_policy_fingerprint", lambda _p, *_a: "policy")
     monkeypatch.setattr(refresh.plan, "source_state", lambda *_a: None)
     monkeypatch.setattr(
         refresh.tests, "validate_test_receipt", lambda *_a: {"receipt_sha256": "f" * 64}
@@ -339,7 +366,9 @@ def test_harvest_discovers_completed_plan_without_job_record(tmp_path, monkeypat
     )
     monkeypatch.setattr(refresh.plan, "run_directory", lambda *_args: run)
     monkeypatch.setattr(refresh.plan, "runtime_fingerprint", lambda: "runtime")
-    monkeypatch.setattr(refresh.plan, "execution_policy_fingerprint", lambda _policy: "policy")
+    monkeypatch.setattr(
+        refresh.plan, "execution_policy_fingerprint", lambda _policy, *_a: "policy"
+    )
     monkeypatch.setattr(refresh.plan, "source_state", lambda *_args: None)
     monkeypatch.setattr(refresh.plan, "workspace_source_fingerprint", lambda *_args: "d" * 64)
     monkeypatch.setattr(
@@ -399,7 +428,9 @@ def test_harvest_does_not_publish_orphan_plan_with_invalid_receipt(tmp_path, mon
     )
     monkeypatch.setattr(refresh.plan, "run_directory", lambda *_args: plans)
     monkeypatch.setattr(refresh.plan, "runtime_fingerprint", lambda: "runtime")
-    monkeypatch.setattr(refresh.plan, "execution_policy_fingerprint", lambda _policy: "policy")
+    monkeypatch.setattr(
+        refresh.plan, "execution_policy_fingerprint", lambda _policy, *_a: "policy"
+    )
     monkeypatch.setattr(refresh.plan, "source_state", lambda *_args: None)
     (plans / "receipt.json").write_text("{}")
     validated = []

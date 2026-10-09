@@ -362,6 +362,52 @@ def test_missing_plan_never_launches(tmp_path):
     assert native.run_or_read_tests(tmp_path, binding, tmp_path, {}) is None
 
 
+def test_authority_waits_for_remote_requalification_receipt(tmp_path, monkeypatch):
+    from skcapstone.fleet import production_test_plan as test_plan
+
+    binding = {
+        "source_card": "89508f83",
+        "source_owner": "producer",
+        "source_claim_revision": "claim",
+        "source_head": "a" * 40,
+        "source_tree": "b" * 40,
+        "source_revision": "revision",
+        "criteria_sha256": "c" * 64,
+    }
+    authority = "chiap08"
+    execution = "chiap01"
+    policy = {
+        "authority_host": authority,
+        "node_quotas": {execution: {"memory_max_bytes": 1}},
+    }
+    sealed = {
+        "host": execution,
+        "remote_requalification": True,
+        "authority_host": authority,
+        "policy_sha256": "d" * 64,
+    }
+    directory = tmp_path / "remote-run"
+    monkeypatch.setattr(
+        native, "load_plan", lambda *_a, **_k: (sealed, tmp_path / "plan", "e" * 64)
+    )
+    monkeypatch.setattr(test_plan, "execution_policy_fingerprint", lambda *_a: "d" * 64)
+    monkeypatch.setattr(native, "source_state", lambda *_a: {})
+    monkeypatch.setattr(native, "run_directory", lambda *_a: directory)
+    monkeypatch.setattr(native.socket, "gethostname", lambda: authority)
+    assert native.run_or_read_tests(tmp_path, binding, tmp_path, policy) is None
+
+    directory.mkdir()
+    (directory / "receipt.json").write_text("{}")
+    receipt = {"receipt_sha256": "f" * 64}
+    monkeypatch.setattr(native, "validate_test_receipt", lambda *_a: receipt)
+    monkeypatch.setattr(
+        native,
+        "reserve_launch",
+        lambda *_a, **_k: pytest.fail("authority must never launch a remote plan locally"),
+    )
+    assert native.run_or_read_tests(tmp_path, binding, tmp_path, policy) == receipt
+
+
 def test_receipt_rehashes_raw_output_and_terminal_custody(setup, monkeypatch):
     receipt_fixture(setup, monkeypatch)
     result = native.validate_test_receipt(setup.home, setup.binding, setup.workspace)

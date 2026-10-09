@@ -44,7 +44,7 @@ from skcapstone.fleet_lane_health import (
     cycle_id as new_cycle_id,
     lane_health,
 )
-from skcapstone.fleet_route_preflight import resolve_and_preflight
+from skcapstone.fleet_route_preflight import preflight_failure_expired, resolve_and_preflight
 from skcapstone.fleet import builder_dispatch, store as fleet_store
 from skcapstone.fleet.production_dispatch import (
     production_policy_from_environment,
@@ -8834,6 +8834,7 @@ _cycle_deadline = (
 )
 #: Per-cycle cache: equivalent logical routes are resolved and prefilled exactly once.
 _route_preflight_cache = {}
+_route_preflight_cache_failed_at = {}
 for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
     _profile_requalify = False
     if launched>=MAX_LAUNCH:
@@ -9365,14 +9366,21 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
     _preflight_key = _route_preflight_cache_key(model, _review_route_snapshot)
     if _preflight_key in _route_preflight_cache:
         _route_preflight=_route_preflight_cache[_preflight_key]
-        if _route_preflight is None:
+        if _route_preflight is None and preflight_failure_expired(
+            _route_preflight_cache_failed_at.get(_preflight_key, 0.0), time.monotonic()
+        ):
+            _route_preflight_cache.pop(_preflight_key, None)
+            _route_preflight_cache_failed_at.pop(_preflight_key, None)
+            _route_preflight = None
+        elif _route_preflight is None:
             log(d,"ROUTE_PREFLIGHT_BLOCKED|%s|%s|requested=%s|reason=cached-failure"%
                 (HOST,cid,model))
             continue
-        log(d,"ROUTE_PREFLIGHT_OK|%s|%s|requested=%s|served=%s|provider=%s|cached=1"%
-            (HOST,cid,_route_preflight.requested_identity,
-             _route_preflight.served_identity,_route_preflight.provider or "unknown"))
-    else:
+        else:
+            log(d,"ROUTE_PREFLIGHT_OK|%s|%s|requested=%s|served=%s|provider=%s|cached=1"%
+                (HOST,cid,_route_preflight.requested_identity,
+                 _route_preflight.served_identity,_route_preflight.provider or "unknown"))
+    if _preflight_key not in _route_preflight_cache:
         try:
             _route_preflight=resolve_and_preflight(
                 _GATEWAY_ENDPOINT,model,deadline=_cycle_deadline)
@@ -9380,6 +9388,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             log(d,"ROUTE_PREFLIGHT_BLOCKED|%s|%s|requested=%s|reason=%s"%
                 (HOST,cid,model,str(exc)[:140]))
             _route_preflight_cache[_preflight_key]=None
+            _route_preflight_cache_failed_at[_preflight_key]=time.monotonic()
             continue
         _route_preflight_cache[_preflight_key]=_route_preflight
         log(d,"ROUTE_PREFLIGHT_OK|%s|%s|requested=%s|served=%s|provider=%s"%

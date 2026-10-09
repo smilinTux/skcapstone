@@ -41,6 +41,13 @@ and the dispatcher reads that as an unhealthy route rather than a rejected
 client. Keep it a conventional token.
 """
 
+PREFLIGHT_FAILURE_CACHE_TTL_SECONDS = 60.0
+
+
+def preflight_failure_expired(failed_at: float, now: float) -> bool:
+    """Expire negative route probes quickly so gateway recovery is observed."""
+    return now - failed_at >= PREFLIGHT_FAILURE_CACHE_TTL_SECONDS
+
 
 def _json_response(response: Any) -> dict[str, Any]:
     raw = response.read(MAX_RESPONSE_BYTES + 1)
