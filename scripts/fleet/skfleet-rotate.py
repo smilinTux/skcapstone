@@ -8261,14 +8261,17 @@ def _record_offer_state(card_id, state):
 # launch (2026-10-09 18:14-18:33Z). The offer memory serves the least recently
 # tried cards first, so cards past the cap are reached on the next cycle.
 # 45s still left the cycle over its 270s limit (lane selection + launch ~90s).
-_BUILDER_OFFER_SECONDS = float(os.environ.get("SKFLEET_BUILDER_OFFER_SECONDS", "20"))
+# After the cycle read reuse (#1071) lane selection takes ~10s and a whole
+# cycle ~110s, while the 20s cap held qualification to 1-2 offers per cycle
+# (2026-10-09 20:51Z). 80s keeps the cycle near 170s.
+_BUILDER_OFFER_SECONDS = float(os.environ.get("SKFLEET_BUILDER_OFFER_SECONDS", "80"))
 
 # Niobe offers source cards to Ready builders within the shared cycle budget.
 # The remote node claims the card itself, so the CardStore fence remains the
 # authority and this scheduler never impersonates a remote worker.
 if not DRY and _is_niobe_builder_host(HOST):
     _profile_requalifications_offered = 0
-    _profile_requalification_limit = 4
+    _profile_requalification_limit = 8
     _builder_phase_started = time.monotonic()
     for _candidate in tuple(_builder_candidates)[:MAX_CANDIDATE_SCAN]:
         if time.monotonic() - _builder_phase_started >= _BUILDER_OFFER_SECONDS:

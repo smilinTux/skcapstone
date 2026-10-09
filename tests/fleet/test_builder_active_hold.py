@@ -387,7 +387,7 @@ def test_profile_blocked_candidate_is_queued_remotely_before_local_selection() -
     source = ROTATE.read_text(encoding="utf-8")
     assert 'str(_exc) == "required-test-profile-unqualified"' in source
     assert "offer_stale_candidate(" in source
-    assert "_profile_requalification_limit = 4" in source
+    assert "_profile_requalification_limit = 8" in source
     assert "BUILDER_PROFILE_REQUALIFICATION_FALLBACK" not in source
 
 
