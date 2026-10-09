@@ -123,6 +123,31 @@ def artifact_path(environment: dict) -> Path:
     return ARTIFACT_ROOT / identity
 
 
+def qualified_environment(workspace: Path) -> dict:
+    """Resolve an already-qualified local Node artifact for an exact source."""
+    source = {}
+    for relative in SOURCE_FILES:
+        path = workspace / relative
+        if path.is_symlink() or not path.is_file():
+            raise plan.TestEvidenceError("Node qualification source is incomplete")
+        source[relative] = plan.sha(path.read_bytes())
+    for artifact in sorted(ARTIFACT_ROOT.iterdir()) if ARTIFACT_ROOT.is_dir() else ():
+        if artifact.is_symlink() or not artifact.is_dir():
+            continue
+        try:
+            value = {
+                "node_sha256": plan.sha(NODE.read_bytes()),
+                "platform": [platform.system(), platform.machine()],
+                "artifact_sha256": artifact_digest(artifact),
+                "source_sha256": source,
+            }
+            validate_environment(value, workspace)
+        except (OSError, ValueError, RuntimeError):
+            continue
+        return value
+    raise plan.TestEvidenceError("no qualified Node dependency artifact matches source")
+
+
 def validate_environment(environment: dict, workspace: Path | None = None) -> None:
     """Recheck the pinned runtime/artifact and optional exact candidate configuration."""
     try:

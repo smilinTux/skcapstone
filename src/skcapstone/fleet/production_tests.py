@@ -325,9 +325,11 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
         return None
     if plan["policy_sha256"] != test_plan.execution_policy_fingerprint(policy, plan["host"]):
         raise TestEvidenceError("test quota policy changed after qualification")
-    if plan.get("remote_requalification") is True and plan.get("authority_host") != policy.get(
-        "authority_host"
-    ):
+    remote_plan = (
+        plan.get("remote_requalification") is True
+        or plan.get("remote_initial_profile_qualification") is True
+    )
+    if remote_plan and plan.get("authority_host") != policy.get("authority_host"):
         raise TestEvidenceError("remote test plan authority differs from production policy")
     workspace = workspace.resolve()
     source_state(workspace, binding)
@@ -335,10 +337,7 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
     directory = run_directory(home, plan_sha)
     current_host = socket.gethostname().split(".")[0].lower()
     if plan["host"] != current_host:
-        if (
-            plan.get("remote_requalification") is not True
-            or plan.get("authority_host") != current_host
-        ):
+        if not remote_plan or plan.get("authority_host") != current_host:
             raise TestEvidenceError("remote test plan is not authority-readable")
         if not (directory / "receipt.json").is_file():
             return None

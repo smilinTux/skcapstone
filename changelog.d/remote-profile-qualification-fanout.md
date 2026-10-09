@@ -1,3 +1,3 @@
 ### Fixed
 
-- Stale test profiles now queue and harvest up to four governed native requalifications per cycle on ready remote builder nodes, without consuming the authority host's local worker slot.
+- Missing profiles with a supported card scope now qualify from fixed full-suite recipes as governed remote native jobs. Successful receipts publish profiles before dispatch; stale profiles continue to use their stored trusted recipes.

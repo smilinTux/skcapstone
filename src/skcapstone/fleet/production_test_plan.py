@@ -384,6 +384,7 @@ def seal_plan(
     requalification: bool = False,
     profile_predecessor_sha256: str | None = None,
     execution_host: str | None = None,
+    initial_profile_qualification: bool = False,
 ) -> Path:
     """Seal an explicitly qualified legacy or reusable profile for one candidate."""
     if predecessor_sha256 is not None:
@@ -402,6 +403,7 @@ def seal_plan(
                 requalification,
                 profile_predecessor_sha256,
                 execution_host,
+                initial_profile_qualification,
             )
     return _seal_plan(
         home,
@@ -415,6 +417,7 @@ def seal_plan(
         requalification,
         profile_predecessor_sha256,
         execution_host,
+        initial_profile_qualification,
     )
 
 
@@ -461,6 +464,7 @@ def _seal_plan(
     requalification: bool,
     profile_predecessor_sha256: str | None,
     execution_host: str | None,
+    initial_profile_qualification: bool,
 ) -> Path:
     check_binding(binding)
     execution_host = execution_host or policy["authority_host"]
@@ -478,27 +482,41 @@ def _seal_plan(
         if (run_directory(home, current) / "launch.json").exists():
             raise TestEvidenceError("prior test plan already launched")
         path = previous_path.with_name(previous_path.stem + "." + current + ".json")
+    if initial_profile_qualification and (profile is None or requalification):
+        raise TestEvidenceError("initial profile qualification needs one unpublished profile")
+    if initial_profile_qualification:
+        from .production_test_profile import recipe_checks
+
     remote_requalification = requalification and execution_host != policy["authority_host"]
+    remote_initial = initial_profile_qualification and execution_host != policy["authority_host"]
     value = {
         "schema": (
-            "skfleet.native-test-plan/v5"
-            if remote_requalification
+            "skfleet.native-test-plan/v6"
+            if remote_initial
             else (
-                "skfleet.native-test-plan/v4"
-                if predecessor_sha256 is not None and requalification
+                "skfleet.native-test-plan/v5"
+                if remote_requalification
                 else (
-                    "skfleet.native-test-plan/v3"
-                    if requalification
+                    "skfleet.native-test-plan/v4"
+                    if predecessor_sha256 is not None and requalification
                     else (
-                        "skfleet.native-test-plan/v2"
-                        if predecessor_sha256 is not None
-                        else "skfleet.native-test-plan/v1"
+                        "skfleet.native-test-plan/v3"
+                        if requalification
+                        else (
+                            "skfleet.native-test-plan/v2"
+                            if predecessor_sha256 is not None
+                            else "skfleet.native-test-plan/v1"
+                        )
                     )
                 )
             )
         ),
         "binding": binding,
-        "checks": approved_checks(),
+        "checks": (
+            recipe_checks(profile["recipe"])
+            if initial_profile_qualification and profile is not None
+            else approved_checks()
+        ),
         "qualified_by": qualified_by,
         "qualification_sha256": qualification_sha256,
         "python_sha256": sha((PREFIX / "bin/python").read_bytes()),
@@ -509,6 +527,11 @@ def _seal_plan(
     if remote_requalification:
         value["authority_host"] = policy["authority_host"]
         value["remote_requalification"] = True
+    if initial_profile_qualification:
+        value["initial_profile_qualification"] = True
+    if remote_initial:
+        value["authority_host"] = policy["authority_host"]
+        value["remote_initial_profile_qualification"] = True
     value["host"] = execution_host
     if predecessor_sha256 is not None:
         value["predecessor_sha256"] = predecessor_sha256
@@ -568,7 +591,11 @@ def _seal_plan(
     if (
         not qualified_by
         or not re.fullmatch(r"[0-9a-f]{64}", qualification_sha256)
-        or value["host"] != policy["authority_host"]
+        or value["host"] != execution_host
+        or (
+            execution_host != policy["authority_host"]
+            and not (remote_requalification or remote_initial)
+        )
     ):
         raise TestEvidenceError("operator qualification is incomplete")
     if predecessor_sha256 is not None and all(
@@ -659,6 +686,8 @@ def _validate_plan(
         required.add("predecessor_sha256")
     requalification = plan.get("profile_requalification") is True
     remote_requalification = plan.get("remote_requalification") is True
+    initial_qualification = plan.get("initial_profile_qualification") is True
+    remote_initial = plan.get("remote_initial_profile_qualification") is True
     if remote_requalification:
         authority = plan.get("authority_host")
         if (
@@ -669,8 +698,21 @@ def _validate_plan(
             or plan.get("schema") != "skfleet.native-test-plan/v5"
         ):
             raise TestEvidenceError("remote test plan authority is invalid")
-    elif "authority_host" in plan or "remote_requalification" in plan:
+    elif not remote_initial and ("authority_host" in plan or "remote_requalification" in plan):
         raise TestEvidenceError("operator test plan is invalid or stale")
+    if initial_qualification:
+        required.add("initial_profile_qualification")
+    if remote_initial:
+        authority = plan.get("authority_host")
+        if (
+            not initial_qualification
+            or not isinstance(authority, str)
+            or not authority
+            or authority == plan.get("host")
+            or plan.get("schema") != "skfleet.native-test-plan/v6"
+        ):
+            raise TestEvidenceError("remote initial qualification authority is invalid")
+        required.update({"authority_host", "remote_initial_profile_qualification"})
     if requalification:
         required.update({"profile_requalification", "profile_predecessor_sha256"})
     if remote_requalification:
@@ -682,7 +724,39 @@ def _validate_plan(
         from .production_test_profile import read_profile, recipe_checks
 
         required.add("profile")
-        profile, profile_sha = read_profile(home, binding["source_card"], pinned=plan["profile"])
+        profile = plan["profile"]
+        if initial_qualification:
+            from .production_test_profile import _validate_shape
+
+            expected_profile = {
+                "card": binding["source_card"],
+                "criteria_sha256": binding["criteria_sha256"],
+            }
+            _validate_shape(profile)
+            if (
+                any(profile.get(key) != value for key, value in expected_profile.items())
+                or profile.get("host") != plan.get("authority_host", plan.get("host"))
+                or profile.get("python_sha256") != plan.get("python_sha256")
+                or profile.get("runtime_sha256") != plan.get("runtime_sha256")
+                or profile.get("source_sha256")
+                != source_fingerprint(
+                    profile.get("repository", ""),
+                    binding["source_head"],
+                    binding["source_tree"],
+                )
+            ):
+                raise TestEvidenceError("initial candidate test profile source changed")
+            if (
+                profile.get("qualified_by") != plan.get("qualified_by")
+                or profile.get("qualification_sha256") != plan.get("qualification_sha256")
+                or profile.get("python_sha256") != plan.get("python_sha256")
+                or profile.get("runtime_sha256") != plan.get("runtime_sha256")
+            ):
+                raise TestEvidenceError("initial candidate test profile authority changed")
+        else:
+            profile, profile_sha = read_profile(
+                home, binding["source_card"], pinned=plan["profile"]
+            )
         if requalification:
             if (
                 profile != plan["profile"]
@@ -711,7 +785,7 @@ def _validate_plan(
                 )
             ):
                 raise TestEvidenceError("candidate test profile changed")
-        elif (
+        elif not initial_qualification and (
             profile != plan["profile"]
             or profile.get("card") != binding["source_card"]
             or profile.get("criteria_sha256") != binding["criteria_sha256"]
@@ -747,18 +821,22 @@ def _validate_plan(
         set(plan) != required
         or plan["schema"]
         != (
-            "skfleet.native-test-plan/v5"
-            if remote_requalification
+            "skfleet.native-test-plan/v6"
+            if remote_initial
             else (
-                "skfleet.native-test-plan/v4"
-                if successor and requalification
+                "skfleet.native-test-plan/v5"
+                if remote_requalification
                 else (
-                    "skfleet.native-test-plan/v3"
-                    if requalification
+                    "skfleet.native-test-plan/v4"
+                    if successor and requalification
                     else (
-                        "skfleet.native-test-plan/v2"
-                        if successor
-                        else "skfleet.native-test-plan/v1"
+                        "skfleet.native-test-plan/v3"
+                        if requalification
+                        else (
+                            "skfleet.native-test-plan/v2"
+                            if successor
+                            else "skfleet.native-test-plan/v1"
+                        )
                     )
                 )
             )
@@ -776,9 +854,9 @@ def _validate_plan(
         or (
             allow_remote_host
             and plan["host"] != socket.gethostname().split(".")[0].lower()
-            and not remote_requalification
+            and not (remote_requalification or remote_initial)
         )
-        or (remote_requalification and plan["host"] == plan["authority_host"])
+        or ((remote_requalification or remote_initial) and plan["host"] == plan["authority_host"])
     ):
         raise TestEvidenceError("operator test plan is invalid or stale")
 
@@ -882,6 +960,32 @@ def junit_counts(
 
     if node.is_node(profile):
         return node.junit_counts(raw, profile)
+    if profile and profile.get("recipe") == {"pytest_all": True}:
+        if len(raw) > MAX_OUTPUT or b"<!DOCTYPE" in raw or b"<!ENTITY" in raw:
+            raise TestEvidenceError("invalid full-suite JUnit size or entities")
+        root = ElementTree.fromstring(raw)
+        cases = list(root.iter("testcase"))
+        identities = set()
+        for case in cases:
+            identity = (case.get("classname"), case.get("name"))
+            if (
+                any(case.find(tag) is not None for tag in ("failure", "error", "skipped"))
+                or not all(isinstance(value, str) and value for value in identity)
+                or identity in identities
+            ):
+                raise TestEvidenceError("full pytest suite failed or returned invalid identities")
+            identities.add(identity)
+        suites = list(root.iter("testsuite"))
+        if (
+            not cases
+            or not suites
+            or any(
+                int(s.get(k, "-1")) != 0 for s in suites for k in ("failures", "errors", "skipped")
+            )
+            or sum(int(s.get("tests", "-1")) for s in suites) != len(cases)
+        ):
+            raise TestEvidenceError("full pytest suite totals are invalid")
+        return {"total": len(cases), "failures": 0, "errors": 0, "skipped": 0}
     from .production_pytest_recipe import requires_selection, selected_junit_counts
 
     if profile and requires_selection(profile["recipe"]):

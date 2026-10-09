@@ -66,6 +66,82 @@ def contract(core: dict) -> dict:
     return {"card": card, "repository": repository, "criteria_sha256": digest(criteria)}
 
 
+def initial_recipe(core: dict, workspace: Path) -> tuple[dict, dict | None]:
+    """Choose a fixed full-suite recipe from an explicit card source scope."""
+    text = "\n".join(
+        [str(core.get("description") or ""), *(core.get("acceptance_criteria") or [])]
+    ).lower()
+    node_scope = "apps/web/" in text or "vitest" in text or ".tsx" in text or ".ts" in text
+    python_scope = ".py" in text or "pytest" in text or "python" in text
+    repository = (core.get("links") or {}).get("repository") or (core.get("meta") or {}).get(
+        "repository", ""
+    )
+    python_project = (workspace / "pyproject.toml").is_file() and (workspace / "tests").is_dir()
+    node_project = (workspace / "apps/web/package.json").is_file()
+    if node_scope and python_scope:
+        raise plan.TestEvidenceError("initial qualification needs one language scope")
+    if node_scope and node_project:
+        from . import production_test_node as node
+
+        web = workspace / "apps/web"
+        test_files = [
+            path
+            for path in web.rglob("*")
+            if path.is_file() and (".test." in path.name or ".spec." in path.name)
+        ]
+        tests = sorted(path.relative_to(web).as_posix() for path in test_files)
+        if (
+            not tests
+            or len(tests) > 256
+            or any(not path.startswith("src/") or ".test.ts" not in path for path in tests)
+        ):
+            raise plan.TestEvidenceError("Node source has no bounded Vitest suite")
+        recipe = {"vitest": {path: 1 for path in tests}}
+        environment = node.qualified_environment(workspace)
+        return recipe, environment
+    if python_project and (
+        python_scope
+        or not node_project
+        or repository.rstrip("/").removesuffix(".git").endswith("/skcapstone")
+    ):
+        return {"pytest_all": True}, None
+    raise plan.TestEvidenceError("card scope has no supported initial test recipe")
+
+
+def profile_value(
+    core: dict,
+    policy: dict,
+    recipe: dict,
+    qualified_by: str,
+    qualification_sha256: str,
+    *,
+    source_sha256: str | None = None,
+    node_environment: dict | None = None,
+) -> dict:
+    """Build and validate a profile value without publishing it."""
+    value = {
+        "schema": SCHEMA if source_sha256 is not None else SCHEMA_V2,
+        **contract(core),
+        "recipe": recipe,
+        "qualified_by": qualified_by,
+        "qualification_sha256": qualification_sha256,
+        "python_sha256": plan.sha((plan.PREFIX / "bin/python").read_bytes()),
+        "toolchain_sha256": plan.toolchain_fingerprint(),
+        "runtime_sha256": plan.runtime_fingerprint(),
+        "policy_sha256": plan.execution_policy_fingerprint(policy),
+        "host": socket.gethostname().split(".")[0].lower(),
+    }
+    if source_sha256 is not None:
+        value["source_sha256"] = source_sha256
+    if node_environment is not None:
+        value.update(
+            schema=node.SCHEMA if source_sha256 is not None else node.SCHEMA_V2,
+            node_environment=node_environment,
+        )
+    validate_profile(value, contract(core), policy)
+    return value
+
+
 def _validate_shape(value: dict) -> None:
     """Check each historical generation without requalifying its old environment."""
     node_profile = node.is_node(value) or composite.is_composite(value)
@@ -211,30 +287,15 @@ def qualify_profile(
     node_environment: dict | None = None,
 ) -> Path:
     """Operator API after actual recipe qualification; no worker calls this API."""
-    value = {
-        "schema": SCHEMA if source_sha256 is not None else SCHEMA_V2,
-        **contract(core),
-        "recipe": recipe,
-        "qualified_by": qualified_by,
-        "qualification_sha256": qualification_sha256,
-        "python_sha256": plan.sha((plan.PREFIX / "bin/python").read_bytes()),
-        "toolchain_sha256": plan.toolchain_fingerprint(),
-        "runtime_sha256": plan.runtime_fingerprint(),
-        "policy_sha256": plan.execution_policy_fingerprint(policy),
-        "host": socket.gethostname().split(".")[0].lower(),
-    }
-    if source_sha256 is not None:
-        value["source_sha256"] = source_sha256
-    if node_environment is not None:
-        value.update(
-            schema=(
-                (composite.SCHEMA if "pytest" in recipe else node.SCHEMA)
-                if source_sha256 is not None
-                else (composite.SCHEMA_V2 if "pytest" in recipe else node.SCHEMA_V2)
-            ),
-            node_environment=node_environment,
-        )
-    validate_profile(value, contract(core), policy)
+    value = profile_value(
+        core,
+        policy,
+        recipe,
+        qualified_by,
+        qualification_sha256,
+        source_sha256=source_sha256,
+        node_environment=node_environment,
+    )
     directory = home / "fleet/test-profiles"
     plan.private_dir(directory, create=True)
     path = directory / (value["card"] + ".json")

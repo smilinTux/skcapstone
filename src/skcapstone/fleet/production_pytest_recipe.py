@@ -67,6 +67,24 @@ def requires_selection(recipe: dict) -> bool:
 
 def recipe_checks(recipe: dict) -> list[dict]:
     """Compile operator-approved bounded inputs to fixed command argv."""
+    if recipe == {"pytest_all": True}:
+        return [
+            {
+                "id": "pytest",
+                "argv": [
+                    str(plan.PREFIX / "bin/python"),
+                    "-m",
+                    "pytest",
+                    "-q",
+                    "-p",
+                    "no:cacheprovider",
+                    "-m",
+                    "not host_systemd",
+                    "--junitxml=/output/pytest.xml",
+                    ".",
+                ],
+            }
+        ]
     if isinstance(recipe, dict) and "vitest" in recipe:
         if set(recipe) == {"vitest"}:
             return node.checks(recipe)
@@ -151,6 +169,10 @@ def validate_source(recipe: dict, workspace: Path) -> None:
     """Require every target and baseline file to be real within sealed source."""
     recipe_checks(recipe)
     workspace = workspace.resolve(strict=True)
+    if recipe == {"pytest_all": True}:
+        if not (workspace / "pyproject.toml").is_file() or not (workspace / "tests").is_dir():
+            raise plan.TestEvidenceError("full pytest suite requires pyproject.toml and tests/")
+        return
     paths = [*recipe["pytest"], *recipe["compile"], *recipe["lint"]]
     paths += [safe_node(n, recipe["pytest"]) for n in recipe.get("deselect", [])]
     if recipe["changelog"]:

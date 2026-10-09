@@ -113,6 +113,80 @@ def test_toolchain_fingerprint_rejects_python_symlink_outside_base_prefix(
         plan.toolchain_fingerprint()
 
 
+def test_full_pytest_recipe_requires_a_clean_nonempty_junit_report():
+    root = ElementTree.Element("testsuites", tests="1", failures="0", errors="0", skipped="0")
+    suite = ElementTree.SubElement(
+        root, "testsuite", tests="1", failures="0", errors="0", skipped="0"
+    )
+    ElementTree.SubElement(suite, "testcase", classname="test_sample", name="passes")
+    raw = ElementTree.tostring(root)
+    assert plan.junit_counts(raw, {"recipe": {"pytest_all": True}}) == {
+        "total": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+    }
+    with pytest.raises(plan.TestEvidenceError, match="full pytest suite failed"):
+        failed = ElementTree.Element(
+            "testsuites", tests="1", failures="1", errors="0", skipped="0"
+        )
+        failed_suite = ElementTree.SubElement(
+            failed, "testsuite", tests="1", failures="1", errors="0", skipped="0"
+        )
+        failed_case = ElementTree.SubElement(
+            failed_suite, "testcase", classname="test_sample", name="fails"
+        )
+        ElementTree.SubElement(failed_case, "failure")
+        plan.junit_counts(ElementTree.tostring(failed), {"recipe": {"pytest_all": True}})
+
+
+def test_initial_recipe_uses_fixed_full_pytest_for_python_scope(tmp_path):
+    from skcapstone.fleet.production_pytest_recipe import recipe_checks
+
+    (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+    (tmp_path / "tests").mkdir()
+    card = {
+        "description": "Repair src/skcapstone/example.py and test it with pytest.",
+        "acceptance_criteria": ["tests must pass"],
+    }
+
+    assert profile.initial_recipe(card, tmp_path) == ({"pytest_all": True}, None)
+    assert "not host_systemd" in recipe_checks({"pytest_all": True})[0]["argv"]
+
+
+def test_initial_recipe_rejects_ambiguous_language_scope():
+    with pytest.raises(plan.TestEvidenceError, match="one language scope"):
+        profile.initial_recipe(
+            {
+                "description": "Change apps/web/src/page.tsx and src/api.py",
+                "acceptance_criteria": [],
+            },
+            Path("/unused"),
+        )
+
+
+def test_initial_recipe_uses_only_the_fixed_vitest_suite(tmp_path, monkeypatch):
+    from skcapstone.fleet import production_test_node as node
+
+    target = tmp_path / "apps/web/src/pages/Workflow.test.tsx"
+    target.parent.mkdir(parents=True)
+    target.write_text("export {};\n")
+    (tmp_path / "apps/web/package.json").write_text("{}\n")
+    monkeypatch.setattr(node, "qualified_environment", lambda _workspace: {"artifact": "a" * 64})
+
+    recipe, environment = profile.initial_recipe(
+        {
+            "description": "Repair apps/web/src/pages/Workflow.tsx and its tests.",
+            "acceptance_criteria": ["Vitest passes."],
+            "links": {"repository": "https://github.com/example/sklegal"},
+        },
+        tmp_path,
+    )
+
+    assert recipe == {"vitest": {"src/pages/Workflow.test.tsx": 1}}
+    assert environment == {"artifact": "a" * 64}
+
+
 @pytest.fixture
 def qualified(tmp_path, monkeypatch):
     home = tmp_path / "home"

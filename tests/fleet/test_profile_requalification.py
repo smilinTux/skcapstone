@@ -163,9 +163,7 @@ def test_authority_advances_four_current_remote_jobs_per_cycle(tmp_path, monkeyp
     monkeypatch.setattr(
         refresh,
         "_advance",
-        lambda _home, _policy, _skc, _actor, _path, job: (
-            advanced.append(job["card"]) or "pending"
-        ),
+        lambda _home, _policy, _skc, _actor, _path, job: advanced.append(job["card"]) or "pending",
     )
 
     state = refresh.requalify_or_advance(
@@ -243,9 +241,86 @@ def test_stale_profile_candidate_queues_under_governed_claim(tmp_path, monkeypat
     assert calls == [["/test/skcapstone", "coord", "claim", "1234abcd", "--agent", "niobe"]]
 
 
+def test_missing_profile_queues_fixed_recipe_as_remote_native_job(tmp_path, monkeypatch):
+    (tmp_path / "fleet").mkdir(mode=0o700)
+    monkeypatch.setattr(refresh.socket, "gethostname", lambda: "chiap08")
+    monkeypatch.setattr(
+        profile,
+        "preflight",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            plan.TestEvidenceError("required-test-profile-unqualified")
+        ),
+    )
+    core = {
+        "id": "1234abcd",
+        "description": "Repair src/skcapstone/example.py and run pytest.",
+        "acceptance_criteria": ["The full test suite passes."],
+        "links": {"repository": "https://github.com/example/repo.git"},
+    }
+    monkeypatch.setattr(
+        profile,
+        "contract",
+        lambda _core: {
+            "card": "1234abcd",
+            "repository": "https://github.com/example/repo.git",
+            "criteria_sha256": "c" * 64,
+        },
+    )
+    monkeypatch.setattr(profile, "initial_recipe", lambda *_args: ({"pytest_all": True}, None))
+    monkeypatch.setattr(refresh.plan, "workspace_source_fingerprint", lambda *_args: "s" * 64)
+    monkeypatch.setattr(refresh, "_execution_host", lambda *_args: "chiap01")
+    card = SimpleNamespace(status=SimpleNamespace(value="ready"), owner=None, meta={})
+    monkeypatch.setattr(refresh.CardStore, "fold", lambda *_args: card)
+    calls = []
+
+    def claim(argv, **_kwargs):
+        calls.append(argv)
+        card.status.value = "doing"
+        card.owner = "niobe"
+        card.meta["_claim_revision"] = "claim-1"
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("subprocess.run", claim)
+    monkeypatch.setattr(refresh, "requalify_or_advance", lambda *_args, **_kw: "pending")
+    monkeypatch.setattr(
+        refresh,
+        "_records",
+        lambda _root: iter(
+            [
+                (
+                    Path("job.job.json"),
+                    {
+                        "card": "1234abcd",
+                        "owner": "niobe",
+                        "claim_revision": "claim-1",
+                        "execution_host": "chiap01",
+                    },
+                )
+            ]
+        ),
+    )
+    state = refresh.offer_stale_candidate(
+        tmp_path,
+        {"authority_host": "chiap08"},
+        "/test/skcapstone",
+        "niobe",
+        core,
+        ["source-only", "glm-only", "sk-m"],
+        lambda _core, _labels: tmp_path / "exact-source",
+    )
+
+    assert state == "pending:chiap01"
+    assert calls == [["/test/skcapstone", "coord", "claim", "1234abcd", "--agent", "niobe"]]
+
+
 def test_remote_qualification_uses_least_loaded_ready_node(tmp_path, monkeypatch):
-    nodes = [SimpleNamespace(name=name) for name in ("node01", "node02", "node03")]
-    hosts = {"node01": "chiap01", "node02": "chiap02", "node03": "chiap03"}
+    nodes = [SimpleNamespace(name=name) for name in ("node01", "node02", "node03", "node-wk12")]
+    hosts = {
+        "node01": "chiap01",
+        "node02": "chiap02",
+        "node03": "chiap03",
+        "node-wk12": "chiwk12",
+    }
     pending = [
         (Path("one.job.json"), {"execution_host": "chiap01"}),
         (Path("two.job.json"), {"execution_host": "chiap01"}),
@@ -652,8 +727,10 @@ def test_harvest_does_not_publish_orphan_plan_with_invalid_receipt(tmp_path, mon
     monkeypatch.setattr(
         refresh.tests,
         "validate_test_receipt",
-        lambda *_args: validated.append(True)
-        or (_ for _ in ()).throw(plan.TestEvidenceError("receipt custody invalid")),
+        lambda *_args: (
+            validated.append(True)
+            or (_ for _ in ()).throw(plan.TestEvidenceError("receipt custody invalid"))
+        ),
     )
     monkeypatch.setattr(
         refresh.profile, "read_profile", lambda *_args, **_kwargs: ({"repository": "r"}, "c" * 64)

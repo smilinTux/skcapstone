@@ -1,4 +1,4 @@
-"""Native, receipt-backed refresh for execution-only stale test profiles."""
+"""Receipt-backed remote initial qualification and refresh of test profiles."""
 
 from __future__ import annotations
 
@@ -71,7 +71,9 @@ def _execution_host(home: Path, policy: dict, card_id: str) -> str:
     candidates = [
         view
         for view in candidates
-        if production_builder.node_binding(paths, view.name, policy)["host"] != authority
+        if production_builder.node_binding(paths, view.name, policy)["host"]
+        in {"chiap01", "chiap02", "chiap03", "chiap04"}
+        and production_builder.node_binding(paths, view.name, policy)["host"] != authority
     ]
     if not candidates:
         return authority
@@ -399,19 +401,23 @@ def offer_stale_candidate(
     labels: list[str] | tuple[str, ...],
     prepare_workspace,
 ) -> str:
-    """Claim and queue one stale profile for remote native qualification."""
+    """Claim and queue one missing or stale profile for remote qualification."""
     home = Path(home)
     if socket.gethostname().split(".")[0].lower() != policy.get("authority_host"):
         return "not-authority"
     from . import production_test_profile as profile
 
     card_id = str(core.get("id") or "").lower()
+    initial = False
     try:
         profile.preflight(home, dict(core, id=card_id), labels, policy)
     except profile.ProfileRequalificationRequired:
         pass
     except (OSError, ValueError) as exc:
-        return "ineligible:" + str(exc)[:120]
+        if str(exc) == "required-test-profile-unqualified":
+            initial = True
+        else:
+            return "ineligible:" + str(exc)[:120]
     else:
         return "current"
 
@@ -420,16 +426,23 @@ def offer_stale_candidate(
     if card is None or card.status.value != "ready" or card.owner:
         return "deferred:card-not-ready-or-owned"
     try:
-        current, _predecessor = profile.read_profile(home, card_id)
-        repository = current["repository"]
         workspace = Path(prepare_workspace(core, labels))
-        source_sha = plan.workspace_source_fingerprint(repository, workspace)
         expected = profile.contract(dict(core, id=card_id))
-        if not (
-            profile.fingerprint_only_stale(current, expected, policy, source_sha256=source_sha)
-            or profile.legacy_full_qualification_required(current, expected, policy)
-        ):
-            return "ineligible:source-or-contract-changed"
+        repository = expected.get("repository")
+        if repository is None and not initial:
+            repository = profile.read_profile(home, card_id)[0]["repository"]
+        if not isinstance(repository, str):
+            return "ineligible:test repository binding is invalid"
+        source_sha = plan.workspace_source_fingerprint(repository, workspace)
+        if initial:
+            profile.initial_recipe(core, workspace)
+        else:
+            current, _predecessor = profile.read_profile(home, card_id)
+            if not (
+                profile.fingerprint_only_stale(current, expected, policy, source_sha256=source_sha)
+                or profile.legacy_full_qualification_required(current, expected, policy)
+            ):
+                return "ineligible:source-or-contract-changed"
         if _execution_host(home, policy, card_id) == policy["authority_host"]:
             return "deferred:no-ready-remote-host"
     except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -509,7 +522,12 @@ def offer_stale_candidate(
 
 def _begin(home, policy, skc, actor, card_id, core, workspace, owner, claim_revision):
     expected = profile.contract(dict(core, id=card_id))
-    value, predecessor = profile.read_profile(home, card_id)
+    try:
+        value, predecessor = profile.read_profile(home, card_id)
+        initial_profile = None
+    except FileNotFoundError:
+        value, predecessor = None, None
+        initial_profile = True
     card = CardStore(home).fold(card_id)
     if (
         card is None
@@ -528,15 +546,30 @@ def _begin(home, policy, skc, actor, card_id, core, workspace, owner, claim_revi
         "criteria_sha256": expected["criteria_sha256"],
     }
     plan.source_state(workspace, spec)
-    source_sha256 = plan.workspace_source_fingerprint(value["repository"], workspace)
-    legacy = profile.legacy_full_qualification_required(value, expected, policy)
-    if any(value.get(key) != expected.get(key) for key in expected) or (
-        not legacy
-        and not profile.fingerprint_only_stale(
-            value, expected, policy, source_sha256=source_sha256
+    source_sha256 = plan.workspace_source_fingerprint(expected["repository"], workspace)
+    if initial_profile:
+        recipe, node_environment = profile.initial_recipe(core, workspace)
+        recipe_sha256 = plan.sha(
+            json.dumps(recipe, sort_keys=True, separators=(",", ":")).encode()
         )
-    ):
-        return "ineligible"
+        initial_profile = profile.profile_value(
+            dict(core, id=card_id),
+            policy,
+            recipe,
+            actor,
+            recipe_sha256,
+            source_sha256=source_sha256,
+            node_environment=node_environment,
+        )
+    else:
+        legacy = profile.legacy_full_qualification_required(value, expected, policy)
+        if any(value.get(key) != v for key, v in expected.items()) or (
+            not legacy
+            and not profile.fingerprint_only_stale(
+                value, expected, policy, source_sha256=source_sha256
+            )
+        ):
+            return "ineligible"
     binding = spec
     job = {
         "schema": "skfleet.profile-requalification/v1",
@@ -549,6 +582,8 @@ def _begin(home, policy, skc, actor, card_id, core, workspace, owner, claim_revi
         "source_sha256": source_sha256,
         "execution_host": _execution_host(home, policy, card_id),
     }
+    if initial_profile:
+        job.update(initial_profile=True, initial_profile_value=initial_profile)
     root = _private_root(home)
     job_id = plan.sha(json.dumps(job, sort_keys=True, separators=(",", ":")).encode())
     path = root / (job_id + ".job.json")
@@ -581,33 +616,57 @@ def _advance(home, policy, skc, actor, path, job):
     ):
         raise plan.TestEvidenceError("profile source claim changed")
     workspace = Path(job["workspace"])
+    initial_profile = job.get("initial_profile") is True
+    profile_value = job.get("initial_profile_value") if initial_profile else None
     plan.source_state(workspace, job["binding"])
     try:
         current_plan, _, _ = plan.load_plan(
             home, job["binding"], allow_completed=True, allow_remote_host=True
         )
-        if (
+        if initial_profile:
+            if (
+                current_plan.get("initial_profile_qualification") is not True
+                or current_plan.get("profile") != profile_value
+            ):
+                raise plan.TestEvidenceError("another test plan owns this source revision")
+        elif (
             current_plan.get("profile_requalification") is not True
             or current_plan.get("profile_predecessor_sha256") != job["profile_sha256"]
         ):
             raise plan.TestEvidenceError("another test plan owns this source revision")
     except FileNotFoundError:
-        value, predecessor = profile.read_profile(home, job["card"])
-        if predecessor != job["profile_sha256"]:
-            raise plan.TestEvidenceError("profile predecessor changed")
-        plan.seal_plan(
-            home,
-            job["binding"],
-            workspace,
-            policy,
-            value["qualified_by"],
-            value["qualification_sha256"],
-            profile=value,
-            requalification=True,
-            profile_predecessor_sha256=predecessor,
-            execution_host=job.get("execution_host"),
-        )
+        if initial_profile:
+            value = profile_value
+            plan.seal_plan(
+                home,
+                job["binding"],
+                workspace,
+                policy,
+                value["qualified_by"],
+                value["qualification_sha256"],
+                profile=value,
+                execution_host=job.get("execution_host"),
+                initial_profile_qualification=True,
+            )
+        else:
+            value, predecessor = profile.read_profile(home, job["card"])
+            if predecessor != job["profile_sha256"]:
+                raise plan.TestEvidenceError("profile predecessor changed")
+            plan.seal_plan(
+                home,
+                job["binding"],
+                workspace,
+                policy,
+                value["qualified_by"],
+                value["qualification_sha256"],
+                profile=value,
+                requalification=True,
+                profile_predecessor_sha256=predecessor,
+                execution_host=job.get("execution_host"),
+            )
     except plan.TestEvidenceError as exc:
+        if initial_profile:
+            raise
         if str(exc) != "operator test plan is invalid or stale":
             raise
         current_plan, _, plan_predecessor = plan.load_plan(
@@ -639,8 +698,21 @@ def _advance(home, policy, skc, actor, path, job):
     receipt = tests.run_or_read_tests(home, job["binding"], workspace, policy)
     if receipt is None:
         return "pending"
-    value, predecessor = profile.read_profile(home, job["card"])
-    if predecessor == job["profile_sha256"]:
+    if initial_profile:
+        tests.validate_test_receipt(home, job["binding"], workspace)
+        profile.qualify_profile(
+            home,
+            card.model_dump(mode="json"),
+            policy,
+            profile_value["recipe"],
+            profile_value["qualified_by"],
+            receipt["receipt_sha256"],
+            source_sha256=job["source_sha256"],
+            node_environment=profile_value.get("node_environment"),
+        )
+    else:
+        value, predecessor = profile.read_profile(home, job["card"])
+    if not initial_profile and predecessor == job["profile_sha256"]:
         profile.supersede_profile(
             home,
             card.model_dump(mode="json"),
@@ -653,7 +725,7 @@ def _advance(home, policy, skc, actor, path, job):
             source_sha256=job["source_sha256"],
             source_claim={"owner": job["owner"], "claim_revision": job["claim_revision"]},
         )
-    elif value.get("qualification_sha256") != receipt["receipt_sha256"]:
+    elif not initial_profile and value.get("qualification_sha256") != receipt["receipt_sha256"]:
         raise plan.TestEvidenceError("profile predecessor changed")
     import subprocess
 
@@ -749,15 +821,30 @@ def consume_remote(home: Path, policy: dict, host: str) -> list[str]:
                 ):
                     raise plan.TestEvidenceError("remote qualification claim changed")
                 sealed, _, _ = plan.load_plan(home, job["binding"])
-                if (
+                initial = job.get("initial_profile") is True
+                if initial:
+                    if (
+                        sealed.get("remote_initial_profile_qualification") is not True
+                        or sealed.get("initial_profile_qualification") is not True
+                        or sealed.get("authority_host") != policy.get("authority_host")
+                        or sealed.get("host") != host
+                        or sealed.get("profile") != job.get("initial_profile_value")
+                    ):
+                        raise plan.TestEvidenceError("remote initial qualification plan changed")
+                elif (
                     sealed.get("remote_requalification") is not True
                     or sealed.get("authority_host") != policy.get("authority_host")
                     or sealed.get("host") != host
                 ):
                     raise plan.TestEvidenceError("remote qualification plan binding changed")
-                value, predecessor = profile.read_profile(home, job["card"])
-                if predecessor != job["profile_sha256"]:
-                    raise plan.TestEvidenceError("remote qualification profile changed")
+                if initial:
+                    value = job["initial_profile_value"]
+                    if value.get("card") != job["card"]:
+                        raise plan.TestEvidenceError("remote initial profile card changed")
+                else:
+                    value, predecessor = profile.read_profile(home, job["card"])
+                    if predecessor != job["profile_sha256"]:
+                        raise plan.TestEvidenceError("remote qualification profile changed")
                 workspace = Path(job["workspace"])
                 request = {
                     "repository": value["repository"],
@@ -766,6 +853,18 @@ def consume_remote(home: Path, policy: dict, host: str) -> list[str]:
                 }
                 materialize_source(request, workspace)
                 plan.source_state(workspace, job["binding"])
+                if initial:
+                    recipe, node_environment = profile.initial_recipe(
+                        card.model_dump(mode="json"), workspace
+                    )
+                    if (
+                        recipe != value["recipe"]
+                        or node_environment != value.get("node_environment")
+                        or value.get("source_sha256") != job.get("source_sha256")
+                    ):
+                        raise plan.TestEvidenceError(
+                            "remote initial qualification source recipe changed"
+                        )
                 receipt = tests.run_or_read_tests(home, job["binding"], workspace, policy)
                 states.append(
                     "running:" + job["card"] if receipt is None else "receipt:" + job["card"]
