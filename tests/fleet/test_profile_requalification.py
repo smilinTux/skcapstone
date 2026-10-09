@@ -1,6 +1,7 @@
 """The automatic refresh has one durable native qualification slot."""
 
 import ast
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1091,3 +1092,25 @@ def test_failed_remote_job_releases_its_leaked_claim_back_to_ready(tmp_path, mon
         == "idle"
     )
     assert calls == []
+
+
+def test_changed_operator_recipe_is_not_backed_off(tmp_path):
+    root = tmp_path / "fleet/profile-requalifications"
+    root.mkdir(parents=True, mode=0o700)
+    old_recipe = {"pytest": {"tests/test_a.py": 1}, "compile": [], "lint": [], "changelog": False}
+    plan.write_once(
+        root / ("c" * 64 + ".job.json"),
+        {
+            "card": "1234abcd",
+            "source_sha256": "s" * 64,
+            "initial_profile_value": {"recipe": old_recipe},
+        },
+    )
+    plan.write_once(
+        root / ("c" * 64 + ".job.failed.json"),
+        {"card": "1234abcd", "reason": "operator test recipe is invalid: test target missing"},
+    )
+    same = json.dumps(old_recipe)
+    new = json.dumps({**old_recipe, "pytest": {"tests/test_b.py": 2}})
+    assert refresh._recent_failure(root, "1234abcd", "s" * 64, same)
+    assert not refresh._recent_failure(root, "1234abcd", "s" * 64, new)

@@ -436,7 +436,9 @@ DETERMINISTIC_FAILURES = (
 )
 
 
-def _recent_failure(root: Path, card_id: str, source_sha: str) -> bool:
+def _recent_failure(
+    root: Path, card_id: str, source_sha: str, operator_recipe: str | None = None
+) -> bool:
     import time
 
     now = time.time()
@@ -451,6 +453,17 @@ def _recent_failure(root: Path, card_id: str, source_sha: str) -> bool:
             continue
         if job.get("card") != card_id or job.get("source_sha256") != source_sha:
             continue
+        # A changed operator recipe is a new attempt, not a repeat: SKLegal
+        # cards that failed on a mis-matched baseline recipe were re-linked to
+        # their own revision's recipe and must not wait out the backoff.
+        if operator_recipe is not None:
+            try:
+                current = json.loads(operator_recipe)
+            except ValueError:
+                current = None
+            tried = (job.get("initial_profile_value") or {}).get("recipe")
+            if current is not None and tried is not None and current != tried:
+                continue
         try:
             reason = str(json.loads(plan.read_private(failed)).get("reason") or "")
         except (OSError, ValueError):
@@ -515,7 +528,12 @@ def offer_stale_candidate(
         if not isinstance(repository, str):
             return "ineligible:test repository binding is invalid"
         source_sha = plan.workspace_source_fingerprint(repository, workspace)
-        if _recent_failure(root, card_id, source_sha):
+        if _recent_failure(
+            root,
+            card_id,
+            source_sha,
+            (getattr(card, "links", None) or {}).get("test_profile_recipe"),
+        ):
             return "deferred:recent-qualification-failure"
         if initial:
             profile.initial_recipe(core, workspace)
