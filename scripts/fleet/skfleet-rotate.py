@@ -9336,6 +9336,23 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
                 _review_route_reservations[_domain]=(
                     _review_route_reservations.get(_domain,0)+1)
         continue
+    # Cheap test-profile gate on the pool core before the fresh fold below.
+    # The fresh claimability + admission re-check costs ~2.3s a card, and every
+    # unqualified source card paid it only to hit TEST_PROFILE_BLOCKED: 64 cards
+    # took lane_launch to 150s and the cycle to 260s of its 270s limit when
+    # their shared 1h cooldown expired together (chiap08 2026-10-09 21:02Z).
+    # The authoritative preflight on the fresh core still runs further down.
+    if PRODUCTION_POLICY and _governed_review_metadata(core, _labels) is None:
+        from skcapstone.fleet import production_test_profile as _profile_gate
+        try:
+            _profile_gate.preflight(Path(HOME)/".skcapstone", dict(core, id=cid), _labels,
+                           PRODUCTION_POLICY)
+        except _profile_gate.ProfileRequalificationRequired:
+            pass
+        except (OSError,ValueError) as exc:
+            log(d,"TEST_PROFILE_BLOCKED|%s|%s|%s"%(HOST,cid,exc))
+            _record_workspace_cooldown(cid)
+            continue
     _review_recommendation = None
     _review_handoff = None
     bf=os.path.join(logdir,"brief-%s.txt"%cid); open(bf,"w").write(brief)
@@ -9909,6 +9926,12 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
                             "--abandon-reason","error"],capture_output=True,text=True)
             log(d,"NODE_ADMISSION_DEFERRED|%s|%s|reason=%s"%(
                 HOST,cid,str(_admission_exc)[:160]))
+            # The occupancy cap is node-wide, so no later card can be admitted
+            # this cycle. Continuing claimed, prepared and released each one:
+            # 10 cards cost ~120s of lane_launch (chiap08 2026-10-09 21:19Z).
+            if "worker occupancy cap reached" in str(_admission_exc):
+                log(d,"LANE_LAUNCH_STOPPED|%s|reason=node-occupancy-cap"%HOST)
+                break
             continue
         except AdmissionError:
             log(d,"NODE_ADMISSION_CUSTODY_REQUIRED|%s|%s"%(HOST,cid))
