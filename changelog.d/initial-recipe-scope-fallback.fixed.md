@@ -1,0 +1,1 @@
+Initial test-profile qualification reads frontend/backend card labels as scope and, when a repository has both a Python and a frontend suite but the card states no scope, qualifies against both instead of refusing.

@@ -83,6 +83,11 @@ def initial_recipe(core: dict, workspace: Path) -> tuple[dict, dict | None]:
         or "frontend" in text
     )
     python_scope = ".py" in text or "pytest" in text or "python" in text
+    # Board labels are scope too: SKLegal cards carry frontend/backend labels
+    # whose text names neither a file suffix nor a test runner.
+    labels = {str(label).lower() for label in core.get("labels") or ()}
+    node_scope = node_scope or "frontend" in labels
+    python_scope = python_scope or bool(labels & {"backend", "python"})
     repository = (core.get("links") or {}).get("repository") or (core.get("meta") or {}).get(
         "repository", ""
     )
@@ -149,6 +154,11 @@ def initial_recipe(core: dict, workspace: Path) -> tuple[dict, dict | None]:
             ) from exc
         return recipe, environment
 
+    if not (node_scope or python_scope) and python_project and node_project:
+        # No stated scope in a repository with both suites: qualify against
+        # both rather than refusing. Seven SKLegal cards sat ineligible with
+        # "no supported initial test recipe" every cycle (2026-10-09).
+        node_scope = python_scope = True
     if node_scope and python_scope:
         if not (python_project and node_project):
             raise plan.TestEvidenceError("mixed test scope needs Python and frontend projects")

@@ -755,3 +755,48 @@ def test_acceptance_hook_seals_before_tests_and_does_not_self_complete(
     result = acceptance.reconcile(s.home, s.policy, process_check=lambda *args: None)
     assert result == [{"card": review, "state": "awaiting-trusted-tests"}]
     assert observed == ["tests/test_any.py"]
+
+
+def _both_projects(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+    (tmp_path / "tests").mkdir()
+    target = tmp_path / "apps/web/src/pages/Workflow.test.tsx"
+    target.parent.mkdir(parents=True)
+    target.write_text("export {};\n")
+    (tmp_path / "apps/web/package.json").write_text("{}\n")
+
+
+def test_initial_recipe_without_stated_scope_runs_both_suites(tmp_path, monkeypatch):
+    from skcapstone.fleet import production_test_node as node
+
+    _both_projects(tmp_path)
+    monkeypatch.setattr(node, "qualified_environment", lambda _workspace: {"artifact": "a" * 64})
+    recipe, _ = profile.initial_recipe(
+        {
+            "title": "Rebase scoped Product Status onto current main",
+            "acceptance_criteria": ["Status page renders the live state."],
+            "links": {"repository": "https://github.com/example/sklegal"},
+        },
+        tmp_path,
+    )
+    assert recipe == {"pytest_all": True, "vitest": {"src/pages/Workflow.test.tsx": 1}}
+
+
+def test_initial_recipe_reads_frontend_label_as_node_scope(tmp_path, monkeypatch):
+    from skcapstone.fleet import production_test_node as node
+
+    target = tmp_path / "apps/web/src/pages/Workflow.test.tsx"
+    target.parent.mkdir(parents=True)
+    target.write_text("export {};\n")
+    (tmp_path / "apps/web/package.json").write_text("{}\n")
+    monkeypatch.setattr(node, "qualified_environment", lambda _workspace: {"artifact": "a" * 64})
+    recipe, _ = profile.initial_recipe(
+        {
+            "title": "Wait for the live audit",
+            "labels": ["frontend", "source-only"],
+            "acceptance_criteria": ["Audit waits for the live state."],
+            "links": {"repository": "https://github.com/example/sklegal"},
+        },
+        tmp_path,
+    )
+    assert recipe == {"vitest": {"src/pages/Workflow.test.tsx": 1}}
