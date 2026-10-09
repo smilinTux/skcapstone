@@ -479,8 +479,10 @@ def _seal_plan(
     source_state(workspace, binding)
     directory = home / "fleet/test-plans"
     private_dir(directory, create=True)
-    base = _initial_plan_base(home, binding) if initial_profile_qualification else _plan_base(
-        home, binding
+    base = (
+        _initial_plan_base(home, binding)
+        if initial_profile_qualification
+        else _plan_base(home, binding)
     )
     path = base
     if predecessor_sha256 is not None:
