@@ -591,3 +591,68 @@ def test_fresh_fenced_recovery_refuses_changed_current_custody(
     monkeypatch.setattr(CardStore, "fold", lambda *a: card)
     assert len(admission._occupancy(root, home, strict_terminal=True)) == 1
     assert not (directory / "fenced-assignment-terminal.json").exists()
+
+
+def test_fenced_recovery_accepts_exactly_released_claim(
+    fenced_without_launch_receipt, monkeypatch
+):
+    """A worker reclaimed after it exited must not stay charged forever (chiap08 cap leak)."""
+    home, root, directory, state, events, entries = fenced_without_launch_receipt
+    binding = admission.read_json(directory / "intent.json")["binding"]
+    card = CardStore(home).fold("12345678")
+    card.owner = None
+    card.meta.pop("_claim_revision", None)
+    monkeypatch.setattr(CardStore, "fold", lambda *a: card)
+    events.append(
+        dict(
+            action="release_claim",
+            event_id="r" * 32,
+            ts=events[0]["ts"],
+            writer="niobe",
+            node="fixture",
+            released_owner=binding["owner"],
+            expected_claim_revision=binding["claim_revision"],
+        )
+    )
+    assert admission._occupancy(root, home, strict_terminal=True) == []
+    assert (directory / "fenced-assignment-terminal.json").is_file()
+
+
+@pytest.mark.parametrize("field", ["released_owner", "expected_claim_revision"])
+def test_fenced_recovery_refuses_release_of_another_generation(
+    fenced_without_launch_receipt, monkeypatch, field
+):
+    home, root, directory, state, events, entries = fenced_without_launch_receipt
+    binding = admission.read_json(directory / "intent.json")["binding"]
+    card = CardStore(home).fold("12345678")
+    card.owner = None
+    monkeypatch.setattr(CardStore, "fold", lambda *a: card)
+    release = dict(
+        action="release_claim",
+        event_id="r" * 32,
+        ts=events[0]["ts"],
+        released_owner=binding["owner"],
+        expected_claim_revision=binding["claim_revision"],
+    )
+    release[field] = "f" * 32
+    events.append(release)
+    assert len(admission._occupancy(root, home, strict_terminal=True)) == 1
+    assert not (directory / "fenced-assignment-terminal.json").exists()
+
+
+def test_fenced_recovery_ignores_older_generation_of_reused_unit(fenced_without_launch_receipt):
+    """A retried card reuses its unit name; the earlier claim's invocation is not ambiguity."""
+    home, root, directory, state, events, entries = fenced_without_launch_receipt
+    older = [
+        dict(
+            entry,
+            USER_INVOCATION_ID="0" * 32,
+            __REALTIME_TIMESTAMP=str(int(entry["__REALTIME_TIMESTAMP"]) - 10_000_000),
+        )
+        for entry in entries
+    ]
+    older[0]["MESSAGE"] = older[0]["MESSAGE"].replace("a" * 32, "b" * 32)
+    entries[:0] = older
+    assert admission._occupancy(root, home, strict_terminal=True) == []
+    proof = admission.read_json(directory / "fenced-assignment-terminal.json")
+    assert proof["invocation"] == "c" * 32

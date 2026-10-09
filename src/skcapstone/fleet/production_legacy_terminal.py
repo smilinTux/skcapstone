@@ -85,6 +85,7 @@ def _fenced_claim(directory: Path, home: Path, intent: dict, *, current=True) ->
     ):
         return []
     store = CardStore(home)
+    events = store._read_events(binding["card_id"])
     if current:
         card = store.fold(binding["card_id"])
         if (
@@ -94,9 +95,8 @@ def _fenced_claim(directory: Path, home: Path, intent: dict, *, current=True) ->
             or card.status.value != "doing"
             or card.owner != binding["owner"]
             or card.meta.get("_claim_revision") != binding["claim_revision"]
-        ):
+        ) and not _claim_released(events, binding, card):
             return []
-    events = store._read_events(binding["card_id"])
     claims = [
         event
         for event in events
@@ -155,6 +155,28 @@ def _fenced_claim(directory: Path, home: Path, intent: dict, *, current=True) ->
         and re.fullmatch(r"[0-9a-f]{64}", str(event.get("evidence_sha256", "")))
     ]
     return [launch] if len(recommendations) == 1 else []
+
+
+def _claim_released(events: list[dict], binding: dict, card) -> bool:
+    """A native release of this exact claim ends the generation as surely as custody.
+
+    Without this, a worker whose claim was released after it exited (the
+    dispatcher's normal reclaim) kept its reservation charged forever, because
+    fresh recovery demanded a claim that no longer exists. Every other proof
+    (start receipt, wrapper-bound start, terminal journal event, absent unit)
+    is still required.
+    """
+    return (
+        card is not None
+        and (card.owner, card.meta.get("_claim_revision"))
+        != (binding["owner"], binding["claim_revision"])
+        and any(
+            event.get("action") == "release_claim"
+            and event.get("released_owner") == binding["owner"]
+            and event.get("expected_claim_revision") == binding["claim_revision"]
+            for event in events
+        )
+    )
 
 
 def _wrapper_binding(entry: dict, intent: dict) -> bool:
@@ -294,7 +316,7 @@ def reconcile_legacy_assignment(
     if not _absent(state, intent["unit"]):
         return False
     try:
-        when = _launch_time(launches[0])
+        anchor = _launch_time(start_anchor if fenced and start_anchor else launches[0])
         result = subprocess.run(
             [
                 "journalctl",
@@ -308,11 +330,15 @@ def reconcile_legacy_assignment(
                 *["MESSAGE_ID=" + message for message in sorted(admission._JOURNAL_TERMINAL_IDS)],
                 *(
                     []
-                    if fenced
+                    if fenced and start_anchor is None
                     else [
-                        "--since=@" + str(when // 1_000_000 - 2),
+                        "--since=@" + str(anchor // 1_000_000 - 2),
                         "--until=@"
-                        + str(when // 1_000_000 + intent["resources"]["runtime_max_seconds"] + 62),
+                        + str(
+                            anchor // 1_000_000
+                            + intent["resources"]["runtime_max_seconds"] * (2 if fenced else 1)
+                            + 62
+                        ),
                     ]
                 ),
             ],
@@ -332,6 +358,20 @@ def reconcile_legacy_assignment(
             for row, digest in rows
         ):
             return False
+        if fenced:
+            # Unit names are reused across claim generations of one card. Keep
+            # only the invocation whose manager-owned start binds this exact
+            # claim; an older generation's rows are not ambiguity, a second
+            # start bound to the same claim still is.
+            bound = {
+                row["USER_INVOCATION_ID"]
+                for row, digest in rows
+                if row.get("MESSAGE_ID") == START_ID and _wrapper_binding(row, intent)
+            }
+            if len(bound) == 1:
+                rows = [
+                    (row, digest) for row, digest in rows if row["USER_INVOCATION_ID"] in bound
+                ]
         invocations = {row["USER_INVOCATION_ID"] for row, digest in rows}
         starts = [(row, digest) for row, digest in rows if row.get("MESSAGE_ID") == START_ID]
         terminals = [
