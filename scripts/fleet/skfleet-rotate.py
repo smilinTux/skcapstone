@@ -8111,23 +8111,24 @@ log(
     ),
 )
 
+# Offer cards that already hold a test profile before cards that still
+# need one. Each unqualified card costs a requalification offer and a
+# source materialization, so the cycle deadline used to expire on them
+# while a qualified card waited behind: 6b2f91a4 qualified at 12:0xZ on
+# 2026-10-09 and was never offered (CYCLE_DEADLINE_REACHED processed=22,
+# deferred=107). sorted() is stable, so pool priority holds within each group.
+_qualified_profiles = Path(HOME) / ".skcapstone/fleet/test-profiles"
+_builder_candidates = sorted(
+    _builder_candidates,
+    key=lambda _c: not (_qualified_profiles / (str(_c[2]) + ".json")).is_file(),
+)
+
 # Niobe offers source cards to Ready builders within the shared cycle budget.
 # The remote node claims the card itself, so the CardStore fence remains the
 # authority and this scheduler never impersonates a remote worker.
 if not DRY and _is_niobe_builder_host(HOST):
     _profile_requalifications_offered = 0
     _profile_requalification_limit = 4
-    # Offer cards that already hold a test profile before cards that still
-    # need one. Each unqualified card costs a requalification offer and a
-    # source materialization, so the cycle deadline used to expire on them
-    # while a qualified card waited behind: 6b2f91a4 qualified at 12:0xZ on
-    # 2026-10-09 and was never offered (CYCLE_DEADLINE_REACHED processed=22,
-    # deferred=107). sorted() is stable, so pool priority holds within each group.
-    _qualified_profiles = Path(HOME) / ".skcapstone/fleet/test-profiles"
-    _builder_candidates = sorted(
-        _builder_candidates,
-        key=lambda _c: not (_qualified_profiles / (str(_c[2]) + ".json")).is_file(),
-    )
     for _candidate in tuple(_builder_candidates)[:MAX_CANDIDATE_SCAN]:
         if PRODUCTION_POLICY and time.monotonic() - _cycle_started >= _production_cycle_budget:
             break
