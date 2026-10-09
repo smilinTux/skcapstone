@@ -1,0 +1,1 @@
+- Retry fleet claims only after a timed-out board mutation lock, with fresh ownership readback before each bounded retry.

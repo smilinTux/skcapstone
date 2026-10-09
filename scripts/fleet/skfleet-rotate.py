@@ -1476,6 +1476,8 @@ def _claim_failure_detail(stdout, stderr):
             line for line in (text or "").splitlines()
             if line.strip() and not any(noise in line for noise in _BENIGN_FOLD_NOISE)
         ]
+        if any(line.lstrip().startswith("Traceback (most recent call last):") for line in lines):
+            return lines[-1].strip() if lines else ""
         return " ".join(lines).strip()
 
     return (
@@ -1485,6 +1487,25 @@ def _claim_failure_detail(stdout, stderr):
         or (stdout or "").strip()
         or "claim not visible with an explicit revision in CardStore fold"
     )
+
+
+def _is_board_mutation_lock_timeout(stdout, stderr):
+    """Recognize only the retryable coordination board-lock timeout."""
+    detail = "\n".join((stdout or "", stderr or ""))
+    return "TimeoutError: timed out acquiring board mutation lock" in detail
+
+
+def _run_coord_claim(command, card_id, *, run, readback, sleep, max_attempts=3):
+    """Retry a claim only when the board mutation lock timed out before writing."""
+    attempts = max(1, int(max_attempts))
+    for attempt in range(1, attempts + 1):
+        result = run(command, capture_output=True, text=True)
+        owner, claimed_at, revision = readback(card_id)
+        retryable = _is_board_mutation_lock_timeout(result.stdout, result.stderr)
+        if not retryable or owner is not None or attempt == attempts:
+            return result, owner, claimed_at, revision, attempt
+        sleep(min(0.5 * attempt, 1.0))
+    raise AssertionError("claim retry loop exited without a result")
 
 
 def _classify_claim_outcome(still_assignable, returncode=None,
@@ -9523,8 +9544,17 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         except (OSError, ValueError) as exc:
             log(d, "PROFILE_REQUALIFICATION_HARVEST_BLOCKED|%s|%s|%s" %
                 (HOST, cid, str(exc)[:180]))
-    claim=subprocess.run([SKC,"coord","claim",cid,"--agent",name],capture_output=True,text=True)
-    claimed_owner,_claimed_at,claimed_revision=_current_claim_identity_fresh(cid)
+    claim,claimed_owner,_claimed_at,claimed_revision,claim_attempts=_run_coord_claim(
+        [SKC,"coord","claim",cid,"--agent",name],
+        cid,
+        run=subprocess.run,
+        readback=_current_claim_identity_fresh,
+        sleep=time.sleep,
+    )
+    if claim_attempts > 1:
+        log(d,"CLAIM_LOCK_RETRIED|%s|%s|attempts=%d|outcome=%s" % (
+            HOST,cid,claim_attempts,
+            "claimed" if claim.returncode == 0 and claimed_owner == name else "refused"))
     claim_outcome=_classify_claim_outcome(
         True,
         claim.returncode if claimed_revision else 1,
