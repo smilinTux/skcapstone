@@ -471,3 +471,8 @@ def test_rotate_harvests_before_builder_claim():
     assert source.index("_harvest_state = harvest_completed(", loop) < source.index(
         'claim=subprocess.run([SKC,"coord","claim"', loop
     )
+    requalify = source.index('log(d,"PROFILE_REQUALIFICATION|%s|%s|state=%s"', loop)
+    launch = source.index("if PRODUCTION_POLICY and _review_seat is None", requalify)
+    deferred = source[requalify:launch]
+    assert "BUILDER_CLAIM_NOT_LAUNCHED|" in deferred
+    assert '"coord","release-claim"' not in deferred

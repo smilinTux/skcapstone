@@ -9457,6 +9457,9 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
                     (HOST,cid,_requal_state,claimed_revision))
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             log(d,"PROFILE_REQUALIFICATION_BLOCKED|%s|%s|%s"%(HOST,cid,str(exc)[:180]))
+            _requal_state = "blocked:" + str(exc)[:180]
+        log(d,"BUILDER_CLAIM_NOT_LAUNCHED|%s|%s|reason=profile-requalification|state=%s|claim=%s"%
+            (HOST,cid,_requal_state,claimed_revision))
         continue
     if PRODUCTION_POLICY and _review_seat is None and _source_spec is not None:
         brief=production_worker_brief(
