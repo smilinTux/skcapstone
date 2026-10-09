@@ -325,13 +325,35 @@ def _offer_directory_safe(paths, node, card_id):
     """Skip offer targets whose request parent the sealed writer rejects."""
     directory = dispatch.request_path(paths, node, card_id).parent
     try:
+        if directory.resolve(strict=False) != directory:
+            return False
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         if directory.resolve() != directory:
             return False
-        info = directory.stat()
-    except FileNotFoundError:
-        return True
+        info = directory.stat(follow_symlinks=False)
     except OSError:
         return False
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+        return False
+    if info.st_mode & 0o022:
+        try:
+            fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except OSError:
+            return False
+        try:
+            opened = os.fstat(fd)
+            if (
+                opened.st_dev != info.st_dev
+                or opened.st_ino != info.st_ino
+                or opened.st_uid != os.getuid()
+            ):
+                return False
+            os.fchmod(fd, stat.S_IMODE(opened.st_mode) & ~0o022)
+            info = os.fstat(fd)
+        except OSError:
+            return False
+        finally:
+            os.close(fd)
     return stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and not info.st_mode & 0o022
 
 

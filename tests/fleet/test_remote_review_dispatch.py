@@ -103,16 +103,33 @@ def test_remote_partition_keeps_legacy_reviews_on_the_existing_seat(dispatch):
     assert dispatch.partition_remote_reviews(rows, {"card_ids": [legacy[2]]}) == ([], rows)
 
 
-def test_offer_destination_skips_group_writable_request_directory(dispatch, tmp_path):
+def test_offer_destination_tightens_group_writable_request_directory(dispatch, tmp_path):
     paths = FleetPaths(tmp_path / "fleet")
     directory = builder.request_path(paths, "node-chiap04", "8f4b04d4").parent
     directory.mkdir(parents=True)
     directory.chmod(0o775)
 
-    assert not dispatch._offer_directory_safe(paths, "node-chiap04", "8f4b04d4")
-
-    directory.chmod(0o700)
     assert dispatch._offer_directory_safe(paths, "node-chiap04", "8f4b04d4")
+    assert directory.stat().st_mode & 0o777 == 0o755
+
+
+def test_offer_destination_creates_private_request_directory(dispatch, tmp_path):
+    paths = FleetPaths(tmp_path / "fleet")
+    directory = builder.request_path(paths, "node-chiap04", "8f4b04d4").parent
+
+    assert dispatch._offer_directory_safe(paths, "node-chiap04", "8f4b04d4")
+    assert directory.stat().st_mode & 0o777 == 0o700
+
+
+def test_offer_destination_rejects_symlink_request_directory(dispatch, tmp_path):
+    paths = FleetPaths(tmp_path / "fleet")
+    directory = builder.request_path(paths, "node-chiap04", "8f4b04d4").parent
+    directory.parent.mkdir(parents=True)
+    target = tmp_path / "outside"
+    target.mkdir()
+    directory.symlink_to(target, target_is_directory=True)
+
+    assert not dispatch._offer_directory_safe(paths, "node-chiap04", "8f4b04d4")
 
 
 @pytest.mark.parametrize(
