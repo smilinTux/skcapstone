@@ -1267,6 +1267,20 @@ SSH_SOURCE_TRANSPORTS = {
 }
 
 
+def _gh_binary() -> str:
+    """Resolve gh to an absolute path for the sanitized fetch environment.
+
+    The fetch runs with PATH=/usr/bin:/bin, but chiap02 and chiap03 install gh
+    under ~/.local/bin, so the credential helper there was "gh: not found" and
+    every GitHub source failed as "exact source reconstruction failed"
+    (a0834032, 2026-10-09). Only fixed system and per-user locations count.
+    """
+    search = os.pathsep.join(
+        ["/usr/bin", "/bin", "/usr/local/bin", str(Path.home() / ".local/bin")]
+    )
+    return shutil.which("gh", path=search) or "gh"
+
+
 def materialize_source(request: dict, workspace: Path) -> Path:
     """Reconstruct and verify exact source without inheriting host Git settings."""
     # Match preseed custody literally; host insteadOf or Git environment must
@@ -1288,7 +1302,7 @@ def materialize_source(request: dict, workspace: Path) -> Path:
                 "-c",
                 "credential.helper=",
                 "-c",
-                "credential.https://github.com.helper=!gh auth git-credential",
+                f"credential.https://github.com.helper=!{_gh_binary()} auth git-credential",
             ]
         )
     # Private Forgejo (skgit) serves Git over SSH only to the host key; anonymous

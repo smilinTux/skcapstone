@@ -76,13 +76,32 @@ def test_materialize_source_uses_only_host_scoped_github_credentials(
     assert repository in calls[1][0]
     if authenticated:
         assert "credential.helper=" in fetch_command
-        assert "credential.https://github.com.helper=!gh auth git-credential" in fetch_command
+        assert any(
+            part.startswith("credential.https://github.com.helper=!")
+            and part.endswith("gh auth git-credential")
+            for part in fetch_command
+        )
         assert fetch_environment["HOME"] == str(auth_home)
     else:
         assert not any("credential.https://github.com.helper" in part for part in fetch_command)
         assert fetch_environment["HOME"] == "/nonexistent"
     assert fetch_environment["GIT_CONFIG_GLOBAL"] == "/dev/null"
     assert "GH_TOKEN" not in fetch_environment
+
+
+def test_gh_helper_resolves_a_per_user_install(monkeypatch, tmp_path):
+    """The sanitized PATH must not hide a gh installed under ~/.local/bin."""
+    gh = tmp_path / ".local/bin/gh"
+    gh.parent.mkdir(parents=True)
+    gh.write_text("#!/bin/sh\n")
+    gh.chmod(0o755)
+    monkeypatch.setattr(builder_dispatch.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(
+        builder_dispatch.shutil,
+        "which",
+        lambda name, path=None: str(gh) if str(gh.parent) in (path or "").split(":") else None,
+    )
+    assert builder_dispatch._gh_binary() == str(gh)
 
 
 def test_materialize_source_fetches_skgit_over_pinned_ssh_transport(monkeypatch, tmp_path):
