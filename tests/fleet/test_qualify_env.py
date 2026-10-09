@@ -255,3 +255,22 @@ def test_build_refuses_a_different_interpreter(tmp_path):
         pytest.skip("pinned interpreter not present on this host")
     with pytest.raises(qualify_env.QualifyEnvError, match="interpreter"):
         qualify_env.build(tmp_path / "prefix", ROOT, manifest_path=path, uv=sys.executable)
+
+
+def test_vcs_direct_pins_get_a_host_independent_version():
+    """chiap08 (core.abbrev=40) and chiap01-04 built different skharness versions."""
+    from skcapstone.fleet import qualify_env
+
+    pin = "skharness @ git+https://github.com/smilinTux/skharness.git@" + (
+        "7409a1ab28f9c8fed87cd40226f4c031ca9e3f6e"
+    )
+    assert qualify_env._pretend_versions([pin]) == {
+        "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_SKHARNESS": "0.3.45.dev30+g7409a1a"
+    }
+    assert qualify_env._pretend_versions(["skharness @ git+https://x/y.git@" + "0" * 40]) == {}
+
+
+def test_state_schema_bump_forces_one_rebuild():
+    from skcapstone.fleet import qualify_env
+
+    assert qualify_env.STATE_SCHEMA.endswith("/v2")
