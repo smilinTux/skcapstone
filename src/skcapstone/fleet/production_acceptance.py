@@ -669,6 +669,44 @@ def collect(home, policy, card, claim, *, process_check):
     return context
 
 
+def _retired_exit(home, card, directory):
+    """Classify retained exits that no acceptance step can ever act on again.
+
+    This never accepts anything. It only stops re-running live launch-policy
+    and test-recipe replay for (a) pairs already finished under their own
+    sealed evidence, whose replay fails by construction once the policy,
+    route snapshot or qualify recipe moves on, and (b) exits of reviews that
+    are not source-only, which collect() refuses permanently.
+    """
+    finished = directory / "finished.json"
+    if finished.exists():
+        result = read_json(finished)
+        context = read_json(directory / "context.json")
+        if (
+            result.get("schema") != "skfleet.source-review-acceptance/v1"
+            or result.get("accepted") is not True
+            or result.get("context_sha256") != digest(context)
+            or result.get("review_card") != card
+        ):
+            raise ReviewEvidenceError("finished acceptance record differs from context")
+        store = CardStore(home)
+        for name in ("source_card", "review_card"):
+            row = store.fold(result[name])
+            if row is None or row.status.value != "done":
+                raise ReviewEvidenceError("accepted native pair is no longer done")
+        return {"card": card, "state": "accepted", "receipt": result, "historical": True}
+    if (directory / "context.json").exists():
+        return None
+    review = CardStore(home).fold(card)
+    if review is None or "source-only" not in review.labels:
+        return {
+            "card": card,
+            "state": "not-applicable",
+            "reason": "review is not source-only; no source acceptance path",
+        }
+    return None
+
+
 def reconcile(home, policy, *, process_check):
     """Reconcile retained review exits with bounded per-card refusal isolation."""
     from .production_test_profile import seal_candidate
@@ -691,6 +729,10 @@ def reconcile(home, policy, *, process_check):
             negative_path = directory / "negative-disposition.json"
             if negative_path.exists():
                 results.append(read_json(negative_path))
+                continue
+            retired = _retired_exit(home, card, directory)
+            if retired is not None:
+                results.append(retired)
                 continue
             from ..review_verdict import recorded_verdict
 

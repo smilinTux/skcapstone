@@ -7301,10 +7301,21 @@ if not DRY:
     if PRODUCTION_POLICY and HOST == AUTHORITY_HOST:
         from skcapstone.fleet.production_acceptance import reconcile as reconcile_source_reviews
 
+        _retired_exits = {"historical": 0, "not-applicable": 0}
         for _acceptance in reconcile_source_reviews(
                 Path(CARDS).parent, PRODUCTION_POLICY, process_check=_card_process_snapshot):
+            # Already-finished pairs and non-source-only exits are inert; count
+            # them so live pending acceptances stay visible in the cycle log.
+            if _acceptance.get("historical"):
+                _retired_exits["historical"] += 1
+                continue
+            if _acceptance["state"] == "not-applicable":
+                _retired_exits["not-applicable"] += 1
+                continue
             log(d, "SOURCE_REVIEW_ACCEPTANCE|%s|%s|%s|%s" % (
                 HOST, _acceptance["card"], _acceptance["state"], _acceptance.get("reason", "")))
+        log(d, "SOURCE_REVIEW_ACCEPTANCE_RETIRED|%s|historical=%d|not_applicable=%d" % (
+            HOST, _retired_exits["historical"], _retired_exits["not-applicable"]))
     close_reviewed_parents()
     release_finished_review_claims()
 
