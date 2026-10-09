@@ -633,6 +633,12 @@ def _seal_plan(
                 raise TestEvidenceError("profile is not eligible for native requalification")
             value["profile_requalification"] = True
             value["profile_predecessor_sha256"] = current_sha
+            # fingerprint_only_stale grants a profile still bound to the
+            # pre-qualify-env ~/.skenv toolchain one migration requal. Seal the
+            # legacy fingerprint it accepted so the executor, whose own legacy
+            # ~/.skenv differs, can admit exactly that value and no other.
+            if current.get("toolchain_sha256") not in (None, toolchain_fingerprint()):
+                value["legacy_toolchain_sha256"] = current["toolchain_sha256"]
         else:
             expected = dict(expected_profile)
             if "source_sha256" in profile:
@@ -778,6 +784,10 @@ def _validate_plan(
         required.update({"authority_host", "remote_initial_profile_qualification"})
     if requalification:
         required.update({"profile_requalification", "profile_predecessor_sha256"})
+        if "legacy_toolchain_sha256" in plan:
+            if not re.fullmatch(r"[0-9a-f]{64}", str(plan["legacy_toolchain_sha256"])):
+                raise TestEvidenceError("operator test plan is invalid or stale")
+            required.add("legacy_toolchain_sha256")
     if remote_requalification:
         required.update({"authority_host", "remote_requalification"})
     elif not requalification and "profile_predecessor_sha256" in plan:
@@ -830,7 +840,8 @@ def _validate_plan(
                 or profile.get("python_sha256") != plan.get("python_sha256")
                 or (
                     "toolchain_sha256" in profile
-                    and profile.get("toolchain_sha256") != toolchain_fingerprint()
+                    and profile.get("toolchain_sha256")
+                    not in {toolchain_fingerprint(), plan.get("legacy_toolchain_sha256")}
                 )
                 or (
                     "source_sha256" in profile
@@ -845,6 +856,7 @@ def _validate_plan(
                     profile.get("runtime_sha256") == plan.get("runtime_sha256")
                     and profile.get("policy_sha256") == plan.get("policy_sha256")
                     and not str(profile.get("schema", "")).endswith("/v1")
+                    and "legacy_toolchain_sha256" not in plan
                 )
             ):
                 raise TestEvidenceError("candidate test profile changed")
