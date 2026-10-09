@@ -290,6 +290,74 @@ def test_harvest_publishes_only_valid_receipt_before_any_new_claim(tmp_path, mon
     assert (root / ("a" * 64 + ".job.done.json")).is_file()
 
 
+def test_harvest_discovers_completed_plan_without_job_record(tmp_path, monkeypatch):
+    root = tmp_path / "fleet/profile-requalifications"
+    plans = tmp_path / "fleet/test-plans"
+    root.parent.mkdir(mode=0o700)
+    plan.private_dir(root, create=True)
+    plan.private_dir(plans, create=True)
+    workspace = tmp_path / "fleet/workspaces/producer"
+    workspace.mkdir(parents=True)
+    binding = {"source_card": "1234abcd", "source_owner": "producer", "criteria_sha256": "b" * 64}
+    plan_path = plans / "1234abcd-completed.json"
+    plan.write_once(plan_path, {"binding": binding, "profile_requalification": True})
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "receipt.json").write_text("{}")
+    card = SimpleNamespace(
+        status=SimpleNamespace(value="ready"),
+        owner=None,
+        model_dump=lambda **_kwargs: {"id": "1234abcd"},
+    )
+    current = {
+        "repository": "https://example.invalid/r",
+        "recipe": {"pytest": []},
+        "qualified_by": "operator",
+    }
+    monkeypatch.setattr(refresh.socket, "gethostname", lambda: "chiap08")
+    monkeypatch.setattr(
+        refresh.plan,
+        "load_plan",
+        lambda *_args, **_kwargs: (
+            {
+                "profile_requalification": True,
+                "profile_predecessor_sha256": "c" * 64,
+                "runtime_sha256": "runtime",
+                "policy_sha256": "policy",
+            },
+            plan_path,
+            "e" * 64,
+        ),
+    )
+    monkeypatch.setattr(refresh.plan, "run_directory", lambda *_args: run)
+    monkeypatch.setattr(refresh.plan, "runtime_fingerprint", lambda: "runtime")
+    monkeypatch.setattr(refresh.plan, "execution_policy_fingerprint", lambda _policy: "policy")
+    monkeypatch.setattr(refresh.plan, "source_state", lambda *_args: None)
+    monkeypatch.setattr(refresh.plan, "workspace_source_fingerprint", lambda *_args: "d" * 64)
+    monkeypatch.setattr(
+        refresh.tests, "validate_test_receipt", lambda *_args: {"receipt_sha256": "f" * 64}
+    )
+    monkeypatch.setattr(
+        refresh.profile, "read_profile", lambda *_args, **_kwargs: (current, "c" * 64)
+    )
+    monkeypatch.setattr(refresh.profile, "fingerprint_only_stale", lambda *_args, **_kwargs: True)
+    published = []
+    monkeypatch.setattr(
+        refresh.profile,
+        "supersede_profile",
+        lambda *args, **kwargs: published.append(kwargs) or tmp_path / "profile",
+    )
+    monkeypatch.setattr(
+        refresh, "CardStore", lambda _home: SimpleNamespace(fold=lambda _card: card)
+    )
+
+    assert (
+        refresh.harvest_completed(tmp_path, {"authority_host": "chiap08"}) == "qualified:1234abcd"
+    )
+    assert published and published[0]["unclaimed"] is True
+    assert (root / ("harvested-" + "e" * 64 + ".json")).is_file()
+
+
 def test_harvest_refuses_to_publish_when_card_is_still_owned(tmp_path, monkeypatch):
     root = tmp_path / "fleet/profile-requalifications"
     root.parent.mkdir(mode=0o700)

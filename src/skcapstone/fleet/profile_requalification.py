@@ -73,6 +73,7 @@ def harvest_completed(home: Path, policy: dict, card_id: str | None = None) -> s
         plan.private_dir(root)
     except FileNotFoundError:
         return "idle"
+    held_state = None
     with _lock(root) as acquired:
         if not acquired:
             return "busy"
@@ -145,7 +146,94 @@ def harvest_completed(home: Path, policy: dict, card_id: str | None = None) -> s
                 if card_id is not None:
                     return "blocked:" + str(exc)[:160]
                 continue
-    return "idle"
+        # A prior cycle may have completed and sealed the native test plan,
+        # then lost the in-memory/job handoff before harvesting its receipt.
+        # Discover those plans directly so selection (and a new claim) is not
+        # required to finish publication.
+        plans = home / "fleet/test-plans"
+        if plans.is_dir():
+            for plan_path in sorted(plans.glob("*.json")):
+                try:
+                    sealed_candidate = json.loads(plan.read_private(plan_path))
+                    binding = sealed_candidate.get("binding")
+                    candidate_id = (
+                        binding.get("source_card") if isinstance(binding, dict) else None
+                    )
+                    if (
+                        sealed_candidate.get("profile_requalification") is not True
+                        or not isinstance(candidate_id, str)
+                        or (card_id is not None and candidate_id != card_id)
+                    ):
+                        continue
+                    sealed, _, plan_sha = plan.load_plan(home, binding, allow_completed=True)
+                    done_path = root / ("harvested-" + plan_sha + ".json")
+                    if done_path.exists():
+                        continue
+                    workspace = home / "fleet/workspaces" / str(binding.get("source_owner") or "")
+                    directory = plan.run_directory(home, plan_sha)
+                    if not (directory / "receipt.json").is_file():
+                        continue
+                    card = CardStore(home).fold(candidate_id)
+                    if card is None or card.status.value not in {"backlog", "ready"} or card.owner:
+                        if card_id is not None:
+                            return "held:card-owned-or-not-ready"
+                        held_state = held_state or (
+                            "held:" + candidate_id + ":card-owned-or-not-ready"
+                        )
+                        continue
+                    current, predecessor = profile.read_profile(home, candidate_id)
+                    profile_predecessor = sealed.get("profile_predecessor_sha256")
+                    if predecessor != profile_predecessor:
+                        continue
+                    if sealed.get("runtime_sha256") != plan.runtime_fingerprint() or sealed.get(
+                        "policy_sha256"
+                    ) != plan.execution_policy_fingerprint(policy):
+                        continue
+                    plan.source_state(workspace, binding)
+                    receipt = tests.validate_test_receipt(home, binding, workspace)
+                    source_sha = plan.workspace_source_fingerprint(
+                        current["repository"], workspace
+                    )
+                    if not profile.fingerprint_only_stale(
+                        current,
+                        {
+                            "card": candidate_id,
+                            "criteria_sha256": binding["criteria_sha256"],
+                            "repository": current["repository"],
+                        },
+                        policy,
+                        source_sha256=source_sha,
+                    ):
+                        continue
+                    profile.supersede_profile(
+                        home,
+                        card.model_dump(mode="json"),
+                        policy,
+                        current["recipe"],
+                        current["qualified_by"],
+                        receipt["receipt_sha256"],
+                        predecessor_sha256=predecessor,
+                        runtime_sha256=plan.runtime_fingerprint(),
+                        source_sha256=source_sha,
+                        unclaimed=True,
+                    )
+                    refreshed_sha = profile.read_profile(home, candidate_id)[1]
+                    plan.write_once(
+                        done_path,
+                        {
+                            "schema": "skfleet.profile-requalification-receipt/v1",
+                            "card": candidate_id,
+                            "profile_sha256": refreshed_sha,
+                            "test_receipt_sha256": receipt["receipt_sha256"],
+                            "plan_sha256": plan_sha,
+                            "harvested": True,
+                        },
+                    )
+                    return "qualified:" + candidate_id
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    if card_id is not None:
+                        return "blocked:" + str(exc)[:160]
+    return held_state or "idle"
 
 
 def requalify_or_advance(
