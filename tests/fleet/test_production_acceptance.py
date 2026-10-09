@@ -149,6 +149,30 @@ def test_sealed_source_collect_survives_producer_claim_release(stopped_pair):
     assert context["source"]["head"] == manifest["head"]
 
 
+def test_sealed_review_collect_survives_reviewer_claim_release(stopped_pair):
+    home, policy, review, _, _, store = stopped_pair
+    store.append_event(
+        review["card"],
+        "release_claim",
+        "niobe",
+        released_owner=review["owner"],
+        expected_claim_revision=review["claim"],
+        reason="reviewer released after terminal PASS",
+    )
+    assert store.fold(review["card"]).owner is None
+
+    context = acceptance.collect(
+        home,
+        policy,
+        review["card"],
+        review["claim"],
+        process_check=lambda card: {"sessions": [], "units": []},
+    )
+
+    assert context["review"]["owner"] == review["owner"]
+    assert context["review"]["claim"] == review["claim"]
+
+
 def test_collected_producer_terminal_can_enter_independent_review(stopped_pair):
     home, _, review, status_path, _, store = stopped_pair
     status = json.loads(status_path.read_text())
@@ -372,9 +396,9 @@ def test_controller_requires_trusted_tests_and_finishes_without_legacy_release(
         home, policy, process_check=lambda card: {"sessions": [], "units": []}
     )
     assert len(results) == 1
-    assert results[0]["state"] == ("accepted" if tests_ready else "awaiting-trusted-tests"), (
-        results
-    )
+    assert results[0]["state"] == (
+        "accepted" if tests_ready else "awaiting-trusted-tests"
+    ), results
     row = store.fold(review["card"])
     assert row.status.value == ("done" if tests_ready else "doing")
     assert row.owner == (None if tests_ready else review["owner"])

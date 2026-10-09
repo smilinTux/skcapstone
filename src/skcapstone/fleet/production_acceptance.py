@@ -209,6 +209,29 @@ def _current_outcome(store, row):
     return outcome
 
 
+def _sealed_review_outcome(store, row, owner, claim):
+    """Prove the terminal reviewer PASS against its original native claim."""
+    claims = [
+        event
+        for event in store._read_events(row.id)
+        if event.get("action") == "claim"
+        and event.get("writer") == owner
+        and (event.get("claim_revision") or event.get("event_id")) == claim
+    ]
+    outcome = _latest_outcome(store, row.id)
+    value = str(outcome.get("verdict") or outcome.get("link_value") or "").strip()
+    if (
+        len(claims) != 1
+        or outcome.get("action") not in {"verdict", "link"}
+        or outcome.get("writer") != owner
+        or outcome.get("expected_claim_revision") not in (None, claim)
+        or value.split(maxsplit=1)[0].upper() != "PASS"
+        or str(outcome.get("ts", "")) < str(claims[0].get("ts", ""))
+    ):
+        raise ReviewEvidenceError("sealed independent review outcome is no longer current")
+    return outcome
+
+
 def _sealed_source_outcome(store, source_id, manifest):
     """Prove the exact producer verdict retained by the sealed review bundle."""
     owner = manifest.get("owner")
@@ -320,10 +343,14 @@ def collect(home, policy, card, claim, *, process_check):
     directory = review_directory(home, card, claim)
     store = CardStore(home)
     review = store.fold(card)
+    terminal = read_exit(home, card, claim)
+    review_owner = terminal.get("owner")
     if (
         review is None
-        or not review.owner
-        or review.meta.get("_claim_revision") != claim
+        or not isinstance(review_owner, str)
+        or not review_owner
+        or (review.owner is not None and review.owner != review_owner)
+        or (review.owner is not None and review.meta.get("_claim_revision") != claim)
         or review.meta.get("claim_conflicts")
         or "source-only" not in review.labels
         or "review" not in review.labels
@@ -347,7 +374,7 @@ def collect(home, policy, card, claim, *, process_check):
         raise ReviewEvidenceError("original producer custody unavailable")
     gateway = LiveCardStoreGateway(home)
     source_snapshot, review_snapshot = gateway.read_card(parent), gateway.read_card(card)
-    review_outcome = _current_outcome(store, review)
+    review_outcome = _sealed_review_outcome(store, review, review_owner, claim)
     repository = _binding(core, "repository")
     selected = _review_manifest(core, repository, head)
     if selected is None:
@@ -372,17 +399,16 @@ def collect(home, policy, card, claim, *, process_check):
         or outcome.get("action") != "verdict"
         or outcome.get("writer") != manifest["owner"]
         or _binding(core, "producer_identity") != manifest["owner"]
-        or manifest["owner"] == review.owner
+        or manifest["owner"] == review_owner
         or review_snapshot.verdict != "PASS"
         or review_snapshot.unresolved_review
-        or review_outcome.get("writer") != review.owner
+        or review_outcome.get("writer") != review_owner
         or not _source_only_applicability(card, home)
     ):
         raise ReviewEvidenceError("native proposal or source-only applicability differs")
     if manifest["tree"] != outcome.get("candidate_tree"):
         raise ReviewEvidenceError("source bundle belongs to another claim")
-    terminal = read_exit(home, card, claim)
-    if terminal["owner"] != review.owner or terminal["source_head"] != head:
+    if terminal["owner"] != review_owner or terminal["source_head"] != head:
         raise ReviewEvidenceError("review terminal binding differs")
     launches = [
         event
@@ -393,7 +419,7 @@ def collect(home, policy, card, claim, *, process_check):
     ]
     launch = {
         "host": terminal["host"],
-        "owner": review.owner,
+        "owner": review_owner,
         "revision": claim,
         "model": terminal["model"],
         "lane": terminal["lane"],
@@ -443,7 +469,7 @@ def collect(home, policy, card, claim, *, process_check):
         parent_card=parent,
         source_head=head,
         source_tree=manifest["tree"],
-        reviewer_identity=review.owner,
+        reviewer_identity=review_owner,
     )
     if (
         proposal["proposal"]["verdict"] != "PASS"
@@ -473,7 +499,7 @@ def collect(home, policy, card, claim, *, process_check):
     }
     review_item = {
         "card": card,
-        "owner": review.owner,
+        "owner": review_owner,
         "claim": claim,
         "revision": review_snapshot.revision,
         "terminal": terminal,
