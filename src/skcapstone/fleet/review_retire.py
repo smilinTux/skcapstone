@@ -18,6 +18,7 @@ from .production_review_custody import unit_terminal
 
 SCHEMA = "skfleet.remote-review-retirement/v1"
 PRESTART_SCHEMA = "skfleet.remote-review-prestart-retirement/v1"
+SUPERSEDE_SCHEMA = "skfleet.remote-review-supersession/v1"
 SHA = re.compile(r"[0-9a-f]{64}")
 CARD = re.compile(r"[0-9a-f]{8}")
 
@@ -411,6 +412,15 @@ def retired_offers(home: Path, card: str, events: list[dict]) -> set[str]:
                 and source_bundle._sha(raw_receipt) == event.get("receipt_sha256")
             ):
                 retired.add(request_id)
+            continue
+        if (
+            event.get("action") == "remote_review_supersede"
+            and event.get("schema") == SUPERSEDE_SCHEMA
+        ):
+            request_id = event.get("request_id")
+            if isinstance(request_id, str) and SHA.fullmatch(request_id):
+                if _supersession_proven(home, card, request_id, event, events):
+                    retired.add(request_id)
             continue
         if event.get("action") != "remote_review_retire" or event.get("schema") != SCHEMA:
             continue
@@ -1330,5 +1340,218 @@ def recover_failed_generations(paths, home: Path, *, actor: str = "niobe") -> li
         except (OSError, ValueError, KeyError, TypeError) as exc:
             results.append(
                 {"card": card, "node": node, "state": "refused", "reason": str(exc)[:160]}
+            )
+    return results
+
+
+SUPERSEDE_REASON = (
+    "automatic: the sealed reviewer's exact claim was released after its review "
+    "exit, so acceptance can never match the sealed native pair; superseded so a "
+    "fresh review generation is offered"
+)
+
+
+def _supersession_receipt(home: Path, card: str, request_id: str) -> Path:
+    return _receipt_path(home, card, request_id).parent / "supersession.json"
+
+
+def _supersession_proven(home: Path, card: str, request_id: str, event, events) -> bool:
+    """Accept a supersession only with its archived bytes and native release proof."""
+    receipt = _supersession_receipt(home, card, request_id)
+    try:
+        raw_receipt = _raw(receipt)
+        value = json.loads(raw_receipt)
+        archived_request = _raw(receipt.parent / "request.json")
+        archived_status = _raw(receipt.parent / "status.json")
+        archived_context = _raw(receipt.parent / "context.json")
+    except (OSError, ValueError):
+        return False
+    offers = [
+        row
+        for row in events
+        if row.get("action") == "remote_review_offer"
+        and row.get("request_id") == request_id
+        and row.get("request_sha256") == event.get("offer_request_sha256")
+    ]
+    releases = [
+        row
+        for row in events
+        if row.get("action") == "release_claim"
+        and row.get("released_owner") == value.get("released_owner")
+        and row.get("expected_claim_revision") == value.get("released_claim")
+    ]
+    try:
+        offer_digest = production_builder.digest(json.loads(archived_request))
+    except ValueError:
+        return False
+    return bool(
+        len(offers) == 1
+        and releases
+        and event.get("writer") == event.get("actor")
+        and dispatch.valid_name(event.get("actor", ""))
+        and value.get("schema") == SUPERSEDE_SCHEMA
+        and value.get("card_id") == card
+        and value.get("request_id") == request_id
+        and source_bundle._sha(archived_request) == value.get("request_sha256")
+        and value.get("request_sha256") == event.get("request_sha256")
+        and offer_digest == event.get("offer_request_sha256")
+        and source_bundle._sha(archived_status) == value.get("status_sha256")
+        and value.get("status_sha256") == event.get("status_sha256")
+        and source_bundle._sha(archived_context) == value.get("context_sha256")
+        and value.get("context_sha256") == event.get("context_sha256")
+        and source_bundle._sha(raw_receipt) == event.get("receipt_sha256")
+    )
+
+
+def _supersedable(store, home: Path, card: str, claim: str, owner: str):
+    """Return (request_id, node) when the sealed reviewer claim is provably gone."""
+    events = store._read_events(card)
+    current = store.fold(card)
+    released = any(
+        row.get("action") == "release_claim"
+        and row.get("released_owner") == owner
+        and row.get("expected_claim_revision") == claim
+        for row in events
+    )
+    if (
+        current is None
+        or current.archived
+        or not released
+        or (current.owner == owner and current.meta.get("_claim_revision") == claim)
+    ):
+        return None
+    launches = [
+        row
+        for row in events
+        if row.get("action") == "review_assignment_launch"
+        and row.get("claim_revision") == claim
+        and row.get("launched") is True
+    ]
+    if len(launches) != 1:
+        return None
+    execution = launches[0].get("execution") or {}
+    request_id, node = execution.get("request_id"), execution.get("node")
+    if (
+        not isinstance(request_id, str)
+        or not SHA.fullmatch(request_id)
+        or not dispatch.valid_name(str(node or ""))
+        or request_id in retired_offers(home, card, events)
+    ):
+        return None
+    return request_id, node
+
+
+def supersede_released_reviews(paths, home: Path, *, actor: str = "niobe") -> list[dict]:
+    """Supersede finished review generations whose sealed reviewer claim is gone.
+
+    Acceptance seals the exact reviewer owner and claim. The absent-worker reaper
+    used to release finished reviewers' claims (fixed by #1088), and a released
+    claim revision can never return, so acceptance stayed pending forever on
+    "native pair changed before trusted tests" (13 cards on chi, 2026-10-10).
+
+    Fail-closed: the sealed context must exist with no finished or negative
+    disposition; the native history must hold a release_claim for exactly that
+    sealed owner and claim, and the card must no longer carry that claim; one
+    launch and one offer must bind the generation. The request, status and
+    context bytes are archived with a receipt, the supersession is recorded
+    natively, and only then are the node pointers removed, so retired_offers()
+    treats the exit as historical and offer_review() can offer a fresh review.
+    """
+    from .production_acceptance import review_directory
+
+    home = Path(home)
+    results = []
+    for exit_file in sorted((home / "evidence/production-review-exits").glob("*.json")):
+        match = re.fullmatch(r"([0-9a-f]{8})-([0-9a-f]{32})\.json", exit_file.name)
+        if not match:
+            continue
+        card, claim = match.groups()
+        try:
+            directory = review_directory(home, card, claim)
+            if not (directory / "context.json").exists() or any(
+                (directory / name).exists()
+                for name in ("finished.json", "negative-disposition.json", "finish-intent.json")
+            ):
+                continue
+            raw_context = _raw(directory / "context.json")
+            context = json.loads(raw_context)
+            sealed = context.get("review") or {}
+            owner = sealed.get("owner")
+            if sealed.get("card") != card or sealed.get("claim") != claim or not owner:
+                continue
+            # Locate the generation first, then lock in retire()'s order
+            # (offer exclusion, request exclusion, card) and re-verify inside.
+            located = _supersedable(CardStore(home), home, card, claim, owner)
+            if located is None:
+                continue
+            request_id, node = located
+            request_path = dispatch.request_path(paths, node, card)
+            status_path = dispatch.status_path(paths, node, card)
+            with (
+                dispatch._request_exclusion(paths.root / "dispatch/.production-offer"),
+                dispatch._request_exclusion(request_path),
+                card_mutation_lock(home, card),
+            ):
+                store = CardStore(home)
+                if _supersedable(store, home, card, claim, owner) != located:
+                    continue
+                events = store._read_events(card)
+                raw_request, raw_status = _raw(request_path), _raw(status_path)
+                request, status = json.loads(raw_request), json.loads(raw_status)
+                offers = [
+                    row
+                    for row in events
+                    if row.get("action") == "remote_review_offer"
+                    and row.get("request_id") == request_id
+                ]
+                if (
+                    request.get("request_id") != request_id
+                    or status.get("request_id") != request_id
+                    or status.get("work_kind") != "review"
+                    or status.get("state") == "running"
+                    or len(offers) != 1
+                    or offers[0].get("request_sha256") != production_builder.digest(request)
+                ):
+                    continue
+                binding = dict(
+                    schema=SUPERSEDE_SCHEMA,
+                    card_id=card,
+                    node=node,
+                    request_id=request_id,
+                    request_sha256=source_bundle._sha(raw_request),
+                    status_sha256=source_bundle._sha(raw_status),
+                    context_sha256=source_bundle._sha(raw_context),
+                    released_owner=owner,
+                    released_claim=claim,
+                    actor=actor,
+                    reason=SUPERSEDE_REASON,
+                )
+                receipt = _supersession_receipt(home, card, request_id)
+                source_bundle._once(receipt.parent / "request.json", raw_request)
+                source_bundle._once(receipt.parent / "status.json", raw_status)
+                source_bundle._once(receipt.parent / "context.json", raw_context)
+                source_bundle._once(receipt, json.dumps(binding, sort_keys=True).encode())
+                store.append_event(
+                    card,
+                    "remote_review_supersede",
+                    actor,
+                    schema=SUPERSEDE_SCHEMA,
+                    request_id=request_id,
+                    request_sha256=binding["request_sha256"],
+                    offer_request_sha256=production_builder.digest(request),
+                    status_sha256=binding["status_sha256"],
+                    context_sha256=binding["context_sha256"],
+                    released_owner=owner,
+                    released_claim=claim,
+                    actor=actor,
+                    reason=SUPERSEDE_REASON,
+                    receipt_sha256=source_bundle._sha(_raw(receipt)),
+                )
+                _remove_pointer(status_path)
+                _remove_pointer(request_path)
+            results.append({"card": card, "claim": claim, "state": "superseded"})
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            results.append(
+                {"card": card, "claim": claim, "state": "refused", "reason": str(exc)[:160]}
             )
     return results

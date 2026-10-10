@@ -8180,10 +8180,13 @@ log(
         len(_builder_candidate_ids - {row[2] for row in pool}),
     ),
 )
-# Fail-safe: a remote reviewer that exited non-zero with no review packet held
-# its claim forever (ffd28b33, killed by a gateway restart 2026-10-10). The
-# authority releases that exact claim and retires the generation through the
-# governed retire(), so the review is offered again instead of waiting on a human.
+# Fail-safe review recovery, authority-only:
+# - a remote reviewer that exited non-zero with no review packet held its claim
+#   forever (ffd28b33, killed by a gateway restart 2026-10-10); release that exact
+#   claim and retire the generation through the governed retire();
+# - a finished review whose sealed reviewer claim the old reaper released could
+#   never be accepted ("native pair changed before trusted tests"); supersede it.
+# Both re-offer the review instead of waiting on a human.
 if (
     not DRY
     and PRODUCTION_POLICY
@@ -8191,7 +8194,10 @@ if (
     and _is_niobe_builder_host(HOST)
 ):
     try:
-        from skcapstone.fleet.review_retire import recover_failed_generations
+        from skcapstone.fleet.review_retire import (
+            recover_failed_generations,
+            supersede_released_reviews,
+        )
 
         for _recovered in recover_failed_generations(
             default_fleet_paths(), Path(HOME) / ".skcapstone"
@@ -8199,6 +8205,14 @@ if (
             log(d, "REVIEW_GENERATION_RECOVERY|%s|%s|node=%s|state=%s|%s" % (
                 HOST, _recovered["card"], _recovered["node"], _recovered["state"],
                 _recovered.get("reason", "")))
+        # A finished review whose sealed reviewer claim was released can never
+        # be accepted; supersede it so a fresh review generation is offered.
+        for _superseded in supersede_released_reviews(
+            default_fleet_paths(), Path(HOME) / ".skcapstone"
+        ):
+            log(d, "REVIEW_GENERATION_SUPERSEDED|%s|%s|claim=%s|state=%s|%s" % (
+                HOST, _superseded["card"], _superseded["claim"], _superseded["state"],
+                _superseded.get("reason", "")))
     except Exception as _exc:  # noqa: BLE001 - recovery must never stop a cycle
         log(d, "REVIEW_GENERATION_RECOVERY_FAILED|%s|%s" % (HOST, str(_exc)[:160]))
 try:
