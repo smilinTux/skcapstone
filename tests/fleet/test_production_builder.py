@@ -528,6 +528,50 @@ def test_production_exit_preserves_source_custody(
     assert result["owner"] == "source-owner"
 
 
+@pytest.mark.parametrize(
+    "folded,closed",
+    [
+        ({"owner": None, "status": SimpleNamespace(value="ready")}, True),
+        ({"owner": None, "status": SimpleNamespace(value="backlog")}, True),
+        ({"owner": None, "status": SimpleNamespace(value="review")}, False),
+        ({"owner": "source-owner", "status": SimpleNamespace(value="ready")}, False),
+    ],
+)
+def test_authority_released_generation_closes_instead_of_holding_evidence(
+    paths, production_setup, monkeypatch, tmp_path, folded, closed
+):
+    from skcapstone.fleet import source_bundle
+
+    request = builder.offer(
+        paths, _card(), ["sk-m", "source-only"], writer=production_setup.writer
+    )
+    status = {
+        "owner": "source-owner",
+        "claim_revision": "a" * 32,
+        "attempt": 1,
+        "production": request["production"],
+        "unit": production.unit_name(request, 1),
+    }
+    monkeypatch.setattr(builder, "_process_state", lambda status: (False, 0))
+    monkeypatch.setattr(builder.CardStore, "fold", lambda *args: _folded(**folded))
+    monkeypatch.setattr(
+        builder, "_release_exact", lambda *args, **kwargs: pytest.fail("already released")
+    )
+
+    def publish(*args, **kwargs):
+        raise source_bundle.SourceBundleError("source proposal claim changed")
+
+    monkeypatch.setattr(source_bundle, "publish_source", publish)
+    result = builder._reconcile_running(paths, tmp_path, "node-worker", request, status)
+    if closed:
+        assert result["state"] == "blocked"
+        assert result["claim_released"] is True
+        assert result["error"] == "claim released by authority before evidence"
+    else:
+        assert result["state"] == "awaiting-evidence"
+        assert result["claim_released"] is False
+
+
 def test_stopped_remote_typed_blocked_does_not_replay_or_publish(
     paths, production_setup, monkeypatch, tmp_path
 ):
