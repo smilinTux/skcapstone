@@ -10,7 +10,10 @@ Only HTTP 503 with error type `bucket_no_eligible_member`, HTTP 504, and HTTP
 429 retry. A 429 is the gateway's own pool or queue refusal (for example the
 zai concurrency ceiling), so it is transient; it waits at least the scheduled
 backoff, or a `Retry-After` hint capped at 60 seconds. Terminal 429 ended nearly
-finished Seraph reviews on 2026-10-10.
+finished Seraph reviews on 2026-10-10. A 429 uses its own schedule (30, 60, 90,
+then 120 second waits, up to seven attempts) because one upstream z.ai 429 puts
+the whole zai backend into a 30 second cooldown; the lane request budget still
+bounds the total.
 There are at most four HTTP attempts with 30, 60 and 120 second backoff, inside
 a six-minute total request budget. Slow attempts consume that budget; fewer
 than four may fit. Cancellation remains cancellation. Every other client 4xx,

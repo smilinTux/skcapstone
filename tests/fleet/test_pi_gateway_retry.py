@@ -407,8 +407,19 @@ let calls=0;const records=[],waits=[];
 const t=gatewayTransport(async()=>{calls++;return calls<3?refused(429,'pool_full'):new Response('ok');},
   e=>records.push(e),{wait:async ms=>waits.push(ms)});
 assert.equal((await t.fetch('http://fixture.invalid')).status,200);
-assert.equal(calls,3);assert.deepEqual(waits,[10000,20000]);
+assert.equal(calls,3);assert.deepEqual(waits,[30000,60000]);
 assert.deepEqual(records.map(r=>r.event),['retry','retry','result']);
+""")
+
+
+def test_gateway_429_outlasts_backend_cooldowns_within_budget():
+    """477886d2: four 429s inside back-to-back 30s cooldowns killed a build."""
+    node_check("""
+let calls=0;let clock=0;const waits=[];
+const t=gatewayTransport(async()=>{calls++;return calls<7?refused(429):new Response('ok');},
+  ()=>{},{now:()=>clock,wait:async ms=>{waits.push(ms);clock+=ms;},budgetMs:570000});
+assert.equal((await t.fetch('http://fixture.invalid')).status,200);
+assert.equal(calls,7);assert.deepEqual(waits,[30000,60000,90000,120000,120000,0]);
 """)
 
 
