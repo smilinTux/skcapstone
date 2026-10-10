@@ -573,6 +573,91 @@ def preflight(
     return validate_profile(value, expected, policy)
 
 
+def acceptance_requalifiable(value: dict, expected: dict, policy: dict) -> bool:
+    """True when only fingerprints differ, so acceptance tests can requalify.
+
+    Custody-held sources were never requalified: requalification fan-out
+    refuses owned cards, and a profile qualified at the base revision can
+    never match the candidate head acceptance binds. Every merge touching a
+    harness module also stales every profile (runtime fingerprint), so on chi
+    (2026-10-10) 18 reviewed cards waited forever on "qualified test profile is
+    missing, stale or conflicting". Card, repository, criteria, current schema
+    and authority host must still match exactly, and a node environment must
+    still validate here.
+    """
+    try:
+        _validate_shape(value)
+    except plan.TestEvidenceError:
+        return False
+    authority = policy.get("authority_host")
+    if (
+        value["schema"] in {SCHEMA_V1, node.SCHEMA_V1, composite.SCHEMA_V1}
+        or any(
+            value.get(key) != expected.get(key)
+            for key in ("card", "repository", "criteria_sha256")
+        )
+        or value.get("host") != authority
+        or authority != socket.gethostname().split(".")[0].lower()
+    ):
+        return False
+    if node.is_node(value) or composite.is_composite(value):
+        try:
+            node.validate_environment(value["node_environment"])
+        except plan.TestEvidenceError:
+            return False
+    return True
+
+
+def refresh_accepted_profile(
+    home: Path, binding: dict, policy: dict, repository: str, receipt_sha256: str
+) -> bool:
+    """Publish the successor profile proven by acceptance's passing trusted tests.
+
+    Returns False when the current profile is already valid for this
+    candidate. The successor is bound to the source custody claim when the
+    source is still held, or published unclaimed when it was released, and
+    supersede_profile() re-validates it against the live environment.
+    """
+    expected = {
+        "card": binding["source_card"],
+        "repository": repository,
+        "criteria_sha256": binding["criteria_sha256"],
+    }
+    value, predecessor = read_profile(home, expected["card"])
+    source_sha256 = plan.source_fingerprint(
+        repository, binding["source_head"], binding["source_tree"]
+    )
+    try:
+        validate_profile(value, dict(expected, source_sha256=source_sha256), policy)
+        return False
+    except plan.TestEvidenceError:
+        if not acceptance_requalifiable(value, expected, policy):
+            raise
+    card = CardStore(home).fold(expected["card"])
+    if card is None:
+        raise plan.TestEvidenceError("profile source claim changed")
+    claimed = card.owner is not None
+    supersede_profile(
+        home,
+        card.model_dump(mode="json"),
+        policy,
+        value["recipe"],
+        value["qualified_by"],
+        receipt_sha256,
+        predecessor_sha256=predecessor,
+        runtime_sha256=plan.runtime_fingerprint(),
+        source_sha256=source_sha256,
+        source_claim=(
+            {"owner": binding["source_owner"], "claim_revision": binding["source_claim_revision"]}
+            if claimed
+            else None
+        ),
+        unclaimed=not claimed,
+        node_environment=value.get("node_environment"),
+    )
+    return True
+
+
 def seal_candidate(
     home: Path, binding: dict, workspace: Path, policy: dict, repository: str
 ) -> None:
@@ -598,7 +683,16 @@ def seal_candidate(
         expected["source_sha256"] = plan.source_fingerprint(
             repository, binding["source_head"], binding["source_tree"]
         )
-    validate_profile(value, expected, policy)
+    try:
+        validate_profile(value, expected, policy)
+    except plan.TestEvidenceError:
+        # Acceptance runs this exact recipe at the candidate head in the current
+        # trusted runtime, which is the evidence a requalification would produce.
+        # A profile that differs only in fingerprints (base-revision source,
+        # runtime, toolchain) is sealed, and refresh_accepted_profile() publishes
+        # its successor once those tests pass. Contract changes still refuse.
+        if not acceptance_requalifiable(value, expected, policy):
+            raise
     plan.seal_plan(
         home,
         binding,
