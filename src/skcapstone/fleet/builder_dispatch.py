@@ -689,15 +689,28 @@ def _offer(paths, core, labels, *, writer, now=None):
     return request
 
 
+# A node writes this before claiming when the request's production binding no
+# longer matches the live policy (a quota edit, a host change). Nothing was
+# claimed or launched, so the request is dead, not held: without a re-offer the
+# card stays parked on a terminal "blocked" status forever (fef9698e and
+# a69ec3a8 after the 2026-10-10 builder runtime quota change).
+POLICY_REFUSED_BEFORE_CLAIM = "production request policy or host changed"
+
+
 def _unclaimed_expired_offer(request: dict, status: dict) -> bool:
-    """Retry only a node-proven expiry that never acquired source custody."""
+    """Retry only a node-proven refusal that never acquired source custody."""
+    if (
+        status.get("request_id") != request.get("request_id")
+        or status.get("state") != "blocked"
+        or status.get("owner")
+        or status.get("claim_revision")
+    ):
+        return False
+    if status.get("error") == POLICY_REFUSED_BEFORE_CLAIM:
+        return status.get("attempt") in (None, 0)
     return bool(
-        status.get("request_id") == request.get("request_id")
-        and status.get("state") == "blocked"
-        and status.get("error") == "unclaimed offer expired"
+        status.get("error") == "unclaimed offer expired"
         and status.get("attempt") == 0
-        and not status.get("owner")
-        and not status.get("claim_revision")
         and _lease_expired(request, _now())
     )
 
@@ -1621,7 +1634,7 @@ def _consume_available(
                     request,
                     "blocked",
                     claim_released=False,
-                    error="production request policy or host changed",
+                    error=POLICY_REFUSED_BEFORE_CLAIM,
                 )
                 continue
             if production is not None:
