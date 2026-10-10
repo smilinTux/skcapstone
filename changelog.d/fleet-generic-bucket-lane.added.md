@@ -1,0 +1,1 @@
+The fleet can route builds and reviews to generic skgateway size buckets (sk-s/m/l/xl) through an optional gateway lane, so enabling or disabling models is a gateway config change instead of card edits.

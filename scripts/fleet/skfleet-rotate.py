@@ -9613,7 +9613,10 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         log(d,"ROUTE_PREFLIGHT_OK|%s|%s|requested=%s|served=%s|provider=%s"%
             (HOST,cid,_route_preflight.requested_identity,
              _route_preflight.served_identity,_route_preflight.provider or "unknown"))
-    if PRODUCTION_POLICY and _route_preflight.provider != _selected_route["capacity_domain"]:
+    from skcapstone.fleet.production_routes import served_backend_matches
+    if PRODUCTION_POLICY and not served_backend_matches(
+            _route_preflight.provider, _selected_route["capacity_domain"],
+            _selected_route.get("bucket_members")):
         log(d,"ROUTE_PREFLIGHT_BLOCKED|%s|%s|reason=backend-family-drift"%(HOST,cid))
         continue
     if PRODUCTION_POLICY and _production_catalog_revision != _review_route_snapshot["capacity_revision"]:

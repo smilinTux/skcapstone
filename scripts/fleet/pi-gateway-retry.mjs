@@ -24,10 +24,13 @@ function retryAfterMs(response) {
 
 function isGlmModel(model) {
   return typeof model?.id === "string"
-    && (/^glm-/i.test(model.id) || /^sk-glm-[sml]$/i.test(model.id));
+    && (/^glm-/i.test(model.id) || /^sk-glm-[sml]$/i.test(model.id)
+      // Generic buckets may be served by GLM, so they get the GLM budget.
+      || /^sk-(s|m|l|xl)$/i.test(model.id));
 }
 export function requestPolicyForLane(lane) {
-  return lane === "glm"
+  // The gateway lane routes generic buckets that may land on GLM.
+  return lane === "glm" || lane === "gateway"
     ? { budgetMs: 570_000, idleTimeoutMs: 600_000 }
     : { budgetMs: 360_000, idleTimeoutMs: 390_000 };
 }

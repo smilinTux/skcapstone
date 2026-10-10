@@ -10,6 +10,7 @@ from skcoord.card_store import CardStore
 
 from .paths import FleetPaths
 from .production_receipts import load_production_snapshot
+from .production_routes import served_backend_matches
 from .source_bundle import MAX_EVIDENCE, _binding, _read
 
 
@@ -254,7 +255,9 @@ def _remote_custody(fleet_paths, card_id, owner, claim, binding):
             proof = status.get("route_preflight") or {}
             if (
                 proof.get("requested_identity") == production.get("model")
-                and proof.get("provider") == production.get("gateway_backend")
+                and served_backend_matches(
+                    proof.get("provider"), production.get("gateway_backend")
+                )
                 and isinstance(proof.get("requested_identity"), str)
                 and proof["requested_identity"]
                 and isinstance(proof.get("provider"), str)
