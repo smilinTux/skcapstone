@@ -902,3 +902,15 @@ def test_contract_change_is_never_requalified_by_acceptance(qualified, monkeypat
         profile.refresh_accepted_profile(
             home, binding, policy, core["meta"]["repository"], "9" * 64
         )
+
+
+def test_acceptance_without_a_reusable_profile_has_nothing_to_refresh(tmp_path, monkeypatch):
+    core = {
+        "id": "abcd1234",
+        "meta": {"repository": "https://example.org/r.git"},
+        "acceptance_criteria": ["x"],
+    }
+    monkeypatch.setattr(profile, "supersede_profile", lambda *a, **k: pytest.fail("published"))
+    assert not profile.refresh_accepted_profile(
+        tmp_path, _binding(core), {"authority_host": "h"}, "https://example.org/r.git", "9" * 64
+    )

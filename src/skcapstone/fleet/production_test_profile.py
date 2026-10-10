@@ -623,7 +623,10 @@ def refresh_accepted_profile(
         "repository": repository,
         "criteria_sha256": binding["criteria_sha256"],
     }
-    value, predecessor = read_profile(home, expected["card"])
+    try:
+        value, predecessor = read_profile(home, expected["card"])
+    except FileNotFoundError:
+        return False  # a legacy plan without a reusable profile has nothing to refresh
     source_sha256 = plan.source_fingerprint(
         repository, binding["source_head"], binding["source_tree"]
     )
