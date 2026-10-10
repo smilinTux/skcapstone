@@ -137,3 +137,17 @@ def test_exact_retired_request_exit_is_historical_not_accepted(tmp_path, directo
         "request_id": request,
         "historical": True,
     }
+
+
+def test_duplicate_applicability_receipts_are_reported_as_ambiguous(tmp_path, monkeypatch):
+    store = _Store(tmp_path, {})
+    store.events[CARD] = [
+        {"action": "link", "link_key": "applicability_receipt", "link_value": "{}"},
+        {"action": "link", "link_key": "applicability_receipt", "link_value": "{}"},
+    ]
+    monkeypatch.setattr(acceptance, "_source_only_applicability", lambda card, home: False)
+
+    assert (
+        acceptance._source_applicability_error(store, CARD, tmp_path)
+        == "duplicate source-only applicability receipts"
+    )
