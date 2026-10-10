@@ -482,3 +482,42 @@ def test_continuation_launches_under_current_policy_after_policy_drift(ready_ret
     )
     assert len(launches) == 1
     assert path.read_bytes() == before
+
+
+def test_expired_unused_grant_is_replaced_and_kept_on_record(preserved, monkeypatch):
+    a = preserved
+    a.outcome = {}
+    monkeypatch.setattr(
+        builder.CardStore,
+        "_read_events",
+        lambda *args: [
+            {
+                "action": "claim",
+                "claim_revision": a.status["claim_revision"],
+                "owner": a.status["owner"],
+                "ts": "2026-10-01T01:00:00Z",
+            }
+        ],
+    )
+
+    def probe(host, payload):
+        return continuation.source_proof(
+            a.paths,
+            a.request,
+            a.status,
+            continuation.directory(a.home, a.request),
+            apply=payload["apply"],
+            unfinished=True,
+        )
+
+    a.kwargs["probe"] = probe
+    first = authorize(a, unfinished=True, apply=True)["grant"]
+    with pytest.raises(ValueError, match="already authorized"):
+        authorize(a, unfinished=True, apply=True)
+    later = builder._now() + __import__("datetime").timedelta(hours=2)
+    monkeypatch.setattr(builder, "_now", lambda: later)
+    second = authorize(a, unfinished=True, apply=True)["grant"]
+    target = continuation.directory(a.home, a.request)
+    assert second["id"] != first["id"]
+    assert (target / ("expired-" + first["id"] + ".json")).exists()
+    assert json.loads((target / "grant.json").read_text())["id"] == second["id"]
