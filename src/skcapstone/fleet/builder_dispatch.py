@@ -1021,6 +1021,27 @@ def _reconcile_running(
             "evidence_sha256": card.links.get("evidence_sha256")
             or card.links.get("candidate_evidence_sha256"),
         }
+    elif (
+        status.get("production") is not None
+        and card is not None
+        and getattr(card.status, "value", card.status) in {"ready", "backlog"}
+        and card.owner is None
+        and card.meta.get("_claim_revision") != revision
+    ):
+        # The authority already released this generation's claim and put the
+        # card back in the queue, so no proposal can ever publish under it.
+        # Holding awaiting-evidence here kept every fresh offer for the card
+        # skipped on this node forever (chi, 2026-10-10: 52f7c2a5, a0834032).
+        return _write_status(
+            paths,
+            node,
+            request,
+            "blocked",
+            **common,
+            exit_code=exit_code,
+            claim_released=True,
+            error="claim released by authority before evidence",
+        )
     elif status.get("production") is not None:
         from .builder_continue import original_outcome_pending
         from .production_exit import release_blocked
