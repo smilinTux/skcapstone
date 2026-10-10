@@ -92,6 +92,25 @@ def _transaction(home: Path, host: str):
         yield root
 
 
+def admission_ready(home: Path, policy: dict, host: str) -> tuple[bool, str]:
+    """Advisory pre-claim check against the same ledger reserve_launch charges.
+
+    The review consumer pre-checked only live units, then claimed, then hit an
+    AdmissionDeferredError from the reservation ledger and released: a claim and
+    release every tick. That churn made expired offers unretirable by the
+    governed prestart retirement (11 reviews, 2026-10-10).
+    """
+    limits_policy = policy.get("node_admission", {}).get(host, {})
+    with _transaction(home, host) as root:
+        rows = _occupancy(root, home, strict_terminal=bool(limits_policy))
+    cap = limits_policy.get("max_concurrent_workers")
+    protected = limits_policy.get("protected_service_bindings", {})
+    charged = sum(1 for row in rows if row["unit"] not in protected)
+    if cap is not None and charged >= cap:
+        return False, f"worker occupancy cap reached: charged={charged} cap={cap}"
+    return local_worker_admission(policy, host, rows)
+
+
 def _private_lock_stat(info: os.stat_result) -> bool:
     """Match the ownership and file shape required for an admission lock."""
     return (
