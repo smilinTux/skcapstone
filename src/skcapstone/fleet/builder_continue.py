@@ -309,6 +309,18 @@ def remote_check(host, payload):
     return json.loads(result.stdout)
 
 
+def _live_grant(target) -> bool:
+    """True when an unexpired grant is waiting; an expired one may be replaced."""
+    path = target / "grant.json"
+    if not path.exists():
+        return False
+    try:
+        grant = json.loads(source_bundle._read(path, source_bundle.MAX_EVIDENCE))
+    except (OSError, ValueError):
+        return True  # unreadable means unproven, never replaced
+    return str(grant.get("expires_at", "")) > builder._iso(builder._now())
+
+
 def authorize(
     paths,
     home,
@@ -355,7 +367,7 @@ def authorize(
             transport = builder_transport.token(transport_session, transport_sha256)
         bound = binding(home, request, status, transport=transport, unfinished=unfinished)
         target = directory(home, request)
-        if (target / "grant.json").exists() or (target / "consumed.json").exists():
+        if (target / "consumed.json").exists() or _live_grant(target):
             raise ValueError("continuation already authorized or consumed")
         proof = probe(
             request["production"]["host"],
@@ -387,6 +399,12 @@ def authorize(
         if not apply:
             return {"state": "qualified-check-only", "grant": grant}
         custody.private_directory(target)
+        expired = target / "grant.json"
+        if expired.exists():
+            # An unused grant whose hour ran out (no node capacity in time) is
+            # kept for the record and replaced; it can never be consumed.
+            old = json.loads(source_bundle._read(expired, source_bundle.MAX_EVIDENCE))
+            os.replace(expired, target / ("expired-" + str(old.get("id")) + ".json"))
         source_bundle._once(target / "grant.json", custody.encoded(grant))
         return {
             "state": "authorized-no-launch",
@@ -528,7 +546,8 @@ def auto_continue_unfinished(paths, home, *, actor="niobe", limit=4, probe=remot
         request = builder._load(builder.request_path(paths, node, card)) or {}
         if request.get("request_id") != status.get("request_id"):
             continue
-        if (directory(home, request) / "grant.json").exists():
+        target = directory(home, request)
+        if (target / "consumed.json").exists() or _live_grant(target):
             continue
         try:
             outcome = authorize(
