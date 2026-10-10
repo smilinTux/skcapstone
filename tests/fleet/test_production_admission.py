@@ -406,3 +406,26 @@ def test_pre_claim_check_sees_ledger_reservations(capacity):
     reserve(capacity)
     assert admission.active_resource_units(capacity) == []
     assert not admission.admission_ready(capacity, POLICY, HOST)[0]
+
+
+def test_ended_unit_past_startup_grace_holds_no_capacity(capacity):
+    """A short review that finished between occupancy passes frees memory at once."""
+    reserve(capacity)
+    _started(capacity, admission.STARTUP_GRACE_SECONDS + 60)
+    other = dict(card_id="87654321", owner="next", claim_revision="next-claim")
+    CardStore(capacity).create(
+        CardCore(
+            id=other["card_id"],
+            title="Next synthetic work",
+            initial_owner=other["owner"],
+            initial_claim_revision=other["claim_revision"],
+        )
+    )
+    reserve(capacity, other, "skfleet-worker-next.service")
+
+
+def test_fresh_start_within_grace_stays_charged(capacity):
+    reserve(capacity)
+    _started(capacity, 30)
+    with pytest.raises(admission.AdmissionError, match="capacity"):
+        reserve(capacity, dict(BINDING, attempt="other"), "skfleet-worker-other.service")
