@@ -6,10 +6,14 @@ The existing models, authentication, base URL and request body remain unchanged.
 The helper ships beside the guard through the normal package script manifest;
 no local extension installation or worker restart is part of this change.
 
-Only HTTP 503 with error type `bucket_no_eligible_member`, and HTTP 504, retry.
+Only HTTP 503 with error type `bucket_no_eligible_member`, HTTP 504, and HTTP
+429 retry. A 429 is the gateway's own pool or queue refusal (for example the
+zai concurrency ceiling), so it is transient; it waits at least the scheduled
+backoff, or a `Retry-After` hint capped at 60 seconds. Terminal 429 ended nearly
+finished Seraph reviews on 2026-10-10.
 There are at most four HTTP attempts with 30, 60 and 120 second backoff, inside
 a six-minute total request budget. Slow attempts consume that budget; fewer
-than four may fit. Cancellation remains cancellation. Every client 4xx,
+than four may fit. Cancellation remains cancellation. Every other client 4xx,
 unrelated or malformed 503, and partial streamed response stays terminal.
 There is no alternate provider or privacy-scope fallback.
 

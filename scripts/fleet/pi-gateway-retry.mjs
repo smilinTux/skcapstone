@@ -8,6 +8,13 @@ const MIN_ATTEMPT_WINDOW_MS = 30_000;
 const DELAYS_MS = [10_000, 20_000, 30_000];
 const GLM_CONTEXT_WINDOW = 128_000;
 
+// Honor a gateway Retry-After (seconds) on 429, capped so one hint cannot
+// consume the whole request budget.
+function retryAfterMs(response) {
+  const seconds = Number(response.headers?.get?.("retry-after"));
+  return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds * 1000, 60_000) : 0;
+}
+
 function isGlmModel(model) {
   return typeof model?.id === "string"
     && (/^glm-/i.test(model.id) || /^sk-glm-[sml]$/i.test(model.id));
@@ -99,13 +106,18 @@ export function gatewayTransport(
             { ...options, signal },
           );
           const fields = await errorFields(response);
-          const transient = response.status === 504 || (
+          // 429 is the gateway's own pool/queue refusal (zai concurrency ceiling):
+          // transient by definition. Terminal 429 killed nearly finished Seraph
+          // reviews on chiap02 (ae812f7a, bb6da93e, 2026-10-10 01:48Z).
+          const transient = response.status === 504 || response.status === 429 || (
             response.status === 503 && fields.type === "bucket_no_eligible_member"
           ) || (
             response.status === 502
             && (fields.type === "malformed_response" || fields.code === "empty_upstream_response")
           );
-          const requestedDelay = DELAYS_MS[attempt - 1];
+          const requestedDelay = response.status === 429
+            ? Math.max(DELAYS_MS[attempt - 1], retryAfterMs(response))
+            : DELAYS_MS[attempt - 1];
           const remaining = budgetMs - (now() - started);
           const retry = transient && replayable && attempt < MAX_ATTEMPTS
             && remaining >= MIN_ATTEMPT_WINDOW_MS;
