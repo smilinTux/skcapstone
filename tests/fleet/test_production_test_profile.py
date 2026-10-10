@@ -914,3 +914,51 @@ def test_acceptance_without_a_reusable_profile_has_nothing_to_refresh(tmp_path, 
     assert not profile.refresh_accepted_profile(
         tmp_path, _binding(core), {"authority_host": "h"}, "https://example.org/r.git", "9" * 64
     )
+
+
+def _base_profile_setup(s):
+    s.plan_path.unlink()  # Fixture-only removal of the legacy one-candidate plan.
+    core = {
+        "id": s.binding["source_card"],
+        "meta": {"repository": "https://example.org/public.git"},
+        "acceptance_criteria": ["Run the parser checks."],
+    }
+    binding = dict(s.binding, criteria_sha256=profile.contract(core)["criteria_sha256"])
+    recipe = {
+        "pytest": {"tests/test_parser-case.py": 1},
+        "compile": ["scripts/fleet/skfleet-working.py"],
+        "lint": ["src/parser-case.py"],
+        "changelog": False,
+    }
+    # Qualified at the base revision: its source fingerprint is not the candidate's.
+    profile.qualify_profile(
+        s.home, core, s.policy, recipe, "operator", "b" * 64, source_sha256="0" * 64
+    )
+    return core, binding
+
+
+def test_acceptance_seals_a_base_revision_profile_for_requalification(
+    setup,  # noqa: F811
+):
+    s = setup
+    _core, binding = _base_profile_setup(s)
+    profile.seal_candidate(
+        s.home, binding, s.workspace, s.policy, "https://example.org/public.git"
+    )
+    sealed, _, _ = plan.load_plan(s.home, binding)
+    assert sealed["acceptance_requalification"] is True
+
+
+def test_acceptance_never_seals_a_profile_for_other_criteria(
+    setup,  # noqa: F811
+):
+    s = setup
+    _core, binding = _base_profile_setup(s)
+    with pytest.raises(plan.TestEvidenceError):
+        profile.seal_candidate(
+            s.home,
+            dict(binding, criteria_sha256="9" * 64),
+            s.workspace,
+            s.policy,
+            "https://example.org/public.git",
+        )

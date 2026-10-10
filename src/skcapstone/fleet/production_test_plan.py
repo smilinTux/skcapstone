@@ -435,6 +435,7 @@ def seal_plan(
     profile_predecessor_sha256: str | None = None,
     execution_host: str | None = None,
     initial_profile_qualification: bool = False,
+    acceptance_requalification: bool = False,
 ) -> Path:
     """Seal an explicitly qualified legacy or reusable profile for one candidate."""
     if predecessor_sha256 is not None:
@@ -454,6 +455,7 @@ def seal_plan(
                 profile_predecessor_sha256,
                 execution_host,
                 initial_profile_qualification,
+                acceptance_requalification,
             )
     return _seal_plan(
         home,
@@ -468,6 +470,7 @@ def seal_plan(
         profile_predecessor_sha256,
         execution_host,
         initial_profile_qualification,
+        acceptance_requalification,
     )
 
 
@@ -521,6 +524,7 @@ def _seal_plan(
     profile_predecessor_sha256: str | None,
     execution_host: str | None,
     initial_profile_qualification: bool,
+    acceptance_requalification: bool = False,
 ) -> Path:
     check_binding(binding)
     execution_host = execution_host or policy["authority_host"]
@@ -647,7 +651,23 @@ def _seal_plan(
                     binding["source_head"],
                     binding["source_tree"],
                 )
-            validate_profile(profile, expected, policy)
+            try:
+                validate_profile(profile, expected, policy)
+            except TestEvidenceError:
+                # Only acceptance asks for this, after acceptance_requalifiable():
+                # its trusted run at this candidate is the requalification.
+                from .production_test_profile import acceptance_requalifiable
+
+                if not (
+                    acceptance_requalification
+                    and acceptance_requalifiable(
+                        profile,
+                        {**expected_profile, "repository": profile.get("repository")},
+                        policy,
+                    )
+                ):
+                    raise
+                value["acceptance_requalification"] = True
         value["profile"] = profile
         value["checks"] = recipe_checks(profile["recipe"])
 
@@ -797,6 +817,10 @@ def _validate_plan(
         from .production_test_profile import read_profile, recipe_checks
 
         required.add("profile")
+        if plan.get("acceptance_requalification") is True:
+            if requalification or initial_qualification:
+                raise TestEvidenceError("operator test plan is invalid or stale")
+            required.add("acceptance_requalification")
         profile = plan["profile"]
         if initial_qualification:
             from .production_test_profile import _validate_shape
@@ -866,22 +890,26 @@ def _validate_plan(
             or profile.get("criteria_sha256") != binding["criteria_sha256"]
             or any(
                 profile.get(k) != plan.get(k)
-                for k in (
-                    "qualified_by",
-                    "qualification_sha256",
-                    "python_sha256",
-                    "runtime_sha256",
-                    "policy_sha256",
-                    "host",
-                )
+                for k in ("qualified_by", "qualification_sha256", "host")
             )
+            # An acceptance requalification seals a profile whose fingerprints
+            # differ by design; its trusted run at this candidate refreshes them.
             or (
-                "source_sha256" in profile
-                and profile["source_sha256"]
-                != source_fingerprint(
-                    profile.get("repository", ""),
-                    binding["source_head"],
-                    binding["source_tree"],
+                plan.get("acceptance_requalification") is not True
+                and (
+                    any(
+                        profile.get(k) != plan.get(k)
+                        for k in ("python_sha256", "runtime_sha256", "policy_sha256")
+                    )
+                    or (
+                        "source_sha256" in profile
+                        and profile["source_sha256"]
+                        != source_fingerprint(
+                            profile.get("repository", ""),
+                            binding["source_head"],
+                            binding["source_tree"],
+                        )
+                    )
                 )
             )
         ):
