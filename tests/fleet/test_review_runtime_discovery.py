@@ -38,15 +38,15 @@ def test_missing_review_runtime_refuses_before_claim(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "source,reviewer,labels,expected",
     [
-        ("glm", "glm", ["review"], False),
-        ("glm", "glm", ["review", "glm-only"], False),
-        ("glm", "glm", ["review", "review-distinct-agent"], False),
-        ("glm", "glm", ["review", "glm-only", "review-distinct-agent"], True),
-        ("codex", "codex", ["review", "glm-only", "review-distinct-agent"], False),
+        ("glm", "glm", ["review"], True),
+        ("deepseek", "deepseek", ["review"], True),
+        ("glm", "deepseek", ["review"], True),
         ("glm", "codex", ["review"], True),
+        ("glm", "glm", ["review", "glm-only", "review-distinct-agent"], True),
+        ("deepseek", "deepseek", ["review", "glm-only"], False),
         ("glm", "codex", ["review", "glm-only", "review-distinct-agent"], False),
-        ("unknown", "glm", ["review", "glm-only", "review-distinct-agent"], False),
+        ("unknown", "glm", ["review"], False),
     ],
 )
-def test_same_family_requires_explicit_glm_review_policy(source, reviewer, labels, expected):
+def test_any_known_family_may_review_unless_pinned(source, reviewer, labels, expected):
     assert review_family_allowed(source, reviewer, labels) is expected

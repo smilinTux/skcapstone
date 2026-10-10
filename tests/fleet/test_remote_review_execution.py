@@ -429,7 +429,7 @@ def test_negative_remote_review_completes_only_review(terminal_review):
     assert producer.status.value != "done"
 
 
-@pytest.mark.parametrize("change", ["quota", "capability", "host-alias", "cordon", "same-family"])
+@pytest.mark.parametrize("change", ["quota", "capability", "host-alias", "cordon"])
 @pytest.mark.host_systemd
 def test_changed_destination_or_route_refuses_before_claim(execution, monkeypatch, change):
     e = execution

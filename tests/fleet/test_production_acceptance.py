@@ -300,7 +300,6 @@ def test_direct_seat_terminal_receipt_can_enter_review_and_is_rechecked(stopped_
         "false-ci",
         "source-change",
         "source-running",
-        "same-family",
         "live-review",
         "review-hold",
     ],
@@ -340,12 +339,9 @@ def test_collection_refuses_missing_forged_stale_or_nonindependent_proof(stopped
         store.append_event(parent, "add_label", "operator", label="source-changed")
     elif kind == "review-hold":
         store.append_event(review["card"], "add_label", "operator", label="do-not-claim")
-    elif kind in {"source-running", "same-family"}:
+    elif kind == "source-running":
         value = json.loads(status_path.read_text())
-        if kind == "source-running":
-            value["state"] = "running"
-        else:
-            value["production"]["family"] = "deepseek"
+        value["state"] = "running"
         status_path.write_text(json.dumps(value))
 
     def process(card):
@@ -357,16 +353,16 @@ def test_collection_refuses_missing_forged_stale_or_nonindependent_proof(stopped
 
 
 @pytest.mark.parametrize("stopped_pair", ["zai"], indirect=True)
-def test_same_provider_family_is_refused_despite_valid_launch_and_source(stopped_pair):
+def test_same_provider_family_is_accepted_with_a_distinct_reviewer(stopped_pair):
+    """Independence is a distinct reviewer agent, not a different provider family."""
     home, policy, review, _, _, _ = stopped_pair
-    with pytest.raises(ValueError, match="family is not independent"):
-        acceptance.collect(
-            home,
-            policy,
-            review["card"],
-            review["claim"],
-            process_check=lambda card: {"sessions": [], "units": []},
-        )
+    acceptance.collect(
+        home,
+        policy,
+        review["card"],
+        review["claim"],
+        process_check=lambda card: {"sessions": [], "units": []},
+    )
 
 
 @pytest.mark.parametrize("tests_ready", [False, True])
