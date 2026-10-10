@@ -151,6 +151,90 @@ def _superseded_source_matches(home: Path, review_card, request: dict) -> bool:
     return latest is supersession
 
 
+def _reviewer_self_release_churn(
+    events: list[dict], offer_at: str, reviewer: str, request_id: str
+) -> bool:
+    """Prove claim/release retries by the sealed reviewer never launched work."""
+    if not offer_at or not dispatch.valid_name(reviewer) or not SHA.fullmatch(request_id):
+        return False
+    try:
+        offer_time = datetime.fromisoformat(offer_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if offer_time.tzinfo is None:
+        return False
+    matching_offers = [
+        event
+        for event in events
+        if event.get("action") == "remote_review_offer" and event.get("request_id") == request_id
+    ]
+    if len(matching_offers) != 1:
+        return False
+    retirements = [
+        event
+        for event in events
+        if event.get("action") == "remote_review_prestart_retire"
+        and event.get("schema") == PRESTART_SCHEMA
+        and event.get("request_id") == request_id
+    ]
+    if len(retirements) > 1:
+        return False
+    after_offer = []
+    for event in events:
+        stamp = event.get("ts")
+        if event is matching_offers[0] or event in retirements:
+            continue
+        if not isinstance(stamp, str):
+            return False
+        try:
+            event_time = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if event_time.tzinfo is None:
+            return False
+        if event_time < offer_time:
+            continue
+        after_offer.append(event)
+    after_offer.sort(
+        key=lambda event: (
+            datetime.fromisoformat(event["ts"].replace("Z", "+00:00")),
+            str(event.get("writer") or ""),
+            event.get("seq", 0) if type(event.get("seq", 0)) is int else 0,
+        )
+    )
+    pending: str | None = None
+    pairs = 0
+    for event in after_offer:
+        action = event.get("action")
+        if action == "claim":
+            claim = event.get("claim_revision")
+            if (
+                pending is not None
+                or event.get("writer") != reviewer
+                or event.get("owner") != reviewer
+                or not isinstance(claim, str)
+                or not re.fullmatch(r"[0-9a-f]{32}", claim)
+            ):
+                return False
+            pending = claim
+        elif action == "release_claim":
+            if (
+                pending is None
+                or event.get("writer") != reviewer
+                or event.get("released_owner") != reviewer
+                or event.get("expected_claim_revision") != pending
+            ):
+                return False
+            pending = None
+            pairs += 1
+        elif action == "move":
+            if event.get("writer") != reviewer or event.get("column") != "review" or pending:
+                return False
+        else:
+            return False
+    return pairs > 0 and pending is None
+
+
 def _raw(path: Path) -> bytes:
     return source_bundle._read(path, source_bundle.MAX_EVIDENCE)
 
@@ -252,6 +336,18 @@ def retired_offers(home: Path, card: str, events: list[dict]) -> set[str]:
             )
             if retirement_mode == "expired-unclaimed":
                 lifecycle_proven = expired_unclaimed
+            elif retirement_mode == "reviewer-self-release-churn":
+                lifecycle_proven = (
+                    expired_before_retirement
+                    and _reviewer_self_release_churn(
+                        events,
+                        offer_at,
+                        archived_request.get("reviewer", ""),
+                        request_id,
+                    )
+                    and not launches
+                    and not releases
+                )
             elif retirement_mode == "archived-orphaned-claim":
                 lifecycle_proven = expired_before_retirement and archived_orphaned
             else:
@@ -710,11 +806,24 @@ def retire_prestart(
             and offer_at
             and str(row.get("ts") or "") >= offer_at
         ]
+        reviewer_self_release_churn = bool(
+            unclaimed
+            and _reviewer_self_release_churn(
+                events, offer_at, str(previous_owner or ""), request_id
+            )
+        )
         if (
             len(offers) != 1
             or offers[0].get("request_sha256") != offer_digest
             or launches
-            or (unclaimed and (not offer_at or releases or claim_activity))
+            or (
+                unclaimed
+                and (
+                    not offer_at
+                    or releases
+                    or (claim_activity and not reviewer_self_release_churn)
+                )
+            )
             or (not unclaimed and not archived_orphaned and len(releases) != 1)
         ):
             raise ValueError("exact release and unused offer proof required")
@@ -791,9 +900,13 @@ def retire_prestart(
         ):
             raise ValueError("resource admission inventory changed during prestart check")
         retirement_mode = (
-            "expired-unclaimed"
+            "reviewer-self-release-churn"
+            if reviewer_self_release_churn
+            else "expired-unclaimed"
             if unclaimed
-            else "archived-orphaned-claim" if archived_orphaned else "released-claim"
+            else "archived-orphaned-claim"
+            if archived_orphaned
+            else "released-claim"
         )
         proof["retired_at"] = datetime.now(timezone.utc).isoformat()
         binding = {

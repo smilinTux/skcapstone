@@ -1,0 +1,1 @@
+- Card `c6aecb75`: allow prestart retirement of an expired review offer only after exact reviewer-owned claim/release churn is paired and the sealed request has no launch, status, or live admission evidence.

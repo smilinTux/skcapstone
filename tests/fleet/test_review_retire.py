@@ -313,6 +313,7 @@ def test_retirement_without_archive_cannot_release_historical_offer(tmp_path):
         "expired-unclaimed",
         "unexpired-unclaimed",
         "claimed-after-offer",
+        "reviewer-self-release-churn",
         "archived-orphaned-claim",
     ],
 )
@@ -342,7 +343,12 @@ def test_prestart_retirement_requires_exact_release_or_expired_unclaimed_offer(
         "lease_expires_at": (
             "2000-01-01T00:00:00Z"
             if retirement_mode
-            in {"expired-unclaimed", "claimed-after-offer", "archived-orphaned-claim"}
+            in {
+                "expired-unclaimed",
+                "claimed-after-offer",
+                "reviewer-self-release-churn",
+                "archived-orphaned-claim",
+            }
             else "2999-01-01T00:00:00Z"
         ),
         "review_revision": "e" * 64,
@@ -374,6 +380,16 @@ def test_prestart_retirement_requires_exact_release_or_expired_unclaimed_offer(
             }
         )
     elif retirement_mode == "claimed-after-offer":
+        events.append(
+            {
+                "action": "claim",
+                "writer": owner,
+                "owner": owner,
+                "claim_revision": claim,
+                "ts": "2026-10-08T12:01:00+00:00",
+            }
+        )
+    elif retirement_mode == "reviewer-self-release-churn":
         events.extend(
             [
                 {
@@ -389,6 +405,32 @@ def test_prestart_retirement_requires_exact_release_or_expired_unclaimed_offer(
                     "released_owner": owner,
                     "expected_claim_revision": claim,
                     "ts": "2026-10-08T12:02:00+00:00",
+                },
+                {
+                    "action": "move",
+                    "writer": owner,
+                    "column": "review",
+                    "ts": "2026-10-08T12:02:01+00:00",
+                },
+                {
+                    "action": "claim",
+                    "writer": owner,
+                    "owner": owner,
+                    "claim_revision": "c" * 32,
+                    "ts": "2026-10-08T12:03:00+00:00",
+                },
+                {
+                    "action": "release_claim",
+                    "writer": owner,
+                    "released_owner": owner,
+                    "expected_claim_revision": "c" * 32,
+                    "ts": "2026-10-08T12:04:00+00:00",
+                },
+                {
+                    "action": "move",
+                    "writer": owner,
+                    "column": "review",
+                    "ts": "2026-10-08T12:04:01+00:00",
                 },
             ]
         )
@@ -531,6 +573,65 @@ def test_prestart_retirement_refuses_when_status_or_launch_exists(tmp_path, monk
             actor="jarvis",
             reason="bounded test",
         )
+
+
+def test_reviewer_self_release_churn_requires_exact_pairs_and_no_other_events():
+    reviewer = "pi-seraph-chiap03-c60a542e"
+    request_id = "a" * 64
+    offer_at = "2026-10-08T12:00:00+00:00"
+    events = [
+        {"action": "remote_review_offer", "request_id": request_id, "ts": offer_at},
+        {
+            "action": "claim",
+            "writer": reviewer,
+            "owner": reviewer,
+            "claim_revision": "b" * 32,
+            "ts": "2026-10-08T12:01:00+00:00",
+        },
+        {
+            "action": "release_claim",
+            "writer": reviewer,
+            "released_owner": reviewer,
+            "expected_claim_revision": "b" * 32,
+            "ts": "2026-10-08T12:02:00+00:00",
+        },
+    ]
+    assert review_retire._reviewer_self_release_churn(events, offer_at, reviewer, request_id)
+
+    wrong_owner_release = [*events[:2], {**events[2], "writer": "other-reviewer"}]
+    assert not review_retire._reviewer_self_release_churn(
+        wrong_owner_release, offer_at, reviewer, request_id
+    )
+    other_reviewer = "pi-seraph-chiap02-c60a542e"
+    wrong_claim_owner = [
+        events[0],
+        {
+            **events[1],
+            "writer": other_reviewer,
+            "owner": other_reviewer,
+        },
+        {
+            **events[2],
+            "writer": other_reviewer,
+            "released_owner": other_reviewer,
+        },
+    ]
+    assert not review_retire._reviewer_self_release_churn(
+        wrong_claim_owner, offer_at, reviewer, request_id
+    )
+    unexpected_mutation = [*events, {"action": "label", "ts": "2026-10-08T12:03:00+00:00"}]
+    assert not review_retire._reviewer_self_release_churn(
+        unexpected_mutation, offer_at, reviewer, request_id
+    )
+    launch = [
+        *events,
+        {
+            "action": "review_assignment_launch",
+            "recommendation_id": request_id,
+            "ts": "2026-10-08T12:03:00+00:00",
+        },
+    ]
+    assert not review_retire._reviewer_self_release_churn(launch, offer_at, reviewer, request_id)
 
 
 def test_prestart_retirement_refuses_matching_resource_intent(tmp_path, monkeypatch):
