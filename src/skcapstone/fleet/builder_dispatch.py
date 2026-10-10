@@ -695,10 +695,22 @@ def _offer(paths, core, labels, *, writer, now=None):
 # card stays parked on a terminal "blocked" status forever (fef9698e and
 # a69ec3a8 after the 2026-10-10 builder runtime quota change).
 POLICY_REFUSED_BEFORE_CLAIM = "production request policy or host changed"
+# A worker that exited with no outcome of its own and left its workspace clean
+# at the authorized base produced nothing reviewable. Its claim is released so
+# the card gets a fresh generation instead of awaiting evidence forever.
+EXITED_WITHOUT_OUTCOME = "worker exited without outcome; clean base released"
 
 
 def _unclaimed_expired_offer(request: dict, status: dict) -> bool:
     """Retry only a node-proven refusal that never acquired source custody."""
+    if (
+        status.get("request_id") == request.get("request_id")
+        and status.get("state") == "blocked"
+        and status.get("error") == EXITED_WITHOUT_OUTCOME
+        and status.get("claim_released") is True
+    ):
+        # The node released the claim after proving nothing was produced.
+        return True
     if (
         status.get("request_id") != request.get("request_id")
         or status.get("state") != "blocked"
@@ -935,6 +947,53 @@ def _frozen_claim_status(
     )
 
 
+def _exited_without_outcome(
+    coordination_home: Path, request: dict, owner: str, revision: str, workspace: Path
+) -> bool:
+    """Prove an exited generation produced nothing: no own outcome, clean base.
+
+    Every check fails closed. The claim must still be this generation's, the
+    owner must have written no verdict or link since claiming, and the
+    workspace must be byte-clean at the authorized base revision (inspected
+    read-only in the same sandbox builder-retry uses). Any commit, edit,
+    untracked file or outcome keeps custody for review or recovery.
+    """
+    from .source_bundle import SourceBundleError, inspect_clean_base
+
+    card_id = request["card_id"]
+    try:
+        store = CardStore(coordination_home)
+        card = store.fold(card_id)
+        if (
+            card is None
+            or card.archived
+            or card.owner != owner
+            or card.meta.get("_claim_revision") != revision
+        ):
+            return False
+        events = store._read_events(card_id)
+        claims = [
+            event
+            for event in events
+            if event.get("action") == "claim"
+            and (event.get("claim_revision") or event.get("event_id")) == revision
+        ]
+        if len(claims) != 1:
+            return False
+        claimed_at = str(claims[0].get("ts", ""))
+        if any(
+            event.get("writer") == owner
+            and event.get("action") in {"verdict", "link"}
+            and str(event.get("ts", "")) >= claimed_at
+            for event in events
+        ):
+            return False
+        inspect_clean_base(workspace, str(request["base_revision"]))
+    except (OSError, ValueError, KeyError, TypeError, SourceBundleError):
+        return False
+    return True
+
+
 def _reconcile_running(
     paths: FleetPaths, coordination_home: Path, node: str, request: dict, status: dict
 ) -> dict:
@@ -1083,8 +1142,28 @@ def _reconcile_running(
             )
         except SourceBundleError as exc:
             # A process exit is not an outcome. Keep original custody for
-            # review/recovery rather than replaying implementation work.
+            # review/recovery rather than replaying implementation work,
+            # unless the generation provably produced nothing at all.
             reason = " ".join(str(exc).split())[:120]
+            if str(exc) == "source proposal lacks a current typed review request" and (
+                _exited_without_outcome(
+                    coordination_home, request, owner, revision, paths.root / "workspaces" / owner
+                )
+            ):
+                released = _release_exact(
+                    coordination_home, request["card_id"], owner, revision, actor=owner
+                )
+                if released:
+                    return _write_status(
+                        paths,
+                        node,
+                        request,
+                        "blocked",
+                        **common,
+                        exit_code=exit_code,
+                        claim_released=True,
+                        error=EXITED_WITHOUT_OUTCOME,
+                    )
             return _write_status(
                 paths,
                 node,
