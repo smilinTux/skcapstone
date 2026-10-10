@@ -1102,7 +1102,32 @@ def _rereview_home(tmp_path, rows):
     )
 
 
-def test_fresh_review_generation_receipt_supersedes_the_retired_one(tmp_path):
+def _claimed(monkeypatch, claimant, at="2026-10-10T20:00:00+00:00"):
+    import skcapstone.review_verdict as verdict_module
+
+    monkeypatch.setattr(
+        verdict_module,
+        "_current_generation",
+        lambda card_id, home: (verdict_module._parsed_ts(at), claimant),
+    )
+
+
+def _current_rows(writer, receipt_head="2" * 40):
+    return [
+        ("verdict", "PASS", "2026-10-10T20:01:00", writer),
+        ("evidence", "review.md", "2026-10-10T20:02:00", writer),
+        ("patch_sha256", "a" * 64, "2026-10-10T20:03:00", writer),
+        (
+            "applicability_receipt",
+            _receipt(writer, head=receipt_head),
+            "2026-10-10T20:04:00",
+            writer,
+        ),
+    ]
+
+
+def test_fresh_generation_receipt_decides_after_a_retired_one(tmp_path, monkeypatch):
+    _claimed(monkeypatch, "second@example")
     home = _rereview_home(
         tmp_path,
         [
@@ -1111,53 +1136,70 @@ def test_fresh_review_generation_receipt_supersedes_the_retired_one(tmp_path):
                 _receipt("first@example"),
                 "2026-10-09T03:00:00",
                 "first@example",
-            ),
-            ("verdict", "PASS", "2026-10-10T20:00:00", "second@example"),
-            ("evidence", "review.md", "2026-10-10T20:01:00", "second@example"),
-            ("patch_sha256", "a" * 64, "2026-10-10T20:02:00", "second@example"),
-            (
-                "applicability_receipt",
-                _receipt("second@example"),
-                "2026-10-10T20:03:00",
-                "second@example",
-            ),
-        ],
+            )
+        ]
+        + _current_rows("second@example"),
     )
     validate_review_completion("239b24bf", "[REVIEW] source-only", home)
 
 
-def test_latest_receipt_from_a_writer_with_an_earlier_receipt_is_refused(tmp_path):
+def test_same_seat_identity_rereview_is_accepted(tmp_path, monkeypatch):
+    _claimed(monkeypatch, "seat@example")
     home = _rereview_home(
         tmp_path,
         [
             (
                 "applicability_receipt",
-                _receipt("second@example"),
+                _receipt("seat@example"),
                 "2026-10-09T03:00:00",
-                "second@example",
-            ),
+                "seat@example",
+            )
+        ]
+        + _current_rows("seat@example"),
+    )
+    validate_review_completion("239b24bf", "[REVIEW] source-only", home)
+
+
+def test_reviewer_correction_inside_one_generation_takes_the_latest(tmp_path, monkeypatch):
+    _claimed(monkeypatch, "seat@example")
+    stale = _receipt("seat@example", head="3" * 40)
+    home = _rereview_home(
+        tmp_path,
+        [("applicability_receipt", stale, "2026-10-10T20:00:30", "seat@example")]
+        + _current_rows("seat@example"),
+    )
+    validate_review_completion("239b24bf", "[REVIEW] source-only", home)
+
+
+def test_foreign_receipt_in_the_current_generation_is_refused(tmp_path, monkeypatch):
+    _claimed(monkeypatch, "seat@example")
+    home = _rereview_home(
+        tmp_path,
+        [
             (
                 "applicability_receipt",
-                _receipt("first@example"),
-                "2026-10-09T04:00:00",
-                "first@example",
-            ),
-            ("verdict", "PASS", "2026-10-10T20:00:00", "second@example"),
-            ("evidence", "review.md", "2026-10-10T20:01:00", "second@example"),
-            ("patch_sha256", "a" * 64, "2026-10-10T20:02:00", "second@example"),
-            (
-                "applicability_receipt",
-                _receipt("second@example"),
-                "2026-10-10T20:03:00",
-                "second@example",
-            ),
-        ],
+                _receipt("other@example"),
+                "2026-10-10T20:00:30",
+                "other@example",
+            )
+        ]
+        + _current_rows("seat@example"),
     )
     with pytest.raises(ValueError, match="required checks"):
         validate_review_completion("239b24bf", "[REVIEW] source-only", home)
 
 
-def test_latest_receipt_for_a_stale_head_is_refused(tmp_path):
+def test_latest_current_receipt_for_a_stale_head_is_refused(tmp_path, monkeypatch):
+    _claimed(monkeypatch, "seat@example")
+    home = _rereview_home(tmp_path, _current_rows("seat@example", receipt_head="3" * 40))
+    with pytest.raises(ValueError, match="required checks"):
+        validate_review_completion("239b24bf", "[REVIEW] source-only", home)
+
+
+def test_without_native_claim_history_two_receipts_are_still_refused(tmp_path, monkeypatch):
+    import skcapstone.review_verdict as verdict_module
+
+    monkeypatch.setattr(verdict_module, "_current_generation", lambda card_id, home: None)
     home = _rereview_home(
         tmp_path,
         [
@@ -1166,17 +1208,9 @@ def test_latest_receipt_for_a_stale_head_is_refused(tmp_path):
                 _receipt("first@example"),
                 "2026-10-09T03:00:00",
                 "first@example",
-            ),
-            ("verdict", "PASS", "2026-10-10T20:00:00", "second@example"),
-            ("evidence", "review.md", "2026-10-10T20:01:00", "second@example"),
-            ("patch_sha256", "a" * 64, "2026-10-10T20:02:00", "second@example"),
-            (
-                "applicability_receipt",
-                _receipt("second@example", head="3" * 40),
-                "2026-10-10T20:03:00",
-                "second@example",
-            ),
-        ],
+            )
+        ]
+        + _current_rows("second@example"),
     )
     with pytest.raises(ValueError, match="required checks"):
         validate_review_completion("239b24bf", "[REVIEW] source-only", home)
