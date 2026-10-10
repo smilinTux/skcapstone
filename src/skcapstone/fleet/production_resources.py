@@ -1,7 +1,9 @@
 """Memory admission based on live node resources and actual worker cgroups."""
 
 import re
+import socket
 import subprocess
+import time
 from pathlib import Path
 
 
@@ -46,6 +48,34 @@ def successful_terminal_absent(state):
     )
 
 
+LAUNCH_EXPIRY_GRACE_SECONDS = 900
+
+
+def _local_launch(home, host, launch):
+    """A fenced launch belongs to the host holding its admission reservation."""
+    marker = next(
+        (
+            str(arg).split("=", 2)[2]
+            for arg in launch.get("service_argv") or ()
+            if str(arg).startswith("--setenv=SKFLEET_ADMISSION_ID=")
+        ),
+        None,
+    )
+    if marker is None:
+        return True  # Legacy launch without a fence: keep charging conservatively.
+    return (Path(home) / "fleet/resource-admission" / host / marker).is_dir()
+
+
+def _launch_expired(path, launch):
+    """True when the launch is older than its unit's RuntimeMaxSec allows."""
+    try:
+        limit = int(launch["production"]["resources"]["runtime_max_seconds"])
+        age = time.time() - path.stat().st_mtime
+    except (OSError, KeyError, TypeError, ValueError):
+        return False
+    return limit > 0 and age > limit + LAUNCH_EXPIRY_GRACE_SECONDS
+
+
 def active_resource_units(home=None):
     """Include native builders/tests and Pi workers in actual quota reservations."""
     result = subprocess.run(
@@ -74,11 +104,20 @@ def active_resource_units(home=None):
     from .production_tests import read_json
 
     home = Path(home) if home is not None else Path.home() / ".skcapstone"
+    host = socket.gethostname().split(".")[0].lower()
     for path in (home / "fleet/test-runs").glob("*/launch.json"):
         if (path.parent / "terminal.json").exists():
             continue
         launch = read_json(path)
         unit = launch["unit"]
+        if unit in units:
+            pass  # Live here: always charged.
+        elif not _local_launch(home, host, launch) or _launch_expired(path, launch):
+            # fleet/test-runs syncs to every host, so another host's unfinished
+            # launch was charged on all of them, and a launch that never wrote
+            # terminal.json stayed charged forever: af5b07b0 (17:55Z) held 3 GiB
+            # on chiap01-04 for five hours (2026-10-10).
+            continue
         units.setdefault(unit, {"unit": unit})["reserved_memory_max"] = launch["production"][
             "resources"
         ]["memory_max_bytes"]
