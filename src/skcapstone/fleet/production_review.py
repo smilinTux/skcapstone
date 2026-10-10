@@ -30,15 +30,18 @@ def provider_family(provider: object) -> str | None:
 
 
 def review_family_allowed(source: str, reviewer: str, labels) -> bool:
-    """Keep cross-family default; explicit GLM review cards require distinct agents."""
+    """Allow any known reviewer family; independence is a distinct reviewer agent.
+
+    Same-family review used to require explicit GLM labels, and cross-family was
+    the default. With one lane exhausted (z.ai, 2026-10-10) that parked every
+    DeepSeek-built review until GLM returned. Chef: drop the family requirement.
+    The publisher still refuses producer_reviewer_not_distinct, and an explicit
+    glm-only pin on the card is still honored.
+    """
     source, reviewer = provider_family(source), provider_family(reviewer)
     if source is None or reviewer is None:
         return False
-    if "glm-only" in labels and reviewer != "zai":
-        return False
-    if source != reviewer:
-        return True
-    return source == "zai" and {"review", "glm-only", "review-distinct-agent"} <= set(labels)
+    return not ("glm-only" in labels and reviewer != "zai")
 
 
 def producer_family(identity: str, provider: str | None = None) -> str:

@@ -81,13 +81,13 @@ def test_explicit_glm_review_contract_allows_a_distinct_same_family_reviewer(
     dispatch.validate_contract(request_record, remote_policy, host="chiap03")
 
 
-def test_same_family_glm_without_both_explicit_labels_is_refused(
+def test_same_family_review_is_allowed_with_a_distinct_reviewer(
     dispatch, request_record, remote_policy
 ):
+    """Chef 2026-10-10: independence is a distinct reviewer agent, not a family."""
     request_record["source"].update(owner="pi-glm-builder-node-chiap01-source1", family="glm")
     request_record["production"].update(family="glm", provider_family="glm", capacity_domain="glm")
-    with pytest.raises(ValueError):
-        dispatch.validate_contract(request_record, remote_policy, host="chiap03")
+    dispatch.validate_contract(request_record, remote_policy, host="chiap03")
 
 
 def test_remote_partition_keeps_legacy_reviews_on_the_existing_seat(dispatch):
@@ -150,7 +150,6 @@ def test_offer_destination_rejects_symlink_request_directory(dispatch, tmp_path)
         "quota",
         "policy",
         "source",
-        "same-family",
         "unknown-family",
         "contradiction",
         "same-principal",
@@ -170,8 +169,6 @@ def test_request_tampering_denied(dispatch, request_record, remote_policy, chang
         r["production"]["policy_sha256"] = "0" * 64
     elif change == "source":
         r["source"]["head"] = "../escape"
-    elif change == "same-family":
-        r["production"].update(family="codex", provider_family="codex", capacity_domain="codex")
     elif change == "unknown-family":
         r["source"].update(owner="unknown", family="unknown")
     elif change == "contradiction":
