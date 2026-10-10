@@ -435,6 +435,38 @@ def test_policy_drift_refuses_before_claim(paths, production_setup, monkeypatch,
     )
 
 
+@pytest.mark.parametrize("outcome", ["blocked", "awaiting-evidence"])
+def test_superseded_evidence_generation_is_reconciled_before_new_offer(
+    paths, production_setup, monkeypatch, tmp_path, outcome
+):
+    request = builder.offer(
+        paths, _card(), ["sk-m", "source-only"], writer=production_setup.writer
+    )
+    builder._write_status(
+        paths,
+        "node-worker",
+        {"request_id": "f" * 64, "card_id": request["card_id"]},
+        "awaiting-evidence",
+        owner="old-owner",
+        claim_revision="a" * 32,
+        attempt=1,
+        production=request["production"],
+        claim_released=False,
+    )
+    seen = []
+
+    def reconcile(_paths, _home, node, generation, status):
+        seen.append((node, generation["request_id"], status["state"]))
+        return {"state": outcome}
+
+    monkeypatch.setattr(builder, "_reconcile_running", reconcile)
+    monkeypatch.setattr(builder.Board, "claim_task", lambda *args: pytest.fail("must not claim"))
+    builder.consume_one(
+        paths, tmp_path, "node-worker", launcher=lambda *args: pytest.fail("must not launch")
+    )
+    assert seen == [("node-worker", "f" * 64, "awaiting-evidence")]
+
+
 def test_aggregate_quota_reservations_replace_fixed_worker_count(paths, production_setup):
     p = production_setup
     offers = [
