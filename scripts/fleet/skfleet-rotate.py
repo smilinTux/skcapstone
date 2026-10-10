@@ -8271,7 +8271,7 @@ _BUILDER_OFFER_SECONDS = float(os.environ.get("SKFLEET_BUILDER_OFFER_SECONDS", "
 # authority and this scheduler never impersonates a remote worker.
 if not DRY and _is_niobe_builder_host(HOST):
     _profile_requalifications_offered = 0
-    _profile_requalification_limit = 8
+    _profile_requalification_limit = 16
     _builder_phase_started = time.monotonic()
     for _candidate in tuple(_builder_candidates)[:MAX_CANDIDATE_SCAN]:
         if time.monotonic() - _builder_phase_started >= _BUILDER_OFFER_SECONDS:
