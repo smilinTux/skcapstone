@@ -16,6 +16,7 @@ import shlex
 import socket
 import stat
 import subprocess
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -137,6 +138,23 @@ def reserved_command(
     return [argv[0], "--setenv=" + MARKER + "=" + identity, *argv[1:]]
 
 
+RUNTIME_EXPIRY_GRACE_SECONDS = 900
+
+
+def _past_runtime_limit(directory: Path, intent: dict, now: float | None = None) -> bool:
+    """True when this reservation started longer ago than its unit may run."""
+    start = directory / "start.json"
+    try:
+        limit = int(intent["resources"]["runtime_max_seconds"])
+        started = start.stat().st_mtime
+    except (OSError, KeyError, TypeError, ValueError):
+        return False
+    if limit <= 0:
+        return False
+    current = time.time() if now is None else now
+    return current - started > limit + RUNTIME_EXPIRY_GRACE_SECONDS
+
+
 def _occupancy(root: Path, home: Path, *, strict_terminal=False) -> list[dict]:
     """Account live units plus unobserved intents, without double charging RAM."""
     units = {row["unit"]: dict(row) for row in active_resource_units(home)}
@@ -159,6 +177,16 @@ def _occupancy(root: Path, home: Path, *, strict_terminal=False) -> list[dict]:
                 if not _valid_journal_terminal(read_json(journal_path), intent, observed):
                     raise AdmissionError("journal terminal proof differs")
                 continue
+        if unit not in units and _past_runtime_limit(directory, intent):
+            # systemd's RuntimeMaxSec bounds every launched unit. A started
+            # reservation whose unit is absent from the live inventory well past
+            # that bound cannot be running, so it holds no memory. Without this,
+            # units that ended before observation (a review frozen by a policy
+            # edit, a per-card worker unit whose journal history is ambiguous)
+            # stayed charged forever and builders refused all work (2026-10-10).
+            # Accounting only: no receipt is written, and any later reuse of the
+            # unit name is still charged through the live inventory above.
+            continue
         from .production_legacy_terminal import reconcile_legacy_assignment
 
         legacy_terminal = reconcile_legacy_assignment(directory, home, intent, live=unit in units)

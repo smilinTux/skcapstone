@@ -363,3 +363,38 @@ def test_measured_capacity_deferral_proves_no_intent_and_is_retryable(capacity, 
     with pytest.raises(admission.AdmissionError) as raised:
         reserve(capacity)
     assert not isinstance(raised.value, admission.AdmissionDeferredError)
+
+
+def _started(home, age_seconds):
+    """Mark the single reservation started age_seconds ago, as start_reserved does."""
+    import os
+    import time
+
+    (directory,) = [d for d in (home / "fleet/resource-admission" / HOST).iterdir() if d.is_dir()]
+    start = directory / "start.json"
+    start.write_text("{}")
+    stamp = time.time() - age_seconds
+    os.utime(start, (stamp, stamp))
+
+
+def test_absent_unit_past_its_runtime_limit_holds_no_capacity(capacity):
+    """2026-10-10: dead, never-observed review units pinned every builder at 0 MiB."""
+    reserve(capacity)
+    _started(capacity, LIMITS["runtime_max_seconds"] + admission.RUNTIME_EXPIRY_GRACE_SECONDS + 60)
+    other = dict(card_id="87654321", owner="next", claim_revision="next-claim")
+    CardStore(capacity).create(
+        CardCore(
+            id=other["card_id"],
+            title="Next synthetic work",
+            initial_owner=other["owner"],
+            initial_claim_revision=other["claim_revision"],
+        )
+    )
+    reserve(capacity, other, "skfleet-worker-next.service")
+
+
+def test_recent_unobserved_start_stays_charged(capacity):
+    reserve(capacity)
+    _started(capacity, 60)
+    with pytest.raises(admission.AdmissionError, match="capacity"):
+        reserve(capacity, dict(BINDING, attempt="other"), "skfleet-worker-other.service")
