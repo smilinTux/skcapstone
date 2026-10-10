@@ -70,6 +70,30 @@ def test_guard_catches_an_abbreviated_reusable_workflow_sha(guard, tmp_path):
     assert any(f.level == "fail" and "ABBREVIATED" in f.msg for f in findings)
 
 
+def test_pytest_sibling_installs_are_immutable_reviewed_pins():
+    """Card 2bd7d1c8 regression: the pytest workflow must not resolve a
+    moving branch for its sibling installs.
+
+    Before the fix the workflow ran ``git ls-remote ... HEAD`` for skdashboard
+    and skharness and installed whatever that resolved to, so a foreign
+    repository change could break SKCapstone trunk with no SKCapstone commit
+    (observed 2026-09-20: a pinned-candidate run failed collection because
+    main's tests imported ``skdashboard.assistant_client``). Every sibling
+    install in this workflow must name an exact 40-hex commit, and no
+    ``ls-remote``-style runtime resolution may remain.
+    """
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "pytest.yml").read_text(encoding="utf-8")
+    assert "git ls-remote" not in workflow, "sibling installs must not resolve a moving ref"
+    for package in ("skcoord", "skdashboard", "skharness"):
+        matching = [line for line in workflow.splitlines() if f'"{package} @ git+' in line]
+        assert matching, f"pytest.yml no longer installs sibling {package}; update this test"
+        for line in matching:
+            revision = line.rsplit("@", 1)[-1].split('"', 1)[0]
+            assert len(revision) == 40 and all(
+                char in "0123456789abcdef" for char in revision
+            ), f"{package} must be pinned to a full 40-hex commit, got {revision!r}"
+
+
 def test_guard_catches_a_mutable_branch_pin(guard, tmp_path):
     """A branch pin is failure mode 1 waiting to happen: delete it and the gate
     goes absent rather than red."""
