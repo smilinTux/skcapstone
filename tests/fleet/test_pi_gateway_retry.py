@@ -109,14 +109,39 @@ assert.equal(t.state.terminal.retryable,false);
 """)
 
 
-def test_unrelated_502_is_terminal_without_retry():
+def test_untyped_upstream_502_retries_then_recovers():
+    node_check("""
+let calls=0,clock=0;const waits=[];
+const t=gatewayTransport(async()=>{
+ calls++;
+ return calls<3
+  ? new Response(JSON.stringify({error:{type:'bad_gateway',code:'upstream_unavailable'}}),
+     {status:502})
+  : new Response('ok');
+},()=>{},{now:()=>clock,wait:async ms=>{waits.push(ms);clock+=ms;}});
+assert.equal((await t.fetch('http://fixture.invalid')).status,200);
+assert.equal(calls,3);assert.deepEqual(waits,[10000,20000]);
+""")
+
+
+def test_untyped_502_is_bounded_to_four_attempts():
+    node_check("""
+let calls=0,clock=0;
+const t=gatewayTransport(async()=>{calls++;return new Response('upstream down',{status:502});},
+ ()=>{},{now:()=>clock,wait:async ms=>{clock+=ms;}});
+assert.equal((await t.fetch('http://fixture.invalid')).status,502);
+assert.equal(calls,4);assert.equal(t.state.terminal.retryable,false);
+""")
+
+
+def test_request_too_large_502_is_terminal_without_retry():
     node_check("""
 let calls=0;
 const t=gatewayTransport(async()=>{
  calls++;
- return new Response(JSON.stringify({error:{type:'bad_gateway',code:'upstream_unavailable'}}),
+ return new Response(JSON.stringify({error:{code:'request_too_large',param:'body'}}),
   {status:502});
-},()=>{},{wait:()=>assert.fail('unqualified502 retry')});
+},()=>{},{wait:()=>assert.fail('oversized retry')});
 assert.equal((await t.fetch('http://fixture.invalid')).status,502);
 assert.equal(calls,1);
 """)
