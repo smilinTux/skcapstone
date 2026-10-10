@@ -6,6 +6,13 @@ import { setTimeout as sleep } from "node:timers/promises";
 const MAX_ATTEMPTS = 4;
 const MIN_ATTEMPT_WINDOW_MS = 30_000;
 const DELAYS_MS = [10_000, 20_000, 30_000];
+// One upstream z.ai 429 puts the whole zai backend into a 30 second cooldown,
+// so 10/20/30s retries land inside back-to-back cooldowns. Builds on chiap04
+// spent all four attempts and died (477886d2, 7ad93016, 2026-10-10 06:28Z).
+// 429 waits at least one full cooldown and may try longer, still inside the
+// lane's request budget.
+const MAX_ATTEMPTS_429 = 7;
+const DELAYS_429_MS = [30_000, 60_000, 90_000, 120_000, 120_000, 120_000];
 const GLM_CONTEXT_WINDOW = 128_000;
 
 // Honor a gateway Retry-After (seconds) on 429, capped so one hint cannot
@@ -115,11 +122,13 @@ export function gatewayTransport(
             response.status === 502
             && (fields.type === "malformed_response" || fields.code === "empty_upstream_response")
           );
-          const requestedDelay = response.status === 429
-            ? Math.max(DELAYS_MS[attempt - 1], retryAfterMs(response))
+          const limited = response.status === 429;
+          const requestedDelay = limited
+            ? Math.max(DELAYS_429_MS[attempt - 1] ?? DELAYS_429_MS.at(-1), retryAfterMs(response))
             : DELAYS_MS[attempt - 1];
           const remaining = budgetMs - (now() - started);
-          const retry = transient && replayable && attempt < MAX_ATTEMPTS
+          const retry = transient && replayable
+            && attempt < (limited ? MAX_ATTEMPTS_429 : MAX_ATTEMPTS)
             && remaining >= MIN_ATTEMPT_WINDOW_MS;
           const delay = retry && remaining > requestedDelay + MIN_ATTEMPT_WINDOW_MS
             ? requestedDelay : 0;
@@ -127,7 +136,7 @@ export function gatewayTransport(
             event: retry ? "retry" : "result", attempt, http_status: response.status,
             elapsed_ms: now() - started, delay_ms: retry ? delay : 0,
             ...fields,
-            ...(transient && !retry ? { reason: attempt >= MAX_ATTEMPTS ? "attempt_limit"
+            ...(transient && !retry ? { reason: attempt >= (limited ? MAX_ATTEMPTS_429 : MAX_ATTEMPTS) ? "attempt_limit"
               : !replayable ? "unreplayable_request" : "budget_limit" } : {}),
           });
           if (!retry) {
