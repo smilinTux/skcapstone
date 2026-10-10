@@ -902,11 +902,11 @@ def retire_prestart(
         retirement_mode = (
             "reviewer-self-release-churn"
             if reviewer_self_release_churn
-            else "expired-unclaimed"
-            if unclaimed
-            else "archived-orphaned-claim"
-            if archived_orphaned
-            else "released-claim"
+            else (
+                "expired-unclaimed"
+                if unclaimed
+                else "archived-orphaned-claim" if archived_orphaned else "released-claim"
+            )
         )
         proof["retired_at"] = datetime.now(timezone.utc).isoformat()
         binding = {
