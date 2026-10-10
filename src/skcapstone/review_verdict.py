@@ -297,9 +297,27 @@ def _source_only_applicability(card_id: str, home: Path) -> bool:
             except (TypeError, ValueError):
                 return False
             receipts.append((row, value))
-    if len(receipts) != 1 or not isinstance(receipts[0][1], dict):
+    if not receipts or any(not isinstance(value, dict) for _, value in receipts):
         return False
-    receipt_event, receipt = receipts[0]
+    # Every review generation's reviewer writes its own receipt, so a fresh
+    # review after a retired or superseded one leaves several. Requiring
+    # exactly one made re-review permanently unacceptable (chi, 2026-10-10:
+    # 7 cards "duplicate source-only applicability receipts"). The latest
+    # ordered receipt decides, and is validated in full below. Ambiguity still
+    # fails closed: an unordered receipt, or a writer who wrote any earlier
+    # receipt too, is refused.
+    positions = [_event_position(row) for row, _ in receipts]
+    if any(position is None for position in positions):
+        return False
+    ordered = sorted(zip(positions, receipts), key=lambda item: item[0])
+    if len({position for position, _ in ordered}) != len(ordered):
+        return False
+    receipt_event, receipt = ordered[-1][1]
+    latest_writer = _normalized_identity(receipt_event.get("writer"))
+    if any(
+        _normalized_identity(row.get("writer")) == latest_writer for _, (row, _) in ordered[:-1]
+    ):
+        return False
     required = {"type", "card_id", "source_head", "reviewer", "evidence_digest", "governed_pr_ci"}
     if set(receipt) != required or receipt["type"] != "source-only-applicability":
         return False

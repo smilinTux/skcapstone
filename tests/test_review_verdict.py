@@ -1075,3 +1075,108 @@ def test_latest_verdict_is_returned(tmp_path):
         ],
     )
     assert recorded_verdict("eeeeeeee", home) == "PASS"
+
+
+def _receipt(reviewer, head="2" * 40):
+    return json.dumps(
+        {
+            "type": "source-only-applicability",
+            "card_id": "239b24bf",
+            "source_head": head,
+            "reviewer": reviewer,
+            "evidence_digest": "a" * 64,
+            "governed_pr_ci": False,
+        },
+        sort_keys=True,
+    )
+
+
+def _rereview_home(tmp_path, rows):
+    return _home(
+        tmp_path,
+        "239b24bf",
+        "[REVIEW] source-only",
+        rows,
+        meta={"link_head_revision": "2" * 40, "producer_identity": "producer@example"},
+        labels=["source-only"],
+    )
+
+
+def test_fresh_review_generation_receipt_supersedes_the_retired_one(tmp_path):
+    home = _rereview_home(
+        tmp_path,
+        [
+            (
+                "applicability_receipt",
+                _receipt("first@example"),
+                "2026-10-09T03:00:00",
+                "first@example",
+            ),
+            ("verdict", "PASS", "2026-10-10T20:00:00", "second@example"),
+            ("evidence", "review.md", "2026-10-10T20:01:00", "second@example"),
+            ("patch_sha256", "a" * 64, "2026-10-10T20:02:00", "second@example"),
+            (
+                "applicability_receipt",
+                _receipt("second@example"),
+                "2026-10-10T20:03:00",
+                "second@example",
+            ),
+        ],
+    )
+    validate_review_completion("239b24bf", "[REVIEW] source-only", home)
+
+
+def test_latest_receipt_from_a_writer_with_an_earlier_receipt_is_refused(tmp_path):
+    home = _rereview_home(
+        tmp_path,
+        [
+            (
+                "applicability_receipt",
+                _receipt("second@example"),
+                "2026-10-09T03:00:00",
+                "second@example",
+            ),
+            (
+                "applicability_receipt",
+                _receipt("first@example"),
+                "2026-10-09T04:00:00",
+                "first@example",
+            ),
+            ("verdict", "PASS", "2026-10-10T20:00:00", "second@example"),
+            ("evidence", "review.md", "2026-10-10T20:01:00", "second@example"),
+            ("patch_sha256", "a" * 64, "2026-10-10T20:02:00", "second@example"),
+            (
+                "applicability_receipt",
+                _receipt("second@example"),
+                "2026-10-10T20:03:00",
+                "second@example",
+            ),
+        ],
+    )
+    with pytest.raises(ValueError, match="required checks"):
+        validate_review_completion("239b24bf", "[REVIEW] source-only", home)
+
+
+def test_latest_receipt_for_a_stale_head_is_refused(tmp_path):
+    home = _rereview_home(
+        tmp_path,
+        [
+            (
+                "applicability_receipt",
+                _receipt("first@example"),
+                "2026-10-09T03:00:00",
+                "first@example",
+            ),
+            ("verdict", "PASS", "2026-10-10T20:00:00", "second@example"),
+            ("evidence", "review.md", "2026-10-10T20:01:00", "second@example"),
+            ("patch_sha256", "a" * 64, "2026-10-10T20:02:00", "second@example"),
+            (
+                "applicability_receipt",
+                _receipt("second@example", head="3" * 40),
+                "2026-10-10T20:03:00",
+                "second@example",
+            ),
+        ],
+    )
+    with pytest.raises(ValueError, match="required checks"):
+        validate_review_completion("239b24bf", "[REVIEW] source-only", home)
