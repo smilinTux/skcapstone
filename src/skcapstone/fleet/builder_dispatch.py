@@ -1319,14 +1319,22 @@ def worker_command(request: dict, owner: str, claim_revision: str, workspace: Pa
         )
         if request.get("_continuation"):
             transport_failure = request["_continuation"].get("binding", {}).get("transport")
+            unfinished = request["_continuation"].get("binding", {}).get("unfinished") is True
             historical = (
                 "The earlier session ended in a verified gateway transport failure, not a "
                 "product verdict. Its transcript and all historical candidate outcomes "
                 "remain preserved. Reuse the existing source; do not resume the oversized "
                 "conversation or infer that a historical PASS approves this generation.\n\n"
                 if transport_failure
-                else "Original BLOCKED evidence remains historical.\n\n"
+                else (
+                    "The earlier session stopped before its typed handoff and recorded no "
+                    "outcome. Its commits and edits are preserved in this workspace; verify "
+                    "them against the card instead of trusting them.\n\n"
+                    if unfinished
+                    else "Original BLOCKED evidence remains historical.\n\n"
+                )
             )
+            transport_failure = transport_failure or unfinished
             prompt = (
                 "PRESERVED SOURCE CONTINUATION\n"
                 + (

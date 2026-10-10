@@ -34,7 +34,7 @@ def original(request):
     return {key: value for key, value in request.items() if key != "_continuation"}
 
 
-def binding(home, request, status, *, transport=None):
+def binding(home, request, status, *, transport=None, unfinished=None):
     """Pin native source, original outcome and stable terminal process status."""
     raw_request = source_bundle._read(
         builder.request_path(FleetPaths(home / "fleet"), request["node"], request["card_id"]),
@@ -43,10 +43,50 @@ def binding(home, request, status, *, transport=None):
     if json.loads(raw_request) != original(request):
         raise ValueError("immutable source request changed")
     transport = transport or request.get("_continuation", {}).get("binding", {}).get("transport")
+    if unfinished is None:
+        unfinished = request.get("_continuation", {}).get("binding", {}).get("unfinished") is True
     native, card = builder_retry.check_custody(
-        home, request, status, allow_final_attempt=transport is not None
+        home, request, status, allow_final_attempt=transport is not None or unfinished
     )
     outcome = _latest_outcome(native, request["card_id"])
+    if unfinished and transport is None:
+        # A worker that committed real work and then stopped before its typed
+        # handoff (runtime limit, crash, provider failure) left that work in
+        # awaiting-evidence forever: continuation required a BLOCKED outcome or
+        # a pinned gateway 413. On chi (2026-10-10) builds such as fef9698e held
+        # a finished-looking commit with no verdict. One continuation is granted
+        # per generation, only with no outcome of its own since the claim.
+        artifacts = source_bundle._root(home, request["card_id"])
+        if artifacts.exists() and any(artifacts.iterdir()):
+            raise ValueError("review source custody forbids unfinished continuation")
+        claims = [
+            event
+            for event in native._read_events(request["card_id"])
+            if event.get("action") == "claim"
+            and (event.get("claim_revision") or event.get("event_id")) == status["claim_revision"]
+        ]
+        if (
+            status.get("source_artifact")
+            or request.get("operator_retry")
+            or status.get("continuation_consumed")
+            or card.meta.get("claim_conflicts")
+            or len(claims) != 1
+            or claims[0].get("owner") != status["owner"]
+            or (
+                outcome
+                and builder_transport.timestamp(outcome.get("ts", ""))
+                >= builder_transport.timestamp(claims[0].get("ts", ""))
+            )
+        ):
+            raise ValueError("exact unfinished claim without a current outcome required")
+        return {
+            "request_sha256": custody.sha(raw_request),
+            "status": {key: value for key, value in status.items() if key != "heartbeat_at"},
+            "card_revision": card_revision(card),
+            "outcome": outcome,
+            "identity": identity(status["owner"]),
+            "unfinished": True,
+        }
     if transport is not None:
         if not isinstance(transport, dict):
             raise ValueError("transport binding must be an object")
@@ -138,14 +178,39 @@ def binding(home, request, status, *, transport=None):
     }
 
 
-def source_proof(paths, request, status, target, *, apply=False, transport=None):
+def source_proof(paths, request, status, target, *, apply=False, transport=None, unfinished=None):
     """Preserve every workspace byte and inspect Git only in the read-only sandbox."""
     if request["production"]["host"] != socket.gethostname().split(".")[0].lower():
         raise ValueError("continuation process belongs to another host")
     builder_terminal.prove(paths.root.parent, status, apply=apply)
     transport = transport or request.get("_continuation", {}).get("binding", {}).get("transport")
+    if unfinished is None:
+        unfinished = request.get("_continuation", {}).get("binding", {}).get("unfinished") is True
     failure = builder_transport.proof(paths, request, status, transport) if transport else None
     workspace = paths.root / "workspaces" / status["owner"]
+    if unfinished and not transport:
+        # Committed work descends from the authorized base on a named feature
+        # branch; something beyond the base (commits or edits) must exist.
+        source = source_bundle._inspect(
+            workspace,
+            source_bundle._INSPECT_SETUP + """
+head=git('rev-parse','HEAD^{commit}').decode().strip()
+git('merge-base','--is-ancestor',base,head)
+ref=git('rev-parse','--symbolic-full-name','HEAD').decode().strip()
+assert ref.startswith('refs/heads/') and ref not in ('refs/heads/main','refs/heads/master')
+assert head!=base or git('status','--porcelain','--untracked-files=all')
+print(json.dumps({'head':head,'tree':git('rev-parse','HEAD^{tree}').decode().strip(),
+                  'ref':ref,'index_sha256':hashlib.sha256((root/'.git/index').read_bytes()).hexdigest()}))
+""",
+            request["card_id"],
+            request["base_revision"],
+            "unused",
+            "unused",
+            "unused",
+        )
+        preserved = custody.preserve(workspace, target, apply=apply)
+        builder_terminal.prove(paths.root.parent, status, apply=apply)
+        return {"source": source, **preserved}
     source = source_bundle._inspect(
         workspace,
         source_bundle._INSPECT_SETUP
@@ -188,7 +253,11 @@ def node_check(payload, *, paths=None, home=None):
             builder._validated_status(builder.status_path(paths, node, card), paths, node) or {}
         )
         transport = payload["binding"].get("transport")
-        if binding(home, request, status, transport=transport) != payload["binding"]:
+        unfinished = payload["binding"].get("unfinished") is True
+        if (
+            binding(home, request, status, transport=transport, unfinished=unfinished)
+            != payload["binding"]
+        ):
             raise ValueError("node continuation generation changed")
         proof = source_proof(
             paths,
@@ -197,13 +266,21 @@ def node_check(payload, *, paths=None, home=None):
             directory(home, request),
             apply=payload["apply"],
             transport=transport,
+            unfinished=unfinished,
         )
         expected = payload["binding"]["outcome"]
-        if not transport and any(
-            proof["source"][key] != expected.get("candidate_" + key) for key in ("tree", "ref")
+        if (
+            not transport
+            and not payload["binding"].get("unfinished")
+            and any(
+                proof["source"][key] != expected.get("candidate_" + key) for key in ("tree", "ref")
+            )
         ):
             raise ValueError("preserved Git identities differ from blocked outcome")
-        if binding(home, request, status, transport=transport) != payload["binding"]:
+        if (
+            binding(home, request, status, transport=transport, unfinished=unfinished)
+            != payload["binding"]
+        ):
             raise ValueError("node continuation claim changed")
         return proof
 
@@ -245,6 +322,7 @@ def authorize(
     reason,
     transport_session=None,
     transport_sha256=None,
+    unfinished=False,
     apply=False,
     probe=remote_check,
 ):
@@ -275,7 +353,7 @@ def authorize(
         transport = None
         if transport_session is not None or transport_sha256 is not None:
             transport = builder_transport.token(transport_session, transport_sha256)
-        bound = binding(home, request, status, transport=transport)
+        bound = binding(home, request, status, transport=transport, unfinished=unfinished)
         target = directory(home, request)
         if (target / "grant.json").exists() or (target / "consumed.json").exists():
             raise ValueError("continuation already authorized or consumed")
@@ -293,7 +371,7 @@ def authorize(
         ):
             raise ValueError("complete source preservation required")
         if (
-            binding(home, request, status, transport=transport) != bound
+            binding(home, request, status, transport=transport, unfinished=unfinished) != bound
             or builder._load(path) != request
         ):
             raise ValueError("continuation source changed during authorization")
@@ -407,6 +485,72 @@ def original_outcome_pending(home, request, status):
         )
     except (OSError, ValueError, KeyError, TypeError):
         return True  # Lost receipts retain this card without stopping unrelated work.
+
+
+UNFINISHED_ERROR = (
+    "candidate source rejected: source proposal lacks a current typed review request"
+)
+UNFINISHED_REASON = (
+    "automatic: the worker committed or staged work and stopped before its typed "
+    "handoff; one preserved continuation finishes validation and handoff"
+)
+
+
+def auto_continue_unfinished(paths, home, *, actor="niobe", limit=4, probe=remote_check):
+    """Grant one continuation to builds that stopped with work but no outcome.
+
+    #1094 releases a generation that produced nothing. Its complement, a
+    generation with real commits or edits and no typed outcome, stayed in
+    awaiting-evidence forever. Every check of authorize() still applies:
+    proven death, a byte-preserving archive of the workspace on its node, a
+    one-use grant that expires, and a re-check before launch. A generation
+    is continued at most once; a second stop keeps custody for an operator.
+    """
+    home = Path(home)
+    results = []
+    for status_file in sorted((paths.root / "status").glob("node-*/dispatch/*.json")):
+        if len(results) >= limit:
+            break
+        node = status_file.parent.parent.name
+        try:
+            status = builder._validated_status(status_file, paths, node) or {}
+        except (OSError, ValueError):
+            continue
+        if (
+            status.get("work_kind") == "review"
+            or status.get("state") != "awaiting-evidence"
+            or status.get("production") is None
+            or status.get("continuation_consumed")
+            or status.get("error") != UNFINISHED_ERROR
+        ):
+            continue
+        card = str(status.get("card_id") or "")
+        request = builder._load(builder.request_path(paths, node, card)) or {}
+        if request.get("request_id") != status.get("request_id"):
+            continue
+        if (directory(home, request) / "grant.json").exists():
+            continue
+        try:
+            outcome = authorize(
+                paths,
+                home,
+                node,
+                card,
+                request_id=request["request_id"],
+                claim=status.get("claim_revision"),
+                invocation=status.get("invocation"),
+                actor=actor,
+                reason=UNFINISHED_REASON,
+                unfinished=True,
+                apply=True,
+                probe=probe,
+            )
+            results.append({"card": card, "node": node, "state": outcome["state"]})
+        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
+            results.append(
+                {"card": card, "node": node, "state": "refused", "reason": str(exc)[:160]}
+            )
+    return results
 
 
 if __name__ == "__main__":
