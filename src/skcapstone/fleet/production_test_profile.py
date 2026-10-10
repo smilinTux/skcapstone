@@ -686,6 +686,7 @@ def seal_candidate(
         expected["source_sha256"] = plan.source_fingerprint(
             repository, binding["source_head"], binding["source_tree"]
         )
+    requalifying = False
     try:
         validate_profile(value, expected, policy)
     except plan.TestEvidenceError:
@@ -696,6 +697,7 @@ def seal_candidate(
         # its successor once those tests pass. Contract changes still refuse.
         if not acceptance_requalifiable(value, expected, policy):
             raise
+        requalifying = True
     plan.seal_plan(
         home,
         binding,
@@ -705,4 +707,5 @@ def seal_candidate(
         value["qualification_sha256"],
         profile=value,
         predecessor_sha256=predecessor_sha256,
+        acceptance_requalification=requalifying,
     )
