@@ -2205,3 +2205,41 @@ def test_finished_work_holds_no_builder_capacity(monkeypatch, tmp_path, state, c
     (tmp_path / "dispatch" / "node-chiap03").mkdir(parents=True)
     usage = builder_dispatch._production_usage(SimpleNamespace(root=tmp_path), "node-chiap03")
     assert usage == ((2.0, 3.0, False) if charged else (0.0, 0.0, False))
+
+
+def test_policy_refused_unclaimed_request_is_reoffered(paths, operator, noded41) -> None:
+    """fef9698e/a69ec3a8: a quota edit must not park unclaimed cards forever."""
+    _node(paths, operator, noded41)
+    writer = store.Writer(role="scheduler", node="niobe", identity="")
+    first = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
+    builder_dispatch._write_status(
+        paths,
+        first["node"],
+        first,
+        "blocked",
+        claim_released=False,
+        error=builder_dispatch.POLICY_REFUSED_BEFORE_CLAIM,
+    )
+    second = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
+    assert second is not None and second["request_id"] != first["request_id"]
+
+
+@pytest.mark.parametrize("field", ["owner", "claim_revision", "attempt"])
+def test_policy_refusal_after_custody_stays_held(paths, operator, noded41, field) -> None:
+    _node(paths, operator, noded41)
+    writer = store.Writer(role="scheduler", node="niobe", identity="")
+    first = builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer)
+    custody = {
+        "owner": "pi-codex-builder-node-ziowk01-24b00003",
+        "claim_revision": "a" * 32,
+        "attempt": 1,
+    }
+    builder_dispatch._write_status(
+        paths,
+        first["node"],
+        first,
+        "blocked",
+        error=builder_dispatch.POLICY_REFUSED_BEFORE_CLAIM,
+        **{field: custody[field]},
+    )
+    assert builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer) is None
