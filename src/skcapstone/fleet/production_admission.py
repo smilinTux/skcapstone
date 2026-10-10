@@ -174,6 +174,36 @@ def _past_runtime_limit(directory: Path, intent: dict, now: float | None = None)
     return current - started > limit + RUNTIME_EXPIRY_GRACE_SECONDS
 
 
+STARTUP_GRACE_SECONDS = 300
+
+
+def _ended_after_start(directory: Path, unit: str, now: float | None = None) -> bool:
+    """True when a started unit is no longer running well after its spawn.
+
+    start.json is written just before the spawn, so a fresh one may belong to a
+    unit systemd has not activated yet. Past STARTUP_GRACE_SECONDS, a unit that
+    is absent from the live inventory and inactive, failed or unloaded has ended.
+    Short Seraph reviews finish between occupancy passes and were never
+    observed, so each held its memory until the runtime bound and kept chiap03
+    from taking builds (2026-10-10).
+    """
+    try:
+        started = (directory / "start.json").stat().st_mtime
+    except OSError:
+        return False
+    current = time.time() if now is None else now
+    if current - started <= STARTUP_GRACE_SECONDS:
+        return False
+    try:
+        state = unit_state(unit)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+    return state.get("LoadState") == "not-found" or state.get("ActiveState") in {
+        "inactive",
+        "failed",
+    }
+
+
 def _occupancy(root: Path, home: Path, *, strict_terminal=False) -> list[dict]:
     """Account live units plus unobserved intents, without double charging RAM."""
     units = {row["unit"]: dict(row) for row in active_resource_units(home)}
@@ -196,7 +226,9 @@ def _occupancy(root: Path, home: Path, *, strict_terminal=False) -> list[dict]:
                 if not _valid_journal_terminal(read_json(journal_path), intent, observed):
                     raise AdmissionError("journal terminal proof differs")
                 continue
-        if unit not in units and _past_runtime_limit(directory, intent):
+        if unit not in units and (
+            _past_runtime_limit(directory, intent) or _ended_after_start(directory, unit)
+        ):
             # systemd's RuntimeMaxSec bounds every launched unit. A started
             # reservation whose unit is absent from the live inventory well past
             # that bound cannot be running, so it holds no memory. Without this,
