@@ -1495,6 +1495,28 @@ def _consume_available(
             active_cards.add(card_id)
             continue
         if status.get("state") != "running":
+            request = requests.get(card_id) or {}
+            if (
+                status.get("production") is not None
+                and status.get("state") == "awaiting-evidence"
+                and request
+                and request.get("request_id") != status.get("request_id")
+            ):
+                # A newer offer replaced this exited generation. Both passes
+                # below skip a card whose prior status is awaiting-*, so the
+                # old generation was never reconciled again and the newer offer
+                # never started (chi, 2026-10-10: 52f7c2a5, a0834032).
+                # Reconciling closes it only once the authority has released
+                # the claim; otherwise custody is kept exactly as before.
+                generation = {
+                    "request_id": status["request_id"],
+                    "card_id": card_id,
+                    "node": node,
+                }
+                result = _reconcile_running(paths, coordination_home, node, generation, status)
+                reconciled_orphans.add(card_id)
+                if result["state"] == "awaiting-evidence":
+                    active_cards.add(card_id)
             continue
         request = requests.get(card_id) or {}
         if request.get("request_id") == status.get("request_id"):
