@@ -114,6 +114,39 @@ def test_reviewed_unclaimed_source_can_complete_against_exact_review(tmp_path):
     assert store.fold(source).owner is None
 
 
+def test_unclaimed_terminal_review_can_complete_with_exact_revision(tmp_path):
+    store, _source, _producer, _artifact, review = prepared_review(tmp_path)
+    reviewer = "pi-seraph-fiber-" + review
+    claim = "d" * 32
+    store.append_event(review, "claim", reviewer, owner=reviewer, claim_revision=claim)
+    linked = _run(tmp_path, "link", review, "verdict", "FAIL", "--agent", reviewer)
+    assert linked.exit_code == 0, linked.output
+    store.append_event(
+        review,
+        "release_claim",
+        "operator",
+        released_owner=reviewer,
+        expected_claim_revision=claim,
+        transition_id="e" * 32,
+        abandon_reason="not-abandoned",
+    )
+    revision = LiveCardStoreGateway(tmp_path).read_card(review).revision
+
+    result = _run(
+        tmp_path,
+        "complete",
+        review,
+        "--agent",
+        reviewer,
+        "--expected-source-revision",
+        revision,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert store.fold(review).status.value == "done"
+    assert store.fold(review).owner is None
+
+
 def test_released_source_cannot_complete_after_review_verdict_changes(tmp_path):
     store, source, review, producer, reviewer, _ = accepted_review(tmp_path)
     store.append_event(

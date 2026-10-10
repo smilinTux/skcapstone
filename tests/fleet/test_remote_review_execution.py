@@ -409,6 +409,15 @@ def test_negative_remote_review_completes_only_review(terminal_review):
 
     e = terminal_review
     e["host"][0] = "chiap08"
+    review_card = e["source"]["store"].fold(e["card"])
+    e["source"]["store"].append_event(
+        e["card"],
+        "release_claim",
+        "niobe",
+        released_owner=review_card.owner,
+        expected_claim_revision=review_card.meta["_claim_revision"],
+        reason="release after sealed negative review terminal",
+    )
     result = acceptance.finish_remote_disposition(
         e["home"], e["policy"], e["card"], e["status"]["claim_revision"]
     )
