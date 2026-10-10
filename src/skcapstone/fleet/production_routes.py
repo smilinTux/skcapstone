@@ -22,6 +22,25 @@ class RouteUnavailableError(ValueError):
     """A currently unqualified route can be retried without claiming source."""
 
 
+GENERIC_BUCKET_IDS = frozenset({"sk-s", "sk-m", "sk-l", "sk-xl"})
+
+
+def served_backend_matches(served: object, expected: object, members=None) -> bool:
+    """Accept the backend that actually served a request.
+
+    A family route must be served by its own backend. A generic size bucket
+    (provider "skgateway", domain sk-s/m/l/xl) is served by whichever member
+    the gateway picked, so any current member is correct; when the member list
+    is unknown, any non-empty backend is accepted because the gateway itself
+    only routes the bucket to its configured members.
+    """
+    if not isinstance(served, str) or not served:
+        return False
+    if expected == "skgateway" or expected in GENERIC_BUCKET_IDS:
+        return not members or served in members
+    return served == expected
+
+
 def snapshot(value: dict) -> dict:
     """Reuse a bounded current gateway observation, never a worker-count ceiling."""
     gateway = value["gateway_url"]
@@ -90,9 +109,10 @@ def candidates(value: dict, route: str, labels: list[str], *, observed=None) -> 
                 _BOOTSTRAP_PROBES[key] = now
                 try:
                     probe = resolve_and_preflight(value["gateway_url"], target["model_or_bucket"])
-                    if (
-                        probe.requested_identity != target["model_or_bucket"]
-                        or probe.provider != target["provider"]
+                    if probe.requested_identity != target[
+                        "model_or_bucket"
+                    ] or not served_backend_matches(
+                        probe.provider, target["provider"], target.get("bucket_members")
                     ):
                         return []
                 except (OSError, RuntimeError, ValueError):
@@ -179,9 +199,8 @@ def preflight(value: dict, binding: dict) -> dict:
         return prior
     try:
         result = resolve_and_preflight(value["gateway_url"], binding["model"])
-        if (
-            result.requested_identity != binding["model"]
-            or result.provider != binding["gateway_backend"]
+        if result.requested_identity != binding["model"] or not served_backend_matches(
+            result.provider, binding["gateway_backend"]
         ):
             raise ValueError("production preflight exact model/backend binding differs")
     except ValueError:

@@ -28,6 +28,7 @@ def production_lanes(policy, scan_budget):
         "deepseek": ("deepseek",),
         "qwen": ("chiap08-qwen38", "chiap01-qwen38"),
         "kimi": (),
+        "gateway": ("sk-s", "sk-m", "sk-l", "sk-xl"),
     }
     lanes = []
     for name, route in policy["lanes"].items():

@@ -19,8 +19,16 @@ _ALIASES = {
     "skgw-qwen": "qwen",
     "chiap01-qwen38": "qwen",
     "chiap08-qwen38": "qwen",
+    # Generic gateway size buckets: skgateway chooses the member model, so the
+    # fleet routes to the bucket and the gateway config is the on/off switch.
+    "skgateway": "gateway",
+    "gateway": "gateway",
+    "sk-s": "gateway",
+    "sk-m": "gateway",
+    "sk-l": "gateway",
+    "sk-xl": "gateway",
 }
-_IDENTITY = re.compile(r"pi-(codex|glm|zai|deepseek|qwen|escalate)-[a-z0-9][a-z0-9._-]*\Z")
+_IDENTITY = re.compile(r"pi-(codex|glm|zai|deepseek|qwen|escalate|gateway)-[a-z0-9][a-z0-9._-]*\Z")
 _GLM_DISTINCT_REVIEW_LABELS = {"review", "glm-only", "review-distinct-agent"}
 
 

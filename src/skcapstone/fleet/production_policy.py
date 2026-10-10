@@ -98,9 +98,9 @@ def load_production_policy(path: Path, *, host: str) -> dict:
     if not valid_url:
         raise ValueError("production policy gateway URL is invalid")
     lanes = value["lanes"]
-    if not isinstance(lanes, dict) or set(lanes) != {*LANES, "kimi"}:
+    if not isinstance(lanes, dict) or set(lanes) - {"gateway"} != {*LANES, "kimi"}:
         raise ValueError("production policy lanes are invalid")
-    for lane in LANES:
+    for lane in LANES | ({"gateway"} & set(lanes)):
         row = lanes[lane]
         if (
             not isinstance(row, dict)

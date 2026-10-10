@@ -59,6 +59,11 @@ def _fetch(url: str, opener: Callable[..., Any]) -> dict[str, Any]:
     return value
 
 
+#: Generic skgateway size buckets. The gateway picks the member model and exposes
+#: one capacity domain per bucket (summed member pools) in /queue and /health.
+GENERIC_BUCKETS = frozenset({"sk-s", "sk-m", "sk-l", "sk-xl"})
+
+
 def _capacity_domain(queue: Mapping[str, Any], provider: str) -> str | None:
     matches = []
     for name, row in queue.items():
@@ -142,7 +147,16 @@ def acquire_review_route_snapshot(
             route = str(model.get("id") or "")
             provider = str(model.get("provider") or model.get("owned_by") or "")
             size = str(card.get("size_class") or "") if isinstance(card, dict) else ""
-            domain = _capacity_domain(queue, provider)
+            generic = (
+                model.get("kind") == "bucket"
+                and route in GENERIC_BUCKETS
+                and provider == "skgateway"
+            )
+            domain = (
+                route
+                if generic and _capacity_domain(queue, route) == route
+                else _capacity_domain(queue, provider)
+            )
             if (
                 not route
                 or not provider
@@ -177,6 +191,11 @@ def acquire_review_route_snapshot(
                     "max": int(queue_row["max"]),
                     "gateway_active": int(queue_row.get("active", 0)),
                     "gateway_model": model,
+                    "bucket_members": (
+                        sorted(str(m) for m in model.get("member_backends") or [])
+                        if generic
+                        else []
+                    ),
                 }
             )
         snapshot = {
