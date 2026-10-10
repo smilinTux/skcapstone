@@ -6063,6 +6063,13 @@ def reap_dead_claims():
                                       fleet_paths=default_fleet_paths()):
                 log(d,"REAP_PRESERVED_PRODUCTION_CUSTODY|%s|%s|%s"%(HOST,cid,fresh_owner))
                 continue
+            # A finished remote Seraph review keeps its claim for acceptance.
+            from skcapstone.fleet import production_custody as _review_custody
+            if _review_custody.retains_review_custody(
+                    Path(HOME)/".skcapstone",cid,fresh_owner,fresh_revision,
+                    fleet_paths=default_fleet_paths()):
+                log(d,"REAP_PRESERVED_REVIEW_CUSTODY|%s|%s|%s"%(HOST,cid,fresh_owner))
+                continue
             from skcapstone.fleet.profile_requalification import retains_pending_claim
             try:
                 if retains_pending_claim(

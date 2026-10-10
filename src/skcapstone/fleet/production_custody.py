@@ -264,3 +264,67 @@ def _remote_custody(fleet_paths, card_id, owner, claim, binding):
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
             continue
     return False
+
+
+REVIEW_CUSTODY_STATES = {"running", "awaiting-review-acceptance"}
+
+
+def retains_review_custody(
+    home: Path,
+    card_id: str,
+    owner: str,
+    claim: str,
+    *,
+    fleet_paths: FleetPaths,
+    store=None,
+) -> bool:
+    """Keep a remote Seraph reviewer's claim until production acceptance consumes it.
+
+    The reviewer exits after its handoff and must keep its claim; acceptance
+    later requires that exact owner and claim. retains_source_custody refuses
+    review cards, so the absent-worker reaper released every finished review
+    (worker_absent_after_quorum, then release_claim) and acceptance stopped on
+    'native pair changed before trusted tests' (add19bf8, 369cb4bc, 2026-10-10).
+    """
+    if not re.fullmatch(r"[0-9a-f]{8}", card_id) or not owner or not claim:
+        return False
+    try:
+        store = store or CardStore(home)
+        card = store.fold(card_id)
+        if (
+            card is None
+            or card.archived
+            or card.owner != owner
+            or card.meta.get("_claim_revision") != claim
+        ):
+            return False
+        launches = [
+            event
+            for event in store._read_events(card_id)
+            if event.get("action") == "review_assignment_launch"
+            and event.get("schema") == "skfleet.review-assignment-launch/v3"
+            and event.get("writer") == owner
+            and event.get("reviewer") == owner
+            and event.get("claim_revision") == claim
+            and event.get("launched") is True
+        ]
+        if not launches:
+            return False
+        execution = launches[-1].get("execution") or {}
+        node = str(execution.get("node") or "")
+        token = execution.get("request_id")
+        if not re.fullmatch(r"node-[a-z0-9-]{1,60}", node) or not isinstance(token, str):
+            return False
+        status = json.loads(
+            _read(fleet_paths.status_path(node, "dispatch", card_id), MAX_EVIDENCE)
+        )
+        return (
+            status.get("card_id") == card_id
+            and status.get("work_kind") == "review"
+            and status.get("request_id") == token
+            and status.get("owner") == owner
+            and status.get("claim_revision") == claim
+            and status.get("state") in REVIEW_CUSTODY_STATES
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
