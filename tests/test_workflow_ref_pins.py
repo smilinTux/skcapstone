@@ -146,17 +146,17 @@ def test_pytest_workflow_has_no_unpinned_git_urls():
     for line in workflow.splitlines():
         stripped = line.strip()
         if " @ git+" in stripped and stripped.endswith('"'):
-            assert "@" in stripped.rsplit("git+", 1)[1], (
-                f"VCS requirement without an immutable revision: {stripped!r}"
-            )
+            assert (
+                "@" in stripped.rsplit("git+", 1)[1]
+            ), f"VCS requirement without an immutable revision: {stripped!r}"
 
 
 def test_reviewed_sibling_pins_are_full_40_hex_commits():
     """The approved mapping itself is well formed: full 40-hex lowercase."""
     for url, revision in REVIEWED_SIBLING_PINS.items():
-        assert len(revision) == 40 and all(char in "0123456789abcdef" for char in revision), (
-            f"approved pin for {url} is not a full 40-hex commit: {revision!r}"
-        )
+        assert len(revision) == 40 and all(
+            char in "0123456789abcdef" for char in revision
+        ), f"approved pin for {url} is not a full 40-hex commit: {revision!r}"
 
 
 def test_skharness_pin_matches_pyproject_reviewed_pin():
@@ -168,9 +168,9 @@ def test_skharness_pin_matches_pyproject_reviewed_pin():
     pyproject = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "pytest.yml").read_text(encoding="utf-8")
     harness_pin = REVIEWED_SIBLING_PINS["https://github.com/smilinTux/skharness"]
-    assert harness_pin in pyproject, (
-        "skharness workflow pin diverged from the reviewed pyproject.toml pin"
-    )
+    assert (
+        harness_pin in pyproject
+    ), "skharness workflow pin diverged from the reviewed pyproject.toml pin"
     assert harness_pin in workflow
 
 
