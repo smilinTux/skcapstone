@@ -1751,22 +1751,37 @@ def _consume_available(
                     error="unclaimed offer expired",
                 )
                 continue
+            launch_request = request
             try:
                 production = production_builder.validate_request(paths, node, request, local=True)
             except production_builder.production_routes.RouteUnavailableError:
                 continue
             except ValueError:
-                if retrying:
+                if continuing:
+                    # The fresh continued session runs under today's policy; the
+                    # immutable offer and custody records stay as they were.
+                    try:
+                        production = production_builder.rebind_request(
+                            paths, node, request, local=True
+                        )
+                    except (
+                        ValueError,
+                        production_builder.production_routes.RouteUnavailableError,
+                    ):
+                        continue
+                    launch_request = dict(request, production=production)
+                elif retrying:
                     continue
-                _write_status(
-                    paths,
-                    node,
-                    request,
-                    "blocked",
-                    claim_released=False,
-                    error=POLICY_REFUSED_BEFORE_CLAIM,
-                )
-                continue
+                else:
+                    _write_status(
+                        paths,
+                        node,
+                        request,
+                        "blocked",
+                        claim_released=False,
+                        error=POLICY_REFUSED_BEFORE_CLAIM,
+                    )
+                    continue
             if production is not None:
                 policy = production_builder.policy()
                 if not any(
@@ -1954,15 +1969,18 @@ def _consume_available(
             if frozen is not None:
                 return frozen
             startup_hello(coordination_home, owner, host=node)
-            command = worker_command(request, owner, revision, workspace)
+            command = worker_command(launch_request, owner, revision, workspace)
             if production is not None:
                 try:
                     from .worker_git import preflight
 
                     preflight(command, workspace, owner)
-                    production_builder.validate_request(paths, node, request, local=True)
+                    if launch_request is request:
+                        production_builder.validate_request(paths, node, request, local=True)
+                    else:
+                        production_builder.rebind_request(paths, node, request, local=True)
                     command = production_builder.service_command(
-                        request, attempt, command, workspace
+                        launch_request, attempt, command, workspace
                     )
                 except ValueError as exc:
                     if retrying:
