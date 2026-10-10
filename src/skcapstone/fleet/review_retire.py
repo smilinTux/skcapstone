@@ -1239,3 +1239,96 @@ def retire(
         _remove_pointer(status_path)
         _remove_pointer(request_path)
         return {"state": "retired", "receipt": str(receipt)}
+
+
+RECOVERY_REASON = (
+    "automatic: remote review worker exited non-zero with no review packet; "
+    "released its exact claim and retired the generation so a fresh review is offered"
+)
+
+
+def recover_failed_generations(paths, home: Path, *, actor: str = "niobe") -> list[dict]:
+    """Release and retire remote review generations whose worker provably failed.
+
+    A reviewer that crashes (a gateway restart, a provider 400) leaves its
+    status at running with no review packet. Nothing ever cleared it: the
+    node refuses the failed exit, the reaper keeps a running reviewer's
+    claim, and retire() requires that claim already released. On chi a
+    reviewer killed by a gateway restart (ffd28b33, 2026-10-10) held the only
+    fresh source PASS of the day this way.
+
+    Fail-closed precondition: exactly one recorded worker exit for that card,
+    owner and claim with a non-zero child exit code. Only then is the exact
+    claim released (abandon reason "error"), and retire(apply=True) runs every
+    one of its own checks again, including proven unit death. A refusal after
+    the release leaves the card unclaimed and is retried on the next cycle.
+    """
+    from ..coordination import Board
+
+    home = Path(home)
+    results = []
+    for status_file in sorted((paths.root / "status").glob("node-*/dispatch/*.json")):
+        try:
+            status = json.loads(_raw(status_file))
+        except (OSError, ValueError):
+            continue
+        card = str(status.get("card_id") or "")
+        if (
+            status.get("work_kind") != "review"
+            or status.get("state") != "running"
+            or status.get("review_packet") is not None
+            or status.get("terminal") is not None
+            or not CARD.fullmatch(card)
+        ):
+            continue
+        node = status_file.parent.parent.name
+        owner, claim = status.get("owner"), status.get("claim_revision")
+        failed = []
+        for path in (home / "evidence/worker-exits").glob(card + "-*.json"):
+            try:
+                value = json.loads(_raw(path))
+            except (OSError, ValueError):
+                continue
+            if (
+                value.get("card_id") == card
+                and value.get("owner") == owner
+                and value.get("claim_revision") == claim
+                and type(value.get("child_exit_code")) is int
+                and value["child_exit_code"] != 0
+            ):
+                failed.append(path)
+        if len(failed) != 1:
+            continue
+        try:
+            current = CardStore(home).fold(card)
+            if (
+                current is not None
+                and current.owner == owner
+                and current.meta.get("_claim_revision") == claim
+            ):
+                Board(home).release_claim(
+                    owner,
+                    card,
+                    actor=owner,
+                    expected_claim_revision=claim,
+                    abandon_reason="error",
+                )
+                current = CardStore(home).fold(card)
+            outcome = retire(
+                paths,
+                home,
+                node,
+                card,
+                request_sha256=source_bundle._sha(_raw(dispatch.request_path(paths, node, card))),
+                status_sha256=source_bundle._sha(_raw(status_file)),
+                card_sha256=review_state_revision(current),
+                actor=actor,
+                reason=RECOVERY_REASON,
+                apply=True,
+            )
+            results.append({"card": card, "node": node, "state": outcome["state"]})
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            results.append(
+                {"card": card, "node": node, "state": "refused", "reason": str(exc)[:160]}
+            )
+    return results
