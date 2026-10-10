@@ -608,8 +608,7 @@ def process_snapshot(card):
 
 def consume_review(paths, home, node, request, *, launcher=None):
     """Use governed recommendation and native claim, then destination admission."""
-    from .production_admission import AdmissionDeferredError
-    from .production_resources import active_resource_units, local_worker_admission
+    from .production_admission import AdmissionDeferredError, admission_ready
     from .source_bundle import import_review_source
 
     prior = dispatch._validated_status(
@@ -621,7 +620,7 @@ def consume_review(paths, home, node, request, *, launcher=None):
     production.review_runtime()
     dispatch._guard_path()
     host, owner = request["production"]["host"], request["reviewer"]
-    ready, _ = local_worker_admission(request["policy"], host, active_resource_units(home))
+    ready, _ = admission_ready(home, request["policy"], host)
     if not ready:
         return None  # No claim, intent or retry is charged for capacity deferral.
     observed = process_snapshot(card.id)

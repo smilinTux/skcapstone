@@ -398,3 +398,11 @@ def test_recent_unobserved_start_stays_charged(capacity):
     _started(capacity, 60)
     with pytest.raises(admission.AdmissionError, match="capacity"):
         reserve(capacity, dict(BINDING, attempt="other"), "skfleet-worker-other.service")
+
+
+def test_pre_claim_check_sees_ledger_reservations(capacity):
+    """The review pre-check must agree with reserve_launch, or it claims then releases."""
+    assert admission.admission_ready(capacity, POLICY, HOST)[0]
+    reserve(capacity)
+    assert admission.active_resource_units(capacity) == []
+    assert not admission.admission_ready(capacity, POLICY, HOST)[0]
