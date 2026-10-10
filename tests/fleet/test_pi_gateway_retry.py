@@ -134,7 +134,7 @@ assert.equal(t.state.terminal.retryable,false);
 """)
 
 
-@pytest.mark.parametrize("status", [400, 401, 403, 404, 408, 413, 429])
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 408, 413])
 def test_every_client_error_is_terminal_without_wait(status):
     node_check(f"""
 let calls=0;const records=[];
@@ -314,18 +314,18 @@ let got;const records=[];const provider={id:'skgateway',auth:{apiKey:'fixture'},
  getModels:()=>['unchanged'],streamSimple(model,context,options){
   got=options;
   const result=(async()=>{await options.fetch('http://fixture.invalid');return {
-   stopReason:'error',errorMessage:'429: rate limit',content:[]};})();
+   stopReason:'error',errorMessage:'401: unauthorized',content:[]};})();
   return {result:()=>result,async *[Symbol.asyncIterator]() {
     yield {type:'error',error:await result};}};
  }};
 const wrapped=wrapGatewayProvider(provider,e=>records.push(e));
 assert.equal(wrapped.auth,provider.auth);assert.equal(wrapped.getModels,provider.getModels);
 const stream=wrapped.streamSimple({provider:'skgateway',id:'sk-glm-m'},{},
- {fetch:async()=>refused(429),maxRetries:99});
+ {fetch:async()=>refused(401),maxRetries:99});
 const events=[];for await(const e of stream)events.push(e);
 const result=await stream.result();
-assert.equal(got.maxRetries,0);assert.equal(result.gatewayError.http_status,429);
-assert(!/429|rate.?limit|503|504/.test(result.errorMessage));
+assert.equal(got.maxRetries,0);assert.equal(result.gatewayError.http_status,401);
+assert(!/401|unauthorized|503|504/.test(result.errorMessage));
 assert.equal(events[0].error,result);assert.equal(records[0].provider,'skgateway');
 """)
 
@@ -398,3 +398,26 @@ assert.equal(configured,390000);
         text=True,
         timeout=10,
     )
+
+
+def test_gateway_429_is_retried_with_backoff():
+    """ae812f7a: a pool-full 429 ended a nearly finished review on attempt 1."""
+    node_check("""
+let calls=0;const records=[],waits=[];
+const t=gatewayTransport(async()=>{calls++;return calls<3?refused(429,'pool_full'):new Response('ok');},
+  e=>records.push(e),{wait:async ms=>waits.push(ms)});
+assert.equal((await t.fetch('http://fixture.invalid')).status,200);
+assert.equal(calls,3);assert.deepEqual(waits,[10000,20000]);
+assert.deepEqual(records.map(r=>r.event),['retry','retry','result']);
+""")
+
+
+def test_gateway_429_honors_a_bounded_retry_after():
+    node_check("""
+let calls=0;const waits=[];
+const limited=s=>new Response('{}',{status:429,headers:{'retry-after':String(s)}});
+const t=gatewayTransport(async()=>{calls++;return calls===1?limited(45):calls===2?limited(9999):new Response('ok');},
+  ()=>{},{wait:async ms=>waits.push(ms)});
+assert.equal((await t.fetch('http://fixture.invalid')).status,200);
+assert.deepEqual(waits,[45000,60000]);
+""")
