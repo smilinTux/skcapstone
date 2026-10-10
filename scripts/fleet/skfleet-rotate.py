@@ -8180,6 +8180,27 @@ log(
         len(_builder_candidate_ids - {row[2] for row in pool}),
     ),
 )
+# Fail-safe: a remote reviewer that exited non-zero with no review packet held
+# its claim forever (ffd28b33, killed by a gateway restart 2026-10-10). The
+# authority releases that exact claim and retires the generation through the
+# governed retire(), so the review is offered again instead of waiting on a human.
+if (
+    not DRY
+    and PRODUCTION_POLICY
+    and PRODUCTION_POLICY.get("remote_review", {}).get("enabled")
+    and _is_niobe_builder_host(HOST)
+):
+    try:
+        from skcapstone.fleet.review_retire import recover_failed_generations
+
+        for _recovered in recover_failed_generations(
+            default_fleet_paths(), Path(HOME) / ".skcapstone"
+        ):
+            log(d, "REVIEW_GENERATION_RECOVERY|%s|%s|node=%s|state=%s|%s" % (
+                HOST, _recovered["card"], _recovered["node"], _recovered["state"],
+                _recovered.get("reason", "")))
+    except Exception as _exc:  # noqa: BLE001 - recovery must never stop a cycle
+        log(d, "REVIEW_GENERATION_RECOVERY_FAILED|%s|%s" % (HOST, str(_exc)[:160]))
 try:
     _builder_held_ids = builder_dispatch.held_card_ids(default_fleet_paths())
 except (builder_dispatch.BuilderDispatchError, OSError) as _exc:
