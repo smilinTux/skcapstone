@@ -535,8 +535,8 @@ def _run_shell_steps(
         command = template.format(**format_kwargs)
         try:
             argv = wrap(command)
-            if step_name == "qualification_tools" and runner is default_runner:
-                result = default_runner(argv, timeout=120)
+            if step_name in _LONG_STEP_TIMEOUTS and runner is default_runner:
+                result = default_runner(argv, timeout=_LONG_STEP_TIMEOUTS[step_name])
             else:
                 result = runner(argv)
         except Exception as exc:  # pragma: no cover - defensive, mirrors actuation.py
@@ -547,6 +547,13 @@ def _run_shell_steps(
             ).strip()
             return DeployOutcome(ok=False, step=step_name, reason=reason)
     return DeployOutcome(ok=True, step=None, reason=None)
+
+
+# Steps that legitimately outlast the default runner timeout. converge runs a
+# full sknoded tick, which folds every builder status: 73-100s on chiap01 with
+# ~17 outstanding statuses, so every rollout halted there on the 30s default
+# and chiap02/chiap04 kept the previous main (2026-10-10 00:24Z).
+_LONG_STEP_TIMEOUTS = {"qualification_tools": 120, "converge": 240}
 
 
 def default_deploy_node(

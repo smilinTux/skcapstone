@@ -1266,3 +1266,25 @@ def test_copy_steps_are_ordered_after_the_package_install():
         i for i, n in enumerate(names) if n.startswith("copy_")
     )
     assert max(i for i, n in enumerate(names) if n.startswith("copy_")) < names.index("converge")
+
+
+def test_converge_step_gets_a_full_sknoded_tick(monkeypatch):
+    """chiap01 2026-10-10: converge took 73-100s and every rollout halted at 30s."""
+    from skcapstone.fleet import staged_rollout as rollout
+
+    seen = {}
+
+    def fake_runner(argv, timeout=None):
+        seen[argv[-1]] = timeout
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(rollout, "default_runner", fake_runner)
+    outcome = rollout._run_shell_steps(
+        "chiap01",
+        steps=(("converge", "skcapstone fleet sknoded --once"), ("other", "true")),
+        repo="/r",
+        runner=fake_runner,
+        wrap=lambda command: ["sh", "-c", command],
+    )
+    assert outcome.ok
+    assert seen == {"skcapstone fleet sknoded --once": 240, "true": None}
