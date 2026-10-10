@@ -322,6 +322,21 @@ def _sealed_review_outcome(store, row, owner, claim, *, expected_verdicts=("PASS
     return outcome
 
 
+def _source_applicability_error(store, card, home):
+    """Explain why an invalid source-only applicability receipt cannot pass."""
+    if _source_only_applicability(card, home):
+        return None
+    receipts = [
+        event
+        for event in store._read_events(card) + store._legacy_events(card)
+        if event.get("action") == "link"
+        and (event.get("link_key") or event.get("key")) == "applicability_receipt"
+    ]
+    if len(receipts) > 1:
+        return "duplicate source-only applicability receipts"
+    return "source-only applicability receipt differs"
+
+
 def _historical_review_attempt(home, card, core, parent, head):
     """Validate review identity/lineage without consulting released source state."""
     from ..link_review_work import review_card_id
@@ -527,9 +542,11 @@ def collect(home, policy, card, claim, *, process_check):
         or review_snapshot.verdict != "PASS"
         or review_snapshot.unresolved_review
         or review_outcome.get("writer") != review_owner
-        or not _source_only_applicability(card, home)
     ):
         raise ReviewEvidenceError("native proposal or source-only applicability differs")
+    applicability_error = _source_applicability_error(store, card, home)
+    if applicability_error:
+        raise ReviewEvidenceError(applicability_error)
     if (
         not manifest.get("owner")
         or not manifest.get("claim_revision")
