@@ -80,6 +80,37 @@ def test_generic_bucket_snapshot_row_uses_bucket_domain_and_members(tmp_path):
     assert row["max"] == 30
 
 
+def test_family_routes_survive_a_bucket_row_that_lists_their_provider(tmp_path):
+    """A bucket's members list must not make a provider's own domain ambiguous."""
+    now = 2_000_000_000.0
+    models, health, queue = _documents(now)
+    models["data"].append(
+        {
+            "id": "glm-5",
+            "provider": "zai",
+            "advertised": True,
+            "stale": False,
+            "tools": True,
+            "card": {"size_class": "M", "reasoning": True, "tier": "paid-cloud"},
+        }
+    )
+    health["backends"]["zai"] = dict(health["backends"]["sk-m"])
+    queue["backends"]["zai"] = {"capacityDomain": "zai", "max": 10, "active": 1}
+    documents = dict(zip(("/v1/models", "/health", "/queue"), (models, health, queue)))
+
+    def opener(url, timeout):
+        suffix = next(key for key in documents if url.endswith(key))
+        return _Response(json.dumps(documents[suffix]).encode())
+
+    snapshot = acquire_review_route_snapshot(
+        "https://gateway", tmp_path / "snapshot.json", "cycle-1", opener=opener, now=lambda: now
+    )
+    rows = {r["logical_route"]: r for r in snapshot["routes"]}
+    assert rows["glm-5"]["capacity_domain"] == "zai"
+    assert rows["glm-5"]["max"] == 10
+    assert rows["sk-m"]["capacity_domain"] == "sk-m"
+
+
 def test_gateway_family_and_lane():
     assert provider_family("skgateway") == provider_family("sk-m") == "gateway"
     policy = {

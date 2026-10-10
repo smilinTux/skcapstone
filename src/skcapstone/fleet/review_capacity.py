@@ -69,6 +69,10 @@ def _capacity_domain(queue: Mapping[str, Any], provider: str) -> str | None:
     for name, row in queue.items():
         if not isinstance(row, dict):
             continue
+        # A generic bucket row lists its member providers, but a provider's
+        # own capacity domain is never the bucket that fans out to it.
+        if name in GENERIC_BUCKETS and name != provider:
+            continue
         members = row.get("members")
         if name == provider or (isinstance(members, list) and provider in members):
             if row.get("capacityDomain") == name:
