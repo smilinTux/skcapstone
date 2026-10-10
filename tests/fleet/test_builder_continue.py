@@ -351,3 +351,102 @@ def test_native_cli_check_only_is_the_default(monkeypatch):
     )
     assert result.exit_code == 0, result.output
     assert calls[0]["apply"] is False
+
+
+def _unfinished_probe(a, monkeypatch=None):
+    if monkeypatch is not None:
+        monkeypatch.setattr(
+            builder.CardStore,
+            "_read_events",
+            lambda *args: [
+                {
+                    "action": "claim",
+                    "claim_revision": a.status["claim_revision"],
+                    "owner": a.status["owner"],
+                    "ts": "2026-10-01T01:00:00Z",
+                }
+            ],
+        )
+
+    def probe(host, payload):
+        assert payload["binding"] == continuation.binding(
+            a.home, a.request, a.status, unfinished=True
+        )
+        return continuation.source_proof(
+            a.paths,
+            a.request,
+            a.status,
+            continuation.directory(a.home, a.request),
+            apply=payload["apply"],
+            unfinished=True,
+        )
+
+    return probe
+
+
+def test_unfinished_work_without_outcome_gets_one_preserved_continuation(preserved, monkeypatch):
+    a = preserved
+    a.outcome = {}  # the worker stopped before any typed handoff
+    a.kwargs["probe"] = _unfinished_probe(a, monkeypatch)
+    result = authorize(a, unfinished=True, apply=True)
+    assert result["state"] == "authorized-no-launch"
+    assert result["grant"]["binding"]["unfinished"] is True
+    target = continuation.directory(a.home, a.request)
+    assert (target / "workspace.tar.gz").stat().st_mode & 0o777 == 0o600
+    assert continuation.attach(a.home, a.request, a.status)
+    continuation.check_attempt(a.paths, a.home, a.request, a.status)
+    with pytest.raises(ValueError, match="already authorized"):
+        authorize(a, unfinished=True, apply=True)
+
+
+def test_unfinished_continuation_ignores_an_older_generation_outcome(preserved, monkeypatch):
+    a = preserved
+    a.outcome = dict(a.outcome, ts="2026-09-08T00:00:00Z", writer="september-author")
+    a.kwargs["probe"] = _unfinished_probe(a, monkeypatch)
+    assert authorize(a, unfinished=True)["state"] == "qualified-check-only"
+
+
+def test_unfinished_continuation_refuses_a_current_outcome(preserved, monkeypatch):
+    a = preserved  # its BLOCKED outcome postdates the claim
+    a.kwargs["probe"] = _unfinished_probe(a, monkeypatch)
+    with pytest.raises(ValueError, match="unfinished claim without a current outcome"):
+        authorize(a, unfinished=True)
+
+
+def test_a_continued_generation_is_never_continued_again(preserved, monkeypatch):
+    a = preserved
+    a.outcome = {}
+    a.status = dict(a.status, continuation_consumed="f" * 64)
+    a.kwargs["probe"] = _unfinished_probe(a, monkeypatch)
+    with pytest.raises(ValueError):
+        authorize(a, unfinished=True)
+
+
+def test_sweep_continues_only_unfinished_awaiting_evidence(preserved, monkeypatch):
+    a = preserved
+    status_file = a.paths.status_path("node-worker", "dispatch", a.request["card_id"])
+    status_file.parent.mkdir(parents=True, exist_ok=True)
+    status_file.write_text("{}")
+    calls = []
+
+    def fake_authorize(paths, home, node, card, **kwargs):
+        calls.append((node, card, kwargs["unfinished"], kwargs["apply"]))
+        return {"state": "authorized-no-launch"}
+
+    monkeypatch.setattr(continuation, "authorize", fake_authorize)
+    a.status = dict(
+        a.status,
+        state="awaiting-evidence",
+        error=continuation.UNFINISHED_ERROR,
+        request_id=a.request["request_id"],
+    )
+    monkeypatch.setattr(builder, "_validated_status", lambda *args: a.status)
+    results = continuation.auto_continue_unfinished(a.paths, a.home)
+    assert results == [
+        {"card": a.request["card_id"], "node": "node-worker", "state": "authorized-no-launch"}
+    ]
+    assert calls == [("node-worker", a.request["card_id"], True, True)]
+    calls.clear()
+    a.status = dict(a.status, error="candidate source rejected: source proposal claim changed")
+    assert continuation.auto_continue_unfinished(a.paths, a.home) == []
+    assert calls == []

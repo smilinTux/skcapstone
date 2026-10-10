@@ -8220,6 +8220,23 @@ log(
         len(_builder_candidate_ids - {row[2] for row in pool}),
     ),
 )
+# Fail-safe build continuation, authority-only: a builder that committed or staged
+# real work and stopped before its typed handoff held the card in
+# awaiting-evidence forever (fef9698e, 2026-10-10). Grant one preserved
+# continuation through the governed authorize() so the work is finished and
+# handed off instead of waiting on a human.
+if not DRY and PRODUCTION_POLICY and _is_niobe_builder_host(HOST):
+    try:
+        from skcapstone.fleet.builder_continue import auto_continue_unfinished
+
+        for _continued in auto_continue_unfinished(
+            default_fleet_paths(), Path(HOME) / ".skcapstone"
+        ):
+            log(d, "BUILDER_CONTINUATION|%s|%s|node=%s|state=%s|%s" % (
+                HOST, _continued["card"], _continued["node"], _continued["state"],
+                _continued.get("reason", "")))
+    except Exception as _exc:  # noqa: BLE001 - continuation must never stop a cycle
+        log(d, "BUILDER_CONTINUATION_FAILED|%s|%s" % (HOST, str(_exc)[:160]))
 # Fail-safe review recovery, authority-only:
 # - a remote reviewer that exited non-zero with no review packet held its claim
 #   forever (ffd28b33, killed by a gateway restart 2026-10-10); release that exact
