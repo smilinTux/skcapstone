@@ -579,39 +579,69 @@ def test_reviewer_self_release_churn_requires_exact_pairs_and_no_other_events():
     reviewer = "pi-seraph-chiap03-c60a542e"
     request_id = "a" * 64
     offer_at = "2026-10-08T12:00:00+00:00"
-    events = [
-        {"action": "remote_review_offer", "request_id": request_id, "ts": offer_at},
+    offer = {"action": "remote_review_offer", "request_id": request_id, "ts": offer_at}
+    recommendation = {
+        "action": "review_assignment_recommendation",
+        "writer": "link",
+        "recommendation_id": request_id,
+        "ts": "2026-10-08T12:00:30+00:00",
+    }
+    claim = {
+        "action": "claim",
+        "writer": reviewer,
+        "owner": reviewer,
+        "claim_revision": "b" * 32,
+        "ts": "2026-10-08T12:01:00+00:00",
+    }
+    release = {
+        "action": "release_claim",
+        "writer": reviewer,
+        "released_owner": reviewer,
+        "expected_claim_revision": "b" * 32,
+        "ts": "2026-10-08T12:02:00+00:00",
+    }
+    observation = {
+        "action": "mero_observation",
+        "writer": "mero",
+        "schema": "skfleet.mero-observation/v1",
+        "state": "worker_absent_after_quorum",
+        "process": {"host": "chiap03", "sessions": [], "claim_revision": "b" * 32},
+        "evidence_sha256": "c" * 64,
+        "ts": "2026-10-08T12:01:30+00:00",
+    }
+    events = [offer, recommendation, claim, release]
+    assert review_retire._reviewer_self_release_churn(events, offer_at, reviewer, request_id)
+    assert review_retire._reviewer_self_release_churn(
+        [offer, recommendation, claim, observation, release], offer_at, reviewer, request_id
+    )
+    quorum_release = [
+        offer,
+        recommendation,
+        claim,
+        observation,
+        {**release, "writer": "niobe"},
         {
-            "action": "claim",
-            "writer": reviewer,
-            "owner": reviewer,
-            "claim_revision": "b" * 32,
-            "ts": "2026-10-08T12:01:00+00:00",
-        },
-        {
-            "action": "release_claim",
-            "writer": reviewer,
-            "released_owner": reviewer,
-            "expected_claim_revision": "b" * 32,
-            "ts": "2026-10-08T12:02:00+00:00",
+            "action": "move",
+            "writer": "niobe",
+            "column": "review",
+            "ts": "2026-10-08T12:02:30+00:00",
         },
     ]
-    assert review_retire._reviewer_self_release_churn(events, offer_at, reviewer, request_id)
+    assert review_retire._reviewer_self_release_churn(
+        quorum_release, offer_at, reviewer, request_id
+    )
 
-    wrong_owner_release = [*events[:2], {**events[2], "writer": "other-reviewer"}]
+    wrong_owner_release = [offer, recommendation, claim, {**release, "writer": "other-reviewer"}]
     assert not review_retire._reviewer_self_release_churn(
         wrong_owner_release, offer_at, reviewer, request_id
     )
     other_reviewer = "pi-seraph-chiap02-c60a542e"
     wrong_claim_owner = [
-        events[0],
+        offer,
+        recommendation,
+        {**claim, "writer": other_reviewer, "owner": other_reviewer},
         {
-            **events[1],
-            "writer": other_reviewer,
-            "owner": other_reviewer,
-        },
-        {
-            **events[2],
+            **release,
             "writer": other_reviewer,
             "released_owner": other_reviewer,
         },
@@ -623,15 +653,18 @@ def test_reviewer_self_release_churn_requires_exact_pairs_and_no_other_events():
     assert not review_retire._reviewer_self_release_churn(
         unexpected_mutation, offer_at, reviewer, request_id
     )
-    launch = [
-        *events,
-        {
-            "action": "review_assignment_launch",
-            "recommendation_id": request_id,
-            "ts": "2026-10-08T12:03:00+00:00",
-        },
-    ]
+    launch = [*events, {"action": "review_assignment_launch", "recommendation_id": request_id}]
     assert not review_retire._reviewer_self_release_churn(launch, offer_at, reviewer, request_id)
+    unmatched_observation = [
+        offer,
+        recommendation,
+        claim,
+        {**observation, "process": {**observation["process"], "claim_revision": "d" * 32}},
+        release,
+    ]
+    assert not review_retire._reviewer_self_release_churn(
+        unmatched_observation, offer_at, reviewer, request_id
+    )
 
 
 def test_prestart_retirement_refuses_matching_resource_intent(tmp_path, monkeypatch):

@@ -204,6 +204,9 @@ def _reviewer_self_release_churn(
     )
     pending: str | None = None
     pairs = 0
+    released_claims = set()
+    observations = set()
+    niobe_released = False
     for event in after_offer:
         action = event.get("action")
         if action == "claim":
@@ -217,22 +220,52 @@ def _reviewer_self_release_churn(
             ):
                 return False
             pending = claim
+            niobe_released = False
+        elif action == "review_assignment_recommendation":
+            if event.get("writer") != "link" or event.get("recommendation_id") != request_id:
+                return False
         elif action == "release_claim":
             if (
                 pending is None
-                or event.get("writer") != reviewer
                 or event.get("released_owner") != reviewer
                 or event.get("expected_claim_revision") != pending
+                or not (
+                    event.get("writer") == reviewer
+                    or (event.get("writer") == "niobe" and pending in observations)
+                )
             ):
                 return False
             pending = None
+            released_claims.add(event.get("expected_claim_revision"))
+            niobe_released = event.get("writer") == "niobe"
             pairs += 1
         elif action == "move":
-            if event.get("writer") != reviewer or event.get("column") != "review" or pending:
+            if (
+                event.get("column") != "review"
+                or pending
+                or not (
+                    event.get("writer") == reviewer
+                    or (event.get("writer") == "niobe" and niobe_released)
+                )
+            ):
                 return False
+        elif action == "mero_observation":
+            process = event.get("process") or {}
+            if (
+                event.get("writer") != "mero"
+                or event.get("schema") != "skfleet.mero-observation/v1"
+                or event.get("state") != "worker_absent_after_quorum"
+                or not dispatch.valid_name(process.get("host", ""))
+                or process.get("sessions") != []
+                or not re.fullmatch(r"[0-9a-f]{32}", str(process.get("claim_revision") or ""))
+                or not SHA.fullmatch(str(event.get("evidence_sha256") or ""))
+                or process.get("claim_revision") != pending
+            ):
+                return False
+            observations.add(process["claim_revision"])
         else:
             return False
-    return pairs > 0 and pending is None
+    return pairs > 0 and pending is None and observations.issubset(released_claims)
 
 
 def _raw(path: Path) -> bytes:
