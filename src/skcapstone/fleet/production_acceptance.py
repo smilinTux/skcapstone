@@ -827,6 +827,15 @@ def reconcile(home, policy, *, process_check):
                 if receipt is None:
                     results.append({"card": card, "state": "awaiting-trusted-tests"})
                     continue
+                from .production_test_profile import refresh_accepted_profile
+
+                refresh_accepted_profile(
+                    home,
+                    context["test_binding"],
+                    policy,
+                    context["source"]["repository"],
+                    receipt["receipt_sha256"],
+                )
             result = finish_pair(home, directory, context, guard=guard)
             results.append({"card": card, "state": "accepted", "receipt": result})
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:

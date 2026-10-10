@@ -821,3 +821,84 @@ def test_node_recipe_ignores_vitest_snapshot_artifacts(tmp_path, monkeypatch):
     )
     assert recipe == {"vitest": {"src/pages/Workflow.test.tsx": 1}}
     node.checks(recipe)
+
+
+def test_acceptance_requalifies_only_fingerprint_drift(qualified, monkeypatch):
+    home, core, policy, _, _ = qualified
+    value, _ = profile.read_profile(home, core["id"])
+    expected = profile.contract(core)
+    monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "c" * 64)
+    monkeypatch.setattr(plan, "toolchain_fingerprint", lambda: "d" * 64)
+    assert profile.acceptance_requalifiable(value, dict(expected, source_sha256="0" * 64), policy)
+    for key, changed in (
+        ("card", "abcd1235"),
+        ("repository", "https://example.org/other.git"),
+        ("criteria_sha256", "9" * 64),
+    ):
+        assert not profile.acceptance_requalifiable(
+            value, dict(expected, **{key: changed}), policy
+        )
+    assert not profile.acceptance_requalifiable(
+        value, expected, dict(policy, authority_host="elsewhere")
+    )
+
+
+def _binding(core, head="1" * 40, tree="2" * 40):
+    return {
+        "source_card": core["id"],
+        "source_owner": "pi-glm-builder-node-chiap02-" + core["id"],
+        "source_claim_revision": "3" * 32,
+        "source_head": head,
+        "source_tree": tree,
+        "source_revision": "r",
+        "criteria_sha256": profile.contract(core)["criteria_sha256"],
+    }
+
+
+@pytest.mark.parametrize("held", [True, False])
+def test_accepted_trusted_tests_publish_the_candidate_profile(qualified, monkeypatch, held):
+    home, core, policy, _, _ = qualified
+    monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "c" * 64)
+    binding = _binding(core)
+    calls = []
+
+    class Store:
+        def __init__(self, *_args):
+            pass
+
+        def fold(self, card_id):
+            from types import SimpleNamespace
+
+            return SimpleNamespace(
+                owner=binding["source_owner"] if held else None,
+                model_dump=lambda mode=None: dict(core),
+            )
+
+    monkeypatch.setattr(profile, "CardStore", Store)
+    monkeypatch.setattr(profile, "supersede_profile", lambda *a, **k: calls.append(k))
+    assert profile.refresh_accepted_profile(
+        home, binding, policy, core["meta"]["repository"], "9" * 64
+    )
+    (kwargs,) = calls
+    assert kwargs["source_sha256"] == plan.source_fingerprint(
+        core["meta"]["repository"], binding["source_head"], binding["source_tree"]
+    )
+    assert kwargs["runtime_sha256"] == "c" * 64
+    if held:
+        assert kwargs["source_claim"] == {
+            "owner": binding["source_owner"],
+            "claim_revision": binding["source_claim_revision"],
+        }
+        assert kwargs["unclaimed"] is False
+    else:
+        assert kwargs["source_claim"] is None and kwargs["unclaimed"] is True
+
+
+def test_contract_change_is_never_requalified_by_acceptance(qualified, monkeypatch):
+    home, core, policy, _, _ = qualified
+    binding = dict(_binding(core), criteria_sha256="9" * 64)
+    monkeypatch.setattr(profile, "supersede_profile", lambda *a, **k: pytest.fail("published"))
+    with pytest.raises(plan.TestEvidenceError):
+        profile.refresh_accepted_profile(
+            home, binding, policy, core["meta"]["repository"], "9" * 64
+        )
