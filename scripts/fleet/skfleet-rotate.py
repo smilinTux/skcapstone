@@ -4933,6 +4933,7 @@ def awaiting_review(cid):
         ts
         and _PASS_RE.match(str(val or ""))
         and not _explicit_ready_requeue_after(cid, _ts_epoch(ts))
+        and not _superseded_after(cid, ts)
     )
 
 
@@ -4958,6 +4959,44 @@ def _explicit_ready_requeue_after(cid, threshold):
         for event in event_rows(cid)
     )
 
+def _verified_retired(cid, rows):
+    """Return the review requests whose retirement or supersession is proven."""
+    try:
+        from skcapstone.fleet.review_retire import retired_offers
+
+        return retired_offers(Path(HOME) / ".skcapstone", cid, rows)
+    except Exception:  # noqa: BLE001 - unproven means not superseded
+        return set()
+
+
+def _superseded_after(cid, threshold):
+    """True when a VERIFIED review supersession is newer than ``threshold``.
+
+    A finished review whose sealed reviewer claim was released can never be
+    accepted, so #1095 supersedes it. Its old PASS must then stop parking the
+    card as awaiting_review or terminal_review, or the fresh review is never
+    offered (11 cards on chi, 2026-10-10). Only a supersession whose request
+    retired_offers() proves counts; a bare event never reopens a card.
+    """
+    try:
+        boundary = (
+            float(threshold)
+            if isinstance(threshold, (int, float))
+            else _ts_epoch(threshold)
+        )
+    except (TypeError, ValueError):
+        return False
+    rows = event_rows(cid)
+    later = [
+        event for event in rows
+        if event.get("action") == "remote_review_supersede"
+        and _ts_epoch(event.get("ts")) > boundary
+    ]
+    if not later:
+        return False
+    retired = _verified_retired(cid, rows)
+    return any(event.get("request_id") in retired for event in later)
+
 def terminal_review_verdict(cid, core=None):
     """True when an independent review card already recorded PASS or FAIL."""
     labels = folded_labels(cid, core or {})
@@ -4967,6 +5006,7 @@ def terminal_review_verdict(cid, core=None):
     return bool(
         ts
         and re.match(r"^\s*(?:PASS\s*(?::|$)|FAIL(?:\s*(?::|$)|_))", str(value or ""), re.I)
+        and not _superseded_after(cid, ts)
     )
 
 

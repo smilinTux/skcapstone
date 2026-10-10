@@ -42,6 +42,8 @@ FUNCTIONS = {
     "_work_between",
     "_claim_ceiling_hit",
     "_explicit_ready_requeue_after",
+    "_verified_retired",
+    "_superseded_after",
     "acts",
     "blocked_backoff",
     "_material_change_since",

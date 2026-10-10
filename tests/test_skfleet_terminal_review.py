@@ -7,7 +7,7 @@ from pathlib import Path
 SCRIPT = Path(__file__).parents[1] / "scripts" / "fleet" / "skfleet-rotate.py"
 
 
-def _load(labels, outcomes):
+def _load(labels, outcomes, superseded=False):
     tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
     function = next(
         node
@@ -18,6 +18,7 @@ def _load(labels, outcomes):
         "re": re,
         "folded_labels": lambda cid, core: labels,
         "_load_outcomes": lambda: {"card": outcomes},
+        "_superseded_after": lambda cid, ts: superseded,
     }
     exec(compile(ast.Module(body=[function], type_ignores=[]), str(SCRIPT), "exec"), namespace)
     return namespace["terminal_review_verdict"]("card", {})
@@ -47,3 +48,45 @@ def test_source_pass_for_review_is_not_terminal():
 
 def test_blocked_review_can_be_retried_after_change():
     assert not _load(["review"], ("2026-09-01T14:28:05Z", "BLOCKED: dependency"))
+
+
+def test_superseded_review_pass_is_not_terminal():
+    assert not _load(["review"], ("2026-10-10T08:00:00Z", "PASS"), superseded=True)
+
+
+def _superseded(rows, retired):
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_superseded_after"
+    )
+    from datetime import datetime
+
+    namespace = {
+        "event_rows": lambda cid: rows,
+        "_verified_retired": lambda cid, rows: retired,
+        "_ts_epoch": lambda ts: datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp(),
+    }
+    exec(compile(ast.Module(body=[function], type_ignores=[]), str(SCRIPT), "exec"), namespace)
+    return namespace["_superseded_after"]("card", "2026-10-10T08:00:00Z")
+
+
+SUPERSEDE = {
+    "action": "remote_review_supersede",
+    "request_id": "e" * 64,
+    "ts": "2026-10-10T19:30:00Z",
+}
+
+
+def test_verified_later_supersession_reopens_the_review():
+    assert _superseded([SUPERSEDE], {"e" * 64})
+
+
+def test_unverified_supersession_never_reopens():
+    assert not _superseded([SUPERSEDE], set())
+
+
+def test_supersession_before_the_pass_is_history():
+    earlier = dict(SUPERSEDE, ts="2026-10-09T00:00:00Z")
+    assert not _superseded([earlier], {"e" * 64})
