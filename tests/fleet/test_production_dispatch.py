@@ -267,7 +267,7 @@ def test_actual_producer_selection_requires_fresh_sealed_gateway_facts(invalid):
     assert bool(result) is (invalid is None)
 
 
-def test_actual_review_capacity_gate_requires_an_independent_family():
+def test_actual_review_capacity_gate_admits_any_family_for_a_distinct_reviewer():
     ns = helpers("evaluate_review_capacity", policy_value=policy())
     rows = [
         {
@@ -297,8 +297,13 @@ def test_actual_review_capacity_gate_requires_an_independent_family():
         }
     )
     result = ns["evaluate_review_capacity"]({}, "M", [], "pi-codex-node-deadbeef", "reviewer")
-    assert result["available"] == 20
-    assert result["routes"] == [rows[1]]
+    assert result["available"] == 50
+    assert result["routes"] == rows
+    same = ns["evaluate_review_capacity"](
+        {}, "M", [], "pi-codex-node-deadbeef", "pi-codex-node-deadbeef"
+    )
+    assert same["available"] == 0
+    assert same["reason"] == "independent-provider-unavailable"
     unknown = ns["evaluate_review_capacity"]({}, "M", [], "unknown-source", "reviewer")
     assert unknown["available"] == 0
     assert unknown["reason"] == "source-provider-evidence-required"

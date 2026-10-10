@@ -78,14 +78,16 @@ def independent_review_routes(
     reviewer_identity: str | None = None,
     labels: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
-    """Keep qualified routes from independent families or explicit GLM reviews.
+    """Keep qualified review routes for a distinct reviewer principal.
 
     ``routes`` must already pass the current sealed gateway health, capability,
     capacity and card policy gates. This filter neither creates qualification
     nor changes source, claim, candidate or reviewer-principal authorization.
-    Same-family routing is allowed only for an explicitly GLM-only review whose
-    producer and reviewer principals differ. Independent model hosts within
-    Qwen remain one family.
+    Any enabled family may review (Chef, 2026-10-10: the cross-family rule
+    parked every DeepSeek build while GLM was the only other lane). This is
+    the dispatch-side twin of ``review_family_allowed``: independence is a
+    distinct reviewer agent, and an explicit ``glm-only`` pin admits only GLM.
+    The producer family must still be known, because acceptance needs it.
     """
     from ..seat_boundaries import canonical_principal
     from .production_dispatch import enabled_family_routes
@@ -103,11 +105,13 @@ def independent_review_routes(
             raise
         source = None
 
+    if reviewer_identity is not None and not distinct_principals:
+        return []
+    glm_only = "glm-only" in normalized_labels or source is None
+
     def is_independent(route: Mapping[str, Any]) -> bool:
         family = provider_family(route["provider"])
-        if source is None:
-            return family == "zai"
-        return family != source or (allow_glm and source == "zai" and family == "zai")
+        return family is not None and (not glm_only or family == "zai")
 
     return [
         route for route in enabled_family_routes(routes, policy=policy) if is_independent(route)
