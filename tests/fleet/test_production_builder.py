@@ -604,6 +604,95 @@ def test_authority_released_generation_closes_instead_of_holding_evidence(
         assert result["claim_released"] is False
 
 
+@pytest.mark.parametrize(
+    "case",
+    ["empty", "own-link", "own-verdict", "dirty", "other-error", "claim-moved"],
+)
+def test_exited_generation_without_outcome_is_released_only_when_provably_empty(
+    paths, production_setup, monkeypatch, tmp_path, case
+):
+    from skcapstone.fleet import source_bundle
+
+    request = builder.offer(
+        paths, _card(), ["sk-m", "source-only"], writer=production_setup.writer
+    )
+    claim = "a" * 32
+    status = {
+        "owner": "source-owner",
+        "claim_revision": claim,
+        "attempt": 1,
+        "production": request["production"],
+        "unit": production.unit_name(request, 1),
+    }
+    folded = _folded(
+        owner="source-owner",
+        meta=dict(_card()["meta"], _claim_revision="b" * 32 if case == "claim-moved" else claim),
+    )
+    events = [{"action": "claim", "claim_revision": claim, "ts": "2026-10-10T10:00:00Z"}]
+    if case == "own-link":
+        events.append({"action": "link", "writer": "source-owner", "ts": "2026-10-10T10:05:00Z"})
+    if case == "own-verdict":
+        events.append(
+            {"action": "verdict", "writer": "source-owner", "ts": "2026-10-10T10:05:00Z"}
+        )
+    # An older generation's outcome by someone else must not keep custody.
+    events.append({"action": "link", "writer": "september-author", "ts": "2026-09-08T00:00:00Z"})
+    monkeypatch.setattr(builder, "_process_state", lambda status: (False, 0))
+    monkeypatch.setattr(builder.CardStore, "fold", lambda *args: folded)
+    monkeypatch.setattr(builder.CardStore, "_read_events", lambda *args: events)
+
+    def clean(workspace, base):
+        if case == "dirty":
+            raise source_bundle.SourceBundleError("workspace changed")
+        return {"head": base}
+
+    monkeypatch.setattr(source_bundle, "inspect_clean_base", clean)
+    releases = []
+    monkeypatch.setattr(
+        builder, "_release_exact", lambda *args, **kwargs: releases.append(args) or True
+    )
+
+    def publish(*args, **kwargs):
+        if case == "other-error":
+            raise source_bundle.SourceBundleError("source proposal claim changed")
+        raise source_bundle.SourceBundleError(
+            "source proposal lacks a current typed review request"
+        )
+
+    monkeypatch.setattr(source_bundle, "publish_source", publish)
+    result = builder._reconcile_running(paths, tmp_path, "node-worker", request, status)
+    if case == "empty":
+        assert result["state"] == "blocked"
+        assert result["claim_released"] is True
+        assert result["error"] == builder.EXITED_WITHOUT_OUTCOME
+        assert len(releases) == 1
+        assert builder._unclaimed_expired_offer(request, result) is True
+    else:
+        assert result["state"] == "awaiting-evidence"
+        assert result["claim_released"] is False
+        assert releases == []
+        assert builder._unclaimed_expired_offer(request, result) is False
+
+
+def test_released_empty_generation_gets_a_fresh_offer(paths, production_setup):
+    first = builder.offer(paths, _card(), ["sk-m", "source-only"], writer=production_setup.writer)
+    builder._write_status(
+        paths,
+        first["node"],
+        first,
+        "blocked",
+        owner="source-owner",
+        claim_revision="a" * 32,
+        attempt=1,
+        production=first["production"],
+        claim_released=True,
+        error=builder.EXITED_WITHOUT_OUTCOME,
+    )
+    second = builder.offer(paths, _card(), ["sk-m", "source-only"], writer=production_setup.writer)
+    assert second is not None
+    assert second["request_id"] != first["request_id"]
+
+
 def test_stopped_remote_typed_blocked_does_not_replay_or_publish(
     paths, production_setup, monkeypatch, tmp_path
 ):
