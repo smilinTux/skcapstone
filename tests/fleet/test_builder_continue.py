@@ -450,3 +450,35 @@ def test_sweep_continues_only_unfinished_awaiting_evidence(preserved, monkeypatc
     a.status = dict(a.status, error="candidate source rejected: source proposal claim changed")
     assert continuation.auto_continue_unfinished(a.paths, a.home) == []
     assert calls == []
+
+
+@pytest.mark.host_systemd
+def test_continuation_launches_under_current_policy_after_policy_drift(ready_retry, monkeypatch):
+    a = ready_retry
+    a.request.pop("operator_retry")
+    a.request["production"] = dict(a.request["production"], policy_sha256="0" * 40)
+    grant = {"schema": continuation.SCHEMA, "expires_at": "2099-01-01T00:00:00Z"}
+    grant["id"] = custody.sha(custody.encoded(grant))
+    target = continuation.directory(a.home, a.request)
+    custody.private_directory(target)
+    source_bundle._once(target / "grant.json", custody.encoded(grant))
+    path = builder.request_path(a.paths, "node-worker", a.request["card_id"])
+    path.write_text(json.dumps(a.request))
+    before = path.read_bytes()
+    monkeypatch.setattr(continuation, "check_attempt", lambda *args: None)
+    monkeypatch.setattr(continuation, "card_mutation_lock", lambda *args: nullcontext())
+    launches = []
+
+    def launch(command, workspace):
+        launches.append(command)
+        return SimpleNamespace(pid=12345680, poll=lambda: None)
+
+    builder.consume_one(
+        a.paths,
+        a.home,
+        "node-worker",
+        launcher=launch,
+        materializer=lambda *args: pytest.fail("preserved source cannot reset"),
+    )
+    assert len(launches) == 1
+    assert path.read_bytes() == before

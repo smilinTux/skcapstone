@@ -760,3 +760,24 @@ def test_terminal_process_custody_survives_transient_unit_collection(
     result = builder._reconcile_running(paths, tmp_path, "node-worker", request, status)
     assert result["state"] == "awaiting-review"
     assert result["claim_released"] is False
+
+
+def test_continuation_rebinds_a_drifted_request_to_the_current_policy(paths, production_setup):
+    request = builder.offer(
+        paths, _card(), ["sk-m", "source-only"], writer=production_setup.writer
+    )
+    current = production.validate_request(paths, request["node"], request)
+    drifted = dict(request, production=dict(request["production"], policy_sha256="0" * 40))
+    with pytest.raises(ValueError, match="policy changed"):
+        production.validate_request(paths, request["node"], drifted)
+    assert production.rebind_request(paths, request["node"], drifted) == current
+
+
+@pytest.mark.parametrize("field", ["host", "family"])
+def test_continuation_rebind_never_moves_host_or_family(paths, production_setup, field):
+    request = builder.offer(
+        paths, _card(), ["sk-m", "source-only"], writer=production_setup.writer
+    )
+    drifted = dict(request, production=dict(request["production"], **{field: "elsewhere"}))
+    with pytest.raises((ValueError, production.production_routes.RouteUnavailableError)):
+        production.rebind_request(paths, request["node"], drifted)

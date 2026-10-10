@@ -124,6 +124,40 @@ def validate_request(paths, node: str, request: dict, *, local: bool = False) ->
     return expected
 
 
+def rebind_request(paths, node: str, request: dict, *, local: bool = False) -> dict:
+    """Bind a continued generation's fresh session to the current policy.
+
+    A continuation is a new session on retained custody. Its immutable offer
+    still names the policy, quotas and model of the day it was offered, so any
+    later production.json edit made validate_request() refuse it forever and
+    the node skipped the grant silently (chi, 2026-10-10: every retained build
+    predated that day's lane changes). Host and model family must stay the
+    same, which keeps the claimant identity; quotas and the concrete route are
+    taken from the current policy, and the route must be currently qualified.
+    """
+    value = policy()
+    bound = request.get("production")
+    if value is None or not isinstance(bound, dict):
+        raise ValueError("production request requires production policy")
+    expected = node_binding(paths, node, value)
+    if expected.get("host") != bound.get("host"):
+        raise ValueError("continuation execution host changed")
+    if local and expected["host"] != socket.gethostname().split(".")[0].lower():
+        raise ValueError("production request belongs to another execution host")
+    expected.update(
+        route_binding(
+            value,
+            request["card_id"],
+            request["logical_route"],
+            request["labels"],
+            family=bound.get("family"),
+        )
+    )
+    if expected.get("family") != bound.get("family"):
+        raise ValueError("continuation model family changed")
+    return expected
+
+
 def unit_name(request: dict, attempt: int) -> str:
     """Give every request attempt its own non-reusable service identity."""
     card, token = request["card_id"], request["request_id"]
