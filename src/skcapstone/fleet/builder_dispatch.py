@@ -32,6 +32,16 @@ PROVIDER = "skgateway"
 LOGICAL_ROUTES = frozenset({"sk-s", "sk-m", "sk-l", "sk-xl"})
 LEASE_SECONDS = 900
 TERMINAL_STATES = {"completed", "blocked", "failed", "stale", "awaiting-review"}
+# States whose process has ended, so they hold no builder RAM or cores. A
+# remote review that finished on a builder leaves awaiting-review-acceptance
+# (or review-fail/-blocked) in the same status directory; charging those kept
+# chiap03 at 9 of 10.4 GiB with nothing running (2026-10-09 23:40Z).
+CAPACITY_FREE_STATES = TERMINAL_STATES | {
+    "awaiting-evidence",
+    "awaiting-review-acceptance",
+    "review-fail",
+    "review-blocked",
+}
 MAX_ATTEMPTS = 2
 MATCH_RETRY_LIMIT = 3
 BUILDER_CAPACITY = 4
@@ -310,7 +320,7 @@ def _node_load(paths: FleetPaths, node: str, *, production: bool = False) -> int
         card_id = str(request.get("card_id") or "")
         status = statuses.get(card_id, {})
         same = status.get("request_id") == request.get("request_id")
-        terminal = TERMINAL_STATES | ({"awaiting-evidence"} if production else set())
+        terminal = CAPACITY_FREE_STATES if production else TERMINAL_STATES
         if same and status.get("state") in terminal:
             continue
         if production and not status and _lease_expired(request, _now()):
@@ -363,11 +373,11 @@ def _production_usage(paths, node: str, *, exclude=None):
             continue
         request, status = requests.get(candidate, {}), statuses.get(candidate, {})
         same = request.get("request_id") == status.get("request_id")
-        if same and status.get("state") in TERMINAL_STATES | {"awaiting-evidence"}:
+        if same and status.get("state") in CAPACITY_FREE_STATES:
             continue
         if not status and _lease_expired(request, _now()):
             continue
-        if not request and status.get("state") in TERMINAL_STATES | {"awaiting-evidence"}:
+        if not request and status.get("state") in CAPACITY_FREE_STATES:
             continue
         resources = (status.get("production") or request.get("production") or {}).get("resources")
         if not isinstance(resources, dict):
