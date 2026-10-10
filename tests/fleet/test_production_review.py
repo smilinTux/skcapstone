@@ -1,4 +1,4 @@
-"""Exact source-family and qualified route bindings for independent review."""
+"""Qualified review route bindings: any enabled family, a distinct reviewer."""
 
 import copy
 
@@ -66,17 +66,41 @@ def test_ambiguous_or_conflicting_producer_refuses(identity, provider):
         producer_family(identity, provider)
 
 
-def test_two_healthy_families_never_admit_producer_family():
+def test_any_enabled_family_reviews_for_a_distinct_reviewer():
     routes = [route("gpt-5.6-sol", "codex"), route("sk-zai-m", "zai")]
-    assert independent_review_routes(
-        routes, policy=policy(), producer_identity="pi-codex-chiap03-deadbeef"
-    ) == [routes[1]]
     assert (
         independent_review_routes(
-            routes[:1], policy=policy(), producer_identity="pi-codex-chiap03-deadbeef"
+            routes,
+            policy=policy(),
+            producer_identity="pi-codex-chiap03-deadbeef",
+            reviewer_identity="pi-seraph-chiap08-1234abcd",
+        )
+        == routes
+    )
+
+
+def test_same_reviewer_principal_gets_no_route():
+    routes = [route("gpt-5.6-sol", "codex"), route("sk-zai-m", "zai")]
+    assert (
+        independent_review_routes(
+            routes,
+            policy=policy(),
+            producer_identity="pi-codex-chiap03-deadbeef",
+            reviewer_identity="pi-codex-chiap03-deadbeef",
         )
         == []
     )
+
+
+def test_glm_only_pin_admits_only_glm_routes():
+    routes = [route("deepseek-flash", "deepseek"), route("sk-zai-m", "zai")]
+    assert independent_review_routes(
+        routes,
+        policy=policy(),
+        producer_identity="pi-deepseek-builder-chiap02-1234abcd",
+        reviewer_identity="pi-seraph-chiap08-1234abcd",
+        labels=["review", "glm-only"],
+    ) == [routes[1]]
 
 
 def test_explicit_glm_distinct_agent_policy_admits_glm_for_untyped_source():
@@ -118,7 +142,7 @@ def test_explicit_glm_distinct_agent_policy_admits_known_glm_source():
     )
 
 
-def test_qwen_replica_change_is_not_provider_independence():
+def test_qwen_replicas_and_other_families_all_review():
     routes = [
         route("qwen-model", "chiap01-qwen38"),
         route("qwen-model", "chiap08-qwen38"),
@@ -127,7 +151,7 @@ def test_qwen_replica_change_is_not_provider_independence():
     result = independent_review_routes(
         routes, policy=policy(), producer_identity="pi-qwen-builder-chiap08-1234abcd"
     )
-    assert result == [routes[2]]
+    assert result == routes
 
 
 @pytest.mark.parametrize(
