@@ -42,6 +42,8 @@ def route(model, provider, domain=None):
         ("pi-escalate-chiap08-1234abcd", "codex", "codex"),
         ("codex-production-review-746626c9", "openai", "codex"),
         ("opaque-author", "zai", "zai"),
+        ("opaque-author", "skgateway", "gateway"),
+        ("pi-gateway-builder-chiap02-1234abcd", None, "gateway"),
     ],
 )
 def test_source_family_from_actual_identity_or_typed_provider(identity, provider, family):
@@ -57,7 +59,6 @@ def test_source_family_from_actual_identity_or_typed_provider(identity, provider
         ("pi-codex", None),
         ("pi-codex-chiap08-id", "zai"),
         ("opaque", "local"),
-        ("opaque", "skgateway"),
         ("pi-codex-chiap08-id", "unknown"),
     ],
 )
