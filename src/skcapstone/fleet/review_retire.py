@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import socket
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1251,6 +1253,11 @@ def retire(
         return {"state": "retired", "receipt": str(receipt)}
 
 
+def _skcapstone() -> str:
+    """Resolve the native board CLI the same way the rest of the fleet does."""
+    return shutil.which("skcapstone") or str(Path.home() / ".skenv/bin/skcapstone")
+
+
 RECOVERY_REASON = (
     "automatic: remote review worker exited non-zero with no review packet; "
     "released its exact claim and retired the generation so a fresh review is offered"
@@ -1322,6 +1329,22 @@ def recover_failed_generations(paths, home: Path, *, actor: str = "niobe") -> li
                     actor=owner,
                     expected_claim_revision=claim,
                     abandon_reason="error",
+                )
+                current = CardStore(home).fold(card)
+            # release-claim lands a card in backlog, and retire() (like any new
+            # review offer) needs the review column: ffd28b33, 056a4633, 1751be81
+            # and 8be94bd4 stuck there on chi (2026-10-10). Restore the column.
+            if (
+                current is not None
+                and current.owner is None
+                and getattr(current.status, "value", current.status) != "review"
+                and "review" in {str(label).lower() for label in current.labels}
+            ):
+                subprocess.run(
+                    [_skcapstone(), "coord", "move", card, "review", "--agent", actor],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
                 )
                 current = CardStore(home).fold(card)
             outcome = retire(

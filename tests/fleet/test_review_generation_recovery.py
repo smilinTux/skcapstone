@@ -54,13 +54,28 @@ def harness(monkeypatch):
     calls = SimpleNamespace(
         releases=[],
         retires=[],
-        folded=SimpleNamespace(owner=OWNER, meta={"_claim_revision": CLAIM}),
+        moves=[],
+        folded=SimpleNamespace(
+            owner=OWNER,
+            meta={"_claim_revision": CLAIM},
+            status=SimpleNamespace(value="doing"),
+            labels=["review", "source-only"],
+        ),
     )
 
     def release(_self, owner, card, **kwargs):
         calls.releases.append((owner, card, kwargs))
-        calls.folded = SimpleNamespace(owner=None, meta={})
+        calls.folded = SimpleNamespace(
+            owner=None, meta={}, status=SimpleNamespace(value="backlog"), labels=["review"]
+        )
         return True
+
+    def run(argv, **kwargs):
+        calls.moves.append(argv[-5:])
+        calls.folded = SimpleNamespace(
+            owner=None, meta={}, status=SimpleNamespace(value="review"), labels=["review"]
+        )
+        return SimpleNamespace(returncode=0)
 
     def retire(paths, home, node, card, **kwargs):
         calls.retires.append((node, card, kwargs))
@@ -70,6 +85,7 @@ def harness(monkeypatch):
     monkeypatch.setattr(review_retire.CardStore, "fold", lambda *args: calls.folded)
     monkeypatch.setattr(review_retire, "review_state_revision", lambda card: "d" * 64)
     monkeypatch.setattr(review_retire, "retire", retire)
+    monkeypatch.setattr(review_retire.subprocess, "run", run)
     return calls
 
 
@@ -87,9 +103,19 @@ def test_failed_reviewer_is_released_then_retired(tmp_path, harness):
 
 def test_already_released_claim_is_only_retired(tmp_path, harness):
     home, paths = _tree(tmp_path)
-    harness.folded = SimpleNamespace(owner=None, meta={})
+    harness.folded = SimpleNamespace(
+        owner=None, meta={}, status=SimpleNamespace(value="review"), labels=["review"]
+    )
     review_retire.recover_failed_generations(paths, home)
     assert harness.releases == []
+    assert harness.moves == []
+    assert len(harness.retires) == 1
+
+
+def test_released_review_card_returns_to_the_review_column_before_retire(tmp_path, harness):
+    home, paths = _tree(tmp_path)
+    review_retire.recover_failed_generations(paths, home)
+    assert harness.moves == [["move", CARD, "review", "--agent", "niobe"]]
     assert len(harness.retires) == 1
 
 

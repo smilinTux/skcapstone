@@ -119,11 +119,14 @@ export function gatewayTransport(
           // 429 is the gateway's own pool/queue refusal (zai concurrency ceiling):
           // transient by definition. Terminal 429 killed nearly finished Seraph
           // reviews on chiap02 (ae812f7a, bb6da93e, 2026-10-10 01:48Z).
+          // Any 502 is an upstream failure. When every backend 502s, skgateway
+          // passes the last upstream body through untyped, so a review or build
+          // died on one blip (chi, 2026-10-10 20:10Z, "no more backends").
+          // Request-shaped errors stay 4xx and terminal; 503 keeps its typed rule.
           const transient = response.status === 504 || response.status === 429 || (
             response.status === 503 && fields.type === "bucket_no_eligible_member"
           ) || (
-            response.status === 502
-            && (fields.type === "malformed_response" || fields.code === "empty_upstream_response")
+            response.status === 502 && fields.code !== "request_too_large"
           );
           const limited = response.status === 429;
           const requestedDelay = limited
