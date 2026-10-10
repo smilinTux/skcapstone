@@ -300,8 +300,8 @@ def _sealed_review_policy(home, launch, card, event, current_policy):
     return current_policy
 
 
-def _sealed_review_outcome(store, row, owner, claim):
-    """Find the PASS event for the reviewer's original claim after release."""
+def _sealed_review_outcome(store, row, owner, claim, *, expected_verdicts=("PASS",)):
+    """Find an exact terminal outcome for the reviewer's original claim after release."""
     claims = [
         event
         for event in store._read_events(row.id)
@@ -315,7 +315,7 @@ def _sealed_review_outcome(store, row, owner, claim):
         len(claims) != 1
         or outcome.get("writer") != owner
         or outcome.get("expected_claim_revision") not in (None, claim)
-        or value.split(maxsplit=1)[0].upper() != "PASS"
+        or value.split(maxsplit=1)[0].upper() not in expected_verdicts
         or str(outcome.get("ts", "")) < str(claims[0].get("ts", ""))
     ):
         raise ReviewEvidenceError("sealed independent review outcome is no longer current")
@@ -669,7 +669,7 @@ def collect(home, policy, card, claim, *, process_check):
     return context
 
 
-def _retired_exit(home, card, directory):
+def _retired_exit(home, card, directory, *, claim=None):
     """Classify retained exits that no acceptance step can ever act on again.
 
     This never accepts anything. It only stops re-running live launch-policy
@@ -695,9 +695,31 @@ def _retired_exit(home, card, directory):
             if row is None or row.status.value != "done":
                 raise ReviewEvidenceError("accepted native pair is no longer done")
         return {"card": card, "state": "accepted", "receipt": result, "historical": True}
+    store = CardStore(home)
+    if claim is not None:
+        from .review_retire import retired_offers
+
+        launches = [
+            event
+            for event in store._read_events(card)
+            if event.get("action") == "review_assignment_launch"
+            and event.get("claim_revision") == claim
+            and event.get("launched") is True
+        ]
+        if len(launches) == 1:
+            request_id = (launches[0].get("execution") or {}).get("request_id")
+            if request_id in retired_offers(
+                home, card, store._read_events(card) + store._legacy_events(card)
+            ):
+                return {
+                    "card": card,
+                    "state": "retired",
+                    "request_id": request_id,
+                    "historical": True,
+                }
     if (directory / "context.json").exists():
         return None
-    review = CardStore(home).fold(card)
+    review = store.fold(card)
     if review is None or "source-only" not in review.labels:
         return {
             "card": card,
@@ -730,7 +752,7 @@ def reconcile(home, policy, *, process_check):
             if negative_path.exists():
                 results.append(read_json(negative_path))
                 continue
-            retired = _retired_exit(home, card, directory)
+            retired = _retired_exit(home, card, directory, claim=claim)
             if retired is not None:
                 results.append(retired)
                 continue
@@ -859,7 +881,16 @@ def finish_remote_disposition(home, policy, card_id, claim):
     proposal = inspect_remote_review(workspace, **proposal_binding(request))
     verdict = recorded_verdict(card_id, home)
     expected = proposal["proposal"]["verdict"].split()[0]
-    _current_outcome(cards, card)
+    if card.owner is None:
+        _sealed_review_outcome(
+            cards,
+            card,
+            terminal["owner"],
+            claim,
+            expected_verdicts=("FAIL", "BLOCKED"),
+        )
+    else:
+        _current_outcome(cards, card)
     if (
         expected not in {"FAIL", "BLOCKED"}
         or not verdict
@@ -871,19 +902,17 @@ def finish_remote_disposition(home, policy, card_id, claim):
     before = native_state(home, card_id)
     # Existing native completion validates FAIL/structured BLOCKED. No link or
     # completion command is issued against the producer in this branch.
-    native_command(
-        home,
-        [
-            "complete",
-            card_id,
-            "--agent",
-            card.owner,
-            "--expected-source-revision",
-            before["revision"],
-            "--expected-claim-revision",
-            claim,
-        ],
-    )
+    complete_args = [
+        "complete",
+        card_id,
+        "--agent",
+        terminal["owner"] if card.owner is None else card.owner,
+        "--expected-source-revision",
+        before["revision"],
+    ]
+    if card.owner is not None:
+        complete_args.extend(["--expected-claim-revision", claim])
+    native_command(home, complete_args)
     if native_state(home, request["source"]["card"]) != source_before:
         raise ReviewEvidenceError("producer changed during negative review acceptance")
     result = dict(

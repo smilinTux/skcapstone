@@ -91,7 +91,9 @@ def native_command(home, args):
         timeout=60,
     )
     if result.returncode:
-        raise ReviewEvidenceError("guarded native acceptance refused")
+        detail = (result.stderr or result.stdout or "").strip().splitlines()
+        suffix = ": " + detail[-1][:180] if detail else ""
+        raise ReviewEvidenceError("guarded native acceptance refused" + suffix)
     return json.loads(result.stdout) if "--json" in args else None
 
 

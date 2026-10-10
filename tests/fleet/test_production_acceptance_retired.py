@@ -18,9 +18,16 @@ class _Row:
 class _Store:
     def __init__(self, home, rows):
         self.rows = rows
+        self.events = {}
 
     def fold(self, card):
         return self.rows.get(card)
+
+    def _read_events(self, card):
+        return self.events.get(card, [])
+
+    def _legacy_events(self, card):
+        return []
 
 
 @pytest.fixture
@@ -99,3 +106,34 @@ def test_collected_context_is_never_retired_by_label(tmp_path, directory, monkey
     once(directory / "context.json", {})
     monkeypatch.setattr(acceptance, "CardStore", lambda home: _Store(home, {CARD: None}))
     assert acceptance._retired_exit(tmp_path, CARD, directory) is None
+
+
+def test_exact_retired_request_exit_is_historical_not_accepted(tmp_path, directory, monkeypatch):
+    claim = "a" * 32
+    request = "b" * 64
+    store = _Store(
+        tmp_path,
+        {CARD: _Row(["review", "seat-seraph", "source-only"])},
+    )
+    store.events[CARD] = [
+        {
+            "action": "review_assignment_launch",
+            "claim_revision": claim,
+            "launched": True,
+            "execution": {"request_id": request},
+        }
+    ]
+    monkeypatch.setattr(acceptance, "CardStore", lambda home: store)
+    from skcapstone.fleet import review_retire
+
+    monkeypatch.setattr(review_retire, "retired_offers", lambda *args: {request})
+    once(directory / "context.json", {"review": {"card": CARD}})
+
+    result = acceptance._retired_exit(tmp_path, CARD, directory, claim=claim)
+
+    assert result == {
+        "card": CARD,
+        "state": "retired",
+        "request_id": request,
+        "historical": True,
+    }

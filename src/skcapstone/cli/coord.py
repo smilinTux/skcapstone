@@ -714,10 +714,16 @@ def register_coord_commands(main: click.Group) -> None:
             unclaimed_reviewed = bool(
                 expected_source_revision and expected_claim_revision is None and all(review_guards)
             )
+            unclaimed_review_terminal = bool(
+                expected_source_revision
+                and expected_claim_revision is None
+                and not any(review_guards)
+            )
             if (
                 any(value is not None for value in guards)
                 and not all(guards)
                 and not unclaimed_reviewed
+                and not unclaimed_review_terminal
             ):
                 raise ValueError("guarded completion requires both revisions")
             if any(value is not None for value in review_guards) and not all(review_guards):
@@ -726,7 +732,14 @@ def register_coord_commands(main: click.Group) -> None:
                 all(guards) or unclaimed_reviewed
             ):
                 raise ValueError("guarded review completion requires a source revision guard")
-            if all(guards) or unclaimed_reviewed:
+            if unclaimed_review_terminal:
+                from ..card_store import CardStore
+                from ..review_verdict import is_review_card
+
+                card = CardStore(home_path).fold(task_id)
+                if card is None or not is_review_card(card.title):
+                    raise ValueError("unclaimed terminal review completion requires a review card")
+            if all(guards) or unclaimed_reviewed or unclaimed_review_terminal:
                 guard = (
                     owned_revision_guard(home_path, agent, task_id, *guards)
                     if all(guards)
