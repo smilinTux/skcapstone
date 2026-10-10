@@ -36,7 +36,7 @@ from __future__ import annotations
 import glob
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .card import CardEvent
@@ -200,6 +200,36 @@ def _event_position(row: dict) -> tuple[str, str, int] | None:
     return stamp, str(row.get("writer") or ""), int(row.get("seq") or 0)
 
 
+def _parsed_ts(value: object) -> datetime | None:
+    """Parse a CardStore timestamp as an aware UTC datetime, or None."""
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _current_generation(card_id: str, home: Path) -> tuple[datetime, str] | None:
+    """Return the start and claimant of the card's latest native claim."""
+    try:
+        from skcoord.card_store import CardStore
+
+        events = CardStore(Path(home))._read_events(card_id)
+    except Exception:  # noqa: BLE001 - no readable native history means no generation
+        return None
+    latest = None
+    for event in events:
+        if event.get("action") != "claim":
+            continue
+        at = _parsed_ts(event.get("ts"))
+        claimant = _normalized_identity(event.get("owner") or event.get("writer"))
+        if at is None or not claimant:
+            continue
+        if latest is None or at > latest[0]:
+            latest = (at, claimant)
+    return latest
+
+
 def _normalized_identity(value: object) -> str:
     """Use the same principal normalization as governed review admission."""
     return str(value or "").strip().casefold().replace("_", "-")
@@ -299,25 +329,37 @@ def _source_only_applicability(card_id: str, home: Path) -> bool:
             receipts.append((row, value))
     if not receipts or any(not isinstance(value, dict) for _, value in receipts):
         return False
-    # Every review generation's reviewer writes its own receipt, so a fresh
-    # review after a retired or superseded one leaves several. Requiring
-    # exactly one made re-review permanently unacceptable (chi, 2026-10-10:
-    # 7 cards "duplicate source-only applicability receipts"). The latest
-    # ordered receipt decides, and is validated in full below. Ambiguity still
-    # fails closed: an unordered receipt, or a writer who wrote any earlier
-    # receipt too, is refused.
-    positions = [_event_position(row) for row, _ in receipts]
-    if any(position is None for position in positions):
-        return False
-    ordered = sorted(zip(positions, receipts), key=lambda item: item[0])
-    if len({position for position, _ in ordered}) != len(ordered):
-        return False
-    receipt_event, receipt = ordered[-1][1]
-    latest_writer = _normalized_identity(receipt_event.get("writer"))
-    if any(
-        _normalized_identity(row.get("writer")) == latest_writer for _, (row, _) in ordered[:-1]
-    ):
-        return False
+    # Every review generation's reviewer writes its own receipt, and a fresh
+    # generation on the same host reuses the same seat identity. Requiring
+    # exactly one receipt made every re-review permanently unacceptable (chi,
+    # 2026-10-10: "duplicate source-only applicability receipts"). The card's
+    # latest native claim starts the current generation: only receipts written
+    # at or after it count, every one of them must come from that claimant, and
+    # the latest decides and is validated in full below. Without native claim
+    # history the original exactly-one rule applies. Unparseable timestamps,
+    # a foreign writer in the current generation or a tie fail closed.
+    generation = _current_generation(card_id, home)
+    if generation is None:
+        if len(receipts) != 1:
+            return False
+        receipt_event, receipt = receipts[0]
+    else:
+        start, claimant = generation
+        current = []
+        for row, value in receipts:
+            at = _parsed_ts(row.get("ts"))
+            if at is None:
+                return False
+            if at >= start:
+                current.append((at, row, value))
+        if not current or any(
+            _normalized_identity(row.get("writer")) != claimant for _, row, _ in current
+        ):
+            return False
+        current.sort(key=lambda item: item[0])
+        if len(current) > 1 and current[-1][0] == current[-2][0]:
+            return False
+        _, receipt_event, receipt = current[-1]
     required = {"type", "card_id", "source_head", "reviewer", "evidence_digest", "governed_pr_ci"}
     if set(receipt) != required or receipt["type"] != "source-only-applicability":
         return False
