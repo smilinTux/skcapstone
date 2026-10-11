@@ -91,7 +91,11 @@ def test_node_junit_negatives(mutation):
         plan.junit_counts(ET.tostring(root), value)
 
 
-@pytest.mark.parametrize("raw", [b"<", b"<!DOCTYPE x><testsuites/>", b"x" * (plan.MAX_OUTPUT + 1)])
+@pytest.mark.parametrize(
+    "raw",
+    [b"<", b"<!DOCTYPE x><testsuites/>", b"x" * (plan.MAX_OUTPUT + 1)],
+    ids=["truncated", "doctype", "oversized"],
+)
 def test_node_junit_bounded_and_parse_errors(raw):
     with pytest.raises(plan.TestEvidenceError):
         plan.junit_counts(raw, specimen()[0])

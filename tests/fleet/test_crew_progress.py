@@ -163,7 +163,11 @@ def test_malformed_or_old_generation_record_never_triggers(sample, key, value):
     assert progress.stalled_evidence(sample[0], sample[2], NOW) is None
 
 
-@pytest.mark.parametrize("payload", ["[]", "null", "{", '{"schema":1,"schema":2}', "x" * 262145])
+@pytest.mark.parametrize(
+    "payload",
+    ["[]", "null", "{", '{"schema":1,"schema":2}', "x" * 262145],
+    ids=["list", "null", "truncated", "duplicate", "oversized"],
+)
 def test_bounded_strict_json_reads(sample, payload):
     assert publish(sample)
     record_path(sample).write_text(payload)

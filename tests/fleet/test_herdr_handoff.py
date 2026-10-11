@@ -366,7 +366,11 @@ def test_conflicting_result_preserves_prior_custody(scenario):
     assert run.manager.observe("assignment-1")["result"] == row["result"]
 
 
-@pytest.mark.parametrize("data", [b'{"a":1,"a":2}', b"x" * 32769, b"not json"])
+@pytest.mark.parametrize(
+    "data",
+    [b'{"a":1,"a":2}', b"x" * 32769, b"not json"],
+    ids=["duplicate", "oversized", "invalid"],
+)
 def test_strict_bounded_json(tmp_path, data):
     path = tmp_path / "packet.json"
     path.write_bytes(data)
