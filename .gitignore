@@ -26,3 +26,10 @@ htmlcov/
 # git-ignored scratch, and a review package is a full -U10 diff, so they are
 # large and duplicate what git already holds.
 .superpowers/sdd/*/
+
+# Claude Code subagent worktrees: ephemeral scratch checkouts the harness
+# creates per subagent. Four sibling repos already ignore these; skcapstone
+# did not, so an abandoned one showed up as a dirty shared checkout (44M,
+# found 2026-10-11). Scoped to worktrees/ so a committed .claude/settings.json
+# or .claude/agents/ stays trackable.
+.claude/worktrees/
