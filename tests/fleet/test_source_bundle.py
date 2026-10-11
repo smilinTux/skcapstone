@@ -413,3 +413,17 @@ def test_inspection_missing_manager_fails_without_direct_fallback(tmp_path, monk
     with pytest.raises(bundle.SourceBundleError):
         bundle._inspect(tmp_path, "print('{}')")
     assert [command[0] for command in calls] == ["/usr/bin/systemd-run", "/usr/bin/systemctl"]
+
+
+def test_once_narrows_our_own_group_writable_directory(tmp_path):
+    """An evidence directory we own but created 0775 is tightened, not refused."""
+    import stat as stat_module
+
+    from skcapstone.fleet import source_bundle as bundle
+
+    directory = tmp_path / "evidence" / "work" / "8c4a9e21"
+    directory.mkdir(parents=True)
+    directory.chmod(0o775)
+    bundle._once(directory / "EVIDENCE.md", b"evidence")
+    assert (directory / "EVIDENCE.md").read_bytes() == b"evidence"
+    assert stat_module.S_IMODE(directory.stat().st_mode) & 0o022 == 0
