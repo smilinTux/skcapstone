@@ -42,13 +42,15 @@ def covered(path: str, targets: dict[str, int]) -> str:
     return matches[0]
 
 
-def safe_node(node_id: str, targets: dict[str, int]) -> str:
+#: Baseline IDs become pytest argv, so they stay tightly bounded.
+MAX_BASELINE_NODE = 16384
+
+
+def safe_node(node_id: str, targets: dict[str, int], maximum: int = MAX_BASELINE_NODE) -> str:
     """Validate an exact pytest ID bound to a selected test source file."""
     if (
         not isinstance(node_id, str)
-        # Parametrized IDs embed their values; existing card bases carry
-        # bounded-input tests whose IDs reach 4 MiB. Bound by the evidence size.
-        or len(node_id) > plan.MAX_OUTPUT
+        or len(node_id) > maximum
         or any(c in node_id for c in "\x00\r\n")
     ):
         raise plan.TestEvidenceError("invalid baseline node ID")
@@ -222,7 +224,10 @@ def selected_junit_counts(raw: bytes, profile: dict, selection: dict | None) -> 
         raise plan.TestEvidenceError("invalid selected test identities")
     identities, counts = set(), dict.fromkeys(recipe["pytest"], 0)
     for node_id in selected:
-        path = safe_node(node_id, recipe["pytest"])
+        # Selected IDs only reach the bounded evidence file, never argv.
+        # Parametrized IDs embed their values: existing card bases carry
+        # bounded-input tests whose IDs reach 4 MiB.
+        path = safe_node(node_id, recipe["pytest"], plan.MAX_OUTPUT)
         counts[covered(path, recipe["pytest"])] += 1
         address = mangle_test_address(node_id)
         identity = (".".join(address[:-1]), address[-1])
