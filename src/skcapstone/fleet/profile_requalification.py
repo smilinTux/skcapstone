@@ -237,7 +237,11 @@ def harvest_completed(
                 if len(qualified) >= limit:
                     return "qualified:" + ",".join(qualified)
                 continue
-            except (OSError, ValueError, KeyError, TypeError) as exc:
+            # A job whose workspace is gone makes git raise CalledProcessError. Not
+            # catching it aborted the whole harvest, and rotate's shared try then skipped
+            # requalify_or_advance too: one deleted workspace (8d4e7c5f) left every
+            # authority-side requalification unfinalized for hours (2026-10-11).
+            except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
                 if card_id is not None:
                     return "blocked:" + str(exc)[:160]
                 continue
@@ -339,7 +343,13 @@ def harvest_completed(
                     if len(qualified) >= limit:
                         return "qualified:" + ",".join(qualified)
                     continue
-                except (OSError, ValueError, KeyError, TypeError) as exc:
+                except (
+                    OSError,
+                    ValueError,
+                    KeyError,
+                    TypeError,
+                    subprocess.SubprocessError,
+                ) as exc:
                     if card_id is not None:
                         return "blocked:" + str(exc)[:160]
     if qualified:
@@ -385,7 +395,7 @@ def requalify_or_advance(
             for path, job in targets:
                 try:
                     state = _advance(home, policy, skc, actor, path, job)
-                except (OSError, ValueError) as exc:
+                except (OSError, ValueError, subprocess.SubprocessError) as exc:
                     plan.write_once(
                         path.with_name(path.stem + ".failed.json"),
                         {
@@ -407,7 +417,7 @@ def requalify_or_advance(
             return _begin(
                 home, policy, skc, actor, card_id, core, Path(workspace), owner, claim_revision
             )
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
             for path, job in _records(root):
                 if job.get("card") == card_id and job.get("claim_revision") == claim_revision:
                     plan.write_once(

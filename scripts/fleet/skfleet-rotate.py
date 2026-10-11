@@ -8734,9 +8734,14 @@ if PRODUCTION_POLICY:
             requalify_or_advance,
         )
 
-        _harvest_state = harvest_completed(Path(HOME) / ".skcapstone", PRODUCTION_POLICY)
-        if _harvest_state != "idle":
-            log(d, "PROFILE_REQUALIFICATION_HARVEST|%s|state=%s" % (HOST, _harvest_state))
+        # Harvest and advance are independent: a harvest failure must not stop
+        # the advance that finalizes finished local runs (2026-10-11).
+        try:
+            _harvest_state = harvest_completed(Path(HOME) / ".skcapstone", PRODUCTION_POLICY)
+            if _harvest_state != "idle":
+                log(d, "PROFILE_REQUALIFICATION_HARVEST|%s|state=%s" % (HOST, _harvest_state))
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            log(d, "PROFILE_REQUALIFICATION_HARVEST_BLOCKED|%s|%s" % (HOST, str(exc)[:180]))
         _requal_state = requalify_or_advance(
             Path(HOME) / ".skcapstone", PRODUCTION_POLICY, SKC, DISPATCH_AGENT
         )
