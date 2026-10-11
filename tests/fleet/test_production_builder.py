@@ -641,10 +641,16 @@ def test_exited_generation_without_outcome_is_released_only_when_provably_empty(
     monkeypatch.setattr(builder.CardStore, "fold", lambda *args: folded)
     monkeypatch.setattr(builder.CardStore, "_read_events", lambda *args: events)
 
-    def clean(workspace, base):
+    def clean(workspace, base, *, allow_ignored=False):
+        # The release proof tolerates ignored build caches; it is not a reuse.
+        assert allow_ignored is True
         if case == "dirty":
             raise source_bundle.SourceBundleError("workspace changed")
         return {"head": base}
+
+    workspace = paths.root / "workspaces" / "source-owner"
+    (workspace / "__pycache__").mkdir(parents=True)
+    (workspace / "__pycache__" / "cache.pyc").write_bytes(b"cache")
 
     monkeypatch.setattr(source_bundle, "inspect_clean_base", clean)
     releases = []
@@ -667,10 +673,14 @@ def test_exited_generation_without_outcome_is_released_only_when_provably_empty(
         assert result["error"] == builder.EXITED_WITHOUT_OUTCOME
         assert len(releases) == 1
         assert builder._unclaimed_expired_offer(request, result) is True
+        # The next generation must materialize fresh, never inherit caches.
+        assert not workspace.exists()
+        assert not list(workspace.parent.glob(".discard-*"))
     else:
         assert result["state"] == "awaiting-evidence"
         assert result["claim_released"] is False
         assert releases == []
+        assert workspace.exists()
         assert builder._unclaimed_expired_offer(request, result) is False
 
 
