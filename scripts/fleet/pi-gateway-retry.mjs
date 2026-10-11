@@ -192,7 +192,16 @@ export function wrapGatewayProvider(provider, record, { budgetMs = 360_000 } = {
           message.gatewayError = transport.state.terminal ?? {
             http_status: 0, reason: "partial_stream", retryable: false,
           };
-          message.errorMessage = "Fleet gateway request ended. See session transport evidence.";
+          // A request_too_large is a context overflow: Pi's own overflow
+          // patterns match the code and compact the session, then continue.
+          // Scrubbing it killed every long builder session once the gateway's
+          // silent history trim kept reported usage far below the real body,
+          // so Pi never compacted on its own (chi, 2026-10-11: bd2315a2,
+          // 8daa0873 ended at 2001096 of 2000000 bytes). Other terminals stay
+          // scrubbed so Pi's text-matching retry loop cannot double-retry them.
+          message.errorMessage = message.gatewayError.code === "request_too_large"
+            ? "Fleet gateway request_too_large: context overflow, compact and continue."
+            : "Fleet gateway request ended. See session transport evidence.";
         }
         return message;
       }
