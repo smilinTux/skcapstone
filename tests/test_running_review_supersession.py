@@ -474,3 +474,25 @@ def test_superseded_main_releases_once_retires_capacity_and_exits_75(
         and event.get("expected_claim_revision") == values.claim_revision
     ]
     assert len(releases) == 1
+
+
+def test_typed_verdict_candidate_wins_over_a_stale_legacy_link():
+    """A production source's stale commit link must not supersede its review."""
+    module = load_module()
+    reviewed = "e" * 40
+    install_store(
+        module,
+        {"3a11f071": review(reviewed), "a9b4266c": source("3" * 40)},
+        {"a9b4266c": [{"action": "verdict", "candidate_commit": reviewed}]},
+    )
+    assert module.review_supersession(args()) is None
+
+
+def test_a_newer_typed_candidate_still_supersedes():
+    module = load_module()
+    install_store(
+        module,
+        {"3a11f071": review("e" * 40), "a9b4266c": source("e" * 40)},
+        {"a9b4266c": [{"action": "verdict", "candidate_commit": "f" * 40}]},
+    )
+    assert module.review_supersession(args())["current_head"] == "f" * 40
