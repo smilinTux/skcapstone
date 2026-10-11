@@ -458,9 +458,20 @@ def _recent_failure(
     import time
 
     now = time.time()
+    # A failure under an older qualification environment is not a repeat: the
+    # same source and recipe in a rebuilt qualify-env is a new attempt. Every
+    # skcapstone card waited out the 6h backoff after the environment gained
+    # the dependencies its suite needs (chi, 2026-10-11).
+    from .qualified_runtime import STATE_NAME
+
+    try:
+        environment_built = (plan.PREFIX / STATE_NAME).stat().st_mtime
+    except OSError:
+        environment_built = 0.0
     for failed in root.glob("*.job.failed.json"):
         try:
-            if now - failed.stat().st_mtime > RECENT_FAILURE_SECONDS:
+            recorded = failed.stat().st_mtime
+            if now - recorded > RECENT_FAILURE_SECONDS or recorded < environment_built:
                 continue
             job = json.loads(
                 plan.read_private(failed.with_name(failed.name.replace(".failed", "")))
