@@ -59,7 +59,7 @@ def test_collection_errors_and_unresolvable_cases_refuse(workspace, case):
 def test_empty_or_oversized_baselines_refuse(workspace):
     with pytest.raises(br.BaselineError, match="no failing"):
         br.baseline_recipe([], workspace)
-    many = ["tests/test_a.py::test_%04d_%s" % (n, "p" * 40) for n in range(400)]
+    many = ["tests/test_a.py::test_%04d_%s" % (n, "p" * 40) for n in range(1600)]
     with pytest.raises(br.BaselineError, match="bound"):
         br.baseline_recipe(many, workspace)
 
@@ -78,3 +78,33 @@ def test_only_a_completed_full_suite_failure_is_curated(tmp_path, monkeypatch):
     job = {"initial_profile_value": {"recipe": br.FULL_SUITE}, "binding": {}, "workspace": "x"}
     with pytest.raises(br.BaselineError, match="did not run to completion"):
         br._failed_run(tmp_path, job)
+
+
+def test_targets_compact_clean_directories_and_omit_module_skipped_files():
+    passing = {
+        "tests/fleet/test_a.py": 3,
+        "tests/fleet/test_b.py": 1,
+        "tests/test_top.py": 2,
+        "tests/test_partly.py": 1,
+        "tests/integration/test_ok.py": 1,
+    }
+    untargetable = {"tests/test_skipmod.py", "tests/integration/test_e2e.py"}
+    targets = br.compact_targets(passing, untargetable)
+    # tests/ holds a module-level skip, so it splits; tests/fleet is clean.
+    assert targets == [
+        "tests/test_partly.py",
+        "tests/test_top.py",
+        "tests/fleet",
+        "tests/integration/test_ok.py",
+    ]
+
+
+def test_module_level_skip_in_junit_is_untargetable_not_a_refusal(workspace):
+    raw = junit(
+        ("tests.test_a", "test_ok", ""),
+        ("", "tests.test_a", '<skipped message="collection skipped"/>'),
+    )
+    passing, baseline, untargetable = br.analyze_junit(raw, workspace)
+    assert untargetable == {"tests/test_a.py"} and baseline == []
+    with pytest.raises(br.BaselineError):
+        br.baseline_from_junit(raw, workspace)

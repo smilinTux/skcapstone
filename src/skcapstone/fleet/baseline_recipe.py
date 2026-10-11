@@ -33,7 +33,7 @@ from xml.etree import ElementTree
 from . import production_test_plan as plan
 from .production_pytest_recipe import recipe_checks, validate_source
 
-MAX_LINK = 16384
+MAX_LINK = 65536
 RECENT_SECONDS = 24 * 3600
 FULL_SUITE = {"pytest_all": True}
 
@@ -59,28 +59,91 @@ def node_id(classname: str, name: str, workspace: Path) -> str:
     raise BaselineError("test case does not resolve to a sealed test file")
 
 
-def baseline_from_junit(raw: bytes, workspace: Path) -> list[str]:
-    """Every failed, errored or skipped case as an exact node ID; refuse anything else."""
+def analyze_junit(raw: bytes, workspace: Path) -> tuple[dict[str, int], list[str], set[str]]:
+    """Passing cases per test file, exact baseline node IDs, and untargetable files.
+
+    A module-level skip or collection error has no node ID to deselect, so its
+    whole file is left out of the targets instead.
+    """
     if len(raw) > plan.MAX_OUTPUT or b"<!DOCTYPE" in raw or b"<!ENTITY" in raw:
         raise BaselineError("invalid JUnit size or entities")
     root = ElementTree.fromstring(raw)
-    baseline = set()
+    passing: dict[str, int] = {}
+    baseline, untargetable = set(), set()
     for case in root.iter("testcase"):
-        if any(case.find(tag) is not None for tag in ("failure", "error", "skipped")):
-            baseline.add(node_id(case.get("classname", ""), case.get("name", ""), workspace))
-    return sorted(baseline)
+        bad = any(case.find(tag) is not None for tag in ("failure", "error", "skipped"))
+        classname, name = case.get("classname", ""), case.get("name", "")
+        if not classname:
+            module = (name or "").replace(".", "/") + ".py"
+            if not bad or not (workspace / module).is_file():
+                raise BaselineError("collection error or anonymous test case")
+            untargetable.add(module)
+            continue
+        identity = node_id(classname, name, workspace)
+        path = identity.split("::", 1)[0]
+        if bad:
+            baseline.add(identity)
+        else:
+            passing[path] = passing.get(path, 0) + 1
+    return passing, sorted(baseline), untargetable
 
 
-def baseline_recipe(deselect: list[str], workspace: Path) -> str:
+def compact_targets(
+    passing: dict[str, int], untargetable: set[str], top: str = "tests"
+) -> list[str]:
+    """Directory targets where every test file below is clean, else clean files.
+
+    A clean file has at least one passing case and no module-level problem.
+    Directory targets also cover test files a candidate adds there.
+    """
+    files = set(passing) | untargetable
+    clean = {path for path in passing if path not in untargetable}
+
+    def under(directory: str) -> set[str]:
+        return {path for path in files if path.startswith(directory + "/")}
+
+    def compact(directory: str) -> list[str]:
+        below = under(directory)
+        if below and below <= clean:
+            return [directory]
+        prefix = len(directory) + 1
+        direct = {path for path in below if "/" not in path[prefix:]}
+        targets = sorted(direct & clean)
+        subdirs = sorted(
+            {directory + "/" + path[prefix:].split("/", 1)[0] for path in below - direct}
+        )
+        for subdir in subdirs:
+            targets.extend(compact(subdir))
+        return targets
+
+    return compact(top)
+
+
+def baseline_from_junit(raw: bytes, workspace: Path) -> list[str]:
+    """Every failed, errored or skipped case as an exact node ID (no module skips)."""
+    _passing, baseline, untargetable = analyze_junit(raw, workspace)
+    if untargetable:
+        raise BaselineError("collection error or anonymous test case")
+    return baseline
+
+
+def baseline_recipe(deselect: list[str], workspace: Path, targets: list[str] | None = None) -> str:
     """The validated recipe text, or BaselineError."""
-    if not deselect:
+    targets = targets or ["tests"]
+    if not deselect and targets == ["tests"]:
         raise BaselineError("failed run has no failing test cases")
+    covered = [
+        node
+        for node in deselect
+        if any(node.split("::", 1)[0] == t or node.startswith(t + "/") for t in targets)
+    ]
     recipe = {
-        "pytest": {"tests": 1},
-        "deselect": deselect,
+        "pytest": dict.fromkeys(targets, 1),
+        "deselect": covered,
         "compile": [],
         "lint": [],
         "changelog": False,
+        "file_cap": max(64, len(targets)),
     }
     try:
         recipe_checks(recipe)
@@ -151,7 +214,11 @@ def curate_failed_qualifications(
             continue
         try:
             raw, workspace = _failed_run(home, job)
-            text = baseline_recipe(baseline_from_junit(raw, workspace), workspace)
+            passing, baseline, untargetable = analyze_junit(raw, workspace)
+            targets = compact_targets(passing, untargetable)
+            if not targets:
+                raise BaselineError("no test file passes at the base")
+            text = baseline_recipe(baseline, workspace, targets)
         except (BaselineError, plan.TestEvidenceError, OSError, ValueError, KeyError) as exc:
             results.append({"card": card_id, "state": "refused", "reason": str(exc)[:120]})
             continue
@@ -176,6 +243,7 @@ def curate_failed_qualifications(
                 "card": card_id,
                 "state": "linked" if linked.returncode == 0 else "link-refused",
                 "deselected": len(json.loads(text)["deselect"]),
+                "targets": len(json.loads(text)["pytest"]),
             }
         )
     return results

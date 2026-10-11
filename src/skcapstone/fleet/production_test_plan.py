@@ -25,7 +25,10 @@ PREFIX = qualify_prefix(Path.home())
 #: The pre-qualify-env runtime. Read only to recognize profiles whose
 #: toolchain was qualified there, so they can be requalified once natively.
 LEGACY_PREFIX = Path.home() / ".skenv"
-MAX_OUTPUT = 4 * 1024 * 1024
+# A full skcapstone suite (12.7k cases, ~475 bytes of JUnit attributes each)
+# writes a ~6 MB report. At 4 MiB the worker's RLIMIT_FSIZE killed pytest while
+# it wrote the report, so no full-suite qualification could ever finish.
+MAX_OUTPUT = 32 * 1024 * 1024
 TEST_FILES = tuple(
     "tests/" + name + ".py"
     for name in (
