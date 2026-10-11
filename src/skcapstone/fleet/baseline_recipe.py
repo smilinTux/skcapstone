@@ -33,7 +33,7 @@ from xml.etree import ElementTree
 from . import production_test_plan as plan
 from .production_pytest_recipe import recipe_checks, validate_source
 
-MAX_LINK = 65536
+MAX_LINK = 262144
 RECENT_SECONDS = 24 * 3600
 FULL_SUITE = {"pytest_all": True}
 
@@ -156,17 +156,20 @@ def baseline_recipe(deselect: list[str], workspace: Path, targets: list[str] | N
     return text
 
 
-def _failed_run(home: Path, job: dict) -> tuple[bytes, Path]:
-    """The failed run's raw report and sealed workspace, only for a full-suite failure."""
-    if (job.get("initial_profile_value") or {}).get("recipe") != FULL_SUITE:
-        raise BaselineError("not a full-suite qualification")
-    _plan, _path, plan_sha = plan.load_plan(
+def _failed_run(home: Path, job: dict) -> tuple[bytes, Path, dict]:
+    """The failed run's raw report, sealed workspace and the recipe it ran."""
+    run_plan, _path, plan_sha = plan.load_plan(
         home,
         job["binding"],
         require_current=False,
         allow_completed=True,
         allow_remote_host=True,
     )
+    recipe = (run_plan.get("profile") or {}).get("recipe")
+    if recipe is None:
+        recipe = (job.get("initial_profile_value") or {}).get("recipe")
+    if not isinstance(recipe, dict):
+        raise BaselineError("failed run has no qualified recipe")
     directory = home / "fleet/test-runs" / plan_sha
     receipt = json.loads(plan.read_private(directory / "receipt.json"))
     checks = receipt.get("checks") or []
@@ -175,7 +178,51 @@ def _failed_run(home: Path, job: dict) -> tuple[bytes, Path]:
     workspace = Path(job["workspace"])
     if not workspace.is_dir() or workspace.is_symlink():
         raise BaselineError("sealed qualification workspace is unavailable")
-    return plan.read_private(directory / "pytest.xml"), workspace
+    return plan.read_private(directory / "pytest.xml"), workspace, recipe
+
+
+def _latest_link_writer(home: Path, card: str, key: str) -> str | None:
+    """Writer of the newest link event for this card and key in the evidence overlay."""
+    latest = ("", None)
+    for path in sorted((home / "coordination/card_events").glob("*.jsonl")):
+        try:
+            lines = path.read_text(errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            if card not in line or key not in line:
+                continue
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if (
+                event.get("card_id") == card
+                and event.get("action") == "link"
+                and event.get("link_key") == key
+                and str(event.get("ts", "")) >= latest[0]
+            ):
+                latest = (str(event.get("ts", "")), event.get("writer"))
+    return latest[1]
+
+
+def extended_recipe(current: dict, raw: bytes, workspace: Path) -> str:
+    """A curated baseline recipe plus the tests that newly failed at the same base.
+
+    A requalification runs at the card's base revision, so a test failing there
+    is a pre-existing failure by definition. Host-dependent tests (staged
+    rollout drift probes) pass while a host is in sync and fail during a
+    rollout, so one baseline run cannot capture them (e6a9c210, 2026-10-11).
+    """
+    if "deselect" not in current or not isinstance(current.get("pytest"), dict):
+        raise BaselineError("only a curated baseline recipe is extended")
+    _passing, failing, untargetable = analyze_junit(raw, workspace)
+    if untargetable:
+        raise BaselineError("collection error or anonymous test case")
+    merged = sorted(set(current["deselect"]) | set(failing))
+    if merged == sorted(current["deselect"]):
+        raise BaselineError("no new failing tests to add to the baseline")
+    return baseline_recipe(merged, workspace, list(current["pytest"]))
 
 
 def curate_failed_qualifications(
@@ -210,15 +257,27 @@ def curate_failed_qualifications(
             continue
         seen.add(card_id)
         card = store.fold(card_id)
-        if card is None or card.archived or (card.links or {}).get("test_profile_recipe"):
+        if card is None or card.archived:
             continue
+        linked_recipe = (card.links or {}).get("test_profile_recipe")
         try:
-            raw, workspace = _failed_run(home, job)
-            passing, baseline, untargetable = analyze_junit(raw, workspace)
-            targets = compact_targets(passing, untargetable)
-            if not targets:
-                raise BaselineError("no test file passes at the base")
-            text = baseline_recipe(baseline, workspace, targets)
+            raw, workspace, ran = _failed_run(home, job)
+            if linked_recipe:
+                # Extend only a recipe this curator wrote, never an operator's.
+                if (
+                    _latest_link_writer(home, card_id, "test_profile_recipe") != actor
+                    or json.loads(linked_recipe) != ran
+                ):
+                    continue
+                text = extended_recipe(ran, raw, workspace)
+            else:
+                if ran != FULL_SUITE:
+                    raise BaselineError("not a full-suite qualification")
+                passing, baseline, untargetable = analyze_junit(raw, workspace)
+                targets = compact_targets(passing, untargetable)
+                if not targets:
+                    raise BaselineError("no test file passes at the base")
+                text = baseline_recipe(baseline, workspace, targets)
         except (BaselineError, plan.TestEvidenceError, OSError, ValueError, KeyError) as exc:
             results.append({"card": card_id, "state": "refused", "reason": str(exc)[:120]})
             continue

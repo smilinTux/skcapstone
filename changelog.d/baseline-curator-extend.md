@@ -1,0 +1,1 @@
+The baseline curator extends a test recipe it wrote when a later qualification at the same base fails on new tests (host-dependent tests such as staged-rollout drift probes), and the recipe bound is raised to 256 KiB for large suites.
