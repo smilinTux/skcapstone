@@ -39,7 +39,22 @@ def verified_legacy_review_source(home: Path, core: dict, producer: str) -> bool
     bytes and an independently hash-bound source receipt must all agree.
     """
     try:
-        labels = set(core.get("labels") or [])
+        # Rotate passes the on-disk cards/<id>/core.json, which carries only
+        # initial_labels and creation-time meta: labels and links written later
+        # (review bindings, PR corrections) live in the fold. Reading the raw
+        # core found no labels, so every legacy review stayed blocked on
+        # source-provider-evidence-required (497f0f02, f519c41a, 2026-10-11).
+        store = CardStore(home)
+        folded = store.fold(str(core.get("id") or ""))
+        if folded is None or folded.archived:
+            return False
+        core = {
+            "id": core.get("id"),
+            "labels": list(folded.labels),
+            "meta": dict(folded.meta),
+            "links": dict(folded.links),
+        }
+        labels = set(core["labels"])
         parent = _binding(core, "link_source_card") or ""
         head = _binding(core, "link_head_revision") or ""
         evidence = _binding(core, "candidate_evidence_sha256") or ""
@@ -60,7 +75,6 @@ def verified_legacy_review_source(home: Path, core: dict, producer: str) -> bool
         # Never downgrade a modern source, including a malformed manifest.
         if os.path.lexists(root / "source-bundles"):
             return False
-        store = CardStore(home)
         source = store.fold(parent)
         if (
             source is None
