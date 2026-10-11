@@ -4,6 +4,7 @@ import ast
 import copy
 import json
 import socket
+import subprocess
 import sys
 from pathlib import Path
 from xml.etree import ElementTree
@@ -152,6 +153,25 @@ def test_initial_recipe_uses_fixed_full_pytest_for_python_scope(tmp_path):
 
     assert profile.initial_recipe(card, tmp_path) == ({"pytest_all": True}, None)
     assert "not host_systemd" in recipe_checks({"pytest_all": True})[0]["argv"]
+
+
+def test_full_pytest_recipe_honors_configured_testpaths(tmp_path):
+    from skcapstone.fleet.production_pytest_recipe import recipe_checks
+
+    (tmp_path / "pyproject.toml").write_text('[tool.pytest.ini_options]\ntestpaths = ["tests"]\n')
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_project.py").write_text("def test_project(): pass\n")
+    vendor_tests = tmp_path / "vendor/capauth/src/capauth/integrations/nextcloud/tests/oidc"
+    vendor_tests.mkdir(parents=True)
+    (vendor_tests / "oidc_e2e_login_test.py").write_text("def test_vendor(): pass\n")
+
+    argv = recipe_checks({"pytest_all": True})[0]["argv"]
+    argv[0] = sys.executable
+    argv[argv.index("--junitxml=/output/pytest.xml")] = "--collect-only"
+    result = subprocess.run(argv, cwd=tmp_path, capture_output=True, text=True, check=True)
+
+    assert "tests/test_project.py::test_project" in result.stdout
+    assert "vendor/" not in result.stdout
 
 
 def test_initial_recipe_rejects_ambiguous_language_scope():
