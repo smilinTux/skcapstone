@@ -304,7 +304,14 @@ def execute(plan_path: Path, directory: Path) -> int:
         if profile:
             composite.validate_source(profile, workspace)
         reports = {}
+        executed = {row["id"] for row in receipt["checks"]}
         for name in composite.report_names(profile):
+            if name.removesuffix(".xml") not in executed:
+                failed = receipt["checks"][-1]
+                raise TestEvidenceError(
+                    f"{failed['id']} exited {failed['exit_code']}; "
+                    f"{name.removesuffix('.xml')} was not run"
+                )
             raw = read_private(directory / "output" / name)
             fd = os.open(
                 directory / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600

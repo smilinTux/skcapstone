@@ -179,7 +179,7 @@ def test_both_source_contracts_are_validated(tmp_path, monkeypatch):
         composite.validate_source(profile, workspace)
 
 
-@pytest.mark.parametrize("failed", [None, "vitest", "pytest", "python-lint"])
+@pytest.mark.parametrize("failed", [None, "vitest", "typecheck", "lint", "pytest", "python-lint"])
 def test_native_executor_requires_every_phase_and_preserves_raw_reports(
     tmp_path, monkeypatch, failed
 ):
@@ -239,13 +239,25 @@ def test_native_executor_requires_every_phase_and_preserves_raw_reports(
             assert plan.read_private(directory / name) == raw
     else:
         assert receipt["failure"] is not None or any(row["exit_code"] for row in receipt["checks"])
+        if failed in {"vitest", "typecheck", "lint"}:
+            assert receipt["failure"] == {
+                "type": "TestEvidenceError",
+                "message": f"{failed} exited 1; pytest was not run",
+            }
+            assert "pytest" not in ran
+            assert not (directory / "pytest.log").exists()
+            assert not (directory / "pytest.xml").exists()
+            assert plan.read_private(directory / "vitest.xml") == reports["vitest.xml"]
+            assert receipt["counts"] is None and receipt["junit_sha256"] is None
 
 
 @pytest.mark.parametrize(
     "tamper",
     [None, "vitest.xml", "pytest.xml", "missing-python", "skipped-python", "missing-check"],
 )
-def test_independent_native_acceptance_rehashes_both_phases(setup, tmp_path, monkeypatch, tamper):
+def test_independent_native_acceptance_rehashes_both_phases(
+    setup, tmp_path, monkeypatch, tamper  # noqa: F811 - imported pytest fixture
+):
     profile, reports = specimen()
     receipt, terminal = receipt_fixture(setup, monkeypatch)
     setup.workspace = source_fixture(tmp_path, monkeypatch)
