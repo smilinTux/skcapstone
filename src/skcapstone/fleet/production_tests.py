@@ -322,6 +322,49 @@ def observe_terminal(directory: Path, launch: dict) -> bool:
     return True
 
 
+def reap_orphaned_test_units(home: Path, host: str, store=None) -> list[str]:
+    """Record terminal custody for, and stop, finished test units nobody will finalize.
+
+    Only run_or_read_tests writes terminal.json and stops the retained unit, and
+    it runs only while the job's claim is current. When the claim moved on (the
+    requalification job failed on "claim changed", or was re-offered), the
+    RemainAfterExit unit stayed active/exited with no terminal record, and
+    active_resource_units charged its full MemoryMax forever. Two or three such
+    orphans per node left every chi builder refusing all qualification launches
+    with memory_available near zero (2026-10-11). A unit whose exact claim is
+    still current is left alone: its owner's finalizer handles it.
+    """
+    from skcoord.card_store import CardStore
+
+    from .production_resources import _local_launch
+
+    states = []
+    store = store or CardStore(home)
+    for path in sorted((Path(home) / "fleet/test-runs").glob("*/launch.json")):
+        directory = path.parent
+        if (directory / "terminal.json").exists():
+            continue
+        try:
+            launch = read_json(path)
+            if not _local_launch(home, host, launch):
+                continue
+            binding = launch["binding"]
+            card = store.fold(binding["source_card"])
+            if (
+                card is not None
+                and card.owner == binding["source_owner"]
+                and card.meta.get("_claim_revision") == binding["source_claim_revision"]
+            ):
+                continue
+            if not observe_terminal(directory, launch):
+                continue
+            stop_retained(directory, launch)
+            states.append("reaped:" + binding["source_card"])
+        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
+            states.append("refused:%s:%s" % (directory.name[:12], type(exc).__name__))
+    return states
+
+
 def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) -> dict | None:
     """Launch once after caller proves source/reviewer termination, or verify real tests.
 

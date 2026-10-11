@@ -213,9 +213,15 @@ def run_once(paths: FleetPaths, node: str) -> dict:
                 # jobs sat pending on chiap01-04). Use the admitted host label,
                 # the identity production_builder.node_binding binds work to.
                 host = (spec.get("labels") or {}).get("host") or socket.gethostname()
-                result_qualifications = consume_remote(
-                    paths.root.parent, policy, host.split(".")[0].lower()
-                )
+                host = host.split(".")[0].lower()
+                from .production_tests import reap_orphaned_test_units
+
+                # Free memory held by finished units whose claim moved on before
+                # admission is asked for the next launch.
+                reaped = reap_orphaned_test_units(paths.root.parent, host)
+                if reaped:
+                    logger.warning("orphaned test units on %s: %s", node, reaped)
+                result_qualifications = consume_remote(paths.root.parent, policy, host)
                 refused = [state for state in result_qualifications if state.startswith("refused")]
                 if refused:
                     logger.warning("remote profile qualification refused on %s: %s", node, refused)
