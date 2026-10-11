@@ -74,6 +74,7 @@ class Worker:
     completion_state: str = "running"
     heartbeat_at: str = ""
     process_record: str = ""
+    herdr_session: bool = False
 
 
 REMOTE = r"""
@@ -83,10 +84,16 @@ from pathlib import Path
 from skcoord.card_store import CardStore
 host=os.uname().nodename.split('.')[0]
 now=int(time.time())
-unit_lines=subprocess.run(
-    ['systemctl','--user','list-units','skfleet-worker-*.service','--all','--no-legend','--plain'],
-    capture_output=True,text=True).stdout.splitlines()
+unit_result=subprocess.run(
+    ['systemctl','--user','list-units','skfleet-worker-*.service','skfleet-builder-*.service','--all','--no-legend','--plain'],
+    capture_output=True,text=True)
+if unit_result.returncode:
+    raise RuntimeError('systemd unit observation unavailable')
+unit_lines=unit_result.stdout.splitlines()
 units={p[0]:p[1:4] for line in unit_lines if len(p:=line.split()) >= 4}
+def unit_card(unit):
+    match=re.fullmatch(r'skfleet-(?:worker-[a-z]+-([0-9a-f]{8}(?:-[0-9a-f]+)?)|builder-([0-9a-f]{8})-[0-9a-f]{64}-[0-9]+)\.service',unit)
+    return (match.group(1) or match.group(2)) if match else ''
 seen_units=set()
 process_agents=set()
 projection_agents=set()
@@ -138,7 +145,7 @@ for raw in glob.glob('/proc/[0-9]*/comm'):
         if direct_record and direct_record[0].get('pid') != pid:
             direct_record=None
         direct=direct_record is not None
-        if not agent.startswith('pi-') or (len(card)!=8 and not direct): continue
+        if not agent.startswith('pi-') or (not re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]+)?',card) and not direct): continue
         if not (agent and card and (agent.endswith('-'+card) or agent == card)) and not direct: continue
         process_agents.add(agent)
         stat=open('/proc/%d/stat'%pid).read().split()
@@ -147,7 +154,7 @@ for raw in glob.glob('/proc/[0-9]*/comm'):
         elapsed=max(0,int(uptime-(int(stat[21])/ticks)))
         cpu=int((int(stat[13])+int(stat[14]))/ticks)
         cg=open('/proc/%d/cgroup'%pid).read()
-        unit=next((part for part in cg.replace('\\x2d','-').strip().split('/') if part.startswith('skfleet-worker-') and part.endswith('.service')),'legacy')
+        unit=next((part for part in cg.replace('\\x2d','-').strip().split('/') if unit_card(part)),'legacy')
         if unit!='legacy': seen_units.add(unit)
         logs=glob.glob(os.path.expanduser('~/.skcapstone/fleet/logs/%s-*.log'%card))
         log=max(logs,key=os.path.getmtime) if logs else ''
@@ -158,8 +165,9 @@ for raw in glob.glob('/proc/[0-9]*/comm'):
             folded=CardStore(Path.home()/'.skcapstone').fold(card)
             status=folded.status.value
             folded_revision=str(folded.meta.get('_claim_revision',''))
-            claim='exact' if (folded.owner==agent and folded_revision
-                              and (not direct or folded_revision == revision)) else 'mismatch'
+            claim=('exact' if (folded.owner==agent and revision and folded_revision==revision
+                              and (unit=='legacy' or unit_card(unit)==card)) else
+                   'unverified' if folded.owner==agent and not revision else 'mismatch')
             identity=projection_identity.get(agent)
             direct_projection_exact=(identity is not None and identity[0] == card
                                      and identity[1] == revision and identity[2] == 'active')
@@ -181,19 +189,21 @@ for raw in glob.glob('/proc/[0-9]*/comm'):
         state=units.get(unit,['not-found','inactive','dead'])
         process_record=direct_record[1] if direct_record else ''
         record_value=direct_record[0] if direct_record else {}
-        print(json.dumps(dict(host=host,agent=agent,card=card,pid=pid,elapsed=elapsed,cpu=cpu,log_bytes=size,log_age=age,unit=unit,tmux=legacy_live,claim_state=claim,card_status=status,unit_missing_process=False,unit_load=state[0],unit_active=state[1],unit_sub=state[2],claim_owner=claim_owner,claim_revision=claim_revision,projection_state=projection_state,projection_error=projection_error,completion_state=str(record_value.get('completion_state','running')),heartbeat_at=str(record_value.get('heartbeat_at','')),process_record=process_record,evidence_source='direct-seat-record+proc+cardstore' if direct else 'systemd+proc+cardstore'),sort_keys=True))
+        print(json.dumps(dict(host=host,agent=agent,card=card,pid=pid,elapsed=elapsed,cpu=cpu,log_bytes=size,log_age=age,unit=unit,tmux=legacy_live,claim_state=claim,card_status=status,unit_missing_process=False,unit_load=state[0],unit_active=state[1],unit_sub=state[2],claim_owner=claim_owner,claim_revision=claim_revision,projection_state=projection_state,projection_error=projection_error,completion_state=str(record_value.get('completion_state','running')),heartbeat_at=str(record_value.get('heartbeat_at','')),process_record=process_record,herdr_session=env.get('HERDR_ENV') == '1',evidence_source='direct-seat-record+proc+cardstore' if direct else 'systemd+proc+cardstore'),sort_keys=True))
     except (FileNotFoundError,ProcessLookupError,PermissionError,ValueError,KeyError,json.JSONDecodeError):
         pass
 for unit in sorted(set(units)-seen_units):
-    match=re.fullmatch(r'skfleet-worker-[a-z]+-([0-9a-f]{8})\.service',unit)
-    if not match: continue
-    card=match.group(1)
+    card=unit_card(unit)
+    if not card: continue
+    # Completed native test/build units are historical, not current worker jobs.
+    if unit.startswith('skfleet-builder-') and units[unit][1] not in {'active','activating','deactivating'}: continue
     try:
         folded=CardStore(Path.home()/'.skcapstone').fold(card)
         revision=str(folded.meta.get('_claim_revision',''))
         owner=folded.owner or ''
         status=folded.status.value
-        claim='exact' if owner and revision else ('released' if not owner else 'mismatch')
+        # A card suffix alone cannot bind a unit to the current claim generation.
+        claim='unverified' if owner else 'released'
         projection_state='valid'
         projection_error=''
     except (FileNotFoundError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -238,8 +248,6 @@ for path in (Path.home()/'.skcapstone/coordination/agents').glob('pi-*.json'):
         # Keep in sync with is_ephemeral_worker_agent on the collector host.
         if not (agent.endswith('-'+card) or agent == card):
             continue
-        expected=next((u for u in units if u.endswith('-'+card+'.service')), '')
-        if expected: continue
         revision=str(projection.get('_claim_revision',''))
         try:
             folded=CardStore(Path.home()/'.skcapstone').fold(card)
@@ -387,6 +395,8 @@ def assess(worker: Worker, samples: dict[str, dict[str, int]], now: int) -> tupl
     if worker.evidence_source.endswith("+herdr"):
         samples.pop(key, None)
         return "OK", now
+    if worker.unit == "legacy" and not worker.evidence_source.startswith("direct-seat-record"):
+        return "LEGACY", now
     if worker.unit in {"", "not-found"}:
         samples.pop(key, None)
         if worker.claim_state == "exact":
@@ -401,6 +411,13 @@ def assess(worker: Worker, samples: dict[str, dict[str, int]], now: int) -> tupl
         previous = None
     first_seen = previous["first_seen"] if previous else now
     if worker.unit_missing_process:
+        if worker.unit.startswith("skfleet-builder-") and worker.unit_active in {
+            "active",
+            "activating",
+            "deactivating",
+        }:
+            samples.pop(key, None)
+            return "UNIT ACTIVE", now
         samples[key] = {"first_seen": first_seen, "observed": now}
         if worker.unit_active == "failed" and worker.claim_state == "exact":
             return "ACTION REQUIRED", first_seen
@@ -458,7 +475,7 @@ def collect(host: str) -> list[Worker]:
     return rows, diagnostics
 
 
-def main() -> int:
+def main(*, details: bool = False) -> int:
     rows = []
     unreachable = []
     host_diagnostics: dict[str, dict] = {}
@@ -470,7 +487,9 @@ def main() -> int:
         except (subprocess.TimeoutExpired, OSError):
             unreachable.append(host)
     rows = join_herdr_evidence(rows)
-    rows.sort(key=lambda row: (-row.elapsed, row.host, row.agent))
+    rows.sort(
+        key=lambda row: (row.unit == "legacy" or row.pid == 0, -row.elapsed, row.host, row.agent)
+    )
     now = int(time.time())
     samples = load_samples()
     live_keys = {f"{row.host}/{row.unit}" for row in rows if row.unit_missing_process}
@@ -487,7 +506,16 @@ def main() -> int:
         and not row.unit_missing_process
         and not row.evidence_source.startswith("agent-projection")
     ]
-    counts = Counter(row.card for row in worker_rows)
+    current_rows = [
+        row
+        for row in worker_rows
+        if row.unit.startswith(("skfleet-worker-", "skfleet-builder-"))
+        and row.unit_active == "active"
+        and row.claim_state == "exact"
+        and row.card_status in {"doing", "review"}
+    ]
+    legacy_rows = [row for row in worker_rows if row.unit == "legacy"]
+    counts = Counter(row.card for row in current_rows)
     gateway_age: dict[str, int] = {}
     db_path = os.path.expanduser(
         os.environ.get("SKGW_METRICS_DB", "~/skgateway-codex/data/metrics.db")
@@ -504,8 +532,15 @@ def main() -> int:
         except (sqlite3.Error, OSError, ValueError):
             gateway_age = {}
     print(
+        f"current claimed unit processes: {len(current_rows)} across "
+        f"{len({row.host for row in current_rows})} host(s)"
+    )
+    print(
         f"fleet worker processes: {len(worker_rows)} across "
-        f"{len({row.host for row in worker_rows})} host(s)"
+        f"{len({row.host for row in worker_rows})} host(s) (observed Pi processes, not active requests)"
+    )
+    print(
+        f"legacy Pi sessions: {len(legacy_rows)}; unit/projection diagnostics: {len(rows)-len(worker_rows)}"
     )
     print(
         "source of truth: pi processes plus transient worker cgroups and exact agent projections"
@@ -520,9 +555,9 @@ def main() -> int:
         owner = (
             row.unit.removesuffix(".service")
             if row.unit != "legacy"
-            else ("legacy-tmux" if row.tmux else "orphan-process")
+            else ("legacy-tmux" if row.tmux else "legacy-session")
         )
-        state = "running; output buffered until completion"
+        state = "PROCESS LIVE; request activity unknown"
         disposition, first_seen = assess(row, samples, now)
         direct_active = (
             row.evidence_source.startswith("direct-seat-record")
@@ -541,34 +576,55 @@ def main() -> int:
             alerts.append((row, "joined-evidence"))
         elif disposition == "SETTLING":
             state = "SETTLING unit without Pi process"
+        elif disposition == "UNIT ACTIVE":
+            state = "UNIT ACTIVE; no Pi observed (setup/test or other unit process)"
         elif disposition == "STALE PROJECTION":
-            state = "STALE PROJECTION no live exact claim"
+            observed = "process observed" if row.pid > 0 else "no process observed"
+            state = f"STALE PROJECTION; {observed}; claim={row.claim_state}"
         elif row.projection_state == "missing":
             state = "LIVE WITHOUT PROJECTION (process/unit truth)"
-        elif row.card_status in {"done", "archived", "void"}:
+        elif row.unit != "legacy" and row.card_status in {"done", "archived", "void"}:
             state = f"TERMINAL STILL RUNNING ({row.card_status})"
             alerts.append((row, "terminal"))
-        elif row in worker_rows and counts[row.card] > 1:
+        elif row in current_rows and counts[row.card] > 1:
             state = "DUPLICATE card process"
             alerts.append((row, "duplicate"))
-        elif owner == "orphan-process" and not direct_active:
-            state = "ORPHAN: no unit or tmux owner"
-            alerts.append((row, "orphan"))
-        elif row.claim_state != "exact":
+        elif row.unit != "legacy" and row.claim_state != "exact":
             state = f"CLAIM {row.claim_state}"
             alerts.append((row, "claim"))
+        if row.unit == "legacy" and not row.evidence_source.startswith("direct-seat-record"):
+            state = f"LEGACY SESSION; activity unknown; claim={row.claim_state}; card={row.card_status}"
+        unowned_legacy = row.unit == "legacy" and not row.tmux and not direct_active
+        if unowned_legacy and row.herdr_session:
+            state = "HERDR SESSION; ownership unverified"
+            alerts.append((row, "ownership-unknown"))
+        elif unowned_legacy:
+            state = "ORPHAN; no tmux owner or active direct-seat record"
+            alerts.append((row, "orphan"))
+        if (
+            row in worker_rows
+            and row.unit != "legacy"
+            and row.card_status not in {"doing", "review"}
+        ):
+            state += f"; card={row.card_status} (not current execution)"
         log = "absent" if row.log_bytes < 0 else f"{row.log_bytes}B"
         gw_age = gateway_age.get(row.agent, -1)
         elapsed = "-" if row.unit_missing_process else duration(row.elapsed)
         if row.unit_missing_process:
             state += "; diagnostic unit without Pi process"
-        print(
-            f"  {row.host:8} {row.pid:7d} {row.agent[:34]:34} "
-            f"{elapsed:>10} {log:>9} {duration(gw_age):>9} "
-            f"{owner[:18]:18} {state}; unit={row.unit}; "
-            f"state={row.unit_load}/{row.unit_active}/{row.unit_sub}; "
+        if not details and not unowned_legacy and (row.unit == "legacy" or row.pid == 0):
+            continue
+        detail = (
+            f"; unit={row.unit}; state={row.unit_load}/{row.unit_active}/{row.unit_sub}; "
             f"claim_owner={row.claim_owner or '-'}; revision={row.claim_revision or '-'}; "
             f"first_seen={first_seen}; grace={UNIT_GRACE}s; source={row.evidence_source}"
+            if details
+            else f"; card={row.card}; claim={row.claim_state}"
+        )
+        print(
+            f"  {row.host:8} {row.pid:7d} {row.agent:34} "
+            f"{elapsed:>10} {log:>9} {duration(gw_age):>9} "
+            f"{owner[:18]:18} {state}{detail}"
         )
     if not rows:
         print("no fleet worker processes found. This says nothing about board eligibility.")
@@ -585,14 +641,26 @@ def main() -> int:
         print("unreachable hosts: " + ", ".join(unreachable))
     if alerts:
         print(f"ACTION REQUIRED ({len(alerts)}):")
-        for row, kind in alerts:
-            print(f"  {row.host} {row.agent}: {kind}")
+        if details:
+            for row, kind in alerts:
+                print(f"  {row.host} {row.agent}: {kind}")
+        else:
+            print(
+                "  "
+                + ", ".join(
+                    f"{kind}={n}" for kind, n in Counter(kind for _, kind in alerts).items()
+                )
+            )
     else:
-        print("no duplicate, orphan, or claim-mismatch process detected")
+        print("no current-unit alerts; legacy session activity remains unknown")
     print("log age is informational only and never proves a stall for pi print mode")
+    if not details:
+        print(
+            "Use --details for legacy sessions, stale projections, exact units and claim revisions."
+        )
     save_samples(samples)
     return 1 if alerts or unreachable else 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(details="--details" in sys.argv[1:]))
