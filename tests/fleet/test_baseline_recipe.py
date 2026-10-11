@@ -138,7 +138,7 @@ def test_unsynced_run_is_pending(tmp_path, monkeypatch, workspace, artifact):
         run.chmod(0o700)
     if artifact == "junit":
         br.plan.write_once(run / "receipt.json", {"checks": [{"id": "pytest", "exit_code": 1}]})
-    with pytest.raises(br.BaselinePending, match="awaiting failed-run"):
+    with pytest.raises(br.BaselinePendingError, match="awaiting failed-run"):
         br._failed_run(tmp_path, {"binding": {}, "workspace": str(workspace)})
 
 
@@ -157,5 +157,56 @@ def test_successful_tests_are_not_baseline_failures(tmp_path, monkeypatch, check
             "failure": {"message": "operator test plan is invalid or stale"},
         },
     )
-    with pytest.raises(br.BaselinePending, match="checks passed"):
+    with pytest.raises(br.BaselinePendingError, match="checks exited zero"):
+        br._failed_run(tmp_path, {"binding": {}})
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        br.BaselinePendingError("awaiting failed-run artifacts"),
+        br.BaselineError("invalid evidence"),
+    ],
+)
+def test_curator_reports_skip_separately_and_never_writes(tmp_path, monkeypatch, failure):
+    from types import SimpleNamespace
+
+    from skcoord.card_store import CardStore
+
+    root = tmp_path / "fleet/profile-requalifications"
+    root.mkdir(parents=True)
+    root.chmod(0o700)
+    br.plan.write_once(root / "a.job.json", {"card": "test-card"})
+    br.plan.write_once(root / "a.job.failed.json", {"card": "test-card"})
+    monkeypatch.setattr(CardStore, "fold", lambda *a: SimpleNamespace(archived=False, links={}))
+
+    def unavailable(*args):
+        raise failure
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("unusable evidence must not write a card")
+
+    monkeypatch.setattr(br, "_failed_run", unavailable)
+    result = br.curate_failed_qualifications(tmp_path, run=forbidden)
+    assert result == [
+        {
+            "card": "test-card",
+            "state": "skipped" if isinstance(failure, br.BaselinePendingError) else "refused",
+            "reason": str(failure),
+        }
+    ]
+
+
+@pytest.mark.parametrize("exit_code", [-9, 2, 3, 4, 5, 124, 137])
+def test_interruption_crash_and_collection_still_refuse(tmp_path, monkeypatch, exit_code):
+    monkeypatch.setattr(
+        br.plan, "load_plan", lambda *a, **k: ({"profile": {"recipe": br.FULL_SUITE}}, None, "abc")
+    )
+    run = tmp_path / "fleet/test-runs/abc"
+    run.mkdir(parents=True)
+    run.chmod(0o700)
+    br.plan.write_once(
+        run / "receipt.json", {"checks": [{"id": "pytest", "exit_code": exit_code}]}
+    )
+    with pytest.raises(br.BaselineError, match="did not run to completion"):
         br._failed_run(tmp_path, {"binding": {}})

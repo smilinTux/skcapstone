@@ -19,7 +19,9 @@ a new attempt and runs it.
 It refuses rather than guesses: only runs whose pytest exited 1 (tests ran;
 never collection errors or interruption), whose every failing case resolves to
 a real test file in the sealed workspace, and whose recipe validates and fits
-in a card link.
+in a card link. Missing run artifacts are pending evidence, and zero-exit
+checks do not justify a failing-test baseline even if later qualification
+validation failed. Both are skipped without changing the recipe.
 """
 
 from __future__ import annotations
@@ -38,7 +40,7 @@ RECENT_SECONDS = 24 * 3600
 FULL_SUITE = {"pytest_all": True}
 
 
-class BaselinePending(ValueError):
+class BaselinePendingError(ValueError):
     """No failed pytest evidence is available to curate on this host."""
 
 
@@ -178,10 +180,10 @@ def _failed_run(home: Path, job: dict) -> tuple[bytes, Path, dict]:
     try:
         receipt = json.loads(plan.read_private(directory / "receipt.json"))
     except FileNotFoundError as exc:
-        raise BaselinePending("awaiting failed-run artifacts on this host") from exc
+        raise BaselinePendingError("awaiting failed-run artifacts on this host") from exc
     checks = receipt.get("checks") or []
     if checks and all(check.get("exit_code") == 0 for check in checks):
-        raise BaselinePending("checks passed; qualification failure is outside pytest")
+        raise BaselinePendingError("checks exited zero; no failing-test baseline")
     if [check.get("id") for check in checks] != ["pytest"] or checks[0].get("exit_code") != 1:
         raise BaselineError("pytest did not run to completion with test failures")
     workspace = Path(job["workspace"])
@@ -190,7 +192,7 @@ def _failed_run(home: Path, job: dict) -> tuple[bytes, Path, dict]:
     try:
         raw = plan.read_private(directory / "pytest.xml")
     except FileNotFoundError as exc:
-        raise BaselinePending("awaiting failed-run JUnit on this host") from exc
+        raise BaselinePendingError("awaiting failed-run JUnit on this host") from exc
     return raw, workspace, recipe
 
 
@@ -291,7 +293,7 @@ def curate_failed_qualifications(
                 if not targets:
                     raise BaselineError("no test file passes at the base")
                 text = baseline_recipe(baseline, workspace, targets)
-        except BaselinePending as exc:
+        except BaselinePendingError as exc:
             results.append({"card": card_id, "state": "skipped", "reason": str(exc)})
             continue
         except (BaselineError, plan.TestEvidenceError, OSError, ValueError, KeyError) as exc:
