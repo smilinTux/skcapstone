@@ -286,14 +286,16 @@ def validate_profile(value: dict, expected: dict, policy: dict, *, environment=T
 def fingerprint_only_stale(
     value: dict, expected: dict, policy: dict, *, source_sha256: str | None = None
 ) -> bool:
-    """Allow automatic requalification only when recipe and test tools still match.
+    """Allow automatic requalification when only fingerprints moved under the recipe.
 
-    One migration exception: a current-schema profile whose toolchain is the
-    exact pre-qualify-env ~/.skenv toolchain on this authority predates the
-    clean qualification prefix. Its recipe is unchanged, so it is offered one
-    full native requalification bound to the new prefix instead of being
-    blocked forever. The legacy fingerprint is recomputed from live bytes, so
-    a ~/.skenv that has since drifted grants nothing.
+    The recipe, card, repository, criteria, authority and interpreter must
+    still match exactly. A changed qualify-env toolchain is a reason to
+    requalify, not a refusal: the requalification reruns the unchanged recipe
+    under the current prefix, and that sealed run is the fresh evidence. It
+    used to be refused unless the old toolchain was the one pre-qualify-env
+    ~/.skenv, so any qualify-env rebuild (adding a missing test dependency)
+    would have stranded every profile. The sealed plan records the prior
+    toolchain it accepted, and plan validation admits exactly that value.
     """
     _validate_shape(value)
     if (
@@ -316,11 +318,7 @@ def fingerprint_only_stale(
         or (source_sha256 is not None and value["source_sha256"] != source_sha256)
     ):
         return False
-    toolchain = plan.toolchain_fingerprint()
-    if value["toolchain_sha256"] != toolchain:
-        legacy = plan.legacy_toolchain_fingerprint()
-        if legacy is None or legacy == toolchain or value["toolchain_sha256"] != legacy:
-            return False
+    if value["toolchain_sha256"] != plan.toolchain_fingerprint():
         if node.is_node(value) or composite.is_composite(value):
             node.current_environment(value["node_environment"])
         return True

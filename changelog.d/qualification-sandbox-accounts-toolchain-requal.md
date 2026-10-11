@@ -1,0 +1,1 @@
+Sealed test qualification can now run skcapstone's suite: the sandbox binds the host passwd/group files read-only (getpwuid failed for the sandbox uid), and a rebuilt qualify-env toolchain is a reason to requalify a profile instead of stranding it.
