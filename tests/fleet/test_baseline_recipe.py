@@ -125,3 +125,37 @@ def test_module_level_skip_in_junit_is_untargetable_not_a_refusal(workspace):
     assert untargetable == {"tests/test_a.py"} and baseline == []
     with pytest.raises(br.BaselineError):
         br.baseline_from_junit(raw, workspace)
+
+
+@pytest.mark.parametrize("artifact", ["directory", "receipt", "junit"])
+def test_unsynced_run_is_pending(tmp_path, monkeypatch, workspace, artifact):
+    monkeypatch.setattr(
+        br.plan, "load_plan", lambda *a, **k: ({"profile": {"recipe": br.FULL_SUITE}}, None, "abc")
+    )
+    run = tmp_path / "fleet/test-runs/abc"
+    if artifact != "directory":
+        run.mkdir(parents=True)
+        run.chmod(0o700)
+    if artifact == "junit":
+        br.plan.write_once(run / "receipt.json", {"checks": [{"id": "pytest", "exit_code": 1}]})
+    with pytest.raises(br.BaselinePending, match="awaiting failed-run"):
+        br._failed_run(tmp_path, {"binding": {}, "workspace": str(workspace)})
+
+
+@pytest.mark.parametrize("checks", [["pytest"], ["pytest", "compile", "lint"]])
+def test_successful_tests_are_not_baseline_failures(tmp_path, monkeypatch, checks):
+    monkeypatch.setattr(
+        br.plan, "load_plan", lambda *a, **k: ({"profile": {"recipe": br.FULL_SUITE}}, None, "abc")
+    )
+    run = tmp_path / "fleet/test-runs/abc"
+    run.mkdir(parents=True)
+    run.chmod(0o700)
+    br.plan.write_once(
+        run / "receipt.json",
+        {
+            "checks": [{"id": name, "exit_code": 0} for name in checks],
+            "failure": {"message": "operator test plan is invalid or stale"},
+        },
+    )
+    with pytest.raises(br.BaselinePending, match="checks passed"):
+        br._failed_run(tmp_path, {"binding": {}})

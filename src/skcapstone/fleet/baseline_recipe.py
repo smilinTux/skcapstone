@@ -38,6 +38,10 @@ RECENT_SECONDS = 24 * 3600
 FULL_SUITE = {"pytest_all": True}
 
 
+class BaselinePending(ValueError):
+    """No failed pytest evidence is available to curate on this host."""
+
+
 class BaselineError(ValueError):
     """The failed run cannot yield an exact baseline."""
 
@@ -171,14 +175,23 @@ def _failed_run(home: Path, job: dict) -> tuple[bytes, Path, dict]:
     if not isinstance(recipe, dict):
         raise BaselineError("failed run has no qualified recipe")
     directory = home / "fleet/test-runs" / plan_sha
-    receipt = json.loads(plan.read_private(directory / "receipt.json"))
+    try:
+        receipt = json.loads(plan.read_private(directory / "receipt.json"))
+    except FileNotFoundError as exc:
+        raise BaselinePending("awaiting failed-run artifacts on this host") from exc
     checks = receipt.get("checks") or []
+    if checks and all(check.get("exit_code") == 0 for check in checks):
+        raise BaselinePending("checks passed; qualification failure is outside pytest")
     if [check.get("id") for check in checks] != ["pytest"] or checks[0].get("exit_code") != 1:
         raise BaselineError("pytest did not run to completion with test failures")
     workspace = Path(job["workspace"])
     if not workspace.is_dir() or workspace.is_symlink():
         raise BaselineError("sealed qualification workspace is unavailable")
-    return plan.read_private(directory / "pytest.xml"), workspace, recipe
+    try:
+        raw = plan.read_private(directory / "pytest.xml")
+    except FileNotFoundError as exc:
+        raise BaselinePending("awaiting failed-run JUnit on this host") from exc
+    return raw, workspace, recipe
 
 
 def _latest_link_writer(home: Path, card: str, key: str) -> str | None:
@@ -278,6 +291,9 @@ def curate_failed_qualifications(
                 if not targets:
                     raise BaselineError("no test file passes at the base")
                 text = baseline_recipe(baseline, workspace, targets)
+        except BaselinePending as exc:
+            results.append({"card": card_id, "state": "skipped", "reason": str(exc)})
+            continue
         except (BaselineError, plan.TestEvidenceError, OSError, ValueError, KeyError) as exc:
             results.append({"card": card_id, "state": "refused", "reason": str(exc)[:120]})
             continue
