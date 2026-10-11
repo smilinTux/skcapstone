@@ -14,6 +14,6 @@
   "direct": [
     "skharness @ git+https://github.com/smilinTux/skharness.git@7409a1ab28f9c8fed87cd40226f4c031ca9e3f6e"
   ],
-  "lock_sha256": "cf358dd7591e11f0fd1dfa3a9e1d13803a38d87f230275592ae37433964c53e2",
+  "lock_sha256": "74a6febadb6d9d87c525be29e039175fc94f8d31e91ec7323c9ae6a006af3954",
   "platform": "x86_64-manylinux_2_39"
 }
