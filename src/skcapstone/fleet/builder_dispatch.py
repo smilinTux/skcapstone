@@ -1138,7 +1138,13 @@ def _reconcile_running(
                 claim_released=False,
                 error="continued generation has not recorded a new outcome",
             )
-        blocked = release_blocked(coordination_home, request, owner, revision)
+        blocked = release_blocked(
+            coordination_home,
+            request,
+            owner,
+            revision,
+            workspace=paths.root / "workspaces" / owner,
+        )
         if blocked is not None:
             return _write_status(
                 paths,

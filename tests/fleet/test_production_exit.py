@@ -15,7 +15,7 @@ from tests.test_skfleet_worker_exit_evidence import _wrapper
 def exit_case(monkeypatch, tmp_path):
     monkeypatch.setenv("SKFLEET_PRODUCTION_POLICY", "/operator/policy.json")
     monkeypatch.setattr(production_exit, "_authority", lambda: "control")
-    monkeypatch.setattr(production_exit, "release_blocked", lambda *args: None)
+    monkeypatch.setattr(production_exit, "release_blocked", lambda *args, **kwargs: None)
     row = SimpleNamespace(labels=["source-only"], title="Source", meta={}, links={})
     monkeypatch.setattr(
         production_exit, "CardStore", lambda home: SimpleNamespace(fold=lambda card: row)
@@ -116,6 +116,49 @@ def test_blocked_exact_native_release_or_preserved_custody(source, invalid):  # 
         assert result["state"] == "blocked" and result["claim_released"]
         assert result["reason"] == outcome["verdict"] and row.owner is None
         assert str(row.status) != "done" and source["workspace"].exists()
+
+
+@pytest.mark.parametrize("case", ["clean", "dirty", "no-workspace", "partial-candidate"])
+def test_candidateless_blocked_releases_only_from_proven_unchanged_base(
+    source, monkeypatch, case  # noqa: F811
+):
+    """A worker blocked before changing anything has no candidate to cite."""
+    from skcoord.coordination import AgentFile, Board
+
+    from skcapstone.fleet import source_bundle
+
+    Board(source["home"]).save_agent(
+        AgentFile(agent=source["owner"], claimed_tasks=[source["card"]])
+    )
+    outcome = {"verdict": "BLOCKED blocked_on=capability referent=schema-absent-from-base"}
+    if case == "partial-candidate":
+        outcome["candidate_commit"] = "c" * 40
+    source["store"].append_event(source["card"], "verdict", source["owner"], **outcome)
+    inspected = []
+
+    def clean(workspace, base, *, allow_ignored=False):
+        inspected.append((workspace, base, allow_ignored))
+        if case == "dirty":
+            raise source_bundle.SourceBundleError("workspace changed")
+        return {"head": base}
+
+    monkeypatch.setattr(source_bundle, "inspect_clean_base", clean)
+    result = production_exit.release_blocked(
+        source["home"],
+        dict(source["request"]),
+        source["owner"],
+        source["claim"],
+        workspace=None if case == "no-workspace" else source["workspace"],
+    )
+    row = source["store"].fold(source["card"])
+    if case == "clean":
+        assert inspected == [(source["workspace"], source["request"]["base_revision"], True)]
+        assert result["state"] == "blocked" and result["claim_released"]
+        assert result["reason"] == outcome["verdict"] and row.owner is None
+    else:
+        assert result is None and row.owner == source["owner"]
+    if case in {"no-workspace", "partial-candidate"}:
+        assert inspected == []
 
 
 def test_no_trusted_git_or_claim_release_without_exact_terminal_proof(exit_case, monkeypatch):

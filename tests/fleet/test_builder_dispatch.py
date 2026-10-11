@@ -1877,7 +1877,7 @@ def test_terminal_source_bundle_refusal_keeps_safe_reason(paths, monkeypatch, tm
         "original_outcome_pending",
         lambda *_args: False,
     )
-    monkeypatch.setattr(production_exit, "release_blocked", lambda *_args: None)
+    monkeypatch.setattr(production_exit, "release_blocked", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         source_bundle,
         "publish_source",
