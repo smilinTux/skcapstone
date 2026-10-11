@@ -792,3 +792,24 @@ def test_continuation_rebind_never_moves_host_or_family(paths, production_setup,
     drifted = dict(request, production=dict(request["production"], **{field: "elsewhere"}))
     with pytest.raises((ValueError, production.production_routes.RouteUnavailableError)):
         production.rebind_request(paths, request["node"], drifted)
+
+
+@pytest.mark.parametrize(
+    "state,reset",
+    [
+        ({"LoadState": "loaded", "ActiveState": "failed"}, True),
+        ({"LoadState": "loaded", "ActiveState": "active"}, False),
+        ({"LoadState": "not-found", "ActiveState": "inactive"}, False),
+    ],
+)
+def test_only_a_failed_previous_review_unit_is_reset(monkeypatch, state, reset):
+    from skcapstone.fleet import production_admission
+
+    monkeypatch.setattr(production_admission, "unit_state", lambda unit: dict(state))
+    calls = []
+    unit = "skfleet-worker-deepseek-10111783.service"
+    assert (
+        production.clear_failed_review_unit(unit, runner=lambda argv, **k: calls.append(argv))
+        is reset
+    )
+    assert calls == ([["systemctl", "--user", "reset-failed", unit]] if reset else [])

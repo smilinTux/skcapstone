@@ -284,6 +284,31 @@ def review_runtime() -> tuple[str, str]:
     return worker, wrapper
 
 
+def clear_failed_review_unit(unit: str, *, runner=subprocess.run) -> bool:
+    """Reset a previous generation's failed review unit so the next can start.
+
+    Review units are named per card, so a failed transient unit stays loaded
+    and systemd refuses to start the next generation under the same name. The
+    launch then died after admission-pending was published and the review sat
+    claimed forever (chi, 2026-10-11: nine reviews incl. 10111783, d60f8598).
+    Only a loaded unit in the failed state is reset; a failed unit is never
+    running, and anything else is left alone.
+    """
+    from .production_admission import unit_state
+
+    previous = unit_state(unit)
+    if previous.get("LoadState") != "loaded" or previous.get("ActiveState") != "failed":
+        return False
+    runner(
+        ["systemctl", "--user", "reset-failed", unit],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    return True
+
+
 def launch_review(paths, home, request, card, handoff, workspace, *, launcher=None):
     """Launch the existing production wrapper under destination-native custody."""
     import sys
@@ -301,6 +326,7 @@ def launch_review(paths, home, request, card, handoff, workspace, *, launcher=No
     bound = request["production"]
     host, lane = bound["host"], bound["family"]
     unit = "skfleet-worker-" + lane + "-" + card.id + ".service"
+    clear_failed_review_unit(unit)
     worker, wrapper = review_runtime()
     brief = production_source_review_brief(
         card_id=card.id,
