@@ -7,13 +7,16 @@ The authority recovery sweep previously sent admission-pending statuses to
 retire(), which requires an acknowledged running generation. retire_prestart()
 refused every existing status. The nine reported cards were read through coord
 show and their dispatch statuses inspected: all had released claims, review
-columns, admission-pending statuses, and empty execution.invocation fields.
+columns, admission-pending statuses, and empty execution.invocation fields
+at the initial read. The follow-up design also handles exact still-owned claims,
+which may be preserved by the reaper.
 No production retirement or other board mutation was performed for this change.
 
 The optional status_sha256 argument selects a narrowly bound admission-pending
 mode in retire_prestart(). It preserves authority, request, offer, card revision,
 criteria, source, hold, exit-custody, session, admission inventory and exact
-release checks. The pending status must bind the same request, reviewer, claim,
+release checks. Pending heartbeat_at must be timezone-aware and at least
+30 minutes old; fresh, future, missing or malformed timestamps refuse. The pending status must bind the same request, reviewer, claim,
 node, host, unit and reservation. A launch with launched=true is refused, as is
 an ambiguous launch record. An explicitly unsuccessful launch is allowed.
 The release actor may differ from the recovery actor, matching the existing
@@ -30,8 +33,14 @@ The request, status and prestart proof are archived before the native retirement
 event and pointer removal. retired_offers() checks the archived status hash and
 pending binding before recognizing the retirement. The existing authority-only,
 non-dry recovery call in skfleet-rotate.py invokes the new path every cycle;
-no new timer, service, policy switch or scheduler is introduced. This path does
-not release claims. Refusals preserve pointers and are reported by the sweep.
+no new timer, service, policy switch or scheduler is introduced. For an exact
+still-owned claim, a check-only recovery preflight verifies all pending proofs
+before Board.release_claim(owner, card, actor=owner,
+expected_claim_revision=claim, abandon_reason="error"). The sweep verifies
+release readback, restores the review column, and calls retire_prestart() again
+with the new card revision. Released claims can resume after an interruption.
+Changed claims or failed proofs are never released. Refusals preserve pointers
+and are reported by the sweep.
 
 ## Validation
 
@@ -71,3 +80,12 @@ mocked service boundaries. No deploy, running-service change, production sweep
 execution or feature enablement was performed. PR 1129 separately addresses the
 failed unit name on future launches. Reverting this change restores the prior
 refusal of all prestart status files; existing receipts remain preserved.
+
+## Follow-up review changes
+
+The new release-path and heartbeat refusal tests ran red before implementation:
+7 failed, 5 passed. The focused admission and recovery suites then passed
+57 tests. The boundary tests accept exactly 30 minutes and refuse 29:59 or a
+future heartbeat. Proof failures, changed claims and failed release readback
+leave retirement pointers intact; fresh released cards are not moved either.
+The pending branch is handled before the running-only failed-run filter.
