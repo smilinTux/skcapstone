@@ -251,13 +251,24 @@ def finish_pair(home, directory, context, *, guard, command=native_command, insp
     """Finish an exact tested pair idempotently, recovering even lost CLI replies."""
     from .acceptance_reseal import acceptance_lock
 
+    if (Path(directory) / "finished.json").exists():
+        # Completed evidence is immutable: validate it without creating a lock file.
+        return _finish_pair(
+            home,
+            directory,
+            context,
+            guard=guard,
+            command=command,
+            inspect=inspect,
+            historical_only=True,
+        )
     with acceptance_lock(directory):
         return _finish_pair(
             home, directory, context, guard=guard, command=command, inspect=inspect
         )
 
 
-def _finish_pair(home, directory, context, *, guard, command, inspect):
+def _finish_pair(home, directory, context, *, guard, command, inspect, historical_only=False):
     """Run the existing journal, or an explicitly authenticated step-08 checkpoint."""
     from .acceptance_reseal import checkpoint
     from .production_tests import validate_test_receipt
@@ -267,7 +278,9 @@ def _finish_pair(home, directory, context, *, guard, command, inspect):
     journal = directory / "resealed" if recovery else directory
     artifacts(context)
     finished = directory / "finished.json"
-    historical = read_json(finished) if finished.exists() else None
+    historical = read_json(finished) if historical_only or finished.exists() else None
+    if historical_only and not isinstance(historical, dict):
+        raise ReviewEvidenceError("completed acceptance marker changed")
     acceptance = (
         _historical_acceptance(home, context, historical, inspect)
         if historical is not None

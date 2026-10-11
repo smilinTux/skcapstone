@@ -384,3 +384,18 @@ def test_historical_junit_rejects_unsuccessful_cases_even_with_rehashed_proof(ac
         finish._historical_acceptance(
             a.s.home, a.context, a.historical, lambda home, card: a.states[card]
         )
+
+
+def test_finished_marker_disappearing_never_enters_unlocked_finish(accepted, monkeypatch):
+    """A vanished historical marker must refuse, never fall back to a live write."""
+    original = finish._finish_pair
+
+    def remove_marker(*args, **kwargs):
+        (accepted.directory / "finished.json").unlink()
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(finish, "_finish_pair", remove_marker)
+    monkeypatch.setattr(finish, "once", lambda *args: pytest.fail("unlocked write attempted"))
+    with pytest.raises(FileNotFoundError):
+        replay(accepted)
+    assert not (accepted.directory / "acceptance.lock").exists()
