@@ -1,0 +1,1 @@
+A review launch resets a previous generation's failed review unit of the same name before starting, so the next generation is not refused by systemd. Failed-run recovery again covers only running generations, since retire() cannot accept admission-pending.
