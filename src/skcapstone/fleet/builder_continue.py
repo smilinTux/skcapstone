@@ -514,7 +514,9 @@ UNFINISHED_REASON = (
 )
 
 
-def auto_continue_unfinished(paths, home, *, actor="niobe", limit=4, probe=remote_check):
+def auto_continue_unfinished(
+    paths, home, *, actor="niobe", limit=4, max_attempts=16, probe=remote_check
+):
     """Grant one continuation to builds that stopped with work but no outcome.
 
     #1094 releases a generation that produced nothing. Its complement, a
@@ -526,8 +528,12 @@ def auto_continue_unfinished(paths, home, *, actor="niobe", limit=4, probe=remot
     """
     home = Path(home)
     results = []
+    # Count only grants against the limit. Counting refusals let the same
+    # first few correctly refused generations fill it every cycle, so later
+    # eligible ones were never reached (chi, 2026-10-11). Attempts stay bounded.
+    granted = 0
     for status_file in sorted((paths.root / "status").glob("node-*/dispatch/*.json")):
-        if len(results) >= limit:
+        if granted >= limit or len(results) >= max_attempts:
             break
         node = status_file.parent.parent.name
         try:
@@ -565,6 +571,7 @@ def auto_continue_unfinished(paths, home, *, actor="niobe", limit=4, probe=remot
                 probe=probe,
             )
             results.append({"card": card, "node": node, "state": outcome["state"]})
+            granted += 1
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
             results.append(
                 {"card": card, "node": node, "state": "refused", "reason": str(exc)[:160]}
