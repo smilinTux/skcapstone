@@ -992,3 +992,68 @@ def test_receipts_sealed_before_account_binds_still_validate(monkeypatch):
     ]
     # Only the exact bind block is removed; any other argv is left as is.
     assert without_account_databases(["a", "b"]) == ["a", "b"]
+
+
+class _Claims:
+    """Fold a source card as owned by the given exact claim, or as released."""
+
+    def __init__(self, owner=None, revision=None):
+        self.card = SimpleNamespace(owner=owner, meta={"_claim_revision": revision})
+
+    def fold(self, card_id):
+        return self.card
+
+
+def _orphan(setup, monkeypatch, *, state=("active", "exited")):
+    """A finished retained test unit with its receipt but no terminal record."""
+    receipt, _ = receipt_fixture(setup, monkeypatch)
+    (setup.directory / "terminal.json").unlink()
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        return SimpleNamespace(
+            stdout="LoadState=loaded\nActiveState=%s\nSubState=%s\n" % state
+            + "MainPID=0\nControlGroup=\nTasksCurrent=[not set]\nInvocationID="
+            + receipt["invocation"]
+            + "\nExecMainPID="
+            + str(receipt["pid"])
+            + "\nExecMainCode=1\nExecMainStatus=1\n"
+        )
+
+    monkeypatch.setattr(native.subprocess, "run", run)
+    monkeypatch.setattr(resources, "_local_launch", lambda *a: True)
+    return calls
+
+
+def test_orphaned_test_unit_is_recorded_and_stopped_once_claim_moves(setup, monkeypatch):
+    calls = _orphan(setup, monkeypatch)
+    states = native.reap_orphaned_test_units(setup.home, "chiap02", store=_Claims())
+    assert states == ["reaped:" + setup.binding["source_card"]]
+    assert native.read_json(setup.directory / "terminal.json")["ActiveState"] == "active"
+    assert ["/usr/bin/systemctl", "--user", "stop"] == calls[-1][:3]
+    # terminal.json now exists, so a second pass neither observes nor stops.
+    calls.clear()
+    assert native.reap_orphaned_test_units(setup.home, "chiap02", store=_Claims()) == []
+    assert calls == []
+
+
+def test_unit_with_current_claim_is_left_to_its_finalizer(setup, monkeypatch):
+    calls = _orphan(setup, monkeypatch)
+    claims = _Claims(setup.binding["source_owner"], setup.binding["source_claim_revision"])
+    assert native.reap_orphaned_test_units(setup.home, "chiap02", store=claims) == []
+    assert calls == [] and not (setup.directory / "terminal.json").exists()
+
+
+def test_running_orphan_is_not_stopped(setup, monkeypatch):
+    calls = _orphan(setup, monkeypatch, state=("active", "running"))
+    assert native.reap_orphaned_test_units(setup.home, "chiap02", store=_Claims()) == []
+    assert all("stop" not in argv for argv in calls)
+    assert not (setup.directory / "terminal.json").exists()
+
+
+def test_foreign_launch_is_ignored(setup, monkeypatch):
+    calls = _orphan(setup, monkeypatch)
+    monkeypatch.setattr(resources, "_local_launch", lambda *a: False)
+    assert native.reap_orphaned_test_units(setup.home, "chiap02", store=_Claims()) == []
+    assert calls == []
