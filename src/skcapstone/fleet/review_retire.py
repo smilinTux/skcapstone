@@ -1292,7 +1292,11 @@ def recover_failed_generations(paths, home: Path, *, actor: str = "niobe") -> li
         card = str(status.get("card_id") or "")
         if (
             status.get("work_kind") != "review"
-            or status.get("state") != "running"
+            # admission-pending is published before the reviewer spawns, and
+            # nothing advances it when the reserved unit then fails: nine
+            # reviews (10111783, d60f8598, ...) held their claims for up to a
+            # day with failed units and recorded non-zero exits (2026-10-11).
+            or status.get("state") not in {"running", "admission-pending"}
             or status.get("review_packet") is not None
             or status.get("terminal") is not None
             or not CARD.fullmatch(card)

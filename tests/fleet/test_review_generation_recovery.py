@@ -153,3 +153,17 @@ def test_retire_refusal_is_reported_not_raised(tmp_path, harness, monkeypatch):
             "reason": "exact managed worker death unproven",
         }
     ]
+
+
+def test_admission_pending_reviewer_whose_unit_failed_is_recovered(tmp_path, harness):
+    """admission-pending is never advanced after the reserved unit fails."""
+    home, paths = _tree(tmp_path, state="admission-pending", exits=(75,))
+    results = review_retire.recover_failed_generations(paths, home)
+    assert results == [{"card": CARD, "node": NODE, "state": "retired"}]
+    assert len(harness.releases) == 1 and len(harness.retires) == 1
+
+
+def test_admission_pending_without_a_recorded_failure_is_kept(tmp_path, harness):
+    home, paths = _tree(tmp_path, state="admission-pending", exits=())
+    assert review_retire.recover_failed_generations(paths, home) == []
+    assert harness.releases == [] and harness.retires == []
