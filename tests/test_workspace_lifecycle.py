@@ -123,20 +123,34 @@ def authoritative_workspace(tmp_path: Path) -> tuple[WorkspaceProof, Path, Path]
 
 
 def authoritative_proof(tmp_path: Path) -> tuple[WorkspaceProof, Path, Path]:
-    """Create a real Git workspace AND a real card with commit_sha/branch links.
+    """Create a real Git workspace AND a real card with every proof link.
 
-    Matches Plan B1's actual delivery record: skcapstone coord link <card>
-    commit_sha <the-genuine-sha> and skcapstone coord link <card> branch
-    <repo>:<name>. The branch link is deliberately the *card's own* branch,
-    qualified with a synthetic repo name, mirroring convention documented in
-    scripts/fleet/skfleet-rotate.py's worker prompt.
+    Matches Plan B1's actual delivery record: skcapstone coord claim,
+    coord link <card> commit_sha <the-genuine-sha>, coord link <card> branch
+    <repo>:<name>, and coord link <card> evidence <path>. The branch link is
+    deliberately the *card's own* branch, qualified with a synthetic repo
+    name, mirroring convention documented in scripts/fleet/skfleet-rotate.py's
+    worker prompt. The claim event carries item.claim_revision so
+    card_claim_generation sees the exact live generation, and the harness's
+    HEAD is linked as commit_sha so unique_commit_custody can prove
+    reachability.
     """
     item, repository, workspace = authoritative_workspace(tmp_path)
     home = tmp_path / "coord-home"
     store = _make_card(home, item.card_id)
+    store.append_event(
+        item.card_id, "claim", "worker", owner="worker", claim_revision=item.claim_revision
+    )
     store.append_event(item.card_id, "link", "worker", link_key="commit_sha", link_value=item.head)
     store.append_event(
         item.card_id, "link", "worker", link_key="branch", link_value=f"fixture:{item.branch}"
+    )
+    store.append_event(
+        item.card_id,
+        "link",
+        "worker",
+        link_key="evidence",
+        link_value="evidence/work/8c4a9e21/manifest.md",
     )
     return item, repository, home
 
@@ -210,7 +224,17 @@ def test_commit_sha_linked_to_none_permits_cleanup(tmp_path: Path) -> None:
     item, repository, workspace = authoritative_workspace(tmp_path)
     home = tmp_path / "coord-home"
     store = _make_card(home, item.card_id)
+    store.append_event(
+        item.card_id, "claim", "worker", owner="worker", claim_revision=item.claim_revision
+    )
     store.append_event(item.card_id, "link", "worker", link_key="commit_sha", link_value="none")
+    store.append_event(
+        item.card_id,
+        "link",
+        "worker",
+        link_key="evidence",
+        link_value="evidence/work/8c4a9e21/manifest.md",
+    )
     decision = cleanup_decision(
         item, home=home, repository=repository, process_counter=lambda _: 0
     )
@@ -375,6 +399,206 @@ def test_successful_cleanup_writes_receipt_and_retry_is_idempotent(tmp_path: Pat
 def test_cleaned_is_terminal() -> None:
     with pytest.raises(ValueError, match="invalid workspace transition"):
         transition(WorkspaceState.CLEANED, WorkspaceState.ACTIVE)
+
+
+def test_transition_table_covers_every_governed_state() -> None:
+    """Every named state is reachable and every transition is deterministic."""
+    from skcapstone.fleet.workspace_lifecycle import TRANSITIONS
+
+    assert set(TRANSITIONS) == set(WorkspaceState)
+    # A successful handoff with a required review waits, then cleans.
+    assert transition(WorkspaceState.ACTIVE, WorkspaceState.HANDOFF_REQUIRED) is (
+        WorkspaceState.HANDOFF_REQUIRED
+    )
+    assert transition(WorkspaceState.HANDOFF_REQUIRED, WorkspaceState.REVIEW_PENDING) is (
+        WorkspaceState.REVIEW_PENDING
+    )
+    assert transition(WorkspaceState.REVIEW_PENDING, WorkspaceState.CLEANUP_ELIGIBLE) is (
+        WorkspaceState.CLEANUP_ELIGIBLE
+    )
+    # A failure path never jumps straight to cleanup.
+    with pytest.raises(ValueError, match="invalid workspace transition"):
+        transition(WorkspaceState.ACTIVE, WorkspaceState.CLEANUP_ELIGIBLE)
+    with pytest.raises(ValueError, match="invalid workspace transition"):
+        transition(WorkspaceState.RECOVERABLE_QUARANTINE, WorkspaceState.CLEANUP_ELIGIBLE)
+
+
+def _record_verdict(home: Path, card_id: str, value: str) -> None:
+    """Write one verdict row to the evidence store recorded_verdict reads."""
+    events = home / "coordination" / "card_events"
+    events.mkdir(parents=True, exist_ok=True)
+    row = {"card_id": card_id, "link_key": "verdict", "link_value": value, "ts": "2026-01-01"}
+    (events / "verdicts.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+
+def _link(home: Path, card_id: str, key: str, value: str) -> None:
+    CardStore(home).append_event(card_id, "link", "worker", link_key=key, link_value=value)
+
+
+def _make_review_card(home: Path, review_id: str, parent_id: str) -> None:
+    """Create a governed review card with exactly one parent label."""
+    CardStore(home).create(
+        CardCore(
+            id=review_id,
+            title=f"[REVIEW] synthetic review of {parent_id}",
+            initial_labels=[f"parent-{parent_id}"],
+        )
+    )
+
+
+def test_reviewer_handoff_waits_in_review_pending(tmp_path: Path) -> None:
+    """A card linking an open review card must wait in REVIEW_PENDING."""
+    item, repository, home = authoritative_proof(tmp_path)
+    _make_review_card(home, "aaaa1111", item.card_id)
+    _link(home, item.card_id, "review_card", "aaaa1111")
+    decision = cleanup_decision(
+        item, home=home, repository=repository, process_counter=lambda _: 0
+    )
+    assert decision.state is WorkspaceState.REVIEW_PENDING
+    assert any(reason.startswith("review-pending") for reason in decision.reasons)
+
+
+def test_reviewer_handoff_terminal_pass_permits_cleanup(tmp_path: Path) -> None:
+    """A terminal PASS on the linked review card discharges the dependency."""
+    item, repository, home = authoritative_proof(tmp_path)
+    _make_review_card(home, "aaaa1111", item.card_id)
+    _link(home, item.card_id, "review_card", "aaaa1111")
+    _record_verdict(home, "aaaa1111", "PASS")
+    decision = cleanup_decision(
+        item, home=home, repository=repository, process_counter=lambda _: 0
+    )
+    assert decision.state is WorkspaceState.CLEANUP_ELIGIBLE
+
+
+def test_reviewer_handoff_terminal_fail_still_permits_cleanup(tmp_path: Path) -> None:
+    """A terminal FAIL is also discharged: the review is over, not silent."""
+    item, repository, home = authoritative_proof(tmp_path)
+    _make_review_card(home, "aaaa1111", item.card_id)
+    _link(home, item.card_id, "review_card", "aaaa1111")
+    _record_verdict(home, "aaaa1111", "FAIL")
+    decision = cleanup_decision(
+        item, home=home, repository=repository, process_counter=lambda _: 0
+    )
+    assert decision.state is WorkspaceState.CLEANUP_ELIGIBLE
+
+
+def test_reviewer_handoff_verdictless_review_stays_pending(tmp_path: Path) -> None:
+    """Silence is not approval: a verdict-less review blocks cleanup."""
+    item, repository, home = authoritative_proof(tmp_path)
+    _make_review_card(home, "aaaa1111", item.card_id)
+    _link(home, item.card_id, "review_card", "aaaa1111")
+    decision = cleanup_decision(
+        item, home=home, repository=repository, process_counter=lambda _: 0
+    )
+    assert decision.state is WorkspaceState.REVIEW_PENDING
+
+
+def test_stale_claim_generation_is_refused(tmp_path: Path) -> None:
+    """A workspace whose claim moved to another generation must not be cleaned."""
+    item, repository, home = authoritative_proof(tmp_path)
+    stale = replace(item, claim_revision="an-older-generation")
+    decision = cleanup_decision(
+        stale, home=home, repository=repository, process_counter=lambda _: 0
+    )
+    assert decision.state is WorkspaceState.HANDOFF_REQUIRED
+    assert any("stale-claim-generation" in reason for reason in decision.reasons)
+
+
+def test_released_claim_is_refused(tmp_path: Path) -> None:
+    """A card with no live claim has no running workspace to clean for."""
+    item, repository, home = authoritative_proof(tmp_path)
+    CardStore(home).append_event(
+        item.card_id,
+        "release_claim",
+        "worker",
+        released_owner="worker",
+        expected_claim_revision=item.claim_revision,
+    )
+    decision = cleanup_decision(
+        item, home=home, repository=repository, process_counter=lambda _: 0
+    )
+    assert decision.state is WorkspaceState.HANDOFF_REQUIRED
+    assert any("claim-unverified" in reason for reason in decision.reasons)
+
+
+def test_missing_evidence_link_is_refused(tmp_path: Path) -> None:
+    """A workspace is the only copy of its bytes; unrecorded evidence blocks it."""
+    item, repository, home = authoritative_proof(tmp_path)
+    # Rebuild the card without the evidence link but with everything else.
+    store = CardStore(home)
+    store.append_event(item.card_id, "link", "worker", link_key="evidence", link_value="")
+    decision = cleanup_decision(
+        item, home=home, repository=repository, process_counter=lambda _: 0
+    )
+    assert decision.state is WorkspaceState.HANDOFF_REQUIRED
+    assert any("evidence-unverified" in reason for reason in decision.reasons)
+
+
+def test_unique_commit_not_reachable_from_custody_is_refused(tmp_path: Path) -> None:
+    """A commit unique to the workspace with no custody ancestor is never deleted."""
+    item, repository, home = authoritative_proof(tmp_path)
+    workspace = Path(item.workspace)
+    # Make a commit unique to the workspace branch, then re-link commit_sha to
+    # the original ancestor so HEAD is no longer reachable from custody.
+    (workspace / "unique.txt").write_text("unique\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(workspace), "add", "unique.txt"], check=True)
+    subprocess.run(["git", "-C", str(workspace), "commit", "-qm", "unique work"], check=True)
+    new_head = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    # commit_sha still names item.head (the original ancestor), so the new
+    # HEAD is not an ancestor of custody.
+    _link(home, item.card_id, "commit_sha", item.head)
+    status = subprocess.run(
+        ["git", "-C", str(workspace), "status", "--porcelain=v1", "-z"],
+        check=True,
+        capture_output=True,
+    ).stdout
+    dirty_proof = replace(
+        item,
+        head=new_head,
+        porcelain_sha256=hashlib.sha256(status).hexdigest(),
+    )
+    decision = cleanup_decision(
+        dirty_proof, home=home, repository=repository, process_counter=lambda _: 0
+    )
+    assert decision.state is WorkspaceState.HANDOFF_REQUIRED
+    assert any("unique-commit-unverified" in reason for reason in decision.reasons)
+
+
+def test_quarantine_manifest_carries_locator_and_reasons(tmp_path: Path) -> None:
+    """A recoverable quarantine manifest points the next agent at exact bytes."""
+    item = proof(tmp_path, outcome="interrupted")
+    manifest = recovery_manifest(
+        item,
+        WorkspaceState.RECOVERABLE_QUARANTINE,
+        reasons=("outcome:interrupted",),
+        quarantine_locator=item.workspace,
+    )
+    assert manifest["quarantine_locator"] == item.workspace
+    assert manifest["reasons"] == ["outcome:interrupted"]
+    assert manifest["state"] == WorkspaceState.RECOVERABLE_QUARANTINE.value
+    content = {key: value for key, value in manifest.items() if key != "content_sha256"}
+    canonical = json.dumps(content, sort_keys=True, separators=(",", ":")).encode()
+    assert manifest["content_sha256"] == hashlib.sha256(canonical).hexdigest()
+
+
+def test_retry_after_successful_removal_without_receipt_is_deterministic(
+    tmp_path: Path,
+) -> None:
+    """A missing, unregistered, already-clean workspace retries as CLEANED."""
+    item, repository, home = authoritative_proof(tmp_path)
+    subprocess.run(
+        ["git", "-C", str(repository), "worktree", "remove", "--", item.workspace],
+        check=True,
+    )
+    result = cleanup_worktree(item, home=home, repository=repository, process_counter=lambda _: 0)
+    assert result["state"] == WorkspaceState.CLEANED.value
+    assert result["retry"] is True
+    assert result["executed"] is False
 
 
 def test_workspace_proof_has_no_review_required_field(tmp_path: Path) -> None:

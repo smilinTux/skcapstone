@@ -38,30 +38,48 @@ these two links through `CardStore(home).fold(card_id)` and reuses
 check, rather than a second copy. Nothing about custody is trusted from a
 caller-constructed `WorkspaceProof`; a proof carries no custody field at all.
 
-Review is not part of this at all. Plan B1 made a PR opt-in (required only
-for a sensitive card, decided by `scripts/fleet/skfleet-rotate.py`'s
-`pr_required()`), not a default every proof had to carry. Whether a card
-needed a PR is a publishing decision about the pushed branch, unrelated to
-whether a workspace is safe to delete, so `review_required` does not exist
-in this module.
+Review is not a hardcoded field on a proof. It is derived from the card's own
+`review_card` link by `card_review_dependency`: no link means no review is owed
+(Plan B1 made a PR opt-in, not a default), a linked review waits in
+`REVIEW_PENDING` until that review card records a canonical terminal PASS or
+FAIL, and a linked-but-silent review keeps the workspace out of cleanup because
+silence is not approval (see `skcapstone.review_verdict`). `review_required`
+does not exist in this module as a caller input.
 
 ## States
 
 `ACTIVE` enters `HANDOFF_REQUIRED` after a terminal exit (success, failure,
-timeout, blocked, or interrupted all land here; only a clean, fully
-identified success proof avoids `RECOVERABLE_QUARANTINE` instead). It may
-enter `CLEANUP_ELIGIBLE` only after `cleanup_decision` independently proves:
-Git worktree identity, a clean and matching porcelain state, no live
-processes inside the workspace, non-empty recovery instructions, and
-`card_custody` for the card. Repository-native cleanup then records `CLEANED`
-or `CLEANUP_FAILED`. Execution requires an immutable receipt path. A retry
-reads the exact proof-bound `CLEANED` receipt; a partial failure reports
-whether the path and Git registration remain.
+timeout, blocked, or interrupted all land here; only a clean, fully identified
+success proof avoids `RECOVERABLE_QUARANTINE` instead). A successful handoff
+with a required review whose linked review card is still open waits in
+`REVIEW_PENDING`. Either `HANDOFF_REQUIRED` (no review owed) or
+`REVIEW_PENDING` (terminal review verdict recorded) may enter
+`CLEANUP_ELIGIBLE`, and only after `cleanup_decision` independently proves all
+of the following, each derived rather than asserted:
 
-Any failure, timeout, missing custody, dirty or untracked bytes, live
-process, or workspace identity mismatch keeps a workspace in
-`RECOVERABLE_QUARANTINE` or `HANDOFF_REQUIRED`. It never skips straight to
-cleanup.
+- the exact card and its live claim generation (`card_claim_generation`),
+- commit and branch custody that survives deleting this workspace
+  (`card_custody`), the same `commit_sha`/`branch` links the completion gate
+  enforces,
+- whether any commit unique to this workspace already reached that custody
+  commit (`unique_commit_custody`),
+- recorded completion evidence (`card_completion_evidence`),
+- the review dependency (`card_review_dependency`),
+- exact Git worktree branch and HEAD identity, and a byte-exact porcelain hash,
+- no live processes whose authoritative cwd is inside the workspace.
+
+Repository-native cleanup then records `CLEANED` or `CLEANUP_FAILED`.
+Execution requires an immutable receipt path. A retry reads the exact
+proof-bound `CLEANED` receipt; a missing, already-clean, unregistered workspace
+is a deterministic successful retry; a partial failure reports the actual
+surviving bytes (`bytes_remaining`) and whether the path and Git registration
+remain. Any failure, timeout, missing custody or claim, dirty or untracked
+bytes, unique commit without custody, unreadable review, live process, or
+workspace identity mismatch keeps a workspace in `RECOVERABLE_QUARANTINE`,
+`REVIEW_PENDING`, or `HANDOFF_REQUIRED`, and never skips straight to cleanup.
+Every quarantine/handoff manifest carries a hash-pinned `quarantine_locator`
+pointing the next agent at the exact recoverable bytes, plus the decision
+reasons.
 
 ## Cleanup is fail closed
 
@@ -83,10 +101,15 @@ which every fleet worker's own exit path reaches (`main()`, right after
 process `cwd` (the exact directory `skfleet-rotate.py`'s
 `_worker_launch_command` binds as the worker's working directory) and the
 card's current `commit_sha`/`branch` links, then writes a hash-pinned
-manifest recording `CLEANUP_ELIGIBLE` or `HANDOFF_REQUIRED` and the reasons,
-and mails a status line naming the decision. That is real production
-traffic, not only a unit test: `tests/test_skfleet_worker_exit_evidence.py`
-exercises it by running the actual wrapper subprocess end to end.
+manifest recording `CLEANUP_ELIGIBLE`, `REVIEW_PENDING`, or
+`HANDOFF_REQUIRED` and the reasons, and mails a status line naming the
+decision. Because an interrupted worker raises `SystemExit` before that
+success-path call, `main()`'s `finally` block detects the interruption and
+routes through `_record_quarantine_fallback`, writing a hash-pinned
+`RECOVERABLE_QUARANTINE` manifest with the exact `quarantine_locator` instead
+of leaving no handoff at all. That is real production traffic, not only a
+unit test: `tests/test_skfleet_worker_exit_evidence.py` exercises the exit
+path and the interruption fallback.
 
 Execution (`cleanup_worktree(execute=True)`, the only call that removes a
 workspace) has **no production caller**. This is deliberate, not an
@@ -109,17 +132,30 @@ separately from this custody-verification port.`
    points to, push the branch, and record both as `commit_sha` and `branch`
    links on the card (`coord link <card> commit_sha <sha>` and
    `coord link <card> branch <repo>:<name>`), or link `commit_sha` to the
-   literal `none` when the card needed no repository change.
+   literal `none` when the card needed no repository change. Record the
+   `evidence` link and, when the card needs independent review, the
+   `review_card` link.
 3. Never delete your own workspace as part of finishing.
    `record_workspace_lifecycle_decision` records whether it is now cleanup
    eligible; it does not act on that record.
-4. A distinct, future cleanup executor may act only on a fresh
+4. A successful handoff with an open linked review waits in
+   `REVIEW_PENDING`, not `CLEANUP_ELIGIBLE`, until that review records a
+   terminal verdict. RSI evaluation and the reaper both read this state:
+   they may release a provably dead claim, but must not delete a workspace
+   in `REVIEW_PENDING`, `RECOVERABLE_QUARANTINE`, or `HANDOFF_REQUIRED`.
+5. An interrupted or failed worker emits a hash-pinned recovery manifest
+   naming its exact `quarantine_locator`; subsequent agents open that
+   locator and preserve dirty bytes and unique commits before doing
+   anything else.
+6. A distinct, future cleanup executor may act only on a fresh
    `CLEANUP_ELIGIBLE` decision and an exact resolved path.
-5. Reapers may release a provably dead claim, but must not delete its
+7. Reapers may release a provably dead claim, but must not delete its
    workspace; that stays `RECOVERABLE_QUARANTINE` or `HANDOFF_REQUIRED`
-   until custody and identity are proven the same way.
+   until custody, claim generation, evidence, review, and identity are
+   proven the same way.
 
 Operators use the lifecycle decision reasons (recorded in the mail line
-`record_workspace_lifecycle_decision` sends, since `recovery_manifest`
-itself does not carry them) to distinguish pending handoff, dirty bytes,
-live processes, missing custody, and cleanup failure.
+`record_workspace_lifecycle_decision` sends and, for quarantine, in the
+manifest itself) to distinguish pending handoff, pending review, dirty
+bytes, live processes, missing custody, missing evidence, a unique commit
+without custody, a stale or released claim, and cleanup failure.

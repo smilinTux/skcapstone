@@ -24,6 +24,9 @@ from skcapstone.fleet.terminal_capacity import (
 from skcapstone.fleet.worker_watchdog import StartupObservation, classify_startup
 from skcapstone.fleet.workspace_lifecycle import (
     WorkspaceProof,
+    WorkspaceState,
+    _workspace_process_count,
+    card_review_dependency,
     cleanup_decision,
     recovery_manifest,
     write_manifest,
@@ -710,18 +713,24 @@ def record_workspace_lifecycle_decision(args: argparse.Namespace, outcome: str) 
             check=False,
         )
         entries = [item for item in status.stdout.split(b"\0") if item]
+        workspace = Path.cwd().resolve()
+        # Derived, never hardcoded: this process is the worker, so a live
+        # count of processes whose authoritative cwd is inside the workspace
+        # is exactly what the cleanup gate must see. Hardcoding 0 here was
+        # the defect that let a running workspace look idle.
+        active_processes = _workspace_process_count(workspace)
         proof = WorkspaceProof(
             card_id=args.card,
             claim_revision=args.claim_revision,
-            workspace=str(Path.cwd().resolve()),
+            workspace=str(workspace),
             branch=branch.stdout.strip(),
             head=head.stdout.strip(),
             porcelain_sha256=hashlib.sha256(status.stdout).hexdigest(),
             dirty_paths=sum(not item.startswith(b"??") for item in entries),
             untracked_paths=sum(item.startswith(b"??") for item in entries),
-            active_processes=0,
+            active_processes=active_processes,
             recovery_instructions=(
-                f"Open exact workspace {Path.cwd().resolve()}",
+                f"Open exact workspace {workspace}",
                 f"Verify card {args.card} claim generation {args.claim_revision}",
                 "Preserve dirty bytes and unique commits before any cleanup decision",
             ),
@@ -733,7 +742,13 @@ def record_workspace_lifecycle_decision(args: argparse.Namespace, outcome: str) 
             else None
         )
         decision = cleanup_decision(proof, home=home, repository=repository)
-        manifest = recovery_manifest(proof, decision.state)
+        _, review_detail = card_review_dependency(home, args.card)
+        manifest = recovery_manifest(
+            proof,
+            decision.state,
+            reasons=decision.reasons + (f"review-dependency:{review_detail}",),
+            quarantine_locator=str(workspace),
+        )
         path = args.evidence_dir / f"{args.card}-{args.claim_revision}-workspace.json"
         digest = write_manifest(path, manifest)
         emit_work_mail(
@@ -743,10 +758,57 @@ def record_workspace_lifecycle_decision(args: argparse.Namespace, outcome: str) 
             f"reasons={','.join(decision.reasons)}",
         )
     except Exception as exc:  # noqa: BLE001 - a broken read must not fail the worker
+        _record_quarantine_fallback(args, "read-failure", type(exc).__name__)
+
+
+def _record_quarantine_fallback(args: argparse.Namespace, reason: str, detail: str) -> None:
+    """Write a best-effort hash-pinned quarantine manifest for a failed read.
+
+    When the normal lifecycle read itself fails (a signal raced the child, the
+    repository could not be resolved, Git returned something unexpected), the
+    workspace must still be recorded as recoverable rather than silently
+    dropped. This never deletes anything and never raises: a failure to record
+    is reported as a blocked mail, not allowed to fail the worker.
+    """
+    try:
+        workspace = str(Path.cwd().resolve())
+        proof = WorkspaceProof(
+            card_id=args.card,
+            claim_revision=args.claim_revision,
+            workspace=workspace,
+            branch="",
+            head="",
+            porcelain_sha256="",
+            dirty_paths=0,
+            untracked_paths=0,
+            active_processes=0,
+            recovery_instructions=(
+                f"Open exact workspace {workspace}",
+                f"Verify card {args.card} claim generation {args.claim_revision}",
+                "Preserve dirty bytes and unique commits before any cleanup decision",
+            ),
+            outcome="interrupted",
+        )
+        manifest = recovery_manifest(
+            proof,
+            WorkspaceState.RECOVERABLE_QUARANTINE,
+            reasons=(f"quarantine-fallback:{reason}:{detail}",),
+            quarantine_locator=workspace,
+        )
+        path = args.evidence_dir / f"{args.card}-{args.claim_revision}-quarantine.json"
+        digest = write_manifest(path, manifest)
         emit_work_mail(
             args,
             "work.blocked",
-            f"workspace_state=RECOVERABLE_QUARANTINE reason={type(exc).__name__}",
+            f"workspace_state=RECOVERABLE_QUARANTINE quarantine_locator={workspace} "
+            f"manifest_sha256={digest} reason={reason}:{detail}",
+        )
+    except Exception as exc:  # noqa: BLE001 - recording must never crash the worker
+        emit_work_mail(
+            args,
+            "work.blocked",
+            f"workspace_state=RECOVERABLE_QUARANTINE quarantine_locator={Path.cwd()} "
+            f"reason=quarantine-record-failed:{type(exc).__name__}",
         )
 
 
@@ -955,7 +1017,15 @@ def main() -> int:
     # candidate generation if the card advances while this worker is running.
     args.card_generation = card_description_generation(args.card)
 
+    interrupted: dict[str, int] = {}
+
     def _stop(signum: int, _frame: object) -> None:
+        # Record what interrupted us before raising. The raise unwinds past
+        # record_workspace_lifecycle_decision on the success path, so the
+        # finally block below uses this marker to write a recoverable
+        # quarantine manifest for the still-present workspace instead of
+        # letting an interrupted worker leave no handoff at all.
+        interrupted["signal"] = signum
         raise SystemExit(128 + signum)
 
     signal.signal(signal.SIGTERM, _stop)
@@ -1022,6 +1092,16 @@ def main() -> int:
             startup_thread.join(timeout=6)
         if supersession_thread:
             supersession_thread.join(timeout=1)
+        if (
+            interrupted
+            and not Path(
+                args.evidence_dir / f"{args.card}-{args.claim_revision}-workspace.json"
+            ).exists()
+        ):
+            # An interrupted worker never owns the cleanup decision: it only
+            # guarantees its bytes are recoverable and points the next agent
+            # at them.
+            _record_quarantine_fallback(args, "interrupted", f"signal={interrupted['signal']}")
         # A failed release must remain visible for fenced reconciliation.
         finalize_worker_exit(args, child)
 

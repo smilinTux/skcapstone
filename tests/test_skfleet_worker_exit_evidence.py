@@ -562,9 +562,17 @@ def test_record_workspace_lifecycle_decision_reaches_cleanup_eligible(
     coord_home.mkdir(parents=True)
     store = module.CardStore(coord_home)
     store.create(CardCore(id="deadbeef", title="synthetic"))
+    store.append_event("deadbeef", "claim", "worker", owner="worker", claim_revision="rev-1")
     store.append_event("deadbeef", "link", "worker", link_key="commit_sha", link_value=head)
     store.append_event(
         "deadbeef", "link", "worker", link_key="branch", link_value="fixture:card-branch"
+    )
+    store.append_event(
+        "deadbeef",
+        "link",
+        "worker",
+        link_key="evidence",
+        link_value="evidence/work/deadbeef/manifest.md",
     )
     monkeypatch.setattr(Path, "home", lambda: home)
     monkeypatch.chdir(workspace)
@@ -621,6 +629,43 @@ def test_record_workspace_lifecycle_decision_refuses_without_custody(
     payload = json.loads((evidence / "deadbeef-rev-1-workspace.json").read_text(encoding="utf-8"))
     assert payload["state"] == "HANDOFF_REQUIRED"
     assert "custody-unverified" in calls[-1][1]
+
+
+def test_interrupted_worker_records_recoverable_quarantine(tmp_path, monkeypatch) -> None:
+    """An interruption must leave a hash-pinned, locator-bearing quarantine.
+
+    The signal path raises SystemExit, which skips the normal success-path
+    lifecycle record. This proves the finally block still writes a
+    RECOVERABLE_QUARANTINE manifest naming the exact workspace, so an
+    interrupted worker's bytes are never silently dropped.
+    """
+    module = _wrapper()
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.chdir(workspace)
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        module, "emit_work_mail", lambda args, kind, body: calls.append((kind, body))
+    )
+    evidence = tmp_path / "evidence"
+    args = argparse.Namespace(
+        card="deadbeef",
+        claim_revision="rev-1",
+        owner="worker",
+        evidence_dir=evidence,
+        mail_recipient="jarvis",
+        host="chiap08",
+    )
+
+    module._record_quarantine_fallback(args, "interrupted", "signal=15")
+
+    manifest = evidence / "deadbeef-rev-1-quarantine.json"
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    assert payload["state"] == "RECOVERABLE_QUARANTINE"
+    assert payload["quarantine_locator"] == str(workspace.resolve())
+    assert "interrupted" in calls[-1][1]
 
 
 def test_wrapper_exit_path_calls_workspace_lifecycle_decision_end_to_end(

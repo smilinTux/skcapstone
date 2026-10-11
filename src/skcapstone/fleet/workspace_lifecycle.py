@@ -18,12 +18,26 @@ because it is the only part of the record that says what to fetch. See
 `card_custody` below. A WorkspaceProof carries no custody field of its own to
 assert or forge; cleanup_decision reads the card independently every time.
 
-review_required is dropped rather than hardcoded True: Plan B1 made review
-opt-in (a PR is required only for a sensitive card, decided by
-scripts/fleet/skfleet-rotate.py's pr_required()), not a default every
-worker's proof must carry. Whether a card needed a PR is a publishing
-decision made on the pushed branch; it has nothing to do with whether this
-workspace is safe to delete, so it does not belong in this module at all.
+review is derived, not asserted. A card that links no review card owes no
+review (Plan B1 made a PR opt-in, not a default), so it may leave
+HANDOFF_REQUIRED for CLEANUP_ELIGIBLE directly. A card that links a review
+card waits in REVIEW_PENDING until that review card's own recorded verdict
+is a canonical terminal PASS or FAIL; an unreadable or verdict-less review
+keeps the workspace out of CLEANUP_ELIGIBLE, because silence is not approval
+(see skcapstone.review_verdict). review_required is not a proof field: it is
+derived from the card's own `review_card` link by card_review_dependency.
+
+Before CLEANUP_ELIGIBLE this module derives, from the card and Git rather than
+from any caller assertion: the exact card and its live claim generation
+(card_claim_generation), commit/branch custody that survives deletion
+(card_custody), whether any workspace-unique commit already reached that
+custody (unique_commit_custody), recorded completion evidence
+(card_completion_evidence), the review dependency (card_review_dependency),
+exact Git worktree branch/HEAD identity and a byte-exact porcelain hash, and
+the absence of live processes inside the workspace. Any failure keeps the
+workspace in RECOVERABLE_QUARANTINE, REVIEW_PENDING, or HANDOFF_REQUIRED;
+none of those states deletes anything, and each manifest carries a hash-pinned
+quarantine_locator pointing at the recoverable bytes.
 
 cleanup_decision() is not merely defined and tested here: it is called from
 scripts/fleet/skfleet-worker-wrapper.py's terminal path
@@ -53,18 +67,29 @@ class WorkspaceState(StrEnum):
 
     ACTIVE = "ACTIVE"
     HANDOFF_REQUIRED = "HANDOFF_REQUIRED"
+    REVIEW_PENDING = "REVIEW_PENDING"
     RECOVERABLE_QUARANTINE = "RECOVERABLE_QUARANTINE"
     CLEANUP_ELIGIBLE = "CLEANUP_ELIGIBLE"
     CLEANED = "CLEANED"
     CLEANUP_FAILED = "CLEANUP_FAILED"
 
 
+#: Deterministic transition table. REVIEW_PENDING is where a successful
+#: handoff waits while its required independent review is still open, and is
+#: the only state that can enter CLEANUP_ELIGIBLE without the review already
+#: being terminal. RECOVERABLE_QUARANTINE never deletes: its only forward edge
+#: is back to HANDOFF_REQUIRED once custody and review are proven.
 TRANSITIONS = {
     WorkspaceState.ACTIVE: {
         WorkspaceState.HANDOFF_REQUIRED,
         WorkspaceState.RECOVERABLE_QUARANTINE,
     },
     WorkspaceState.HANDOFF_REQUIRED: {
+        WorkspaceState.REVIEW_PENDING,
+        WorkspaceState.CLEANUP_ELIGIBLE,
+        WorkspaceState.RECOVERABLE_QUARANTINE,
+    },
+    WorkspaceState.REVIEW_PENDING: {
         WorkspaceState.CLEANUP_ELIGIBLE,
         WorkspaceState.RECOVERABLE_QUARANTINE,
     },
@@ -146,6 +171,92 @@ def card_custody(home: Path, card_id: str) -> tuple[bool, str]:
     return True, "commit_sha-and-branch-linked"
 
 
+def _fold_card(home: Path, card_id: str):
+    """Return the folded card for ``card_id``, or None, without raising."""
+    from skcapstone.card_store import CardStore
+
+    try:
+        return CardStore(Path(home).expanduser()).fold(card_id)
+    except Exception:  # noqa: BLE001 - a broken fold must fail closed
+        return None
+
+
+def card_claim_generation(home: Path, card_id: str, claim_revision: str) -> tuple[bool, str]:
+    """Prove the exact claim generation this workspace belongs to is still live.
+
+    Reads ``owner`` and ``meta["_claim_revision"]`` off the folded card, the
+    same authority the wrapper's own startup ownership fence uses. A workspace
+    whose claim has moved to another generation must never be cleaned: a later
+    claim may be running inside the same workspace path, and a stale proof is
+    exactly how running work gets deleted. No claim revision is trusted from
+    the proof as evidence of liveness; only the card is.
+    """
+    card = _fold_card(home, card_id)
+    if card is None:
+        return False, "card-unreadable"
+    if getattr(card, "archived", False):
+        return False, "card-archived"
+    owner = str(getattr(card, "owner", None) or "").strip()
+    live_revision = str((getattr(card, "meta", None) or {}).get("_claim_revision") or "")
+    if not owner or not live_revision:
+        return False, "claim-released"
+    if live_revision != str(claim_revision or "").strip():
+        return False, "stale-claim-generation"
+    return True, "claim-generation-current"
+
+
+def card_completion_evidence(home: Path, card_id: str) -> tuple[bool, str]:
+    """Prove the card records immutable completion evidence before deletion.
+
+    Reads the folded card's ``evidence`` link. A workspace is the only copy of
+    its own bytes, so deleting it before the card names durable evidence is
+    exactly the loss this lifecycle exists to prevent.
+    """
+    card = _fold_card(home, card_id)
+    if card is None:
+        return False, "card-unreadable"
+    links = dict(getattr(card, "links", None) or {})
+    value = str(links.get("evidence") or "").strip()
+    return (bool(value), "evidence-linked" if value else "no-evidence-link")
+
+
+def card_review_dependency(home: Path, card_id: str) -> tuple[str, str]:
+    """Return ``(status, detail)`` for the card's required review dependency.
+
+    Status is one of:
+
+      - ``"none"``: the card links no review card, so Plan B1's opt-in review
+        rule means no review is owed; cleanup is not blocked on review.
+      - ``"pending"``: the card links a review card that is not yet terminal
+        (or whose fold fails), so the workspace must wait in REVIEW_PENDING.
+      - ``"terminal"``: the linked review card is archived/completed and its
+        recorded verdict is a canonical terminal PASS or FAIL, so the review
+        dependency is discharged.
+
+    A review link that cannot be read or that has no terminal verdict is
+    deliberately reported ``pending``, never ``terminal``: silence is not
+    approval (see skcapstone.review_verdict), so an unreadable review keeps
+    the workspace quarantined rather than authorising its deletion.
+    """
+    card = _fold_card(home, card_id)
+    if card is None:
+        return "pending", "card-unreadable"
+    links = dict(getattr(card, "links", None) or {})
+    review_id = str(links.get("review_card") or "").strip()
+    if not review_id:
+        return "none", "no-review-required"
+    review = _fold_card(home, review_id)
+    if review is None:
+        return "pending", f"review-card-unreadable:{review_id}"
+    from skcapstone.review_verdict import recorded_verdict
+
+    verdict = str(recorded_verdict(review_id, Path(home).expanduser()) or "").strip()
+    terminal = verdict == "PASS" or verdict == "FAIL" or verdict.startswith("BLOCKED ")
+    if not terminal:
+        return "pending", f"review-verdict-not-terminal:{review_id}"
+    return "terminal", f"review-terminal:{review_id}:{verdict.split()[0]}"
+
+
 def _git(
     runner: Callable[..., subprocess.CompletedProcess[str]],
     repository: Path,
@@ -178,6 +289,59 @@ def _registered_worktrees(
     if current:
         records[Path(current["worktree"]).resolve()] = current
     return result.returncode, records
+
+
+def unique_commit_custody(
+    proof: WorkspaceProof,
+    *,
+    home: Path,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    repository: Path,
+) -> tuple[bool, str]:
+    """Prove any commit unique to the workspace already reached durable custody.
+
+    A workspace whose HEAD carries commits reachable from nowhere else is the
+    one case a workspace delete is irreversible. This derives, rather than
+    trusts, the custody commit named by the card's own ``commit_sha`` link
+    (which cleanup_decision separately requires to be non-empty), then asks
+    Git directly whether the workspace HEAD is an ancestor of it. A commit
+    unique to the workspace with no custody ancestor is refused.
+    """
+    from skcapstone.coord_completion import commit_sha_is_valid
+
+    card = _fold_card(home, proof.card_id)
+    if card is None:
+        return False, "card-unreadable"
+    links = dict(getattr(card, "links", None) or {})
+    custody_sha = str(links.get("commit_sha") or "").strip()
+    if not custody_sha or custody_sha == _NO_CHANGE_SENTINEL:
+        # No custody commit is linked. A workspace that still carries a commit
+        # reachable from nowhere else (rev-list HEAD not reachable from any
+        # ref) would be destroyed forever by a delete, so refuse it. A clean
+        # workspace with no unique commit is safe.
+        unique = _git(runner, repository, "rev-list", "--count", "HEAD", "--not", "--all")
+        if unique.returncode != 0:
+            return False, "unique-commit-check-unreadable"
+        try:
+            has_unique = int(unique.stdout.strip()) > 0
+        except ValueError:
+            return False, "unique-commit-check-unreadable"
+        if has_unique:
+            return False, "unique-commit-without-custody"
+        return True, "no-unique-commit"
+    if not commit_sha_is_valid(custody_sha):
+        return False, "custody-sha-not-genuine"
+    reachable = _git(
+        runner,
+        repository,
+        "merge-base",
+        "--is-ancestor",
+        proof.head,
+        custody_sha,
+    )
+    if reachable.returncode != 0:
+        return False, "head-not-reachable-from-custody-commit"
+    return True, "head-reachable-from-custody-commit"
 
 
 @dataclass(frozen=True)
@@ -214,13 +378,36 @@ class LifecycleDecision:
     reasons: tuple[str, ...]
 
 
-def recovery_manifest(proof: WorkspaceProof, state: WorkspaceState) -> dict[str, object]:
-    """Return a hash-pinned manifest without inspecting or changing the workspace."""
+def recovery_manifest(
+    proof: WorkspaceProof,
+    state: WorkspaceState,
+    *,
+    reasons: Sequence[str] = (),
+    quarantine_locator: str | None = None,
+) -> dict[str, object]:
+    """Return a hash-pinned manifest without inspecting or changing the workspace.
+
+    For a quarantine state the manifest carries an explicit
+    ``quarantine_locator`` (defaulting to the exact workspace path itself, the
+    one location a later agent must recover from) so subsequent agents are
+    pointed at recoverable bytes instead of being left to guess. The locator
+    is part of the hashed content, so it cannot be edited after the fact.
+    """
     payload: dict[str, object] = {
-        "schema": "skcapstone.workspace-recovery.v2",
+        "schema": "skcapstone.workspace-recovery.v3",
         "state": state.value,
         "proof": asdict(proof),
+        "reasons": list(reasons),
     }
+    if state in {
+        WorkspaceState.RECOVERABLE_QUARANTINE,
+        WorkspaceState.HANDOFF_REQUIRED,
+        WorkspaceState.REVIEW_PENDING,
+    }:
+        payload["quarantine_locator"] = (
+            str(quarantine_locator) if quarantine_locator is not None else proof.workspace
+        )
+        payload["recovery_instructions"] = list(proof.recovery_instructions)
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return {**payload, "content_sha256": hashlib.sha256(canonical).hexdigest()}
 
@@ -305,6 +492,22 @@ def cleanup_decision(
     custody_ok, custody_detail = card_custody(home, proof.card_id)
     if not custody_ok:
         reasons.append(f"custody-unverified:{custody_detail}")
+    claim_ok, claim_detail = card_claim_generation(home, proof.card_id, proof.claim_revision)
+    if not claim_ok:
+        reasons.append(f"claim-unverified:{claim_detail}")
+    evidence_ok, evidence_detail = card_completion_evidence(home, proof.card_id)
+    if not evidence_ok:
+        reasons.append(f"evidence-unverified:{evidence_detail}")
+    unique_ok, unique_detail = unique_commit_custody(
+        proof, home=home, repository=repository, runner=runner
+    )
+    if not unique_ok:
+        reasons.append(f"unique-commit-unverified:{unique_detail}")
+    review_status, review_detail = card_review_dependency(home, proof.card_id)
+    if review_status == "pending":
+        return LifecycleDecision(
+            WorkspaceState.REVIEW_PENDING, tuple(reasons) + (f"review-pending:{review_detail}",)
+        )
     if not proof.recovery_instructions:
         reasons.append("recovery-instructions")
     if reasons:
@@ -373,6 +576,26 @@ def cleanup_worktree(
             "reasons": ("receipt-mismatch",),
             "executed": False,
         }
+    # Deterministic retry with no receipt: Git is the authority on whether this
+    # exact worktree is already gone. A workspace the proof already declared
+    # clean (no dirty, no untracked, no unique bytes) and that Git no longer
+    # registers is a prior successful removal, not a mystery; report CLEANED
+    # with retry=True instead of raising or guessing at recovery. A workspace
+    # missing while still registered, or one that was dirty, stays a failure.
+    workspace_path = Path(proof.workspace)
+    if not workspace_path.exists():
+        _, live = _registered_worktrees(runner, repository)
+        already_clean = proof.dirty_paths == 0 and proof.untracked_paths == 0
+        if already_clean and workspace_path.resolve() not in live:
+            return {
+                "state": WorkspaceState.CLEANED.value,
+                "executed": False,
+                "retry": True,
+                "bytes_reclaimed": 0,
+                "recovery_status": "preserved",
+                "proof_sha256": proof_digest,
+                "reasons": ("workspace-already-removed",),
+            }
     decision = cleanup_decision(
         proof, home=home, repository=repository, runner=runner, process_counter=process_counter
     )
@@ -410,6 +633,14 @@ def cleanup_worktree(
     result = runner(command, capture_output=True, text=True, check=False)
     _, after = _registered_worktrees(runner, repository)
     exists_after = workspace.exists()
+    # Verify actual post-command bytes, not just the command's word: a retained
+    # workspace must still hold the bytes this module promised to preserve, and
+    # a partial removal must report how much of it actually survived.
+    remaining = (
+        sum(path.stat().st_size for path in workspace.rglob("*") if path.is_file())
+        if exists_after
+        else 0
+    )
     removed = not exists_after and workspace not in after
     state = (
         WorkspaceState.CLEANED
@@ -420,6 +651,7 @@ def cleanup_worktree(
         "state": state.value,
         "executed": True,
         "bytes_reclaimed": before if state is WorkspaceState.CLEANED else 0,
+        "bytes_remaining": remaining,
         "recovery_status": (
             "preserved"
             if state is WorkspaceState.CLEANED
