@@ -94,6 +94,12 @@ fleet-qualify = [
     "pluggy>=1.0",
     "iniconfig>=1.0",
     "packaging>=23.0",
+    # skcapstone's own suite imports these at collection; without them every
+    # skcapstone card failed sealed qualification (chi, 2026-10-11).
+    "skdashboard>=0.1.0",
+    "skcomms>=0.1.0",
+    "skseed>=0.1.0",
+    "setuptools>=68.0",
 ]
 dashboard = [
     "starlette>=0.40",
