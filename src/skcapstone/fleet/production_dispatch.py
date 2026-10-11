@@ -127,6 +127,17 @@ def resolve_production_routes(routes, *, policy, required_size, labels, lane=Non
     }
     if len(required) > 1 or required == {"kimi"}:
         return []
+    # A pin to a family the policy has disabled fleet-wide can never be served,
+    # so it would hold the card forever (18 ready codex-only cards on chi,
+    # 2026-10-11, with codex disabled). The policy and the gateway bucket own
+    # family choice: such a pin falls back to the card's logical route, and
+    # binds again as soon as its family is re-enabled.
+    enabled = {
+        provider_family(name)
+        for name, row in policy["lanes"].items()
+        if row.get("enabled") is True and row.get("provider") == "skgateway"
+    }
+    required &= enabled
     if model_pin is not None and (not isinstance(model_pin, str) or not model_pin.strip()):
         return []
     rows = enabled_family_routes(routes, policy=policy, lane=lane)

@@ -601,3 +601,50 @@ def test_builder_offer_phase_stops_at_its_own_cap():
     }
     exec(compile(ast.Module(body=[block], type_ignores=[]), str(ROTATE), "exec"), ns)
     assert offers == []
+
+
+def _healthy(family, size="M"):
+    return {
+        "logical_route": "sk-m",
+        "model_or_bucket": family + "-model",
+        "capacity_domain": family,
+        "provider": family,
+        "size_class": size,
+        "state": "healthy",
+        "max": 4,
+        "gateway_active": 0,
+    }
+
+
+@pytest.mark.parametrize("codex_enabled", [True, False])
+def test_pin_to_disabled_family_falls_back_to_the_logical_route(codex_enabled):
+    """The policy and gateway bucket own family choice; a dead pin never strands a card."""
+    value = policy()
+    value["lanes"]["codex"]["enabled"] = codex_enabled
+    routes = [_healthy("codex"), _healthy("deepseek")]
+    rows = resolve_production_routes(
+        routes, policy=value, required_size="M", labels=["codex-only", "sk-m"]
+    )
+    families = sorted(row["family"] for row in rows)
+    assert families == (["codex"] if codex_enabled else ["deepseek"])
+
+
+def test_enabled_pin_and_conflicting_or_kimi_pins_are_still_refused_or_honored():
+    value = policy()
+    routes = [_healthy("codex"), _healthy("deepseek"), _healthy("zai")]
+    assert [
+        row["family"]
+        for row in resolve_production_routes(
+            routes, policy=value, required_size="M", labels=["deepseek-only"]
+        )
+    ] == ["deepseek"]
+    assert (
+        resolve_production_routes(
+            routes, policy=value, required_size="M", labels=["deepseek-only", "glm-only"]
+        )
+        == []
+    )
+    assert (
+        resolve_production_routes(routes, policy=value, required_size="M", labels=["kimi-only"])
+        == []
+    )
