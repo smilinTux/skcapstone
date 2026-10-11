@@ -972,3 +972,23 @@ def test_failed_remote_tests_discharge_their_reservation(setup, monkeypatch):
         native.run_or_read_tests(setup.home, setup.binding, setup.workspace, setup.policy)
     assert calls and calls[0]["invocation"] == "a" * 32
     assert calls[0]["expected_card_revision"] == "rev-1"
+
+
+def test_receipts_sealed_before_account_binds_still_validate(monkeypatch):
+    """A run recorded without the passwd/group binds ran in a smaller sandbox."""
+    from skcapstone.fleet import production_test_worker as worker
+    from skcapstone.fleet.production_tests import without_account_databases
+
+    binds = ["--ro-bind", "/etc/passwd", "/etc/passwd", "--ro-bind", "/etc/group", "/etc/group"]
+    monkeypatch.setattr(worker, "_account_databases", lambda: list(binds))
+    current = ["/usr/bin/bwrap", "--ro-bind", "/p", "/p", *binds, "--tmpfs", "/tmp"]
+    assert without_account_databases(current) == [
+        "/usr/bin/bwrap",
+        "--ro-bind",
+        "/p",
+        "/p",
+        "--tmpfs",
+        "/tmp",
+    ]
+    # Only the exact bind block is removed; any other argv is left as is.
+    assert without_account_databases(["a", "b"]) == ["a", "b"]
