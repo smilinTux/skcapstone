@@ -41,6 +41,19 @@ def _packaging_install_boundary(request):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_skmail(monkeypatch):
+    """Never deliver test fixtures to a real mailbox.
+
+    Fleet code resolves skmail from $SKMAIL_BIN, then beside the interpreter,
+    then PATH. On a chi host that is the live helper, so tests run there mailed
+    fixture dispatch events (card 1234abcd, owner-g1/24b00003) to jarvis as
+    urgent mail (2026-10-11). A test that exercises resolution or delivery sets
+    or deletes SKMAIL_BIN itself, which overrides this default.
+    """
+    monkeypatch.setenv("SKMAIL_BIN", "/bin/true")
+
+
+@pytest.fixture(autouse=True)
 def _no_external_network(monkeypatch, request):
     """Fail at the socket boundary if a unit test misses an endpoint stub.
 
