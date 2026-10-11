@@ -2,6 +2,7 @@
 
 import ast
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -690,6 +691,92 @@ def test_harvest_publishes_only_the_bounded_batch(tmp_path, monkeypatch):
     assert published == cards[:3]
 
 
+def test_harvest_skips_a_job_whose_workspace_git_fails(tmp_path, monkeypatch):
+    root = tmp_path / "fleet/profile-requalifications"
+    root.parent.mkdir(mode=0o700)
+    plan.private_dir(root, create=True)
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "receipt.json").write_text("{}")
+    cards = ["1234abcd", "2345bcde", "3456cdef", "4567def0", "5678ef01"]
+    for index, card_id in enumerate(cards):
+        plan.write_once(
+            root / (str(index) * 64 + ".job.json"),
+            {
+                "schema": "skfleet.profile-requalification/v1",
+                "card": card_id,
+                "binding": {"source_card": card_id, "criteria_sha256": "b" * 64},
+                "workspace": str(tmp_path / ("workspace-" + card_id)),
+                "profile_sha256": "c" * 64,
+                "source_sha256": "d" * 64,
+            },
+        )
+    monkeypatch.setattr(refresh.socket, "gethostname", lambda: "chiap08")
+    monkeypatch.setattr(
+        refresh.plan,
+        "load_plan",
+        lambda _home, binding, **_kwargs: (
+            {
+                "profile_requalification": True,
+                "profile_predecessor_sha256": "c" * 64,
+                "runtime_sha256": "runtime",
+                "policy_sha256": "policy",
+            },
+            tmp_path / "plan",
+            (binding["source_card"][0] * 64),
+        ),
+    )
+    monkeypatch.setattr(refresh.plan, "run_directory", lambda *_args: run)
+    monkeypatch.setattr(refresh.plan, "runtime_fingerprint", lambda: "runtime")
+    monkeypatch.setattr(refresh.plan, "execution_policy_fingerprint", lambda *_a: "policy")
+
+    def source_state(workspace, _binding):
+        # A deleted workspace: git rev-parse HEAD exits 128 (8d4e7c5f, 2026-10-11).
+        if workspace.name == "workspace-" + cards[0]:
+            raise subprocess.CalledProcessError(128, ["git", "rev-parse", "HEAD"])
+
+    monkeypatch.setattr(refresh.plan, "source_state", source_state)
+    monkeypatch.setattr(refresh.plan, "workspace_source_fingerprint", lambda *_args: "d" * 64)
+    monkeypatch.setattr(
+        refresh.tests, "validate_test_receipt", lambda *_args: {"receipt_sha256": "f" * 64}
+    )
+    monkeypatch.setattr(
+        refresh.profile,
+        "read_profile",
+        lambda _home, card_id: (
+            {
+                "repository": "https://example.invalid/r",
+                "recipe": {"pytest": []},
+                "qualified_by": "operator",
+            },
+            "c" * 64,
+        ),
+    )
+    monkeypatch.setattr(refresh.profile, "fingerprint_only_stale", lambda *_a, **_k: True)
+    published = []
+    monkeypatch.setattr(
+        refresh.profile,
+        "supersede_profile",
+        lambda _home, card, *_args, **_kwargs: published.append(card["id"]),
+    )
+    monkeypatch.setattr(
+        refresh,
+        "CardStore",
+        lambda _home: SimpleNamespace(
+            fold=lambda card_id: SimpleNamespace(
+                status=SimpleNamespace(value="ready"),
+                owner=None,
+                model_dump=lambda **_kwargs: {"id": card_id},
+            )
+        ),
+    )
+
+    state = refresh.harvest_completed(tmp_path, {"authority_host": "chiap08"}, limit=3)
+
+    assert state == "qualified:" + ",".join(cards[1:4])
+    assert published == cards[1:4]
+
+
 def test_harvest_does_not_publish_orphan_plan_with_invalid_receipt(tmp_path, monkeypatch):
     root = tmp_path / "fleet/profile-requalifications"
     plans = tmp_path / "fleet/test-plans"
@@ -1145,3 +1232,12 @@ def test_changed_operator_recipe_is_not_backed_off(tmp_path):
     new = json.dumps({**old_recipe, "pytest": {"tests/test_b.py": 2}})
     assert refresh._recent_failure(root, "1234abcd", "s" * 64, same)
     assert not refresh._recent_failure(root, "1234abcd", "s" * 64, new)
+
+
+def test_rotate_advance_survives_a_harvest_failure():
+    rotate = Path(__file__).resolve().parents[2] / "scripts/fleet/skfleet-rotate.py"
+    source = rotate.read_text(encoding="utf-8")
+    harvest = source.index("_harvest_state = harvest_completed(")
+    blocked = source.index("PROFILE_REQUALIFICATION_HARVEST_BLOCKED", harvest)
+    advance = source.index("_requal_state = requalify_or_advance(", harvest)
+    assert harvest < blocked < advance
