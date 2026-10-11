@@ -211,3 +211,28 @@ def test_no_unknown_source_fallback_even_with_healthy_routes():
         independent_review_routes(
             [route("deepseek-flash", "deepseek")], policy=policy(), producer_identity="jarvis"
         )
+
+
+def test_verified_legacy_hosted_review_keeps_provider_unknown_and_distinct():
+    routes = [route("deepseek-flash", "deepseek"), route("sk-zai-m", "zai")]
+    kwargs = dict(
+        policy=policy(),
+        producer_identity="jarvis",
+        reviewer_identity="pi-seraph-chiap08-1234abcd",
+        labels=["review", "review-distinct-agent"],
+        legacy_producer_verified=True,
+    )
+    assert independent_review_routes(routes, **kwargs) == routes
+    with pytest.raises(ValueError):
+        independent_review_routes(routes, **(kwargs | {"reviewer_identity": "jarvis"}))
+    assert independent_review_routes(
+        routes, **(kwargs | {"labels": kwargs["labels"] + ["glm-only"]})
+    ) == [routes[1]]
+    with pytest.raises(ValueError):
+        producer_family("jarvis")
+    with pytest.raises(ValueError):
+        independent_review_routes(routes, **(kwargs | {"producer_provider": "unknown"}))
+    with pytest.raises(ValueError):
+        independent_review_routes(
+            routes, **(kwargs | {"labels": kwargs["labels"] + ["source-only"]})
+        )

@@ -18,7 +18,10 @@ def binding(tmp_path, monkeypatch):
     receipt.write_text("Historical candidate receipt\n")
     bundle = root / "candidate.bundle"
     bundle.write_bytes(b"Historical candidate bytes")
-    sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def sha(path):
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
     repository = "https://forge.example/org/project.git"
     source = SimpleNamespace(
         id=source_id,
@@ -33,6 +36,7 @@ def binding(tmp_path, monkeypatch):
         },
     )
     event = dict(
+        ts="2026-09-23T16:13:39+00:00",
         action="verdict",
         verdict="PASS_FOR_REVIEW",
         writer="jarvis",
@@ -43,7 +47,9 @@ def binding(tmp_path, monkeypatch):
     )
     events = [event]
     store = SimpleNamespace(
-        fold=lambda cid: source if cid == source_id else None, _read_events=lambda cid: events
+        fold=lambda cid: source if cid == source_id else None,
+        _read_events=lambda cid: events,
+        _legacy_events=lambda cid: [],
     )
     monkeypatch.setattr(legacy, "CardStore", lambda home: store)
     core = dict(
@@ -93,6 +99,10 @@ def test_released_legacy_source_binds_exact_candidate_without_provider(binding):
         "conflicting_binding",
         "missing_source",
         "wrong_producer",
+        "new_claim",
+        "later_link_verdict",
+        "modern_fenced_verdict",
+        "dangling_manifest_root",
     ],
 )
 def test_incomplete_or_conflicting_legacy_source_refuses(binding, change):
@@ -108,9 +118,11 @@ def test_incomplete_or_conflicting_legacy_source_refuses(binding, change):
         receipt.rename(other)
         receipt.symlink_to(other)
     elif change == "superseded_head":
-        events.append({**events[-1], "candidate_commit": "d" * 40})
+        events.append(
+            {**events[-1], "candidate_commit": "d" * 40, "ts": "2026-09-24T00:00:00+00:00"}
+        )
     elif change == "failed_outcome":
-        events.append({**events[-1], "verdict": "FAIL"})
+        events.append({**events[-1], "verdict": "FAIL", "ts": "2026-09-24T00:00:00+00:00"})
     elif change == "wrong_writer":
         events[-1]["writer"] = "someone-else"
     elif change == "active_owner":
@@ -147,6 +159,16 @@ def test_incomplete_or_conflicting_legacy_source_refuses(binding, change):
         core["links"]["producer_identity"] = "other"
     elif change == "missing_source":
         core["meta"]["link_source_card"] = "deadbeef"
+    elif change == "new_claim":
+        events.append(dict(action="claim", ts="2026-09-24T00:00:00+00:00"))
+    elif change == "later_link_verdict":
+        events.append(
+            dict(action="link", key="verdict", value="FAIL", ts="2026-09-24T00:00:00+00:00")
+        )
+    elif change == "modern_fenced_verdict":
+        events[-1]["expected_claim_revision"] = "modern-claim"
+    elif change == "dangling_manifest_root":
+        (receipt.parent / "source-bundles").symlink_to(receipt.parent / "absent")
     elif change == "wrong_producer":
         core["meta"]["producer_identity"] = "other"
     assert not legacy.verified_legacy_review_source(home, core, "jarvis")

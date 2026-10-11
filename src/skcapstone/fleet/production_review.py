@@ -85,6 +85,7 @@ def independent_review_routes(
     producer_provider: str | None = None,
     reviewer_identity: str | None = None,
     labels: Sequence[str] = (),
+    legacy_producer_verified: bool = False,
 ) -> list[dict[str, Any]]:
     """Keep qualified review routes for a distinct reviewer principal.
 
@@ -95,7 +96,8 @@ def independent_review_routes(
     parked every DeepSeek build while GLM was the only other lane). This is
     the dispatch-side twin of ``review_family_allowed``: independence is a
     distinct reviewer agent, and an explicit ``glm-only`` pin admits only GLM.
-    The producer family must still be known, because acceptance needs it.
+    A local legacy hosted review may instead supply an exact native source
+    proof. This does not assign a family or authorize remote acceptance.
     """
     from ..seat_boundaries import canonical_principal
     from .production_dispatch import enabled_family_routes
@@ -106,16 +108,22 @@ def independent_review_routes(
         producer_identity
     ) != canonical_principal(reviewer_identity)
     allow_glm = explicit_glm_review and distinct_principals
+    allow_legacy = (
+        legacy_producer_verified
+        and distinct_principals
+        and {"review", "review-distinct-agent"} <= normalized_labels
+        and "source-only" not in normalized_labels
+    )
     try:
         source = producer_family(producer_identity, producer_provider)
     except ValueError:
-        if not allow_glm or producer_provider is not None:
+        if not (allow_glm or allow_legacy) or producer_provider is not None:
             raise
         source = None
 
     if reviewer_identity is not None and not distinct_principals:
         return []
-    glm_only = "glm-only" in normalized_labels or source is None
+    glm_only = "glm-only" in normalized_labels or (source is None and not allow_legacy)
 
     def is_independent(route: Mapping[str, Any]) -> bool:
         family = provider_family(route["provider"])

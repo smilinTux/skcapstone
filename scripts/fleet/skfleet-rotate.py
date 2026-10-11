@@ -125,16 +125,21 @@ def _required_lane_target(name, env=None, default=None):
     return value
 
 
-def evaluate_review_capacity(snapshot, required_size, labels, producer, reviewer, **kwargs):
+def evaluate_review_capacity(snapshot, required_size, labels, producer, reviewer,
+                             *, source_core=None, **kwargs):
     """Apply production family independence after the existing review gates."""
     result=_evaluate_review_capacity(
         snapshot,required_size,labels,producer,reviewer,**kwargs)
     if not globals().get("PRODUCTION_POLICY") or result["reason"] != "eligible":
         return result
+    from skcapstone.fleet.legacy_review_source import verified_legacy_review_source
+
+    legacy = source_core is not None and verified_legacy_review_source(
+        Path(HOME) / ".skcapstone", source_core, producer)
     try:
         routes=independent_review_routes(
             result["routes"],policy=PRODUCTION_POLICY,producer_identity=producer,
-            reviewer_identity=reviewer,labels=labels)
+            reviewer_identity=reviewer,labels=labels,legacy_producer_verified=legacy)
         reason="eligible" if routes else "independent-provider-unavailable"
     except ValueError:
         routes=[]
@@ -8946,6 +8951,7 @@ while _i<len(owned) and _i<len(_candidate_scan):
             _labels,_metadata[0] if _metadata else "",_reviewer,
             declared_seat=_review_seat,
             qualified_seats=qualified_reviewer_seats(_card[3]),
+            source_core=_card[3],
             physical_free=_physical_free)
         _review_routes=_capacity["routes"]
         if _capacity["reason"]=="eligible":
@@ -9221,6 +9227,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             _labels,_metadata[0] if _metadata else "",_reviewer,
             declared_seat=_review_seat,
             qualified_seats=qualified_reviewer_seats(core),
+            source_core=core,
             physical_free=_physical_free)
         _attempt_routes=_capacity["routes"]
         if _capacity["reason"]=="eligible":
@@ -9602,6 +9609,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             fresh_claimability["labels"],_metadata[0] if _metadata else "",name,
             declared_seat=_review_seat,
             qualified_seats=qualified_reviewer_seats(fresh_claimability["core"]),
+            source_core=fresh_claimability["core"],
             physical_free=_physical_free)
         _lane_domains={str(value) for value in _LANE.get("capacity_domains",())}
         _routes=[route for route in _capacity["routes"]
