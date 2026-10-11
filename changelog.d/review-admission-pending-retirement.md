@@ -1,0 +1,1 @@
+- Retire released, unacknowledged remote review admissions during the authority recovery sweep. Preserve exact offer, claim, source, reservation and destination inactivity proofs, archive the pending status, and recognize the sealed retirement before offering another generation.
