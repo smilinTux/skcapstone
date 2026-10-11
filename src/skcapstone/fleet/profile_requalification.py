@@ -1043,7 +1043,10 @@ def consume_remote(home: Path, policy: dict, host: str) -> list[str]:
                     or card.meta.get("_claim_revision") != job["claim_revision"]
                 ):
                     raise plan.TestEvidenceError("remote qualification claim changed")
-                sealed, _, _ = plan.load_plan(home, job["binding"])
+                # A completed run is validated against its sealed environment,
+                # just as on the authority. Incomplete runs still require the
+                # current runtime; run_or_read_tests verifies all receipt proofs.
+                sealed, _, _ = plan.load_plan(home, job["binding"], allow_completed=True)
                 initial = job.get("initial_profile") is True
                 if initial:
                     if (
