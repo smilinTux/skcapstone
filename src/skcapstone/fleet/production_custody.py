@@ -253,8 +253,18 @@ def _remote_custody(fleet_paths, card_id, owner, claim, binding):
             ):
                 continue
             proof = status.get("route_preflight") or {}
+            # A consumed continuation launches under the current policy
+            # (rebind_request: same host and model family), so its preflight may
+            # name today's route rather than the immutable offer's model. The
+            # served backend must still match the offer. Without this, every
+            # re-bound continuation lost source custody and was never reviewed
+            # (b1f004f2, 7ad93023 on chi, 2026-10-11).
+            requested_ok = proof.get("requested_identity") == production.get("model") or (
+                bool(status.get("continuation_consumed"))
+                and proof.get("provider") == production.get("gateway_backend")
+            )
             if (
-                proof.get("requested_identity") == production.get("model")
+                requested_ok
                 and served_backend_matches(
                     proof.get("provider"), production.get("gateway_backend")
                 )
