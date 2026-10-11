@@ -29,6 +29,9 @@ def _namespace() -> dict[str, object]:
     ]
     namespace: dict[str, object] = {"os": os, "re": re}
     exec(compile(ast.Module(body=body, type_ignores=[]), str(LAUNCHER), "exec"), namespace)
+    namespace["exact_glm_bucket"] = __import__(
+        "skcapstone.routing_guard", fromlist=["exact_glm_bucket"]
+    ).exact_glm_bucket
     return namespace
 
 

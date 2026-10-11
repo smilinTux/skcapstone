@@ -221,6 +221,9 @@ def _authoritative_claimability_for(card_home: Path):
             "_dep_satisfied": lambda _dependency: True,
             "host_pin": host_pin,
             "HOST": "chiap08",
+            "classify_card_routing": __import__(
+                "skcapstone.routing_guard", fromlist=["classify_card_routing"]
+            ).classify_card_routing,
         },
     )
     store = CardStore(card_home)
