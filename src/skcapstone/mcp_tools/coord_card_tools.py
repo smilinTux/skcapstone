@@ -202,11 +202,31 @@ async def _handle_coord_label(args: dict) -> list[TextContent]:
     except BoundaryError as exc:
         return _error_response(str(exc))
     remove = bool(args.get("remove", False))
+    home = _shared_root()
+    from ..routing_guard import validate_label_transition
+
+    try:
+        changed, _routing = validate_label_transition(home, task_id, label, remove=remove)
+    except ValueError as exc:
+        return _error_response(str(exc))
     action = "remove_label" if remove else "add_label"
-    CardEventLog(_shared_root()).append(
-        CardEvent(card_id=task_id, action=action, label=label, writer=args.get("agent", "") or "")
+    if changed:
+        CardEventLog(home).append(
+            CardEvent(
+                card_id=task_id,
+                action=action,
+                label=label,
+                writer=args.get("agent", "") or "",
+            )
+        )
+    return _json_response(
+        {
+            "labeled": changed,
+            "task_id": task_id,
+            "label": label,
+            "action": action,
+        }
     )
-    return _json_response({"labeled": True, "task_id": task_id, "label": label, "action": action})
 
 
 async def _handle_coord_link(args: dict) -> list[TextContent]:

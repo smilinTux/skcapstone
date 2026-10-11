@@ -260,15 +260,19 @@ def coord_create(
     except ValueError:
         prio = TaskPriority.MEDIUM
 
+    from .routing_guard import classify_card_routing
     from .source_binding import source_binding_meta
 
     board = Board(_shared_home())
     task_tags = tags or []
+    routing = classify_card_routing(task_tags, normalize_missing=True)
+    if not routing.valid:
+        raise ValueError("routing labels rejected: " + routing.diagnostic)
     task = Task(
         title=title,
         description=description,
         priority=prio,
-        tags=task_tags,
+        tags=list(routing.labels),
         created_by=created_by or _agent_name(),
         acceptance_criteria=acceptance_criteria or [],
         dependencies=dependencies or [],
