@@ -1,0 +1,1 @@
+The fleet review opener accepts a consumed builder continuation whose dispatch offer names an older policy digest, since the continuation launched under the current policy. Such builds previously never received a review card.

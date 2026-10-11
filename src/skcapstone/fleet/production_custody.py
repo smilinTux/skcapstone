@@ -98,11 +98,21 @@ def reviewable_source_candidate(
         request = read_json(home / "fleet/dispatch" / terminal["node"] / (card_id + ".json"))
         _request_matches_current_card(home, request, retained_claim=True)
         production = request["production"]
+        # A consumed continuation ran under the current policy (rebind_request),
+        # so its immutable offer may name an older policy digest. Requiring the
+        # offer digest to equal today's policy kept every re-bound continuation
+        # from ever being reviewed (b1f004f2, 7ad93023 on chi, 2026-10-11).
+        status = read_json(
+            FleetPaths(home / "fleet").status_path(terminal["node"], "dispatch", card_id)
+        )
+        continued = bool(status.get("continuation_consumed")) and (
+            status.get("request_id") == request.get("request_id")
+        )
         if (
             request.get("schema") != "skfleet.builder-dispatch/v1"
             or request.get("node") != terminal["node"]
             or any(request.get(key) != value for key, value in binding.items())
-            or production.get("policy_sha256") != digest(policy)
+            or (production.get("policy_sha256") != digest(policy) and not continued)
             or production.get("authority") != policy["authority_host"]
         ):
             return False
