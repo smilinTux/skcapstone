@@ -960,6 +960,31 @@ def test_recent_failure_on_the_same_source_defers_the_offer(tmp_path):
     assert not refresh._recent_failure(root, "9999aaaa", "s" * 64)
 
 
+def test_failure_under_an_older_qualification_environment_is_a_new_attempt(tmp_path, monkeypatch):
+    """Rebuilding qualify-env (new test dependencies) must not wait out the backoff."""
+    import os
+
+    from skcapstone.fleet.qualified_runtime import STATE_NAME
+
+    root = tmp_path / "fleet/profile-requalifications"
+    root.mkdir(parents=True, mode=0o700)
+    plan.write_once(
+        root / ("c" * 64 + ".job.json"), {"card": "1234abcd", "source_sha256": "s" * 64}
+    )
+    failed = root / ("c" * 64 + ".job.failed.json")
+    plan.write_once(failed, {"card": "1234abcd", "reason": "full pytest suite failed"})
+    prefix = tmp_path / "qualify-env"
+    prefix.mkdir()
+    manifest = prefix / STATE_NAME
+    manifest.write_text("{}")
+    monkeypatch.setattr(plan, "PREFIX", prefix)
+    os.utime(failed, (failed.stat().st_mtime - 60,) * 2)
+    os.utime(manifest, (failed.stat().st_mtime + 30,) * 2)
+    assert not refresh._recent_failure(root, "1234abcd", "s" * 64)
+    os.utime(manifest, (failed.stat().st_mtime - 30,) * 2)
+    assert refresh._recent_failure(root, "1234abcd", "s" * 64)
+
+
 def test_transient_failures_do_not_back_off(tmp_path):
     """A deploy that stales an in-flight plan must not park the card for hours."""
     root = tmp_path / "fleet/profile-requalifications"
