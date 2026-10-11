@@ -59,25 +59,42 @@ def test_collection_errors_and_unresolvable_cases_refuse(workspace, case):
 def test_empty_or_oversized_baselines_refuse(workspace):
     with pytest.raises(br.BaselineError, match="no failing"):
         br.baseline_recipe([], workspace)
-    many = ["tests/test_a.py::test_%04d_%s" % (n, "p" * 40) for n in range(1600)]
+    many = ["tests/test_a.py::test_%04d_%s" % (n, "p" * 80) for n in range(3000)]
     with pytest.raises(br.BaselineError, match="bound"):
         br.baseline_recipe(many, workspace)
 
 
-def test_only_a_completed_full_suite_failure_is_curated(tmp_path, monkeypatch):
-    job = {"initial_profile_value": {"recipe": {"pytest": {"tests/test_a.py": 1}}}}
-    with pytest.raises(br.BaselineError, match="not a full-suite"):
-        br._failed_run(tmp_path, job)
-    monkeypatch.setattr(br.plan, "load_plan", lambda *a, **k: ({}, None, "abc"))
+def test_only_a_completed_failing_run_is_curated(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        br.plan, "load_plan", lambda *a, **k: ({"profile": {"recipe": br.FULL_SUITE}}, None, "abc")
+    )
     run = tmp_path / "fleet/test-runs/abc"
     run.mkdir(parents=True)
     for directory in (run, run.parent, run.parent.parent):
         directory.chmod(0o700)
     (run / "receipt.json").write_text(json.dumps({"checks": [{"id": "pytest", "exit_code": 2}]}))
     (run / "receipt.json").chmod(0o600)
-    job = {"initial_profile_value": {"recipe": br.FULL_SUITE}, "binding": {}, "workspace": "x"}
+    job = {"binding": {}, "workspace": "x"}
     with pytest.raises(br.BaselineError, match="did not run to completion"):
         br._failed_run(tmp_path, job)
+
+
+def test_a_curated_recipe_is_extended_with_new_base_failures(workspace):
+    current = json.loads(br.baseline_recipe(["tests/test_a.py::test_bad"], workspace, ["tests"]))
+    raw = junit(
+        ("tests.test_a", "test_ok", ""),
+        ("tests.fleet.test_b.TestC", "test_x", '<failure message="drift"/>'),
+    )
+    extended = json.loads(br.extended_recipe(current, raw, workspace))
+    assert extended["deselect"] == [
+        "tests/fleet/test_b.py::TestC::test_x",
+        "tests/test_a.py::test_bad",
+    ]
+    assert extended["pytest"] == current["pytest"]
+    with pytest.raises(br.BaselineError, match="no new failing"):
+        br.extended_recipe(extended, raw, workspace)
+    with pytest.raises(br.BaselineError, match="only a curated"):
+        br.extended_recipe({"pytest_all": True}, raw, workspace)
 
 
 def test_targets_compact_clean_directories_and_omit_module_skipped_files():

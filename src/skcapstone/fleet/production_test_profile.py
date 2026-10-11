@@ -128,8 +128,9 @@ def initial_recipe(core: dict, workspace: Path) -> tuple[dict, dict | None]:
     configured = (core.get("links") or {}).get("test_profile_recipe")
     if configured is not None:
         # A baseline recipe for a large suite lists clean files individually
-        # where a directory holds a module-level skip (~31 KB for skcapstone).
-        if not isinstance(configured, str) or len(configured) > 65536:
+        # where a directory holds a module-level skip, plus its deselected
+        # tests (~31 KB for skcapstone, over 64 KiB once extended).
+        if not isinstance(configured, str) or len(configured) > 262144:
             raise plan.TestEvidenceError("operator test recipe is invalid")
         try:
             recipe = json.loads(configured, object_pairs_hook=plan._unique_object)
