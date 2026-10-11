@@ -1057,3 +1057,27 @@ def test_foreign_launch_is_ignored(setup, monkeypatch):
     monkeypatch.setattr(resources, "_local_launch", lambda *a: False)
     assert native.reap_orphaned_test_units(setup.home, "chiap02", store=_Claims()) == []
     assert calls == []
+
+
+@pytest.mark.parametrize("missing", [None, "launch.json", "receipt.json", "terminal.json"])
+def test_completed_plan_runtime_drift_requires_all_native_artifacts(setup, monkeypatch, missing):
+    from skcapstone.fleet import production_test_plan as test_plan
+
+    sealed, _, fingerprint = native.load_plan(setup.home, setup.binding)
+    directory = test_plan.run_directory(setup.home, fingerprint)
+    test_plan.private_dir(directory.parent, create=True)
+    test_plan.private_dir(directory, create=True)
+    for name in ("launch.json", "receipt.json", "terminal.json"):
+        if name != missing:
+            test_plan.write_once(directory / name, {})
+    monkeypatch.setattr(test_plan, "runtime_fingerprint", lambda: "0" * 64)
+    with pytest.raises(native.TestEvidenceError, match="invalid or stale"):
+        native.load_plan(setup.home, setup.binding)
+    if missing:
+        with pytest.raises(native.TestEvidenceError, match="invalid or stale"):
+            native.load_plan(setup.home, setup.binding, allow_completed=True)
+    else:
+        assert native.load_plan(setup.home, setup.binding, allow_completed=True)[0] == sealed
+        # Loading the sealed plan is not acceptance of the empty fake evidence.
+        with pytest.raises(native.TestEvidenceError):
+            native.validate_test_receipt(setup.home, setup.binding, setup.workspace)
