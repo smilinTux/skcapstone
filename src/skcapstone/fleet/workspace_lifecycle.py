@@ -22,7 +22,8 @@ review is derived, not asserted. A card that links no review card owes no
 review (Plan B1 made a PR opt-in, not a default), so it may leave
 HANDOFF_REQUIRED for CLEANUP_ELIGIBLE directly. A card that links a review
 card waits in REVIEW_PENDING until that review card's own recorded verdict
-is a canonical terminal PASS or FAIL; an unreadable or verdict-less review
+is a canonical terminal PASS, FAIL, or structured BLOCKED; an unreadable or
+verdict-less review
 keeps the workspace out of CLEANUP_ELIGIBLE, because silence is not approval
 (see skcapstone.review_verdict). review_required is not a proof field: it is
 derived from the card's own `review_card` link by card_review_dependency.
@@ -230,8 +231,8 @@ def card_review_dependency(home: Path, card_id: str) -> tuple[str, str]:
       - ``"pending"``: the card links a review card that is not yet terminal
         (or whose fold fails), so the workspace must wait in REVIEW_PENDING.
       - ``"terminal"``: the linked review card is archived/completed and its
-        recorded verdict is a canonical terminal PASS or FAIL, so the review
-        dependency is discharged.
+        recorded verdict is a canonical terminal PASS, FAIL, or structured
+        BLOCKED, so the review dependency is discharged.
 
     A review link that cannot be read or that has no terminal verdict is
     deliberately reported ``pending``, never ``terminal``: silence is not
@@ -245,16 +246,20 @@ def card_review_dependency(home: Path, card_id: str) -> tuple[str, str]:
     review_id = str(links.get("review_card") or "").strip()
     if not review_id:
         return "none", "no-review-required"
-    review = _fold_card(home, review_id)
-    if review is None:
-        return "pending", f"review-card-unreadable:{review_id}"
-    from skcapstone.review_verdict import recorded_verdict
+    from skcapstone.review_verdict import _is_terminal_verdict, recorded_verdict
 
-    verdict = str(recorded_verdict(review_id, Path(home).expanduser()) or "").strip()
-    terminal = verdict == "PASS" or verdict == "FAIL" or verdict.startswith("BLOCKED ")
-    if not terminal:
+    home_path = Path(home).expanduser()
+    if _fold_card(home_path, review_id) is None:
+        return "pending", f"review-card-unreadable:{review_id}"
+    verdict = str(recorded_verdict(review_id, home_path) or "").strip()
+    # Reuse the canonical terminal-verdict rule (see review_verdict) rather
+    # than a lookalike check: it accepts only an exact PASS/FAIL or a fully
+    # structured BLOCKED. An annotated value like "FAIL|evidence_sha256=..."
+    # is deliberately not terminal under that rule, and a review that has not
+    # recorded a canonical terminal verdict must not authorise cleanup.
+    if not _is_terminal_verdict(verdict):
         return "pending", f"review-verdict-not-terminal:{review_id}"
-    return "terminal", f"review-terminal:{review_id}:{verdict.split()[0]}"
+    return "terminal", f"review-terminal:{review_id}:{verdict.split()[0].split('|')[0]}"
 
 
 def _git(

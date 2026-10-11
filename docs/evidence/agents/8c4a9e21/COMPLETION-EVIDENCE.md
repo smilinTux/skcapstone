@@ -54,7 +54,7 @@ arguing around:
 
 ## Files and SHA256
 
-- `src/skcapstone/fleet/workspace_lifecycle.py`: `43a8f9e516abbf36290b39922b8e7a274c7ea2679b99e823c80c46d3ede8393b`
+- `src/skcapstone/fleet/workspace_lifecycle.py`: `7be57223d498223d33f485e3d6a2386693d39cba7db47a5659c2646d13199e6f`
 - `scripts/fleet/skfleet-worker-wrapper.py`: `c35899e4a4b6760ff0176f3d5daa96b7ceb87af8b66f46964d1f70d34367be6a`
 - `tests/test_workspace_lifecycle.py`: `4506be21ab212c3bd70912fc88fc47eb7842ffe1cba43ea2a22f78e6cff24f9f`
 - `tests/test_skfleet_worker_exit_evidence.py`: `184673d85fbd347699ea95a4e16fa7282c30b2ff6c166306058e496119981073`
@@ -103,6 +103,28 @@ Result: `4 files already formatted`.
 
 Python compile checks passed for the changed executable paths
 (`python -m py_compile src/skcapstone/fleet/workspace_lifecycle.py scripts/fleet/skfleet-worker-wrapper.py`).
+
+## Live decision against this very card
+
+Running the shipped `cleanup_decision` against this worker's own workspace and
+this card proves the governed path end to end and shows the review gate is
+not decorative:
+
+```text
+custody:  (True, 'commit_sha-and-branch-linked')
+claim:    (True, 'claim-generation-current')
+evidence: (True, 'evidence-linked')
+review:   ('pending', 'review-verdict-not-terminal:fb470f9f')
+unique:   (True, 'head-reachable-from-custody-commit')
+decision: LifecycleDecision(state=WorkspaceState.REVIEW_PENDING,
+          reasons=('review-pending:review-verdict-not-terminal:fb470f9f',))
+```
+
+Every derived proof except review passes, so the only reason this workspace is
+not `CLEANUP_ELIGIBLE` is that the review dependency has not recorded a
+canonical terminal verdict. That is the intended behaviour: the lifecycle
+refuses to authorise deletion while a review is open, and it is exactly why a
+distinct review card is required for R2 rather than self-completion.
 
 ## Limitations
 
