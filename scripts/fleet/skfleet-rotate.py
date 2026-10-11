@@ -8543,6 +8543,16 @@ def lane_compatibility(labels, escalation_required=False, qwen_allowed=True,
     """Return compatible lanes and a stable routing reason."""
     normalized={str(label).strip().lower() for label in (labels or [])}
     required={lane for label,lane in _LANE_ONLY_LABELS.items() if label in normalized}
+    _policy=globals().get("PRODUCTION_POLICY")
+    if _policy:
+        # Same rule as production route resolution (#1110): a pin to a family
+        # the policy disables can never be served, so it falls back to the
+        # ordinary lanes instead of deferring the card forever (7 codex-only
+        # cards every cycle on chi, 2026-10-11). kimi and escalation keep
+        # their explicit meaning.
+        _disabled={name for name,row in (_policy.get("lanes") or {}).items()
+                   if isinstance(row,dict) and row.get("enabled") is not True}
+        required-={lane for lane in ("codex","qwen","glm","deepseek") if lane in _disabled}
     if normalized & {"kimi", "kimi-only", "kimi-suitable", "kimi-lane"}:
         required.add("kimi")
     if qwen_exclusive:
