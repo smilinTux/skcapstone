@@ -129,12 +129,24 @@ def _export(workspace: Path, card: str, base: str, outcome: dict) -> dict:
     )
 
 
-def inspect_clean_base(workspace: Path, base: str) -> dict:
-    """Prove an unchanged retry workspace in the existing read-only sandbox."""
+def inspect_clean_base(workspace: Path, base: str, *, allow_ignored: bool = False) -> dict:
+    """Prove an unchanged retry workspace in the existing read-only sandbox.
+
+    allow_ignored proves only that no source was produced: tracked files and
+    untracked non-ignored files are still refused, but ignored build caches
+    (__pycache__, .pytest_cache, .venv, node_modules) are not source. A
+    workspace reused for a retry must stay fully clean, so only the release
+    proof passes it, and the released workspace is discarded afterwards.
+    """
     program = _INSPECT_SETUP + """
 assert git('rev-parse','HEAD^{commit}').decode().strip()==base
 assert not git('status','--porcelain','--untracked-files=all')
+"""
+    if not allow_ignored:
+        program += """
 assert not git('ls-files','--others','--ignored','--exclude-standard')
+"""
+    program += """
 print(json.dumps({'head':base}))
 """
     return _inspect(workspace, program, "unused", base, base, "unused", "unused")

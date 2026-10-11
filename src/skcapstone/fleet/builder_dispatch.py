@@ -10,6 +10,7 @@ import secrets
 import shutil
 import subprocess
 import tempfile
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -988,10 +989,30 @@ def _exited_without_outcome(
             for event in events
         ):
             return False
-        inspect_clean_base(workspace, str(request["base_revision"]))
+        # Workers run tests and installs, so ignored caches are normal even
+        # when nothing was produced. Requiring their absence kept every such
+        # generation parked in awaiting-evidence (chi, 2026-10-11: c5f154f3,
+        # b1f018f1, af22643e, 4fd4a586). The caches never reach a retry: the
+        # workspace is discarded once the claim is released.
+        inspect_clean_base(workspace, str(request["base_revision"]), allow_ignored=True)
     except (OSError, ValueError, KeyError, TypeError, SourceBundleError):
         return False
     return True
+
+
+def _discard_unproduced_workspace(workspace: Path) -> None:
+    """Remove a released, proven-unproduced workspace so the next offer starts fresh.
+
+    Its tracked state was proven equal to the base revision, so only ignored
+    caches are lost. Best effort: a workspace left behind is refused by the
+    materializer's exact-source check or reused at the same base.
+    """
+    discard = workspace.with_name(f".discard-{workspace.name}-{uuid.uuid4().hex[:8]}")
+    try:
+        workspace.rename(discard)
+    except OSError:
+        return
+    shutil.rmtree(discard, ignore_errors=True)
 
 
 def _reconcile_running(
@@ -1154,6 +1175,7 @@ def _reconcile_running(
                     coordination_home, request["card_id"], owner, revision, actor=owner
                 )
                 if released:
+                    _discard_unproduced_workspace(paths.root / "workspaces" / owner)
                     return _write_status(
                         paths,
                         node,
