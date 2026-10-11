@@ -5,7 +5,15 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from skcapstone import seat_mail
+
+
+@pytest.fixture(autouse=True)
+def _resolve_real_helper(monkeypatch):
+    """These tests exercise resolution itself, so undo the suite-wide stub."""
+    monkeypatch.delenv("SKMAIL_BIN", raising=False)
 
 
 def test_mail_command_prefers_active_interpreter_sibling(monkeypatch, tmp_path: Path) -> None:
