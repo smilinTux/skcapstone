@@ -1,0 +1,1 @@
+Fleet authority attaches a baseline test recipe to a card whose full-suite qualification ran and failed at its pinned base: tests that already failed, errored or skipped there are deselected (exact node IDs, proven by the selection plugin), everything else including new tests must pass.

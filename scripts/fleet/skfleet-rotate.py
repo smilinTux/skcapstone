@@ -8272,6 +8272,20 @@ if (
                 _superseded.get("reason", "")))
     except Exception as _exc:  # noqa: BLE001 - recovery must never stop a cycle
         log(d, "REVIEW_GENERATION_RECOVERY_FAILED|%s|%s" % (HOST, str(_exc)[:160]))
+# Baseline recipes, authority-only: a full-suite qualification that ran and
+# failed at the card's pinned base (host-dependent tests) can never pass, so
+# every skcapstone card failed forever (2026-10-11). Attach the exact baseline
+# (deselect what already failed or skipped at base) as the card's recipe.
+if not DRY and PRODUCTION_POLICY and _is_niobe_builder_host(HOST):
+    try:
+        from skcapstone.fleet.baseline_recipe import curate_failed_qualifications
+
+        for _curated in curate_failed_qualifications(Path(HOME) / ".skcapstone"):
+            log(d, "BASELINE_RECIPE|%s|%s|state=%s|%s" % (
+                HOST, _curated["card"], _curated["state"],
+                _curated.get("deselected", _curated.get("reason", ""))))
+    except Exception as _exc:  # noqa: BLE001 - curation must never stop a cycle
+        log(d, "BASELINE_RECIPE_FAILED|%s|%s" % (HOST, str(_exc)[:160]))
 # Demoted claims, authority-only: skcoord keeps an agent's bumped current task
 # claimed while demoting it to ready, and the pool treats it as claimed forever
 # (84 ready cards on chi, 2026-10-11). Release idle ones through the audited CLI.
