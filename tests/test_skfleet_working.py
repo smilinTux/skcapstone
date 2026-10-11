@@ -388,19 +388,27 @@ def test_main_resets_stale_samples_and_clears_recovery(monkeypatch, tmp_path, ca
 
 @pytest.mark.parametrize("process_revision", ["r1", "old", ""])
 @pytest.mark.parametrize(
-    ("worker_card", "native_builder"),
+    ("worker_card", "native_builder", "herdr_env"),
     [
-        ("deadbeef", False),
-        ("deadbeef", True),
-        ("a8100007-01", False),
-        ("cb65a43a-1", False),
+        ("deadbeef", False, False),
+        ("deadbeef", True, False),
+        ("a8100007-01", False, False),
+        ("cb65a43a-1", False, False),
+        ("deadbeef", False, True),
     ],
 )
 @pytest.mark.parametrize(
     "has_pi, broken_projection", [(False, False), (False, True), (True, False), (True, True)]
 )
 def test_remote_collector_unit_fallback(
-    monkeypatch, capsys, has_pi, broken_projection, worker_card, native_builder, process_revision
+    monkeypatch,
+    capsys,
+    has_pi,
+    broken_projection,
+    worker_card,
+    native_builder,
+    herdr_env,
+    process_revision,
 ):
     """Execute the real collector against synthetic proc, unit and card state."""
     monitor = load_monitor()
@@ -424,12 +432,13 @@ def test_remote_collector_unit_fallback(
     monkeypatch.setattr(Path, "glob", lambda self, pattern: [])
     monkeypatch.setattr(monitor.os, "uname", lambda: SimpleNamespace(nodename="host-a"))
     monkeypatch.setattr(monitor.os, "sysconf", lambda name: 100)
+    environment = f"SKAGENT={agent}\0SKFLEET_CARD_ID={worker_card}\0"
+    if herdr_env:
+        environment += "HERDR_ENV=1\0"
+    environment += f"SKFLEET_CLAIM_REVISION={process_revision}\0"
     proc = {
         "/proc/321/comm": "pi\n",
-        "/proc/321/environ": (
-            f"SKAGENT={agent}\0SKFLEET_CARD_ID={worker_card}\0"
-            f"SKFLEET_CLAIM_REVISION={process_revision}\0"
-        ).encode(),
+        "/proc/321/environ": environment.encode(),
         "/proc/321/stat": " ".join(["0"] * 21 + ["1000"]),
         "/proc/uptime": "100 0",
         "/proc/321/cgroup": f"0::/user.slice/{unit}",
@@ -469,6 +478,7 @@ def test_remote_collector_unit_fallback(
     row = rows[0]
     assert row.unit == unit
     assert row.card == worker_card
+    assert row.herdr_session is (herdr_env and has_pi)
     process_claim = (
         "exact" if process_revision == "r1" else "mismatch" if process_revision else "unverified"
     )
@@ -522,6 +532,21 @@ def test_legacy_without_owner_is_reported_as_orphan_without_details(monkeypatch,
     assert "ORPHAN" in output
     assert "ACTION REQUIRED (1)" in output
     assert "orphan=1" in output
+
+
+def test_herdr_session_without_tmux_is_visible_but_not_called_orphan(
+    monkeypatch, tmp_path, capsys
+):
+    """Herdr-owned legacy work warns without claiming ownership is absent."""
+    monitor = load_monitor()
+    row = worker(monitor, unit="legacy", tmux=False, herdr_session=True)
+
+    result, output, _ = run_report(monkeypatch, tmp_path, capsys, monitor, [row], details=False)
+
+    assert result == 1
+    assert "HERDR SESSION; ownership unverified" in output
+    assert "ORPHAN" not in output
+    assert "ownership-unknown=1" in output
 
 
 def test_native_unit_without_pi_is_not_assumed_dead(monkeypatch, tmp_path, capsys):

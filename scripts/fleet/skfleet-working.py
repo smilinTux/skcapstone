@@ -74,6 +74,7 @@ class Worker:
     completion_state: str = "running"
     heartbeat_at: str = ""
     process_record: str = ""
+    herdr_session: bool = False
 
 
 REMOTE = r"""
@@ -188,7 +189,7 @@ for raw in glob.glob('/proc/[0-9]*/comm'):
         state=units.get(unit,['not-found','inactive','dead'])
         process_record=direct_record[1] if direct_record else ''
         record_value=direct_record[0] if direct_record else {}
-        print(json.dumps(dict(host=host,agent=agent,card=card,pid=pid,elapsed=elapsed,cpu=cpu,log_bytes=size,log_age=age,unit=unit,tmux=legacy_live,claim_state=claim,card_status=status,unit_missing_process=False,unit_load=state[0],unit_active=state[1],unit_sub=state[2],claim_owner=claim_owner,claim_revision=claim_revision,projection_state=projection_state,projection_error=projection_error,completion_state=str(record_value.get('completion_state','running')),heartbeat_at=str(record_value.get('heartbeat_at','')),process_record=process_record,evidence_source='direct-seat-record+proc+cardstore' if direct else 'systemd+proc+cardstore'),sort_keys=True))
+        print(json.dumps(dict(host=host,agent=agent,card=card,pid=pid,elapsed=elapsed,cpu=cpu,log_bytes=size,log_age=age,unit=unit,tmux=legacy_live,claim_state=claim,card_status=status,unit_missing_process=False,unit_load=state[0],unit_active=state[1],unit_sub=state[2],claim_owner=claim_owner,claim_revision=claim_revision,projection_state=projection_state,projection_error=projection_error,completion_state=str(record_value.get('completion_state','running')),heartbeat_at=str(record_value.get('heartbeat_at','')),process_record=process_record,herdr_session=env.get('HERDR_ENV') == '1',evidence_source='direct-seat-record+proc+cardstore' if direct else 'systemd+proc+cardstore'),sort_keys=True))
     except (FileNotFoundError,ProcessLookupError,PermissionError,ValueError,KeyError,json.JSONDecodeError):
         pass
 for unit in sorted(set(units)-seen_units):
@@ -593,8 +594,11 @@ def main(*, details: bool = False) -> int:
             alerts.append((row, "claim"))
         if row.unit == "legacy" and not row.evidence_source.startswith("direct-seat-record"):
             state = f"LEGACY SESSION; activity unknown; claim={row.claim_state}; card={row.card_status}"
-        orphan = row.unit == "legacy" and not row.tmux and not direct_active
-        if orphan:
+        unowned_legacy = row.unit == "legacy" and not row.tmux and not direct_active
+        if unowned_legacy and row.herdr_session:
+            state = "HERDR SESSION; ownership unverified"
+            alerts.append((row, "ownership-unknown"))
+        elif unowned_legacy:
             state = "ORPHAN; no tmux owner or active direct-seat record"
             alerts.append((row, "orphan"))
         if (
@@ -608,7 +612,7 @@ def main(*, details: bool = False) -> int:
         elapsed = "-" if row.unit_missing_process else duration(row.elapsed)
         if row.unit_missing_process:
             state += "; diagnostic unit without Pi process"
-        if not details and not orphan and (row.unit == "legacy" or row.pid == 0):
+        if not details and not unowned_legacy and (row.unit == "legacy" or row.pid == 0):
             continue
         detail = (
             f"; unit={row.unit}; state={row.unit_load}/{row.unit_active}/{row.unit_sub}; "
