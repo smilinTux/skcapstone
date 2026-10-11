@@ -357,6 +357,27 @@ assert.equal(events[0].error,result);assert.equal(records[0].provider,'skgateway
 """)
 
 
+def test_request_too_large_surfaces_as_pi_context_overflow():
+    """Pi compacts on request_too_large; every other terminal stays scrubbed."""
+    node_check("""
+const provider={id:'skgateway',streamSimple(model,context,options){
+  const result=(async()=>{await options.fetch('http://fixture.invalid');return {
+   stopReason:'error',errorMessage:'413: too large',content:[]};})();
+  return {result:()=>result,async *[Symbol.asyncIterator]() {
+    yield {type:'error',error:await result};}};
+ }};
+const stream=wrapGatewayProvider(provider,()=>{}).streamSimple(
+ {provider:'skgateway',id:'sk-deepseek-s'},{},
+ {fetch:async()=>new Response(JSON.stringify({error:{code:'request_too_large',param:'body'}}),
+   {status:413,headers:{'content-type':'application/json'}})});
+for await(const e of stream){}
+const result=await stream.result();
+assert.equal(result.gatewayError.code,'request_too_large');
+assert(/request_too_large/i.test(result.errorMessage));
+assert(!/rate limit|too many requests/i.test(result.errorMessage));
+""")
+
+
 def test_partial_stream_failure_is_not_replayed():
     node_check("""
 const message={stopReason:'error',errorMessage:'504: server error',content:['partial']};
