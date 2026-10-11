@@ -277,7 +277,7 @@ def run_report(monkeypatch, tmp_path, capsys, monitor, rows, samples=None, now=1
     monkeypatch.setattr(monitor, "save_samples", saved.update)
     monkeypatch.setattr(monitor.time, "time", lambda: now)
     monkeypatch.setenv("SKGW_METRICS_DB", str(tmp_path / "absent.db"))
-    result = monitor.main()
+    result = monitor.main(details=True)
     return result, capsys.readouterr().out, saved
 
 
@@ -386,13 +386,19 @@ def test_main_resets_stale_samples_and_clears_recovery(monkeypatch, tmp_path, ca
     assert recovered == {}
 
 
+@pytest.mark.parametrize("process_revision", ["r1", "old", ""])
+@pytest.mark.parametrize("native_builder", [False, True])
 @pytest.mark.parametrize(
     "has_pi, broken_projection", [(False, False), (False, True), (True, False), (True, True)]
 )
-def test_remote_collector_unit_fallback(monkeypatch, capsys, has_pi, broken_projection):
+def test_remote_collector_unit_fallback(
+    monkeypatch, capsys, has_pi, broken_projection, native_builder, process_revision
+):
     """Execute the real collector against synthetic proc, unit and card state."""
     monitor = load_monitor()
     unit = "skfleet-worker-codex-deadbeef.service"
+    if native_builder:
+        unit = "skfleet-builder-deadbeef-" + "a" * 64 + "-1.service"
     agent = "pi-codex-host-a-deadbeef"
     card_store = ModuleType("skcoord.card_store")
 
@@ -412,7 +418,9 @@ def test_remote_collector_unit_fallback(monkeypatch, capsys, has_pi, broken_proj
     monkeypatch.setattr(monitor.os, "sysconf", lambda name: 100)
     proc = {
         "/proc/321/comm": "pi\n",
-        "/proc/321/environ": f"SKAGENT={agent}\0".encode(),
+        "/proc/321/environ": (
+            f"SKAGENT={agent}\0SKFLEET_CLAIM_REVISION={process_revision}\0".encode()
+        ),
         "/proc/321/stat": " ".join(["0"] * 21 + ["1000"]),
         "/proc/uptime": "100 0",
         "/proc/321/cgroup": f"0::/user.slice/{unit}",
@@ -450,6 +458,13 @@ def test_remote_collector_unit_fallback(monkeypatch, capsys, has_pi, broken_proj
     ]
     assert len(rows) == 1
     row = rows[0]
+    assert row.unit == unit
+    process_claim = (
+        "exact" if process_revision == "r1" else "mismatch" if process_revision else "unverified"
+    )
+    assert row.claim_state == (
+        "malformed-projection" if broken_projection else process_claim if has_pi else "unverified"
+    )
     assert row.unit_missing_process is (not has_pi)
     assert row.elapsed == (90 if has_pi else -1)
     assert row.pid == (321 if has_pi else 999)
@@ -457,6 +472,47 @@ def test_remote_collector_unit_fallback(monkeypatch, capsys, has_pi, broken_proj
         "malformed" if broken_projection else "missing" if has_pi else "valid"
     )
     assert row.projection_error == ("ValueError" if broken_projection else "")
+
+
+def test_report_separates_legacy_from_current_execution(monkeypatch, tmp_path, capsys):
+    """A two-week-old terminal process is not current native worker execution."""
+    monitor = load_monitor()
+    rows = [
+        worker(monitor, unit="legacy", elapsed=1051200, claim_state="mismatch"),
+        worker(
+            monitor,
+            card="feedface",
+            pid=322,
+            unit="skfleet-builder-feedface-" + "a" * 64 + "-1.service",
+        ),
+        worker(
+            monitor,
+            pid=0,
+            projection_state="stale",
+            unit="not-found",
+            evidence_source="agent-projection+systemd+proc",
+        ),
+    ]
+    _, output, _ = run_report(monkeypatch, tmp_path, capsys, monitor, rows)
+    assert "current claimed unit processes: 1" in output
+    assert "legacy Pi sessions: 1" in output
+    assert "STALE PROJECTION; no process observed; claim=exact" in output
+    assert "LEGACY SESSION" in output
+    assert "running; output buffered until completion" not in output
+
+
+def test_native_unit_without_pi_is_not_assumed_dead(monkeypatch, tmp_path, capsys):
+    """Native units also run qualification and preparation without Pi."""
+    monitor = load_monitor()
+    row = worker(
+        monitor,
+        unit="skfleet-builder-deadbeef-" + "a" * 64 + "-1.service",
+        unit_missing_process=True,
+        claim_state="unverified",
+    )
+    _, output, _ = run_report(monkeypatch, tmp_path, capsys, monitor, [row])
+    assert "UNIT ACTIVE; no Pi observed (setup/test or other unit process)" in output
+    assert "current claimed unit processes: 0" in output
 
 
 def test_direct_seat_active_requires_exact_process_projection_claim_join(
