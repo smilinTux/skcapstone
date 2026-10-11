@@ -64,6 +64,15 @@ def system_awk_alias() -> list[str]:
     return ["--symlink", str(target), "/etc/alternatives/awk"]
 
 
+def _account_databases() -> list[str]:
+    """Bind the host passwd/group files read-only when they are regular files."""
+    binds = []
+    for path in ("/etc/passwd", "/etc/group"):
+        if Path(path).is_file() and not Path(path).is_symlink():
+            binds.extend(["--ro-bind", path, path])
+    return binds
+
+
 def sandbox_command(
     workspace: Path, output: Path, argv: list[str], profile: dict | None = None
 ) -> list[str]:
@@ -91,6 +100,11 @@ def sandbox_command(
         "--ro-bind",
         str(PREFIX),
         str(PREFIX),
+        # Read-only account databases. Without them getpwuid() fails for the
+        # sandbox uid, which errored 62 skcapstone tests (Path.home(),
+        # getpass.getuser()) and one whole module at collection, so no
+        # skcapstone card could ever qualify (chi, 2026-10-11).
+        *_account_databases(),
         "--ro-bind",
         str(workspace),
         "/work",
