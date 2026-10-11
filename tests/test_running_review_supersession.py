@@ -483,7 +483,15 @@ def test_typed_verdict_candidate_wins_over_a_stale_legacy_link():
     install_store(
         module,
         {"3a11f071": review(reviewed), "a9b4266c": source("3" * 40)},
-        {"a9b4266c": [{"action": "verdict", "candidate_commit": reviewed}]},
+        {
+            "a9b4266c": [
+                {
+                    "action": "verdict",
+                    "candidate_commit": reviewed,
+                    "writer": "pi-glm-builder-node-chiap03-a9b4266c",
+                }
+            ]
+        },
     )
     assert module.review_supersession(args()) is None
 
@@ -493,6 +501,26 @@ def test_a_newer_typed_candidate_still_supersedes():
     install_store(
         module,
         {"3a11f071": review("e" * 40), "a9b4266c": source("e" * 40)},
-        {"a9b4266c": [{"action": "verdict", "candidate_commit": "f" * 40}]},
+        {
+            "a9b4266c": [
+                {
+                    "action": "verdict",
+                    "candidate_commit": "f" * 40,
+                    "writer": "pi-glm-builder-node-chiap03-a9b4266c",
+                }
+            ]
+        },
     )
     assert module.review_supersession(args())["current_head"] == "f" * 40
+
+
+def test_legacy_source_repaired_head_in_links_is_current():
+    """jarvis/crew sources recorded repaired heads in links after the verdict."""
+    module = load_module()
+    repaired = "4" * 40
+    install_store(
+        module,
+        {"3a11f071": review(repaired), "a9b4266c": source(repaired)},
+        {"a9b4266c": [{"action": "verdict", "candidate_commit": "3" * 40, "writer": "jarvis"}]},
+    )
+    assert module.review_supersession(args()) is None

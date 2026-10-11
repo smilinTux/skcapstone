@@ -201,24 +201,30 @@ def review_supersession(args: argparse.Namespace) -> dict[str, str] | None:
     source_card = str(card.meta.get("link_source_card") or "").strip()
     source_head = str(card.meta.get("link_head_revision") or "").strip().lower()
     source = CardStore(Path.home() / ".skcapstone").fold(source_card) if source_card else None
+    # Production builders name the current head on their typed verdict event,
+    # and their legacy links can be stale (d60f8598, #1126). The earlier
+    # workflow (jarvis and crews) recorded repaired heads in the candidate,
+    # commit and head links AFTER its verdict, so for those sources the links
+    # are current (b3416bde reviews 42c37e6b while ca220939's verdict says
+    # 340d9b7e). Choose by who wrote the latest verdict.
     current_head = ""
     if source is not None:
-        # A production source names its candidate on its typed verdict event;
-        # its legacy commit/head links can be stale from older work. Reading
-        # only the links killed d60f8598's reviewer as "superseded" (link
-        # commit 3b7470c8 vs the actual candidate e54dfb10, 2026-10-11).
+        latest = None
         for event in reversed(CardStore(Path.home() / ".skcapstone")._read_events(source_card)):
             if event.get("action") == "verdict":
-                value = str(event.get("candidate_commit") or "").strip().lower()
+                latest = event
+                break
+        typed = str((latest or {}).get("candidate_commit") or "").strip().lower()
+        writer = str((latest or {}).get("writer") or "")
+        production = bool(re.fullmatch(r"pi-[a-z0-9]+-builder-node-[a-z0-9-]+", writer))
+        if production and re.fullmatch(r"[0-9a-f]{40}", typed):
+            current_head = typed
+        else:
+            for key in ("candidate", "commit", "head"):
+                value = str(source.links.get(key) or "").strip().lower()
                 if re.fullmatch(r"[0-9a-f]{40}", value):
                     current_head = value
-                break
-    if source is not None and not current_head:
-        for key in ("candidate", "commit", "head"):
-            value = str(source.links.get(key) or "").strip().lower()
-            if re.fullmatch(r"[0-9a-f]{40}", value):
-                current_head = value
-                break
+                    break
     if not re.fullmatch(r"[0-9a-f]{40}", source_head) or not current_head:
         return None
     if current_head == source_head:
