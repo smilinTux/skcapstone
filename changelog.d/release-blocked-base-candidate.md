@@ -1,0 +1,1 @@
+Fleet builders also release a typed BLOCKED whose candidate commit is the authorized base revision itself, once the node sandbox proves the workspace unchanged, since such a verdict names no produced source.

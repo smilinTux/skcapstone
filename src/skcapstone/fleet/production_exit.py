@@ -22,9 +22,23 @@ CANDIDATE_KEYS = (
 )
 
 
+def _cites_nothing(outcome: dict, request: dict) -> bool:
+    """No candidate fields at all, or a candidate commit that is the base itself.
+
+    Workers often fill the candidate fields of a BLOCKED with the base revision,
+    the repository URL as the ref and a report outside the bundle root (chi,
+    2026-10-11: 7ad93010, 477886d2). A commit equal to the authorized base names
+    no produced source, so there is nothing to review and nothing to preserve.
+    """
+    if not any(outcome.get(key) for key in CANDIDATE_KEYS):
+        return True
+    base = str(request.get("base_revision") or "")
+    return bool(base) and outcome.get("candidate_commit") == base
+
+
 def _unproduced(outcome: dict, request: dict, workspace: Path | None) -> bool:
-    """A BLOCKED with no candidate at all, from a workspace proven unchanged at base."""
-    if workspace is None or any(outcome.get(key) for key in CANDIDATE_KEYS):
+    """A BLOCKED citing no produced source, from a workspace proven unchanged at base."""
+    if workspace is None or not _cites_nothing(outcome, request):
         return False
     from .source_bundle import SourceBundleError, inspect_clean_base
 
@@ -88,8 +102,8 @@ def release_blocked(
                 return None
             if unproduced:
                 # The proof covered exactly this outcome and still no candidate.
-                if outcome.get("event_id") != first.get("event_id") or any(
-                    outcome.get(key) for key in CANDIDATE_KEYS
+                if outcome.get("event_id") != first.get("event_id") or not _cites_nothing(
+                    outcome, request
                 ):
                     return None
             else:

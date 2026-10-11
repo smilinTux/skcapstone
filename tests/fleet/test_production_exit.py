@@ -118,7 +118,9 @@ def test_blocked_exact_native_release_or_preserved_custody(source, invalid):  # 
         assert str(row.status) != "done" and source["workspace"].exists()
 
 
-@pytest.mark.parametrize("case", ["clean", "dirty", "no-workspace", "partial-candidate"])
+@pytest.mark.parametrize(
+    "case", ["clean", "dirty", "no-workspace", "partial-candidate", "base-as-candidate"]
+)
 def test_candidateless_blocked_releases_only_from_proven_unchanged_base(
     source, monkeypatch, case  # noqa: F811
 ):
@@ -133,6 +135,15 @@ def test_candidateless_blocked_releases_only_from_proven_unchanged_base(
     outcome = {"verdict": "BLOCKED blocked_on=capability referent=schema-absent-from-base"}
     if case == "partial-candidate":
         outcome["candidate_commit"] = "c" * 40
+    if case == "base-as-candidate":
+        # Worker filled the fields with the base, a repo URL and a report path.
+        outcome.update(
+            candidate_commit=source["request"]["base_revision"],
+            candidate_tree="d" * 40,
+            candidate_ref=source["request"]["repository"],
+            candidate_path="/elsewhere/BLOCKED-REPORT.md",
+            candidate_sha256="e" * 64,
+        )
     source["store"].append_event(source["card"], "verdict", source["owner"], **outcome)
     inspected = []
 
@@ -151,7 +162,7 @@ def test_candidateless_blocked_releases_only_from_proven_unchanged_base(
         workspace=None if case == "no-workspace" else source["workspace"],
     )
     row = source["store"].fold(source["card"])
-    if case == "clean":
+    if case in {"clean", "base-as-candidate"}:
         assert inspected == [(source["workspace"], source["request"]["base_revision"], True)]
         assert result["state"] == "blocked" and result["claim_released"]
         assert result["reason"] == outcome["verdict"] and row.owner is None
