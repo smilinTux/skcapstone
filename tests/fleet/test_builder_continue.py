@@ -521,3 +521,46 @@ def test_expired_unused_grant_is_replaced_and_kept_on_record(preserved, monkeypa
     assert second["id"] != first["id"]
     assert (target / ("expired-" + first["id"] + ".json")).exists()
     assert json.loads((target / "grant.json").read_text())["id"] == second["id"]
+
+
+def test_refused_generations_do_not_starve_later_eligible_ones(tmp_path, monkeypatch):
+    from skcapstone.fleet.paths import FleetPaths
+
+    paths = FleetPaths(tmp_path / "fleet")
+    cards = [f"{index:08x}" for index in range(1, 6)]
+    for card in cards:
+        status_file = paths.status_path("node-worker", "dispatch", card)
+        status_file.parent.mkdir(parents=True, exist_ok=True)
+        status_file.write_text("{}")
+
+    def status_for(path, *_args):
+        card = path.stem
+        return {
+            "card_id": card,
+            "state": "awaiting-evidence",
+            "production": {"host": "worker"},
+            "error": continuation.UNFINISHED_ERROR,
+            "request_id": card * 8,
+            "claim_revision": "c" * 32,
+            "invocation": "d" * 32,
+        }
+
+    monkeypatch.setattr(builder, "_validated_status", status_for)
+    monkeypatch.setattr(
+        builder,
+        "_load",
+        lambda path: {"card_id": path.stem, "request_id": path.stem * 8, "node": "node-worker"},
+    )
+    monkeypatch.setattr(continuation, "directory", lambda home, request: tmp_path / "none")
+    granted = []
+
+    def fake_authorize(paths_, home, node, card, **kwargs):
+        if card != cards[-1]:
+            raise ValueError("exact unfinished claim without a current outcome required")
+        granted.append(card)
+        return {"state": "authorized-no-launch"}
+
+    monkeypatch.setattr(continuation, "authorize", fake_authorize)
+    results = continuation.auto_continue_unfinished(paths, tmp_path, limit=4)
+    assert granted == [cards[-1]]
+    assert [r["state"] for r in results] == ["refused"] * 4 + ["authorized-no-launch"]
