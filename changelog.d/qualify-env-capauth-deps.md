@@ -1,0 +1,1 @@
+- fleet: the sealed qualify-env carries capauth's collection-time test dependencies (webauthn, soft-webauthn, pywebpush, python-gnupg, zeroconf), so capauth cards no longer fail qualification with collection errors.

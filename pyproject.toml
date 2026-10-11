@@ -100,6 +100,13 @@ fleet-qualify = [
     "skcomms>=0.1.0",
     "skseed>=0.1.0",
     "setuptools>=68.0",
+    # capauth's suite imports these at collection; without webauthn every
+    # capauth card was interrupted with 6-8 collection errors (chi, 2026-10-11).
+    "webauthn>=2.0",
+    "soft-webauthn>=0.1",
+    "pywebpush>=1.14",
+    "python-gnupg>=0.5",
+    "zeroconf>=0.38",
 ]
 dashboard = [
     "starlette>=0.40",
