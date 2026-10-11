@@ -423,7 +423,7 @@ def test_new_candidate_after_authorization_uses_review_path(ready_retry, monkeyp
     monkeypatch.setattr(
         retry, "_latest_outcome", lambda *args: {"action": "verdict", "verdict": "PASS_FOR_REVIEW"}
     )
-    monkeypatch.setattr(production_exit, "release_blocked", lambda *args: None)
+    monkeypatch.setattr(production_exit, "release_blocked", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         source_bundle, "publish_source", lambda *args, **kwargs: {"manifest_sha256": "f" * 64}
     )

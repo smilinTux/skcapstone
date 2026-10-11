@@ -187,7 +187,7 @@ def test_dispatcher_preserves_recovered_terminal_and_source_custody(
     monkeypatch.setattr(builder, "_process_state", lambda status: (None, None))
     monkeypatch.setattr(builder.CardStore, "fold", lambda *args: a.card)
     monkeypatch.setattr(builder_continue, "original_outcome_pending", lambda *args: False)
-    monkeypatch.setattr(production_exit, "release_blocked", lambda *args: None)
+    monkeypatch.setattr(production_exit, "release_blocked", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         source_bundle, "publish_source", lambda *args, **kwargs: {"manifest_sha256": "f" * 64}
     )

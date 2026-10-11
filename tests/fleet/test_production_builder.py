@@ -721,7 +721,8 @@ def test_stopped_remote_typed_blocked_does_not_replay_or_publish(
     monkeypatch.setattr(builder.CardStore, "fold", lambda *args: _folded(owner="source-owner"))
     calls = []
 
-    def blocked(home, actual, owner, claim):
+    def blocked(home, actual, owner, claim, *, workspace=None):
+        assert workspace == paths.root / "workspaces" / owner
         calls.append((actual["card_id"], owner, claim))
         return {
             "reason": "BLOCKED blocked_on=human referent=approval:test",

@@ -13,16 +13,48 @@ from ..seraph_review_cardstore import _latest_outcome
 from .source_bundle import MAX_EVIDENCE, _binding, _read, _root, _sha, publish_source
 from .source_transport import _authority
 
+CANDIDATE_KEYS = (
+    "candidate_commit",
+    "candidate_tree",
+    "candidate_ref",
+    "candidate_path",
+    "candidate_sha256",
+)
 
-def release_blocked(home: Path, request: dict, owner: str, claim: str) -> dict | None:
-    """After caller-proven death, release only a valid exact typed BLOCKED generation."""
+
+def _unproduced(outcome: dict, request: dict, workspace: Path | None) -> bool:
+    """A BLOCKED with no candidate at all, from a workspace proven unchanged at base."""
+    if workspace is None or any(outcome.get(key) for key in CANDIDATE_KEYS):
+        return False
+    from .source_bundle import SourceBundleError, inspect_clean_base
+
+    try:
+        inspect_clean_base(workspace, str(request["base_revision"]), allow_ignored=True)
+    except (OSError, ValueError, KeyError, TypeError, SourceBundleError):
+        return False
+    return True
+
+
+def release_blocked(
+    home: Path, request: dict, owner: str, claim: str, *, workspace: Path | None = None
+) -> dict | None:
+    """After caller-proven death, release only a valid exact typed BLOCKED generation.
+
+    A worker blocked before it changed anything (a missing dependency or
+    input) has no candidate commit to cite. Requiring one parked every such
+    honest BLOCKED in awaiting-evidence forever (chi, 2026-10-11: 7ad93010,
+    477886d2). Given the workspace, a BLOCKED with no candidate fields at all
+    is accepted once the sandbox proves nothing was produced. A partial
+    candidate is still refused.
+    """
     card_id = request["card_id"]
     store = CardStore(home)
     row = store.fold(card_id)
-    if row is None or not is_blocked_verdict(
-        "verdict", _latest_outcome(store, card_id).get("verdict")
-    ):
+    first = _latest_outcome(store, card_id)
+    if row is None or not is_blocked_verdict("verdict", first.get("verdict")):
         return None
+    # Inspect before taking the board lock: the sandbox run can take seconds.
+    unproduced = _unproduced(first, request, workspace)
     try:
         # Preserve native lock order and execute the same locked Board mutation.
         with _board_mutation_lock(home), card_mutation_lock(home, card_id):
@@ -54,21 +86,28 @@ def release_blocked(home: Path, request: dict, owner: str, claim: str) -> dict |
             ]
             if len(claims) != 1 or str(outcome.get("ts", "")) < str(claims[0].get("ts", "")):
                 return None
-            if any(
-                not re.fullmatch(r"[0-9a-f]{40}", str(outcome.get(key, "")))
-                for key in ("candidate_commit", "candidate_tree")
-            ):
-                return None
-            if not re.fullmatch(
-                r"refs/heads/[A-Za-z0-9][A-Za-z0-9._/-]{0,180}",
-                str(outcome.get("candidate_ref", "")),
-            ):
-                return None
-            evidence = Path(str(outcome.get("candidate_path", "")))
-            if _root(home, card_id).parent not in evidence.parents or _sha(
-                _read(evidence, MAX_EVIDENCE)
-            ) != outcome.get("candidate_sha256"):
-                return None
+            if unproduced:
+                # The proof covered exactly this outcome and still no candidate.
+                if outcome.get("event_id") != first.get("event_id") or any(
+                    outcome.get(key) for key in CANDIDATE_KEYS
+                ):
+                    return None
+            else:
+                if any(
+                    not re.fullmatch(r"[0-9a-f]{40}", str(outcome.get(key, "")))
+                    for key in ("candidate_commit", "candidate_tree")
+                ):
+                    return None
+                if not re.fullmatch(
+                    r"refs/heads/[A-Za-z0-9][A-Za-z0-9._/-]{0,180}",
+                    str(outcome.get("candidate_ref", "")),
+                ):
+                    return None
+                evidence = Path(str(outcome.get("candidate_path", "")))
+                if _root(home, card_id).parent not in evidence.parents or _sha(
+                    _read(evidence, MAX_EVIDENCE)
+                ) != outcome.get("candidate_sha256"):
+                    return None
             released = Board(home)._release_claim_locked(
                 owner, card_id, actor=owner, expected_claim_revision=claim
             )
