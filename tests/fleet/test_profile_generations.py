@@ -333,7 +333,7 @@ def test_completed_plan_can_be_verified_after_runtime_change(setup, monkeypatch)
         plan.load_plan(s.home, s.binding, allow_completed=True)
 
 
-def test_policy_change_requires_requalification_before_plan_successor(setup):  # noqa: F811
+def test_policy_change_reseals_as_acceptance_requalification(setup):  # noqa: F811
     s = setup
     s.plan_path.unlink()
     core = {
@@ -370,11 +370,15 @@ def test_policy_change_requires_requalification_before_plan_successor(setup):  #
     assert plan.load_plan(s.home, binding)[2] == fingerprint
     changed_policy = json.loads(json.dumps(s.policy))
     changed_policy["node_quotas"][changed_policy["authority_host"]]["memory_max_bytes"] += 1
-    with pytest.raises(plan.TestEvidenceError, match="profile"):
-        profile.seal_candidate(
-            s.home, binding, s.workspace, changed_policy, core["meta"]["repository"]
-        )
-    assert not list(path.parent.glob(path.stem + ".*.json"))
+    # A quota change is fingerprint drift: acceptance reruns the exact recipe
+    # under the new quotas and seals the plan as an acceptance requalification
+    # instead of waiting forever for a separate requalification.
+    profile.seal_candidate(
+        s.home, binding, s.workspace, changed_policy, core["meta"]["repository"]
+    )
+    resealed, _, _ = plan.load_plan(s.home, binding)
+    assert resealed["acceptance_requalification"] is True
+    assert resealed["predecessor_sha256"] == fingerprint
     profile.supersede_profile(
         s.home,
         core,
