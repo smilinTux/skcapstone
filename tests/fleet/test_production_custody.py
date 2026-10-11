@@ -186,6 +186,20 @@ def test_review_custody_reuses_one_snapshot_and_rechecks_fresh_state(
 
 
 @pytest.mark.parametrize("source", ["https"], indirect=True)
+@pytest.mark.parametrize("continued", [False, True])
+@pytest.mark.host_systemd
+def test_consumed_continuation_survives_policy_drift_since_offer(review_candidate, continued):
+    """A re-bound continuation ran under today's policy, not its offer's digest."""
+    value = review_candidate
+    value["policy"]["reviewer_quota"] = 9
+    if continued:
+        value["status"]["continuation_consumed"] = "c" * 40
+        value["status_path"].write_text(json.dumps(value["status"]))
+
+    assert candidate_allowed(value) is continued
+
+
+@pytest.mark.parametrize("source", ["https"], indirect=True)
 @pytest.mark.parametrize(
     "mutation",
     [
