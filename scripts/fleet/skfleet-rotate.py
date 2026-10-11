@@ -8272,6 +8272,18 @@ if (
                 _superseded.get("reason", "")))
     except Exception as _exc:  # noqa: BLE001 - recovery must never stop a cycle
         log(d, "REVIEW_GENERATION_RECOVERY_FAILED|%s|%s" % (HOST, str(_exc)[:160]))
+# Demoted claims, authority-only: skcoord keeps an agent's bumped current task
+# claimed while demoting it to ready, and the pool treats it as claimed forever
+# (84 ready cards on chi, 2026-10-11). Release idle ones through the audited CLI.
+if not DRY and PRODUCTION_POLICY and _is_niobe_builder_host(HOST):
+    try:
+        from skcapstone.fleet.demoted_claims import release_demoted_claims
+
+        for _released in release_demoted_claims(Path(HOME) / ".skcapstone"):
+            log(d, "DEMOTED_CLAIM_RELEASED|%s|%s|owner=%s|state=%s" % (
+                HOST, _released["card"], _released["owner"], _released["state"]))
+    except Exception as _exc:  # noqa: BLE001 - a sweep must never stop a cycle
+        log(d, "DEMOTED_CLAIM_RELEASE_FAILED|%s|%s" % (HOST, str(_exc)[:160]))
 try:
     _builder_held_ids = builder_dispatch.held_card_ids(default_fleet_paths())
 except (builder_dispatch.BuilderDispatchError, OSError) as _exc:
