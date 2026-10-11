@@ -417,3 +417,23 @@ def test_pool_and_immediate_preclaim_use_the_same_affinity_predicate() -> None:
     claim = source.index('claim=subprocess.run([SKC,"coord","claim"')
     assert health_check < claim
     assert "SKIPPED_LANE_HEALTH|" in source[health_check:claim]
+
+
+def test_production_pin_to_a_disabled_family_falls_back_to_ordinary_lanes() -> None:
+    """Same rule as production route resolution: a dead pin never strands a card."""
+    namespace = _load_lane_helpers()
+    namespace["PRODUCTION_POLICY"] = {
+        "lanes": {
+            "codex": {"enabled": False},
+            "glm": {"enabled": True},
+            "deepseek": {"enabled": True},
+            "kimi": {"enabled": False},
+        }
+    }
+    compatible, reason = namespace["lane_compatibility"](["codex-only", "sk-m"], False)
+    assert reason == "ordinary" and "glm" in compatible
+    assert namespace["lane_compatibility"](["glm-only"], False) == (("glm",), "required-lane:glm")
+    assert namespace["lane_compatibility"](["kimi-only"], False) == (
+        ("kimi",),
+        "required-lane:kimi",
+    )
