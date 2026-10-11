@@ -1,0 +1,1 @@
+- Add an explicit, operator-attributed `coord acceptance-reseal` checkpoint for a source PASS that landed at acceptance step 08 before stale PR or commit bindings prevented its acknowledgement. Validate exact history and evidence, preserve the original journal, and continue steps 09 onward without repeating PASS or review completion. Ordinary guarded replay remains strict.

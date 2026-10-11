@@ -249,9 +249,22 @@ def _historical_acceptance(home, context, historical, inspect):
 
 def finish_pair(home, directory, context, *, guard, command=native_command, inspect=native_state):
     """Finish an exact tested pair idempotently, recovering even lost CLI replies."""
+    from .acceptance_reseal import acceptance_lock
+
+    with acceptance_lock(directory):
+        return _finish_pair(
+            home, directory, context, guard=guard, command=command, inspect=inspect
+        )
+
+
+def _finish_pair(home, directory, context, *, guard, command, inspect):
+    """Run the existing journal, or an explicitly authenticated step-08 checkpoint."""
+    from .acceptance_reseal import checkpoint
     from .production_tests import validate_test_receipt
 
     directory = Path(directory)
+    recovery = checkpoint(home, directory, context)
+    journal = directory / "resealed" if recovery else directory
     artifacts(context)
     finished = directory / "finished.json"
     historical = read_json(finished) if finished.exists() else None
@@ -310,10 +323,14 @@ def finish_pair(home, directory, context, *, guard, command=native_command, insp
             raise ReviewEvidenceError("historical acceptance intent changed")
     else:
         once(intent, binding)
-    expected = initial
+    if recovery:
+        binding = dict(binding, reseal_sha256=_digest(recovery))
+    expected = recovery["after"] if recovery else initial
     for index, (role, action, key, value) in enumerate(
         steps(context, acceptance, source_claim_current=source_claim_current)
     ):
+        if recovery and index < 9:
+            continue
         item = context[role]
         other = "review" if role == "source" else "source"
         request = {
@@ -328,8 +345,8 @@ def finish_pair(home, directory, context, *, guard, command=native_command, insp
             "owner": item["owner"],
             "claim": item["claim"] if role != "source" or source_claim_current else None,
         }
-        step_path = directory / ("step-%02d.intent.json" % index)
-        ack_path = directory / ("step-%02d.ack.json" % index)
+        step_path = journal / ("step-%02d.intent.json" % index)
+        ack_path = journal / ("step-%02d.ack.json" % index)
         if step_path.exists():
             step = read_json(step_path)
             if any(step.get(name) != val for name, val in request.items()):
@@ -366,6 +383,8 @@ def finish_pair(home, directory, context, *, guard, command=native_command, insp
         if historical:
             raise ReviewEvidenceError("acceptance acknowledgement missing")
         guard()
+        if recovery:
+            checkpoint(home, directory, context)
         artifacts(context)
         if (
             validate_test_receipt(home, context["test_binding"], Path(context["source_workspace"]))
@@ -419,6 +438,8 @@ def finish_pair(home, directory, context, *, guard, command=native_command, insp
         inspect(home, context[name]["card"])["revision"] != expected[name] for name in expected
     ):
         raise ReviewEvidenceError("completed native pair changed")
+    if recovery:
+        checkpoint(home, directory, context)
     result = {
         "schema": "skfleet.source-review-acceptance/v1",
         "controller": context["controller"],
