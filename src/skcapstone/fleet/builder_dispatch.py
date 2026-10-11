@@ -700,6 +700,7 @@ POLICY_REFUSED_BEFORE_CLAIM = "production request policy or host changed"
 # at the authorized base produced nothing reviewable. Its claim is released so
 # the card gets a fresh generation instead of awaiting evidence forever.
 EXITED_WITHOUT_OUTCOME = "worker exited without outcome; clean base released"
+AUTHORITY_RELEASED = "claim released by authority before evidence"
 
 
 def _unclaimed_expired_offer(request: dict, status: dict) -> bool:
@@ -707,10 +708,14 @@ def _unclaimed_expired_offer(request: dict, status: dict) -> bool:
     if (
         status.get("request_id") == request.get("request_id")
         and status.get("state") == "blocked"
-        and status.get("error") == EXITED_WITHOUT_OUTCOME
+        and status.get("error") in {EXITED_WITHOUT_OUTCOME, AUTHORITY_RELEASED}
         and status.get("claim_released") is True
     ):
-        # The node released the claim after proving nothing was produced.
+        # The node released the claim after proving nothing was produced, or
+        # the authority released it and the card went back to the queue. That
+        # closed generation used to block every new offer for the card while
+        # still counting as held (chi, 2026-10-11: eight cards, including
+        # 38119435, c33a1004 and e75915f5, idle for hours).
         return True
     if (
         status.get("request_id") != request.get("request_id")
@@ -1120,7 +1125,7 @@ def _reconcile_running(
             **common,
             exit_code=exit_code,
             claim_released=True,
-            error="claim released by authority before evidence",
+            error=AUTHORITY_RELEASED,
         )
     elif status.get("production") is not None:
         from .builder_continue import original_outcome_pending
