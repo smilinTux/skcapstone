@@ -67,11 +67,30 @@ def record_success_mutation(tmp_path, module, args):
 )
 def test_next_cycle_release_requires_negative_proof_and_fresh_fence(tmp_path, monkeypatch, fault):
     tree = ast.parse((ROOT / "scripts/fleet/skfleet-rotate.py").read_text())
-    names = {"_startup_release_ready", "_release_failed_startups", "_worker_unit_name"}
+    names = {
+        "_startup_release_ready",
+        "_release_failed_startups",
+        "_worker_unit_name",
+        "_worker_card_token",
+    }
     nodes = [
         node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names
     ]
     import re
+
+    constants = {
+        "_WORKER_UNIT_RE",
+        "_WORKER_CARD_RE",
+        "_WORKER_CARD_RE_HEX8",
+        "_WORKER_CARD_MAX",
+        "_WORKER_LANES",
+    }
+    assignments = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id in constants for target in node.targets)
+    ]
 
     calls = []
     claim = ["worker", 123, "rev-1"]
@@ -161,7 +180,14 @@ def test_next_cycle_release_requires_negative_proof_and_fresh_fence(tmp_path, mo
         d="unused",
         log=lambda *args: None,
     )
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), "startup-release", "exec"), namespace)
+    exec(
+        compile(
+            ast.Module(body=assignments + nodes, type_ignores=[]),
+            "startup-release",
+            "exec",
+        ),
+        namespace,
+    )
     directory = tmp_path / "worker-startup"
     directory.mkdir()
     (directory / "report.json").write_text(json.dumps(report))

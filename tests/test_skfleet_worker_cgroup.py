@@ -14,22 +14,30 @@ ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 
 def _load(*names: str) -> dict[str, object]:
     tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
+    # Pull in helper dependencies referenced by the requested functions.
+    wanted_names = set(names) | {"_worker_card_token"}
     nodes = {
         node.name: node
         for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name in names
+        if isinstance(node, ast.FunctionDef) and node.name in wanted_names
     }
-    assert set(nodes) == set(names)
-    namespace: dict[str, object] = {
-        "_WORKER_UNIT_RE": re.compile(
-            r"^skfleet-worker-(codex|glm|qwen|escalate)-([0-9a-f]{8})\.service$"
-        ),
-        "re": re,
+    assert wanted_names <= set(nodes), sorted(wanted_names - set(nodes))
+    wanted = {
+        "_WORKER_UNIT_RE",
+        "_WORKER_CARD_RE",
+        "_WORKER_CARD_RE_HEX8",
+        "_WORKER_CARD_MAX",
+        "_WORKER_LANES",
     }
-    exec(
-        compile(ast.Module([nodes[name] for name in names], []), str(ROTATE), "exec"),
-        namespace,
-    )
+    assignments = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id in wanted for target in node.targets)
+    ]
+    namespace: dict[str, object] = {"re": re}
+    module = ast.Module(assignments + [nodes[name] for name in sorted(wanted_names)], [])
+    exec(compile(module, str(ROTATE), "exec"), namespace)
     return namespace
 
 
@@ -64,7 +72,14 @@ def test_worker_unit_identity_rejects_unbounded_values(lane: str, card: str) -> 
         function(lane, card)
 
 
-def test_invalid_legacy_id_does_not_block_valid_subsequent_unit() -> None:
+@pytest.mark.parametrize("card", ["a" * 65, "5a71c2dd-", "-5a71c2dd", "5a71--c2dd"])
+def test_overlong_or_malformed_ids_fail_closed(card: str) -> None:
+    function = _load("_worker_unit_name")["_worker_unit_name"]
+    with pytest.raises(ValueError, match="invalid worker unit identity"):
+        function("codex", card)
+
+
+def test_suffixed_canonical_id_does_not_block_valid_subsequent_unit() -> None:
     make = _load("_worker_unit_name")["_worker_unit_name"]
     launched = []
     for card_id in ("a8100002-1", "5a71c2dd"):
@@ -74,7 +89,10 @@ def test_invalid_legacy_id_does_not_block_valid_subsequent_unit() -> None:
             continue
         launched.append((card_id, unit))
 
-    assert launched == [("5a71c2dd", "skfleet-worker-codex-5a71c2dd.service")]
+    assert launched == [
+        ("a8100002-1", "skfleet-worker-codex-a8100002-1.service"),
+        ("5a71c2dd", "skfleet-worker-codex-5a71c2dd.service"),
+    ]
 
 
 def test_unit_identity_skip_precedes_workspace_and_claim() -> None:

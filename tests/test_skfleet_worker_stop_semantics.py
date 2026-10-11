@@ -6,7 +6,7 @@ performing any live service action. The proof is static and deterministic:
 
 1. Every launch goes through _worker_launch_command, so one worker IS one
    transient user service unit whose name pins the lane and the exact
-   8-hex card generation.
+   bounded canonical card ID.
 2. Each worker unit carries KillMode=control-group on itself, so systemd stops
    the worker's whole descendant subtree when that exact unit stops, while
    sibling units are untouched because they are separate cgroups under the
@@ -37,22 +37,30 @@ LANES = ("codex", "glm", "qwen", "escalate")
 
 def _functions(*names: str) -> dict[str, object]:
     tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
+    # Pull in helper dependencies referenced by the requested functions.
+    wanted_names = set(names) | {"_worker_card_token"}
     nodes = {
         node.name: node
         for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name in names
+        if isinstance(node, ast.FunctionDef) and node.name in wanted_names
     }
-    assert set(nodes) == set(names), f"missing functions: {set(names) - set(nodes)}"
-    namespace: dict[str, object] = {
-        "_WORKER_UNIT_RE": re.compile(
-            r"^skfleet-worker-(codex|glm|qwen|escalate)-([0-9a-f]{8})\.service$"
-        ),
-        "re": re,
+    assert wanted_names <= set(nodes), sorted(wanted_names - set(nodes))
+    wanted = {
+        "_WORKER_UNIT_RE",
+        "_WORKER_CARD_RE",
+        "_WORKER_CARD_RE_HEX8",
+        "_WORKER_CARD_MAX",
+        "_WORKER_LANES",
     }
-    exec(
-        compile(ast.Module([nodes[name] for name in names], []), str(ROTATE), "exec"),
-        namespace,
-    )
+    assignments = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id in wanted for target in node.targets)
+    ]
+    namespace: dict[str, object] = {"re": re}
+    module = ast.Module(assignments + [nodes[name] for name in sorted(wanted_names)], [])
+    exec(compile(module, str(ROTATE), "exec"), namespace)
     return namespace
 
 
@@ -76,16 +84,16 @@ def test_every_worker_is_one_exact_card_pinned_unit() -> None:
 
 
 def test_worker_unit_owner_cannot_be_widened() -> None:
-    """The exact-generation identity is enforced, not assumed."""
+    """The bounded-canonical identity is enforced, not assumed."""
     functions = _functions("_worker_unit_name")
     make = functions["_worker_unit_name"]
 
     with pytest.raises(ValueError):
-        make("glm", "280e3c1")  # 7 hex: short generation
-    with pytest.raises(ValueError):
-        make("glm", "280e3c166")  # 9 hex: extended generation
+        make("glm", "280e3c1")  # 7 chars: below the bounded floor
     with pytest.raises(ValueError):
         make("glm", "280e3c16.service")  # unit smuggling into the card field
+    with pytest.raises(ValueError):
+        make("glm", "2" * 65)  # overlong: above the bounded ceiling
     with pytest.raises(ValueError):
         make("all-lanes", "280e3c16")  # wildcard lane
 
@@ -127,7 +135,7 @@ def test_launcher_issues_no_stop_against_other_workers() -> None:
 
 
 def test_worker_scope_is_lane_and_generation_only() -> None:
-    """Unit discovery matches exactly one lane and one 8-hex generation."""
+    """Unit discovery matches exactly one lane and one bounded card ID."""
     functions = _functions("_parse_worker_units")
     parse = functions["_parse_worker_units"]
 
@@ -137,19 +145,21 @@ def test_worker_scope_is_lane_and_generation_only() -> None:
             "  skfleet-worker-glm-3b227de2.service loaded active running worker",
             "  skfleet-worker-codex-280e3c16.service loaded active running worker",
             "  skfleet-rotate.service loaded active running rotation",
-            "  skfleet-worker-glm-280e3c166.service loaded active running other",
+            "  skfleet-worker-glm-a8100002-1.service loaded active running worker",
+            "  skfleet-worker-glm-bad--id1.service loaded active running other",
             "  skfleet-worker-all-280e3c16.service loaded active running other",
         ]
     )
     units = parse(output)
     names = sorted(unit["unit"] for unit in units)
 
-    # Only exact lane-plus-generation units are recognized; the rotation unit,
-    # overlong generations, and wildcard lanes never enter the managed set.
+    # Only exact lane-plus-card units are recognized; malformed IDs, the
+    # rotation unit, and wildcard lanes never enter the managed set.
     assert names == [
         "skfleet-worker-codex-280e3c16.service",
         "skfleet-worker-glm-280e3c16.service",
         "skfleet-worker-glm-3b227de2.service",
+        "skfleet-worker-glm-a8100002-1.service",
     ]
 
 

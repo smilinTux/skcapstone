@@ -531,18 +531,60 @@ run_production_cycle(agent=_dispatch_writer())
 
 def sh(*a): return subprocess.run(a,capture_output=True,text=True).stdout
 
+_WORKER_LANES = frozenset({"codex", "glm", "qwen", "kimi", "escalate"})
+
+# One bounded, reversible worker-unit encoding for canonical CardStore IDs.
+# Legacy eight-hex IDs keep their historical service names verbatim, so an
+# in-flight generation survives the upgrade. Every other admitted canonical ID
+# (for example the suffixed ``a8100002-1`` that crashed the fan-out) is embedded
+# directly: systemd unit names accept ``[a-z0-9-]`` and the lane prefix is drawn
+# from a closed set, so splitting the service name on the first ``-`` restores
+# the exact original card ID without collisions or ambiguous truncation.
 _WORKER_UNIT_RE = re.compile(
-    r"^skfleet-worker-(codex|glm|qwen|kimi|escalate)-([0-9a-f]{8})\.service$"
+    r"^skfleet-worker-(codex|glm|qwen|kimi|escalate)-"
+    r"([0-9a-f]{8}|[a-z0-9]+(?:-[a-z0-9]+)+)\.service$"
 )
+_WORKER_CARD_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+_WORKER_CARD_RE_HEX8 = re.compile(r"[0-9a-f]{8}")
+_WORKER_CARD_MAX = 64
+
+
+def _worker_card_token(cid):
+    """Return the reversible unit-name token for one bounded canonical card.
+
+    The exact canonical CardStore ID is returned verbatim: its grammar
+    (lowercase ``[a-z0-9]`` groups joined by single ``-``) already fits inside
+    a systemd unit name, so no lossy truncation is needed. Legacy eight-hex
+    IDs therefore keep their historical spelling. Any value that is not a
+    bounded canonical CardStore ID raises ValueError so a caller can fail
+    closed per card without aborting the rest of the fan-out.
+    """
+    if not isinstance(cid, str) or not 8 <= len(cid) <= _WORKER_CARD_MAX:
+        raise ValueError("invalid worker unit identity")
+    # A bare run of alphanumerics is only a card ID when it is the historical
+    # eight-hex generation token; every other admitted canonical ID is
+    # dash-segmented (for example ``a8100002-1``). This rejects malformed bare
+    # ids such as the nine-hex ``280e3c166`` while keeping legacy names intact.
+    if not _WORKER_CARD_RE.fullmatch(cid):
+        raise ValueError("invalid worker unit identity")
+    if "-" not in cid and not _WORKER_CARD_RE_HEX8.fullmatch(cid):
+        raise ValueError("invalid worker unit identity")
+    return cid
 
 
 def _worker_unit_name(lane, cid):
-    """Return the transient service name for one newly launched worker."""
-    if lane not in {"codex", "glm", "qwen", "kimi", "escalate"} or not re.fullmatch(
-        r"[0-9a-f]{8}", cid
-    ):
+    """Return the transient service name for one newly launched worker.
+
+    The card identity is embedded via :func:`_worker_card_token` so the mapping
+    is reversible: ``_parse_worker_units`` splits the service name on the first
+    ``-`` after the lane prefix and recovers the exact original canonical
+    CardStore ID. Legacy eight-hex IDs keep their historical names unchanged.
+    Any identity that is not a bounded canonical CardStore ID raises ValueError
+    so the caller can skip exactly one card without aborting the fan-out.
+    """
+    if lane not in _WORKER_LANES:
         raise ValueError("invalid worker unit identity")
-    return "skfleet-worker-%s-%s.service" % (lane, cid)
+    return "skfleet-worker-%s-%s.service" % (lane, _worker_card_token(cid))
 
 
 def _parse_worker_units(output):
