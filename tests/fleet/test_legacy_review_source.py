@@ -46,8 +46,9 @@ def binding(tmp_path, monkeypatch):
         candidate_sha256=sha(bundle),
     )
     events = [event]
+    review = SimpleNamespace(id="5678abcd", archived=False, labels=[], meta={}, links={})
     store = SimpleNamespace(
-        fold=lambda cid: source if cid == source_id else None,
+        fold=lambda cid: {source_id: source, review.id: review}.get(cid),
         _read_events=lambda cid: events,
         _legacy_events=lambda cid: [],
     )
@@ -64,6 +65,8 @@ def binding(tmp_path, monkeypatch):
         },
         links={"pr": source.links["pr"]},
     )
+    # The verifier trusts only the fold; mirror the fixture core into it.
+    review.labels, review.meta, review.links = core["labels"], core["meta"], core["links"]
     return tmp_path, core, source, events, receipt, bundle
 
 
@@ -172,3 +175,19 @@ def test_incomplete_or_conflicting_legacy_source_refuses(binding, change):
     elif change == "wrong_producer":
         core["meta"]["producer_identity"] = "other"
     assert not legacy.verified_legacy_review_source(home, core, "jarvis")
+
+
+def test_raw_core_json_without_labels_uses_the_fold(binding):
+    """Rotate passes cards/<id>/core.json: initial_labels, no labels, no links."""
+    home, core, *_ = binding
+    raw = {
+        "id": core["id"],
+        "initial_labels": ["review"],
+        "meta": {"producer_identity": "jarvis"},
+    }
+    assert legacy.verified_legacy_review_source(home, raw, "jarvis")
+
+
+def test_unfolded_review_card_refuses(binding):
+    home, core, *_ = binding
+    assert not legacy.verified_legacy_review_source(home, dict(core, id="0000dead"), "jarvis")
