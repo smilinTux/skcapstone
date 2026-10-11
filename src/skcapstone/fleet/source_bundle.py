@@ -51,7 +51,21 @@ def _root(home: Path, card: str) -> Path:
 def _once(path: Path, raw: bytes) -> None:
     """Publish complete immutable bytes by exclusive link, preserving retries."""
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if path.parent.resolve() != path.parent or path.parent.stat().st_mode & 0o022:
+    parent = path.parent
+    info = parent.lstat()
+    if (
+        parent.resolve() == parent
+        and stat.S_ISDIR(info.st_mode)
+        and info.st_uid == os.getuid()
+        and info.st_mode & 0o022
+    ):
+        # Our own evidence directory, created group-writable by an older umask
+        # or Syncthing: narrow it rather than refuse. 3784 of 4265 card
+        # evidence directories on chi were 0775, so the authority refused
+        # every candidate whose evidence lives there (8c4a9e21, 2026-10-11).
+        # Only ever removes write bits; a directory we do not own stays refused.
+        os.chmod(parent, stat.S_IMODE(info.st_mode) & ~0o022)
+    if parent.resolve() != parent or parent.stat().st_mode & 0o022:
         raise SourceBundleError("source artifact directory is unsafe")
     fd, temporary = tempfile.mkstemp(prefix=".source-", dir=path.parent)
     try:
