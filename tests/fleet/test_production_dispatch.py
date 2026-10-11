@@ -648,3 +648,55 @@ def test_enabled_pin_and_conflicting_or_kimi_pins_are_still_refused_or_honored()
         resolve_production_routes(routes, policy=value, required_size="M", labels=["kimi-only"])
         == []
     )
+
+
+@pytest.mark.parametrize("verified", [True, False])
+def test_actual_capacity_gate_requires_checked_legacy_source(tmp_path, monkeypatch, verified):
+    from skcapstone.fleet import legacy_review_source
+
+    core = {"id": "1234abcd"}
+    observed = []
+
+    def verify(home, source, producer):
+        observed.append((home, source, producer))
+        return verified
+
+    monkeypatch.setattr(legacy_review_source, "verified_legacy_review_source", verify)
+    rows = [
+        {
+            "logical_route": "deepseek-test",
+            "model_or_bucket": "deepseek-test",
+            "capacity_domain": "deepseek",
+            "provider": "deepseek",
+            "free": 2,
+        }
+    ]
+    ns = helpers("evaluate_review_capacity", policy_value=policy())
+    ns.update(
+        {
+            "HOME": str(tmp_path),
+            "Path": Path,
+            "_evaluate_review_capacity": lambda *a, **kw: {"reason": "eligible", "routes": rows},
+            "aggregate_review_capacity": aggregate_review_capacity,
+            "independent_review_routes": independent_review_routes,
+        }
+    )
+    result = ns["evaluate_review_capacity"](
+        {}, "M", ["review", "review-distinct-agent"], "jarvis", "reviewer", source_core=core
+    )
+    assert observed == [(tmp_path / ".skcapstone", core, "jarvis")]
+    assert result["routes"] == (rows if verified else [])
+    assert result["reason"] == ("eligible" if verified else "source-provider-evidence-required")
+
+
+def test_all_rotate_capacity_checks_supply_the_current_review_core():
+    tree = ast.parse(ROTATE.read_text())
+    calls = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "evaluate_review_capacity"
+    ]
+    assert len(calls) == 3
+    assert all(any(k.arg == "source_core" for k in call.keywords) for call in calls)
