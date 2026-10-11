@@ -266,7 +266,7 @@ def test_herdr_unavailable_timeout_or_malformed_fails_closed(monkeypatch, failur
     assert monitor.join_herdr_evidence([stale_projection(monitor)])[0].projection_state == "stale"
 
 
-def run_report(monkeypatch, tmp_path, capsys, monitor, rows, samples=None, now=100):
+def run_report(monkeypatch, tmp_path, capsys, monitor, rows, samples=None, now=100, details=True):
     """Render a report using only supplied evidence and an in-memory cache."""
     saved = {}
     monkeypatch.setattr(monitor, "HOSTS", ("host-a", "host-b"))
@@ -277,7 +277,7 @@ def run_report(monkeypatch, tmp_path, capsys, monitor, rows, samples=None, now=1
     monkeypatch.setattr(monitor, "save_samples", saved.update)
     monkeypatch.setattr(monitor.time, "time", lambda: now)
     monkeypatch.setenv("SKGW_METRICS_DB", str(tmp_path / "absent.db"))
-    result = monitor.main(details=True)
+    result = monitor.main(details=details)
     return result, capsys.readouterr().out, saved
 
 
@@ -387,24 +387,32 @@ def test_main_resets_stale_samples_and_clears_recovery(monkeypatch, tmp_path, ca
 
 
 @pytest.mark.parametrize("process_revision", ["r1", "old", ""])
-@pytest.mark.parametrize("native_builder", [False, True])
+@pytest.mark.parametrize(
+    ("worker_card", "native_builder"),
+    [
+        ("deadbeef", False),
+        ("deadbeef", True),
+        ("a8100007-01", False),
+        ("cb65a43a-1", False),
+    ],
+)
 @pytest.mark.parametrize(
     "has_pi, broken_projection", [(False, False), (False, True), (True, False), (True, True)]
 )
 def test_remote_collector_unit_fallback(
-    monkeypatch, capsys, has_pi, broken_projection, native_builder, process_revision
+    monkeypatch, capsys, has_pi, broken_projection, worker_card, native_builder, process_revision
 ):
     """Execute the real collector against synthetic proc, unit and card state."""
     monitor = load_monitor()
-    unit = "skfleet-worker-codex-deadbeef.service"
+    unit = f"skfleet-worker-codex-{worker_card}.service"
     if native_builder:
         unit = "skfleet-builder-deadbeef-" + "a" * 64 + "-1.service"
-    agent = "pi-codex-host-a-deadbeef"
+    agent = f"pi-codex-host-a-{worker_card}"
     card_store = ModuleType("skcoord.card_store")
 
     def fold(card):
         """Return an exact synthetic claim or the collector's error fallback."""
-        assert card == "deadbeef"
+        assert card == worker_card
         if broken_projection:
             raise ValueError("synthetic invalid projection")
         return SimpleNamespace(
@@ -419,8 +427,9 @@ def test_remote_collector_unit_fallback(
     proc = {
         "/proc/321/comm": "pi\n",
         "/proc/321/environ": (
-            f"SKAGENT={agent}\0SKFLEET_CLAIM_REVISION={process_revision}\0".encode()
-        ),
+            f"SKAGENT={agent}\0SKFLEET_CARD_ID={worker_card}\0"
+            f"SKFLEET_CLAIM_REVISION={process_revision}\0"
+        ).encode(),
         "/proc/321/stat": " ".join(["0"] * 21 + ["1000"]),
         "/proc/uptime": "100 0",
         "/proc/321/cgroup": f"0::/user.slice/{unit}",
@@ -459,6 +468,7 @@ def test_remote_collector_unit_fallback(
     assert len(rows) == 1
     row = rows[0]
     assert row.unit == unit
+    assert row.card == worker_card
     process_claim = (
         "exact" if process_revision == "r1" else "mismatch" if process_revision else "unverified"
     )
@@ -478,7 +488,7 @@ def test_report_separates_legacy_from_current_execution(monkeypatch, tmp_path, c
     """A two-week-old terminal process is not current native worker execution."""
     monitor = load_monitor()
     rows = [
-        worker(monitor, unit="legacy", elapsed=1051200, claim_state="mismatch"),
+        worker(monitor, unit="legacy", tmux=True, elapsed=1051200, claim_state="mismatch"),
         worker(
             monitor,
             card="feedface",
@@ -499,6 +509,19 @@ def test_report_separates_legacy_from_current_execution(monkeypatch, tmp_path, c
     assert "STALE PROJECTION; no process observed; claim=exact" in output
     assert "LEGACY SESSION" in output
     assert "running; output buffered until completion" not in output
+
+
+def test_legacy_without_owner_is_reported_as_orphan_without_details(monkeypatch, tmp_path, capsys):
+    """An unowned legacy row remains visible and alerts in the default report."""
+    monitor = load_monitor()
+    row = worker(monitor, unit="legacy", tmux=False)
+
+    result, output, _ = run_report(monkeypatch, tmp_path, capsys, monitor, [row], details=False)
+
+    assert result == 1
+    assert "ORPHAN" in output
+    assert "ACTION REQUIRED (1)" in output
+    assert "orphan=1" in output
 
 
 def test_native_unit_without_pi_is_not_assumed_dead(monkeypatch, tmp_path, capsys):
@@ -545,9 +568,9 @@ def test_direct_seat_active_requires_exact_process_projection_claim_join(
         heartbeat_at="1970-01-01T00:01:40+00:00",
     )
     result, output, _ = run_report(monkeypatch, tmp_path, capsys, monitor, [mismatched])
-    assert result == 0
+    assert result == 1
     assert "DIRECT SEAT ACTIVE" not in output
-    assert "STALE PROJECTION" in output
+    assert "ORPHAN" in output
 
 
 def test_direct_seat_terminal_process_is_not_active(monkeypatch, tmp_path, capsys):
@@ -563,8 +586,9 @@ def test_direct_seat_terminal_process_is_not_active(monkeypatch, tmp_path, capsy
         heartbeat_at="1970-01-01T00:01:40+00:00",
     )
     result, output, _ = run_report(monkeypatch, tmp_path, capsys, monitor, [row])
-    assert result == 0
+    assert result == 1
     assert "DIRECT SEAT ACTIVE" not in output
+    assert "ORPHAN" in output
 
 
 def test_direct_seat_stale_heartbeat_is_not_active(monkeypatch, tmp_path, capsys):
@@ -579,9 +603,9 @@ def test_direct_seat_stale_heartbeat_is_not_active(monkeypatch, tmp_path, capsys
         process_record="/bounded/record.json",
     )
     result, output, _ = run_report(monkeypatch, tmp_path, capsys, monitor, [row], now=1000)
-    assert result == 0
+    assert result == 1
     assert "DIRECT SEAT ACTIVE" not in output
-    assert "STALE PROJECTION" in output
+    assert "ORPHAN" in output
 
 
 def test_collect_parses_unit_diagnostic_and_ignores_noise(monkeypatch):

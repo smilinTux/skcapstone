@@ -91,7 +91,7 @@ if unit_result.returncode:
 unit_lines=unit_result.stdout.splitlines()
 units={p[0]:p[1:4] for line in unit_lines if len(p:=line.split()) >= 4}
 def unit_card(unit):
-    match=re.fullmatch(r'skfleet-(?:worker-[a-z]+-([0-9a-f]{8})|builder-([0-9a-f]{8})-[0-9a-f]{64}-[0-9]+)\.service',unit)
+    match=re.fullmatch(r'skfleet-(?:worker-[a-z]+-([0-9a-f]{8}(?:-[0-9a-f]+)?)|builder-([0-9a-f]{8})-[0-9a-f]{64}-[0-9]+)\.service',unit)
     return (match.group(1) or match.group(2)) if match else ''
 seen_units=set()
 process_agents=set()
@@ -144,7 +144,7 @@ for raw in glob.glob('/proc/[0-9]*/comm'):
         if direct_record and direct_record[0].get('pid') != pid:
             direct_record=None
         direct=direct_record is not None
-        if not agent.startswith('pi-') or (len(card)!=8 and not direct): continue
+        if not agent.startswith('pi-') or (not re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]+)?',card) and not direct): continue
         if not (agent and card and (agent.endswith('-'+card) or agent == card)) and not direct: continue
         process_agents.add(agent)
         stat=open('/proc/%d/stat'%pid).read().split()
@@ -593,6 +593,10 @@ def main(*, details: bool = False) -> int:
             alerts.append((row, "claim"))
         if row.unit == "legacy" and not row.evidence_source.startswith("direct-seat-record"):
             state = f"LEGACY SESSION; activity unknown; claim={row.claim_state}; card={row.card_status}"
+        orphan = row.unit == "legacy" and not row.tmux and not direct_active
+        if orphan:
+            state = "ORPHAN; no tmux owner or active direct-seat record"
+            alerts.append((row, "orphan"))
         if (
             row in worker_rows
             and row.unit != "legacy"
@@ -604,7 +608,7 @@ def main(*, details: bool = False) -> int:
         elapsed = "-" if row.unit_missing_process else duration(row.elapsed)
         if row.unit_missing_process:
             state += "; diagnostic unit without Pi process"
-        if not details and (row.unit == "legacy" or row.pid == 0):
+        if not details and not orphan and (row.unit == "legacy" or row.pid == 0):
             continue
         detail = (
             f"; unit={row.unit}; state={row.unit_load}/{row.unit_active}/{row.unit_sub}; "
