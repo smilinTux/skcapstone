@@ -85,7 +85,6 @@ def recipe_checks(recipe: dict) -> list[dict]:
                     "-m",
                     "not host_systemd",
                     "--junitxml=/output/pytest.xml",
-                    ".",
                 ],
             }
         ]
