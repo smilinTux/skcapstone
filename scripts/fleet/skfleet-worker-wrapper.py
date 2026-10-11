@@ -203,6 +203,17 @@ def review_supersession(args: argparse.Namespace) -> dict[str, str] | None:
     source = CardStore(Path.home() / ".skcapstone").fold(source_card) if source_card else None
     current_head = ""
     if source is not None:
+        # A production source names its candidate on its typed verdict event;
+        # its legacy commit/head links can be stale from older work. Reading
+        # only the links killed d60f8598's reviewer as "superseded" (link
+        # commit 3b7470c8 vs the actual candidate e54dfb10, 2026-10-11).
+        for event in reversed(CardStore(Path.home() / ".skcapstone")._read_events(source_card)):
+            if event.get("action") == "verdict":
+                value = str(event.get("candidate_commit") or "").strip().lower()
+                if re.fullmatch(r"[0-9a-f]{40}", value):
+                    current_head = value
+                break
+    if source is not None and not current_head:
         for key in ("candidate", "commit", "head"):
             value = str(source.links.get(key) or "").strip().lower()
             if re.fullmatch(r"[0-9a-f]{40}", value):
