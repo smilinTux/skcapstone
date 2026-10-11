@@ -1,6 +1,6 @@
 # Unacknowledged review admission retirement
 
-Base: origin/main at 12a9d8d64992dbb4f86cc842194ebd1943f86f1e.
+Base: origin/main at 5a1dd3777d221351b765a6b6d1bf7e7bc2841555, after PR 1129 merged.
 Branch: fix/review-admission-pending-retirement.
 
 The authority recovery sweep previously sent admission-pending statuses to
@@ -51,7 +51,7 @@ python -m pytest tests/fleet/test_review_admission_retire.py -q
 18 failed: retire_prestart() did not accept status_sha256
 ```
 
-Final run:
+Original draft run:
 
 ```text
 python -m pytest tests/fleet/test_review_retire.py tests/fleet/test_review_admission_retire.py tests/fleet/test_review_generation_recovery.py tests/fleet/test_remote_review_dispatch.py tests/fleet/test_remote_review_execution.py tests/fleet/test_remote_review_policy.py -q
@@ -89,3 +89,26 @@ The new release-path and heartbeat refusal tests ran red before implementation:
 future heartbeat. Proof failures, changed claims and failed release readback
 leave retirement pointers intact; fresh released cards are not moved either.
 The pending branch is handled before the running-only failed-run filter.
+
+## Final validation after PR 1129
+
+Rebased after PR 1129 merged at 2026-10-11T20:36:24Z. Resolved the shared
+state-filter conflict by placing admission-pending recovery before the
+state != running filter. PR 1129's failed-run regression test remains unchanged.
+
+```text
+python -m pytest tests/fleet/test_review_retire.py tests/fleet/test_review_admission_retire.py tests/fleet/test_review_pending_recovery.py tests/fleet/test_review_generation_recovery.py tests/fleet/test_remote_review_dispatch.py tests/fleet/test_remote_review_execution.py tests/fleet/test_remote_review_policy.py tests/fleet/test_production_builder.py -q
+221 passed in 65.68s
+python -m ruff check src/skcapstone/fleet/review_retire.py src/skcapstone/fleet/review_pending.py tests/fleet/test_review_pending_recovery.py tests/fleet/test_review_admission_retire.py
+All checks passed!
+python -m black --check src/skcapstone/fleet/review_retire.py src/skcapstone/fleet/review_pending.py tests/fleet/test_review_pending_recovery.py tests/fleet/test_review_admission_retire.py
+4 files would be left unchanged.
+git diff --check
+clean
+```
+
+The 19 follow-up tests cover release-then-retire, no release before proof,
+fresh/invalid/missing/future heartbeat refusals, the exact 30-minute boundary,
+check-only preflight enforcement, failed release readback, and protection of
+released backlog cards from premature moves. No production recovery or deploy
+was run. The force-with-lease push applies only to this PR's own rebased branch.
