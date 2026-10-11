@@ -785,7 +785,16 @@ def reconcile(home, policy, *, process_check):
                 if context_path.exists()
                 else collect(home, policy, card, claim, process_check=process_check)
             )
-            _sealed_context_policy(home, context, policy)
+            # The sealed review receipt is replayed before finishing starts.
+            # Once finish-intent.json exists, finish_pair itself has written
+            # the source completion links (verdict PASS among them), so a replay
+            # that requires the producer's PASS_FOR_REVIEW to be the latest
+            # outcome can never pass again and an interrupted finish was stuck
+            # forever (190a597a, 569f0f50, 5b33409b, 7907fdaf on chi,
+            # 2026-10-11). The resumed finish keeps its own per-step journal
+            # and guards.
+            if not (directory / "finish-intent.json").exists():
+                _sealed_context_policy(home, context, policy)
 
             def guard():
                 return terminal_guard(home, context, process_check)
