@@ -172,7 +172,9 @@ assert.equal(t.state.terminal.http_status,{status});
 
 
 @pytest.mark.parametrize(
-    "payload", ["not json", '{"error":{"type":"other_failure"}}', "x" * 70000]
+    "payload",
+    ["not json", '{"error":{"type":"other_failure"}}', "x" * 70000],
+    ids=["not-json", "other-failure", "oversized"],
 )
 def test_unrelated_or_malformed_503_does_not_retry(payload):
     node_check(f"""
