@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -378,6 +379,9 @@ def retired_offers(home: Path, card: str, events: list[dict]) -> set[str]:
                 try:
                     pending_raw = _raw(receipt.parent / "status.json")
                     pending_status = json.loads(pending_raw)
+                    review_pending.require_stale(
+                        pending_status, now=datetime.fromisoformat(proof_value["retired_at"])
+                    )
                     pending_proven = (
                         source_bundle._sha(pending_raw) == proof_value.get("status_sha256")
                         and review_pending.status_matches(
@@ -392,7 +396,7 @@ def retired_offers(home: Path, card: str, events: list[dict]) -> set[str]:
                         and review_pending.inactive(proof_value.get("unit_state", {}))
                         and proof_value.get("dispatch_status_absent") is False
                     )
-                except (OSError, ValueError, TypeError):
+                except (OSError, ValueError, TypeError, KeyError):
                     pass
             if retirement_mode == "admission-pending":
                 lifecycle_proven = pending_proven and len(releases) == 1
@@ -791,6 +795,7 @@ def retire_prestart(
     reason: str,
     apply: bool = False,
     status_sha256: str | None = None,
+    check_recovery: bool = False,
 ) -> dict:
     """Archive an unused offer, including a hash-bound unacknowledged admission."""
     home = Path(home)
@@ -822,6 +827,8 @@ def retire_prestart(
         card_mutation_lock(home, card),
     ):
         pending = status_sha256 is not None
+        if check_recovery and (apply or not pending):
+            raise ValueError("admission recovery preflight is check-only")
         if pending and (not SHA.fullmatch(status_sha256) or previous_owner is None):
             raise ValueError("exact pending status and released claim required")
         if os.path.lexists(status_path) and not pending:
@@ -829,6 +836,8 @@ def retire_prestart(
         raw_status = _raw(status_path) if pending else None
         if pending and source_bundle._sha(raw_status) != status_sha256:
             raise ValueError("pending status hash changed")
+        if pending:
+            review_pending.require_stale(json.loads(raw_status))
         raw_request = _raw(request_path)
         if source_bundle._sha(raw_request) != request_sha256:
             raise ValueError("sealed request hash changed")
@@ -917,6 +926,9 @@ def retire_prestart(
                 events, offer_at, str(previous_owner or ""), request_id
             )
         )
+        owned_preflight = bool(
+            check_recovery and current is not None and current.owner is not None
+        )
         if (
             len(offers) != 1
             or offers[0].get("request_sha256") != offer_digest
@@ -929,16 +941,39 @@ def retire_prestart(
                     or (claim_activity and not reviewer_self_release_churn)
                 )
             )
-            or (not unclaimed and not archived_orphaned and len(releases) != 1)
+            or (
+                not unclaimed
+                and not archived_orphaned
+                and not owned_preflight
+                and len(releases) != 1
+            )
+            or (owned_preflight and releases)
         ):
             raise ValueError("exact release and unused offer proof required")
+        readiness = current
+        if check_recovery:
+            if current is None:
+                raise ValueError("review recovery card missing")
+            column = getattr(current.status, "value", current.status)
+            if owned_preflight:
+                if (
+                    current.owner != previous_owner
+                    or current.meta.get("_claim_revision") != previous_claim_revision
+                    or column not in {"doing", "review"}
+                ):
+                    raise ValueError("owned review claim changed")
+            elif current.meta.get("_claim_revision") or column not in {"backlog", "review"}:
+                raise ValueError("released review card changed")
+            readiness = copy.copy(current)
+            readiness.owner = None
+            readiness.status = "review"
         if (
             current is None
             or (current.archived and not archived_orphaned)
-            or current.owner is not None
+            or (not owned_preflight and current.owner is not None)
             or current.meta.get("claim_conflicts")
-            or (pending and current.meta.get("_claim_revision"))
-            or not governed_review_assignment_ready(current)
+            or (pending and not owned_preflight and current.meta.get("_claim_revision"))
+            or not governed_review_assignment_ready(readiness)
             or review_state_revision(current) != card_sha256
             or {"hold", "human-gate", "do-not-claim"}.intersection(current.labels)
         ):
@@ -1376,9 +1411,9 @@ def recover_failed_generations(paths, home: Path, *, actor: str = "niobe") -> li
     claim released (abandon reason "error"), and retire(apply=True) runs every
     one of its own checks again, including proven unit death. A refusal after
     the release leaves the card unclaimed and is retried on the next cycle.
-    Unacknowledged admission-pending generations instead require an already
-    released exact claim and all retire_prestart proofs. They never need a
-    worker exit, and this path never releases a still-owned claim.
+    Unacknowledged admissions require a heartbeat at least thirty minutes old
+    and all prestart proofs before releasing the exact claim. Retirement then
+    rechecks those proofs against the released card without requiring an exit.
     """
     from ..coordination import Board
 
@@ -1392,11 +1427,6 @@ def recover_failed_generations(paths, home: Path, *, actor: str = "niobe") -> li
         card = str(status.get("card_id") or "")
         if (
             status.get("work_kind") != "review"
-            # Only running: retire() requires a launched, running generation,
-            # so admitting admission-pending here (#1124) could only release a
-            # claim and then be refused. A launch that died at admission needs
-            # a prestart-style retirement instead.
-            or status.get("state") != "running"
             or status.get("review_packet") is not None
             or status.get("terminal") is not None
             or not CARD.fullmatch(card)
@@ -1404,17 +1434,15 @@ def recover_failed_generations(paths, home: Path, *, actor: str = "niobe") -> li
             continue
         node = status_file.parent.parent.name
         owner, claim = status.get("owner"), status.get("claim_revision")
-        if status.get("state") == "admission-pending" and (
-            isinstance(status.get("execution"), dict)
-            and status["execution"].get("invocation") == ""
-        ):
+        if status.get("state") == "admission-pending":
+            if (
+                not isinstance(status.get("execution"), dict)
+                or status["execution"].get("invocation") != ""
+            ):
+                continue
             try:
                 current = CardStore(home).fold(card)
-                outcome = retire_prestart(
-                    paths,
-                    home,
-                    node,
-                    card,
+                kwargs = dict(
                     request_sha256=source_bundle._sha(
                         _raw(dispatch.request_path(paths, node, card))
                     ),
@@ -1423,14 +1451,53 @@ def recover_failed_generations(paths, home: Path, *, actor: str = "niobe") -> li
                     previous_owner=owner,
                     previous_claim_revision=claim,
                     actor=actor,
-                    reason="automatic: released unacknowledged review admission",
-                    apply=True,
+                    reason="automatic: stale unacknowledged review admission",
                 )
+                retire_prestart(paths, home, node, card, check_recovery=True, **kwargs)
+                if current.owner is not None:
+                    # The native release fences the exact generation. Recheck the
+                    # snapshot and pointers before crossing the mutation boundary.
+                    current = CardStore(home).fold(card)
+                    if (
+                        review_state_revision(current) != kwargs["card_sha256"]
+                        or source_bundle._sha(_raw(status_file)) != kwargs["status_sha256"]
+                        or source_bundle._sha(_raw(dispatch.request_path(paths, node, card)))
+                        != kwargs["request_sha256"]
+                    ):
+                        raise ValueError("pending review changed after release preflight")
+                    Board(home).release_claim(
+                        owner,
+                        card,
+                        actor=owner,
+                        expected_claim_revision=claim,
+                        abandon_reason="error",
+                    )
+                    current = CardStore(home).fold(card)
+                    if current.owner is not None or current.meta.get("_claim_revision"):
+                        raise ValueError("pending claim release readback differs")
+                # Retry after a release/restore interruption without releasing twice.
+                if (
+                    current.owner is None
+                    and getattr(current.status, "value", current.status) == "backlog"
+                    and "review" in current.labels
+                ):
+                    subprocess.run(
+                        [_skcapstone(), "coord", "move", card, "review", "--agent", actor],
+                        capture_output=True,
+                        text=True,
+                        timeout=15,
+                        check=True,
+                    )
+                    current = CardStore(home).fold(card)
+                kwargs["card_sha256"] = review_state_revision(current)
+                outcome = retire_prestart(paths, home, node, card, apply=True, **kwargs)
                 results.append({"card": card, "node": node, "state": outcome["state"]})
             except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
                 results.append(
                     {"card": card, "node": node, "state": "refused", "reason": str(exc)[:160]}
                 )
+            continue
+        if status.get("state") != "running":
             continue
         failed = []
         for path in (home / "evidence/worker-exits").glob(card + "-*.json"):

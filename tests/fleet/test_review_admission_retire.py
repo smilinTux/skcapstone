@@ -74,6 +74,7 @@ def pending(tmp_path, monkeypatch):
         owner=owner,
         claim_revision=claim,
         state="admission-pending",
+        heartbeat_at="2026-01-01T00:00:00Z",
         execution=execution,
         admission=intent,
     )
@@ -94,7 +95,9 @@ def pending(tmp_path, monkeypatch):
             expected_claim_revision=claim,
         ),
     ]
-    current = SimpleNamespace(owner=None, archived=False, meta={}, labels=["review"])
+    current = SimpleNamespace(
+        owner=None, archived=False, meta={}, labels=["review"], status="review"
+    )
     current.model_dump = lambda **kw: core
 
     class Store:
@@ -298,10 +301,10 @@ def test_pending_sweep_retires_released_admission_without_worker_exit(pending):
     assert retire.recover_failed_generations(p.paths, p.home) == []
 
 
-def test_pending_sweep_never_releases_an_owned_claim(pending):
+def test_pending_sweep_never_releases_a_changed_claim(pending):
     p = pending
     p.current.owner = p.owner
-    p.current.meta["_claim_revision"] = p.claim
+    p.current.meta["_claim_revision"] = "4" * 32
     assert retire.recover_failed_generations(p.paths, p.home)[0]["state"] == "refused"
     assert p.current.owner == p.owner
     assert p.request_path.exists() and p.status_path.exists()

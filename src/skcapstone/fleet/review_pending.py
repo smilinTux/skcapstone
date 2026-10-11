@@ -3,6 +3,7 @@
 import re
 import socket
 import subprocess
+from datetime import datetime, timedelta, timezone
 
 from . import production_admission as admission
 from . import production_builder
@@ -96,3 +97,14 @@ def unit_state(unit, host):
     ):
         raise ValueError("pending review reserved unit inactivity unproven")
     return state
+
+
+def require_stale(status: dict, *, now: datetime | None = None) -> None:
+    """Refuse pre-spawn custody younger than thirty minutes or with unknown age."""
+    now = now or datetime.now(timezone.utc)
+    try:
+        heartbeat = datetime.fromisoformat(status["heartbeat_at"].replace("Z", "+00:00"))
+        if heartbeat.tzinfo is None or now - heartbeat < timedelta(minutes=30):
+            raise ValueError("fresh or timezone-free heartbeat")
+    except (KeyError, TypeError, AttributeError, ValueError) as exc:
+        raise ValueError("pending review heartbeat must be at least 30 minutes old") from exc
