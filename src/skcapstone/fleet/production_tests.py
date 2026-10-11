@@ -89,6 +89,17 @@ def validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
         raise TestEvidenceError(str(exc)) from exc
 
 
+def without_account_databases(argv: list[str]) -> list[str]:
+    """The same sandbox as built before #1115 added read-only account files."""
+    from .production_test_worker import _account_databases
+
+    binds = _account_databases()
+    for start in range(len(argv) - len(binds) + 1):
+        if binds and argv[start : start + len(binds)] == binds:
+            return argv[:start] + argv[start + len(binds) :]
+    return argv
+
+
 def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
     """Rehash real output, argv, JUnit, source and independently observed unit exit."""
     plan, plan_path, plan_sha = load_plan(
@@ -158,10 +169,14 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
 
     for check, result in zip(plan["checks"], results):
         actual = sandbox_command(workspace, directory / "output", check["argv"], profile)
+        # A run sealed before the account binds existed ran in a strictly
+        # smaller sandbox and stays valid evidence. Without this, every such
+        # acceptance waited forever on "native command or raw output mismatch"
+        # (chi, 2026-10-11: 7907fdaf, 8f5077b2, a4ed7c20, add19bf8, bb6da93e).
         if (
             result.get("id") != check["id"]
             or result.get("argv") != check["argv"]
-            or result.get("sandbox_argv") != actual
+            or result.get("sandbox_argv") not in (actual, without_account_databases(actual))
             or type(result.get("exit_code")) is not int
             or result.get("exit_code") != 0
             or result.get("output_sha256") != sha(read_private(directory / (check["id"] + ".log")))
