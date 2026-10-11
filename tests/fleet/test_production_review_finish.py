@@ -31,7 +31,12 @@ def test_native_state_reuses_only_current_locked_store(tmp_path, monkeypatch, le
     store.create(CardCore(id=card, title="[M] Source", created_by="producer"))
     store.append_event(card, "claim", "producer", owner="producer")
     overlay, loads, locked = {}, [], []
-    load = cards.load_legacy_mutations
+    loader = (
+        "load_legacy_mutations_cached"
+        if hasattr(cards, "load_legacy_mutations_cached")
+        else "load_legacy_mutations"
+    )
+    load = getattr(cards, loader)
     lock = finish.card_mutation_lock
     read = finish.LiveCardStoreGateway.read_card
 
@@ -52,7 +57,7 @@ def test_native_state_reuses_only_current_locked_store(tmp_path, monkeypatch, le
         assert locked and _store is not None
         return read(self, card_id, _store=_store)
 
-    monkeypatch.setattr(cards, "load_legacy_mutations", load_current)
+    monkeypatch.setattr(cards, loader, load_current)
     monkeypatch.setattr(finish, "card_mutation_lock", tracked_lock)
     monkeypatch.setattr(finish.LiveCardStoreGateway, "read_card", checked_read)
     first = finish.native_state(home, card)
