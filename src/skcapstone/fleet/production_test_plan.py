@@ -395,6 +395,40 @@ def check_binding(binding: dict) -> None:
         raise TestEvidenceError("invalid exact source binding")
 
 
+def effective_profile(plan: dict) -> dict | None:
+    """The sealed profile as executed: a requalification may re-bind the Node runtime.
+
+    Only _validate_plan admits node_environment_refresh, and only as the exact
+    runtime-only refresh of the sealed profile's own environment.
+    """
+    profile = plan.get("profile")
+    refresh = plan.get("node_environment_refresh")
+    if profile is None or refresh is None:
+        return profile
+    return dict(profile, node_environment=refresh)
+
+
+def validate_plan_node_environment(plan: dict, profile: dict) -> None:
+    """Validate the Node runtime a sealed plan executes; recompute any refresh."""
+    from . import production_test_node as node
+    from .production_test_composite import is_composite
+
+    refresh = plan.get("node_environment_refresh")
+    if not (node.is_node(profile) or is_composite(profile)):
+        if refresh is not None:
+            raise TestEvidenceError("operator test plan is invalid or stale")
+        return
+    if refresh is None:
+        node.validate_environment(profile["node_environment"])
+        return
+    # Recompute, never trust: only today's exact runtime-only refresh, and only
+    # on a profile requalification, whose run is the fresh evidence.
+    if plan.get("profile_requalification") is not True or refresh != node.refreshed_runtime(
+        profile["node_environment"]
+    ):
+        raise TestEvidenceError("candidate test profile changed")
+
+
 def approved_checks() -> list[dict]:
     """The initial qualified trial profile has no model-controlled command text."""
     python = str(PREFIX / "bin/python")
@@ -643,6 +677,12 @@ def _seal_plan(
             # ~/.skenv differs, can admit exactly that value and no other.
             if current.get("toolchain_sha256") not in (None, toolchain_fingerprint()):
                 value["legacy_toolchain_sha256"] = current["toolchain_sha256"]
+            if "node_environment" in current:
+                from . import production_test_node as node
+
+                refreshed = node.current_environment(current["node_environment"])
+                if refreshed != current["node_environment"]:
+                    value["node_environment_refresh"] = refreshed
         else:
             expected = dict(expected_profile)
             if "source_sha256" in profile:
@@ -673,7 +713,7 @@ def _seal_plan(
 
         from .production_test_composite import validate_source
 
-        validate_source(profile, workspace)
+        validate_source(effective_profile(value), workspace)
     if (
         not qualified_by
         or not re.fullmatch(r"[0-9a-f]{64}", qualification_sha256)
@@ -802,6 +842,10 @@ def _validate_plan(
         ):
             raise TestEvidenceError("remote initial qualification authority is invalid")
         required.update({"authority_host", "remote_initial_profile_qualification"})
+    if "node_environment_refresh" in plan:
+        if not requalification:
+            raise TestEvidenceError("operator test plan is invalid or stale")
+        required.add("node_environment_refresh")
     if requalification:
         required.update({"profile_requalification", "profile_predecessor_sha256"})
         if "legacy_toolchain_sha256" in plan:
@@ -915,11 +959,8 @@ def _validate_plan(
         ):
             raise TestEvidenceError("candidate test profile changed")
         expected_checks = recipe_checks(profile["recipe"])
-        from . import production_test_node as node
-        from .production_test_composite import is_composite
 
-        if node.is_node(profile) or is_composite(profile):
-            node.validate_environment(profile["node_environment"])
+        validate_plan_node_environment(plan, profile)
     if (
         set(plan) != required
         or plan["schema"]

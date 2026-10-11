@@ -322,13 +322,17 @@ def fingerprint_only_stale(
         if legacy is None or legacy == toolchain or value["toolchain_sha256"] != legacy:
             return False
         if node.is_node(value) or composite.is_composite(value):
-            node.validate_environment(value["node_environment"])
+            node.current_environment(value["node_environment"])
         return True
+    runtime_drift = False
     if node.is_node(value) or composite.is_composite(value):
-        node.validate_environment(value["node_environment"])
-    return value["runtime_sha256"] != plan.runtime_fingerprint() or value[
-        "policy_sha256"
-    ] != plan.execution_policy_fingerprint(policy)
+        environment = node.current_environment(value["node_environment"])
+        runtime_drift = environment != value["node_environment"]
+    return (
+        runtime_drift
+        or value["runtime_sha256"] != plan.runtime_fingerprint()
+        or value["policy_sha256"] != plan.execution_policy_fingerprint(policy)
+    )
 
 
 def legacy_full_qualification_required(value: dict, expected: dict, policy: dict) -> bool:
@@ -344,10 +348,13 @@ def legacy_full_qualification_required(value: dict, expected: dict, policy: dict
         or value["python_sha256"] != plan.sha((plan.PREFIX / "bin/python").read_bytes())
     ):
         return False
+    runtime_drift = False
     if node.is_node(value) or composite.is_composite(value):
-        node.validate_environment(value["node_environment"])
+        environment = node.current_environment(value["node_environment"])
+        runtime_drift = environment != value["node_environment"]
     return (
         legacy_v1
+        or runtime_drift
         or value["runtime_sha256"] != plan.runtime_fingerprint()
         or value["policy_sha256"] != plan.execution_policy_fingerprint(policy)
         or value.get("toolchain_sha256") != plan.toolchain_fingerprint()
@@ -518,9 +525,9 @@ def supersede_profile(
         if node_environment is not None:
             value.update(
                 schema=(
-                    (composite.SCHEMA if "pytest" in recipe else node.SCHEMA)
+                    (composite.SCHEMA if set(recipe) - {"vitest"} else node.SCHEMA)
                     if source_sha256 is not None
-                    else (composite.SCHEMA_V2 if "pytest" in recipe else node.SCHEMA_V2)
+                    else (composite.SCHEMA_V2 if set(recipe) - {"vitest"} else node.SCHEMA_V2)
                 ),
                 node_environment=node_environment,
             )

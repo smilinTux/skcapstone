@@ -220,6 +220,7 @@ def harvest_completed(
                     runtime_sha256=plan.runtime_fingerprint(),
                     source_sha256=job.get("source_sha256"),
                     unclaimed=True,
+                    node_environment=_successor_environment(current),
                 )
                 refreshed_sha = profile.read_profile(home, job["card"])[1]
                 plan.write_once(
@@ -320,6 +321,7 @@ def harvest_completed(
                         runtime_sha256=plan.runtime_fingerprint(),
                         source_sha256=source_sha,
                         unclaimed=True,
+                        node_environment=_successor_environment(current),
                     )
                     refreshed_sha = profile.read_profile(home, candidate_id)[1]
                     plan.write_once(
@@ -418,6 +420,20 @@ def requalify_or_advance(
                     )
                     return "failed:" + str(exc)[:160]
             return "blocked:" + str(exc)[:180]
+
+
+def _successor_environment(value: dict) -> dict | None:
+    """Node environment a successor profile must carry: current, or runtime-refreshed.
+
+    Every supersede here omitted it, so a Node or composite successor failed
+    validation ("test recipe and profile variant disagree") and no Node profile
+    could ever requalify.
+    """
+    if "node_environment" not in value:
+        return None
+    from . import production_test_node as node
+
+    return node.current_environment(value["node_environment"])
 
 
 # A qualification that failed on this exact source will fail again: the SKLegal
@@ -920,6 +936,7 @@ def _advance(home, policy, skc, actor, path, job):
             runtime_sha256=plan.runtime_fingerprint(),
             source_sha256=job["source_sha256"],
             source_claim={"owner": job["owner"], "claim_revision": job["claim_revision"]},
+            node_environment=_successor_environment(value),
         )
     elif not initial_profile and value.get("qualification_sha256") != receipt["receipt_sha256"]:
         raise plan.TestEvidenceError("profile predecessor changed")

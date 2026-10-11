@@ -100,9 +100,11 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
     terminal = read_json(directory / "terminal.json")
     expected = source_state(workspace, binding)
     from . import production_test_composite as composite
+    from .production_test_plan import effective_profile
 
-    if plan.get("profile"):
-        composite.validate_source(plan["profile"], workspace)
+    profile = effective_profile(plan)
+    if profile:
+        composite.validate_source(profile, workspace)
     unit = production_builder.unit_name(launch, 1)
     policy = launch.get("policy", {})
     expected_argv = service_argv(
@@ -155,9 +157,7 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
     from .production_test_worker import sandbox_command
 
     for check, result in zip(plan["checks"], results):
-        actual = sandbox_command(
-            workspace, directory / "output", check["argv"], plan.get("profile")
-        )
+        actual = sandbox_command(workspace, directory / "output", check["argv"], profile)
         if (
             result.get("id") != check["id"]
             or result.get("argv") != check["argv"]
@@ -167,13 +167,9 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
             or result.get("output_sha256") != sha(read_private(directory / (check["id"] + ".log")))
         ):
             raise TestEvidenceError("native command or raw output mismatch")
-    reports = {
-        name: read_private(directory / name)
-        for name in composite.report_names(plan.get("profile"))
-    }
+    reports = {name: read_private(directory / name) for name in composite.report_names(profile)}
     selection = None
 
-    profile = plan.get("profile")
     if composite.python_selection(profile):
         selection_raw = read_private(directory / "selection.json")
         if receipt.get("selection_sha256") != sha(selection_raw):

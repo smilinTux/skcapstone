@@ -199,6 +199,42 @@ def qualified_environment(workspace: Path) -> dict:
     raise plan.TestEvidenceError("no qualified Node dependency artifact matches source")
 
 
+def refreshed_runtime(environment: dict) -> dict | None:
+    """Return the environment re-bound to today's Node binary, if only that changed.
+
+    A fleet-wide Node reinstall (chi, 2026-10-05 and 2026-10-09) changed the
+    binary digest every Node profile pins, so every one failed with
+    "qualified Node environment changed" and none could requalify: the
+    requalification path validated the old environment first. The platform,
+    the source file set and the content-addressed dependency artifact must
+    still validate exactly; only node_sha256 is replaced. Requalification then
+    reruns the tests under the new binary, so the successor is real evidence.
+    """
+    if not isinstance(environment, dict):
+        return None
+    current = _node_digest()
+    if environment.get("node_sha256") in (None, current):
+        return None
+    refreshed = dict(environment, node_sha256=current)
+    try:
+        validate_environment(refreshed)
+    except plan.TestEvidenceError:
+        return None
+    return refreshed
+
+
+def current_environment(environment: dict) -> dict:
+    """The stored environment when valid, else its runtime-only refresh; else raise."""
+    try:
+        validate_environment(environment)
+        return environment
+    except plan.TestEvidenceError:
+        refreshed = refreshed_runtime(environment)
+        if refreshed is None:
+            raise
+        return refreshed
+
+
 def validate_environment(environment: dict, workspace: Path | None = None) -> None:
     """Recheck the pinned runtime/artifact and optional exact candidate configuration."""
     try:
