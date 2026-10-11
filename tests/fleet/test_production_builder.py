@@ -813,3 +813,23 @@ def test_only_a_failed_previous_review_unit_is_reset(monkeypatch, state, reset):
         is reset
     )
     assert calls == ([["systemctl", "--user", "reset-failed", unit]] if reset else [])
+
+
+def test_authority_released_generation_gets_a_fresh_offer(paths, production_setup):
+    """A generation the authority closed must not block the card's next offer."""
+    first = builder.offer(paths, _card(), ["sk-m", "source-only"], writer=production_setup.writer)
+    builder._write_status(
+        paths,
+        first["node"],
+        first,
+        "blocked",
+        owner="source-owner",
+        claim_revision="a" * 32,
+        attempt=1,
+        production=first["production"],
+        claim_released=True,
+        error=builder.AUTHORITY_RELEASED,
+    )
+    second = builder.offer(paths, _card(), ["sk-m", "source-only"], writer=production_setup.writer)
+    assert second is not None
+    assert second["request_id"] != first["request_id"]
