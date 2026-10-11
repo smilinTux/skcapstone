@@ -454,3 +454,56 @@ def test_remote_generation_protects_pending_evidence_without_local_launch_event(
     status["request_id"] = "f" * 64
     sp.write_text(json.dumps(status))
     assert not retains_source_custody(home, CARD, OWNER, CLAIM, fleet_paths=paths)
+
+
+@pytest.mark.parametrize(
+    "continued,provider,retained",
+    [(True, "deepseek", True), (False, "deepseek", False), (True, "zai", False)],
+)
+def test_rebound_continuation_keeps_custody_on_the_same_backend(
+    custody, continued, provider, retained
+):
+    from skcapstone.fleet.production_custody import retains_source_custody
+
+    home, store, event = custody
+    Path(event["route_identity"]["production_snapshot"]["path"]).unlink()
+    request_id = "d" * 64
+    production = {
+        "host": "chiap03",
+        "authority": "chiap08",
+        "policy_sha256": "e" * 64,
+        "model": "offered-model",
+        "gateway_backend": "deepseek",
+    }
+    request = {
+        "schema": "skfleet.builder-dispatch/v1",
+        "card_id": CARD,
+        "node": "node-chiap03",
+        "request_id": request_id,
+        "production": production,
+        **SOURCE,
+    }
+    status = {
+        "schema": "skfleet.builder-dispatch-status/v1",
+        "card_id": CARD,
+        "node": "node-chiap03",
+        "request_id": request_id,
+        "production": production,
+        "owner": OWNER,
+        "claim_revision": CLAIM,
+        "state": "awaiting-review",
+        "attempt": 2,
+        "unit": f"skfleet-builder-{CARD}-{request_id}-2.service",
+        # The continued session launched under today's route (rebind_request).
+        "route_preflight": {"requested_identity": "todays-route", "provider": provider},
+    }
+    if continued:
+        status["continuation_consumed"] = "f" * 64
+    paths = FleetPaths(home / "fleet")
+    rp = paths.root / "dispatch/node-chiap03" / f"{CARD}.json"
+    sp = paths.status_path("node-chiap03", "dispatch", CARD)
+    for path, value in ((rp, request), (sp, status)):
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(value))
+        path.chmod(0o600)
+    assert retains_source_custody(home, CARD, OWNER, CLAIM, fleet_paths=paths) is retained
