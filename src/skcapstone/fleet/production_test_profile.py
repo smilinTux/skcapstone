@@ -136,7 +136,13 @@ def initial_recipe(core: dict, workspace: Path) -> tuple[dict, dict | None]:
             recipe = json.loads(configured, object_pairs_hook=plan._unique_object)
             recipe_checks(recipe)
             environment = None
-            if "vitest" in recipe:
+            if "node_test" in recipe:
+                from . import production_node_test_recipe as native
+                from . import production_test_node as node
+
+                native.validate_source(recipe, workspace)
+                environment = node.qualified_environment(workspace)
+            elif "vitest" in recipe:
                 from . import production_test_node as node
 
                 environment = node.qualified_environment(workspace)
@@ -162,6 +168,19 @@ def initial_recipe(core: dict, workspace: Path) -> tuple[dict, dict | None]:
                 "operator test recipe is invalid: " + str(exc)[:120]
             ) from exc
         return recipe, environment
+
+    if (workspace / "package.json").is_file() and not (workspace / "apps/web").exists():
+        from . import production_node_test_recipe as native
+        from . import production_test_node as node
+
+        tests = sorted(
+            path.relative_to(workspace).as_posix()
+            for path in (workspace / "tests").glob("*.test.mjs")
+        )
+        if tests:
+            recipe = {"node_test": dict.fromkeys(tests, 1)}
+            native.validate_source(recipe, workspace)
+            return recipe, node.qualified_environment(workspace)
 
     if node_scope and python_scope:
         if not (python_project and node_project):
@@ -207,7 +226,7 @@ def profile_value(
     if node_environment is not None:
         value["schema"] = (
             (composite.SCHEMA if source_sha256 is not None else composite.SCHEMA_V2)
-            if set(recipe) - {"vitest"}
+            if set(recipe) - {"vitest", "node_test"}
             else (node.SCHEMA if source_sha256 is not None else node.SCHEMA_V2)
         )
         value.update(
@@ -257,7 +276,7 @@ def _validate_shape(value: dict) -> None:
     ):
         raise plan.TestEvidenceError("qualified test profile is missing, stale or conflicting")
     recipe_checks(value["recipe"])
-    if ("vitest" in value["recipe"]) != node_profile:
+    if bool({"vitest", "node_test"} & value["recipe"].keys()) != node_profile:
         raise plan.TestEvidenceError("test recipe and profile variant disagree")
     if ("vitest" in value["recipe"] and len(value["recipe"]) > 1) != composite.is_composite(value):
         raise plan.TestEvidenceError("test phases and profile variant disagree")
@@ -526,9 +545,13 @@ def supersede_profile(
         if node_environment is not None:
             value.update(
                 schema=(
-                    (composite.SCHEMA if set(recipe) - {"vitest"} else node.SCHEMA)
+                    (composite.SCHEMA if set(recipe) - {"vitest", "node_test"} else node.SCHEMA)
                     if source_sha256 is not None
-                    else (composite.SCHEMA_V2 if set(recipe) - {"vitest"} else node.SCHEMA_V2)
+                    else (
+                        composite.SCHEMA_V2
+                        if set(recipe) - {"vitest", "node_test"}
+                        else node.SCHEMA_V2
+                    )
                 ),
                 node_environment=node_environment,
             )

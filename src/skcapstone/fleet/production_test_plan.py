@@ -89,6 +89,7 @@ HARNESS_MODULES = (
     "production_test_profile.py",
     "production_test_worker.py",
     "production_test_node.py",
+    "production_node_test_recipe.py",
     "production_test_composite.py",
     "production_tests.py",
     "production_admission.py",
