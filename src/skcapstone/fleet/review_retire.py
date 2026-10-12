@@ -16,7 +16,7 @@ from skcoord.card_store import CardStore, card_mutation_lock
 
 from ..seat_runtime import governed_review_assignment_ready, review_state_revision
 from . import builder_dispatch as dispatch
-from . import production_builder, review_pending, source_bundle
+from . import production_builder, review_pending, review_recovery, source_bundle
 from .production_review_custody import unit_terminal
 
 SCHEMA = "skfleet.remote-review-retirement/v1"
@@ -423,6 +423,7 @@ def retired_offers(home: Path, card: str, events: list[dict]) -> set[str]:
                 and lifecycle_proven
                 and event.get("writer") == event.get("actor")
                 and dispatch.valid_name(event.get("actor", ""))
+                and review_recovery.snapshot_proven(receipt, value, archived_request)
                 and value.get("schema") == PRESTART_SCHEMA
                 and value.get("card_id") == card
                 and value.get("request_id") == request_id
@@ -484,6 +485,13 @@ def retired_offers(home: Path, card: str, events: list[dict]) -> set[str]:
                     and exit_value.get("host") == status_value.get("execution", {}).get("host")
                     and type(exit_value.get("child_exit_code")) is int
                     and exit_value.get("child_exit_code") != 0
+                )
+            elif exit_source == "production-review-exit":
+                archived_exit = _raw(receipt.parent / "production-review-exit.json")
+                exit_value = json.loads(archived_exit)
+                status_value = json.loads(archived_status)
+                exit_proven = review_recovery.failed_review_exit(
+                    exit_value, archived_request, status_value
                 )
             elif exit_source == "systemd-terminal":
                 archived_exit = _raw(receipt.parent / "systemd-terminal.json")
@@ -547,6 +555,7 @@ def retired_offers(home: Path, card: str, events: list[dict]) -> set[str]:
             len(offers) == 1
             and event.get("writer") == event.get("actor")
             and dispatch.valid_name(event.get("actor", ""))
+            and review_recovery.snapshot_proven(receipt, value, archived_request)
             and value.get("schema") == SCHEMA
             and value.get("card_id") == card
             and value.get("request_id") == request_id
@@ -796,6 +805,7 @@ def retire_prestart(
     apply: bool = False,
     status_sha256: str | None = None,
     check_recovery: bool = False,
+    superseded: bool = False,
 ) -> dict:
     """Archive an unused offer, including a hash-bound unacknowledged admission."""
     home = Path(home)
@@ -992,22 +1002,23 @@ def retire_prestart(
                 )
             }
         )
-        if criteria != request.get("criteria_sha256"):
+        if not superseded and criteria != request.get("criteria_sha256"):
             raise ValueError("review criteria changed after offer")
         from . import review_dispatch
 
-        try:
-            current_source = review_dispatch._source(home, current)
-        except ValueError as exc:
-            if (
-                not archived_orphaned
-                or str(exc) != "original source custody unavailable"
-                or not _superseded_source_matches(home, current, request)
-            ):
-                raise
-        else:
-            if current_source != request.get("source"):
-                raise ValueError("source changed after offer")
+        if not superseded:
+            try:
+                current_source = review_dispatch._source(home, current)
+            except ValueError as exc:
+                if (
+                    not archived_orphaned
+                    or str(exc) != "original source custody unavailable"
+                    or not _superseded_source_matches(home, current, request)
+                ):
+                    raise
+            else:
+                if current_source != request.get("source"):
+                    raise ValueError("source changed after offer")
         exit_path = (
             (
                 Path(home)
@@ -1017,7 +1028,9 @@ def retire_prestart(
             if previous_claim_revision
             else None
         )
-        if exit_path is not None and exit_path.exists():
+        if pending:
+            review_recovery.acceptance_absent(home, card, previous_claim_revision)
+        if exit_path is not None and os.path.lexists(exit_path):
             raise ValueError("review exit exists; prestart retirement refused")
         host = production_builder.node_binding(paths, node, policy)["host"]
         if request.get("production", {}).get("host") != host:
@@ -1096,6 +1109,8 @@ def retire_prestart(
             "actor": actor,
             "reason": reason.strip(),
         }
+        if superseded:
+            binding.update(review_recovery.supersession_binding(current, request))
         if not apply:
             return {"state": "qualified-check-only", "binding": binding}
         receipt = _receipt_path(home, card, request_id)
@@ -1104,6 +1119,11 @@ def retire_prestart(
             source_bundle._once(receipt.parent / "status.json", raw_status)
         proof_raw = json.dumps(proof, sort_keys=True).encode()
         source_bundle._once(receipt.parent / "prestart.json", proof_raw)
+        if superseded:
+            source_bundle._once(
+                receipt.parent / "superseded-card.json",
+                json.dumps(current.model_dump(mode="json"), sort_keys=True).encode(),
+            )
         source_bundle._once(receipt, json.dumps(binding, sort_keys=True).encode())
         store.append_event(
             card,
@@ -1140,6 +1160,8 @@ def retire(
     actor: str,
     reason: str,
     apply: bool = False,
+    check_recovery: bool = False,
+    superseded: bool = False,
 ) -> dict:
     """Archive an exact failed generation, then clear only its stale pointers."""
     home = Path(home)
@@ -1163,12 +1185,19 @@ def retire(
     ):
         store = CardStore(home)
         current = store.fold(card)
+        if check_recovery and apply:
+            raise ValueError("review recovery preflight is check-only")
+        readiness = current
+        if check_recovery and current is not None:
+            readiness = copy.copy(current)
+            readiness.owner = None
+            readiness.status = "review"
         if (
-            not governed_review_assignment_ready(current)
+            not governed_review_assignment_ready(readiness)
             or review_state_revision(current) != card_sha256
             or current.archived
             or current.meta.get("claim_conflicts")
-            or {"hold", "human-gate"}.intersection(current.labels)
+            or {"hold", "human-gate", "do-not-claim"}.intersection(current.labels)
         ):
             raise ValueError("unclaimed review card changed")
         events = store._read_events(card)
@@ -1244,6 +1273,22 @@ def retire(
             and e.get("released_owner") == status.get("owner")
             and e.get("expected_claim_revision") == status["claim_revision"]
         ]
+        owned_preflight = check_recovery and current.owner is not None
+        if owned_preflight and (
+            current.owner != status.get("owner")
+            or current.meta.get("_claim_revision") != status.get("claim_revision")
+            or getattr(current.status, "value", current.status) not in {"doing", "review"}
+        ):
+            raise ValueError("owned review claim changed")
+        if (
+            check_recovery
+            and not owned_preflight
+            and (
+                current.meta.get("_claim_revision")
+                or getattr(current.status, "value", current.status) not in {"backlog", "review"}
+            )
+        ):
+            raise ValueError("released review card changed")
         if (
             len(offers) != 1
             or offers[0].get("request_sha256") != production_builder.digest(request)
@@ -1252,10 +1297,24 @@ def retire(
             or launches[0].get("execution") != execution
             or launches[0].get("writer") != status["owner"]
             or launches[0].get("launched") is not True
-            or not releases
+            or (not releases and not owned_preflight)
+            or (owned_preflight and releases)
             or status.get("owner") != request.get("reviewer")
         ):
             raise ValueError("native offer, launch or claim release proof missing")
+        review_recovery.acceptance_absent(home, card, status["claim_revision"])
+        production_exit_path = (
+            home
+            / "evidence/production-review-exits"
+            / (card + "-" + status["claim_revision"] + ".json")
+        )
+        production_exit = None
+        if os.path.lexists(production_exit_path):
+            production_exit = _raw(production_exit_path)
+            if not review_recovery.failed_review_exit(
+                json.loads(production_exit), request, status
+            ):
+                raise ValueError("exact failed production review exit required")
         exit_paths = sorted((home / "evidence/worker-exits").glob(card + "-*.json"))
         exits = []
         for path in exit_paths:
@@ -1275,6 +1334,8 @@ def retire(
                 exits.append((raw_exit, path))
         if len(exits) > 1:
             raise ValueError("one exact failed worker exit required")
+        if production_exit is not None:
+            exits.append((production_exit, production_exit_path))
         unit = unit_terminal(execution["unit"], execution["invocation"], host=host)
         systemd_failure = (
             not exits
@@ -1287,6 +1348,10 @@ def retire(
             and unit.get("Result") not in {None, "", "success"}
             and unit.get("ExecMainStatus") not in {None, "", "0"}
         )
+        # A collected invocation proves completion, not failure. The automatic
+        # sweep must not discard a successful run whose receipt has not synced.
+        if (check_recovery or superseded) and not exits and not systemd_failure:
+            raise ValueError("exact failed review terminal proof required")
         journal_terminal = None
         absence = None
         admission_inventory_sha256 = None
@@ -1320,9 +1385,13 @@ def retire(
             or _raw(status_path) != raw_status
         ):
             raise ValueError("review generation changed during terminal check")
-        exit_source = "worker-exit" if exits else "systemd-terminal"
+        exit_source = (
+            "production-review-exit"
+            if production_exit is not None
+            else "worker-exit" if exits else "systemd-terminal"
+        )
         if exits:
-            exit_evidence = exits[0][0]
+            exit_evidence = production_exit if production_exit is not None else exits[0][0]
         elif journal_terminal is not None:
             exit_evidence = json.dumps(
                 {
@@ -1353,13 +1422,20 @@ def retire(
             actor=actor,
             reason=reason.strip(),
         )
+        if superseded:
+            binding.update(review_recovery.supersession_binding(current, request))
         if not apply:
             return {"state": "qualified-check-only", "binding": binding}
         receipt = _receipt_path(home, card, request_id)
         source_bundle._once(receipt.parent / "request.json", raw_request)
         source_bundle._once(receipt.parent / "status.json", raw_status)
-        exit_name = "worker-exit.json" if exits else "systemd-terminal.json"
+        exit_name = exit_source + ".json"
         source_bundle._once(receipt.parent / exit_name, exit_evidence)
+        if superseded:
+            source_bundle._once(
+                receipt.parent / "superseded-card.json",
+                json.dumps(current.model_dump(mode="json"), sort_keys=True).encode(),
+            )
         source_bundle._once(receipt, json.dumps(binding, sort_keys=True).encode())
         store.append_event(
             card,
@@ -1391,7 +1467,7 @@ def _skcapstone() -> str:
 
 
 RECOVERY_REASON = (
-    "automatic: remote review worker exited non-zero with no review packet; "
+    "automatic: exact failed remote review generation superseded with no review packet; "
     "released its exact claim and retired the generation so a fresh review is offered"
 )
 
@@ -1406,11 +1482,11 @@ def recover_failed_generations(paths, home: Path, *, actor: str = "niobe") -> li
     reviewer killed by a gateway restart (ffd28b33, 2026-10-10) held the only
     fresh source PASS of the day this way.
 
-    Fail-closed precondition: exactly one recorded worker exit for that card,
-    owner and claim with a non-zero child exit code. Only then is the exact
-    claim released (abandon reason "error"), and retire(apply=True) runs every
-    one of its own checks again, including proven unit death. A refusal after
-    the release leaves the card unclaimed and is retried on the next cycle.
+    Fail-closed precondition: retire(check_recovery=True) verifies the native
+    offer/launch, exact failed exit or systemd terminal evidence, destination
+    death and absence of acceptance custody before any exact claim release.
+    Retirement then repeats the proofs against the released generation. A
+    refusal after release leaves custody intact for the next recovery cycle.
     Unacknowledged admissions require a heartbeat at least thirty minutes old
     and all prestart proofs before releasing the exact claim. Retirement then
     rechecks those proofs against the released card without requiring an exit.
@@ -1451,7 +1527,8 @@ def recover_failed_generations(paths, home: Path, *, actor: str = "niobe") -> li
                     previous_owner=owner,
                     previous_claim_revision=claim,
                     actor=actor,
-                    reason="automatic: stale unacknowledged review admission",
+                    reason="automatic: stale unacknowledged review admission superseded",
+                    superseded=True,
                 )
                 retire_prestart(paths, home, node, card, check_recovery=True, **kwargs)
                 if current.owner is not None:
@@ -1499,24 +1576,24 @@ def recover_failed_generations(paths, home: Path, *, actor: str = "niobe") -> li
             continue
         if status.get("state") != "running":
             continue
-        failed = []
-        for path in (home / "evidence/worker-exits").glob(card + "-*.json"):
-            try:
-                value = json.loads(_raw(path))
-            except (OSError, ValueError):
-                continue
-            if (
-                value.get("card_id") == card
-                and value.get("owner") == owner
-                and value.get("claim_revision") == claim
-                and type(value.get("child_exit_code")) is int
-                and value["child_exit_code"] != 0
-            ):
-                failed.append(path)
-        if len(failed) != 1:
-            continue
         try:
             current = CardStore(home).fold(card)
+            kwargs = dict(
+                request_sha256=source_bundle._sha(_raw(dispatch.request_path(paths, node, card))),
+                status_sha256=source_bundle._sha(_raw(status_file)),
+                card_sha256=review_state_revision(current),
+                actor=actor,
+                reason=RECOVERY_REASON,
+                superseded=True,
+            )
+            retire(paths, home, node, card, check_recovery=True, **kwargs)
+            if (
+                review_state_revision(CardStore(home).fold(card)) != kwargs["card_sha256"]
+                or source_bundle._sha(_raw(status_file)) != kwargs["status_sha256"]
+                or source_bundle._sha(_raw(dispatch.request_path(paths, node, card)))
+                != kwargs["request_sha256"]
+            ):
+                raise ValueError("review changed after release preflight")
             if (
                 current is not None
                 and current.owner == owner
@@ -1544,25 +1621,19 @@ def recover_failed_generations(paths, home: Path, *, actor: str = "niobe") -> li
                     capture_output=True,
                     text=True,
                     timeout=15,
+                    check=True,
                 )
-                current = CardStore(home).fold(card)
-            outcome = retire(
-                paths,
-                home,
-                node,
-                card,
-                request_sha256=source_bundle._sha(_raw(dispatch.request_path(paths, node, card))),
-                status_sha256=source_bundle._sha(_raw(status_file)),
-                card_sha256=review_state_revision(current),
-                actor=actor,
-                reason=RECOVERY_REASON,
-                apply=True,
-            )
+            current = CardStore(home).fold(card)
+            if current is None or current.owner is not None or current.meta.get("_claim_revision"):
+                raise ValueError("review claim release readback differs")
+            kwargs["card_sha256"] = review_state_revision(current)
+            outcome = retire(paths, home, node, card, apply=True, **kwargs)
             results.append({"card": card, "node": node, "state": outcome["state"]})
-        except (OSError, ValueError, KeyError, TypeError) as exc:
+        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
             results.append(
                 {"card": card, "node": node, "state": "refused", "reason": str(exc)[:160]}
             )
+    results.extend(review_recovery.recover_unused_offers(paths, home, actor))
     return results
 
 
