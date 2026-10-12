@@ -254,7 +254,14 @@ def _source(home, card, *, historical=False):
     ):
         raise ValueError("original source custody unavailable")
     manifest, _ = selected
-    if historical:
+    released = source.owner is None
+    if released:
+        from .released_source import current_attempt, prove, revision_matches
+
+        release = prove(home, source, manifest)
+        if not revision_matches(home, source, release, _binding(core, "source_revision")):
+            raise ValueError("review source generation changed")
+    if historical or released:
         owner, claim = manifest.get("owner"), manifest.get("claim_revision")
         if not isinstance(owner, str) or not isinstance(claim, str):
             raise ValueError("sealed producer generation unavailable")
@@ -276,6 +283,7 @@ def _source(home, card, *, historical=False):
         or _binding(core, "producer_identity") != owner
         or (
             not historical
+            and not released
             and not _revision_drift_is_supplemental(
                 home, card, source, _binding(core, "source_revision"), revision
             )
@@ -286,7 +294,12 @@ def _source(home, card, *, historical=False):
     if not historical:
         from ..review_replacement import current_review_attempt
 
-        if current_review_attempt(home, parent, head) != card.id:
+        selected_attempt = (
+            current_attempt(home, source, release, manifest)
+            if released
+            else current_review_attempt(home, parent, head)
+        )
+        if selected_attempt != card.id:
             raise ValueError("review is not the current attempt")
     terminal = _producer_terminal(Path(home), source, manifest)
     producer_family(owner, terminal["family"])

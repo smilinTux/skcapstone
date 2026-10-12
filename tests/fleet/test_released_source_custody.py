@@ -4,10 +4,12 @@ import json
 
 import pytest
 
-from skcapstone.fleet import production_acceptance as acceptance, review_dispatch
+from skcapstone.fleet import production_acceptance as acceptance
 from skcapstone.fleet import production_review_custody as custody
+from skcapstone.fleet import review_dispatch
 from tests.fleet import remote_review_fixtures, test_remote_review_policy, test_source_bundle
 
+strict_unit_terminal = custody.unit_terminal
 execution = remote_review_fixtures.execution
 remote_policy = test_remote_review_policy.remote_policy
 source = test_source_bundle.source
@@ -17,6 +19,10 @@ source = test_source_bundle.source
 def released(execution, monkeypatch):
     e = execution
     s = e["source"]
+    request_path = e["paths"].root / "dispatch/node-chiap02" / (s["card"] + ".json")
+    request = json.loads(request_path.read_text())
+    request.update(repository=s["remote"], base_revision=s["base"])
+    request_path.write_text(json.dumps(request))
     e["bound_before"] = review_dispatch._source(e["home"], s["store"].fold(e["card"]))
     s["store"].append_event(
         s["card"],
@@ -83,6 +89,12 @@ def test_acceptance_reuses_same_released_terminal_proof(released):
         "request",
         "unit",
         "active-host",
+        "writer",
+        "hold",
+        "artifact",
+        "claimed",
+        "no-terminal-proof",
+        "recipe-drift",
     ],
 )
 def test_released_source_failures_never_become_legacy_or_current_custody(
@@ -129,6 +141,21 @@ def test_released_source_failures_never_become_legacy_or_current_custody(
             )
         )
         path.write_text("{}")
+    elif change == "writer":
+        e["producer_status"]["writer"]["role"] = "scheduler"
+    elif change == "hold":
+        st.append_event(parent, "add_label", "operator", label="hold")
+    elif change == "claimed":
+        st.append_event(parent, "claim", "new-builder", owner="new-builder")
+    elif change == "recipe-drift":
+        st.append_event(
+            parent, "link", "operator", link_key="test_profile_recipe", link_value="changed"
+        )
+    elif change == "no-terminal-proof":
+        e["producer_status"]["exit_code"] = None
+        e["producer_status"].pop("terminal_proof", None)
+    elif change == "artifact":
+        e["producer_status"]["source_artifact"] = {"head": "0" * 40}
     elif change == "failed-exit":
         e["producer_status"]["exit_code"] = 1
     elif change == "status-owner":
@@ -144,5 +171,70 @@ def test_released_source_failures_never_become_legacy_or_current_custody(
 
         monkeypatch.setattr(custody, "unit_terminal", refuse)
     e["producer_path"].write_text(json.dumps(e["producer_status"]))
-    with pytest.raises((ValueError, AttributeError)):
+    with pytest.raises(ValueError):
         review_dispatch._source(e["home"], st.fold(e["card"]))
+
+
+def test_fresh_remote_review_of_released_source_reaches_acceptance(released, monkeypatch, request):
+    e = remote_review_fixtures.terminal_review.__wrapped__(released, monkeypatch, request)
+    s = e["source"]
+    context = acceptance.collect(
+        e["home"],
+        e["request"]["policy"],
+        e["card"],
+        e["status"]["claim_revision"],
+        process_check=lambda card: {"sessions": [], "units": []},
+    )
+    assert context["source"]["owner"] == s["owner"]
+    assert context["source"]["claim"] == s["claim"]
+    assert context["source"]["head"] == s["head"]
+    assert s["store"].fold(s["card"]).owner is None
+
+
+def test_qualified_terminal_without_exit_code_remains_supported(released):
+    e = released
+    e["producer_status"].update(exit_code=None, terminal_proof="qualified-terminal")
+    e["producer_path"].write_text(json.dumps(e["producer_status"]))
+    assert (
+        review_dispatch._source(e["home"], e["source"]["store"].fold(e["card"]))
+        == e["bound_before"]
+    )
+
+
+@pytest.mark.parametrize("observation", ["unreachable", "live", "different-invocation"])
+def test_own_host_terminal_probe_refuses_unproven_death(released, monkeypatch, observation):
+    import subprocess
+
+    seen = []
+
+    def run(command, **kwargs):
+        seen.append(command)
+        values = dict(
+            LoadState="loaded",
+            ActiveState="active" if observation == "live" else "failed",
+            SubState="running" if observation == "live" else "failed",
+            MainPID="123" if observation == "live" else "0",
+            ControlPID="0",
+            InvocationID="d" * 32 if observation == "different-invocation" else "b" * 32,
+        )
+        return subprocess.CompletedProcess(
+            command,
+            255 if observation == "unreachable" else 0,
+            "\n".join(f"{k}={v}" for k, v in values.items()),
+            "",
+        )
+
+    monkeypatch.setattr(custody, "unit_terminal", strict_unit_terminal)
+    monkeypatch.setattr(custody.socket, "gethostname", lambda: "authority")
+    monkeypatch.setattr(custody.subprocess, "run", run)
+    with pytest.raises(ValueError, match="exact managed worker death unproven"):
+        review_dispatch._source(
+            released["home"], released["source"]["store"].fold(released["card"])
+        )
+    assert seen[0][:5] == [
+        "ssh",
+        "-oBatchMode=yes",
+        "-oStrictHostKeyChecking=yes",
+        "-oConnectTimeout=5",
+        "chiap02",
+    ]

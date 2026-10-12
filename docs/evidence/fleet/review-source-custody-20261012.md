@@ -23,3 +23,31 @@ Plan: commit this design, write failing regression tests, implement the shared
 proof and two callers, run targeted and remote-review/acceptance tests plus Ruff
 and Black, probe all cards read-only, report any remaining exact blockers, and
 open an unmerged draft PR. No deployment is part of this task.
+
+## Verified result
+
+Read-only probes against the 28 reported reviews verified readable modern source
+bundles for every card. Twenty-five pass the new release-only revision proof and
+strict terminal observation on the original producer host. No card is eligible
+for a legacy evidence downgrade. No live board or custody files were changed.
+
+Three intentionally remain refused:
+
+- a950ce42 / a0196e7c: later test_profile_recipe changes prevent exact replay.
+- 10191291 / 3f9eaa98: candidate artifact/tree/producer links changed and the
+  pinned revision is not reproduced at review creation.
+- c264927d / 52f7c2a5: its old candidate was superseded by a newer producer claim
+  and PASS_FOR_REVIEW. Restoring the old review would review the wrong generation.
+
+Those sources are already unclaimed in backlog. Preserve that governed path for
+fresh current-generation qualification and review rather than editing immutable
+review bindings, removing valid test recipes, or fabricating old claims. Reuse
+existing candidate bytes where valid; this change does not dispatch fresh builds.
+The complete local per-card evidence and remaining decisions are reported in
+~/reviews/review-source-custody-20261012.md.
+
+Tests cover source resolution, acceptance terminal proof, a complete fresh remote
+review through acceptance collection, release-only replay, latest claims/outcomes,
+changed criteria/recipes, holds, altered artifacts/status/request/unit, qualified
+terminal evidence, and actual strict SSH observer refusals for live, unreachable,
+or differently invoked units. Existing independent review and test gates remain.
