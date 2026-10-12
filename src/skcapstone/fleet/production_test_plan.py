@@ -581,7 +581,9 @@ def _seal_plan(
         previous, previous_path, current = load_plan(home, binding, require_current=False)
         if current != predecessor_sha256:
             raise TestEvidenceError("test plan predecessor changed")
-        if (run_directory(home, current) / "launch.json").exists():
+        if (run_directory(home, current) / "launch.json").exists() and not (
+            acceptance_requalification and _completed_test_attempt(home, current)
+        ):
             raise TestEvidenceError("prior test plan already launched")
         path = previous_path.with_name(previous_path.stem + "." + current + ".json")
     if initial_profile_qualification and (profile is None or requalification):
@@ -797,11 +799,14 @@ def load_plan(
                     ):
                         raise
             return plan, path, fingerprint
-        if (run_directory(home, fingerprint) / "launch.json").exists():
-            raise TestEvidenceError("prior test plan already launched")
         next_plan = json.loads(next_raw, object_pairs_hook=_unique_object)
         if not isinstance(next_plan, dict) or next_plan.get("predecessor_sha256") != fingerprint:
             raise TestEvidenceError("test plan predecessor changed")
+        if (run_directory(home, fingerprint) / "launch.json").exists() and not (
+            next_plan.get("acceptance_requalification") is True
+            and _completed_test_attempt(home, fingerprint)
+        ):
+            raise TestEvidenceError("prior test plan already launched")
         path, raw = next_path, next_raw
     raise TestEvidenceError("test plan chain exceeds generation bound")
 
@@ -1119,6 +1124,27 @@ def source_state(workspace: Path, binding: dict) -> dict:
 def run_directory(home: Path, plan_sha: str) -> Path:
     """Return the single immutable attempt directory for the exact plan bytes."""
     return home / "fleet/test-runs" / plan_sha
+
+
+def _completed_test_attempt(home: Path, plan_sha: str) -> bool:
+    """Recognize a terminal native run before appending an acceptance successor."""
+    directory = run_directory(home, plan_sha)
+    try:
+        launch = read_json(directory / "launch.json")
+        terminal = read_json(directory / "terminal.json")
+    except (OSError, ValueError, TestEvidenceError):
+        return False
+    state = (terminal.get("ActiveState"), terminal.get("SubState"))
+    return (
+        launch.get("request_id") == plan_sha
+        and isinstance(launch.get("unit"), str)
+        and terminal.get("unit") == launch["unit"]
+        and re.fullmatch(r"[0-9a-f]{32}", str(terminal.get("InvocationID", ""))) is not None
+        and terminal.get("LoadState") == "loaded"
+        and state in {("active", "exited"), ("failed", "failed")}
+        and re.fullmatch(r"[1-9][0-9]*", str(terminal.get("ExecMainPID", ""))) is not None
+        and re.fullmatch(r"-?[0-9]+", str(terminal.get("ExecMainStatus", ""))) is not None
+    )
 
 
 def junit_counts(

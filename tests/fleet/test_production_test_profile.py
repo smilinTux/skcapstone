@@ -1013,6 +1013,25 @@ def test_acceptance_reseals_legacy_collection_plan_for_requalification(
     assert (
         plan.load_plan(s.home, binding, require_current=False)[0]["checks"] == old_plan["checks"]
     )
+    run = plan.run_directory(s.home, old_sha)
+    plan.private_dir(run.parent, create=True)
+    plan.private_dir(run, create=True)
+    plan.write_once(
+        run / "launch.json", {"request_id": old_sha, "unit": "skfleet-test-old.service"}
+    )
+    plan.write_once(run / "receipt.json", {"plan_sha256": old_sha})
+    plan.write_once(
+        run / "terminal.json",
+        {
+            "unit": "skfleet-test-old.service",
+            "InvocationID": "a" * 32,
+            "LoadState": "loaded",
+            "ActiveState": "active",
+            "SubState": "exited",
+            "ExecMainPID": "123",
+            "ExecMainStatus": "0",
+        },
+    )
 
     profile.seal_candidate(
         s.home, binding, s.workspace, s.policy, "https://example.org/public.git"
@@ -1022,6 +1041,34 @@ def test_acceptance_reseals_legacy_collection_plan_for_requalification(
     assert current["acceptance_requalification"] is True
     assert current["checks"] == profile.recipe_checks(current["profile"]["recipe"])
     assert current_sha != old_sha
+
+
+def test_acceptance_requalification_refuses_running_predecessor(setup, monkeypatch):  # noqa: F811
+    from skcapstone.fleet.production_pytest_recipe import legacy_collection_recipe_candidates
+
+    s = setup
+    _core, binding = _base_profile_setup(s)
+    profile.seal_candidate(
+        s.home, binding, s.workspace, s.policy, "https://example.org/public.git"
+    )
+    old_plan, old_path, _ = plan.load_plan(s.home, binding)
+    monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "d" * 64)
+    old_plan["checks"] = legacy_collection_recipe_candidates(old_plan["profile"]["recipe"])[0]
+    old_raw = json.dumps(old_plan, sort_keys=True, separators=(",", ":")).encode()
+    old_path.write_bytes(old_raw)
+    old_path.chmod(0o600)
+    old_sha = plan.sha(old_raw)
+    run = plan.run_directory(s.home, old_sha)
+    plan.private_dir(run.parent, create=True)
+    plan.private_dir(run, create=True)
+    plan.write_once(
+        run / "launch.json", {"request_id": old_sha, "unit": "skfleet-test-old.service"}
+    )
+
+    with pytest.raises(plan.TestEvidenceError, match="prior test plan already launched"):
+        profile.seal_candidate(
+            s.home, binding, s.workspace, s.policy, "https://example.org/public.git"
+        )
 
 
 def test_legacy_full_suite_recipe_accepts_all_historical_targets():
