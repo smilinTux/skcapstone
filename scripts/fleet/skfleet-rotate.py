@@ -10086,6 +10086,22 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
                             "--abandon-reason","error"],capture_output=True,text=True)
             log(d,"NODE_ADMISSION_DEFERRED|%s|%s|reason=%s"%(
                 HOST,cid,str(_admission_exc)[:160]))
+            # release-claim lands the card in backlog, so a READY card that only
+            # met a full node lost its column and left every pool: three freshly
+            # qualified cards were parked this way within an hour (6b9a32e5,
+            # 8cbad4d9, 5b5909e2 on 2026-10-12). Nothing ran, so restore READY
+            # when the release left the card unowned in backlog.
+            try:
+                _deferred = CardStore(Path(HOME) / ".skcapstone").fold(cid)
+            except Exception:
+                _deferred = None
+            if (_deferred is not None and _deferred.owner is None
+                    and _deferred.status.value == "backlog"):
+                _restored = subprocess.run(
+                    [SKC,"coord","move",cid,"ready","--agent",DISPATCH_AGENT],
+                    capture_output=True,text=True,timeout=30)
+                log(d,"NODE_ADMISSION_DEFERRED_READY_RESTORED|%s|%s|rc=%s"%(
+                    HOST,cid,_restored.returncode))
             # The occupancy cap is node-wide, so no later card can be admitted
             # this cycle. Continuing claimed, prepared and released each one:
             # 10 cards cost ~120s of lane_launch (chiap08 2026-10-09 21:19Z).

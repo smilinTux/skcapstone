@@ -463,3 +463,15 @@ def test_lane_stops_at_the_node_occupancy_cap() -> None:
     deferred = source.index('log(d,"NODE_ADMISSION_DEFERRED|%s|%s|reason=%s"%(')
     stop = source.index('"worker occupancy cap reached" in str(_admission_exc)')
     assert deferred < stop < source.index("break", stop) < source.index("continue", stop)
+
+
+def test_deferred_admission_restores_ready_before_the_lane_stops() -> None:
+    """A READY card that only met a full node goes back to READY, not backlog."""
+    source = ROTATE.read_text(encoding="utf-8")
+    release = source.index('"--abandon-reason","error"],capture_output=True,text=True)')
+    deferred = source.index('log(d,"NODE_ADMISSION_DEFERRED|%s|%s|reason=%s"%(', release)
+    restore = source.index('[SKC,"coord","move",cid,"ready","--agent",DISPATCH_AGENT]', deferred)
+    stop = source.index('"worker occupancy cap reached" in str(_admission_exc)', deferred)
+    assert release < deferred < restore < stop
+    guard = source[deferred:restore]
+    assert "_deferred.owner is None" in guard and '_deferred.status.value == "backlog"' in guard
