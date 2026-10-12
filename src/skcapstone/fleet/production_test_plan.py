@@ -768,13 +768,20 @@ def load_plan(
             raise TestEvidenceError("test plan chain repeats")
         seen.add(fingerprint)
         plan = json.loads(raw, object_pairs_hook=_unique_object)
-        _validate_plan(
-            home, binding, plan, successor=generation > 0, allow_remote_host=allow_remote_host
-        )
         next_path = base.with_name(base.stem + "." + fingerprint + ".json")
         try:
             next_raw = read_private(next_path)
         except FileNotFoundError:
+            next_raw = None
+        _validate_plan(
+            home,
+            binding,
+            plan,
+            successor=generation > 0,
+            allow_remote_host=allow_remote_host,
+            allow_legacy_recipe=not require_current or next_raw is not None,
+        )
+        if next_raw is None:
             extras = list(base.parent.glob(base.stem + ".*.json"))
             if len(extras) != generation:
                 raise TestEvidenceError("test plan chain is disconnected") from None
@@ -799,7 +806,13 @@ def load_plan(
 
 
 def _validate_plan(
-    home: Path, binding: dict, plan: dict, *, successor: bool, allow_remote_host: bool = False
+    home: Path,
+    binding: dict,
+    plan: dict,
+    *,
+    successor: bool,
+    allow_remote_host: bool = False,
+    allow_legacy_recipe: bool = False,
 ) -> None:
     if not isinstance(plan, dict):
         raise TestEvidenceError("operator test plan is invalid or stale")
@@ -964,6 +977,11 @@ def _validate_plan(
         expected_checks = recipe_checks(profile["recipe"])
 
         validate_plan_node_environment(plan, profile)
+    checks_match = plan["checks"] == expected_checks
+    if allow_legacy_recipe and not checks_match and "profile" in plan:
+        from .production_pytest_recipe import legacy_collection_recipe_checks
+
+        checks_match = plan["checks"] == legacy_collection_recipe_checks(plan["profile"]["recipe"])
     if (
         set(plan) != required
         or plan["schema"]
@@ -989,7 +1007,7 @@ def _validate_plan(
             )
         )
         or plan["binding"] != binding
-        or plan["checks"] != expected_checks
+        or not checks_match
         or not isinstance(plan["qualified_by"], str)
         or not plan["qualified_by"]
         or any(

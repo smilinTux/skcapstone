@@ -989,6 +989,41 @@ def test_acceptance_seals_a_base_revision_profile_for_requalification(
     assert sealed["acceptance_requalification"] is True
 
 
+def test_acceptance_reseals_legacy_collection_plan_for_requalification(
+    setup,  # noqa: F811
+    monkeypatch,
+):
+    s = setup
+    _core, binding = _base_profile_setup(s)
+    profile.seal_candidate(
+        s.home, binding, s.workspace, s.policy, "https://example.org/public.git"
+    )
+    old_plan, old_path, _ = plan.load_plan(s.home, binding)
+    from skcapstone.fleet.production_pytest_recipe import legacy_collection_recipe_checks
+
+    monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "d" * 64)
+    old_plan["checks"] = legacy_collection_recipe_checks(old_plan["profile"]["recipe"])
+    old_raw = json.dumps(old_plan, sort_keys=True, separators=(",", ":")).encode()
+    old_path.write_bytes(old_raw)
+    old_path.chmod(0o600)
+    old_sha = plan.sha(old_raw)
+
+    with pytest.raises(plan.TestEvidenceError, match="invalid or stale"):
+        plan.load_plan(s.home, binding)
+    assert (
+        plan.load_plan(s.home, binding, require_current=False)[0]["checks"] == old_plan["checks"]
+    )
+
+    profile.seal_candidate(
+        s.home, binding, s.workspace, s.policy, "https://example.org/public.git"
+    )
+    current, _, current_sha = plan.load_plan(s.home, binding)
+    assert current["predecessor_sha256"] == old_sha
+    assert current["acceptance_requalification"] is True
+    assert current["checks"] == profile.recipe_checks(current["profile"]["recipe"])
+    assert current_sha != old_sha
+
+
 def test_acceptance_never_seals_a_profile_for_other_criteria(
     setup,  # noqa: F811
 ):
