@@ -54,6 +54,11 @@ def _producer_terminal(home, source, manifest):
         status = read_json(path)
         if status.get("owner") != producer_owner or status.get("claim_revision") != producer_claim:
             continue
+        if status.get("state") == "blocked" and status.get("claim_released") is True:
+            from .released_source import terminal
+
+            matches.append(terminal(home, source, manifest, status, path))
+            continue
         artifact = status.get("source_artifact") or {}
         if (
             status.get("schema") != "skfleet.builder-dispatch-status/v1"
