@@ -680,6 +680,16 @@ def _offer(paths, core, labels, *, writer, now=None):
             )
         except production_builder.production_routes.RouteUnavailableError:
             return None
+        # Offer only a route that answers right now. A builder cannot claim
+        # without passing this same probe, so an offer on a dead route is
+        # never consumed: it withheld the card from the authority's own
+        # lanes and reserved the builder's RAM for the whole lease, every
+        # cycle (chi, 2026-10-12: sk-m served only by DeepSeek, HTTP 429 for
+        # no credit; 8 offers per cycle, zero builder launches).
+        try:
+            production_builder.production_routes.probe(production, binding)
+        except ValueError as exc:
+            raise BuilderDispatchError(f"route-preflight-unavailable: {exc}") from exc
     scheduler.place(
         paths,
         (
@@ -1861,9 +1871,16 @@ def _consume_available(
                     route_preflight = production_builder.production_routes.preflight(
                         policy, production
                     )
-                except ValueError:
+                except ValueError as exc:
                     # Transient provider/catalog failure is retryable without
-                    # a native claim or implementation attempt.
+                    # a native claim or implementation attempt. Say so: this
+                    # skip was silent while every offer sat unconsumed.
+                    logger.warning(
+                        "builder dispatch deferring %s on %s: route preflight failed: %s",
+                        request["card_id"],
+                        node,
+                        exc,
+                    )
                     continue
             elif len(active_cards) >= _node_capacity(paths, node):
                 continue

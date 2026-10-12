@@ -146,6 +146,11 @@ def production_setup(paths, operator, monkeypatch, tmp_path, qualified_runtime):
             "observed_at": time.time(),
         },
     )
+    monkeypatch.setattr(
+        production.production_routes,
+        "probe",
+        lambda value, bound: {"observed_at": time.time()},
+    )
     store.write_spec(
         paths,
         "node",
@@ -235,6 +240,35 @@ def test_production_offers_above_old_count_cap_and_enforces_readiness(paths, pro
         )
         is None
     )
+
+
+def test_offer_is_refused_when_the_route_fails_its_probe(paths, production_setup, monkeypatch):
+    """A route that 429s for lack of credit must not be offered (chi, 2026-10-12).
+
+    The builder runs the same probe before it claims, so an offer on a dead
+    route is never consumed. It withheld the card from the authority's own lanes
+    and reserved the builder's RAM for the lease, every cycle.
+    """
+    p = production_setup
+
+    def dead(_value, _bound):
+        raise ValueError("gateway rejected preflight with HTTP 429")
+
+    monkeypatch.setattr(production.production_routes, "probe", dead)
+    card = _card() | {"id": "24b000a1"}
+    labels = ["sk-m", "source-only"]
+    with pytest.raises(builder.BuilderDispatchError, match="route-preflight-unavailable"):
+        builder.offer(paths, card, labels, writer=p.writer)
+    assert not list((paths.root / "dispatch").glob("node-*/24b000a1.json"))
+    assert builder._production_usage(paths, "node-worker") == (0.0, 0.0, False)
+
+
+def test_offer_proceeds_when_the_route_probe_passes(paths, production_setup):
+    p = production_setup
+    request = builder.offer(
+        paths, _card() | {"id": "24b000a2"}, ["sk-m", "source-only"], writer=p.writer
+    )
+    assert request is not None and request["card_id"] == "24b000a2"
 
 
 def test_missing_node_quota_never_invents_a_limit(paths, production_setup):
