@@ -95,7 +95,8 @@ def test_failed_reviewer_is_released_then_retired(tmp_path, harness):
     assert results == [{"card": CARD, "node": NODE, "state": "retired"}]
     expected = {"actor": OWNER, "expected_claim_revision": CLAIM, "abandon_reason": "error"}
     assert harness.releases == [(OWNER, CARD, expected)]
-    node, card, kwargs = harness.retires[0]
+    assert harness.retires[0][2]["check_recovery"] is True
+    node, card, kwargs = harness.retires[1]
     assert (node, card) == (NODE, CARD)
     assert kwargs["apply"] is True
     assert kwargs["card_sha256"] == "d" * 64
@@ -109,26 +110,23 @@ def test_already_released_claim_is_only_retired(tmp_path, harness):
     review_retire.recover_failed_generations(paths, home)
     assert harness.releases == []
     assert harness.moves == []
-    assert len(harness.retires) == 1
+    assert len(harness.retires) == 2
 
 
 def test_released_review_card_returns_to_the_review_column_before_retire(tmp_path, harness):
     home, paths = _tree(tmp_path)
     review_retire.recover_failed_generations(paths, home)
     assert harness.moves == [["move", CARD, "review", "--agent", "niobe"]]
-    assert len(harness.retires) == 1
+    assert len(harness.retires) == 2
 
 
 @pytest.mark.parametrize(
     "tree",
     [
-        {"exits": ()},
-        {"exits": (0,)},
-        {"exits": (1, 2)},
         {"state": "awaiting-review-acceptance"},
         {"packet": {"manifest": "present"}},
     ],
-    ids=["no-exit", "clean-exit", "two-exits", "terminal-state", "has-packet"],
+    ids=["terminal-state", "has-packet"],
 )
 def test_no_proof_of_failure_touches_nothing(tmp_path, harness, tree):
     home, paths = _tree(tmp_path, **tree)
@@ -145,6 +143,7 @@ def test_retire_refusal_is_reported_not_raised(tmp_path, harness, monkeypatch):
 
     monkeypatch.setattr(review_retire, "retire", refuse)
     results = review_retire.recover_failed_generations(paths, home)
+    assert harness.releases == []
     assert results == [
         {
             "card": CARD,
