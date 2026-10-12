@@ -1,0 +1,1 @@
+- Acceptance requalification can append a fresh plan after a completed prior test run while still refusing a predecessor whose run has no terminal receipt.
