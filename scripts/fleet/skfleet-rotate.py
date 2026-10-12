@@ -1113,10 +1113,37 @@ def _preclaim_worker_source(core, labels):
     return spec
 
 
-def _materialize_worker_workspace(default, core, labels, runner=subprocess.run):
+#: Lanes that must never start in an empty directory. The escalate lane exists
+#: to run the strong model on a card the cheap lanes refused, and its brief
+#: orders the worker to read workspace AGENTS.md and the exact card TDD first.
+#: With no source binding there is no checkout to hold either, so on chiap08
+#: 2026-10-12 esc-auto-7722064f and esc-auto-9c537e1e launched in an empty
+#: non-git directory, reported BLOCKED, and wrote a blocked_on=capability link
+#: that re-qualified the card for escalation again. Fail closed before the claim.
+SOURCE_REQUIRED_LANES = ("escalate",)
+
+
+def _materialize_worker_workspace(default, core, labels, runner=subprocess.run, lane=None):
     """Materialize one source checkout atomically before a worker is claimed."""
     configured = os.environ.get("SKFLEET_WORKSPACE")
     spec = _source_workspace_spec(core, labels)
+    # Under PRODUCTION_POLICY every worker brief orders the worker to read
+    # workspace AGENTS.md and the card TDD, so an empty directory can never
+    # produce work (codex-auto-37bbe263 and codex-auto-510367e5 on chiap08,
+    # 2026-10-12). The one source-free role the code already recognises is a
+    # governed review (label "review" plus complete producer evidence, see
+    # _governed_review_metadata); it is exempt. Non-production keeps the
+    # empty directory for non-source cards.
+    if (
+        spec is None
+        and (lane in SOURCE_REQUIRED_LANES or globals().get("PRODUCTION_POLICY"))
+        and _governed_review_metadata(core, labels) is None
+    ):
+        raise ValueError(
+            "%s lane requires an exact source binding "
+            "(repository, base_ref, base_revision); refusing an empty workspace"
+            % (lane or "worker")
+        )
     if spec is not None and globals().get("PRODUCTION_POLICY"):
         from skcapstone.fleet.source_bundle import import_review_source
         if import_review_source(core,spec[0],spec[2],Path(configured or default)):
@@ -8520,6 +8547,9 @@ _LANE_ONLY_LABELS={
 _CAPABILITY_VERDICT_RE = re.compile(
     r"blocked_on[=: |]+\s*capability\b|^\s*BLOCKED\s*\|\s*capability\b", re.I)
 
+_WORKSPACE_BLOCKER_RE = re.compile(
+    r"workspace|agents\.md|\btdd\b", re.I)
+
 _SEMANTIC_COMPLETE_ACTION="semantic_stage_complete"
 
 
@@ -8668,7 +8698,12 @@ def needs_escalation(cid, core=None, labels=None):
         _ts, _val = _load_outcomes().get(cid, (None, None))
     except Exception:
         return False
-    return bool(_ts and _CAPABILITY_VERDICT_RE.search(str(_val or "")))
+    text = str(_val or "")
+    # A blocker about a missing workspace, AGENTS.md or card TDD is an
+    # environment fault, not a capability refusal; escalating it only cycles.
+    if _WORKSPACE_BLOCKER_RE.search(text):
+        return False
+    return bool(_ts and _CAPABILITY_VERDICT_RE.search(text))
 
 # Answers: can the qwen lane specifically take this card. This is a ROUTING
 # gate, not an admission gate. _SENSITIVE_CATEGORY (elsewhere in this same
@@ -9789,6 +9824,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             default_workspace,
             fresh_claimability["core"],
             fresh_claimability["labels"],
+            lane=_LANE["name"],
         )
     except (OSError,ValueError) as exc:
         log(d,"WORKSPACE_BLOCKED|%s|%s|%s"%(HOST,cid,exc))

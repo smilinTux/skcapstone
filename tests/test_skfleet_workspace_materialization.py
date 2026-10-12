@@ -81,6 +81,7 @@ def _helpers() -> dict[str, object]:
         "_normalize_credential_free_https_remote",
         "_select_matching_source_remote",
         "_verify_source_workspace",
+        "_governed_review_metadata",
         "_materialize_worker_workspace",
     )
 
@@ -336,6 +337,84 @@ def test_non_source_card_keeps_empty_working_directory(tmp_path: Path) -> None:
     target = tmp_path / "worker"
     assert materialize(str(target), {}, []) == str(target)
     assert target.is_dir()
+
+
+@pytest.mark.parametrize("lane", ["codex", "glm", "qwen", None])
+def test_production_policy_refuses_empty_workspace_on_every_lane(tmp_path: Path, lane) -> None:
+    helpers = _helpers()
+    helpers["PRODUCTION_POLICY"] = {"lanes": {}}
+    target = tmp_path / "pi-codex-chiap08-37bbe263"
+    with pytest.raises(ValueError, match="requires an exact source binding"):
+        helpers["_materialize_worker_workspace"](str(target), {}, [], lane=lane)
+    assert not target.exists()
+
+
+def test_production_policy_keeps_governed_review_source_free(tmp_path: Path) -> None:
+    helpers = _helpers()
+    helpers["PRODUCTION_POLICY"] = {"lanes": {}}
+    core = {
+        "links": {
+            "producer_identity": "pi-codex-x",
+            "candidate_evidence_sha256": "a" * 64,
+            "link_source_card": "abcd1234",
+            "link_head_revision": "b" * 40,
+        }
+    }
+    target = tmp_path / "review"
+    out = helpers["_materialize_worker_workspace"](str(target), core, ["review"], lane="codex")
+    assert out == str(target)
+
+
+def test_workspace_blocker_is_not_an_escalation_trigger() -> None:
+    tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
+    names = {"needs_escalation"}
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names)
+    consts = [
+        n
+        for n in tree.body
+        if isinstance(n, ast.Assign)
+        and getattr(n.targets[0], "id", "")
+        in {"_WORKSPACE_BLOCKER_RE", "_CAPABILITY_VERDICT_RE", "_ESCALATE_LABEL"}
+    ]
+    ns: dict = {"re": re}
+    exec(compile(ast.Module(consts + [fn], []), str(ROTATE), "exec"), ns)
+    cases = {
+        "blocked_on=capability:exact-card-TDD-and-workspace-AGENTS-unavailable": False,
+        "blocked_on=capability referent=workspace-empty": False,
+        "blocked_on=capability referent=free": True,
+    }
+    for value, expected in cases.items():
+        ns["_load_outcomes"] = lambda v=value: {"c1": ("2026-10-12T20:00:00Z", v)}
+        assert ns["needs_escalation"]("c1", {}, []) is expected, value
+
+
+@pytest.mark.parametrize(
+    "core",
+    [
+        # esc-auto-7722064f: ops card for another host, no source binding at all.
+        {"id": "7722064f", "title": "ops task for ZIOWK01"},
+        # esc-auto-9c537e1e: names a PR in prose but carries only a partial binding.
+        {"id": "9c537e1e", "links": {"repository": "https://example.invalid/r.git"}},
+    ],
+)
+def test_escalate_lane_refuses_empty_workspace(tmp_path: Path, core: dict) -> None:
+    materialize = _helpers()["_materialize_worker_workspace"]
+    target = tmp_path / "pi-escalate-chiap08-7722064f"
+    with pytest.raises(ValueError, match="requires an exact source binding"):
+        materialize(str(target), core, [], lane="escalate")
+    assert not target.exists()
+
+
+def test_escalate_lane_refusal_is_independent_of_other_lanes(tmp_path: Path) -> None:
+    materialize = _helpers()["_materialize_worker_workspace"]
+    target = tmp_path / "worker"
+    assert materialize(str(target), {}, [], lane="codex") == str(target)
+
+
+def test_scheduler_passes_lane_to_workspace_guard() -> None:
+    source = ROTATE.read_text(encoding="utf-8")
+    start = source.index("workspace=_materialize_worker_workspace(")
+    assert 'lane=_LANE["name"]' in source[start : start + 300]
 
 
 def test_source_checkout_is_cloned_atomically(tmp_path: Path) -> None:
