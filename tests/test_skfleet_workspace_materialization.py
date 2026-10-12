@@ -338,6 +338,35 @@ def test_non_source_card_keeps_empty_working_directory(tmp_path: Path) -> None:
     assert target.is_dir()
 
 
+@pytest.mark.parametrize(
+    "core",
+    [
+        # esc-auto-7722064f: ops card for another host, no source binding at all.
+        {"id": "7722064f", "title": "ops task for ZIOWK01"},
+        # esc-auto-9c537e1e: names a PR in prose but carries only a partial binding.
+        {"id": "9c537e1e", "links": {"repository": "https://example.invalid/r.git"}},
+    ],
+)
+def test_escalate_lane_refuses_empty_workspace(tmp_path: Path, core: dict) -> None:
+    materialize = _helpers()["_materialize_worker_workspace"]
+    target = tmp_path / "pi-escalate-chiap08-7722064f"
+    with pytest.raises(ValueError, match="requires an exact source binding"):
+        materialize(str(target), core, [], lane="escalate")
+    assert not target.exists()
+
+
+def test_escalate_lane_refusal_is_independent_of_other_lanes(tmp_path: Path) -> None:
+    materialize = _helpers()["_materialize_worker_workspace"]
+    target = tmp_path / "worker"
+    assert materialize(str(target), {}, [], lane="codex") == str(target)
+
+
+def test_scheduler_passes_lane_to_workspace_guard() -> None:
+    source = ROTATE.read_text(encoding="utf-8")
+    start = source.index("workspace=_materialize_worker_workspace(")
+    assert 'lane=_LANE["name"]' in source[start : start + 300]
+
+
 def test_source_checkout_is_cloned_atomically(tmp_path: Path) -> None:
     materialize = _helpers()["_materialize_worker_workspace"]
     target = tmp_path / "worker"
