@@ -6756,7 +6756,9 @@ def _provisional_candidate(parent, outcome_ts, token):
         evidence_digest = str(event.get("artifact_sha256") or "").lower()
         if evidence_path and re.fullmatch(r"[0-9a-f]{64}", evidence_digest):
             try:
-                with open(evidence_path, "rb") as fh:
+                from skcapstone.fleet.mount_reachability import guard
+
+                with open(guard(evidence_path), "rb") as fh:
                     evidence_bytes = fh.read()
                 if hashlib.sha256(evidence_bytes).hexdigest() == evidence_digest:
                     embedded = json.loads(evidence_bytes)
@@ -6767,7 +6769,11 @@ def _provisional_candidate(parent, outcome_ts, token):
     verified = []
     for path, digest in sorted(candidates):
         try:
-            with open(path, "rb") as fh:
+            from skcapstone.fleet.mount_reachability import guard
+
+            # Legacy candidates can point at a hard NFS mount; a dead server
+            # must read as missing evidence, not hang the cycle (2026-10-12).
+            with open(guard(path), "rb") as fh:
                 actual = hashlib.sha256(fh.read()).hexdigest()
         except OSError:
             continue
