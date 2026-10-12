@@ -178,7 +178,7 @@ def recipe_checks(recipe: dict) -> list[dict]:
 
 
 def legacy_collection_recipe_checks(recipe: dict) -> list[dict]:
-    """Reconstruct the sealed pytest argv from before PRs 1148 and 1150.
+    """Reconstruct sealed pytest argv from before PRs 1139, 1148, and 1150.
 
     This compatibility form is only for reading an old plan as the predecessor
     of a new acceptance requalification. It is never current executable proof.
@@ -187,10 +187,13 @@ def legacy_collection_recipe_checks(recipe: dict) -> list[dict]:
         "--import-mode=importlib",
         "--ignore=tests/integration/test_foundation_contract.py",
     }
-    return [
+    checks = [
         {**check, "argv": [arg for arg in check["argv"] if arg not in added]}
         for check in recipe_checks(recipe)
     ]
+    if recipe == {"pytest_all": True}:
+        checks[0]["argv"].append(".")
+    return checks
 
 
 def validate_source(recipe: dict, workspace: Path) -> None:

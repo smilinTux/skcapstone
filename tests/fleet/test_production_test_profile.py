@@ -1024,6 +1024,25 @@ def test_acceptance_reseals_legacy_collection_plan_for_requalification(
     assert current_sha != old_sha
 
 
+def test_legacy_full_suite_recipe_restores_pre_1139_target():
+    from skcapstone.fleet.production_pytest_recipe import legacy_collection_recipe_checks
+
+    current = profile.recipe_checks({"pytest_all": True})
+    legacy = legacy_collection_recipe_checks({"pytest_all": True})
+    assert legacy[0]["argv"][-1] == "."
+    assert "--import-mode=importlib" not in legacy[0]["argv"]
+    assert "--ignore=tests/integration/test_foundation_contract.py" not in legacy[0]["argv"]
+    assert legacy[0]["argv"][:-1] == [
+        arg
+        for arg in current[0]["argv"]
+        if arg
+        not in {
+            "--import-mode=importlib",
+            "--ignore=tests/integration/test_foundation_contract.py",
+        }
+    ]
+
+
 def test_acceptance_never_seals_a_profile_for_other_criteria(
     setup,  # noqa: F811
 ):
