@@ -1928,6 +1928,11 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option(
         "--json", "as_json", is_flag=True, help="Guarded writes: return exact native readback."
     )
+    @click.option(
+        "--value-from-stdin",
+        is_flag=True,
+        help="Read VALUE from stdin (pass - as VALUE); for values over the OS argv limit.",
+    )
     def coord_link(
         task_id,
         key,
@@ -1938,10 +1943,20 @@ def register_coord_commands(main: click.Group) -> None:
         expected_claim_revision,
         transition_id,
         as_json,
+        value_from_stdin,
     ):
         """Attach a link (pr/commit/doc/...) to a card."""
         from ..jarvis_emergency import authorize_coord_mutation
         from ..seat_boundaries import Action
+
+        # A single argv string is capped at 128 KiB (MAX_ARG_STRLEN), so a
+        # curated baseline recipe for a large suite could never be linked:
+        # every SKLegal curation failed with "[Errno 7] Argument list too
+        # long" (chi, 2026-10-12). The value then comes from stdin instead.
+        if value_from_stdin:
+            if value != "-":
+                raise click.ClickException("--value-from-stdin requires VALUE to be -")
+            value = click.get_text_stream("stdin").read()
 
         authorize_coord_mutation(agent or "", Action.LINK_CARD, task_id, None, None)
         from ..blocked_verdict import validate_blocked_verdict

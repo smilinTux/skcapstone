@@ -210,3 +210,39 @@ def test_interruption_crash_and_collection_still_refuse(tmp_path, monkeypatch, e
     )
     with pytest.raises(br.BaselineError, match="did not run to completion"):
         br._failed_run(tmp_path, {"binding": {}})
+
+
+def test_curator_links_a_large_recipe_through_stdin(tmp_path, monkeypatch):
+    """An argv value over 128 KiB failed every SKLegal curation with E2BIG."""
+    import json as _json
+    from types import SimpleNamespace
+
+    from skcoord.card_store import CardStore
+
+    root = tmp_path / "fleet/profile-requalifications"
+    root.mkdir(parents=True)
+    root.chmod(0o700)
+    br.plan.write_once(root / "a.job.json", {"card": "test-card"})
+    br.plan.write_once(root / "a.job.failed.json", {"card": "test-card"})
+    monkeypatch.setattr(CardStore, "fold", lambda *a: SimpleNamespace(archived=False, links={}))
+    big = _json.dumps(
+        {"pytest": {f"tests/test_{i}.py": 1 for i in range(9000)}, "deselect": ["x::y"]},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    assert len(big) > 131072
+    monkeypatch.setattr(br, "_failed_run", lambda *a: (b"", tmp_path, br.FULL_SUITE))
+    monkeypatch.setattr(br, "analyze_junit", lambda *a: ({"p"}, ["x::y"], set()))
+    monkeypatch.setattr(br, "compact_targets", lambda *a: ["tests"])
+    monkeypatch.setattr(br, "baseline_recipe", lambda *a: big)
+    seen = {}
+
+    def run(argv, **kwargs):
+        seen["argv"], seen["input"] = argv, kwargs.get("input")
+        return SimpleNamespace(returncode=0)
+
+    result = br.curate_failed_qualifications(tmp_path, run=run)
+    assert result[0]["state"] == "linked"
+    assert big not in seen["argv"] and max(len(a) for a in seen["argv"]) < 131072
+    assert seen["argv"][4:7] == ["test_profile_recipe", "-", "--value-from-stdin"]
+    assert seen["input"] == big
