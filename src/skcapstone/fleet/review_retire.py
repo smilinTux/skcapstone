@@ -1348,6 +1348,10 @@ def retire(
             and unit.get("Result") not in {None, "", "success"}
             and unit.get("ExecMainStatus") not in {None, "", "0"}
         )
+        # A collected invocation proves completion, not failure. The automatic
+        # sweep must not discard a successful run whose receipt has not synced.
+        if (check_recovery or superseded) and not exits and not systemd_failure:
+            raise ValueError("exact failed review terminal proof required")
         journal_terminal = None
         absence = None
         admission_inventory_sha256 = None

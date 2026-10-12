@@ -262,3 +262,17 @@ def test_released_terminal_or_unexpected_column_is_not_reopened(running, column)
     assert retire.recover_failed_generations(p.paths, p.home)[0]["state"] == "refused"
     assert p.current.status == column
     assert p.request_path.exists()
+
+
+def test_collected_run_without_failed_exit_is_not_automatic_failure(running, monkeypatch):
+    p = running
+    p.exit_path.unlink()
+    p.state.update(LoadState="not-found", ActiveState="inactive", SubState="dead", InvocationID="")
+
+    def no_journal(*a, **kw):
+        pytest.fail("journal completion alone does not prove failure")
+
+    monkeypatch.setattr(retire, "_journal_terminal", no_journal)
+    result = retire.recover_failed_generations(p.paths, p.home)
+    assert result[0]["state"] == "refused"
+    assert p.request_path.exists() and p.status_path.exists()

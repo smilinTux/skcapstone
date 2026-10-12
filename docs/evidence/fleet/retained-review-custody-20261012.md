@@ -32,7 +32,7 @@ blockers have no remote offer, and require separate source eligibility resolutio
 Validation on 2026-10-12:
 
 - Tests first: three expected failures, eleven refusal cases already passing.
-- Final review and remote review suite: 277 passed.
+- Final review and remote review suite: 278 passed.
 - Ruff, Black and git diff whitespace checks passed on changed files.
 - All 31 requested cards were read through `coord show --json`.
 - Strict SSH queried reserved units on chiap01 through chiap04. All 28 retained
@@ -55,3 +55,7 @@ Validation on 2026-10-12:
 Evidence inventory and per-card observations are in the operator report
 `~/reviews/retained-custody-reviews-20261012.md` and its local evidence directory.
 No deployment, merge, successful review verdict, or live recovery is claimed.
+
+Automatic supersession also refuses a collected invocation whose journal only
+proves completion. A failed exit or exact systemd failure is required; delayed
+successful receipt synchronization cannot be treated as failure.
