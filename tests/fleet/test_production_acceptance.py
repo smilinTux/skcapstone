@@ -424,5 +424,74 @@ def test_controller_requires_trusted_tests_and_finishes_without_legacy_release(
         assert store._read_events(review["card"]) == before
 
 
+def test_existing_finish_intent_requalifies_stale_plan_without_rewriting_intent(
+    tmp_path, monkeypatch
+):
+    from skcapstone.fleet import (
+        production_review_finish,
+        production_test_plan,
+        production_test_profile,
+        production_tests,
+    )
+
+    home = tmp_path / "home"
+    directory = home / "evidence" / "production-acceptance" / ("7907fdaf-" + "b" * 32)
+    directory.mkdir(parents=True, mode=0o700)
+    workspace = tmp_path / "source"
+    workspace.mkdir(mode=0o700)
+    context = {
+        "test_binding": {"source_card": "2587020f"},
+        "source_workspace": str(workspace),
+        "source": {"repository": "https://example.invalid/sklegal.git"},
+    }
+    policy = {"authority_host": "chiap08"}
+    prior = {"receipt_sha256": "a" * 64, "plan_sha256": "b" * 64}
+    current = {"receipt_sha256": "c" * 64, "plan_sha256": "d" * 64}
+    production_review_finish.once(directory / "finish-intent.json", {"test_receipt": prior})
+    calls = []
+
+    def stale_then_current(*args, **kwargs):
+        if not calls:
+            calls.append("stale")
+            raise production_test_plan.TestEvidenceError("operator test plan is invalid or stale")
+        return current
+
+    monkeypatch.setattr(production_tests, "validate_test_receipt", stale_then_current)
+    monkeypatch.setattr(production_tests, "run_or_read_tests", lambda *args: current)
+    monkeypatch.setattr(
+        production_test_profile, "seal_candidate", lambda *args: calls.append("sealed")
+    )
+    monkeypatch.setattr(
+        production_test_profile,
+        "refresh_accepted_profile",
+        lambda *args: calls.append("profile-refreshed"),
+    )
+
+    assert acceptance._requalify_finished_acceptance(home, directory, context, policy) is True
+    assert calls == ["stale", "sealed", "profile-refreshed"]
+    recovery = production_review_finish.read_json(directory / "test-requalification.json")
+    assert recovery["prior_test_receipt"] == prior
+    assert recovery["current_test_receipt"] == current
+    assert production_review_finish._finish_test_receipt(directory, context, current) == prior
+    assert (
+        production_review_finish.read_json(directory / "finish-intent.json")["test_receipt"]
+        == prior
+    )
+
+
+def test_finish_requalification_requires_exact_immutable_record(tmp_path):
+    from skcapstone.fleet import production_review_finish
+    from skcapstone.fleet.production_review_evidence import ReviewEvidenceError
+
+    directory = tmp_path / "acceptance"
+    directory.mkdir(mode=0o700)
+    context = {"source": {"card": "2587020f"}}
+    prior = {"receipt_sha256": "a" * 64}
+    current = {"receipt_sha256": "c" * 64}
+    production_review_finish.once(directory / "finish-intent.json", {"test_receipt": prior})
+    with pytest.raises(ReviewEvidenceError, match="historical acceptance intent changed"):
+        production_review_finish._finish_test_receipt(directory, context, current)
+
+
 def _unreachable(*args, **kwargs):
     raise AssertionError("finished pair must not replay live launch policy")

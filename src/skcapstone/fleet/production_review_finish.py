@@ -247,6 +247,31 @@ def _historical_acceptance(home, context, historical, inspect):
     return acceptance
 
 
+def _finish_test_receipt(directory, context, current):
+    """Keep an existing finish journal immutable after trusted requalification."""
+    intent_path = Path(directory) / "finish-intent.json"
+    if not intent_path.exists():
+        return current
+    intent = read_json(intent_path)
+    prior = intent.get("test_receipt")
+    if prior == current:
+        return current
+    recovery_path = Path(directory) / "test-requalification.json"
+    if not recovery_path.exists():
+        raise ReviewEvidenceError("historical acceptance intent changed")
+    recovery = read_json(recovery_path)
+    expected = {
+        "schema": "skfleet.acceptance-test-requalification/v1",
+        "context_sha256": _digest(context),
+        "finish_intent_sha256": _digest(intent),
+        "prior_test_receipt": prior,
+        "current_test_receipt": current,
+    }
+    if recovery != expected:
+        raise ReviewEvidenceError("acceptance test requalification changed")
+    return prior
+
+
 def finish_pair(home, directory, context, *, guard, command=native_command, inspect=native_state):
     """Finish an exact tested pair idempotently, recovering even lost CLI replies."""
     from .acceptance_reseal import acceptance_lock
@@ -288,6 +313,8 @@ def _finish_pair(home, directory, context, *, guard, command, inspect, historica
             home, context["test_binding"], Path(context["source_workspace"])
         )
     )
+    if historical is None:
+        acceptance = _finish_test_receipt(directory, context, acceptance)
     binding_base = {
         "controller": context["controller"],
         "context_sha256": _digest(context),
@@ -399,10 +426,10 @@ def _finish_pair(home, directory, context, *, guard, command, inspect, historica
         if recovery:
             checkpoint(home, directory, context)
         artifacts(context)
-        if (
-            validate_test_receipt(home, context["test_binding"], Path(context["source_workspace"]))
-            != acceptance
-        ):
+        current_acceptance = validate_test_receipt(
+            home, context["test_binding"], Path(context["source_workspace"])
+        )
+        if _finish_test_receipt(directory, context, current_acceptance) != acceptance:
             raise ReviewEvidenceError("trusted test evidence changed")
         if inspect(home, context[other]["card"])["revision"] != expected[other]:
             raise ReviewEvidenceError("related native generation changed")
