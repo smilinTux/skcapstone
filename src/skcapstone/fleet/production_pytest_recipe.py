@@ -91,6 +91,10 @@ def recipe_checks(recipe: dict) -> list[dict]:
                 ],
             }
         ]
+    if isinstance(recipe, dict) and "node_test" in recipe:
+        from .production_node_test_recipe import checks
+
+        return checks(recipe)
     if isinstance(recipe, dict) and "vitest" in recipe:
         if set(recipe) == {"vitest"}:
             return node.checks(recipe)

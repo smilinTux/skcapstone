@@ -1,4 +1,4 @@
-"""Qualified Node/Vitest inputs for the existing native test sandbox."""
+"""Qualified Vitest and native Node inputs for the existing test sandbox."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from xml.etree import ElementTree
 
+from . import production_node_test_recipe as native
 from . import production_test_plan as plan
 
 SCHEMA_V1 = "skfleet.qualified-node-test-profile/v1"
@@ -44,7 +45,9 @@ def is_node(profile: dict | None) -> bool:
 
 
 def checks(recipe: dict) -> list[dict]:
-    """Compile only full-suite Vitest, TypeScript build and ESLint commands."""
+    """Compile fixed Vitest checks or bounded native Node commands."""
+    if isinstance(recipe, dict) and "node_test" in recipe:
+        return native.checks(recipe)
     if not isinstance(recipe, dict) or set(recipe) != {"vitest"}:
         raise plan.TestEvidenceError("unsupported Node recipe")
     tests = recipe["vitest"]
@@ -177,7 +180,8 @@ def artifact_path(environment: dict) -> Path:
 def qualified_environment(workspace: Path) -> dict:
     """Resolve an already-qualified local Node artifact for an exact source."""
     source = {}
-    for relative in SOURCE_FILES:
+    source_files = SOURCE_FILES if (workspace / "apps/web").exists() else native.SOURCE_FILES
+    for relative in source_files:
         path = workspace / relative
         if path.is_symlink() or not path.is_file():
             raise plan.TestEvidenceError("Node qualification source is incomplete")
@@ -251,7 +255,7 @@ def _validate_environment(environment: dict, workspace: Path | None) -> None:
         or environment["platform"] != [platform.system(), platform.machine()]
         or environment["node_sha256"] != _node_digest()
         or not isinstance(environment["source_sha256"], dict)
-        or set(environment["source_sha256"]) != set(SOURCE_FILES)
+        or set(environment["source_sha256"]) not in (set(SOURCE_FILES), set(native.SOURCE_FILES))
         or any(
             not isinstance(v, str) or not re.fullmatch(r"[0-9a-f]{64}", v)
             for v in environment["source_sha256"].values()
@@ -261,7 +265,17 @@ def _validate_environment(environment: dict, workspace: Path | None) -> None:
     artifact = artifact_path(environment)
     if artifact_digest(artifact) != environment["artifact_sha256"]:
         raise plan.TestEvidenceError("qualified Node dependencies changed")
-    for relative in ("node_modules", "apps/web/node_modules"):
+    root_node = set(environment["source_sha256"]) == set(native.SOURCE_FILES)
+    if root_node:
+        for relative in ("package.json", "package-lock.json"):
+            manifest = artifact / relative
+            if (
+                manifest.is_symlink()
+                or plan.sha(manifest.read_bytes()) != environment["source_sha256"][relative]
+            ):
+                raise plan.TestEvidenceError("native Node dependency manifests changed")
+    mounts = ("node_modules",) if root_node else ("node_modules", "apps/web/node_modules")
+    for relative in mounts:
         if (artifact / relative).is_symlink() or not (artifact / relative).is_dir():
             raise plan.TestEvidenceError("Node dependency mount is missing or redirected")
     if workspace is None:
@@ -274,6 +288,10 @@ def _validate_environment(environment: dict, workspace: Path | None) -> None:
             or (plan.sha(path.read_bytes()) != expected)
         ):
             raise plan.TestEvidenceError("Node package, lock or configuration changed")
+    if root_node:
+        if (workspace / "apps/web").exists():
+            raise plan.TestEvidenceError("native Node environment has a web workspace")
+        return
     scripts = json.loads((workspace / "apps/web/package.json").read_bytes())["scripts"]
     if (
         not isinstance(scripts, dict)

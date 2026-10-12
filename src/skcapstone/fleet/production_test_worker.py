@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 from xml.etree import ElementTree
 
+from . import production_node_test_recipe as native
 from . import production_test_composite as composite
 from . import production_test_node as node
 from . import production_test_plan as test_plan
@@ -167,7 +168,13 @@ def sandbox_command(
         # Clean candidates have no ignored node_modules directories. Build only
         # mountpoints privately, overlay every source entry read-only, then seal.
         mounts = ["--tmpfs", "/work"]
-        for relative, excluded in (("", {"apps", ".git"}), ("apps", {"web"}), ("apps/web", set())):
+        root_node = native.is_native(profile)
+        parents = (
+            (("", {".git", "node_modules"}),)
+            if root_node
+            else (("", {"apps", ".git"}), ("apps", {"web"}), ("apps/web", set()))
+        )
+        for relative, excluded in parents:
             source = workspace / relative
             if source.is_symlink() or not source.is_dir():
                 raise TestEvidenceError("Node source mount parent is redirected")
@@ -190,7 +197,9 @@ def sandbox_command(
             str(artifact / "apps/web/node_modules"),
             "/work/apps/web/node_modules",
         ]
-        if argv == node.checks(profile["recipe"])[1]["argv"]:
+        if root_node:
+            dependencies = dependencies[:3]
+        if not root_node and argv == node.checks(profile["recipe"])[1]["argv"]:
             dependencies.extend(
                 [
                     "--bind",
@@ -199,7 +208,7 @@ def sandbox_command(
                 ]
             )
         command[position:position] = [*dependencies, "--remount-ro", "/work"]
-        command[command.index("--chdir") + 1] = "/work/apps/web"
+        command[command.index("--chdir") + 1] = "/work" if root_node else "/work/apps/web"
     return command
 
 

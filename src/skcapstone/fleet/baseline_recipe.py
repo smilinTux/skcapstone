@@ -184,6 +184,14 @@ def _failed_run(home: Path, job: dict) -> tuple[bytes, Path, dict]:
     checks = receipt.get("checks") or []
     if checks and all(check.get("exit_code") == 0 for check in checks):
         raise BaselinePendingError("checks exited zero; no failing-test baseline")
+    if "node_test" in recipe:
+        from .baseline_node_recipe import failed_report
+
+        workspace = Path(job["workspace"])
+        try:
+            return failed_report(directory, checks, recipe), workspace, recipe
+        except FileNotFoundError as exc:
+            raise BaselinePendingError("awaiting failed-run Node artifacts") from exc
     if [check.get("id") for check in checks] != ["pytest"] or checks[0].get("exit_code") != 1:
         raise BaselineError("pytest did not run to completion with test failures")
     workspace = Path(job["workspace"])
@@ -284,6 +292,11 @@ def curate_failed_qualifications(
                     or json.loads(linked_recipe) != ran
                 ):
                     continue
+            if "node_test" in ran:
+                from .baseline_node_recipe import baseline_recipe as node_baseline
+
+                text = node_baseline(raw, workspace, ran)
+            elif linked_recipe:
                 text = extended_recipe(ran, raw, workspace)
             else:
                 if ran != FULL_SUITE:
@@ -317,12 +330,17 @@ def curate_failed_qualifications(
             timeout=60,
         )
         linked_count += linked.returncode == 0
+        curated = json.loads(text)
         results.append(
             {
                 "card": card_id,
                 "state": "linked" if linked.returncode == 0 else "link-refused",
-                "deselected": len(json.loads(text)["deselect"]),
-                "targets": len(json.loads(text)["pytest"]),
+                "deselected": (
+                    len(ran["node_test"]) - len(curated["node_test"])
+                    if "node_test" in ran
+                    else len(curated["deselect"])
+                ),
+                "targets": len(curated.get("node_test", curated.get("pytest", {}))),
             }
         )
     return results

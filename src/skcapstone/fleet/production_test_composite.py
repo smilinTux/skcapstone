@@ -1,5 +1,6 @@
 """One sealed candidate, fixed language phases and independently verified reports."""
 
+from . import production_node_test_recipe as native
 from . import production_test_node as node
 from . import production_test_plan as plan
 
@@ -46,6 +47,10 @@ def validate_source(profile: dict, workspace) -> None:
     """Recheck every required language against the same sealed source."""
     from .production_pytest_recipe import validate_source as python_source
 
+    if native.is_native(profile):
+        native.validate_source(profile["recipe"], workspace)
+        if set(profile["node_environment"]["source_sha256"]) != set(native.SOURCE_FILES):
+            raise plan.TestEvidenceError("native Node environment variant disagrees")
     if node.is_node(profile) or is_composite(profile):
         node.validate_environment(profile["node_environment"], workspace)
     if not node.is_node(profile) or is_composite(profile):
@@ -54,6 +59,8 @@ def validate_source(profile: dict, workspace) -> None:
 
 def report_names(profile: dict | None) -> tuple[str, ...]:
     """Keep both independent native reports, leaving single-language names intact."""
+    if native.is_native(profile):
+        return native.report_names(profile)
     if is_composite(profile):
         return ("vitest.xml", "pytest.xml")
     return ("vitest.xml",) if node.is_node(profile) else ("pytest.xml",)
@@ -71,6 +78,8 @@ def evidence(raw: dict[str, bytes], profile: dict | None, selection=None) -> tup
     """Rehash both raw files and recompute strict counts, never reported aggregates."""
     if set(raw) != set(report_names(profile)):
         raise plan.TestEvidenceError("required phase reports are missing or unexpected")
+    if native.is_native(profile):
+        return native.evidence(raw, profile)
     if not is_composite(profile):
         value = next(iter(raw.values()))
         return plan.sha(value), plan.junit_counts(value, profile, selection=selection)
