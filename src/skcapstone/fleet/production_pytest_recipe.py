@@ -177,7 +177,7 @@ def recipe_checks(recipe: dict) -> list[dict]:
     return checks
 
 
-def legacy_collection_recipe_checks(recipe: dict) -> list[dict]:
+def legacy_collection_recipe_candidates(recipe: dict) -> list[list[dict]]:
     """Reconstruct sealed pytest argv from before PRs 1139, 1148, and 1150.
 
     This compatibility form is only for reading an old plan as the predecessor
@@ -192,8 +192,9 @@ def legacy_collection_recipe_checks(recipe: dict) -> list[dict]:
         for check in recipe_checks(recipe)
     ]
     if recipe == {"pytest_all": True}:
-        checks[0]["argv"].append(".")
-    return checks
+        with_dot = [{**check, "argv": [*check["argv"], "."]} for check in checks]
+        return [checks, with_dot]
+    return [checks]
 
 
 def validate_source(recipe: dict, workspace: Path) -> None:

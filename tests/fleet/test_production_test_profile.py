@@ -999,10 +999,10 @@ def test_acceptance_reseals_legacy_collection_plan_for_requalification(
         s.home, binding, s.workspace, s.policy, "https://example.org/public.git"
     )
     old_plan, old_path, _ = plan.load_plan(s.home, binding)
-    from skcapstone.fleet.production_pytest_recipe import legacy_collection_recipe_checks
+    from skcapstone.fleet.production_pytest_recipe import legacy_collection_recipe_candidates
 
     monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "d" * 64)
-    old_plan["checks"] = legacy_collection_recipe_checks(old_plan["profile"]["recipe"])
+    old_plan["checks"] = legacy_collection_recipe_candidates(old_plan["profile"]["recipe"])[0]
     old_raw = json.dumps(old_plan, sort_keys=True, separators=(",", ":")).encode()
     old_path.write_bytes(old_raw)
     old_path.chmod(0o600)
@@ -1024,15 +1024,12 @@ def test_acceptance_reseals_legacy_collection_plan_for_requalification(
     assert current_sha != old_sha
 
 
-def test_legacy_full_suite_recipe_restores_pre_1139_target():
-    from skcapstone.fleet.production_pytest_recipe import legacy_collection_recipe_checks
+def test_legacy_full_suite_recipe_accepts_all_historical_targets():
+    from skcapstone.fleet.production_pytest_recipe import legacy_collection_recipe_candidates
 
     current = profile.recipe_checks({"pytest_all": True})
-    legacy = legacy_collection_recipe_checks({"pytest_all": True})
-    assert legacy[0]["argv"][-1] == "."
-    assert "--import-mode=importlib" not in legacy[0]["argv"]
-    assert "--ignore=tests/integration/test_foundation_contract.py" not in legacy[0]["argv"]
-    assert legacy[0]["argv"][:-1] == [
+    candidates = legacy_collection_recipe_candidates({"pytest_all": True})
+    without_flags = [
         arg
         for arg in current[0]["argv"]
         if arg
@@ -1041,6 +1038,9 @@ def test_legacy_full_suite_recipe_restores_pre_1139_target():
             "--ignore=tests/integration/test_foundation_contract.py",
         }
     ]
+    assert len(candidates) == 2
+    assert candidates[0][0]["argv"] == without_flags
+    assert candidates[1][0]["argv"] == [*without_flags, "."]
 
 
 def test_acceptance_never_seals_a_profile_for_other_criteria(

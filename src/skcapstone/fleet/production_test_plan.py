@@ -979,9 +979,12 @@ def _validate_plan(
         validate_plan_node_environment(plan, profile)
     checks_match = plan["checks"] == expected_checks
     if allow_legacy_recipe and not checks_match and "profile" in plan:
-        from .production_pytest_recipe import legacy_collection_recipe_checks
+        from .production_pytest_recipe import legacy_collection_recipe_candidates
 
-        checks_match = plan["checks"] == legacy_collection_recipe_checks(plan["profile"]["recipe"])
+        checks_match = any(
+            plan["checks"] == candidate
+            for candidate in legacy_collection_recipe_candidates(plan["profile"]["recipe"])
+        )
     if (
         set(plan) != required
         or plan["schema"]
