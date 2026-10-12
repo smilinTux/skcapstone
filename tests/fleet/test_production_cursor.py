@@ -154,6 +154,7 @@ def test_sandbox_configuration_and_argv_are_pinned(inputs, monkeypatch):
     assert "must-not-cross" not in " ".join(argv)
     assert argv[argv.index(str(inputs[2])) - 1] == "--ro-bind"
     assert argv.count("--bind") == 1
+    assert "--trust" in argv and argv[argv.index("--workspace") + 1] == "/work"
     config = json.loads((inputs[3] / "cli-config.json").read_text())
     assert config["subagentModels"] == {"explore": "disabled"}
     assert config["sandbox"]["networkAccess"] == "user_config_only"

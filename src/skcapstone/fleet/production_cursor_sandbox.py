@@ -165,5 +165,6 @@ def sandbox_command(
         "enabled",
         "--workspace",
         "/work",
+        "--trust",
         prompt,
     ]

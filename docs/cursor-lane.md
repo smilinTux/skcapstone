@@ -75,6 +75,8 @@ another code review. No wildcard, model override or automatic fallback exists.
 The installed CLI reports display names in its init event, so the stream parser
 also recognizes exactly `Composer 2.5` and `Grok 4.6` for their pinned routes.
 
+The CLI receives `--trust` for the exact mounted `/work` only; its trust marker
+lives in disposable `CURSOR_DATA_DIR`, not the source or host configuration.
 The fresh read-only CLI configuration disables explore subagents and installs a
 `subagentStart` deny hook for all subagent types. It selects workspace read
 boundaries and an empty tool-network allowlist. Provider networking belongs to
