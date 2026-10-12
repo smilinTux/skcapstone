@@ -7,7 +7,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from threading import Event, Lock
 from types import SimpleNamespace
 
@@ -2243,3 +2243,60 @@ def test_policy_refusal_after_custody_stays_held(paths, operator, noded41, field
         **{field: custody[field]},
     )
     assert builder_dispatch.offer(paths, _card(), ["sk-m", "source-only"], writer=writer) is None
+
+
+@pytest.mark.parametrize(
+    "state, age_hours, charged",
+    [
+        ("admission-pending", 31, False),  # chiap01 2026-10-12: 18 GiB of these
+        ("running", 31, False),
+        ("admission-pending", 1, True),  # inside lease + RuntimeMaxSec: still live
+        ("running", 1, True),
+    ],
+)
+def test_reservation_past_its_runtime_bound_holds_no_capacity(
+    monkeypatch, tmp_path, state, age_hours, charged
+) -> None:
+    """No unit from an offer can outlive its lease plus RuntimeMaxSec."""
+    resources = {
+        "cpu_quota_percent": 200,
+        "memory_max_bytes": 3 * 1024**3,
+        "runtime_max_seconds": 7200,
+    }
+    now = builder_dispatch._now()
+    expires = (now - timedelta(hours=age_hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    directory = tmp_path / "dispatch" / "node-chiap01"
+    directory.mkdir(parents=True)
+    (directory / "0a10fcae.json").write_text(
+        json.dumps(
+            {
+                "request_id": "r",
+                "lease_expires_at": expires,
+                "production": {"resources": resources},
+            }
+        )
+    )
+    monkeypatch.setattr(
+        builder_dispatch,
+        "_dispatch_statuses",
+        lambda _paths, _node: {
+            "0a10fcae": {"state": state, "request_id": "r", "production": {"resources": resources}}
+        },
+    )
+    usage = builder_dispatch._production_usage(SimpleNamespace(root=tmp_path), "node-chiap01")
+    assert usage == ((2.0, 3.0, False) if charged else (0.0, 0.0, False))
+
+
+def test_unreadable_runtime_bound_keeps_the_reservation() -> None:
+    now = builder_dispatch._now()
+    assert not builder_dispatch._runtime_bound_passed({}, now)
+    assert not builder_dispatch._runtime_bound_passed(
+        {"lease_expires_at": "2026-10-10T19:56:52Z", "production": {"resources": {}}}, now
+    )
+    assert not builder_dispatch._runtime_bound_passed(
+        {
+            "lease_expires_at": "2026-10-10T19:56:52Z",
+            "production": {"resources": {"runtime_max_seconds": 0}},
+        },
+        now,
+    )

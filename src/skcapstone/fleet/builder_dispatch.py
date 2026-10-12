@@ -380,6 +380,8 @@ def _production_usage(paths, node: str, *, exclude=None):
             continue
         if not request and status.get("state") in CAPACITY_FREE_STATES:
             continue
+        if request and _runtime_bound_passed(request, _now()):
+            continue
         resources = (status.get("production") or request.get("production") or {}).get("resources")
         if not isinstance(resources, dict):
             return 0.0, 0.0, True
@@ -414,6 +416,33 @@ def production_load_key(paths: FleetPaths, view: NodeView, policy: dict) -> tupl
         ram_used = (max(0.0, total_ram - free_ram) + ram) * 1024**3
         utilization = max(cpu_used / cpu_quota, ram_used / memory_quota)
     return utilization, _node_load(paths, view.name, production=True), view.name
+
+
+RUNTIME_BOUND_GRACE_SECONDS = 900
+
+
+def _runtime_bound_passed(request: dict, now: datetime) -> bool:
+    """True once no unit started from this request can still be alive.
+
+    A node may start the unit only before the offer's lease expires, and
+    systemd's RuntimeMaxSec then kills it within runtime_max_seconds. Past
+    both plus a grace, the reservation holds nothing, whatever the last
+    status file says. Review generations that failed after admission kept
+    status admission-pending or running forever and reserved 3 to 6 GiB each:
+    on 2026-10-12, 18 GiB on chiap01, 9 on chiap02 and 6 on chiap03 from
+    offers made 31 hours earlier, so those nodes refused every build while
+    idle. A lease or limit that cannot be read keeps the reservation.
+    """
+    try:
+        expires = datetime.strptime(request["lease_expires_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+        limit = int(request["production"]["resources"]["runtime_max_seconds"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if limit <= 0:
+        return False
+    return now > expires + timedelta(seconds=limit + RUNTIME_BOUND_GRACE_SECONDS)
 
 
 def _lease_expired(request: dict, now: datetime) -> bool:
