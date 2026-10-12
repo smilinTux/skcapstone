@@ -1,0 +1,1 @@
+- Skip baseline curation while run artifacts are unavailable or test checks passed, preserving refusal for genuine invalid failure evidence.
