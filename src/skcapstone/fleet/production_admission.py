@@ -85,15 +85,20 @@ def _transaction(home: Path, host: str):
     fd = os.open(root / ".lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
     with os.fdopen(fd, "r+") as stream:
         info = os.fstat(stream.fileno())
-        if (
-            not stat.S_ISREG(info.st_mode)
-            or info.st_uid != os.getuid()
-            or info.st_mode & 0o077
-            or info.st_nlink != 1
-        ):
+        if not _private_lock_stat(info):
             raise AdmissionError("admission lock is not private")
         fcntl.flock(stream, fcntl.LOCK_EX)
         yield root
+
+
+def _private_lock_stat(info: os.stat_result) -> bool:
+    """Match the ownership and file shape required for an admission lock."""
+    return (
+        stat.S_ISREG(info.st_mode)
+        and info.st_uid == os.getuid()
+        and not info.st_mode & 0o077
+        and info.st_nlink == 1
+    )
 
 
 def _digest(value: dict) -> str:

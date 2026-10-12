@@ -346,3 +346,39 @@ def test_prestart_retirement_refuses_matching_resource_intent(tmp_path, monkeypa
             "b" * 32,
             "c" * 64,
         )
+
+
+def test_prestart_inventory_ignores_private_admission_lock(tmp_path):
+    root = tmp_path / "home/fleet/resource-admission/chiap03"
+    root.mkdir(parents=True)
+    lock = root / ".lock"
+    lock.touch(mode=0o600)
+
+    digest = review_retire._admission_inventory(
+        tmp_path / "home",
+        "chiap03",
+        "c60a542e",
+        "pi-seraph-chiap03-c60a542e",
+        "b" * 32,
+        "c" * 64,
+    )
+
+    assert digest == review_retire.source_bundle._sha(b"[]")
+
+
+def test_prestart_inventory_rejects_unsafe_admission_lock(tmp_path):
+    root = tmp_path / "home/fleet/resource-admission/chiap03"
+    root.mkdir(parents=True)
+    target = tmp_path / "lock-target"
+    target.touch(mode=0o600)
+    (root / ".lock").symlink_to(target)
+
+    with pytest.raises(ValueError, match="resource admission lock is unsafe"):
+        review_retire._admission_inventory(
+            tmp_path / "home",
+            "chiap03",
+            "c60a542e",
+            "pi-seraph-chiap03-c60a542e",
+            "b" * 32,
+            "c" * 64,
+        )
