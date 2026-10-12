@@ -1,0 +1,1 @@
+- fleet: a builder dispatch reservation older than its lease plus RuntimeMaxSec no longer holds capacity, so stale admission-pending review generations stop starving idle builder nodes.
