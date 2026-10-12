@@ -155,23 +155,32 @@ def test_initial_recipe_uses_fixed_full_pytest_for_python_scope(tmp_path):
     assert "not host_systemd" in recipe_checks({"pytest_all": True})[0]["argv"]
 
 
-def test_full_pytest_recipe_honors_configured_testpaths(tmp_path):
+def test_full_pytest_recipe_handles_sklegal_testpaths_in_isolation(tmp_path):
     from skcapstone.fleet.production_pytest_recipe import recipe_checks
 
-    (tmp_path / "pyproject.toml").write_text('[tool.pytest.ini_options]\ntestpaths = ["tests"]\n')
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "tests/test_project.py").write_text("def test_project(): pass\n")
-    vendor_tests = tmp_path / "vendor/capauth/src/capauth/integrations/nextcloud/tests/oidc"
-    vendor_tests.mkdir(parents=True)
-    (vendor_tests / "oidc_e2e_login_test.py").write_text("def test_vendor(): pass\n")
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pytest.ini_options]\ntestpaths = ["tests", "packages/strategy/tests"]\n'
+    )
+    root_test = tmp_path / "tests/features/matter_activity"
+    root_test.mkdir(parents=True)
+    (root_test / "test_service.py").write_text("def test_root(): pass\n")
+    strategy_tests = tmp_path / "packages/strategy/tests"
+    strategy_tests.mkdir(parents=True)
+    (strategy_tests / "test_service.py").write_text("def test_strategy(): pass\n")
+    integration = tmp_path / "tests/integration"
+    integration.mkdir()
+    (integration / "test_foundation_contract.py").write_text(
+        "raise RuntimeError('host Docker inspection ran during collection')\n"
+    )
 
     argv = recipe_checks({"pytest_all": True})[0]["argv"]
     argv[0] = sys.executable
     argv[argv.index("--junitxml=/output/pytest.xml")] = "--collect-only"
     result = subprocess.run(argv, cwd=tmp_path, capture_output=True, text=True, check=True)
 
-    assert "tests/test_project.py::test_project" in result.stdout
-    assert "vendor/" not in result.stdout
+    assert "tests/features/matter_activity/test_service.py::test_root" in result.stdout
+    assert "packages/strategy/tests/test_service.py::test_strategy" in result.stdout
+    assert "test_foundation_contract" not in result.stdout
 
 
 def test_initial_recipe_rejects_ambiguous_language_scope():

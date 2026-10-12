@@ -84,6 +84,9 @@ def recipe_checks(recipe: dict) -> list[dict]:
                     "no:cacheprovider",
                     "-m",
                     "not host_systemd",
+                    "--import-mode=importlib",
+                    # This SKLegal integration probe calls Docker during import.
+                    "--ignore=tests/integration/test_foundation_contract.py",
                     "--junitxml=/output/pytest.xml",
                 ],
             }
