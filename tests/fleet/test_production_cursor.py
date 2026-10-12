@@ -106,6 +106,8 @@ def test_selected_cursor_never_falls_back(policy, monkeypatch):
 
 
 def test_preflight_has_no_inference_or_gateway_path(policy, monkeypatch, tmp_path):
+    real_is_file = Path.is_file
+    monkeypatch.setattr(Path, "is_file", lambda p: p == Path("/usr/bin/bwrap") or real_is_file(p))
     monkeypatch.setattr(cursor.socket, "gethostname", lambda: "chiap08")
     monkeypatch.setattr(cursor, "runtime", lambda: (tmp_path / "cursor-agent", tmp_path / "auth"))
     monkeypatch.setattr(builder, "review_wrapper_path", lambda: "/installed/wrapper")
@@ -398,3 +400,17 @@ def test_progress_requires_exact_generation(tmp_path):
     assert worker.read_progress(tmp_path, OWNER, CARD, CLAIM)["bytes"] == 100
     assert worker.read_progress(tmp_path, OWNER, CARD, "b" * 32) is None
     assert worker.read_progress(tmp_path, OWNER, "deadbeef", CLAIM) is None
+
+
+def test_missing_runtime_is_a_preclaim_refusal(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    with pytest.raises(ValueError, match="runtime is unavailable"):
+        cursor.runtime()
+
+
+def test_corrupt_progress_does_not_crash_wrapper(tmp_path):
+    path = worker.progress_path(tmp_path, OWNER, CLAIM)
+    path.parent.mkdir(parents=True)
+    path.write_text("[]")
+    path.chmod(0o600)
+    assert worker.read_progress(tmp_path, OWNER, CARD, CLAIM) is None

@@ -54,7 +54,10 @@ def runtime() -> tuple[Path, Path]:
     """Resolve only the installed local CLI and the selected private account auth."""
     from .native_codex import _path
 
-    executable = (Path.home() / ".local/bin/cursor-agent").resolve(strict=True)
+    try:
+        executable = (Path.home() / ".local/bin/cursor-agent").resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("Cursor runtime is unavailable") from exc
     _path(executable)
     _path(executable.parent / "node")
     _path(executable.parent / "index.js")

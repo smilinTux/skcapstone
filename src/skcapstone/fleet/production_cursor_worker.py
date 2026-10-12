@@ -34,6 +34,8 @@ def read_progress(home: Path, owner: str, card: str, claim: str) -> dict | None:
     """Reject stale, redirected or differently attributed progress observations."""
     try:
         row = json.loads(_read(progress_path(home, owner, claim), 4096))
+        if not isinstance(row, dict):
+            return None
         if (row.get("owner"), row.get("card_id"), row.get("claim_revision")) != (
             owner,
             card,
