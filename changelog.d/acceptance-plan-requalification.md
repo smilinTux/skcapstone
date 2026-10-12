@@ -1,0 +1,1 @@
+- Acceptance now reads a sealed pre-1148/1150 pytest plan only as a predecessor, allowing a fresh current-recipe qualification instead of stalling on the stale command.
