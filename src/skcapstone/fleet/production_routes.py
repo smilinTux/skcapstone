@@ -190,6 +190,19 @@ def preflight(value: dict, binding: dict) -> dict:
         materialize_gateway_catalog(Path.home(), value, observed)
         _CATALOGS[key] = revision
     catalog_preflight(value, binding)
+    return probe(value, binding)
+
+
+def probe(value: dict, binding: dict) -> dict:
+    """Exercise the exact gateway route once per short window.
+
+    This is the gateway half of preflight() and needs no local Pi catalog, so
+    the authority can call it before OFFERING work. A route the gateway
+    advertises as healthy can still fail every request (DeepSeek out of credit
+    returned HTTP 429 rate_limited_all_candidates on sk-s/m/l for hours on
+    2026-10-12 while the capacity snapshot read available). Failures are cached
+    for the same window, so one cycle costs one probe per route.
+    """
     key = (value["gateway_url"], binding["model"], binding["gateway_backend"])
     prior = _PREFLIGHTS.get(key)
     now = time.time()
