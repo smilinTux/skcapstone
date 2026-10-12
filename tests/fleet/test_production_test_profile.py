@@ -464,6 +464,8 @@ def test_hyphenated_targets_preserve_fixed_argv():
                 "production_pytest_selection",
                 "-m",
                 "not host_systemd",
+                "--import-mode=importlib",
+                "--ignore=tests/integration/test_foundation_contract.py",
                 "--junitxml=/output/pytest.xml",
                 "tests/fleet-checks/test_parser-case.py",
             ],

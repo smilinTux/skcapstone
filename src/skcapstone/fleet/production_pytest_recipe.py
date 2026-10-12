@@ -154,6 +154,12 @@ def recipe_checks(recipe: dict) -> list[dict]:
         "production_pytest_selection",
         "-m",
         "not host_systemd",
+        # Collect exactly as the full suite does: a curated recipe comes from a
+        # pytest_all run, and SKLegal's duplicate test basenames plus its
+        # Docker-at-import probe made every targeted rerun fail collection
+        # (c9fd92d7, f2ea7759 on chi, 2026-10-12).
+        "--import-mode=importlib",
+        "--ignore=tests/integration/test_foundation_contract.py",
         "--junitxml=/output/pytest.xml",
     ]
     if requires_selection(recipe):
