@@ -180,6 +180,10 @@ def catalog_preflight(value: dict, binding: dict) -> None:
 
 def preflight(value: dict, binding: dict) -> dict:
     """Probe exact gateway route once per short window before native claim mutation."""
+    if binding.get("family") == "cursor" or binding.get("provider") == "cursor":
+        from .production_cursor import preflight as cursor_preflight
+
+        return cursor_preflight(value, binding)
     observed = snapshot(value)
     qualified = candidates(value, "sk-" + binding["size_class"].lower(), [], observed=observed)
     if not any(all(binding.get(key) == item for key, item in row.items()) for row in qualified):

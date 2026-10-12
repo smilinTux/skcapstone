@@ -66,3 +66,51 @@ progress semantics; wrapper and admission wiring. Run the relevant existing
 builder, policy, routing, wrapper and lifecycle tests plus Ruff/Black. Live
 model inference is unnecessary for these tests and will not be used to validate
 billing assumptions.
+
+## Implementation and operator handoff
+
+The reviewed code allowlist contains exactly the two routed IDs. This is a
+conservative subset of the permitted cursor-grok family; adding an alias needs
+another code review. No wildcard, model override or automatic fallback exists.
+The installed CLI reports display names in its init event, so the stream parser
+also recognizes exactly `Composer 2.5` and `Grok 4.6` for their pinned routes.
+
+The fresh read-only CLI configuration disables explore subagents and installs a
+`subagentStart` deny hook for all subagent types. It selects workspace read
+boundaries and an empty tool-network allowlist. Provider networking belongs to
+the parent CLI. Workspace `.cursor`, `.claude` and `.agents` configuration is
+masked read-only, including when initially absent. Cards that require changing
+these configurations need another lane. Cursor cannot load the Pi extension,
+read fleet mail, or execute the Pi SKGateway retry helper. The host wrapper
+retains mailbox preflight and exact custody; independent review remains on the
+existing lanes.
+
+After local work, the producer writes `.git/skfleet-cursor-result.json` containing
+only `verdict` and the exact `claim_revision`. The host requires the report at
+`docs/evidence/agents/<card>/COMPLETION-EVIDENCE.md`. PASS_FOR_REVIEW requires a
+clean named feature branch, the authorized base ancestor and exact committed
+report bytes. A BLOCKED result retains its explicit category and referent. The
+host uses `coord verdict` with source revision, claim revision, candidate digest
+and an idempotent transition ID, then checks the recorded native event. It never
+records terminal PASS or completes a card. An existing result at session restart
+requires reconciliation before another inference run.
+
+The normal wrapper records bounded stdout and exit evidence. Host-written
+`fleet/cursor-progress/<owner>/<claim>.json` records assistant/tool stream activity;
+`agent_progress` in the wrapper's direct-seat record exposes it separately from
+shell heartbeat. These new observations do not introduce a stall-kill threshold.
+The systemd invocation is captured inside the newly admitted unit so evidence
+cannot accidentally name its controller's generation.
+
+Only the repository example adds the following disabled row. Activating it after
+review remains an operator action on the real production policy:
+
+```json
+"cursor": {"enabled": false, "provider": "cursor", "host": "chiap08"}
+```
+
+Validation uses fake streams, isolated native CardStore fixtures, real guarded
+coord subprocesses, real bwrap containment and a read-only installed CLI help
+and model-catalog smoke tests. Both routed IDs resolve inside the fresh sandbox. It does not exercise paid inference, token refresh or vendor-side
+billing. Expired login, missing runtime or changed CLI protocol fail the lane
+closed. The read-only credential cannot be refreshed from inside the worker.

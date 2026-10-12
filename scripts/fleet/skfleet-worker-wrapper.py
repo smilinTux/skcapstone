@@ -112,7 +112,13 @@ def startup_observation(args: argparse.Namespace, child_pid: int) -> StartupObse
             )
             matches = executable == expected_executable
             if executable.name in {"node", "nodejs"} and len(argv) > 1:
-                matches = Path(os.fsdecode(argv[1])).resolve() == expected_executable
+                script_index = 1
+                if getattr(args, "lane", "") == "cursor" and argv[1] == b"--use-system-ca":
+                    script_index = 2
+                matches = (
+                    len(argv) > script_index
+                    and Path(os.fsdecode(argv[script_index])).resolve() == expected_executable
+                )
             if executable.name in {"node", "nodejs"} and not matches:
                 try:
                     shebang = expected_executable.read_text(encoding="utf-8").splitlines()[0]
@@ -168,6 +174,24 @@ def write_process_record(
         "pid": pid,
         **runtime_route_identity(args),
     }
+    if args.lane == "cursor":
+        from skcapstone.fleet.production_cursor_worker import read_progress
+
+        record["agent_progress"] = read_progress(
+            Path.home() / ".skcapstone", args.owner, args.card, args.claim_revision
+        )
+        # Native builder service names include the exact offer and attempt.
+        try:
+            groups = Path("/proc/self/cgroup").read_text().splitlines()
+            services = [
+                line.rsplit("/", 1)[-1]
+                for line in groups
+                if line.startswith("0::") and line.endswith(".service")
+            ]
+            if len(services) == 1:
+                record["unit"] = services[0]
+        except OSError:
+            pass
     source_disposition = getattr(args, "production_source_disposition", None)
     if source_disposition is not None:
         record["source_disposition"] = source_disposition

@@ -657,6 +657,15 @@ def _offer(paths, core, labels, *, writer, now=None):
     if selected_node is None:
         builders = _under_capacity(paths, ready)
         if production is not None:
+            from .production_cursor import candidate as cursor_candidate
+
+            if cursor_candidate(production, route, normalized_labels):
+                builders = [
+                    view
+                    for view in builders
+                    if production_builder.node_binding(paths, view.name, production)["host"]
+                    == "chiap08"
+                ]
             # Spread already offered work before stale heartbeat headroom can
             # repeatedly select the same large machine. This is no count cap.
             builders = sorted(
@@ -676,7 +685,9 @@ def _offer(paths, core, labels, *, writer, now=None):
         binding = production_builder.node_binding(paths, selected_node, production)
         try:
             binding.update(
-                production_builder.route_binding(production, card_id, route, normalized_labels)
+                production_builder.route_binding(
+                    production, card_id, route, normalized_labels, host=binding["host"]
+                )
             )
         except production_builder.production_routes.RouteUnavailableError:
             return None
@@ -1347,6 +1358,10 @@ def _guard_path() -> str:
 
 def worker_command(request: dict, owner: str, claim_revision: str, workspace: Path) -> list[str]:
     """Build the only permitted remote worker command."""
+    if (request.get("production") or {}).get("family") == "cursor":
+        from .production_cursor import worker_command as cursor_command
+
+        return cursor_command(request, owner, claim_revision, workspace)
     worker = os.environ.get("SKFLEET_PI") or shutil.which("pi")
     if not worker:
         raise BuilderDispatchError("mediated worker runtime is not installed")

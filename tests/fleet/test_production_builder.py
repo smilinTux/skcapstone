@@ -833,3 +833,47 @@ def test_authority_released_generation_gets_a_fresh_offer(paths, production_setu
     second = builder.offer(paths, _card(), ["sk-m", "source-only"], writer=production_setup.writer)
     assert second is not None
     assert second["request_id"] != first["request_id"]
+
+
+def test_cursor_offer_uses_only_chiap08_and_preserves_claim_binding(
+    paths, operator, production_setup, monkeypatch
+):
+    p = production_setup
+    p.policy["lanes"]["cursor"] = {"enabled": True, "provider": "cursor", "host": "chiap08"}
+    p.policy["node_quotas"]["chiap08"] = p.policy["node_quotas"]["worker"].copy()
+    p.path.write_text(json.dumps(p.policy))
+    local = NodeView(
+        "node-cursor",
+        "Ready",
+        role="builder-standby",
+        labels={"host": "chiap08"},
+        capacity={"cores": 32, "ram_gb": 64},
+        allocatable={"cores": 32, "ram_gb": 64},
+    )
+    store.write_spec(
+        paths,
+        "node",
+        local.name,
+        {"role": "builder-standby", "actuate": True, "cordoned": False},
+        writer=operator,
+        labels=local.labels,
+    )
+    monkeypatch.setattr(builder, "node_views", lambda _: [p.view, local])
+    monkeypatch.setattr(
+        production.production_routes,
+        "candidates",
+        lambda *a, **k: pytest.fail("Cursor offer reached gateway"),
+    )
+    request = builder.offer(paths, _card(), ["source-only", "sk-m"], writer=p.writer)
+    assert request["node"] == "node-cursor"
+    assert request["production"]["model"] == "composer-2.5"
+    assert production.validate_request(paths, "node-cursor", request) == request["production"]
+    with pytest.raises(ValueError, match="policy changed"):
+        production.validate_request(paths, p.view.name, request)
+    monkeypatch.setattr(builder, "node_views", lambda _: [p.view])
+    assert (
+        builder.offer(
+            paths, _card() | {"id": "24b0008f"}, ["source-only", "sk-m"], writer=p.writer
+        )
+        is None
+    )

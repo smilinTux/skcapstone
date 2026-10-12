@@ -32,6 +32,9 @@ def production_lanes(policy, scan_budget):
     }
     lanes = []
     for name, route in policy["lanes"].items():
+        if name == "cursor":
+            # Cursor producers use native builder admission, never the Pi direct loop.
+            continue
         lanes.append(
             {
                 "name": name,

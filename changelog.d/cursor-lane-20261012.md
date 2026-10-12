@@ -1,0 +1,1 @@
+- Add an optional, disabled Cursor producer lane restricted to chiap08 and fixed Cursor-plan models. Reuse native builder admission and managed exit evidence, isolate source edits with bwrap and Cursor sandbox mode, and relay explicit reports through guarded coordination verdicts. Cursor subagents and inherited configuration are disabled; gateway review lanes remain unchanged.
