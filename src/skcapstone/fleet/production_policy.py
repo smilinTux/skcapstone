@@ -249,6 +249,20 @@ def execution_projection(policy: dict, host: str | None) -> dict:
     return value
 
 
+def _lane_for_family(lanes, bound_family):
+    """Map an offer's bound family (a lane name or a provider family such as
+    ``zai`` for the ``glm`` lane) to exactly one policy lane name."""
+    if not isinstance(lanes, dict) or not isinstance(bound_family, str):
+        return None
+    if bound_family in lanes:
+        return bound_family
+    from .production_review import provider_family
+
+    wanted = provider_family(bound_family)
+    matches = [name for name in lanes if wanted is not None and provider_family(name) == wanted]
+    return matches[0] if len(matches) == 1 else None
+
+
 def offer_policy_compatible(offered, current, bound_family, host=None) -> bool:
     """Whether an offer sealed under `offered` is still valid under `current`.
 
@@ -261,9 +275,12 @@ def offer_policy_compatible(offered, current, bound_family, host=None) -> bool:
         return False
     if offered == current:
         return True
+    lane_name = _lane_for_family(current.get("lanes"), bound_family)
+    if lane_name is None:
+        return False
     try:
-        lane = current["lanes"][bound_family]
-        sealed_lane = offered["lanes"][bound_family]
+        lane = current["lanes"][lane_name]
+        sealed_lane = offered["lanes"][lane_name]
     except (KeyError, TypeError):
         return False
     if not isinstance(lane, dict) or lane.get("enabled") is not True:

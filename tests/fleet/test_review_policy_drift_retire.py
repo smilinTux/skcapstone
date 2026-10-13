@@ -187,3 +187,14 @@ def test_node_holds_only_incompatible_offer(drifted):
     p = drifted
     assert not review_dispatch._offer_policy_current(p.request, NEW)
     assert review_dispatch._offer_policy_current(p.request, _policy(codex=True, glm=True))
+
+
+def test_provider_family_maps_to_its_lane():
+    """Offers record family "zai" for the glm lane; that must resolve to glm."""
+    from skcapstone.fleet.production_policy import offer_policy_compatible
+
+    old = _policy(codex=False, glm=True)
+    toggled = _policy(codex=True, glm=True)
+    assert offer_policy_compatible(old, toggled, "zai", "chiap03")
+    assert offer_policy_compatible(old, toggled, "glm", "chiap03")
+    assert not offer_policy_compatible(old, _policy(codex=True, glm=False), "zai", "chiap03")
