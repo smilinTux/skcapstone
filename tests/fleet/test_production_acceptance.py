@@ -390,6 +390,7 @@ def test_controller_requires_trusted_tests_and_finishes_without_legacy_release(
         SimpleNamespace(
             run_or_read_tests=lambda *args: receipt if tests_ready else None,
             validate_test_receipt=lambda *args: dict(receipt),
+            admission_refusal=lambda card: None,
         ),
     )
     results = acceptance.reconcile(

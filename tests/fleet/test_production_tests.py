@@ -1081,3 +1081,12 @@ def test_completed_plan_runtime_drift_requires_all_native_artifacts(setup, monke
         # Loading the sealed plan is not acceptance of the empty fake evidence.
         with pytest.raises(native.TestEvidenceError):
             native.validate_test_receipt(setup.home, setup.binding, setup.workspace)
+
+
+def test_admission_refusal_is_recorded_not_silent(monkeypatch, caplog):
+    from skcapstone.fleet import production_tests as pt
+
+    pt._ADMISSION_REFUSALS["abcd1234"] = "memory_available=1 required=2"
+    assert pt.admission_refusal("abcd1234") == "memory_available=1 required=2"
+    assert pt.admission_refusal("other000") is None
+    pt._ADMISSION_REFUSALS.clear()
