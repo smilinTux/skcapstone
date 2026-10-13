@@ -190,8 +190,10 @@ def disposition(args, *, terminal_proven: bool) -> dict | None:
             base = getattr(args, "source_base_revision", "")
             if not repository or not base:
                 raise ValueError("exact source binding missing")
-            if card is None or "source-only" not in card.labels:
-                raise ValueError("source-only authorization missing")
+            from .production_custody import source_work
+
+            if not source_work(card):
+                raise ValueError("source binding authorization missing")
             _authority()
             request = {"card_id": args.card, "repository": repository, "base_revision": base}
             blocked = release_blocked(home, request, args.owner, args.claim_revision)

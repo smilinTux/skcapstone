@@ -181,6 +181,18 @@ def source_binding(card) -> dict:
     return value
 
 
+def source_work(card) -> bool:
+    """Match dispatch's source authorization without requiring its legacy label."""
+    if card is None:
+        return False
+    if "source-only" in card.labels:
+        return True
+    try:
+        return bool(source_binding(card))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
 def retains_source_custody(
     home: Path,
     card_id: str,
@@ -207,7 +219,7 @@ def retains_source_custody(
             or card.meta.get("_claim_revision") != claim
             or not claim
             or card.archived
-            or "source-only" not in card.labels
+            or not source_work(card)
             or "review" in card.labels
             or "[REVIEW]" in card.title.upper()
             or card.meta.get("link_source_card")

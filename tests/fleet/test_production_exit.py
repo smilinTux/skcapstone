@@ -324,3 +324,18 @@ def test_wrapper_exact_source_arguments_are_explicit(monkeypatch):
     assert args.source_repository == "https://example.invalid/repo.git"
     assert args.source_base_revision == "b" * 40
     assert args.command == ["/usr/bin/true"]
+
+
+def test_bound_source_without_legacy_label_publishes(exit_case, monkeypatch):
+    args, row = exit_case
+    row.id = args.card
+    row.labels = ["sklegal", "dispatch-approved"]
+    row.meta = {
+        "repository": args.source_repository,
+        "base_ref": "main",
+        "base_revision": args.source_base_revision,
+    }
+    monkeypatch.setattr(production_exit, "publish_source", lambda *a: {"head": "c" * 40})
+    result = production_exit.disposition(args, terminal_proven=True)
+    assert result["state"] == "awaiting-review"
+    assert result["claim_released"] is False

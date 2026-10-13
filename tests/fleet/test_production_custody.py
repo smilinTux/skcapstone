@@ -299,7 +299,7 @@ def test_production_opener_rejects_inexact_or_unavailable_custody(
 
 
 @pytest.fixture
-def custody(tmp_path):
+def custody(tmp_path, request):
     home = tmp_path / ".skcapstone"
     home.mkdir()
     store = CardStore(home)
@@ -308,7 +308,7 @@ def custody(tmp_path):
             id=CARD,
             title="[M] Source",
             created_by=OWNER,
-            initial_labels=["source-only"],
+            initial_labels=["source-only"] if getattr(request, "param", True) else [],
             meta=SOURCE,
         )
     )
@@ -525,3 +525,21 @@ def test_rebound_continuation_keeps_custody_on_the_same_backend(
         path.write_text(json.dumps(value))
         path.chmod(0o600)
     assert retains_source_custody(home, CARD, OWNER, CLAIM, fleet_paths=paths) is retained
+
+
+@pytest.mark.parametrize("custody", [False], indirect=True)
+def test_complete_binding_without_legacy_label_records_launch_and_retains_custody(custody):
+    from skcapstone.fleet.production_custody import retains_source_custody
+
+    home, store, event = custody
+    store.append_event(CARD, "remove_label", "lumina-nor", label="source-only")
+    launched = append_production_launch_receipt(
+        home,
+        CARD,
+        actor=OWNER,
+        claim_revision=CLAIM,
+        launched=True,
+        route_identity=event["route_identity"],
+    )
+    assert launched["source_binding"] == SOURCE
+    assert retains_source_custody(home, CARD, OWNER, CLAIM, fleet_paths=FleetPaths(home / "fleet"))
