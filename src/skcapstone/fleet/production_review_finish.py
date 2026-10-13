@@ -52,7 +52,14 @@ def native_state(home, card):
         }
         native = store._read_events(card)
         events = native + store._legacy_events(card)
-        events.sort(key=lambda e: (e.get("ts", ""), e.get("writer", ""), e.get("seq", 0)))
+        events.sort(
+            key=lambda e: (
+                e.get("ts", ""),
+                e.get("writer", ""),
+                e.get("seq", 0),
+                bool(e.get("expected_claim_revision")),
+            )
+        )
         outcomes = [
             e
             for e in events
