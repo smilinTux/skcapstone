@@ -1,7 +1,7 @@
 """Deterministic file-level test sharding for CI (``-p pytest_shard --shard I/N``).
 
 Whole files are assigned to shards, largest first, each to the currently
-lightest shard (weight = number of collected tests in the file). Assignment
+lightest shard (weight = measured seconds from shard-weights.json, else tests * 0.15s). Assignment
 depends only on the collected node ids, so the pytest controller and every
 pytest-xdist worker compute the same partition, and the N shards together
 select every collected test exactly once.
@@ -9,7 +9,24 @@ select every collected test exactly once.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
+
+# Measured seconds per test file (sum of testcase times from a green CI run).
+# Files absent from the table fall back to ``tests * _DEFAULT_SECONDS_PER_TEST``.
+# Stale numbers only unbalance the shards; they can never drop or duplicate a
+# test, so refreshing this file is an optimisation, not a correctness matter.
+WEIGHTS_FILE = Path(__file__).with_name("shard-weights.json")
+_DEFAULT_SECONDS_PER_TEST = 0.15
+
+
+def load_weights(path: Path = WEIGHTS_FILE) -> dict[str, float]:
+    try:
+        return {str(k): float(v) for k, v in json.loads(path.read_text("utf-8")).items()}
+    except (OSError, ValueError):
+        return {}
 
 
 def parse_shard(spec: str) -> tuple[int, int]:
@@ -21,9 +38,9 @@ def parse_shard(spec: str) -> tuple[int, int]:
     return i - 1, n
 
 
-def assign(weights: dict[str, int], count: int) -> dict[str, int]:
+def assign(weights: dict[str, float], count: int) -> dict[str, int]:
     """Map each file to a shard index, balancing total weight (LPT greedy)."""
-    loads = [0] * count
+    loads = [0.0] * count
     owner: dict[str, int] = {}
     for path in sorted(weights, key=lambda p: (-weights[p], p)):
         shard = min(range(count), key=lambda k: (loads[k], k))
@@ -44,10 +61,14 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     if not spec:
         return
     index, count = parse_shard(spec)
-    weights: dict[str, int] = {}
+    counts: dict[str, int] = {}
     for item in items:
         path = item.nodeid.split("::", 1)[0]
-        weights[path] = weights.get(path, 0) + 1
+        counts[path] = counts.get(path, 0) + 1
+    measured = load_weights()
+    weights = {
+        path: measured.get(path, n * _DEFAULT_SECONDS_PER_TEST) for path, n in counts.items()
+    }
     owner = assign(weights, count)
     keep = [item for item in items if owner[item.nodeid.split("::", 1)[0]] == index]
     dropped = [item for item in items if owner[item.nodeid.split("::", 1)[0]] != index]
