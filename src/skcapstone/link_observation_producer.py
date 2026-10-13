@@ -271,6 +271,13 @@ def build_feed(
             item["repository"] = repository
             raw_rows.append(item)
 
+    if now is None:
+        # Snapshots are stamped while the forge is read, so the reference clock
+        # must be taken after the reads. A slow forge (over 30s of reads) made
+        # every snapshot look ahead of a clock taken before them and the feed
+        # unhealthy with snapshot_clock_ahead.
+        timestamp = _now()
+
     keys: set[str] = set()
     records: list[dict[str, Any]] = []
     missing: list[str] = []

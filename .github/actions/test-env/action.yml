@@ -30,7 +30,9 @@ runs:
         python scripts/ci/test_environment.py
         python -m pip install --upgrade pip
         python scripts/ci/test_environment.py
-        python -m pip install -e ".[all,dev]"
+        # Constraints = the versions production runs (deploy/fleet-constraints.txt).
+        python -m pip install -c deploy/fleet-constraints.txt -e ".[all,dev]"
+        python -m skcapstone.fleet.dependency_parity
     - name: Verify resolved package dependencies
       shell: bash --noprofile --norc -p -e -o pipefail {0}
       run: python -m pip check
@@ -39,7 +41,7 @@ runs:
       run: |
         python scripts/ci/test_environment.py
         python -m pip install --force-reinstall --no-deps --no-cache-dir \
-          --only-binary=:all: "skcoord==0.1.86"
+          --only-binary=:all: -c deploy/fleet-constraints.txt skcoord
         python -m pip show skcoord
         python - <<'PY'
         import os
@@ -60,7 +62,9 @@ runs:
         from skcoord.coordination import Board
         from skcoord.lifecycle import audit_lifecycle, repair_lifecycle, transition_task
 
-        assert Version(version("skcoord")) == Version("0.1.86")
+        from skcapstone.fleet.dependency_parity import load_constraints
+
+        assert Version(version("skcoord")) == load_constraints()["skcoord"]
         assert callable(scan_overlay_records)
         assert callable(plan_overlay_recovery)
         assert callable(save_recovery_plan)
@@ -103,16 +107,11 @@ runs:
           tests/test_cli_kanban.py \
           tests/test_coord_kanban_mcp.py \
           tests/test_coord_amend.py
-    - name: Install preserved production SKCoord candidate
-      # Draft sibling reconciliation: smilinTux/skcoord#131.
-      # Keep the registry-only contract above; this exact overlay supplies
-      # the unpublished helper/replacement APIs used by production.
+    - name: Verify production SKCoord helper modules
+      # The released skcoord pinned in deploy/fleet-constraints.txt is what
+      # production runs; no unreleased git overlay (2026-10-13 incident).
       shell: bash --noprofile --norc -p -e -o pipefail {0}
-      run: |
-        python scripts/ci/test_environment.py
-        python -m pip install --force-reinstall --no-deps --no-cache-dir \
-          "skcoord @ git+https://github.com/smilinTux/skcoord@47cf3b1d6cbfbda5a07f32ae3a9ed9ad59de6217"
-        python -c "import skcoord.owner_helpers, skcoord.review_replacement"
+      run: python -c "import skcoord.owner_helpers, skcoord.review_replacement"
     - name: Resolve exact sibling revisions
       id: siblings
       shell: bash --noprofile --norc -p -e -o pipefail {0}
