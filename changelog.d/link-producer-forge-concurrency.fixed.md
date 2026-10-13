@@ -1,0 +1,1 @@
+Link producer: read the private forge's open PRs concurrently (8 workers, order and fail-closed errors preserved). Serial per-PR status and recheck reads took about 120s for ~55 sklegal PRs and, run in both producer stages, exceeded the unit's 180s start timeout from 2026-10-13 16:00Z.

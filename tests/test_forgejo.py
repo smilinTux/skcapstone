@@ -246,3 +246,46 @@ def test_missing_private_token_returns_safe_producer_failure(monkeypatch):
     monkeypatch.delenv("SKFLEET_SKGIT_READ_TOKEN", raising=False)
     with pytest.raises(ProducerError, match="credential_unavailable"):
         MultiForgeReadOnlyConnector().list_open(SKGIT_REPOSITORY)
+
+
+class Slow(Pages):
+    """Many PRs behind a slow forge, as the link producer saw on 2026-10-13."""
+
+    count = 40
+    delay = 0.05
+
+    def request(self, method, path, payload=None):
+        import time
+
+        time.sleep(self.delay)
+        if "/pulls?" in path:
+            if "page=1&" in path:
+                return [self.pr(n) for n in range(1, self.count + 1)]
+            return []
+        return super().request(method, path, payload)
+
+
+def test_slow_forge_reads_overlap_and_keep_order():
+    import time
+
+    transport = Slow()
+    started = time.perf_counter()
+    rows = ForgejoReadOnlyConnector(transport).list_open(SKGIT_REPOSITORY)
+    elapsed = time.perf_counter() - started
+    assert [r["number"] for r in rows] == list(range(1, Slow.count + 1))
+    # 2 list pages + 3 requests per PR is ~6s one after another at 50ms each.
+    serial = (2 + 3 * Slow.count) * Slow.delay
+    assert elapsed < serial / 3
+
+
+def test_first_error_in_pr_order_wins_under_concurrency():
+    class TwoBad(Slow):
+        def request(self, method, path, payload=None):
+            if path.endswith("/pulls/5") or path.endswith("/pulls/9"):
+                value = self.pr(int(path.rsplit("/", 1)[-1]))
+                value["head"]["sha"] = "b" * 40
+                return value
+            return super().request(method, path, payload)
+
+    with pytest.raises(ForgejoError, match="head_changed"):
+        ForgejoReadOnlyConnector(TwoBad()).list_open(SKGIT_REPOSITORY)

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -18,6 +19,8 @@ _ROOT = "/api/v1/repos/smilinTux/sklegal"
 _MAX_BYTES = 4 * 1024 * 1024
 _MAX_PAGES = 100
 _SHA = re.compile(r"[0-9a-f]{40}")
+#: Concurrent per-PR observations; modest so the forge is never hammered.
+_FETCH_WORKERS = 8
 
 
 class ForgejoError(ValueError):
@@ -153,48 +156,59 @@ class ForgejoReadOnlyConnector:
             SKGIT_ORIGIN, os.environ.get("SKFLEET_SKGIT_READ_TOKEN", "")
         )
         rows = _pages(client, _ROOT + "/pulls?state=open")
-        result: list[dict[str, Any]] = []
         numbers: set[int] = set()
+        pinned: list[tuple[int, str, str]] = []
         for raw in rows:
             number = raw.get("number")
             if type(number) is not int or number < 1 or number in numbers:
                 raise ForgejoError("forge_pr_number_invalid")
             numbers.add(number)
-            head, base = _pin(raw, "head"), _pin(raw, "base")
-            statuses = _pages(client, f"{_ROOT}/commits/{head}/statuses")
-            latest: dict[str, tuple[int, str]] = {}
-            for status in statuses:
-                context, identity, value = (status.get(k) for k in ("context", "id", "status"))
-                if (
-                    not isinstance(context, str)
-                    or not context
-                    or type(identity) is not int
-                    or identity < 1
-                    or not isinstance(value, str)
-                    or not value
-                ):
-                    raise ForgejoError("forge_status_malformed")
-                prior = latest.get(context)
-                if prior is not None and prior[0] == identity and prior[1] != value:
-                    raise ForgejoError("forge_status_conflict")
-                if prior is None or identity > prior[0]:
-                    latest[context] = (identity, value)
-            current = client.request("GET", f"{_ROOT}/pulls/{number}")
+            pinned.append((number, _pin(raw, "head"), _pin(raw, "base")))
+        # Each PR costs a status read and a detail recheck, each a fresh TLS
+        # connection. Done one after another a board of ~80 PRs took ~2 minutes
+        # and the link producer timed out; the reads are independent, so overlap
+        # them. Results keep PR order and the first error in that order wins.
+        if len(pinned) < 2:
+            return [self._observe(client, *entry) for entry in pinned]
+        with ThreadPoolExecutor(max_workers=min(_FETCH_WORKERS, len(pinned))) as pool:
+            return list(pool.map(lambda entry: self._observe(client, *entry), pinned))
+
+    @staticmethod
+    def _observe(client: Any, number: int, head: str, base: str) -> dict[str, Any]:
+        """Read one PR's latest statuses and recheck that its exact pins held."""
+        statuses = _pages(client, f"{_ROOT}/commits/{head}/statuses")
+        latest: dict[str, tuple[int, str]] = {}
+        for status in statuses:
+            context, identity, value = (status.get(k) for k in ("context", "id", "status"))
             if (
-                not isinstance(current, dict)
-                or type(current.get("number")) is not int
-                or current.get("number") != number
+                not isinstance(context, str)
+                or not context
+                or type(identity) is not int
+                or identity < 1
+                or not isinstance(value, str)
+                or not value
             ):
-                raise ForgejoError("forge_pr_identity_changed")
-            if _pin(current, "head") != head or _pin(current, "base") != base:
-                raise ForgejoError("forge_pr_head_changed")
-            item = dict(current)
-            item["checks"] = [
-                {"context": name, "status": value} for name, (_, value) in sorted(latest.items())
-            ]
-            item["snapshot_at"] = datetime.now(timezone.utc).isoformat()
-            result.append(item)
-        return result
+                raise ForgejoError("forge_status_malformed")
+            prior = latest.get(context)
+            if prior is not None and prior[0] == identity and prior[1] != value:
+                raise ForgejoError("forge_status_conflict")
+            if prior is None or identity > prior[0]:
+                latest[context] = (identity, value)
+        current = client.request("GET", f"{_ROOT}/pulls/{number}")
+        if (
+            not isinstance(current, dict)
+            or type(current.get("number")) is not int
+            or current.get("number") != number
+        ):
+            raise ForgejoError("forge_pr_identity_changed")
+        if _pin(current, "head") != head or _pin(current, "base") != base:
+            raise ForgejoError("forge_pr_head_changed")
+        item = dict(current)
+        item["checks"] = [
+            {"context": name, "status": value} for name, (_, value) in sorted(latest.items())
+        ]
+        item["snapshot_at"] = datetime.now(timezone.utc).isoformat()
+        return item
 
 
 class MultiForgeReadOnlyConnector:
