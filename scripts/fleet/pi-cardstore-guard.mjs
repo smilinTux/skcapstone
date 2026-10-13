@@ -37,6 +37,21 @@ export function isCurrentFleetCardReclaim(command, cardId = process.env.SKFLEET_
   return new RegExp(`\\bskcapstone\\s+coord\\s+claim\\s+["']?${escaped}["']?(?:\\s|$)`).test(command);
 }
 
+export function isOutOfScopeFleetCardCustodyMutation(
+  command,
+  cardId = process.env.SKFLEET_CARD_ID,
+  operatorRole = process.env.SKFLEET_OPERATOR_ROLE
+) {
+  if (typeof command !== "string" || !/^[a-z0-9]{8}$/.test(cardId ?? "")) return false;
+  if (operatorRole === "coord-custody") return false;
+  const custodyCommand = /\bskcapstone\s+coord\s+(?:claim|release-claim|move|reassign|assign)\b([^;\n|&]*)/g;
+  for (const match of command.matchAll(custodyCommand)) {
+    const target = match[1].match(/(?:^|\s)["']?([a-f0-9]{8})["']?(?=\s|$)/)?.[1];
+    if (!target || target !== cardId) return true;
+  }
+  return false;
+}
+
 export default function cardStoreGuard(pi) {
   gatewayRetry(pi);
   pi.on("tool_call", async (event) => {
@@ -55,6 +70,16 @@ export default function cardStoreGuard(pi) {
         block: true,
         terminate: true,
         reason: "Direct CardStore JSONL mutation is forbidden. Use skcapstone coord.",
+      };
+    }
+    if (
+      event.toolName === "bash" &&
+      isOutOfScopeFleetCardCustodyMutation(event.input?.command)
+    ) {
+      return {
+        block: true,
+        terminate: false,
+        reason: "A production worker may only mutate custody of its dispatched card.",
       };
     }
     if (event.toolName === "bash" && isCurrentFleetCardReclaim(event.input?.command)) {

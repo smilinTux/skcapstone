@@ -166,6 +166,16 @@ def test_niobe_places_one_generic_medium_card(paths, operator, noded41) -> None:
     assert repeated == request
 
 
+def test_offer_preserves_operator_role_from_card_metadata(paths, operator, noded41) -> None:
+    _node(paths, operator, noded41)
+    writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
+    card = _card() | {
+        "meta": {**_card()["meta"], "operator_role": "coord-custody"},
+    }
+    request = builder_dispatch.offer(paths, card, ["sk-m", "source-only"], writer=writer)
+    assert request["operator_role"] == "coord-custody"
+
+
 def test_niobe_admits_four_distinct_requests_and_denies_fifth(paths, operator, noded41) -> None:
     _node(paths, operator, noded41)
     writer = store.Writer(role="scheduler", node="niobe", identity="capauth:niobe")
@@ -598,6 +608,25 @@ def test_worker_command_uses_bundled_guard_in_isolated_environment(monkeypatch) 
 
     assert command[command.index("--extension") + 1] == str(builder_dispatch._BUNDLED_GUARD)
     assert builder_dispatch._BUNDLED_GUARD.is_file()
+
+
+def test_worker_command_propagates_the_card_operator_role(monkeypatch) -> None:
+    monkeypatch.delenv("SKFLEET_OPERATOR_ROLE", raising=False)
+    ordinary = builder_dispatch.worker_command(
+        _card() | {"card_id": "24b00003", "logical_route": "sk-s"},
+        "owner",
+        "rev",
+        "/tmp/work",
+    )
+    assert "SKFLEET_OPERATOR_ROLE=" in ordinary
+
+    granted_card = _card() | {
+        "card_id": "24b00003",
+        "logical_route": "sk-s",
+        "operator_role": "coord-custody",
+    }
+    granted = builder_dispatch.worker_command(granted_card, "owner", "rev", "/tmp/work")
+    assert "SKFLEET_OPERATOR_ROLE=coord-custody" in granted
 
 
 def test_worker_command_rejects_missing_configured_guard(monkeypatch) -> None:

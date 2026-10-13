@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -24,6 +26,32 @@ from .seat_boundaries import (
 Operation = Callable[..., Any]
 Verifier = Callable[[bytes, str, str], bool]
 SCOPE = "skcapstone,skdashboard,skworld"
+_WORKER_CARD_CUSTODY_ACTIONS = frozenset(
+    {Action.CLAIM, Action.RELEASE, Action.REASSIGN, Action.MOVE_CARD}
+)
+
+
+def _require_worker_card_scope(action: Action, target: str, *, home: Path | None = None) -> None:
+    """Fence production workers to their dispatched card's custody."""
+    worker_card = os.environ.get("SKFLEET_CARD_ID", "").strip().lower()
+    if not worker_card or action not in _WORKER_CARD_CUSTODY_ACTIONS:
+        return
+    if not re.fullmatch(r"[0-9a-f]{8}", worker_card):
+        raise ValueError("production worker card context is invalid")
+    target_card = target.split(":", 1)[0].strip().lower()
+    if target_card == worker_card:
+        return
+
+    from .card_store import CardStore
+
+    card_home = home or Path(os.environ.get("SKCAPSTONE_HOME", Path.home() / ".skcapstone"))
+    worker_task = CardStore(Path(card_home).expanduser()).fold(worker_card)
+    if worker_task and worker_task.meta.get("operator_role") == "coord-custody":
+        return
+    raise ValueError(
+        f"production worker for card {worker_card} may only mutate custody "
+        "of its dispatched card"
+    )
 
 
 def authorize_coord_mutation(
@@ -32,6 +60,8 @@ def authorize_coord_mutation(
     target: str,
     authorization_path: Path | None,
     change_id: str | None,
+    *,
+    home: Path | None = None,
 ) -> None:
     """The one gate every coord mutation entrypoint calls.
 
@@ -44,6 +74,7 @@ def authorize_coord_mutation(
     ``pi-<seat>-*`` lane workers, humans, and system writers pass as their
     own explicitly classified identities.
     """
+    _require_worker_card_scope(action, target, home=home)
     require_coord_authority(actor, action)
     normalized = actor.strip().lower()
     if normalized != "jarvis":

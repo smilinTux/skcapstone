@@ -1,0 +1,1 @@
+- Production workers can only claim, release, or move their dispatched card unless that card's immutable metadata grants the coordination custody role. Previously, delegated worker identities could mutate custody on any card through coord.

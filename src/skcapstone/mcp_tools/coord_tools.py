@@ -289,6 +289,7 @@ async def _handle_coord_claim(args: dict) -> list[TextContent]:
         task_id,
         Path(auth) if auth else None,
         args.get("casey_change_id"),
+        home=_home(),
     )
     board = Board(_home())
     try:
@@ -539,6 +540,7 @@ async def _handle_coord_move(args: dict) -> list[TextContent]:
             f"{task_id}:{column}",
             Path(auth) if auth else None,
             args.get("casey_change_id"),
+            home=_shared_root(),
         )
         receipt = move_coord_task(
             _shared_root(),
