@@ -698,6 +698,7 @@ def seal_candidate(
     """Seal once only after acceptance has independently validated current custody."""
     predecessor_sha256 = None
     existing_policy_current = False
+    existing = None
     try:
         existing, _, predecessor_sha256 = plan.load_plan(home, binding, allow_completed=True)
         existing_policy_current = existing["policy_sha256"] == plan.execution_policy_fingerprint(
@@ -736,7 +737,10 @@ def seal_candidate(
         if not acceptance_requalifiable(value, expected, policy):
             raise
         requalifying = True
-    if existing_policy_current and not requalifying:
+    if existing_policy_current and (
+        not requalifying
+        or (existing is not None and existing.get("acceptance_requalification") is True)
+    ):
         return
     plan.seal_plan(
         home,
