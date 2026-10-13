@@ -1,0 +1,154 @@
+{
+  "attempted": [
+    "Recomputed candidate and bundle manifest SHA-256 from shared bytes.",
+    "Parsed all 180 cited immutable JSONL snapshots line by line and checked each snapshot byte length, parsed line count, snapshot hash, prefix hash, source prefix, and recorded provenance fields.",
+    "Compared the embedded structural and evidence join to the frozen source report and checked card selection, source path capture, dependency joins, semantic guards, evidence separation, status counts, and mutation guards.",
+    "Compared each top level supported remedy proposal position to the corresponding selected card remedy or proposed approval text."
+  ],
+  "blocked_on": {
+    "referent": "ac:3",
+    "type": "card"
+  },
+  "card_id": "7985186a",
+  "criterion_quote": "Verify every remedy proposal is exactly supported by the frozen source bytes and preserves human authority and historical non-PASS outcomes.",
+  "identity": {
+    "bundle_manifest_bytes": 3399486,
+    "bundle_manifest_path": "/home/skuser01/.skcapstone/evidence/work/c84987dd/bundle-manifest.json",
+    "bundle_manifest_sha256": "7bd3b9c94a39bb1ac51fb64f068fdd6ae41a69c0eced5501c6d63f2e367a1bf3",
+    "candidate_bytes": 418146,
+    "candidate_path": "/home/skuser01/.skcapstone/evidence/work/c84987dd/immutable/reports/42a21eece3ac9994180ca6c28ef68e1c943787a32679ebf8f7275064d01945f0.json",
+    "candidate_sha256": "42a21eece3ac9994180ca6c28ef68e1c943787a32679ebf8f7275064d01945f0",
+    "source_report_bytes": 175469,
+    "source_report_path": "/home/skuser01/.skcapstone/evidence/work/d7d7f9a7/partition-18-report.json",
+    "source_report_sha256": "51f05c31a715b1988255581f2fcfabe8200c497ff48b55e8bfbe07e2bf70ae0e"
+  },
+  "join_verification": {
+    "completion_implies_pass": false,
+    "dependency_ids_equal_joined_dependency_ids": true,
+    "link_implies_dependency": false,
+    "machine_supersession_discharges_human_gate": false,
+    "preserved_historical_nonpass_outcomes": 64,
+    "report_cited_paths": 270,
+    "selected_cards": 42,
+    "structural_and_evidence_fields_separate": true,
+    "uncaptured_report_paths": [],
+    "verified_folded_evidence_outcomes": 164
+  },
+  "mutations": {
+    "candidate_mutated": false,
+    "lifecycle_or_dependency_mutation_applied": false,
+    "repair_applied": false,
+    "review_evidence_only": true
+  },
+  "observed_at": "2026-08-28T11:31:13.981350+00:00",
+  "partition": 18,
+  "reason": "Acceptance criterion 3 is unsatisfied. The candidate top level supported_remedy_proposals array is positionally inconsistent with the 42 selected cards. Eleven entries do not equal the remedy or proposed approval value embedded in the card at the same index, including entries moved onto cards that have no proposal. Therefore the report does not exactly identify every source supported remedy proposal.",
+  "remedy_mismatch_count": 11,
+  "remedy_mismatches": [
+    {
+      "card_embedded_nonempty": true,
+      "card_embedded_value_sha256": "71f4b3c9fbdf60324152bd62b0949edd9f0d53c5d78f031be90cc1ac6192754e",
+      "card_id": "673f7bce",
+      "index": 21,
+      "top_level_claim_nonempty": false,
+      "top_level_claim_sha256": "0fc28d96550913e9ca1f66ca3bfde744322722b919d085f3330e1c39416ba16b"
+    },
+    {
+      "card_embedded_nonempty": false,
+      "card_embedded_value_sha256": "0fc28d96550913e9ca1f66ca3bfde744322722b919d085f3330e1c39416ba16b",
+      "card_id": "6a565c9a",
+      "index": 22,
+      "top_level_claim_nonempty": true,
+      "top_level_claim_sha256": "71f4b3c9fbdf60324152bd62b0949edd9f0d53c5d78f031be90cc1ac6192754e"
+    },
+    {
+      "card_embedded_nonempty": true,
+      "card_embedded_value_sha256": "71f4b3c9fbdf60324152bd62b0949edd9f0d53c5d78f031be90cc1ac6192754e",
+      "card_id": "6cdf0a04",
+      "index": 23,
+      "top_level_claim_nonempty": false,
+      "top_level_claim_sha256": "0fc28d96550913e9ca1f66ca3bfde744322722b919d085f3330e1c39416ba16b"
+    },
+    {
+      "card_embedded_nonempty": false,
+      "card_embedded_value_sha256": "0fc28d96550913e9ca1f66ca3bfde744322722b919d085f3330e1c39416ba16b",
+      "card_id": "790aad92",
+      "index": 24,
+      "top_level_claim_nonempty": true,
+      "top_level_claim_sha256": "71f4b3c9fbdf60324152bd62b0949edd9f0d53c5d78f031be90cc1ac6192754e"
+    },
+    {
+      "card_embedded_nonempty": true,
+      "card_embedded_value_sha256": "821f18e2496dec4d0ee25eb68561744e8e5b4b17cbf228260d799453b0d37a32",
+      "card_id": "79dc470e",
+      "index": 25,
+      "top_level_claim_nonempty": false,
+      "top_level_claim_sha256": "0fc28d96550913e9ca1f66ca3bfde744322722b919d085f3330e1c39416ba16b"
+    },
+    {
+      "card_embedded_nonempty": true,
+      "card_embedded_value_sha256": "6f96e91f7a9f6559ce4f9ff052d5f5b410a45358196ba1d6f09c297857df869f",
+      "card_id": "7ddca485",
+      "index": 26,
+      "top_level_claim_nonempty": true,
+      "top_level_claim_sha256": "821f18e2496dec4d0ee25eb68561744e8e5b4b17cbf228260d799453b0d37a32"
+    },
+    {
+      "card_embedded_nonempty": false,
+      "card_embedded_value_sha256": "0fc28d96550913e9ca1f66ca3bfde744322722b919d085f3330e1c39416ba16b",
+      "card_id": "90f3b067",
+      "index": 27,
+      "top_level_claim_nonempty": true,
+      "top_level_claim_sha256": "6f96e91f7a9f6559ce4f9ff052d5f5b410a45358196ba1d6f09c297857df869f"
+    },
+    {
+      "card_embedded_nonempty": true,
+      "card_embedded_value_sha256": "71f4b3c9fbdf60324152bd62b0949edd9f0d53c5d78f031be90cc1ac6192754e",
+      "card_id": "c8aee725",
+      "index": 34,
+      "top_level_claim_nonempty": false,
+      "top_level_claim_sha256": "0fc28d96550913e9ca1f66ca3bfde744322722b919d085f3330e1c39416ba16b"
+    },
+    {
+      "card_embedded_nonempty": false,
+      "card_embedded_value_sha256": "0fc28d96550913e9ca1f66ca3bfde744322722b919d085f3330e1c39416ba16b",
+      "card_id": "d626958b",
+      "index": 35,
+      "top_level_claim_nonempty": true,
+      "top_level_claim_sha256": "71f4b3c9fbdf60324152bd62b0949edd9f0d53c5d78f031be90cc1ac6192754e"
+    },
+    {
+      "card_embedded_nonempty": true,
+      "card_embedded_value_sha256": "4517c8f39b0deb076610d2e0f413c183dbaa70a18909e6d5ba0c7c496b4a5441",
+      "card_id": "e7392982",
+      "index": 40,
+      "top_level_claim_nonempty": false,
+      "top_level_claim_sha256": "0fc28d96550913e9ca1f66ca3bfde744322722b919d085f3330e1c39416ba16b"
+    },
+    {
+      "card_embedded_nonempty": false,
+      "card_embedded_value_sha256": "0fc28d96550913e9ca1f66ca3bfde744322722b919d085f3330e1c39416ba16b",
+      "card_id": "ea2c9790",
+      "index": 41,
+      "top_level_claim_nonempty": true,
+      "top_level_claim_sha256": "4517c8f39b0deb076610d2e0f413c183dbaa70a18909e6d5ba0c7c496b4a5441"
+    }
+  ],
+  "repository": {
+    "branch": "chore/7985186a-immutable-review",
+    "pull_request": "https://github.com/smilinTux/skcapstone/pull/250"
+  },
+  "reviewer_identity": "pi-codex-7985186a",
+  "schema": "skcapstone.immutable_replacement_independent_review.v1",
+  "snapshot_verification": {
+    "all_lengths_line_counts_snapshot_hashes_prefix_hashes_and_source_prefixes_match": true,
+    "append_only_jsonl_snapshots": 180,
+    "manifest_cited_sources": 305,
+    "note": "Device and inode are capture host provenance and are not expected to remain equal after cross host synchronization. Durable snapshot identity is established by exact bytes and SHA-256.",
+    "parsed_jsonl_lines": 13358,
+    "partition_cited_sources": 305,
+    "provenance_fields_present_for_every_source": true
+  },
+  "source_card_id": "c84987dd",
+  "verdict": "BLOCKED"
+}
