@@ -72,6 +72,7 @@ def _retain(home: Path, packet: dict, *, authoritative: bool) -> str:
         from skcoord.card_store import CardStore, card_mutation_lock
 
         from ..seraph_review_cardstore import _latest_outcome
+        from .production_custody import source_work
 
         with card_mutation_lock(home, manifest["card"]):
             store = CardStore(home)
@@ -79,7 +80,7 @@ def _retain(home: Path, packet: dict, *, authoritative: bool) -> str:
             outcome = _latest_outcome(store, manifest["card"])
             if (
                 row is None
-                or "source-only" not in row.labels
+                or not source_work(row)
                 or row.owner != manifest["owner"]
                 or row.meta.get("_claim_revision") != manifest["claim_revision"]
                 or outcome.get("action") != "verdict"
@@ -211,6 +212,7 @@ def serve() -> None:
             from skcoord.card_store import CardStore
 
             from ..seraph_review_cardstore import _latest_outcome
+            from .production_custody import source_work
 
             bundle._root(home, request["card"])
             if not re.fullmatch(r"[0-9a-f]{40}", str(request["head"])):
@@ -220,7 +222,7 @@ def serve() -> None:
             outcome = _latest_outcome(store, request["card"])
             if (
                 row is None
-                or "source-only" not in row.labels
+                or not source_work(row)
                 or row.archived
                 or outcome.get("candidate_commit") != request["head"]
                 or outcome.get("action") != "verdict"

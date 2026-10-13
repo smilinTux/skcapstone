@@ -32,6 +32,7 @@ def _fold_digest(card) -> str:
 
 def _source(home: Path, source_card: str) -> tuple[dict, str]:
     """Resolve the current exact producer candidate and attempt-zero identity."""
+    from .fleet.production_custody import source_work
     from .guarded_review_work import _candidate
     from .link_review_work import card_generation, review_card_id
     from .seraph_review_cardstore import LiveCardStoreGateway, _latest_outcome
@@ -42,7 +43,7 @@ def _source(home: Path, source_card: str) -> tuple[dict, str]:
         card is None
         or card.archived
         or card.status.value not in {"ready", "doing", "review"}
-        or "source-only" not in card.labels
+        or not source_work(card)
         or "review" in card.labels
         or card.meta.get("claim_conflicts")
         or not card.owner

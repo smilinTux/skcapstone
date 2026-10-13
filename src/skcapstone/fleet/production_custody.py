@@ -262,7 +262,12 @@ def retains_source_custody(
                     return True
             except (OSError, ValueError, KeyError, TypeError):
                 continue
-        return _remote_custody(fleet_paths, card_id, owner, claim, binding)
+        if _remote_custody(fleet_paths, card_id, owner, claim, binding):
+            return True
+        from .direct_source_recovery import inspect_direct_source
+
+        inspect_direct_source(home, card, store=store)
+        return True
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         return refuse("source-custody", card_id, reason_of(exc))
 

@@ -7709,6 +7709,22 @@ def _reconcile_source_reviews_step():
         HOST, _retired_exits["historical"], _retired_exits["not-applicable"]))
 
 
+def _recover_direct_source_publications():
+    if not PRODUCTION_POLICY or HOST != PRODUCTION_POLICY["authority_host"]:
+        return
+    from skcapstone.fleet.direct_source_recovery import recover_pending_direct_sources
+
+    for recovered in recover_pending_direct_sources(
+            Path(HOME) / ".skcapstone", PRODUCTION_POLICY,
+            process_check=_card_process_snapshot, cycle=CYCLE):
+        message = "DIRECT_SOURCE_PUBLICATION|%s|%s|state=%s|%s" % (
+            HOST, recovered["card"], recovered["state"], recovered.get("reason", ""))
+        if recovered["state"] == "refused":
+            _log_once_per_hour(d, "DIRECT_SOURCE_PUBLICATION_REFUSED", recovered["card"], message)
+        else:
+            log(d, message)
+
+
 if not DRY:
     # Keep acceptance out of the rotating review-sweep cursor so it runs on
     # every cycle even when later cleanup steps use the sweep budget.
@@ -7717,8 +7733,8 @@ if not DRY:
     ))
     _phase_timing("source_review_acceptance")
 
-CYCLE.run_steps("review_sweeps",(
-)+(() if DRY else (
+CYCLE.run_steps("review_sweeps",(() if DRY else (
+    ("recover_direct_source_publications",_recover_direct_source_publications),
     ("close_reviewed_parents",close_reviewed_parents),
     ("release_finished_review_claims",release_finished_review_claims),
 ))+(("open_provisional_reviews",lambda: open_provisional_reviews(review_capacity, dry_run=DRY)),))

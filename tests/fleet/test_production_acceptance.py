@@ -560,3 +560,18 @@ def test_finish_requalification_requires_exact_immutable_record(tmp_path):
 
 def _unreachable(*args, **kwargs):
     raise AssertionError("finished pair must not replay live launch policy")
+
+
+@pytest.mark.parametrize("source", ["https-unlabeled"], indirect=True)
+def test_acceptance_keeps_complete_unlabeled_producer_in_governed_path(stopped_pair):
+    home, policy, review, _, _, store = stopped_pair
+    context = acceptance.collect(
+        home,
+        policy,
+        review["card"],
+        review["claim"],
+        process_check=lambda card: {"sessions": [], "units": []},
+    )
+    producer = store.fold(context["source"]["card"])
+    assert "source-only" not in producer.labels
+    assert producer.owner == context["source"]["owner"]

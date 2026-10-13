@@ -174,7 +174,9 @@ def _producer_terminal(home, source, manifest):
     return matches[0]
 
 
-def _direct_seat_terminal(home, source, manifest, producer_owner, producer_claim):
+def _direct_seat_terminal(
+    home, source, manifest, producer_owner, producer_claim, *, publication_pending=False
+):
     """Validate a completed direct worker's exact native source receipt."""
     path = Path(home) / "fleet/direct-seats" / (producer_owner + ".json")
     try:
@@ -189,6 +191,7 @@ def _direct_seat_terminal(home, source, manifest, producer_owner, producer_claim
         artifact = disposition.get("source_artifact") or {}
         schema = receipt.get("schema")
         explicit_receipt = schema == "skfleet.direct-seat/v1"
+        expected_state = "awaiting-evidence" if publication_pending else "awaiting-review"
         parts = source.owner.split("-")
         owner_host = parts[-2] if len(parts) >= 4 else ""
         host = str(receipt.get("host") or owner_host)
@@ -198,15 +201,16 @@ def _direct_seat_terminal(home, source, manifest, producer_owner, producer_claim
             or receipt.get("card") != source.id
             or receipt.get("owner") != producer_owner
             or receipt.get("claim_revision") != producer_claim
-            or receipt.get("completion_state") != "awaiting-review"
+            or receipt.get("completion_state") != expected_state
             or type(receipt.get("pid")) is not int
             or receipt["pid"] <= 0
             or host != owner_host
             or host != socket.gethostname().split(".")[0].lower()
-            or disposition.get("state") != "awaiting-review"
+            or disposition.get("state") != expected_state
             or disposition.get("claim_released") is not False
             or disposition.get("process_terminal") is not True
             or not isinstance(artifact, dict)
+            or (publication_pending and (not explicit_receipt or artifact or manifest))
             or any(artifact.get(key) != value for key, value in manifest.items())
             or receipt.get("route_schema") != "skfleet.runtime-route/v1"
             or not receipt.get("logical_route")
@@ -536,11 +540,13 @@ def collect(home, policy, card, claim, *, process_check):
     manifest, _ = selected
     source = store.fold(parent) if parent else None
     launch_event, launch_request = _recorded_remote_review(home, review, claim)
+    from .production_custody import source_work
+
     if (
         source is None
         or source.archived
         or source.status.value in {"done", "archived"}
-        or "source-only" not in source.labels
+        or not source_work(source)
         or {"do-not-claim", "hold"}.intersection(source.labels)
         or source.meta.get("claim_conflicts")
     ):

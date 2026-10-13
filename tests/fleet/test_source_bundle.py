@@ -34,7 +34,7 @@ def source(tmp_path, monkeypatch, request):
     remote = tmp_path / "remote.git"
     git(tmp_path, "clone", "--bare", str(workspace), str(remote))
     repository = str(remote)
-    if getattr(request, "param", None) == "https":
+    if getattr(request, "param", None) in {"https", "https-unlabeled"}:
         repository = "https://example.invalid/source.git"
         monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
         monkeypatch.setenv("GIT_CONFIG_KEY_0", f"url.{remote}.insteadOf")
@@ -62,7 +62,9 @@ def source(tmp_path, monkeypatch, request):
             id=card,
             title="[M] Source",
             created_by=owner,
-            initial_labels=["source-only"],
+            initial_labels=(
+                [] if getattr(request, "param", None) == "https-unlabeled" else ["source-only"]
+            ),
             meta={"repository": repository, "base_revision": base, "base_ref": "main"},
         )
     )
