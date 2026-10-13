@@ -585,7 +585,12 @@ def _seal_plan(
             acceptance_requalification and _completed_test_attempt(home, current)
         ):
             raise TestEvidenceError("prior test plan already launched")
-        path = previous_path.with_name(previous_path.stem + "." + current + ".json")
+        # load_plan walks <base>.<sha>.json from the chain base, so every
+        # generation is named from the base, never from the previous file.
+        # Naming it from previous_path made generation 2 unreachable and the
+        # chain "disconnected" (chi, six acceptances, 2026-10-13).
+        chain_stem = re.sub(r"(\.[0-9a-f]{64})+\Z", "", previous_path.stem)
+        path = previous_path.with_name(chain_stem + "." + current + ".json")
     if initial_profile_qualification and (profile is None or requalification):
         raise TestEvidenceError("initial profile qualification needs one unpublished profile")
     if initial_profile_qualification:

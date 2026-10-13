@@ -426,3 +426,54 @@ def test_old_evidence_cannot_be_relabelled(qualified):
             runtime_sha256="a" * 64,
         )
     assert not (original.parent / core["id"]).exists()
+
+
+def test_second_successor_stays_reachable_from_the_chain_base(setup):  # noqa: F811
+    """A generation-2 plan must be named from the chain base, not from gen 1.
+
+    chi 2026-10-13: the acceptance requalification sealed a second successor as
+    ``<base>.<gen0>.<gen1>.json``. load_plan walks ``<base>.<sha>.json`` from the
+    base, so it never reached that file and every later cycle reported "test
+    plan chain is disconnected" for six acceptances.
+    """
+    s = setup
+    s.plan_path.unlink()
+    core = {
+        "id": "89508f85",
+        "meta": {"repository": "https://example.org/public.git"},
+        "acceptance_criteria": ["Run parser checks"],
+    }
+    custody(s.home, core)
+    binding = dict(
+        s.binding,
+        source_card=core["id"],
+        source_owner=CLAIM["owner"],
+        source_claim_revision=CLAIM["claim_revision"],
+        criteria_sha256=profile.contract(core)["criteria_sha256"],
+    )
+    recipe = {"pytest": {"tests/test_parser.py": 1}, "compile": [], "lint": [], "changelog": False}
+    profile.qualify_profile(
+        s.home,
+        core,
+        s.policy,
+        recipe,
+        "operator",
+        "b" * 64,
+        source_sha256=plan.source_fingerprint(
+            core["meta"]["repository"], binding["source_head"], binding["source_tree"]
+        ),
+    )
+    repository = core["meta"]["repository"]
+    profile.seal_candidate(s.home, binding, s.workspace, s.policy, repository)
+    _, base_path, generation0 = plan.load_plan(s.home, binding)
+    first_policy = json.loads(json.dumps(s.policy))
+    first_policy["node_quotas"][first_policy["authority_host"]]["memory_max_bytes"] += 1
+    profile.seal_candidate(s.home, binding, s.workspace, first_policy, repository)
+    _, _, generation1 = plan.load_plan(s.home, binding)
+    second_policy = json.loads(json.dumps(first_policy))
+    second_policy["node_quotas"][second_policy["authority_host"]]["memory_max_bytes"] += 1
+    profile.seal_candidate(s.home, binding, s.workspace, second_policy, repository)
+    latest, latest_path, _ = plan.load_plan(s.home, binding)
+    assert latest["predecessor_sha256"] == generation1
+    assert latest_path == base_path.with_name(base_path.stem + "." + generation1 + ".json")
+    assert generation0 != generation1
