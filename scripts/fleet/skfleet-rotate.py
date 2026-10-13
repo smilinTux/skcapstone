@@ -7696,9 +7696,16 @@ def _reconcile_source_reviews_step():
         HOST, _retired_exits["historical"], _retired_exits["not-applicable"]))
 
 
+if not DRY:
+    # Keep acceptance out of the rotating review-sweep cursor so it runs on
+    # every cycle even when later cleanup steps use the sweep budget.
+    CYCLE.run_steps("source_review_acceptance",(
+        ("reconcile_source_reviews",_reconcile_source_reviews_step),
+    ))
+    _phase_timing("source_review_acceptance")
+
 CYCLE.run_steps("review_sweeps",(
 )+(() if DRY else (
-    ("reconcile_source_reviews",_reconcile_source_reviews_step),
     ("close_reviewed_parents",close_reviewed_parents),
     ("release_finished_review_claims",release_finished_review_claims),
 ))+(("open_provisional_reviews",lambda: open_provisional_reviews(review_capacity, dry_run=DRY)),))

@@ -112,12 +112,14 @@ def test_acceptance_reconciliation_logs_every_result_after_work_finishes() -> No
     assert "CYCLE.stop(" not in step
 
 
-def test_acceptance_reconciliation_runs_before_opening_new_reviews() -> None:
+def test_acceptance_reconciliation_has_its_own_nonrotating_phase() -> None:
     source = ROTATE.read_text()
-    start = source.index('CYCLE.run_steps("review_sweeps"')
-    end = source.index('_phase_timing("review_sweeps")', start)
-    phase = source[start:end]
+    acceptance = source.index('CYCLE.run_steps("source_review_acceptance"')
+    review_start = source.index('CYCLE.run_steps("review_sweeps"')
+    review_end = source.index('_phase_timing("review_sweeps")', review_start)
+    acceptance_phase = source[acceptance:review_start]
+    review_phase = source[review_start:review_end]
 
-    assert phase.index('("reconcile_source_reviews",') < phase.index(
-        '("open_provisional_reviews",'
-    )
+    assert '("reconcile_source_reviews",_reconcile_source_reviews_step)' in acceptance_phase
+    assert '"reconcile_source_reviews"' not in review_phase
+    assert '("open_provisional_reviews",' in review_phase
