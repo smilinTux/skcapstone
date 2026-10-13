@@ -56,12 +56,17 @@ def test_every_pyproject_sk_dependency_is_constrained():
 
 
 def test_ci_installs_with_the_constraints_file():
-    for workflow in ("pytest.yml", "providers.yml"):
-        text = (ROOT / ".github" / "workflows" / workflow).read_text()
-        assert "-c deploy/fleet-constraints.txt" in text, workflow
-    assert (
-        "skcoord @ git+" not in (ROOT / ".github/workflows/pytest.yml").read_text()
-    ), "CI must not overlay an unreleased skcoord; test the version production runs"
+    # pytest.yml provisions its environment through the shared test-env action.
+    for path in (
+        ".github/actions/test-env/action.yml",
+        ".github/workflows/providers.yml",
+    ):
+        text = (ROOT / path).read_text()
+        assert "-c deploy/fleet-constraints.txt" in text, path
+    for path in (".github/workflows/pytest.yml", ".github/actions/test-env/action.yml"):
+        assert (
+            "skcoord @ git+" not in (ROOT / path).read_text()
+        ), "CI must not overlay an unreleased skcoord; test the version production runs"
 
 
 def _skcoord_imports():
