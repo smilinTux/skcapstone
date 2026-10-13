@@ -129,7 +129,7 @@ def test_cached_preflight_failure_expires_after_sixty_seconds():
 
 def test_automatic_preflight_precedes_workspace_and_claim():
     source = ROTATE.read_text(encoding="utf-8")
-    probe = source.index("_route_preflight=resolve_and_preflight")
+    probe = source.index("_route_preflight,_pf_reason,_pf_cached=preflight_through_ledger")
     workspace = source.index("default_workspace=os.path.join", probe)
     claim = source.index('claim=subprocess.run([SKC,"coord","claim"', workspace)
     assert probe < workspace < claim

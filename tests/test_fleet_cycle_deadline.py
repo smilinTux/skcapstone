@@ -49,11 +49,15 @@ def test_route_preflight_caches_rejected_routes_per_cycle() -> None:
     # Each logical route is resolved/preflighted once; a cached failure must
     # not re-invoke the gateway for later compatible candidates.
     assert "_route_preflight_cache = {}" in source
-    assert "reason=cached-failure" in source
+    # The ledger now lives in fleet/lane_health.py; the launch site must call it
+    # and only the injected probe may reach the gateway.
+    assert "preflight_through_ledger(" in source
     assert (
-        "resolve_and_preflight(\n                _GATEWAY_ENDPOINT,model,deadline=_cycle_deadline)"
-        in source
+        "lambda: resolve_and_preflight(_GATEWAY_ENDPOINT,model,deadline=_cycle_deadline)" in source
     )
+    ledger = (ROTATE.parents[2] / "src/skcapstone/fleet/lane_health.py").read_text()
+    assert '"cached-failure"' in ledger
+    assert "probe()" in ledger
 
 
 def test_route_preflight_cache_key_changes_with_gateway_revision() -> None:
@@ -72,12 +76,12 @@ def test_route_preflight_cache_key_changes_with_gateway_revision() -> None:
     assert key("glm-5", {"capacity_revision": "new"}) == ("glm-5", "new")
     assert key("glm-5", {"capacity_revision": "old"}) != key("glm-5", {"capacity_revision": "new"})
     assert "_preflight_key = _route_preflight_cache_key(model, _review_route_snapshot)" in source
-    assert "_route_preflight_cache[_preflight_key]" in source
+    assert "_route_preflight_cache,_preflight_key," in source
 
 
 def test_route_preflight_cannot_consume_receipt_reserve_or_reach_launch() -> None:
     source = ROTATE.read_text()
-    probe = source.index("_route_preflight=resolve_and_preflight")
+    probe = source.index("_route_preflight,_pf_reason,_pf_cached=preflight_through_ledger")
     post_probe_deadline = source.index("time.monotonic() >= _cycle_deadline", probe)
     workspace = source.index("default_workspace=os.path.join", probe)
     receipt = source.index('log(d,"CYCLE_RECEIPT|')

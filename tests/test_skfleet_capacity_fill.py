@@ -226,7 +226,7 @@ def test_runtime_counts_only_successful_launches() -> None:
     assert "(candidate for candidate in owned" in source
     assert "if _logical_route_for(candidate[3],candidate[4]) is not None)" in source
     assert "if not _has_launchable_pick(" in source
-    assert "_attempt_lane_name,_attempt_defer=select_compatible_lane(" in source
+    assert "_attempt_lane_name,_attempt_defer=_select_attempt_lane(" in source
     assert "_attempt_lane_name,_attempt_defer=select_elastic_review_lane(" in source
     assert "_attempt_routes" in source
     assert "else:\n        launched+=1" in source
@@ -273,7 +273,7 @@ def test_prelaunch_admission_uses_the_current_cards_elastic_state(order) -> None
 def test_prelaunch_recheck_uses_gateway_routes_for_producer_health() -> None:
     source = ROTATE.read_text(encoding="utf-8")
     recheck = source.index("_attempt_health={")
-    selection = source.index("_attempt_lane_name,_attempt_defer=select_compatible_lane(", recheck)
+    selection = source.index("_attempt_lane_name,_attempt_defer=_select_attempt_lane(", recheck)
     block = source[recheck:selection]
 
     assert "_producer_routes=_producer_routes_for(" in block

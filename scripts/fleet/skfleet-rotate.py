@@ -44,7 +44,7 @@ from skcapstone.fleet_lane_health import (
     cycle_id as new_cycle_id,
     lane_health,
 )
-from skcapstone.fleet_route_preflight import preflight_failure_expired, resolve_and_preflight
+from skcapstone.fleet_route_preflight import resolve_and_preflight
 from skcapstone.fleet import builder_dispatch, store as fleet_store
 from skcapstone.fleet import builder_offer_memory as _offer_memory
 from skcapstone.fleet.production_dispatch import (
@@ -57,6 +57,12 @@ from skcapstone.fleet.production_dispatch import (
     authoritative_owner_state,
 )
 from skcapstone.fleet.production_review import independent_review_routes
+from skcapstone.fleet.lane_health import (
+    effective_lanes_line,
+    fallthrough_log_lines,
+    preflight_through_ledger,
+    select_lane_with_fallthrough,
+)
 from skcapstone.fleet.production_resources import local_worker_admission
 from skcapstone.fleet.pi_catalog import materialize_gateway_catalog
 from skcapstone.fleet.production_receipts import persist_production_snapshot
@@ -9289,7 +9295,7 @@ _cycle_deadline = (
 )
 #: Per-cycle cache: equivalent logical routes are resolved and prefilled exactly once.
 _route_preflight_cache = {}
-_route_preflight_cache_failed_at = {}
+_lane_unhealthy = {}
 for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
     _profile_requalify = False
     if launched>=MAX_LAUNCH:
@@ -9357,10 +9363,31 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             _attempt_lane_name,_attempt_defer=None,_capacity["reason"]
     else:
         _attempt_routes=None
-        _attempt_lane_name,_attempt_defer=select_compatible_lane(
-            _labels,_attempt_escalation,lane_order,launch_remaining,
-            qwen_suitable(core,_labels),qwen_first_exclusive(cid,_labels),_attempt_health,
-            QWEN_TARGET>0,GLM_TARGET>0)
+        def _select_attempt_lane(_health):
+            return select_compatible_lane(
+                _labels,_attempt_escalation,lane_order,launch_remaining,
+                qwen_suitable(core,_labels),qwen_first_exclusive(cid,_labels),_health,
+                QWEN_TARGET>0,GLM_TARGET>0)
+        _attempt_lane_name,_attempt_defer=_select_attempt_lane(_attempt_health)
+    if PRODUCTION_POLICY and _attempt_routes is None and not DRY and _attempt_lane_name:
+        # Effective lanes: allowed AND route-health-ok. The probe is the same
+        # ledger-backed preflight the launch below uses, so it is paid once per
+        # exact route per cycle and the launch reuses its result.
+        def _fallthrough_preflight(_model):
+            _res,_why,_cached=preflight_through_ledger(
+                _route_preflight_cache,
+                _route_preflight_cache_key(_model,_review_route_snapshot),
+                lambda: resolve_and_preflight(_GATEWAY_ENDPOINT,_model,deadline=_cycle_deadline),
+                now=time.monotonic())
+            return _res is not None,_why
+        _attempt_lane_name,_attempt_defer,_hops=select_lane_with_fallthrough(
+            _select_attempt_lane,
+            lambda _n: _lane_model(next(_ln for _ln in LANES if _ln["name"]==_n),core,_labels),
+            _fallthrough_preflight,_attempt_health)
+        for _hop in _hops:
+            _lane_unhealthy[_hop["from"]]=_hop["reason"] or "preflight-failed"
+        for _line in fallthrough_log_lines(HOST,cid,_hops):
+            log(d,_line)
     if _attempt_lane_name is None:
         log(d,"SKIPPED_ATTEMPT_ADMISSION|%s|%s|reason=%s"%
             (HOST,cid,_attempt_defer))
@@ -9838,36 +9865,18 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
                 "- Your authority is limited to this route and the card criteria.\n"
                 % _fanout_env)
     _preflight_key = _route_preflight_cache_key(model, _review_route_snapshot)
-    if _preflight_key in _route_preflight_cache:
-        _route_preflight=_route_preflight_cache[_preflight_key]
-        if _route_preflight is None and preflight_failure_expired(
-            _route_preflight_cache_failed_at.get(_preflight_key, 0.0), time.monotonic()
-        ):
-            _route_preflight_cache.pop(_preflight_key, None)
-            _route_preflight_cache_failed_at.pop(_preflight_key, None)
-            _route_preflight = None
-        elif _route_preflight is None:
-            log(d,"ROUTE_PREFLIGHT_BLOCKED|%s|%s|requested=%s|reason=cached-failure"%
-                (HOST,cid,model))
-            continue
-        else:
-            log(d,"ROUTE_PREFLIGHT_OK|%s|%s|requested=%s|served=%s|provider=%s|cached=1"%
-                (HOST,cid,_route_preflight.requested_identity,
-                 _route_preflight.served_identity,_route_preflight.provider or "unknown"))
-    if _preflight_key not in _route_preflight_cache:
-        try:
-            _route_preflight=resolve_and_preflight(
-                _GATEWAY_ENDPOINT,model,deadline=_cycle_deadline)
-        except ValueError as exc:
-            log(d,"ROUTE_PREFLIGHT_BLOCKED|%s|%s|requested=%s|reason=%s"%
-                (HOST,cid,model,str(exc)[:140]))
-            _route_preflight_cache[_preflight_key]=None
-            _route_preflight_cache_failed_at[_preflight_key]=time.monotonic()
-            continue
-        _route_preflight_cache[_preflight_key]=_route_preflight
-        log(d,"ROUTE_PREFLIGHT_OK|%s|%s|requested=%s|served=%s|provider=%s"%
-            (HOST,cid,_route_preflight.requested_identity,
-             _route_preflight.served_identity,_route_preflight.provider or "unknown"))
+    _route_preflight,_pf_reason,_pf_cached=preflight_through_ledger(
+        _route_preflight_cache,_preflight_key,
+        lambda: resolve_and_preflight(_GATEWAY_ENDPOINT,model,deadline=_cycle_deadline),
+        now=time.monotonic())
+    if _route_preflight is None:
+        log(d,"ROUTE_PREFLIGHT_BLOCKED|%s|%s|requested=%s|reason=%s"%
+            (HOST,cid,model,_pf_reason))
+        continue
+    log(d,"ROUTE_PREFLIGHT_OK|%s|%s|requested=%s|served=%s|provider=%s%s"%
+        (HOST,cid,_route_preflight.requested_identity,
+         _route_preflight.served_identity,_route_preflight.provider or "unknown",
+         "|cached=1" if _pf_cached else ""))
     from skcapstone.fleet.production_routes import served_backend_matches
     if PRODUCTION_POLICY and not served_backend_matches(
             _route_preflight.provider, _selected_route["capacity_domain"],
@@ -10382,5 +10391,7 @@ if admission_refused:
         "creation: a live authoritative owner already holds the exact card"%(
         HOST,admission_refused))
 _phase_timing("lane_launch")
+if PRODUCTION_POLICY:
+    log(d,effective_lanes_line(HOST,LANES,_lane_unhealthy))
 log(d,"CYCLE_RECEIPT|%s|seat=%s|launched=%d|attempted=%d|receipts=%d"%
     (HOST,_ONLY_SEAT or "niobe",launched,processed_picks,launch_receipts))
