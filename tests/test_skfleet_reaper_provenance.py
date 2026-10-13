@@ -1245,3 +1245,64 @@ def test_builder_node_recognition_preserves_dead_worker_proofs(tmp_path, gate):
         )
     assert namespace["reap_dead_claims"]() == 0
     assert released == []
+
+
+@pytest.mark.parametrize("verdict", ("PASS", "PASS_FOR_REVIEW", "PASS_FOR_REREVIEW"))
+@pytest.mark.parametrize("legacy", (False, True))
+def test_dead_builder_pass_is_preserved_before_reaper_evidence(tmp_path, verdict, legacy):
+    """A stopped builder's finished work is not overwritten with WORKER_DIED."""
+    from skcoord.card_store import CardCore, CardStore
+
+    from skcapstone.card import CardEvent, CardEventLog
+
+    owner = "pi-deepseek-builder-node-chiap02-deadbeef"
+    revision = "builder-claim"
+    namespace, released, messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner=owner,
+        claim_revision=revision,
+        launch_revision=None,
+    )
+    home = tmp_path / ".skcapstone"
+    home.mkdir()
+    store = CardStore(home)
+    store.create(CardCore(id="deadbeef", kind="task", title="finished builder", created_by="test"))
+    store.append_event("deadbeef", "claim", owner, owner=owner, claim_revision=revision)
+    if legacy:
+        CardEventLog(home).append(
+            CardEvent(
+                card_id="deadbeef",
+                action="link",
+                link_key="verdict",
+                link_value=verdict,
+                writer=owner,
+            )
+        )
+    else:
+        store.append_event("deadbeef", "verdict", owner, verdict=verdict)
+    assert namespace["reap_dead_claims"]() == 0
+    assert released == []
+    assert not (tmp_path / "card_events" / "fleet-liveness-reaper.jsonl").exists()
+    assert any("REAP_PRESERVED_FINISHED_WORK" in message for message in messages)
+
+
+@pytest.mark.parametrize("failure", (OSError("unreadable"), ValueError("invalid events")))
+def test_dead_builder_refuses_when_finished_work_cannot_be_read(tmp_path, monkeypatch, failure):
+    """Unavailable outcome evidence cannot turn a stopped builder into a release."""
+    from skcapstone import release_guard
+
+    def unavailable(*_args):
+        raise failure
+
+    namespace, released, messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner="pi-glm-builder-node-chiap02-deadbeef",
+        claim_revision="builder-claim",
+        launch_revision=None,
+    )
+    monkeypatch.setattr(release_guard, "finished_work_verdict", unavailable)
+    assert namespace["reap_dead_claims"]() == 0
+    assert released == []
+    assert any("REAP_FINISHED_WORK_UNAVAILABLE" in message for message in messages)

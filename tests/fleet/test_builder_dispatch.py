@@ -17,7 +17,13 @@ from skcapstone.fleet import builder_dispatch, sknoded, store
 
 
 @pytest.fixture(autouse=True)
-def _clear_process_registry(monkeypatch):
+def _clear_process_registry(monkeypatch, tmp_path):
+    from skcoord.card_store import CardCore, CardStore
+
+    # Release now fences the verdict under the native card lock.
+    CardStore(tmp_path).create(
+        CardCore(id="24b00003", kind="task", title="builder fixture", created_by="test")
+    )
     builder_dispatch._PROCESSES.clear()
     monkeypatch.setenv("SKFLEET_PI", "/test/bin/pi")
     monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: _folded())
@@ -364,7 +370,7 @@ def test_changed_request_preserves_uncertain_live_generation(
     )
     monkeypatch.setattr(
         builder_dispatch.Board,
-        "release_claim",
+        "_release_claim_locked",
         lambda *_args, **_kwargs: pytest.fail("released"),
     )
     monkeypatch.setattr(
@@ -830,7 +836,7 @@ def test_changed_offer_releases_prior_exact_claim_without_launch(
         return release_result
 
     monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: folded)
-    monkeypatch.setattr(builder_dispatch.Board, "release_claim", release)
+    monkeypatch.setattr(builder_dispatch.Board, "_release_claim_locked", release)
     monkeypatch.setattr(
         builder_dispatch.Board,
         "claim_task",
@@ -880,7 +886,7 @@ def test_amendment_during_claim_releases_generation_without_launch(
 
     monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: folded)
     monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
-    monkeypatch.setattr(builder_dispatch.Board, "release_claim", release)
+    monkeypatch.setattr(builder_dispatch.Board, "_release_claim_locked", release)
     monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
     assert (
         builder_dispatch.consume_one(
@@ -1107,7 +1113,7 @@ def test_freeze_after_claim_releases_generation_and_prevents_launch(
         return True
 
     monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
-    monkeypatch.setattr(builder_dispatch.Board, "release_claim", release)
+    monkeypatch.setattr(builder_dispatch.Board, "_release_claim_locked", release)
     monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: folded)
     monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
     launches = []
@@ -1166,7 +1172,7 @@ def test_freeze_winning_atomic_exclusion_prevents_process_creation(
         yield
 
     monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
-    monkeypatch.setattr(builder_dispatch.Board, "release_claim", release)
+    monkeypatch.setattr(builder_dispatch.Board, "_release_claim_locked", release)
     monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: folded)
     monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(builder_dispatch.store, "actuation_exclusion", freeze_wins)
@@ -1267,7 +1273,7 @@ def test_dead_worker_recovery_releases_only_matching_generation(
         releases.append((owner, card_id, kwargs))
         return True
 
-    monkeypatch.setattr(builder_dispatch.Board, "release_claim", release)
+    monkeypatch.setattr(builder_dispatch.Board, "_release_claim_locked", release)
     assert builder_dispatch.recover_stale(
         paths,
         tmp_path,
@@ -1326,7 +1332,7 @@ def test_consumer_reconciles_expired_dead_generation_after_request_disappears(
         folded.owner = None
         return True
 
-    monkeypatch.setattr(builder_dispatch.Board, "release_claim", release)
+    monkeypatch.setattr(builder_dispatch.Board, "_release_claim_locked", release)
     monkeypatch.setattr(builder_dispatch, "_send_status", lambda *_args: True)
 
     result = builder_dispatch.consume_one(paths, tmp_path, "node-ziowk01")
@@ -1376,7 +1382,7 @@ def test_dead_orphan_releases_g1_without_terminalizing_g2(
         folded.owner = owner
         folded.meta = dict(_card()["meta"], _claim_revision="claim-g2")
 
-    monkeypatch.setattr(builder_dispatch.Board, "release_claim", release)
+    monkeypatch.setattr(builder_dispatch.Board, "_release_claim_locked", release)
     monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
     monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: folded)
     monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
@@ -1437,7 +1443,7 @@ def test_dead_orphan_claim_revision_mismatch_fences_g2(
     monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: folded)
     monkeypatch.setattr(
         builder_dispatch.Board,
-        "release_claim",
+        "_release_claim_locked",
         lambda *_args, **_kwargs: pytest.fail("mismatched G1 claim released"),
     )
     monkeypatch.setattr(
@@ -1506,7 +1512,7 @@ def test_status_scan_ignores_noncanonical_records(
     path.write_text(original, encoding="utf-8")
     monkeypatch.setattr(
         builder_dispatch.Board,
-        "release_claim",
+        "_release_claim_locked",
         lambda *_args, **_kwargs: pytest.fail("invalid status released a claim"),
     )
 
@@ -1559,7 +1565,7 @@ def test_status_scan_ignores_sync_conflict_copy(
     monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: folded)
     monkeypatch.setattr(
         builder_dispatch.Board,
-        "release_claim",
+        "_release_claim_locked",
         lambda *_args, **_kwargs: pytest.fail("conflict copy released a claim"),
     )
 
@@ -1777,7 +1783,7 @@ def test_launch_failure_releases_exact_claim_and_retries_once(
         return True
 
     monkeypatch.setattr(builder_dispatch.Board, "claim_task", claim)
-    monkeypatch.setattr(builder_dispatch.Board, "release_claim", release)
+    monkeypatch.setattr(builder_dispatch.Board, "_release_claim_locked", release)
     monkeypatch.setattr(builder_dispatch.CardStore, "fold", lambda *_args: folded)
     monkeypatch.setattr(builder_dispatch, "startup_hello", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(builder_dispatch, "_send_status", lambda *_args: True)

@@ -6132,6 +6132,19 @@ def reap_dead_claims():
             log(d, "REAP_GRACE|%s|%s|%s|fresh claim generation remains inside "
                    "grace; leaving it alone this tick" % (HOST, cid, fresh_owner))
             continue
+        # Inspect fresh native and legacy outcomes before writing WORKER_DIED.
+        # The CLI checks again under its mutation lock before the release.
+        try:
+            from skcapstone.release_guard import finished_work_verdict
+            finished = finished_work_verdict(
+                Path(HOME) / ".skcapstone", cid, fresh_owner, fresh_revision)
+        except (ImportError, OSError, ValueError, TypeError) as exc:
+            log(d, "REAP_FINISHED_WORK_UNAVAILABLE|%s|%s|%s" % (HOST, cid, exc))
+            continue
+        if finished:
+            log(d, "REAP_PRESERVED_FINISHED_WORK|%s|%s|%s|verdict=%s" %
+                (HOST, cid, fresh_owner, finished))
+            continue
         if globals().get("PRODUCTION_POLICY"):
             from skcapstone.fleet.production_custody import retains_source_custody
             if retains_source_custody(Path(HOME)/".skcapstone",cid,fresh_owner,fresh_revision,
