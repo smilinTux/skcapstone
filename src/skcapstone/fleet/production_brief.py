@@ -184,17 +184,129 @@ ACCEPTANCE CRITERIA:
 """
 
 
-def production_source_review_brief(
+_REVIEW_VERIFY = """import hashlib,json,sys
+from pathlib import Path
+expected=json.loads(sys.argv[1]);d=json.load(open(sys.argv[2]))
+if (set(d)!=set(expected)|{'verdict','report_sha256'}
+    or any(d.get(k)!=v for k,v in expected.items())):
+    raise ValueError('review decision binding changed')
+if d['report_sha256']!=hashlib.sha256(Path(sys.argv[3]).read_bytes()).hexdigest():
+    raise ValueError('review report digest changed')
+v=d['verdict']
+blocked=(isinstance(v,str) and v.startswith('BLOCKED ')
+         and 'blocked_on=' in v and 'referent=' in v)
+if v not in ('PASS','FAIL') and not blocked: raise ValueError('invalid review verdict')
+print(v)
+"""
+
+_REVIEW_CHECK = """import json,sys
+c=json.load(sys.stdin);e=json.loads(sys.argv[1]);claim=sys.argv[2]
+if (c.get('id')!=e['card'] or c.get('owner')!=e['reviewer_identity']
+    or c.get('meta',{}).get('_claim_revision')!=claim or c.get('archived')
+    or c.get('status') not in ('ready','doing','review')
+    or c.get('meta',{}).get('claim_conflicts') or 'source-only' not in c.get('labels',[])):
+    raise ValueError('review ownership changed')
+for key,wanted in json.loads(sys.argv[3]).items():
+    values={str(c.get(part,{}).get(key)) for part in ('meta','links')
+            if c.get(part,{}).get(key) is not None}
+    if values!={wanted}: raise ValueError('review source changed')
+"""
+
+_REVIEW_RECEIPT = """import json,sys
+card,head,reviewer,digest=sys.argv[1:]
+print(json.dumps(dict(type='source-only-applicability',card_id=card,source_head=head,reviewer=reviewer,evidence_digest=digest,governed_pr_ci=False),sort_keys=True))
+"""
+
+_REVIEW_REVISION = """from pathlib import Path
+import sys
+from skcapstone.seraph_review_cardstore import LiveCardStoreGateway
+print(LiveCardStoreGateway(Path.home()/'.skcapstone').read_card(sys.argv[1]).revision)
+"""
+
+_REVIEW_TRANSITION = """import hashlib,json,sys
+print(hashlib.sha256(json.dumps(sys.argv[1:],separators=(',',':')).encode()).hexdigest())
+"""
+
+_REVIEW_READBACK = """import json,re,sys
+d=json.load(sys.stdin)
+if d.get('card_id')!=sys.argv[1] or not re.fullmatch('[0-9a-f]{64}',d.get('source_revision','')):
+    raise ValueError('guarded link readback invalid')
+print(d['source_revision'])
+"""
+
+
+def source_review_handoff_recipe(
     *,
     card_id: str,
     owner: str,
     claim_revision: str,
-    workspace: str,
+    source_head: str,
+    tree: str,
+    expected: dict,
+    bindings: dict,
+) -> str:
+    """Render the reviewer's guarded handoff, the one copy workers and recovery run."""
+    _identity(card_id, owner, claim_revision)
+    expected_arg = shlex.quote(json.dumps(expected, sort_keys=True))
+    bindings_arg = shlex.quote(json.dumps(bindings, sort_keys=True))
+    actor = shlex.quote(owner)
+    return f"""set -euo pipefail
+test -d .git; test ! -L .git
+test "$(git rev-parse --show-toplevel)" = "$PWD"
+test -z "$(git status --porcelain)"
+branch=$(git symbolic-ref --short HEAD)
+test "$branch" != main; test "$branch" != master
+source_head=$(git rev-parse '{source_head}^{{commit}}')
+test "$source_head" = {source_head}
+test "$(git rev-parse "$source_head^{{tree}}")" = {tree}
+head=$(git rev-parse HEAD)
+test "$head" != "$source_head"
+git merge-base --is-ancestor "$source_head" "$head"
+printf '%s\\n' "$head"
+evidence=docs/evidence/agents/{card_id}/COMPLETION-EVIDENCE.md
+decision=docs/evidence/agents/{card_id}/REVIEW-DECISION.json
+for path in "$evidence" "$decision"; do
+    test -s "$path"; test -f "$path"; test ! -L "$path"
+    cmp -- "$path" <(git cat-file blob "HEAD:$path")
+done
+changed=$(git diff --name-only "$source_head" HEAD | sort)
+test "$changed" = "$(printf '%s\\n' "$evidence" "$decision" | sort)"
+verdict=$(python3 -c {shlex.quote(_REVIEW_VERIFY)} {expected_arg} "$decision" "$evidence")
+revision=$(python3 -c {shlex.quote(_REVIEW_REVISION)} {card_id})
+skcapstone coord show {card_id} --json |
+    python3 -c {shlex.quote(_REVIEW_CHECK)} {expected_arg} {claim_revision} {bindings_arg}
+candidate=$(python3 -c {shlex.quote(_private_evidence_stage())} {card_id} "$head" "$evidence")
+cmp -- "$evidence" "$candidate"
+ls -- "$candidate"
+digest=$(sha256sum "$candidate" | cut -d ' ' -f1)
+guarded_link() {{
+    transition=$(python3 -c {shlex.quote(_REVIEW_TRANSITION)} \\
+        {card_id} {claim_revision} "$revision" "$1" "$2")
+    reply=$(skcapstone coord link {card_id} "$1" "$2" --agent {actor} \\
+        --expected-source-revision "$revision" --expected-claim-revision {claim_revision} \\
+        --transition-id "$transition" --json)
+    revision=$(printf '%s' "$reply" | python3 -c {shlex.quote(_REVIEW_READBACK)} {card_id})
+}}
+guarded_link evidence "$candidate"
+guarded_link review_evidence_sha256 "$digest"
+guarded_link verdict "$verdict"
+if test "$verdict" = PASS; then
+    receipt=$(python3 -c {shlex.quote(_REVIEW_RECEIPT)} {card_id} "$source_head" {actor} "$digest")
+    guarded_link applicability_receipt "$receipt"
+fi
+"""
+
+
+def source_review_binding(
+    *,
+    card_id: str,
+    owner: str,
+    claim_revision: str,
     source_head: str,
     core: dict,
     labels: Sequence[str],
-) -> str:
-    """Render only the existing native source-only applicability handoff."""
+) -> tuple[dict, dict]:
+    """Validate the exact source-only review binding; shared by brief and recovery."""
     from ..review_admission import reviewer_candidate_reasons
     from ..review_verdict import _has_pr_or_ci_binding
     from .source_bundle import _binding
@@ -232,19 +344,38 @@ def production_source_review_brief(
         source_tree=tree,
         reviewer_identity=owner,
     )
-    expected_arg = shlex.quote(json.dumps(expected, sort_keys=True))
-    bindings_arg = shlex.quote(
-        json.dumps(
-            {
-                "link_source_card": parent,
-                "link_head_revision": source_head,
-                "candidate_tree": tree,
-                "producer_identity": producer,
-                "candidate_evidence_sha256": digest,
-            },
-            sort_keys=True,
-        )
+    bindings = {
+        "link_source_card": parent,
+        "link_head_revision": source_head,
+        "candidate_tree": tree,
+        "producer_identity": producer,
+        "candidate_evidence_sha256": digest,
+    }
+    return expected, bindings
+
+
+def production_source_review_brief(
+    *,
+    card_id: str,
+    owner: str,
+    claim_revision: str,
+    workspace: str,
+    source_head: str,
+    core: dict,
+    labels: Sequence[str],
+) -> str:
+    """Render only the existing native source-only applicability handoff."""
+    expected, bindings = source_review_binding(
+        card_id=card_id,
+        owner=owner,
+        claim_revision=claim_revision,
+        source_head=source_head,
+        core=core,
+        labels=labels,
     )
+    parent, tree = expected["parent_card"], expected["source_tree"]
+    digest = bindings["candidate_evidence_sha256"]
+    expected_arg = shlex.quote(json.dumps(expected, sort_keys=True))
     prepare = """import hashlib,json,os,subprocess,sys
 from pathlib import Path
 d=json.loads(sys.argv[1])
@@ -269,51 +400,15 @@ d['report_sha256']=hashlib.sha256(report.read_bytes()).hexdigest()
 fd=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
 with os.fdopen(fd,'w') as f: json.dump(d,f,indent=2)
 """
-    verify = """import hashlib,json,sys
-from pathlib import Path
-expected=json.loads(sys.argv[1]);d=json.load(open(sys.argv[2]))
-if (set(d)!=set(expected)|{'verdict','report_sha256'}
-    or any(d.get(k)!=v for k,v in expected.items())):
-    raise ValueError('review decision binding changed')
-if d['report_sha256']!=hashlib.sha256(Path(sys.argv[3]).read_bytes()).hexdigest():
-    raise ValueError('review report digest changed')
-v=d['verdict']
-blocked=(isinstance(v,str) and v.startswith('BLOCKED ')
-         and 'blocked_on=' in v and 'referent=' in v)
-if v not in ('PASS','FAIL') and not blocked: raise ValueError('invalid review verdict')
-print(v)
-"""
-    check = """import json,sys
-c=json.load(sys.stdin);e=json.loads(sys.argv[1]);claim=sys.argv[2]
-if (c.get('id')!=e['card'] or c.get('owner')!=e['reviewer_identity']
-    or c.get('meta',{}).get('_claim_revision')!=claim or c.get('archived')
-    or c.get('status') not in ('ready','doing','review')
-    or c.get('meta',{}).get('claim_conflicts') or 'source-only' not in c.get('labels',[])):
-    raise ValueError('review ownership changed')
-for key,wanted in json.loads(sys.argv[3]).items():
-    values={str(c.get(part,{}).get(key)) for part in ('meta','links')
-            if c.get(part,{}).get(key) is not None}
-    if values!={wanted}: raise ValueError('review source changed')
-"""
-    receipt = """import json,sys
-card,head,reviewer,digest=sys.argv[1:]
-print(json.dumps(dict(type='source-only-applicability',card_id=card,source_head=head,reviewer=reviewer,evidence_digest=digest,governed_pr_ci=False),sort_keys=True))
-"""
-    revision = """from pathlib import Path
-import sys
-from skcapstone.seraph_review_cardstore import LiveCardStoreGateway
-print(LiveCardStoreGateway(Path.home()/'.skcapstone').read_card(sys.argv[1]).revision)
-"""
-    transition = """import hashlib,json,sys
-print(hashlib.sha256(json.dumps(sys.argv[1:],separators=(',',':')).encode()).hexdigest())
-"""
-    readback = """import json,re,sys
-d=json.load(sys.stdin)
-if d.get('card_id')!=sys.argv[1] or not re.fullmatch('[0-9a-f]{64}',d.get('source_revision','')):
-    raise ValueError('guarded link readback invalid')
-print(d['source_revision'])
-"""
-    actor = shlex.quote(owner)
+    handoff = source_review_handoff_recipe(
+        card_id=card_id,
+        owner=owner,
+        claim_revision=claim_revision,
+        source_head=source_head,
+        tree=tree,
+        expected=expected,
+        bindings=bindings,
+    )
     criteria = "\n".join(str(value) for value in core.get("acceptance_criteria") or [])
     return f"""PRODUCTION SOURCE-ONLY INDEPENDENT REVIEW
 Use only card {card_id}, owner {owner}, claim {claim_revision}, workspace {workspace}.
@@ -356,51 +451,7 @@ Commit only the report and decision on the named reviewer branch, when the card
 authorizes that local commit. Afterward run this handoff from the clean workspace:
 
 ```bash
-set -euo pipefail
-test -d .git; test ! -L .git
-test "$(git rev-parse --show-toplevel)" = "$PWD"
-test -z "$(git status --porcelain)"
-branch=$(git symbolic-ref --short HEAD)
-test "$branch" != main; test "$branch" != master
-source_head=$(git rev-parse '{source_head}^{{commit}}')
-test "$source_head" = {source_head}
-test "$(git rev-parse "$source_head^{{tree}}")" = {tree}
-head=$(git rev-parse HEAD)
-test "$head" != "$source_head"
-git merge-base --is-ancestor "$source_head" "$head"
-printf '%s\\n' "$head"
-evidence=docs/evidence/agents/{card_id}/COMPLETION-EVIDENCE.md
-decision=docs/evidence/agents/{card_id}/REVIEW-DECISION.json
-for path in "$evidence" "$decision"; do
-    test -s "$path"; test -f "$path"; test ! -L "$path"
-    cmp -- "$path" <(git cat-file blob "HEAD:$path")
-done
-changed=$(git diff --name-only "$source_head" HEAD | sort)
-test "$changed" = "$(printf '%s\\n' "$evidence" "$decision" | sort)"
-verdict=$(python3 -c {shlex.quote(verify)} {expected_arg} "$decision" "$evidence")
-revision=$(python3 -c {shlex.quote(revision)} {card_id})
-skcapstone coord show {card_id} --json |
-    python3 -c {shlex.quote(check)} {expected_arg} {claim_revision} {bindings_arg}
-candidate=$(python3 -c {shlex.quote(_private_evidence_stage())} {card_id} "$head" "$evidence")
-cmp -- "$evidence" "$candidate"
-ls -- "$candidate"
-digest=$(sha256sum "$candidate" | cut -d ' ' -f1)
-guarded_link() {{
-    transition=$(python3 -c {shlex.quote(transition)} \\
-        {card_id} {claim_revision} "$revision" "$1" "$2")
-    reply=$(skcapstone coord link {card_id} "$1" "$2" --agent {actor} \\
-        --expected-source-revision "$revision" --expected-claim-revision {claim_revision} \\
-        --transition-id "$transition" --json)
-    revision=$(printf '%s' "$reply" | python3 -c {shlex.quote(readback)} {card_id})
-}}
-guarded_link evidence "$candidate"
-guarded_link review_evidence_sha256 "$digest"
-guarded_link verdict "$verdict"
-if test "$verdict" = PASS; then
-    receipt=$(python3 -c {shlex.quote(receipt)} {card_id} "$source_head" {actor} "$digest")
-    guarded_link applicability_receipt "$receipt"
-fi
-```
+{handoff}```
 
 Stop after handoff. The controller verifies evidence independently and handles
 completion. This recipe does not prove review truth or replace deterministic

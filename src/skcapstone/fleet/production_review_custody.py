@@ -40,7 +40,21 @@ def retain_review_exit(home, args, card, *, terminal_proven):
             raise ReviewEvidenceError("review child terminal status missing")
         if args.host != socket.gethostname().split(".")[0].lower():
             raise ReviewEvidenceError("review host differs")
+        # A reviewer's own final message is not evidence that its guarded handoff
+        # ran (13 reviewers claimed success after a ValueError, 2026-10-13). Only a
+        # native outcome for this exact claim proves it; otherwise fail loudly.
+        from skcoord.card_store import CardStore
+
+        from .review_handoff_recovery import native_outcome_current
+
+        live = CardStore(home).fold(args.card)
+        handoff_ok = live is not None and native_outcome_current(CardStore(home), live) is not None
+        if not handoff_ok:
+            state["reason"] = "handoff-failed: no native review verdict for this claim"
+            if args.production_child_exit_code == 0:
+                state["state"] = "handoff-failed"
         receipt = {
+            "handoff": "completed" if handoff_ok else "failed",
             "schema": "skfleet.production-review-exit/v1",
             "card": args.card,
             "owner": args.owner,
