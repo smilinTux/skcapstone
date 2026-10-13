@@ -1,0 +1,135 @@
+{
+  "acceptance": {
+    "ac1": "PASS",
+    "ac2": "PASS",
+    "ac3": "BLOCKED",
+    "ac4": "PASS: durable hashed review artifact published in PR 255; jarvis and lumina notification receipts are recorded in the shared evidence envelope."
+  },
+  "all_records_review": {
+    "actions_applied": [],
+    "correction_ledger_count": 3,
+    "join_contract_check": "PASS: structural fields and direct evidence entries remain distinct. No normalized verdict is derived from lifecycle, labels, dependencies, or links.",
+    "nonterminal_count": 4,
+    "record_count": 43,
+    "remedy_contract_check": "BLOCKED",
+    "repository_or_external_action_applied": false
+  },
+  "attempted": [
+    "Reproduced PR 244 head 254fdb5cdf7283008a40b96c5bd29df5f5f5437c and compared the PR blob byte for byte with the manifest shared path.",
+    "Parsed the corrected report and all cited structural and direct evidence event JSON used for the three correction ledger entries.",
+    "Compared each correction with the prior blocked review and separately checked structural void, archive, claim, release, note, and verdict bytes.",
+    "Inspected every proposed remedy and the supported coord command help without executing a remedy or audited card action."
+  ],
+  "audited_card_repair_applied": false,
+  "blocked_on": {
+    "referent": "ac:3",
+    "type": "card"
+  },
+  "blocking_findings": [
+    {
+      "card_id": "03bf6be6",
+      "criterion": "ac:3",
+      "finding": "The proposed remedy is not an exact supported append only command. It says to append remove_dependency/add_dependency transitions as applicable, but supplies no exact command, target dependency transition set, required reason, explicit authority, or execution preconditions. This is neither an explicit no action disposition nor an exact executable proposal."
+    }
+  ],
+  "correction_verification": [
+    {
+      "card_id": "289315d7",
+      "corrected_classification": "terminal_void",
+      "direct_evidence_finding": "No direct evidence verdict is recorded. The replacement keeps structural disposition separate and does not infer a verdict.",
+      "remedy_check": "PASS: explicit no action preserves terminal events.",
+      "result": "PASS",
+      "structural_finding": "Explicit void and archive events make the card terminal despite backlog status."
+    },
+    {
+      "card_id": "96d65096",
+      "corrected_classification": "terminal_void",
+      "direct_evidence_finding": "No explicit Chef approval or direct evidence verdict is recorded. The replacement treats void only as structural disposition.",
+      "remedy_check": "PASS: explicit no action preserves terminal events.",
+      "result": "PASS",
+      "structural_finding": "Explicit void and archive events make this machine created human gate card terminal. Its dependency e82c379e is also explicitly voided and archived."
+    },
+    {
+      "card_id": "84cee038",
+      "corrected_classification": "claim_projection_inconsistency_unproven_stale",
+      "direct_evidence_finding": "The direct BLOCKED reconciliation note is retained independently. It does not establish current worker absence.",
+      "remedy_check": "PASS: release-claim is a supported append only command and is proposal only, with authority and fresh liveness, owner, and revision preconditions.",
+      "result": "PASS",
+      "structural_finding": "Current folded owner skuser01 follows a claim with revision 79a7b93ef6564fa5bf149cc3cd16dfbb. The cited stale release is for prior owner pi-glm-84cee038."
+    }
+  ],
+  "external_action_applied": false,
+  "pr_url": "https://github.com/smilinTux/skcapstone/pull/255",
+  "producer_card_id": "a743f500",
+  "repository_change": true,
+  "review_card_id": "b6eedf67",
+  "reviewer": "pi-codex-b6eedf67",
+  "schema": "skcapstone.fleet_unblock.corrected_review.v1",
+  "source_event_artifacts": [
+    {
+      "path": "/home/skuser01/.skcapstone/cards/289315d7/core.json",
+      "sha256": "eba967fe954f7fafa28ade6df90b1f289686e0d26db1d5ff3f64bccc0e85df3e",
+      "size": 1427
+    },
+    {
+      "path": "/home/skuser01/.skcapstone/cards/289315d7/events/codex-root@chiap08.jsonl",
+      "sha256": "3dbb0df9772943dea1c5a5ccfd74900881749a269bf3b4845c9a05bc9fbd6632",
+      "size": 1280
+    },
+    {
+      "path": "/home/skuser01/.skcapstone/cards/96d65096/core.json",
+      "sha256": "408942c57e29fe2fd183a0fbe29f44fa0b142f5f80602e073a65160d483cebf6",
+      "size": 1152
+    },
+    {
+      "path": "/home/skuser01/.skcapstone/cards/96d65096/events/codex-skgw-root@chiap08.jsonl",
+      "sha256": "ba11ea341d0d4172e4a3bfb33c3fc561759d7bd15af05ed8ad87b6838ec3f22c",
+      "size": 442
+    },
+    {
+      "path": "/home/skuser01/.skcapstone/cards/84cee038/core.json",
+      "sha256": "c45f72afc9f9774bba2b1f8cee73d5e22a27d0595039485cf8e24bd5f2835873",
+      "size": 2311
+    },
+    {
+      "path": "/home/skuser01/.skcapstone/cards/84cee038/events/codex-terra-84cee038-reconcile@chiap08.jsonl",
+      "sha256": "00a6afff0078db4fe7579fd39291256d0535cce5d76dc43bd6a8d7e6e4cbe196",
+      "size": 3085
+    },
+    {
+      "path": "/home/skuser01/.skcapstone/cards/84cee038/events/skuser01@chiap03.jsonl",
+      "sha256": "8dc1de33231e587f856db172ae97b8a84b7a633df2639b441376e324b5b41704",
+      "size": 536
+    }
+  ],
+  "source_identity": {
+    "declared_sha256": "783875c5a86a5cd06ffec5a1a1f431f137724b26adab1c8be797896b9bb38458",
+    "manifest": {
+      "path": "/home/skuser01/.skcapstone/evidence/work/a743f500/manifest.json",
+      "sha256": "07ec3c58abf34eb4137d8586ec659fa381dacdf5117a9dca3eca84d41cb92433",
+      "size": 1990
+    },
+    "pr_blob_shared_path_exact_match": true,
+    "pr_head": "254fdb5cdf7283008a40b96c5bd29df5f5f5437c",
+    "pr_path": "docs/reviews/artifacts/a743f500/partition-30-corrected-replacement.json",
+    "pr_url": "https://github.com/smilinTux/skcapstone/pull/244",
+    "prior_blocked_review": {
+      "path": "/home/skuser01/.skcapstone/evidence/work/3ad01333/review-verdict-pi-codex-3ad01333.json",
+      "sha256": "51899693d6ae9d68b3797ef53bf37204e3168424d3813ea6b64d04601926b6b4",
+      "size": 4532
+    },
+    "sha256_sidecar_matches": true,
+    "shared_artifact": {
+      "path": "/home/skuser01/.skcapstone/evidence/work/a743f500/partition-30-corrected-replacement.json",
+      "sha256": "783875c5a86a5cd06ffec5a1a1f431f137724b26adab1c8be797896b9bb38458",
+      "size": 175252
+    },
+    "superseded_report_sha256": "f490368b6ffdb62f897f3f1ba4cdd27615d9d15a276747c73a54b14ee8181d53"
+  },
+  "supported_command_observations": {
+    "dependency_commands": "Supported add-dependency and remove-dependency commands each require an exact task ID, dependency ID, reason, and writer agent. The 03bf6be6 prose omits these mandatory exact values.",
+    "executed": false,
+    "release_claim": "Supported syntax is skcapstone coord release-claim TASK_ID --owner TEXT --agent TEXT. The 84cee038 proposal conforms and remains unexecuted."
+  },
+  "verdict": "BLOCKED"
+}
