@@ -1,5 +1,8 @@
 """CLI coverage for atomic create-and-claim."""
 
+import json
+from concurrent.futures import ThreadPoolExecutor
+
 from click.testing import CliRunner
 
 from skcapstone.card_store import CardStore
@@ -90,6 +93,23 @@ def test_governed_review_create_lists_all_missing_admission_fields(tmp_path, mon
         "head_revision",
     ):
         assert field in result.output
+    assert CardStore(tmp_path).fold("90dea47b") is None
+
+    corrected = CliRunner().invoke(
+        main,
+        [
+            "coord",
+            "create",
+            "--home",
+            str(tmp_path),
+            "--id",
+            "90dea47b",
+            "--title",
+            "ordinary replacement",
+        ],
+    )
+    assert corrected.exit_code != 0
+    assert "reserved by a rejected creation attempt" in corrected.output
     assert CardStore(tmp_path).fold("90dea47b") is None
 
 
@@ -228,6 +248,7 @@ def test_source_card_rejects_sha_in_base_ref_before_write(tmp_path, monkeypatch)
 
 def test_source_card_lists_missing_binding_fields_before_write(tmp_path, monkeypatch):
     monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    monkeypatch.setattr("skcapstone.active_agent_name", lambda: "maker")
     result = CliRunner().invoke(
         main,
         [
@@ -247,3 +268,127 @@ def test_source_card_lists_missing_binding_fields_before_write(tmp_path, monkeyp
     assert result.exit_code != 0
     assert "repository, base_ref, base_revision" in result.output
     assert CardStore(tmp_path).fold("a1b2c3e5") is None
+
+    reservations = list(
+        (tmp_path / "coordination" / "recovery").glob("card-creation-attempts*.jsonl")
+    )
+    assert len(reservations) == 1
+    record = json.loads(reservations[0].read_text().splitlines()[0])
+    assert record.keys() >= {"card_id", "request_digest", "actor", "ts", "outcome"}
+    assert record["card_id"] == "a1b2c3e5"
+    assert record["actor"] == "human"
+    assert record["outcome"] == "rejected"
+
+    corrected = CliRunner().invoke(
+        main,
+        [
+            "coord",
+            "create",
+            "--home",
+            str(tmp_path),
+            "--id",
+            "a1b2c3e5",
+            "--title",
+            "Corrected source work",
+            "--claim-for-me",
+        ],
+    )
+    assert corrected.exit_code != 0
+    assert "reserved by a rejected creation attempt" in corrected.output
+    assert CardStore(tmp_path).fold("a1b2c3e5") is None
+    assert not list((tmp_path / "coordination" / "tasks").glob("a1b2c3e5-*.json"))
+    assert not list((tmp_path / "coordination" / "agents").glob("*.json"))
+    assert not (tmp_path / "cards" / "a1b2c3e5" / "events").exists()
+
+
+def test_rejected_explicit_id_reservation_survives_restart(tmp_path, monkeypatch):
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    rejected = CliRunner().invoke(
+        main,
+        [
+            "coord",
+            "create",
+            "--home",
+            str(tmp_path),
+            "--id",
+            "a1b2c3e6",
+            "--title",
+            "Incomplete source work",
+            "--tag",
+            "source-only",
+        ],
+    )
+    assert rejected.exit_code != 0
+
+    retried = CliRunner().invoke(
+        main,
+        [
+            "coord",
+            "create",
+            "--home",
+            str(tmp_path),
+            "--id",
+            "a1b2c3e6",
+            "--title",
+            "Different process request",
+        ],
+    )
+    assert retried.exit_code != 0
+    assert "reserved by a rejected creation attempt" in retried.output
+
+
+def test_concurrent_valid_and_rejected_explicit_id_have_one_winner(tmp_path, monkeypatch):
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    card_id = "a1b2c3e7"
+    common = ["coord", "create", "--home", str(tmp_path), "--id", card_id]
+    valid = common + ["--title", "Valid request"]
+    rejected = common + ["--title", "Rejected request", "--tag", "source-only"]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        valid_result, rejected_result = list(
+            pool.map(lambda args: CliRunner().invoke(main, args), (valid, rejected))
+        )
+
+    reservation_files = list(
+        (tmp_path / "coordination" / "recovery").glob("card-creation-attempts*.jsonl")
+    )
+    card = CardStore(tmp_path).fold(card_id)
+    assert (valid_result.exit_code == 0) != bool(reservation_files)
+    assert (card is not None) == (valid_result.exit_code == 0)
+    assert rejected_result.exit_code != 0
+
+
+def test_successful_explicit_id_byte_identical_replay_is_preserved(tmp_path, monkeypatch):
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    args = [
+        "coord",
+        "create",
+        "--home",
+        str(tmp_path),
+        "--id",
+        "a1b2c3e8",
+        "--title",
+        "Replay me",
+        "--by",
+        "maker",
+    ]
+    first = CliRunner().invoke(main, args)
+    core = tmp_path / "cards" / "a1b2c3e8" / "core.json"
+    before = core.read_bytes()
+    second = CliRunner().invoke(main, args)
+
+    assert first.exit_code == second.exit_code == 0
+    assert core.read_bytes() == before
+    assert not (tmp_path / "coordination" / "recovery").exists()
+
+
+def test_auto_generated_cli_id_does_not_create_attempt_artifact(tmp_path, monkeypatch):
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    result = CliRunner().invoke(
+        main,
+        ["coord", "create", "--home", str(tmp_path), "--title", "Generated ID"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(CardStore(tmp_path).list_card_ids()) == 1
+    assert not list((tmp_path / "coordination" / "recovery").glob("card-creation-attempts*.jsonl"))
