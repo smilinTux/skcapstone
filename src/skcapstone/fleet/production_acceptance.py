@@ -43,17 +43,28 @@ def _requalify_finished_acceptance(home, directory, context, policy):
     from .production_tests import run_or_read_tests, validate_test_receipt
 
     directory = Path(directory)
-    intent_path = directory / "finish-intent.json"
-    intent = read_json(intent_path)
-    try:
-        validate_test_receipt(home, context["test_binding"], Path(context["source_workspace"]))
+    intent = read_json(directory / "finish-intent.json")
+    prior = intent["test_receipt"]
+    # An existing record is validated exactly by finish_pair; never rewrite it.
+    if (directory / "test-requalification.json").exists():
         return False
+    binding = context["test_binding"]
+    try:
+        _, _, plan_sha = plan.load_plan(
+            home, binding, allow_completed=True, allow_remote_host=True
+        )
     except plan.TestEvidenceError as exc:
         if str(exc) != "operator test plan is invalid or stale":
             raise
+    else:
+        # A plan that is still current and is the one the intent was written
+        # against resumes exactly as before: no sealing, no test execution.
+        if plan_sha == prior.get("plan_sha256"):
+            return False
+    # Idempotent: seal_candidate only appends a successor to the current tip.
     seal_candidate(
         home,
-        context["test_binding"],
+        binding,
         Path(context["source_workspace"]),
         policy,
         context["source"]["repository"],
