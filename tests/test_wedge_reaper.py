@@ -250,10 +250,10 @@ def test_enforce_stops_records_and_releases_under_a_cas(harness):
 def test_the_reason_and_its_evidence_are_recorded_on_the_card(harness):
     harness.run()
     rows = harness.evidence()
-    assert [row["action"] for row in rows] == ["verdict", "link"]
+    assert [row["action"] for row in rows] == ["link"]
     assert all(row["card_id"] == CARD for row in rows)
-    assert rows[0]["verdict"] == "WORKER_WEDGED"
-    detail = rows[1]["link_value"]
+    assert rows[0]["link_key"] == "worker_wedged"
+    detail = rows[0]["link_value"]
     for expected in (
         "verdict=wedge-stale-confirmed",
         "progress_age_s=22680",
