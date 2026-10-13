@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from skcapstone.fleet.cycle_deadline import CycleDeadline
 from skcapstone.fleet.production_dispatch import (
     authoritative_owner_state,
     cycle_budget_seconds,
@@ -426,6 +427,7 @@ def test_builder_offers_are_bounded_and_do_not_stop_after_first_success():
         "PRODUCTION_POLICY": policy(),
         "_cycle_started": 0,
         "_production_cycle_budget": 250,
+        "CYCLE": CycleDeadline(250, started=0, clock=lambda: 1),
         "time": type("Clock", (), {"monotonic": staticmethod(lambda: 1)}),
         "builder_dispatch": Builder(),
         "fleet_store": SimpleNamespace(Writer=lambda **kwargs: kwargs),

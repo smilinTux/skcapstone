@@ -372,23 +372,18 @@ def test_the_expiry_path_is_wired_into_the_rotation():
     still runs when that function returns early for quorum shortage.
     """
     tree = _module()
+
+    def names(nodes):
+        return {n.id for stmt in nodes for n in ast.walk(stmt) if isinstance(n, ast.Name)}
+
     guard = next(
         node
         for node in tree.body
         if isinstance(node, ast.If)
         and getattr(node.test, "id", "") == "DRY"
-        and any(
-            isinstance(stmt, ast.Expr)
-            and isinstance(stmt.value, ast.Call)
-            and getattr(stmt.value.func, "id", "") == "reap_dead_claims"
-            for stmt in node.orelse
-        )
+        and "reap_dead_claims" in names(node.orelse)
     )
-    called = {
-        getattr(stmt.value.func, "id", "")
-        for stmt in guard.orelse
-        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
-    }
+    called = names(guard.orelse)
     assert "_expire_idle_claims" in called
 
 
