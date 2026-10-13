@@ -1,0 +1,1657 @@
+{
+  "chiap01": {
+    "all_active_user_units": [
+      "at-spi-dbus-bus.service",
+      "capauth-authz.service",
+      "claude-code-api.service",
+      "cluster-dashboard.service",
+      "dbus.service",
+      "dconf.service",
+      "evolution-addressbook-factory.service",
+      "evolution-calendar-factory.service",
+      "evolution-source-registry.service",
+      "filter-chain.service",
+      "gcr-ssh-agent.service",
+      "gnome-keyring-daemon.service",
+      "gnome-session-manager@ubuntu.service",
+      "gnome-session-monitor.service",
+      "gnome-terminal-server.service",
+      "gpg-agent.service",
+      "gvfs-afc-volume-monitor.service",
+      "gvfs-daemon.service",
+      "gvfs-goa-volume-monitor.service",
+      "gvfs-gphoto2-volume-monitor.service",
+      "gvfs-metadata.service",
+      "gvfs-mtp-volume-monitor.service",
+      "gvfs-udisks2-volume-monitor.service",
+      "hammertime-embed.service",
+      "kokoro-tts.service",
+      "llama-paddleocr-vl16.service",
+      "llama-qwen38-card0.service",
+      "llama-qwen38-card1.service",
+      "org.freedesktop.IBus.session.GNOME.service",
+      "org.gnome.SettingsDaemon.A11ySettings.service",
+      "org.gnome.SettingsDaemon.Color.service",
+      "org.gnome.SettingsDaemon.Datetime.service",
+      "org.gnome.SettingsDaemon.Housekeeping.service",
+      "org.gnome.SettingsDaemon.Keyboard.service",
+      "org.gnome.SettingsDaemon.MediaKeys.service",
+      "org.gnome.SettingsDaemon.Power.service",
+      "org.gnome.SettingsDaemon.PrintNotifications.service",
+      "org.gnome.SettingsDaemon.Rfkill.service",
+      "org.gnome.SettingsDaemon.ScreensaverProxy.service",
+      "org.gnome.SettingsDaemon.Sharing.service",
+      "org.gnome.SettingsDaemon.Smartcard.service",
+      "org.gnome.SettingsDaemon.Sound.service",
+      "org.gnome.SettingsDaemon.Wacom.service",
+      "org.gnome.SettingsDaemon.XSettings.service",
+      "org.gnome.Shell@x11.service",
+      "pipewire-pulse.service",
+      "pipewire.service",
+      "skcapstone@jarvis.service",
+      "skcode-hostd.service",
+      "skcomms.service",
+      "skgateway-codex.service",
+      "skvoice.service",
+      "skwhisper@aster.service",
+      "skwhisper@jarvis.service",
+      "snap.snapd-desktop-integration.snapd-desktop-integration.service",
+      "tracker-miner-fs-3.service",
+      "whisper-large-v3.service",
+      "wireplumber.service",
+      "xdg-desktop-portal-gnome.service",
+      "xdg-desktop-portal-gtk.service",
+      "xdg-desktop-portal.service",
+      "xdg-document-portal.service",
+      "xdg-permission-store.service"
+    ],
+    "host": "chiap01",
+    "import_origins": {
+      "/home/skuser01/.skenv/bin/python": {
+        "err": "",
+        "out": "{\"skcomms\": \"/home/skuser01/work/skcomms/src/skcomms/__init__.py\"}",
+        "rc": 0
+      },
+      "/home/skuser01/.venvs/skops/bin/python": {
+        "err": "",
+        "out": "{\"skharness\": \"/home/skuser01/.local/opt/skharness-5bcecb3b/src/skharness/__init__.py\"}",
+        "rc": 0
+      },
+      "/home/skuser01/skvoice-env/bin/python": {
+        "err": "",
+        "out": "{\"skvoice\": null}",
+        "rc": 0
+      }
+    },
+    "target_processes": [
+      {
+        "cgroup": "0::/user.slice/user-1001.slice/session-164496.scope",
+        "ps": "1255111 1255069       0 bash -c python3 - <<'INNER' import json,os,subprocess  def run(a):  try:   p=subprocess.run(a,text=True,capture_output=True); return {'rc':p.returncode,'out':p.stdout.strip(),'err':p.stderr.strip()}  except OSError as e:return {'rc':127,'out':'','err':str(e)} units=[] r=run(['systemctl','--user','list-units','--type=service','--state=running','--no-legend','--plain']) for l in r['out'].splitlines():  p=l.split();  if p: units.append(p[0]) unit_data={u:run(['systemctl','--user','show',u,'-p','FragmentPath','-p','ExecStart','-p','MainPID','-p','ActiveState','-p','SubState']) for u in units} ps=run(['ps','-eo','pid=,ppid=,etimes=,args=','--sort=pid']) target=[] for l in ps['out'].splitlines():  if any(x in l.lower() for x in ['skcomms serve','skvoice.service','skcode_hostd','skcode-hostd','durable_liberty_internal','sklegal-liberty-web-launcher']):   p=l.strip().split(None,1); pid=p[0]; target.append({'ps':l.strip(),'cgroup':open('/proc/'+pid+'/cgroup').read().strip()}) checks={ '/home/skuser01/.skenv/bin/python':['skcomms'], '/home/skuser01/.venvs/skops/bin/python':['skharness'], '/home/skuser01/skvoice-env/bin/python':['skvoice'], '/home/skuser01/work/sklegal-liberty-live/.venv/bin/python':['sklegal_api'], } imports={} for interp,mods in checks.items():  if os.path.exists(interp):   code='import importlib.util,json; print(json.dumps({m:(importlib.util.find_spec(m).origin if importlib.util.find_spec(m) else None) for m in '+repr(mods)+'}))'   imports[interp]=run([interp,'-c',code]) print(json.dumps({'host':os.uname().nodename,'all_active_user_units':units,'unit_details':unit_data,'target_processes':target,'import_origins':imports},sort_keys=True)) INNER"
+      },
+      {
+        "cgroup": "0::/user.slice/user-1001.slice/user@1001.service/app.slice/skvoice.service",
+        "ps": "1652515    3010 1235421 /home/skuser01/skvoice-env/bin/python3 /home/skuser01/skvoice-env/bin/uvicorn skvoice.service:app --host 0.0.0.0 --port 18800"
+      },
+      {
+        "cgroup": "0::/user.slice/user-1001.slice/user@1001.service/app.slice/skcomms.service",
+        "ps": "2237885    3010   42472 /home/skuser01/.skenv/bin/python /home/skuser01/.skenv/bin/skcomms serve --host 127.0.0.1 --port 9384"
+      }
+    ],
+    "unit_details": {
+      "at-spi-dbus-bus.service": {
+        "err": "",
+        "out": "MainPID=1368769\nExecStart={ path=/usr/libexec/at-spi-bus-launcher ; argv[]=/usr/libexec/at-spi-bus-launcher ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/at-spi-dbus-bus.service",
+        "rc": 0
+      },
+      "capauth-authz.service": {
+        "err": "",
+        "out": "MainPID=645769\nExecStart={ path=/home/skuser01/.skenv/bin/capauth-service ; argv[]=/home/skuser01/.skenv/bin/capauth-service --host 127.0.0.1 --port 8420 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/capauth-authz.service",
+        "rc": 0
+      },
+      "claude-code-api.service": {
+        "err": "",
+        "out": "MainPID=3197\nExecStart={ path=/home/skuser01/claude-code-api-env/bin/python3 ; argv[]=/home/skuser01/claude-code-api-env/bin/python3 server.py --host 127.0.0.1 --port 18782 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/claude-code-api.service",
+        "rc": 0
+      },
+      "cluster-dashboard.service": {
+        "err": "",
+        "out": "MainPID=3198\nExecStart={ path=/home/skuser01/.local/bin/cluster-status ; argv[]=/home/skuser01/.local/bin/cluster-status --serve --host 127.0.0.1 --port 8765 --timeout 6 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/cluster-dashboard.service",
+        "rc": 0
+      },
+      "dbus.service": {
+        "err": "",
+        "out": "MainPID=3238\nExecStart={ path=/usr/bin/dbus-daemon ; argv[]=/usr/bin/dbus-daemon --session --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/dbus.service",
+        "rc": 0
+      },
+      "dconf.service": {
+        "err": "",
+        "out": "MainPID=1369991\nExecStart={ path=/usr/libexec/dconf-service ; argv[]=/usr/libexec/dconf-service ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/dconf.service",
+        "rc": 0
+      },
+      "evolution-addressbook-factory.service": {
+        "err": "",
+        "out": "MainPID=1369759\nExecStart={ path=/usr/libexec/evolution-addressbook-factory ; argv[]=/usr/libexec/evolution-addressbook-factory ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/evolution-addressbook-factory.service",
+        "rc": 0
+      },
+      "evolution-calendar-factory.service": {
+        "err": "",
+        "out": "MainPID=1369670\nExecStart={ path=/usr/libexec/evolution-calendar-factory ; argv[]=/usr/libexec/evolution-calendar-factory ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/evolution-calendar-factory.service",
+        "rc": 0
+      },
+      "evolution-source-registry.service": {
+        "err": "",
+        "out": "MainPID=1369372\nExecStart={ path=/usr/libexec/evolution-source-registry ; argv[]=/usr/libexec/evolution-source-registry ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/evolution-source-registry.service",
+        "rc": 0
+      },
+      "filter-chain.service": {
+        "err": "",
+        "out": "MainPID=3205\nExecStart={ path=/usr/bin/pipewire ; argv[]=/usr/bin/pipewire -c filter-chain.conf ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/filter-chain.service",
+        "rc": 0
+      },
+      "gcr-ssh-agent.service": {
+        "err": "",
+        "out": "MainPID=1368925\nExecStart={ path=/usr/libexec/gcr-ssh-agent ; argv[]=/usr/libexec/gcr-ssh-agent --base-dir /run/user/1001/gcr ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gcr-ssh-agent.service",
+        "rc": 0
+      },
+      "gnome-keyring-daemon.service": {
+        "err": "",
+        "out": "MainPID=1368622\nExecStart={ path=/usr/bin/gnome-keyring-daemon ; argv[]=/usr/bin/gnome-keyring-daemon --foreground --components=pkcs11,secrets --control-directory=/run/user/1001/keyring ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gnome-keyring-daemon.service",
+        "rc": 0
+      },
+      "gnome-session-manager@ubuntu.service": {
+        "err": "",
+        "out": "MainPID=1369034\nExecStart={ path=/usr/libexec/gnome-session-binary ; argv[]=/usr/libexec/gnome-session-binary --systemd-service --session=ubuntu ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gnome-session-manager@.service",
+        "rc": 0
+      },
+      "gnome-session-monitor.service": {
+        "err": "",
+        "out": "MainPID=1368995\nExecStart={ path=/usr/libexec/gnome-session-ctl ; argv[]=/usr/libexec/gnome-session-ctl --monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gnome-session-monitor.service",
+        "rc": 0
+      },
+      "gnome-terminal-server.service": {
+        "err": "",
+        "out": "MainPID=1373184\nExecStart={ path=/usr/libexec/gnome-terminal-server ; argv[]=/usr/libexec/gnome-terminal-server ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gnome-terminal-server.service",
+        "rc": 0
+      },
+      "gpg-agent.service": {
+        "err": "",
+        "out": "MainPID=2686676\nExecStart={ path=/usr/bin/gpg-agent ; argv[]=/usr/bin/gpg-agent --supervised ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gpg-agent.service",
+        "rc": 0
+      },
+      "gvfs-afc-volume-monitor.service": {
+        "err": "",
+        "out": "MainPID=1369747\nExecStart={ path=/usr/libexec/gvfs-afc-volume-monitor ; argv[]=/usr/libexec/gvfs-afc-volume-monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-afc-volume-monitor.service",
+        "rc": 0
+      },
+      "gvfs-daemon.service": {
+        "err": "",
+        "out": "MainPID=1369023\nExecStart={ path=/usr/libexec/gvfsd ; argv[]=/usr/libexec/gvfsd ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-daemon.service",
+        "rc": 0
+      },
+      "gvfs-goa-volume-monitor.service": {
+        "err": "",
+        "out": "MainPID=1369698\nExecStart={ path=/usr/libexec/gvfs-goa-volume-monitor ; argv[]=/usr/libexec/gvfs-goa-volume-monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-goa-volume-monitor.service",
+        "rc": 0
+      },
+      "gvfs-gphoto2-volume-monitor.service": {
+        "err": "",
+        "out": "MainPID=1369711\nExecStart={ path=/usr/libexec/gvfs-gphoto2-volume-monitor ; argv[]=/usr/libexec/gvfs-gphoto2-volume-monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-gphoto2-volume-monitor.service",
+        "rc": 0
+      },
+      "gvfs-metadata.service": {
+        "err": "",
+        "out": "MainPID=1370324\nExecStart={ path=/usr/libexec/gvfsd-metadata ; argv[]=/usr/libexec/gvfsd-metadata ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-metadata.service",
+        "rc": 0
+      },
+      "gvfs-mtp-volume-monitor.service": {
+        "err": "",
+        "out": "MainPID=1369635\nExecStart={ path=/usr/libexec/gvfs-mtp-volume-monitor ; argv[]=/usr/libexec/gvfs-mtp-volume-monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-mtp-volume-monitor.service",
+        "rc": 0
+      },
+      "gvfs-udisks2-volume-monitor.service": {
+        "err": "",
+        "out": "MainPID=1369476\nExecStart={ path=/usr/libexec/gvfs-udisks2-volume-monitor ; argv[]=/usr/libexec/gvfs-udisks2-volume-monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-udisks2-volume-monitor.service",
+        "rc": 0
+      },
+      "hammertime-embed.service": {
+        "err": "",
+        "out": "MainPID=3165140\nExecStart={ path=/home/skuser01/hammertime-embed-cpu/bin/python ; argv[]=/home/skuser01/hammertime-embed-cpu/bin/python /mnt/cloud/onedrive/projects/DAVE AI/hammerTime/scripts/embed-server.py --host 0.0.0.0 --port 18797 --model-path /mnt/cloud/onedrive/projects/DAVE AI/hammerTime/models/bge-legal-v2 --device cpu --preload ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/hammertime-embed.service",
+        "rc": 0
+      },
+      "kokoro-tts.service": {
+        "err": "",
+        "out": "MainPID=3199\nExecStart={ path=/usr/bin/docker ; argv[]=/usr/bin/docker start -a kokoro-tts ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/kokoro-tts.service",
+        "rc": 0
+      },
+      "llama-paddleocr-vl16.service": {
+        "err": "",
+        "out": "MainPID=3200\nExecStart={ path=/home/skuser01/bin/launch-chiap01-llama-paddleocr-vl16.sh ; argv[]=/home/skuser01/bin/launch-chiap01-llama-paddleocr-vl16.sh ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/llama-paddleocr-vl16.service",
+        "rc": 0
+      },
+      "llama-qwen38-card0.service": {
+        "err": "",
+        "out": "MainPID=3384358\nExecStart={ path=/home/skuser01/bin/launch-chiap01-llama-qwen38-card0.sh ; argv[]=/home/skuser01/bin/launch-chiap01-llama-qwen38-card0.sh ; ignore_errors=no ; start_time=[Sun 2026-08-30 19:24:21 CDT] ; stop_time=[n/a] ; pid=3384358 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/llama-qwen38-card0.service",
+        "rc": 0
+      },
+      "llama-qwen38-card1.service": {
+        "err": "",
+        "out": "MainPID=1974527\nExecStart={ path=/home/skuser01/bin/launch-chiap01-llama-qwen38-card1.sh ; argv[]=/home/skuser01/bin/launch-chiap01-llama-qwen38-card1.sh ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/llama-qwen38-card1.service",
+        "rc": 0
+      },
+      "org.freedesktop.IBus.session.GNOME.service": {
+        "err": "",
+        "out": "MainPID=1369414\nExecStart={ path=sh ; argv[]=sh -c exec /usr/bin/ibus-daemon --panel disable $([ \"$XDG_SESSION_TYPE\" = \"x11\" ] && echo \"--xim\") ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.freedesktop.IBus.session.GNOME.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.A11ySettings.service": {
+        "err": "",
+        "out": "MainPID=1369416\nExecStart={ path=/usr/libexec/gsd-a11y-settings ; argv[]=/usr/libexec/gsd-a11y-settings ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.A11ySettings.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Color.service": {
+        "err": "",
+        "out": "MainPID=1369422\nExecStart={ path=/usr/libexec/gsd-color ; argv[]=/usr/libexec/gsd-color ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Color.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Datetime.service": {
+        "err": "",
+        "out": "MainPID=1369428\nExecStart={ path=/usr/libexec/gsd-datetime ; argv[]=/usr/libexec/gsd-datetime ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Datetime.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Housekeeping.service": {
+        "err": "",
+        "out": "MainPID=1369430\nExecStart={ path=/usr/libexec/gsd-housekeeping ; argv[]=/usr/libexec/gsd-housekeeping ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Housekeeping.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Keyboard.service": {
+        "err": "",
+        "out": "MainPID=1369436\nExecStart={ path=/usr/libexec/gsd-keyboard ; argv[]=/usr/libexec/gsd-keyboard ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Keyboard.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.MediaKeys.service": {
+        "err": "",
+        "out": "MainPID=1369437\nExecStart={ path=/usr/libexec/gsd-media-keys ; argv[]=/usr/libexec/gsd-media-keys ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.MediaKeys.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Power.service": {
+        "err": "",
+        "out": "MainPID=1369440\nExecStart={ path=/usr/libexec/gsd-power ; argv[]=/usr/libexec/gsd-power ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Power.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.PrintNotifications.service": {
+        "err": "",
+        "out": "MainPID=1369443\nExecStart={ path=/usr/libexec/gsd-print-notifications ; argv[]=/usr/libexec/gsd-print-notifications ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.PrintNotifications.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Rfkill.service": {
+        "err": "",
+        "out": "MainPID=1369444\nExecStart={ path=/usr/libexec/gsd-rfkill ; argv[]=/usr/libexec/gsd-rfkill ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Rfkill.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.ScreensaverProxy.service": {
+        "err": "",
+        "out": "MainPID=1369446\nExecStart={ path=/usr/libexec/gsd-screensaver-proxy ; argv[]=/usr/libexec/gsd-screensaver-proxy ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.ScreensaverProxy.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Sharing.service": {
+        "err": "",
+        "out": "MainPID=1369449\nExecStart={ path=/usr/libexec/gsd-sharing ; argv[]=/usr/libexec/gsd-sharing ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Sharing.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Smartcard.service": {
+        "err": "",
+        "out": "MainPID=1369455\nExecStart={ path=/usr/libexec/gsd-smartcard ; argv[]=/usr/libexec/gsd-smartcard ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Smartcard.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Sound.service": {
+        "err": "",
+        "out": "MainPID=1369459\nExecStart={ path=/usr/libexec/gsd-sound ; argv[]=/usr/libexec/gsd-sound ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Sound.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Wacom.service": {
+        "err": "",
+        "out": "MainPID=1369461\nExecStart={ path=/usr/libexec/gsd-wacom ; argv[]=/usr/libexec/gsd-wacom ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Wacom.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.XSettings.service": {
+        "err": "",
+        "out": "MainPID=1369464\nExecStart={ path=/usr/libexec/gsd-xsettings ; argv[]=/usr/libexec/gsd-xsettings ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.XSettings.service",
+        "rc": 0
+      },
+      "org.gnome.Shell@x11.service": {
+        "err": "",
+        "out": "MainPID=1369100\nExecStart={ path=/usr/bin/gnome-shell ; argv[]=/usr/bin/gnome-shell ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.Shell@x11.service",
+        "rc": 0
+      },
+      "pipewire-pulse.service": {
+        "err": "",
+        "out": "MainPID=3218\nExecStart={ path=/usr/bin/pipewire-pulse ; argv[]=/usr/bin/pipewire-pulse ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/pipewire-pulse.service",
+        "rc": 0
+      },
+      "pipewire.service": {
+        "err": "",
+        "out": "MainPID=3201\nExecStart={ path=/usr/bin/pipewire ; argv[]=/usr/bin/pipewire ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/pipewire.service",
+        "rc": 0
+      },
+      "skcapstone@jarvis.service": {
+        "err": "",
+        "out": "MainPID=4073170\nExecStart={ path=/home/skuser01/.skenv/bin/skcapstone ; argv[]=/home/skuser01/.skenv/bin/skcapstone daemon start --agent jarvis --foreground ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skcapstone@.service",
+        "rc": 0
+      },
+      "skcode-hostd.service": {
+        "err": "",
+        "out": "MainPID=1425912\nExecStart={ path=/home/skuser01/.venvs/skops/bin/python ; argv[]=/home/skuser01/.venvs/skops/bin/python -m skharness --host ${SKCODE_HOSTD_TAILSCALE_IP} --port 9394 --host-id ${SKCODE_HOSTD_HOST_ID} ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skcode-hostd.service",
+        "rc": 0
+      },
+      "skcomms.service": {
+        "err": "",
+        "out": "MainPID=2237885\nExecStart={ path=/home/skuser01/.skenv/bin/skcomms ; argv[]=/home/skuser01/.skenv/bin/skcomms serve --host 127.0.0.1 --port 9384 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skcomms.service",
+        "rc": 0
+      },
+      "skgateway-codex.service": {
+        "err": "",
+        "out": "MainPID=895046\nExecStart={ path=/home/skuser01/.local/bin/node ; argv[]=/home/skuser01/.local/bin/node /home/skuser01/skgateway-codex/src/index.mjs --port 18790 --config /home/skuser01/skgateway-codex/config/skgateway-codex.yaml ; ignore_errors=no ; start_time=[Mon 2026-08-31 00:43:41 CDT] ; stop_time=[n/a] ; pid=895046 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skgateway-codex.service",
+        "rc": 0
+      },
+      "skvoice.service": {
+        "err": "",
+        "out": "MainPID=1652515\nExecStart={ path=/home/skuser01/skvoice-env/bin/uvicorn ; argv[]=/home/skuser01/skvoice-env/bin/uvicorn skvoice.service:app --host 0.0.0.0 --port 18800 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skvoice.service",
+        "rc": 0
+      },
+      "skwhisper@aster.service": {
+        "err": "",
+        "out": "MainPID=3644229\nExecStart={ path=/home/skuser01/.skenv/bin/skwhisper ; argv[]=/home/skuser01/.skenv/bin/skwhisper daemon ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skwhisper@.service",
+        "rc": 0
+      },
+      "skwhisper@jarvis.service": {
+        "err": "",
+        "out": "MainPID=4073172\nExecStart={ path=/home/skuser01/.skenv/bin/skwhisper ; argv[]=/home/skuser01/.skenv/bin/skwhisper daemon ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skwhisper@.service",
+        "rc": 0
+      },
+      "snap.snapd-desktop-integration.snapd-desktop-integration.service": {
+        "err": "",
+        "out": "MainPID=1370584\nExecStart={ path=/usr/bin/snap ; argv[]=/usr/bin/snap run snapd-desktop-integration ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/etc/xdg/systemd/user/snap.snapd-desktop-integration.snapd-desktop-integration.service",
+        "rc": 0
+      },
+      "tracker-miner-fs-3.service": {
+        "err": "",
+        "out": "MainPID=1369877\nExecStart={ path=/usr/libexec/tracker-miner-fs-3 ; argv[]=/usr/libexec/tracker-miner-fs-3 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/tracker-miner-fs-3.service",
+        "rc": 0
+      },
+      "whisper-large-v3.service": {
+        "err": "",
+        "out": "MainPID=3151604\nExecStart={ path=/usr/bin/docker ; argv[]=/usr/bin/docker run --name hammertime-whisper-large-v3 --init --rm --network host --ipc host --shm-size=16g --device /dev/dri:/dev/dri --security-opt label=disable --env ZE_AFFINITY_MASK=0 --env ONEAPI_DEVICE_SELECTOR=level_zero:0 --env HF_HOME=/root/.cache/huggingface --env HF_HUB_OFFLINE=1 --env TRANSFORMERS_OFFLINE=1 --env HF_DATASETS_OFFLINE=1 --env WHISPER_MODEL_PATH=openai/whisper-large-v3 --env WHISPER_DEVICE=xpu:0 --volume /home/skuser01/.cache/huggingface:/root/.cache/huggingface:ro --volume /home/skuser01/services/whisper-large-v3:/app:ro --entrypoint /usr/bin/python3 intel/llm-scaler-vllm:0.14.0-b8.1 /app/whisper_server.py --host 0.0.0.0 --port 18794 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/whisper-large-v3.service",
+        "rc": 0
+      },
+      "wireplumber.service": {
+        "err": "",
+        "out": "MainPID=3217\nExecStart={ path=/usr/bin/wireplumber ; argv[]=/usr/bin/wireplumber ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/wireplumber.service",
+        "rc": 0
+      },
+      "xdg-desktop-portal-gnome.service": {
+        "err": "",
+        "out": "MainPID=1370153\nExecStart={ path=/usr/libexec/xdg-desktop-portal-gnome ; argv[]=/usr/libexec/xdg-desktop-portal-gnome ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/xdg-desktop-portal-gnome.service",
+        "rc": 0
+      },
+      "xdg-desktop-portal-gtk.service": {
+        "err": "",
+        "out": "MainPID=1370380\nExecStart={ path=/usr/libexec/xdg-desktop-portal-gtk ; argv[]=/usr/libexec/xdg-desktop-portal-gtk ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/xdg-desktop-portal-gtk.service",
+        "rc": 0
+      },
+      "xdg-desktop-portal.service": {
+        "err": "",
+        "out": "MainPID=1370137\nExecStart={ path=/usr/libexec/xdg-desktop-portal ; argv[]=/usr/libexec/xdg-desktop-portal ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/xdg-desktop-portal.service",
+        "rc": 0
+      },
+      "xdg-document-portal.service": {
+        "err": "",
+        "out": "MainPID=6674\nExecStart={ path=/usr/libexec/xdg-document-portal ; argv[]=/usr/libexec/xdg-document-portal ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/xdg-document-portal.service",
+        "rc": 0
+      },
+      "xdg-permission-store.service": {
+        "err": "",
+        "out": "MainPID=6680\nExecStart={ path=/usr/libexec/xdg-permission-store ; argv[]=/usr/libexec/xdg-permission-store ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/xdg-permission-store.service",
+        "rc": 0
+      }
+    }
+  },
+  "chiap02": {
+    "all_active_user_units": [
+      "at-spi-dbus-bus.service",
+      "cluster-dashboard.service",
+      "dbus.service",
+      "dconf.service",
+      "evolution-addressbook-factory.service",
+      "evolution-calendar-factory.service",
+      "evolution-source-registry.service",
+      "filter-chain.service",
+      "gcr-ssh-agent.service",
+      "gnome-keyring-daemon.service",
+      "gnome-session-manager@ubuntu.service",
+      "gnome-session-monitor.service",
+      "gnome-terminal-server.service",
+      "gpg-agent.service",
+      "gvfs-afc-volume-monitor.service",
+      "gvfs-daemon.service",
+      "gvfs-goa-volume-monitor.service",
+      "gvfs-gphoto2-volume-monitor.service",
+      "gvfs-metadata.service",
+      "gvfs-mtp-volume-monitor.service",
+      "gvfs-udisks2-volume-monitor.service",
+      "llama-paddleocr-vl16.service",
+      "org.freedesktop.IBus.session.GNOME.service",
+      "org.gnome.SettingsDaemon.A11ySettings.service",
+      "org.gnome.SettingsDaemon.Color.service",
+      "org.gnome.SettingsDaemon.Datetime.service",
+      "org.gnome.SettingsDaemon.Housekeeping.service",
+      "org.gnome.SettingsDaemon.Keyboard.service",
+      "org.gnome.SettingsDaemon.MediaKeys.service",
+      "org.gnome.SettingsDaemon.Power.service",
+      "org.gnome.SettingsDaemon.PrintNotifications.service",
+      "org.gnome.SettingsDaemon.Rfkill.service",
+      "org.gnome.SettingsDaemon.ScreensaverProxy.service",
+      "org.gnome.SettingsDaemon.Sharing.service",
+      "org.gnome.SettingsDaemon.Smartcard.service",
+      "org.gnome.SettingsDaemon.Sound.service",
+      "org.gnome.SettingsDaemon.Wacom.service",
+      "org.gnome.SettingsDaemon.XSettings.service",
+      "org.gnome.Shell@x11.service",
+      "pipewire-pulse.service",
+      "pipewire.service",
+      "skcapstone@jarvis.service",
+      "skcomms.service",
+      "skwhisper@aster.service",
+      "skwhisper@jarvis.service",
+      "snap.snapd-desktop-integration.snapd-desktop-integration.service",
+      "syncthing.service",
+      "tracker-miner-fs-3.service",
+      "wireplumber.service",
+      "xdg-desktop-portal-gnome.service",
+      "xdg-desktop-portal-gtk.service",
+      "xdg-desktop-portal.service",
+      "xdg-document-portal.service",
+      "xdg-permission-store.service"
+    ],
+    "host": "chiap02",
+    "import_origins": {
+      "/home/skuser01/.skenv/bin/python": {
+        "err": "",
+        "out": "{\"skcomms\": \"/home/skuser01/work/skcomms/src/skcomms/__init__.py\"}",
+        "rc": 0
+      }
+    },
+    "target_processes": [
+      {
+        "cgroup": "0::/user.slice/user-1001.slice/user@1001.service/app.slice/skcomms.service",
+        "ps": "114003    1496   42465 /home/skuser01/.skenv/bin/python /home/skuser01/.skenv/bin/skcomms serve --host 127.0.0.1 --port 9384"
+      },
+      {
+        "cgroup": "0::/user.slice/user-1001.slice/user@1001.service/app.slice/skfleet-rotate.service",
+        "ps": "1569230 1563149       1 /bin/bash -c cat > /tmp/f6target.py <<'PY' import json,subprocess hosts=['chiap01','chiap02','chiap03','chiap04','chiap08'] remote=r'''python3 - <<'INNER' import json,os,subprocess  def run(a):  try:   p=subprocess.run(a,text=True,capture_output=True); return {'rc':p.returncode,'out':p.stdout.strip(),'err':p.stderr.strip()}  except OSError as e:return {'rc':127,'out':'','err':str(e)} units=[] r=run(['systemctl','--user','list-units','--type=service','--state=running','--no-legend','--plain']) for l in r['out'].splitlines():  p=l.split();  if p: units.append(p[0]) unit_data={u:run(['systemctl','--user','show',u,'-p','FragmentPath','-p','ExecStart','-p','MainPID','-p','ActiveState','-p','SubState']) for u in units} ps=run(['ps','-eo','pid=,ppid=,etimes=,args=','--sort=pid']) target=[] for l in ps['out'].splitlines():  if any(x in l.lower() for x in ['skcomms serve','skvoice.service','skcode_hostd','skcode-hostd','durable_liberty_internal','sklegal-liberty-web-launcher']):   p=l.strip().split(None,1); pid=p[0]; target.append({'ps':l.strip(),'cgroup':open('/proc/'+pid+'/cgroup').read().strip()}) checks={ '/home/skuser01/.skenv/bin/python':['skcomms'], '/home/skuser01/.venvs/skops/bin/python':['skharness'], '/home/skuser01/skvoice-env/bin/python':['skvoice'], '/home/skuser01/work/sklegal-liberty-live/.venv/bin/python':['sklegal_api'], } imports={} for interp,mods in checks.items():  if os.path.exists(interp):   code='import importlib.util,json; print(json.dumps({m:(importlib.util.find_spec(m).origin if importlib.util.find_spec(m) else None) for m in '+repr(mods)+'}))'   imports[interp]=run([interp,'-c',code]) print(json.dumps({'host':os.uname().nodename,'all_active_user_units':units,'unit_details':unit_data,'target_processes':target,'import_origins':imports},sort_keys=True)) INNER''' out={} for h in hosts:  p=subprocess.run(['ssh',h,remote],text=True,capture_output=True)  out[h]=json.loads(p.stdout) open('/tmp/f6-target.json','w').write(json.dumps(out,indent=2,sort_keys=True)+'\\n') PY python /tmp/f6target.py python - <<'PY' import json x=json.load(open('/tmp/f6-target.json')) for h,d in x.items():  print('\\n'+h)  for p in d['target_processes']:print(p)  print(d['import_origins'])  for u in ['skcomms.service','skcode-hostd.service','skvoice.service','sklegal-liberty-api.service','sklegal-liberty-web.service']:   if u in d['unit_details']:print(u,d['unit_details'][u]) PY"
+      },
+      {
+        "cgroup": "0::/user.slice/user-1001.slice/user@1001.service/app.slice/skfleet-rotate.service",
+        "ps": "1569243 1569232       0 ssh chiap02 python3 - <<'INNER' import json,os,subprocess  def run(a):  try:   p=subprocess.run(a,text=True,capture_output=True); return {'rc':p.returncode,'out':p.stdout.strip(),'err':p.stderr.strip()}  except OSError as e:return {'rc':127,'out':'','err':str(e)} units=[] r=run(['systemctl','--user','list-units','--type=service','--state=running','--no-legend','--plain']) for l in r['out'].splitlines():  p=l.split();  if p: units.append(p[0]) unit_data={u:run(['systemctl','--user','show',u,'-p','FragmentPath','-p','ExecStart','-p','MainPID','-p','ActiveState','-p','SubState']) for u in units} ps=run(['ps','-eo','pid=,ppid=,etimes=,args=','--sort=pid']) target=[] for l in ps['out'].splitlines():  if any(x in l.lower() for x in ['skcomms serve','skvoice.service','skcode_hostd','skcode-hostd','durable_liberty_internal','sklegal-liberty-web-launcher']):   p=l.strip().split(None,1); pid=p[0]; target.append({'ps':l.strip(),'cgroup':open('/proc/'+pid+'/cgroup').read().strip()}) checks={ '/home/skuser01/.skenv/bin/python':['skcomms'], '/home/skuser01/.venvs/skops/bin/python':['skharness'], '/home/skuser01/skvoice-env/bin/python':['skvoice'], '/home/skuser01/work/sklegal-liberty-live/.venv/bin/python':['sklegal_api'], } imports={} for interp,mods in checks.items():  if os.path.exists(interp):   code='import importlib.util,json; print(json.dumps({m:(importlib.util.find_spec(m).origin if importlib.util.find_spec(m) else None) for m in '+repr(mods)+'}))'   imports[interp]=run([interp,'-c',code]) print(json.dumps({'host':os.uname().nodename,'all_active_user_units':units,'unit_details':unit_data,'target_processes':target,'import_origins':imports},sort_keys=True)) INNER"
+      },
+      {
+        "cgroup": "0::/user.slice/user-1001.slice/session-38434.scope",
+        "ps": "1569314 1569294       0 bash -c python3 - <<'INNER' import json,os,subprocess  def run(a):  try:   p=subprocess.run(a,text=True,capture_output=True); return {'rc':p.returncode,'out':p.stdout.strip(),'err':p.stderr.strip()}  except OSError as e:return {'rc':127,'out':'','err':str(e)} units=[] r=run(['systemctl','--user','list-units','--type=service','--state=running','--no-legend','--plain']) for l in r['out'].splitlines():  p=l.split();  if p: units.append(p[0]) unit_data={u:run(['systemctl','--user','show',u,'-p','FragmentPath','-p','ExecStart','-p','MainPID','-p','ActiveState','-p','SubState']) for u in units} ps=run(['ps','-eo','pid=,ppid=,etimes=,args=','--sort=pid']) target=[] for l in ps['out'].splitlines():  if any(x in l.lower() for x in ['skcomms serve','skvoice.service','skcode_hostd','skcode-hostd','durable_liberty_internal','sklegal-liberty-web-launcher']):   p=l.strip().split(None,1); pid=p[0]; target.append({'ps':l.strip(),'cgroup':open('/proc/'+pid+'/cgroup').read().strip()}) checks={ '/home/skuser01/.skenv/bin/python':['skcomms'], '/home/skuser01/.venvs/skops/bin/python':['skharness'], '/home/skuser01/skvoice-env/bin/python':['skvoice'], '/home/skuser01/work/sklegal-liberty-live/.venv/bin/python':['sklegal_api'], } imports={} for interp,mods in checks.items():  if os.path.exists(interp):   code='import importlib.util,json; print(json.dumps({m:(importlib.util.find_spec(m).origin if importlib.util.find_spec(m) else None) for m in '+repr(mods)+'}))'   imports[interp]=run([interp,'-c',code]) print(json.dumps({'host':os.uname().nodename,'all_active_user_units':units,'unit_details':unit_data,'target_processes':target,'import_origins':imports},sort_keys=True)) INNER"
+      }
+    ],
+    "unit_details": {
+      "at-spi-dbus-bus.service": {
+        "err": "",
+        "out": "MainPID=626674\nExecStart={ path=/usr/libexec/at-spi-bus-launcher ; argv[]=/usr/libexec/at-spi-bus-launcher ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/at-spi-dbus-bus.service",
+        "rc": 0
+      },
+      "cluster-dashboard.service": {
+        "err": "",
+        "out": "MainPID=1620\nExecStart={ path=/home/skuser01/.local/bin/cluster-status ; argv[]=/home/skuser01/.local/bin/cluster-status --serve --host 127.0.0.1 --port 8765 --timeout 6 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/cluster-dashboard.service",
+        "rc": 0
+      },
+      "dbus.service": {
+        "err": "",
+        "out": "MainPID=1644\nExecStart={ path=/usr/bin/dbus-daemon ; argv[]=/usr/bin/dbus-daemon --session --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/dbus.service",
+        "rc": 0
+      },
+      "dconf.service": {
+        "err": "",
+        "out": "MainPID=627668\nExecStart={ path=/usr/libexec/dconf-service ; argv[]=/usr/libexec/dconf-service ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/dconf.service",
+        "rc": 0
+      },
+      "evolution-addressbook-factory.service": {
+        "err": "",
+        "out": "MainPID=627462\nExecStart={ path=/usr/libexec/evolution-addressbook-factory ; argv[]=/usr/libexec/evolution-addressbook-factory ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/evolution-addressbook-factory.service",
+        "rc": 0
+      },
+      "evolution-calendar-factory.service": {
+        "err": "",
+        "out": "MainPID=627417\nExecStart={ path=/usr/libexec/evolution-calendar-factory ; argv[]=/usr/libexec/evolution-calendar-factory ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/evolution-calendar-factory.service",
+        "rc": 0
+      },
+      "evolution-source-registry.service": {
+        "err": "",
+        "out": "MainPID=627136\nExecStart={ path=/usr/libexec/evolution-source-registry ; argv[]=/usr/libexec/evolution-source-registry ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/evolution-source-registry.service",
+        "rc": 0
+      },
+      "filter-chain.service": {
+        "err": "",
+        "out": "MainPID=1623\nExecStart={ path=/usr/bin/pipewire ; argv[]=/usr/bin/pipewire -c filter-chain.conf ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/filter-chain.service",
+        "rc": 0
+      },
+      "gcr-ssh-agent.service": {
+        "err": "",
+        "out": "MainPID=626785\nExecStart={ path=/usr/libexec/gcr-ssh-agent ; argv[]=/usr/libexec/gcr-ssh-agent --base-dir /run/user/1001/gcr ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gcr-ssh-agent.service",
+        "rc": 0
+      },
+      "gnome-keyring-daemon.service": {
+        "err": "",
+        "out": "MainPID=626530\nExecStart={ path=/usr/bin/gnome-keyring-daemon ; argv[]=/usr/bin/gnome-keyring-daemon --foreground --components=pkcs11,secrets --control-directory=/run/user/1001/keyring ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gnome-keyring-daemon.service",
+        "rc": 0
+      },
+      "gnome-session-manager@ubuntu.service": {
+        "err": "",
+        "out": "MainPID=626828\nExecStart={ path=/usr/libexec/gnome-session-binary ; argv[]=/usr/libexec/gnome-session-binary --systemd-service --session=ubuntu ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gnome-session-manager@.service",
+        "rc": 0
+      },
+      "gnome-session-monitor.service": {
+        "err": "",
+        "out": "MainPID=626786\nExecStart={ path=/usr/libexec/gnome-session-ctl ; argv[]=/usr/libexec/gnome-session-ctl --monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gnome-session-monitor.service",
+        "rc": 0
+      },
+      "gnome-terminal-server.service": {
+        "err": "",
+        "out": "MainPID=2553878\nExecStart={ path=/usr/libexec/gnome-terminal-server ; argv[]=/usr/libexec/gnome-terminal-server ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gnome-terminal-server.service",
+        "rc": 0
+      },
+      "gpg-agent.service": {
+        "err": "",
+        "out": "MainPID=984387\nExecStart={ path=/usr/bin/gpg-agent ; argv[]=/usr/bin/gpg-agent --supervised ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gpg-agent.service",
+        "rc": 0
+      },
+      "gvfs-afc-volume-monitor.service": {
+        "err": "",
+        "out": "MainPID=627447\nExecStart={ path=/usr/libexec/gvfs-afc-volume-monitor ; argv[]=/usr/libexec/gvfs-afc-volume-monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-afc-volume-monitor.service",
+        "rc": 0
+      },
+      "gvfs-daemon.service": {
+        "err": "",
+        "out": "MainPID=626798\nExecStart={ path=/usr/libexec/gvfsd ; argv[]=/usr/libexec/gvfsd ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-daemon.service",
+        "rc": 0
+      },
+      "gvfs-goa-volume-monitor.service": {
+        "err": "",
+        "out": "MainPID=627429\nExecStart={ path=/usr/libexec/gvfs-goa-volume-monitor ; argv[]=/usr/libexec/gvfs-goa-volume-monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-goa-volume-monitor.service",
+        "rc": 0
+      },
+      "gvfs-gphoto2-volume-monitor.service": {
+        "err": "",
+        "out": "MainPID=627397\nExecStart={ path=/usr/libexec/gvfs-gphoto2-volume-monitor ; argv[]=/usr/libexec/gvfs-gphoto2-volume-monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-gphoto2-volume-monitor.service",
+        "rc": 0
+      },
+      "gvfs-metadata.service": {
+        "err": "",
+        "out": "MainPID=627961\nExecStart={ path=/usr/libexec/gvfsd-metadata ; argv[]=/usr/libexec/gvfsd-metadata ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-metadata.service",
+        "rc": 0
+      },
+      "gvfs-mtp-volume-monitor.service": {
+        "err": "",
+        "out": "MainPID=627438\nExecStart={ path=/usr/libexec/gvfs-mtp-volume-monitor ; argv[]=/usr/libexec/gvfs-mtp-volume-monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-mtp-volume-monitor.service",
+        "rc": 0
+      },
+      "gvfs-udisks2-volume-monitor.service": {
+        "err": "",
+        "out": "MainPID=627257\nExecStart={ path=/usr/libexec/gvfs-udisks2-volume-monitor ; argv[]=/usr/libexec/gvfs-udisks2-volume-monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-udisks2-volume-monitor.service",
+        "rc": 0
+      },
+      "llama-paddleocr-vl16.service": {
+        "err": "",
+        "out": "MainPID=1621\nExecStart={ path=/home/skuser01/bin/launch-chiap02-llama-paddleocr-vl16.sh ; argv[]=/home/skuser01/bin/launch-chiap02-llama-paddleocr-vl16.sh ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/llama-paddleocr-vl16.service",
+        "rc": 0
+      },
+      "org.freedesktop.IBus.session.GNOME.service": {
+        "err": "",
+        "out": "MainPID=627190\nExecStart={ path=sh ; argv[]=sh -c exec /usr/bin/ibus-daemon --panel disable $([ \"$XDG_SESSION_TYPE\" = \"x11\" ] && echo \"--xim\") ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.freedesktop.IBus.session.GNOME.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.A11ySettings.service": {
+        "err": "",
+        "out": "MainPID=627191\nExecStart={ path=/usr/libexec/gsd-a11y-settings ; argv[]=/usr/libexec/gsd-a11y-settings ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.A11ySettings.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Color.service": {
+        "err": "",
+        "out": "MainPID=627192\nExecStart={ path=/usr/libexec/gsd-color ; argv[]=/usr/libexec/gsd-color ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Color.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Datetime.service": {
+        "err": "",
+        "out": "MainPID=627194\nExecStart={ path=/usr/libexec/gsd-datetime ; argv[]=/usr/libexec/gsd-datetime ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Datetime.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Housekeeping.service": {
+        "err": "",
+        "out": "MainPID=627196\nExecStart={ path=/usr/libexec/gsd-housekeeping ; argv[]=/usr/libexec/gsd-housekeeping ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Housekeeping.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Keyboard.service": {
+        "err": "",
+        "out": "MainPID=627198\nExecStart={ path=/usr/libexec/gsd-keyboard ; argv[]=/usr/libexec/gsd-keyboard ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Keyboard.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.MediaKeys.service": {
+        "err": "",
+        "out": "MainPID=627199\nExecStart={ path=/usr/libexec/gsd-media-keys ; argv[]=/usr/libexec/gsd-media-keys ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.MediaKeys.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Power.service": {
+        "err": "",
+        "out": "MainPID=627200\nExecStart={ path=/usr/libexec/gsd-power ; argv[]=/usr/libexec/gsd-power ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Power.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.PrintNotifications.service": {
+        "err": "",
+        "out": "MainPID=627203\nExecStart={ path=/usr/libexec/gsd-print-notifications ; argv[]=/usr/libexec/gsd-print-notifications ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.PrintNotifications.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Rfkill.service": {
+        "err": "",
+        "out": "MainPID=627206\nExecStart={ path=/usr/libexec/gsd-rfkill ; argv[]=/usr/libexec/gsd-rfkill ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Rfkill.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.ScreensaverProxy.service": {
+        "err": "",
+        "out": "MainPID=627214\nExecStart={ path=/usr/libexec/gsd-screensaver-proxy ; argv[]=/usr/libexec/gsd-screensaver-proxy ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.ScreensaverProxy.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Sharing.service": {
+        "err": "",
+        "out": "MainPID=627215\nExecStart={ path=/usr/libexec/gsd-sharing ; argv[]=/usr/libexec/gsd-sharing ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Sharing.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Smartcard.service": {
+        "err": "",
+        "out": "MainPID=627219\nExecStart={ path=/usr/libexec/gsd-smartcard ; argv[]=/usr/libexec/gsd-smartcard ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Smartcard.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Sound.service": {
+        "err": "",
+        "out": "MainPID=627221\nExecStart={ path=/usr/libexec/gsd-sound ; argv[]=/usr/libexec/gsd-sound ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Sound.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Wacom.service": {
+        "err": "",
+        "out": "MainPID=627224\nExecStart={ path=/usr/libexec/gsd-wacom ; argv[]=/usr/libexec/gsd-wacom ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Wacom.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.XSettings.service": {
+        "err": "",
+        "out": "MainPID=627228\nExecStart={ path=/usr/libexec/gsd-xsettings ; argv[]=/usr/libexec/gsd-xsettings ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.XSettings.service",
+        "rc": 0
+      },
+      "org.gnome.Shell@x11.service": {
+        "err": "",
+        "out": "MainPID=626911\nExecStart={ path=/usr/bin/gnome-shell ; argv[]=/usr/bin/gnome-shell ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.Shell@x11.service",
+        "rc": 0
+      },
+      "pipewire-pulse.service": {
+        "err": "",
+        "out": "MainPID=1631\nExecStart={ path=/usr/bin/pipewire-pulse ; argv[]=/usr/bin/pipewire-pulse ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/pipewire-pulse.service",
+        "rc": 0
+      },
+      "pipewire.service": {
+        "err": "",
+        "out": "MainPID=1622\nExecStart={ path=/usr/bin/pipewire ; argv[]=/usr/bin/pipewire ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/pipewire.service",
+        "rc": 0
+      },
+      "skcapstone@jarvis.service": {
+        "err": "",
+        "out": "MainPID=1411150\nExecStart={ path=/home/skuser01/.skenv/bin/skcapstone ; argv[]=/home/skuser01/.skenv/bin/skcapstone daemon start --agent jarvis --foreground ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skcapstone@.service",
+        "rc": 0
+      },
+      "skcomms.service": {
+        "err": "",
+        "out": "MainPID=114003\nExecStart={ path=/home/skuser01/.skenv/bin/skcomms ; argv[]=/home/skuser01/.skenv/bin/skcomms serve --host 127.0.0.1 --port 9384 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skcomms.service",
+        "rc": 0
+      },
+      "skwhisper@aster.service": {
+        "err": "",
+        "out": "MainPID=1327289\nExecStart={ path=/home/skuser01/.skenv/bin/skwhisper ; argv[]=/home/skuser01/.skenv/bin/skwhisper daemon ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skwhisper@.service",
+        "rc": 0
+      },
+      "skwhisper@jarvis.service": {
+        "err": "",
+        "out": "MainPID=1411152\nExecStart={ path=/home/skuser01/.skenv/bin/skwhisper ; argv[]=/home/skuser01/.skenv/bin/skwhisper daemon ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skwhisper@.service",
+        "rc": 0
+      },
+      "snap.snapd-desktop-integration.snapd-desktop-integration.service": {
+        "err": "",
+        "out": "MainPID=628254\nExecStart={ path=/usr/bin/snap ; argv[]=/usr/bin/snap run snapd-desktop-integration ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/etc/xdg/systemd/user/snap.snapd-desktop-integration.snapd-desktop-integration.service",
+        "rc": 0
+      },
+      "syncthing.service": {
+        "err": "",
+        "out": "MainPID=374345\nExecStart={ path=/usr/bin/syncthing ; argv[]=/usr/bin/syncthing serve --no-browser --no-restart ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/syncthing.service",
+        "rc": 0
+      },
+      "tracker-miner-fs-3.service": {
+        "err": "",
+        "out": "MainPID=627575\nExecStart={ path=/usr/libexec/tracker-miner-fs-3 ; argv[]=/usr/libexec/tracker-miner-fs-3 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/tracker-miner-fs-3.service",
+        "rc": 0
+      },
+      "wireplumber.service": {
+        "err": "",
+        "out": "MainPID=1630\nExecStart={ path=/usr/bin/wireplumber ; argv[]=/usr/bin/wireplumber ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/wireplumber.service",
+        "rc": 0
+      },
+      "xdg-desktop-portal-gnome.service": {
+        "err": "",
+        "out": "MainPID=627866\nExecStart={ path=/usr/libexec/xdg-desktop-portal-gnome ; argv[]=/usr/libexec/xdg-desktop-portal-gnome ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/xdg-desktop-portal-gnome.service",
+        "rc": 0
+      },
+      "xdg-desktop-portal-gtk.service": {
+        "err": "",
+        "out": "MainPID=628026\nExecStart={ path=/usr/libexec/xdg-desktop-portal-gtk ; argv[]=/usr/libexec/xdg-desktop-portal-gtk ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/xdg-desktop-portal-gtk.service",
+        "rc": 0
+      },
+      "xdg-desktop-portal.service": {
+        "err": "",
+        "out": "MainPID=627848\nExecStart={ path=/usr/libexec/xdg-desktop-portal ; argv[]=/usr/libexec/xdg-desktop-portal ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/xdg-desktop-portal.service",
+        "rc": 0
+      },
+      "xdg-document-portal.service": {
+        "err": "",
+        "out": "MainPID=3533\nExecStart={ path=/usr/libexec/xdg-document-portal ; argv[]=/usr/libexec/xdg-document-portal ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/xdg-document-portal.service",
+        "rc": 0
+      },
+      "xdg-permission-store.service": {
+        "err": "",
+        "out": "MainPID=3538\nExecStart={ path=/usr/libexec/xdg-permission-store ; argv[]=/usr/libexec/xdg-permission-store ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/xdg-permission-store.service",
+        "rc": 0
+      }
+    }
+  },
+  "chiap03": {
+    "all_active_user_units": [
+      "at-spi-dbus-bus.service",
+      "cluster-dashboard.service",
+      "dbus.service",
+      "filter-chain.service",
+      "gnome-keyring-daemon.service",
+      "gpg-agent.service",
+      "pipewire-pulse.service",
+      "pipewire.service",
+      "skcapstone@jarvis.service",
+      "skcomms.service",
+      "skwhisper@aster.service",
+      "skwhisper@jarvis.service",
+      "snap.snapd-desktop-integration.snapd-desktop-integration.service",
+      "syncthing.service",
+      "wireplumber.service",
+      "xdg-document-portal.service",
+      "xdg-permission-store.service"
+    ],
+    "host": "chiap03",
+    "import_origins": {
+      "/home/skuser01/.skenv/bin/python": {
+        "err": "",
+        "out": "{\"skcomms\": \"/home/skuser01/work/skcomms/src/skcomms/__init__.py\"}",
+        "rc": 0
+      }
+    },
+    "target_processes": [
+      {
+        "cgroup": "0::/user.slice/user-1001.slice/user@1001.service/app.slice/skcomms.service",
+        "ps": "2858014    1915   42463 /home/skuser01/.skenv/bin/python /home/skuser01/.skenv/bin/skcomms serve --host 127.0.0.1 --port 9384"
+      },
+      {
+        "cgroup": "0::/user.slice/user-1001.slice/session-38680.scope",
+        "ps": "3082511 3082510       0 bash -c python3 - <<'INNER' import json,os,subprocess  def run(a):  try:   p=subprocess.run(a,text=True,capture_output=True); return {'rc':p.returncode,'out':p.stdout.strip(),'err':p.stderr.strip()}  except OSError as e:return {'rc':127,'out':'','err':str(e)} units=[] r=run(['systemctl','--user','list-units','--type=service','--state=running','--no-legend','--plain']) for l in r['out'].splitlines():  p=l.split();  if p: units.append(p[0]) unit_data={u:run(['systemctl','--user','show',u,'-p','FragmentPath','-p','ExecStart','-p','MainPID','-p','ActiveState','-p','SubState']) for u in units} ps=run(['ps','-eo','pid=,ppid=,etimes=,args=','--sort=pid']) target=[] for l in ps['out'].splitlines():  if any(x in l.lower() for x in ['skcomms serve','skvoice.service','skcode_hostd','skcode-hostd','durable_liberty_internal','sklegal-liberty-web-launcher']):   p=l.strip().split(None,1); pid=p[0]; target.append({'ps':l.strip(),'cgroup':open('/proc/'+pid+'/cgroup').read().strip()}) checks={ '/home/skuser01/.skenv/bin/python':['skcomms'], '/home/skuser01/.venvs/skops/bin/python':['skharness'], '/home/skuser01/skvoice-env/bin/python':['skvoice'], '/home/skuser01/work/sklegal-liberty-live/.venv/bin/python':['sklegal_api'], } imports={} for interp,mods in checks.items():  if os.path.exists(interp):   code='import importlib.util,json; print(json.dumps({m:(importlib.util.find_spec(m).origin if importlib.util.find_spec(m) else None) for m in '+repr(mods)+'}))'   imports[interp]=run([interp,'-c',code]) print(json.dumps({'host':os.uname().nodename,'all_active_user_units':units,'unit_details':unit_data,'target_processes':target,'import_origins':imports},sort_keys=True)) INNER"
+      }
+    ],
+    "unit_details": {
+      "at-spi-dbus-bus.service": {
+        "err": "",
+        "out": "MainPID=2606636\nExecStart={ path=/usr/libexec/at-spi-bus-launcher ; argv[]=/usr/libexec/at-spi-bus-launcher ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/at-spi-dbus-bus.service",
+        "rc": 0
+      },
+      "cluster-dashboard.service": {
+        "err": "",
+        "out": "MainPID=2025\nExecStart={ path=/home/skuser01/.local/bin/cluster-status ; argv[]=/home/skuser01/.local/bin/cluster-status --serve --host 127.0.0.1 --port 8765 --timeout 6 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/cluster-dashboard.service",
+        "rc": 0
+      },
+      "dbus.service": {
+        "err": "",
+        "out": "MainPID=2055\nExecStart={ path=/usr/bin/dbus-daemon ; argv[]=/usr/bin/dbus-daemon --session --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/dbus.service",
+        "rc": 0
+      },
+      "filter-chain.service": {
+        "err": "",
+        "out": "MainPID=2031\nExecStart={ path=/usr/bin/pipewire ; argv[]=/usr/bin/pipewire -c filter-chain.conf ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/filter-chain.service",
+        "rc": 0
+      },
+      "gnome-keyring-daemon.service": {
+        "err": "",
+        "out": "MainPID=2602901\nExecStart={ path=/usr/bin/gnome-keyring-daemon ; argv[]=/usr/bin/gnome-keyring-daemon --foreground --components=pkcs11,secrets --control-directory=/run/user/1001/keyring ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gnome-keyring-daemon.service",
+        "rc": 0
+      },
+      "gpg-agent.service": {
+        "err": "",
+        "out": "MainPID=538306\nExecStart={ path=/usr/bin/gpg-agent ; argv[]=/usr/bin/gpg-agent --supervised ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gpg-agent.service",
+        "rc": 0
+      },
+      "pipewire-pulse.service": {
+        "err": "",
+        "out": "MainPID=2043\nExecStart={ path=/usr/bin/pipewire-pulse ; argv[]=/usr/bin/pipewire-pulse ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/pipewire-pulse.service",
+        "rc": 0
+      },
+      "pipewire.service": {
+        "err": "",
+        "out": "MainPID=2027\nExecStart={ path=/usr/bin/pipewire ; argv[]=/usr/bin/pipewire ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/pipewire.service",
+        "rc": 0
+      },
+      "skcapstone@jarvis.service": {
+        "err": "",
+        "out": "MainPID=650491\nExecStart={ path=/home/skuser01/.skenv/bin/skcapstone ; argv[]=/home/skuser01/.skenv/bin/skcapstone daemon start --agent jarvis --foreground ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skcapstone@.service",
+        "rc": 0
+      },
+      "skcomms.service": {
+        "err": "",
+        "out": "MainPID=2858014\nExecStart={ path=/home/skuser01/.skenv/bin/skcomms ; argv[]=/home/skuser01/.skenv/bin/skcomms serve --host 127.0.0.1 --port 9384 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skcomms.service",
+        "rc": 0
+      },
+      "skwhisper@aster.service": {
+        "err": "",
+        "out": "MainPID=626212\nExecStart={ path=/home/skuser01/.skenv/bin/skwhisper ; argv[]=/home/skuser01/.skenv/bin/skwhisper daemon ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skwhisper@.service",
+        "rc": 0
+      },
+      "skwhisper@jarvis.service": {
+        "err": "",
+        "out": "MainPID=650493\nExecStart={ path=/home/skuser01/.skenv/bin/skwhisper ; argv[]=/home/skuser01/.skenv/bin/skwhisper daemon ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skwhisper@.service",
+        "rc": 0
+      },
+      "snap.snapd-desktop-integration.snapd-desktop-integration.service": {
+        "err": "",
+        "out": "MainPID=2036\nExecStart={ path=/usr/bin/snap ; argv[]=/usr/bin/snap run snapd-desktop-integration ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/etc/xdg/systemd/user/snap.snapd-desktop-integration.snapd-desktop-integration.service",
+        "rc": 0
+      },
+      "syncthing.service": {
+        "err": "",
+        "out": "MainPID=2875023\nExecStart={ path=/usr/bin/syncthing ; argv[]=/usr/bin/syncthing serve --no-browser --no-restart ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/syncthing.service",
+        "rc": 0
+      },
+      "wireplumber.service": {
+        "err": "",
+        "out": "MainPID=2042\nExecStart={ path=/usr/bin/wireplumber ; argv[]=/usr/bin/wireplumber ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/wireplumber.service",
+        "rc": 0
+      },
+      "xdg-document-portal.service": {
+        "err": "",
+        "out": "MainPID=3192\nExecStart={ path=/usr/libexec/xdg-document-portal ; argv[]=/usr/libexec/xdg-document-portal ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/xdg-document-portal.service",
+        "rc": 0
+      },
+      "xdg-permission-store.service": {
+        "err": "",
+        "out": "MainPID=3202\nExecStart={ path=/usr/libexec/xdg-permission-store ; argv[]=/usr/libexec/xdg-permission-store ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/xdg-permission-store.service",
+        "rc": 0
+      }
+    }
+  },
+  "chiap04": {
+    "all_active_user_units": [
+      "at-spi-dbus-bus.service",
+      "claude-code-api.service",
+      "cluster-dashboard.service",
+      "dbus.service",
+      "dconf.service",
+      "evolution-addressbook-factory.service",
+      "evolution-calendar-factory.service",
+      "evolution-source-registry.service",
+      "filter-chain.service",
+      "gcr-ssh-agent.service",
+      "gnome-keyring-daemon.service",
+      "gnome-session-manager@ubuntu.service",
+      "gnome-session-monitor.service",
+      "gpg-agent.service",
+      "gvfs-afc-volume-monitor.service",
+      "gvfs-daemon.service",
+      "gvfs-goa-volume-monitor.service",
+      "gvfs-gphoto2-volume-monitor.service",
+      "gvfs-metadata.service",
+      "gvfs-mtp-volume-monitor.service",
+      "gvfs-udisks2-volume-monitor.service",
+      "hammertime-ingestion-ticker.service",
+      "hermes-gateway.service",
+      "org.freedesktop.IBus.session.GNOME.service",
+      "org.gnome.SettingsDaemon.A11ySettings.service",
+      "org.gnome.SettingsDaemon.Color.service",
+      "org.gnome.SettingsDaemon.Datetime.service",
+      "org.gnome.SettingsDaemon.Housekeeping.service",
+      "org.gnome.SettingsDaemon.Keyboard.service",
+      "org.gnome.SettingsDaemon.MediaKeys.service",
+      "org.gnome.SettingsDaemon.Power.service",
+      "org.gnome.SettingsDaemon.PrintNotifications.service",
+      "org.gnome.SettingsDaemon.Rfkill.service",
+      "org.gnome.SettingsDaemon.ScreensaverProxy.service",
+      "org.gnome.SettingsDaemon.Sharing.service",
+      "org.gnome.SettingsDaemon.Smartcard.service",
+      "org.gnome.SettingsDaemon.Sound.service",
+      "org.gnome.SettingsDaemon.Wacom.service",
+      "org.gnome.SettingsDaemon.XSettings.service",
+      "org.gnome.Shell@x11.service",
+      "pipewire-pulse.service",
+      "pipewire.service",
+      "skcapstone-dashboard.service",
+      "skcapstone@jarvis.service",
+      "skcomms.service",
+      "skcounter-collector.service",
+      "skgateway.service",
+      "skwhisper@aster.service",
+      "skwhisper@jarvis.service",
+      "snap.firmware-updater.firmware-notifier.service",
+      "snap.snapd-desktop-integration.snapd-desktop-integration.service",
+      "syncthing.service",
+      "tracker-miner-fs-3.service",
+      "wireplumber.service",
+      "xdg-desktop-portal-gnome.service",
+      "xdg-desktop-portal-gtk.service",
+      "xdg-desktop-portal.service",
+      "xdg-document-portal.service",
+      "xdg-permission-store.service"
+    ],
+    "host": "chiap04",
+    "import_origins": {
+      "/home/skuser01/.skenv/bin/python": {
+        "err": "",
+        "out": "{\"skcomms\": \"/home/skuser01/work/skcomms/src/skcomms/__init__.py\"}",
+        "rc": 0
+      }
+    },
+    "target_processes": [
+      {
+        "cgroup": "0::/user.slice/user-1001.slice/user@1001.service/app.slice/skcomms.service",
+        "ps": "1634955    1673   42461 /home/skuser01/.skenv/bin/python3 /home/skuser01/.skenv/bin/skcomms serve --host 127.0.0.1 --port 9384"
+      },
+      {
+        "cgroup": "0::/user.slice/user-1001.slice/session-6316.scope",
+        "ps": "3773619 3773618       0 bash -c python3 - <<'INNER' import json,os,subprocess  def run(a):  try:   p=subprocess.run(a,text=True,capture_output=True); return {'rc':p.returncode,'out':p.stdout.strip(),'err':p.stderr.strip()}  except OSError as e:return {'rc':127,'out':'','err':str(e)} units=[] r=run(['systemctl','--user','list-units','--type=service','--state=running','--no-legend','--plain']) for l in r['out'].splitlines():  p=l.split();  if p: units.append(p[0]) unit_data={u:run(['systemctl','--user','show',u,'-p','FragmentPath','-p','ExecStart','-p','MainPID','-p','ActiveState','-p','SubState']) for u in units} ps=run(['ps','-eo','pid=,ppid=,etimes=,args=','--sort=pid']) target=[] for l in ps['out'].splitlines():  if any(x in l.lower() for x in ['skcomms serve','skvoice.service','skcode_hostd','skcode-hostd','durable_liberty_internal','sklegal-liberty-web-launcher']):   p=l.strip().split(None,1); pid=p[0]; target.append({'ps':l.strip(),'cgroup':open('/proc/'+pid+'/cgroup').read().strip()}) checks={ '/home/skuser01/.skenv/bin/python':['skcomms'], '/home/skuser01/.venvs/skops/bin/python':['skharness'], '/home/skuser01/skvoice-env/bin/python':['skvoice'], '/home/skuser01/work/sklegal-liberty-live/.venv/bin/python':['sklegal_api'], } imports={} for interp,mods in checks.items():  if os.path.exists(interp):   code='import importlib.util,json; print(json.dumps({m:(importlib.util.find_spec(m).origin if importlib.util.find_spec(m) else None) for m in '+repr(mods)+'}))'   imports[interp]=run([interp,'-c',code]) print(json.dumps({'host':os.uname().nodename,'all_active_user_units':units,'unit_details':unit_data,'target_processes':target,'import_origins':imports},sort_keys=True)) INNER"
+      }
+    ],
+    "unit_details": {
+      "at-spi-dbus-bus.service": {
+        "err": "",
+        "out": "MainPID=5796\nExecStart={ path=/usr/libexec/at-spi-bus-launcher ; argv[]=/usr/libexec/at-spi-bus-launcher ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/at-spi-dbus-bus.service",
+        "rc": 0
+      },
+      "claude-code-api.service": {
+        "err": "",
+        "out": "MainPID=1898\nExecStart={ path=/usr/bin/node ; argv[]=/usr/bin/node /home/skuser01/claude-code-api/server.js ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/claude-code-api.service",
+        "rc": 0
+      },
+      "cluster-dashboard.service": {
+        "err": "",
+        "out": "MainPID=1901\nExecStart={ path=/home/skuser01/.local/bin/cluster-status ; argv[]=/home/skuser01/.local/bin/cluster-status --serve --host 127.0.0.1 --port 8765 --timeout 6 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/cluster-dashboard.service",
+        "rc": 0
+      },
+      "dbus.service": {
+        "err": "",
+        "out": "MainPID=1922\nExecStart={ path=/usr/bin/dbus-daemon ; argv[]=/usr/bin/dbus-daemon --session --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/dbus.service",
+        "rc": 0
+      },
+      "dconf.service": {
+        "err": "",
+        "out": "MainPID=6131\nExecStart={ path=/usr/libexec/dconf-service ; argv[]=/usr/libexec/dconf-service ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/dconf.service",
+        "rc": 0
+      },
+      "evolution-addressbook-factory.service": {
+        "err": "",
+        "out": "MainPID=6501\nExecStart={ path=/usr/libexec/evolution-addressbook-factory ; argv[]=/usr/libexec/evolution-addressbook-factory ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/evolution-addressbook-factory.service",
+        "rc": 0
+      },
+      "evolution-calendar-factory.service": {
+        "err": "",
+        "out": "MainPID=6405\nExecStart={ path=/usr/libexec/evolution-calendar-factory ; argv[]=/usr/libexec/evolution-calendar-factory ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/evolution-calendar-factory.service",
+        "rc": 0
+      },
+      "evolution-source-registry.service": {
+        "err": "",
+        "out": "MainPID=6128\nExecStart={ path=/usr/libexec/evolution-source-registry ; argv[]=/usr/libexec/evolution-source-registry ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/evolution-source-registry.service",
+        "rc": 0
+      },
+      "filter-chain.service": {
+        "err": "",
+        "out": "MainPID=1905\nExecStart={ path=/usr/bin/pipewire ; argv[]=/usr/bin/pipewire -c filter-chain.conf ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/filter-chain.service",
+        "rc": 0
+      },
+      "gcr-ssh-agent.service": {
+        "err": "",
+        "out": "MainPID=5849\nExecStart={ path=/usr/libexec/gcr-ssh-agent ; argv[]=/usr/libexec/gcr-ssh-agent --base-dir /run/user/1001/gcr ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gcr-ssh-agent.service",
+        "rc": 0
+      },
+      "gnome-keyring-daemon.service": {
+        "err": "",
+        "out": "MainPID=5115\nExecStart={ path=/usr/bin/gnome-keyring-daemon ; argv[]=/usr/bin/gnome-keyring-daemon --foreground --components=pkcs11,secrets --control-directory=/run/user/1001/keyring ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gnome-keyring-daemon.service",
+        "rc": 0
+      },
+      "gnome-session-manager@ubuntu.service": {
+        "err": "",
+        "out": "MainPID=5875\nExecStart={ path=/usr/libexec/gnome-session-binary ; argv[]=/usr/libexec/gnome-session-binary --systemd-service --session=ubuntu ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gnome-session-manager@.service",
+        "rc": 0
+      },
+      "gnome-session-monitor.service": {
+        "err": "",
+        "out": "MainPID=5850\nExecStart={ path=/usr/libexec/gnome-session-ctl ; argv[]=/usr/libexec/gnome-session-ctl --monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gnome-session-monitor.service",
+        "rc": 0
+      },
+      "gpg-agent.service": {
+        "err": "",
+        "out": "MainPID=7413\nExecStart={ path=/usr/bin/gpg-agent ; argv[]=/usr/bin/gpg-agent --supervised ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gpg-agent.service",
+        "rc": 0
+      },
+      "gvfs-afc-volume-monitor.service": {
+        "err": "",
+        "out": "MainPID=6433\nExecStart={ path=/usr/libexec/gvfs-afc-volume-monitor ; argv[]=/usr/libexec/gvfs-afc-volume-monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-afc-volume-monitor.service",
+        "rc": 0
+      },
+      "gvfs-daemon.service": {
+        "err": "",
+        "out": "MainPID=5864\nExecStart={ path=/usr/libexec/gvfsd ; argv[]=/usr/libexec/gvfsd ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-daemon.service",
+        "rc": 0
+      },
+      "gvfs-goa-volume-monitor.service": {
+        "err": "",
+        "out": "MainPID=6452\nExecStart={ path=/usr/libexec/gvfs-goa-volume-monitor ; argv[]=/usr/libexec/gvfs-goa-volume-monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-goa-volume-monitor.service",
+        "rc": 0
+      },
+      "gvfs-gphoto2-volume-monitor.service": {
+        "err": "",
+        "out": "MainPID=6506\nExecStart={ path=/usr/libexec/gvfs-gphoto2-volume-monitor ; argv[]=/usr/libexec/gvfs-gphoto2-volume-monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-gphoto2-volume-monitor.service",
+        "rc": 0
+      },
+      "gvfs-metadata.service": {
+        "err": "",
+        "out": "MainPID=6918\nExecStart={ path=/usr/libexec/gvfsd-metadata ; argv[]=/usr/libexec/gvfsd-metadata ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-metadata.service",
+        "rc": 0
+      },
+      "gvfs-mtp-volume-monitor.service": {
+        "err": "",
+        "out": "MainPID=6478\nExecStart={ path=/usr/libexec/gvfs-mtp-volume-monitor ; argv[]=/usr/libexec/gvfs-mtp-volume-monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-mtp-volume-monitor.service",
+        "rc": 0
+      },
+      "gvfs-udisks2-volume-monitor.service": {
+        "err": "",
+        "out": "MainPID=6236\nExecStart={ path=/usr/libexec/gvfs-udisks2-volume-monitor ; argv[]=/usr/libexec/gvfs-udisks2-volume-monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-udisks2-volume-monitor.service",
+        "rc": 0
+      },
+      "hammertime-ingestion-ticker.service": {
+        "err": "",
+        "out": "MainPID=2719109\nExecStart={ path=/home/skuser01/.skenv/bin/python3 ; argv[]=/home/skuser01/.skenv/bin/python3 /mnt/cloud/onedrive/projects/DAVE AI/hammerTime/scripts/ingestion-ticker.py --loop --interval 15 --output /mnt/cloud/onedrive/projects/DAVE AI/hammerTime/logs/automation/ingestion-ticker-latest.txt ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/hammertime-ingestion-ticker.service",
+        "rc": 0
+      },
+      "hermes-gateway.service": {
+        "err": "",
+        "out": "MainPID=1903\nExecStart={ path=/home/skuser01/.hermes/hermes-agent/venv/bin/python ; argv[]=/home/skuser01/.hermes/hermes-agent/venv/bin/python -m hermes_cli.main gateway run --replace ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/hermes-gateway.service",
+        "rc": 0
+      },
+      "org.freedesktop.IBus.session.GNOME.service": {
+        "err": "",
+        "out": "MainPID=6167\nExecStart={ path=sh ; argv[]=sh -c exec /usr/bin/ibus-daemon --panel disable $([ \"$XDG_SESSION_TYPE\" = \"x11\" ] && echo \"--xim\") ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.freedesktop.IBus.session.GNOME.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.A11ySettings.service": {
+        "err": "",
+        "out": "MainPID=6168\nExecStart={ path=/usr/libexec/gsd-a11y-settings ; argv[]=/usr/libexec/gsd-a11y-settings ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.A11ySettings.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Color.service": {
+        "err": "",
+        "out": "MainPID=6171\nExecStart={ path=/usr/libexec/gsd-color ; argv[]=/usr/libexec/gsd-color ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Color.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Datetime.service": {
+        "err": "",
+        "out": "MainPID=6173\nExecStart={ path=/usr/libexec/gsd-datetime ; argv[]=/usr/libexec/gsd-datetime ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Datetime.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Housekeeping.service": {
+        "err": "",
+        "out": "MainPID=6176\nExecStart={ path=/usr/libexec/gsd-housekeeping ; argv[]=/usr/libexec/gsd-housekeeping ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Housekeeping.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Keyboard.service": {
+        "err": "",
+        "out": "MainPID=6179\nExecStart={ path=/usr/libexec/gsd-keyboard ; argv[]=/usr/libexec/gsd-keyboard ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Keyboard.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.MediaKeys.service": {
+        "err": "",
+        "out": "MainPID=6180\nExecStart={ path=/usr/libexec/gsd-media-keys ; argv[]=/usr/libexec/gsd-media-keys ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.MediaKeys.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Power.service": {
+        "err": "",
+        "out": "MainPID=6187\nExecStart={ path=/usr/libexec/gsd-power ; argv[]=/usr/libexec/gsd-power ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Power.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.PrintNotifications.service": {
+        "err": "",
+        "out": "MainPID=6194\nExecStart={ path=/usr/libexec/gsd-print-notifications ; argv[]=/usr/libexec/gsd-print-notifications ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.PrintNotifications.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Rfkill.service": {
+        "err": "",
+        "out": "MainPID=6200\nExecStart={ path=/usr/libexec/gsd-rfkill ; argv[]=/usr/libexec/gsd-rfkill ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Rfkill.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.ScreensaverProxy.service": {
+        "err": "",
+        "out": "MainPID=6203\nExecStart={ path=/usr/libexec/gsd-screensaver-proxy ; argv[]=/usr/libexec/gsd-screensaver-proxy ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.ScreensaverProxy.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Sharing.service": {
+        "err": "",
+        "out": "MainPID=6210\nExecStart={ path=/usr/libexec/gsd-sharing ; argv[]=/usr/libexec/gsd-sharing ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Sharing.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Smartcard.service": {
+        "err": "",
+        "out": "MainPID=6214\nExecStart={ path=/usr/libexec/gsd-smartcard ; argv[]=/usr/libexec/gsd-smartcard ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Smartcard.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Sound.service": {
+        "err": "",
+        "out": "MainPID=6219\nExecStart={ path=/usr/libexec/gsd-sound ; argv[]=/usr/libexec/gsd-sound ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Sound.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Wacom.service": {
+        "err": "",
+        "out": "MainPID=6221\nExecStart={ path=/usr/libexec/gsd-wacom ; argv[]=/usr/libexec/gsd-wacom ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Wacom.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.XSettings.service": {
+        "err": "",
+        "out": "MainPID=6228\nExecStart={ path=/usr/libexec/gsd-xsettings ; argv[]=/usr/libexec/gsd-xsettings ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.XSettings.service",
+        "rc": 0
+      },
+      "org.gnome.Shell@x11.service": {
+        "err": "",
+        "out": "MainPID=5910\nExecStart={ path=/usr/bin/gnome-shell ; argv[]=/usr/bin/gnome-shell ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.Shell@x11.service",
+        "rc": 0
+      },
+      "pipewire-pulse.service": {
+        "err": "",
+        "out": "MainPID=1915\nExecStart={ path=/usr/bin/pipewire-pulse ; argv[]=/usr/bin/pipewire-pulse ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/pipewire-pulse.service",
+        "rc": 0
+      },
+      "pipewire.service": {
+        "err": "",
+        "out": "MainPID=1904\nExecStart={ path=/usr/bin/pipewire ; argv[]=/usr/bin/pipewire ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/pipewire.service",
+        "rc": 0
+      },
+      "skcapstone-dashboard.service": {
+        "err": "",
+        "out": "MainPID=3122599\nExecStart={ path=/home/skuser01/.skenv/bin/skcapstone ; argv[]=/home/skuser01/.skenv/bin/skcapstone --agent jarvis dashboard --host 0.0.0.0 --port 7778 --no-open ; ignore_errors=no ; start_time=[Sun 2026-08-30 22:24:20 CDT] ; stop_time=[n/a] ; pid=3122599 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skcapstone-dashboard.service",
+        "rc": 0
+      },
+      "skcapstone@jarvis.service": {
+        "err": "",
+        "out": "MainPID=1913\nExecStart={ path=/home/skuser01/.skenv/bin/skcapstone ; argv[]=/home/skuser01/.skenv/bin/skcapstone daemon start --agent jarvis --foreground ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skcapstone@.service",
+        "rc": 0
+      },
+      "skcomms.service": {
+        "err": "",
+        "out": "MainPID=1634955\nExecStart={ path=/home/skuser01/.skenv/bin/skcomms ; argv[]=/home/skuser01/.skenv/bin/skcomms serve --host 127.0.0.1 --port 9384 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skcomms.service",
+        "rc": 0
+      },
+      "skcounter-collector.service": {
+        "err": "",
+        "out": "MainPID=8456\nExecStart={ path=/home/skuser01/.local/lib/skcounter/services/collector.mjs ; argv[]=/home/skuser01/.local/lib/skcounter/services/collector.mjs serve --config /home/skuser01/.config/skcounter/collector.json ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skcounter-collector.service",
+        "rc": 0
+      },
+      "skgateway.service": {
+        "err": "",
+        "out": "MainPID=1907\nExecStart={ path=/home/skuser01/.skenv/bin/uvicorn ; argv[]=/home/skuser01/.skenv/bin/uvicorn skgateway:app --app-dir /home/skuser01/.local/share/skgateway --host 127.0.0.1 --port 18780 --no-access-log ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skgateway.service",
+        "rc": 0
+      },
+      "skwhisper@aster.service": {
+        "err": "",
+        "out": "MainPID=1908\nExecStart={ path=/home/skuser01/.skenv/bin/skwhisper ; argv[]=/home/skuser01/.skenv/bin/skwhisper daemon ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skwhisper@.service",
+        "rc": 0
+      },
+      "skwhisper@jarvis.service": {
+        "err": "",
+        "out": "MainPID=1910\nExecStart={ path=/home/skuser01/.skenv/bin/skwhisper ; argv[]=/home/skuser01/.skenv/bin/skwhisper daemon ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skwhisper@.service",
+        "rc": 0
+      },
+      "snap.firmware-updater.firmware-notifier.service": {
+        "err": "",
+        "out": "MainPID=80074\nExecStart={ path=/usr/bin/snap ; argv[]=/usr/bin/snap run --timer=00:00-24:00/8 firmware-updater.firmware-notifier ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/etc/xdg/systemd/user/snap.firmware-updater.firmware-notifier.service",
+        "rc": 0
+      },
+      "snap.snapd-desktop-integration.snapd-desktop-integration.service": {
+        "err": "",
+        "out": "MainPID=7040\nExecStart={ path=/usr/bin/snap ; argv[]=/usr/bin/snap run snapd-desktop-integration ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/etc/xdg/systemd/user/snap.snapd-desktop-integration.snapd-desktop-integration.service",
+        "rc": 0
+      },
+      "syncthing.service": {
+        "err": "",
+        "out": "MainPID=1831493\nExecStart={ path=/usr/bin/syncthing ; argv[]=/usr/bin/syncthing serve --no-browser --no-restart ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/syncthing.service",
+        "rc": 0
+      },
+      "tracker-miner-fs-3.service": {
+        "err": "",
+        "out": "MainPID=6584\nExecStart={ path=/usr/libexec/tracker-miner-fs-3 ; argv[]=/usr/libexec/tracker-miner-fs-3 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/tracker-miner-fs-3.service",
+        "rc": 0
+      },
+      "wireplumber.service": {
+        "err": "",
+        "out": "MainPID=1914\nExecStart={ path=/usr/bin/wireplumber ; argv[]=/usr/bin/wireplumber ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/wireplumber.service",
+        "rc": 0
+      },
+      "xdg-desktop-portal-gnome.service": {
+        "err": "",
+        "out": "MainPID=6684\nExecStart={ path=/usr/libexec/xdg-desktop-portal-gnome ; argv[]=/usr/libexec/xdg-desktop-portal-gnome ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/xdg-desktop-portal-gnome.service",
+        "rc": 0
+      },
+      "xdg-desktop-portal-gtk.service": {
+        "err": "",
+        "out": "MainPID=6771\nExecStart={ path=/usr/libexec/xdg-desktop-portal-gtk ; argv[]=/usr/libexec/xdg-desktop-portal-gtk ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/xdg-desktop-portal-gtk.service",
+        "rc": 0
+      },
+      "xdg-desktop-portal.service": {
+        "err": "",
+        "out": "MainPID=6676\nExecStart={ path=/usr/libexec/xdg-desktop-portal ; argv[]=/usr/libexec/xdg-desktop-portal ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/xdg-desktop-portal.service",
+        "rc": 0
+      },
+      "xdg-document-portal.service": {
+        "err": "",
+        "out": "MainPID=2071\nExecStart={ path=/usr/libexec/xdg-document-portal ; argv[]=/usr/libexec/xdg-document-portal ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/xdg-document-portal.service",
+        "rc": 0
+      },
+      "xdg-permission-store.service": {
+        "err": "",
+        "out": "MainPID=2081\nExecStart={ path=/usr/libexec/xdg-permission-store ; argv[]=/usr/libexec/xdg-permission-store ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/xdg-permission-store.service",
+        "rc": 0
+      }
+    }
+  },
+  "chiap08": {
+    "all_active_user_units": [
+      "at-spi-dbus-bus.service",
+      "capauth-oidc-qualification.service",
+      "cluster-dashboard.service",
+      "dbus.service",
+      "dconf.service",
+      "evolution-addressbook-factory.service",
+      "evolution-calendar-factory.service",
+      "evolution-source-registry.service",
+      "filter-chain.service",
+      "gcr-ssh-agent.service",
+      "gnome-keyring-daemon.service",
+      "gnome-session-manager@ubuntu.service",
+      "gnome-session-monitor.service",
+      "gnome-terminal-server.service",
+      "gpg-agent.service",
+      "gvfs-afc-volume-monitor.service",
+      "gvfs-daemon.service",
+      "gvfs-goa-volume-monitor.service",
+      "gvfs-gphoto2-volume-monitor.service",
+      "gvfs-metadata.service",
+      "gvfs-mtp-volume-monitor.service",
+      "gvfs-udisks2-volume-monitor.service",
+      "org.freedesktop.IBus.session.GNOME.service",
+      "org.gnome.SettingsDaemon.A11ySettings.service",
+      "org.gnome.SettingsDaemon.Color.service",
+      "org.gnome.SettingsDaemon.Datetime.service",
+      "org.gnome.SettingsDaemon.Housekeeping.service",
+      "org.gnome.SettingsDaemon.Keyboard.service",
+      "org.gnome.SettingsDaemon.MediaKeys.service",
+      "org.gnome.SettingsDaemon.Power.service",
+      "org.gnome.SettingsDaemon.PrintNotifications.service",
+      "org.gnome.SettingsDaemon.Rfkill.service",
+      "org.gnome.SettingsDaemon.ScreensaverProxy.service",
+      "org.gnome.SettingsDaemon.Sharing.service",
+      "org.gnome.SettingsDaemon.Smartcard.service",
+      "org.gnome.SettingsDaemon.Sound.service",
+      "org.gnome.SettingsDaemon.Wacom.service",
+      "org.gnome.SettingsDaemon.XSettings.service",
+      "org.gnome.Shell@x11.service",
+      "pipewire-pulse.service",
+      "pipewire.service",
+      "skcapstone@jarvis.service",
+      "skdashboard-read-only@10.0.0.139.service",
+      "skdashboard-read-only@100.81.238.58.service",
+      "sklegal-liberty-api.service",
+      "sklegal-liberty-web.service",
+      "skwhisper@aster.service",
+      "skwhisper@jarvis.service",
+      "snap.snapd-desktop-integration.snapd-desktop-integration.service",
+      "tracker-miner-fs-3.service",
+      "vllm-qwen38.service",
+      "wireplumber.service",
+      "xdg-desktop-portal-gnome.service",
+      "xdg-desktop-portal-gtk.service",
+      "xdg-desktop-portal.service",
+      "xdg-document-portal.service",
+      "xdg-permission-store.service"
+    ],
+    "host": "chiap08",
+    "import_origins": {
+      "/home/skuser01/.skenv/bin/python": {
+        "err": "",
+        "out": "{\"skcomms\": \"/home/skuser01/work/skcomms/src/skcomms/__init__.py\"}",
+        "rc": 0
+      },
+      "/home/skuser01/work/sklegal-liberty-live/.venv/bin/python": {
+        "err": "",
+        "out": "{\"sklegal_api\": \"/home/skuser01/work/sklegal-liberty-live/services/api/src/sklegal_api/__init__.py\"}",
+        "rc": 0
+      }
+    },
+    "target_processes": [
+      {
+        "cgroup": "0::/user.slice/user-1001.slice/user@1001.service/app.slice/app-org.gnome.Terminal.slice/vte-spawn-261aa5ce-c938-41e4-a965-7f87cd1663ed.scope",
+        "ps": "69211    1789   43000 /home/skuser01/.skenv/bin/python /home/skuser01/.skenv/bin/skcomms serve --host 127.0.0.1 --port 9384"
+      },
+      {
+        "cgroup": "0::/user.slice/user-1001.slice/session-28075.scope",
+        "ps": "318910  318909       0 bash -c python3 - <<'INNER' import json,os,subprocess  def run(a):  try:   p=subprocess.run(a,text=True,capture_output=True); return {'rc':p.returncode,'out':p.stdout.strip(),'err':p.stderr.strip()}  except OSError as e:return {'rc':127,'out':'','err':str(e)} units=[] r=run(['systemctl','--user','list-units','--type=service','--state=running','--no-legend','--plain']) for l in r['out'].splitlines():  p=l.split();  if p: units.append(p[0]) unit_data={u:run(['systemctl','--user','show',u,'-p','FragmentPath','-p','ExecStart','-p','MainPID','-p','ActiveState','-p','SubState']) for u in units} ps=run(['ps','-eo','pid=,ppid=,etimes=,args=','--sort=pid']) target=[] for l in ps['out'].splitlines():  if any(x in l.lower() for x in ['skcomms serve','skvoice.service','skcode_hostd','skcode-hostd','durable_liberty_internal','sklegal-liberty-web-launcher']):   p=l.strip().split(None,1); pid=p[0]; target.append({'ps':l.strip(),'cgroup':open('/proc/'+pid+'/cgroup').read().strip()}) checks={ '/home/skuser01/.skenv/bin/python':['skcomms'], '/home/skuser01/.venvs/skops/bin/python':['skharness'], '/home/skuser01/skvoice-env/bin/python':['skvoice'], '/home/skuser01/work/sklegal-liberty-live/.venv/bin/python':['sklegal_api'], } imports={} for interp,mods in checks.items():  if os.path.exists(interp):   code='import importlib.util,json; print(json.dumps({m:(importlib.util.find_spec(m).origin if importlib.util.find_spec(m) else None) for m in '+repr(mods)+'}))'   imports[interp]=run([interp,'-c',code]) print(json.dumps({'host':os.uname().nodename,'all_active_user_units':units,'unit_details':unit_data,'target_processes':target,'import_origins':imports},sort_keys=True)) INNER"
+      },
+      {
+        "cgroup": "0::/user.slice/user-1001.slice/user@1001.service/app.slice/sklegal-liberty-api.service",
+        "ps": "397902    1789   40209 /home/skuser01/work/sklegal-liberty-live/.venv/bin/python -m uvicorn sklegal_api.durable_liberty_internal:app --host 127.0.0.1 --port 15172 --proxy-headers --forwarded-allow-ips 127.0.0.1"
+      },
+      {
+        "cgroup": "0::/user.slice/user-1001.slice/user@1001.service/app.slice/sklegal-liberty-web.service",
+        "ps": "449490    1789   39699 /home/skuser01/work/sklegal-liberty-live/.venv/bin/python /home/skuser01/.local/bin/sklegal-liberty-web-launcher.py"
+      }
+    ],
+    "unit_details": {
+      "at-spi-dbus-bus.service": {
+        "err": "",
+        "out": "MainPID=5432\nExecStart={ path=/usr/libexec/at-spi-bus-launcher ; argv[]=/usr/libexec/at-spi-bus-launcher ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/at-spi-dbus-bus.service",
+        "rc": 0
+      },
+      "capauth-oidc-qualification.service": {
+        "err": "",
+        "out": "MainPID=3443290\nExecStart={ path=/home/skuser01/.local/share/skdashboard-readonly/approved-venv/bin/uvicorn ; argv[]=/home/skuser01/.local/share/skdashboard-readonly/approved-venv/bin/uvicorn capauth.service.app:app --host 100.81.238.58 --port 8420 --ssl-keyfile /home/skuser01/.config/capauth/tls/privkey.pem --ssl-certfile /home/skuser01/.config/capauth/tls/fullchain.pem ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/capauth-oidc-qualification.service",
+        "rc": 0
+      },
+      "cluster-dashboard.service": {
+        "err": "",
+        "out": "MainPID=1897\nExecStart={ path=/home/skuser01/.local/bin/cluster-status ; argv[]=/home/skuser01/.local/bin/cluster-status --serve --host 127.0.0.1 --port 8765 --timeout 6 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/cluster-dashboard.service",
+        "rc": 0
+      },
+      "dbus.service": {
+        "err": "",
+        "out": "MainPID=1925\nExecStart={ path=/usr/bin/dbus-daemon ; argv[]=/usr/bin/dbus-daemon --session --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/dbus.service",
+        "rc": 0
+      },
+      "dconf.service": {
+        "err": "",
+        "out": "MainPID=6162\nExecStart={ path=/usr/libexec/dconf-service ; argv[]=/usr/libexec/dconf-service ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/dconf.service",
+        "rc": 0
+      },
+      "evolution-addressbook-factory.service": {
+        "err": "",
+        "out": "MainPID=6107\nExecStart={ path=/usr/libexec/evolution-addressbook-factory ; argv[]=/usr/libexec/evolution-addressbook-factory ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/evolution-addressbook-factory.service",
+        "rc": 0
+      },
+      "evolution-calendar-factory.service": {
+        "err": "",
+        "out": "MainPID=6075\nExecStart={ path=/usr/libexec/evolution-calendar-factory ; argv[]=/usr/libexec/evolution-calendar-factory ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/evolution-calendar-factory.service",
+        "rc": 0
+      },
+      "evolution-source-registry.service": {
+        "err": "",
+        "out": "MainPID=5745\nExecStart={ path=/usr/libexec/evolution-source-registry ; argv[]=/usr/libexec/evolution-source-registry ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/evolution-source-registry.service",
+        "rc": 0
+      },
+      "filter-chain.service": {
+        "err": "",
+        "out": "MainPID=1900\nExecStart={ path=/usr/bin/pipewire ; argv[]=/usr/bin/pipewire -c filter-chain.conf ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/filter-chain.service",
+        "rc": 0
+      },
+      "gcr-ssh-agent.service": {
+        "err": "",
+        "out": "MainPID=5487\nExecStart={ path=/usr/libexec/gcr-ssh-agent ; argv[]=/usr/libexec/gcr-ssh-agent --base-dir /run/user/1001/gcr ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gcr-ssh-agent.service",
+        "rc": 0
+      },
+      "gnome-keyring-daemon.service": {
+        "err": "",
+        "out": "MainPID=5301\nExecStart={ path=/usr/bin/gnome-keyring-daemon ; argv[]=/usr/bin/gnome-keyring-daemon --foreground --components=pkcs11,secrets --control-directory=/run/user/1001/keyring ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gnome-keyring-daemon.service",
+        "rc": 0
+      },
+      "gnome-session-manager@ubuntu.service": {
+        "err": "",
+        "out": "MainPID=5530\nExecStart={ path=/usr/libexec/gnome-session-binary ; argv[]=/usr/libexec/gnome-session-binary --systemd-service --session=ubuntu ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gnome-session-manager@.service",
+        "rc": 0
+      },
+      "gnome-session-monitor.service": {
+        "err": "",
+        "out": "MainPID=5501\nExecStart={ path=/usr/libexec/gnome-session-ctl ; argv[]=/usr/libexec/gnome-session-ctl --monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gnome-session-monitor.service",
+        "rc": 0
+      },
+      "gnome-terminal-server.service": {
+        "err": "",
+        "out": "MainPID=2378760\nExecStart={ path=/usr/libexec/gnome-terminal-server ; argv[]=/usr/libexec/gnome-terminal-server ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gnome-terminal-server.service",
+        "rc": 0
+      },
+      "gpg-agent.service": {
+        "err": "",
+        "out": "MainPID=1793577\nExecStart={ path=/usr/bin/gpg-agent ; argv[]=/usr/bin/gpg-agent --supervised ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gpg-agent.service",
+        "rc": 0
+      },
+      "gvfs-afc-volume-monitor.service": {
+        "err": "",
+        "out": "MainPID=5981\nExecStart={ path=/usr/libexec/gvfs-afc-volume-monitor ; argv[]=/usr/libexec/gvfs-afc-volume-monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-afc-volume-monitor.service",
+        "rc": 0
+      },
+      "gvfs-daemon.service": {
+        "err": "",
+        "out": "MainPID=5517\nExecStart={ path=/usr/libexec/gvfsd ; argv[]=/usr/libexec/gvfsd ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-daemon.service",
+        "rc": 0
+      },
+      "gvfs-goa-volume-monitor.service": {
+        "err": "",
+        "out": "MainPID=6054\nExecStart={ path=/usr/libexec/gvfs-goa-volume-monitor ; argv[]=/usr/libexec/gvfs-goa-volume-monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-goa-volume-monitor.service",
+        "rc": 0
+      },
+      "gvfs-gphoto2-volume-monitor.service": {
+        "err": "",
+        "out": "MainPID=6037\nExecStart={ path=/usr/libexec/gvfs-gphoto2-volume-monitor ; argv[]=/usr/libexec/gvfs-gphoto2-volume-monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-gphoto2-volume-monitor.service",
+        "rc": 0
+      },
+      "gvfs-metadata.service": {
+        "err": "",
+        "out": "MainPID=6456\nExecStart={ path=/usr/libexec/gvfsd-metadata ; argv[]=/usr/libexec/gvfsd-metadata ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-metadata.service",
+        "rc": 0
+      },
+      "gvfs-mtp-volume-monitor.service": {
+        "err": "",
+        "out": "MainPID=6077\nExecStart={ path=/usr/libexec/gvfs-mtp-volume-monitor ; argv[]=/usr/libexec/gvfs-mtp-volume-monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-mtp-volume-monitor.service",
+        "rc": 0
+      },
+      "gvfs-udisks2-volume-monitor.service": {
+        "err": "",
+        "out": "MainPID=5857\nExecStart={ path=/usr/libexec/gvfs-udisks2-volume-monitor ; argv[]=/usr/libexec/gvfs-udisks2-volume-monitor ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/gvfs-udisks2-volume-monitor.service",
+        "rc": 0
+      },
+      "org.freedesktop.IBus.session.GNOME.service": {
+        "err": "",
+        "out": "MainPID=5780\nExecStart={ path=sh ; argv[]=sh -c exec /usr/bin/ibus-daemon --panel disable $([ \"$XDG_SESSION_TYPE\" = \"x11\" ] && echo \"--xim\") ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.freedesktop.IBus.session.GNOME.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.A11ySettings.service": {
+        "err": "",
+        "out": "MainPID=5781\nExecStart={ path=/usr/libexec/gsd-a11y-settings ; argv[]=/usr/libexec/gsd-a11y-settings ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.A11ySettings.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Color.service": {
+        "err": "",
+        "out": "MainPID=5783\nExecStart={ path=/usr/libexec/gsd-color ; argv[]=/usr/libexec/gsd-color ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Color.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Datetime.service": {
+        "err": "",
+        "out": "MainPID=5785\nExecStart={ path=/usr/libexec/gsd-datetime ; argv[]=/usr/libexec/gsd-datetime ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Datetime.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Housekeeping.service": {
+        "err": "",
+        "out": "MainPID=5786\nExecStart={ path=/usr/libexec/gsd-housekeeping ; argv[]=/usr/libexec/gsd-housekeeping ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Housekeeping.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Keyboard.service": {
+        "err": "",
+        "out": "MainPID=5787\nExecStart={ path=/usr/libexec/gsd-keyboard ; argv[]=/usr/libexec/gsd-keyboard ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Keyboard.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.MediaKeys.service": {
+        "err": "",
+        "out": "MainPID=5789\nExecStart={ path=/usr/libexec/gsd-media-keys ; argv[]=/usr/libexec/gsd-media-keys ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.MediaKeys.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Power.service": {
+        "err": "",
+        "out": "MainPID=5794\nExecStart={ path=/usr/libexec/gsd-power ; argv[]=/usr/libexec/gsd-power ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Power.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.PrintNotifications.service": {
+        "err": "",
+        "out": "MainPID=5796\nExecStart={ path=/usr/libexec/gsd-print-notifications ; argv[]=/usr/libexec/gsd-print-notifications ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.PrintNotifications.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Rfkill.service": {
+        "err": "",
+        "out": "MainPID=5801\nExecStart={ path=/usr/libexec/gsd-rfkill ; argv[]=/usr/libexec/gsd-rfkill ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Rfkill.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.ScreensaverProxy.service": {
+        "err": "",
+        "out": "MainPID=5806\nExecStart={ path=/usr/libexec/gsd-screensaver-proxy ; argv[]=/usr/libexec/gsd-screensaver-proxy ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.ScreensaverProxy.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Sharing.service": {
+        "err": "",
+        "out": "MainPID=5818\nExecStart={ path=/usr/libexec/gsd-sharing ; argv[]=/usr/libexec/gsd-sharing ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Sharing.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Smartcard.service": {
+        "err": "",
+        "out": "MainPID=5821\nExecStart={ path=/usr/libexec/gsd-smartcard ; argv[]=/usr/libexec/gsd-smartcard ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Smartcard.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Sound.service": {
+        "err": "",
+        "out": "MainPID=5825\nExecStart={ path=/usr/libexec/gsd-sound ; argv[]=/usr/libexec/gsd-sound ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Sound.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.Wacom.service": {
+        "err": "",
+        "out": "MainPID=5831\nExecStart={ path=/usr/libexec/gsd-wacom ; argv[]=/usr/libexec/gsd-wacom ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Wacom.service",
+        "rc": 0
+      },
+      "org.gnome.SettingsDaemon.XSettings.service": {
+        "err": "",
+        "out": "MainPID=5832\nExecStart={ path=/usr/libexec/gsd-xsettings ; argv[]=/usr/libexec/gsd-xsettings ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.SettingsDaemon.XSettings.service",
+        "rc": 0
+      },
+      "org.gnome.Shell@x11.service": {
+        "err": "",
+        "out": "MainPID=5591\nExecStart={ path=/usr/bin/gnome-shell ; argv[]=/usr/bin/gnome-shell ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/org.gnome.Shell@x11.service",
+        "rc": 0
+      },
+      "pipewire-pulse.service": {
+        "err": "",
+        "out": "MainPID=1913\nExecStart={ path=/usr/bin/pipewire-pulse ; argv[]=/usr/bin/pipewire-pulse ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/pipewire-pulse.service",
+        "rc": 0
+      },
+      "pipewire.service": {
+        "err": "",
+        "out": "MainPID=1899\nExecStart={ path=/usr/bin/pipewire ; argv[]=/usr/bin/pipewire ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/pipewire.service",
+        "rc": 0
+      },
+      "skcapstone@jarvis.service": {
+        "err": "",
+        "out": "MainPID=1910\nExecStart={ path=/home/skuser01/.skenv/bin/skcapstone ; argv[]=/home/skuser01/.skenv/bin/skcapstone daemon start --agent jarvis --foreground ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skcapstone@.service",
+        "rc": 0
+      },
+      "skdashboard-read-only@10.0.0.139.service": {
+        "err": "",
+        "out": "MainPID=3307768\nExecStart={ path=/home/skuser01/.local/share/skdashboard-readonly/approved-venv/bin/skdashboard-read-only ; argv[]=/home/skuser01/.local/share/skdashboard-readonly/approved-venv/bin/skdashboard-read-only --home /home/skuser01/.skcapstone --host 10.0.0.139 --port 7778 --tls-certfile /home/skuser01/.config/skdashboard/tls/fullchain.pem --tls-keyfile /home/skuser01/.config/skdashboard/tls/privkey.pem --session-db /home/skuser01/.local/state/skdashboard/session.db --session-key-file /home/skuser01/.config/skdashboard/session/session.key --oidc-issuer https://chiap08.tail204f0c.ts.net:8420 --oidc-redirect-uri https://chiap08.tail204f0c.ts.net:7778/auth/callback --oidc-client-secret-file /home/skuser01/.config/skdashboard/oidc/client.secret --legacy-board-url https://chiap08.tail204f0c.ts.net:7778/control-plane/portfolio --authorized-resource-id authorized-card-set:sha256:ef8ad711a9264924c6abd09b3789db909ad67e608b39f63167c115f45f673cff --owner-policy-file /home/skuser01/.config/skdashboard/live/owner-policy.json --owner-policy-sha256 395e401dab8617127cfbdbc905dab40f53349c1eadaa994c21563f1d28519c78 --owner-policy-revision b5dc425411bfa4a685c5384242c1c5293d52f8621a11bf100c3ac430f810c822 --tenant-id platform --owner-policy-uid 1001 --operator-session-db /home/skuser01/.local/state/skdashboard/operator-sessions.db --operator-policy-revisions-file /home/skuser01/.config/skdashboard/live/operator-policy-revisions.json --operator-policy-revisions-sha256 82380330e4537604f48b8d59ef89ab5f8f0634cbfa253b907c059b2c4b1a4b61 --signer-fingerprint DCE38ED7BC9D95D724B5FE7FECF9D6A423EC83F5 --signer-gnupg-home /home/skuser01/.local/state/skdashboard/dce38-gnupg --signer-passphrase-file /home/skuser01/.skcapstone/capauth/identities/skdashboard-read-only/passphrase --trusted-issuer-policy-file /home/skuser01/.skcapstone/capauth/identities/skdashboard-read-only/policy/trusted-issuers.json --trusted-issuer-policy-sha256 94f3b6f6bdf895ce59a9a5761f9e3302b0ec1ead3290f0dbcd2747f57bc76c8a --trusted-issuer-signature-file /home/skuser01/.skcapstone/capauth/identities/skdashboard-read-only/policy/trusted-issuers.json.asc --trusted-issuer-signature-sha256 a29d6205047959e87e580f68cc52b88a7f6aca37387a2ef7973c4988f0739eef --capability-state-db /home/skuser01/.local/state/skdashboard/capability-state.db --capability-authorizer-factory skdashboard.runtime_authorizer:build ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skdashboard-read-only@.service",
+        "rc": 0
+      },
+      "skdashboard-read-only@100.81.238.58.service": {
+        "err": "",
+        "out": "MainPID=3820376\nExecStart={ path=/home/skuser01/.local/share/skdashboard-readonly/approved-venv/bin/skdashboard-read-only ; argv[]=/home/skuser01/.local/share/skdashboard-readonly/approved-venv/bin/skdashboard-read-only --home /home/skuser01/.skcapstone --host 100.81.238.58 --port 7778 --tls-certfile /home/skuser01/.config/capauth/tls/fullchain.pem --tls-keyfile /home/skuser01/.config/capauth/tls/privkey.pem --session-db /home/skuser01/.local/state/skdashboard/session.db --session-key-file /home/skuser01/.config/skdashboard/session/session.key --oidc-issuer https://chiap08.tail204f0c.ts.net:8420 --oidc-redirect-uri https://chiap08.tail204f0c.ts.net:7778/auth/callback --oidc-client-secret-file /home/skuser01/.config/skdashboard/oidc/client.secret --legacy-board-url https://chiap08.tail204f0c.ts.net:7778/control-plane/portfolio --authorized-resource-id authorized-card-set:sha256:ef8ad711a9264924c6abd09b3789db909ad67e608b39f63167c115f45f673cff --owner-policy-file /home/skuser01/.config/skdashboard/live/owner-policy.json --owner-policy-sha256 9505512ddaa2e07ef887b78e91c0c4eb653583cd92936cc0e94b2b0030c5dc09 --owner-policy-revision c5d930a20127b5a66f3e3a3b3ad811e214787ea6dfe58d26ac79d6aaf63acf6c --tenant-id platform --owner-policy-uid 1001 --operator-session-db /home/skuser01/.local/state/skdashboard/operator-sessions.db --operator-policy-revisions-file /home/skuser01/.config/skdashboard/live/operator-policy-revisions.json --operator-policy-revisions-sha256 1af4966785efcfa9e4a7b4760945cc6c059b0a3aaa339466ee1d696d26e05e11 --signer-fingerprint DCE38ED7BC9D95D724B5FE7FECF9D6A423EC83F5 --signer-gnupg-home /home/skuser01/.local/state/skdashboard/dce38-gnupg --signer-passphrase-file /home/skuser01/.skcapstone/capauth/identities/skdashboard-read-only/passphrase --trusted-issuer-policy-file /home/skuser01/.skcapstone/capauth/identities/skdashboard-read-only/policy/trusted-issuers.json --trusted-issuer-policy-sha256 94f3b6f6bdf895ce59a9a5761f9e3302b0ec1ead3290f0dbcd2747f57bc76c8a --trusted-issuer-signature-file /home/skuser01/.skcapstone/capauth/identities/skdashboard-read-only/policy/trusted-issuers.json.asc --trusted-issuer-signature-sha256 a29d6205047959e87e580f68cc52b88a7f6aca37387a2ef7973c4988f0739eef --capability-state-db /home/skuser01/.local/state/skdashboard/capability-state.db --capability-authorizer-factory skdashboard.runtime_authorizer:build ; ignore_errors=no ; start_time=[Sun 2026-08-30 23:55:54 CDT] ; stop_time=[n/a] ; pid=3820376 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skdashboard-read-only@.service",
+        "rc": 0
+      },
+      "sklegal-liberty-api.service": {
+        "err": "",
+        "out": "MainPID=397902\nExecStart={ path=/home/skuser01/work/sklegal-liberty-live/.venv/bin/python ; argv[]=/home/skuser01/work/sklegal-liberty-live/.venv/bin/python /home/skuser01/.local/bin/sklegal-liberty-api-launcher.py ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/sklegal-liberty-api.service",
+        "rc": 0
+      },
+      "sklegal-liberty-web.service": {
+        "err": "",
+        "out": "MainPID=449490\nExecStart={ path=/home/skuser01/work/sklegal-liberty-live/.venv/bin/python ; argv[]=/home/skuser01/work/sklegal-liberty-live/.venv/bin/python /home/skuser01/.local/bin/sklegal-liberty-web-launcher.py ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/sklegal-liberty-web.service",
+        "rc": 0
+      },
+      "skwhisper@aster.service": {
+        "err": "",
+        "out": "MainPID=1905\nExecStart={ path=/home/skuser01/.skenv/bin/skwhisper ; argv[]=/home/skuser01/.skenv/bin/skwhisper daemon ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skwhisper@.service",
+        "rc": 0
+      },
+      "skwhisper@jarvis.service": {
+        "err": "",
+        "out": "MainPID=1906\nExecStart={ path=/home/skuser01/.skenv/bin/skwhisper ; argv[]=/home/skuser01/.skenv/bin/skwhisper daemon ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/skwhisper@.service",
+        "rc": 0
+      },
+      "snap.snapd-desktop-integration.snapd-desktop-integration.service": {
+        "err": "",
+        "out": "MainPID=6714\nExecStart={ path=/usr/bin/snap ; argv[]=/usr/bin/snap run snapd-desktop-integration ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/etc/xdg/systemd/user/snap.snapd-desktop-integration.snapd-desktop-integration.service",
+        "rc": 0
+      },
+      "tracker-miner-fs-3.service": {
+        "err": "",
+        "out": "MainPID=6129\nExecStart={ path=/usr/libexec/tracker-miner-fs-3 ; argv[]=/usr/libexec/tracker-miner-fs-3 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/tracker-miner-fs-3.service",
+        "rc": 0
+      },
+      "vllm-qwen38.service": {
+        "err": "",
+        "out": "MainPID=3234471\nExecStart={ path=/home/skuser01/.venv-vllm/bin/vllm ; argv[]=/home/skuser01/.venv-vllm/bin/vllm serve /home/skuser01/models/qwen3.8-27b-huihui-nvfp4 --served-model-name qwen3.8-27b-huihui-abliterated-q4_k_m qwen3.8-chiap08 qwen3.8-vllm --host 0.0.0.0 --port 11439 --max-model-len 131072 --kv-cache-dtype fp8 --gpu-memory-utilization 0.95 --max-num-seqs 64 --enable-auto-tool-choice --tool-call-parser qwen3_xml --chat-template /home/skuser01/models/qwen3.8-27b-huihui-nvfp4/chat_template.nothink-default.jinja ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/home/skuser01/.config/systemd/user/vllm-qwen38.service",
+        "rc": 0
+      },
+      "wireplumber.service": {
+        "err": "",
+        "out": "MainPID=1912\nExecStart={ path=/usr/bin/wireplumber ; argv[]=/usr/bin/wireplumber ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/wireplumber.service",
+        "rc": 0
+      },
+      "xdg-desktop-portal-gnome.service": {
+        "err": "",
+        "out": "MainPID=6275\nExecStart={ path=/usr/libexec/xdg-desktop-portal-gnome ; argv[]=/usr/libexec/xdg-desktop-portal-gnome ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/xdg-desktop-portal-gnome.service",
+        "rc": 0
+      },
+      "xdg-desktop-portal-gtk.service": {
+        "err": "",
+        "out": "MainPID=6309\nExecStart={ path=/usr/libexec/xdg-desktop-portal-gtk ; argv[]=/usr/libexec/xdg-desktop-portal-gtk ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/xdg-desktop-portal-gtk.service",
+        "rc": 0
+      },
+      "xdg-desktop-portal.service": {
+        "err": "",
+        "out": "MainPID=6270\nExecStart={ path=/usr/libexec/xdg-desktop-portal ; argv[]=/usr/libexec/xdg-desktop-portal ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/xdg-desktop-portal.service",
+        "rc": 0
+      },
+      "xdg-document-portal.service": {
+        "err": "",
+        "out": "MainPID=1971\nExecStart={ path=/usr/libexec/xdg-document-portal ; argv[]=/usr/libexec/xdg-document-portal ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/xdg-document-portal.service",
+        "rc": 0
+      },
+      "xdg-permission-store.service": {
+        "err": "",
+        "out": "MainPID=1992\nExecStart={ path=/usr/libexec/xdg-permission-store ; argv[]=/usr/libexec/xdg-permission-store ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/user/xdg-permission-store.service",
+        "rc": 0
+      }
+    }
+  }
+}
