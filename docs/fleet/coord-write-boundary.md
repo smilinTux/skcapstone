@@ -30,8 +30,10 @@ filesystem-complete security boundary.
 `coord link` writes a `CardEvent`, whose fixed field set holds no
 `candidate_path` and no `candidate_sha256`. A governed review will not open
 without both, plus the typed commit, tree and ref that bind them to a real
-revision. Measured on chi 2026-09-18: `OPENED_REVIEW` was 0 across 14 days and
-1,660 rotations while 214 cards logged `OPEN_REVIEW_EVIDENCE_BLOCKED` every
+revision. Measured on chi 2026-09-18: `OPENED_REVIEW` was 0 across every rotation
+the journal retains (1,716 cycles, back to 09-09), with the last one in the
+evidence logs at 2026-09-05T21:25:18Z, while 214 cards logged
+`OPEN_REVIEW_EVIDENCE_BLOCKED` every
 cycle; of 354 cards ever blocked that way, 305 held their `PASS_FOR_REVIEW`
 only as an overlay link row and 346 held no hash-bound candidate anywhere.
 `coord verdict` writes one native CardStore event carrying all of it, and
