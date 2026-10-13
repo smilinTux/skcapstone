@@ -402,6 +402,19 @@ def retired_offers(home: Path, card: str, events: list[dict]) -> set[str]:
                 lifecycle_proven = pending_proven and len(releases) == 1
             elif retirement_mode == "expired-unclaimed":
                 lifecycle_proven = expired_unclaimed
+            elif retirement_mode == "policy-drifted":
+                drift = proof_value.get("policy_drift") or {}
+                lifecycle_proven = bool(
+                    offer_at
+                    and not claim_activity
+                    and not launches
+                    and not releases
+                    and isinstance(archived_request.get("policy"), dict)
+                    and drift.get("offered")
+                    == production_builder.digest(archived_request["policy"])
+                    and SHA.fullmatch(str(drift.get("current", "")))
+                    and drift["current"] != drift["offered"]
+                )
             elif retirement_mode == "reviewer-self-release-churn":
                 lifecycle_proven = (
                     expired_before_retirement
@@ -807,8 +820,15 @@ def retire_prestart(
     status_sha256: str | None = None,
     check_recovery: bool = False,
     superseded: bool = False,
+    policy_drifted: bool = False,
 ) -> dict:
-    """Archive an unused offer, including a hash-bound unacknowledged admission."""
+    """Archive an unused offer, including a hash-bound unacknowledged admission.
+
+    policy_drifted retires an unclaimed offer before its lease expires, only
+    when its captured production policy differs from the current one. Every
+    unused-offer proof (no claim, launch, status, session or live unit) still
+    applies, so any execution evidence fails closed.
+    """
     home = Path(home)
     policy = production_builder.policy()
     if not policy or policy["authority_host"] != socket.gethostname().split(".")[0].lower():
@@ -865,8 +885,19 @@ def retire_prestart(
                 )
             except ValueError as exc:
                 raise ValueError("expired offer lease is invalid") from exc
-            if lease_expiry.tzinfo is None or lease_expiry > datetime.now(timezone.utc):
+            if policy_drifted:
+                from . import review_dispatch as _offers
+
+                if (
+                    pending
+                    or not isinstance(request.get("policy"), dict)
+                    or _offers._offer_policy_current(request, policy)
+                ):
+                    raise ValueError("offer policy has not drifted")
+            elif lease_expiry.tzinfo is None or lease_expiry > datetime.now(timezone.utc):
                 raise ValueError("offer has not expired")
+        elif policy_drifted:
+            raise ValueError("policy drift retirement requires an unclaimed offer")
         if (
             request.get("schema") != "skfleet.builder-dispatch/v2"
             or request.get("work_kind") != "review"
@@ -1084,18 +1115,27 @@ def retire_prestart(
         ):
             raise ValueError("resource admission inventory changed during prestart check")
         retirement_mode = (
-            "reviewer-self-release-churn"
-            if reviewer_self_release_churn
+            "policy-drifted"
+            if policy_drifted
             else (
-                "expired-unclaimed"
-                if unclaimed
-                else "archived-orphaned-claim" if archived_orphaned else "released-claim"
+                "reviewer-self-release-churn"
+                if reviewer_self_release_churn
+                else (
+                    "expired-unclaimed"
+                    if unclaimed
+                    else "archived-orphaned-claim" if archived_orphaned else "released-claim"
+                )
             )
         )
         if pending:
             retirement_mode = "admission-pending"
             proof["status_sha256"] = status_sha256
         proof["retired_at"] = datetime.now(timezone.utc).isoformat()
+        if policy_drifted:
+            proof["policy_drift"] = {
+                "offered": production_builder.digest(request["policy"]),
+                "current": production_builder.digest(policy),
+            }
         binding = {
             "schema": PRESTART_SCHEMA,
             "card_id": card,
@@ -1636,6 +1676,11 @@ def recover_failed_generations(paths, home: Path, *, actor: str = "niobe") -> li
             )
     results.extend(review_recovery.recover_unused_offers(paths, home, actor))
     return results
+
+
+def retire_policy_drifted(paths, home: Path, *, actor: str = "niobe") -> list[dict]:
+    """Authority lifecycle step for review offers stranded by a policy change."""
+    return review_recovery.retire_policy_drifted_offers(paths, Path(home), actor)
 
 
 SUPERSEDE_REASON = (

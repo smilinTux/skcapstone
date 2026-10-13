@@ -173,6 +173,16 @@ def _revision_drift_is_supplemental(home, review, source, pinned_revision, curre
     )
 
 
+def _offer_policy_current(request, policy) -> bool:
+    """Offer policy still valid: execution-relevant fields and own lane unchanged."""
+    from . import production_policy
+
+    bound = request.get("production") or {}
+    return production_policy.offer_policy_compatible(
+        request.get("policy"), policy, bound.get("family"), bound.get("host")
+    )
+
+
 def validate_contract(request, policy, *, host, historical=False):
     """Reject ambiguous role, placement, generation or independence bindings."""
     validate_execution_policy(policy)
@@ -198,7 +208,7 @@ def validate_contract(request, policy, *, host, historical=False):
         or bound["authority"] != policy["authority_host"]
         or admitted["authority_host"] != policy["authority_host"]
         or bound["policy_sha256"] != production.digest(admitted)
-        or (not historical and admitted != policy)
+        or (not historical and not _offer_policy_current(request, policy))
         or bound["resources"] != require_destination(admitted, host)
         or not rollout["enabled"]
         or host not in rollout["destinations"]
@@ -571,7 +581,9 @@ def validate_request(paths, home, node, request, *, claimed=False):
         # Capacity may defer an exact native offer past its lease without ever
         # launching it. Continue only that same generation under current
         # source/policy/activation checks; unknown custody still stays held.
-        if request["policy"] != policy or not _expired_unlaunched(paths, home, node, request):
+        if not _offer_policy_current(request, policy) or not _expired_unlaunched(
+            paths, home, node, request
+        ):
             raise
         validate_contract(request, policy, host=host, historical=True)
     if request["node"] != node or not _capable(paths, node):

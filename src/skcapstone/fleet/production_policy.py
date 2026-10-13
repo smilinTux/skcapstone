@@ -223,3 +223,68 @@ def require_destination(value: dict, host: str) -> dict:
     if host not in quotas or host not in value.get("worker_destinations", quotas):
         raise ValueError("worker destination is not authorized and qualified")
     return quotas[host]
+
+
+# Fields that change how an already sealed offer executes. Lane toggles are
+# deliberately absent: only the offer's own lane matters (checked separately).
+_EXECUTION_FIELDS = (
+    "schema",
+    "authority_host",
+    "capacity_authority",
+    "gateway_url",
+    "remote_review",
+    "node_admission",
+    "worker_destinations",
+    "cycle_budget_seconds",
+    "scan_budget",
+    "lane_runtime_max_seconds",
+)
+
+
+def execution_projection(policy: dict, host: str | None) -> dict:
+    """Project a production policy onto what governs execution on one host."""
+    value = {key: policy.get(key) for key in _EXECUTION_FIELDS}
+    quotas = policy.get("node_quotas")
+    value["resources"] = quotas.get(host) if isinstance(quotas, dict) and host else None
+    return value
+
+
+def _lane_for_family(lanes, bound_family):
+    """Map an offer's bound family (a lane name or a provider family such as
+    ``zai`` for the ``glm`` lane) to exactly one policy lane name."""
+    if not isinstance(lanes, dict) or not isinstance(bound_family, str):
+        return None
+    if bound_family in lanes:
+        return bound_family
+    from .production_review import provider_family
+
+    wanted = provider_family(bound_family)
+    matches = [name for name in lanes if wanted is not None and provider_family(name) == wanted]
+    return matches[0] if len(matches) == 1 else None
+
+
+def offer_policy_compatible(offered, current, bound_family, host=None) -> bool:
+    """Whether an offer sealed under `offered` is still valid under `current`.
+
+    Compatible when the execution-relevant projection is unchanged and the
+    offer's own bound lane is still enabled with the same provider. A toggle of
+    any other lane never invalidates the offer; disabling its own lane does.
+    Anything malformed is incompatible (fail closed).
+    """
+    if not isinstance(offered, dict) or not isinstance(current, dict):
+        return False
+    if offered == current:
+        return True
+    lane_name = _lane_for_family(current.get("lanes"), bound_family)
+    if lane_name is None:
+        return False
+    try:
+        lane = current["lanes"][lane_name]
+        sealed_lane = offered["lanes"][lane_name]
+    except (KeyError, TypeError):
+        return False
+    if not isinstance(lane, dict) or lane.get("enabled") is not True:
+        return False
+    if not isinstance(sealed_lane, dict) or lane.get("provider") != sealed_lane.get("provider"):
+        return False
+    return execution_projection(offered, host) == execution_projection(current, host)

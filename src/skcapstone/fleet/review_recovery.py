@@ -94,6 +94,70 @@ def recover_unused_offers(paths, home, actor):
     return results
 
 
+def retire_policy_drifted_offers(paths, home, actor):
+    """Retire unconsumed review offers whose captured policy is no longer current.
+
+    The builder node holds such offers untouched (POLICY_DRIFT_HELD) and leaves
+    retirement to the authority. The full prestart verifier decides: any claim,
+    launch, status, live unit or session leaves the offer held (refused).
+    Retired offers no longer exist as request files, so cycles are idempotent.
+    The normal offer path then re-offers under the current policy.
+    """
+    from . import review_dispatch
+    from . import review_retire as retire
+
+    try:
+        current_policy = retire.production_builder.policy()
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    if current_policy is None:
+        return []
+    results = []
+    for path in sorted((paths.root / "dispatch").glob("node-*/*.json")):
+        card, node = path.stem, path.parent.name
+        if not retire.CARD.fullmatch(card):
+            continue
+        try:
+            raw = retire._raw(path)
+            request = json.loads(raw)
+            if (
+                request.get("work_kind") != "review"
+                or not isinstance(request.get("policy"), dict)
+                or review_dispatch._offer_policy_current(request, current_policy)
+                or os.path.lexists(retire.dispatch.status_path(paths, node, card))
+            ):
+                continue
+            current = retire.CardStore(home).fold(card)
+            outcome = retire.retire_prestart(
+                paths,
+                Path(home),
+                node,
+                card,
+                request_sha256=retire.source_bundle._sha(raw),
+                card_sha256=retire.review_state_revision(current),
+                previous_owner=None,
+                previous_claim_revision=None,
+                actor=actor,
+                reason="automatic: unconsumed review offer retired, production policy changed",
+                superseded=True,
+                policy_drifted=True,
+                apply=True,
+            )
+            results.append(
+                dict(
+                    card=card,
+                    node=node,
+                    state=outcome["state"],
+                    request_id=request.get("request_id"),
+                    old_digest=retire.production_builder.digest(request["policy"]),
+                    new_digest=retire.production_builder.digest(current_policy),
+                )
+            )
+        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
+            results.append(dict(card=card, node=node, state="refused", reason=str(exc)[:160]))
+    return results
+
+
 def snapshot_proven(receipt, value, request):
     """Verify supersession snapshots without invalidating older receipt formats."""
     from . import review_retire as retire

@@ -8291,6 +8291,7 @@ if (
     try:
         from skcapstone.fleet.review_retire import (
             recover_failed_generations,
+            retire_policy_drifted,
             supersede_released_reviews,
         )
 
@@ -8300,6 +8301,19 @@ if (
             log(d, "REVIEW_GENERATION_RECOVERY|%s|%s|node=%s|state=%s|%s" % (
                 HOST, _recovered["card"], _recovered["node"], _recovered["state"],
                 _recovered.get("reason", "")))
+        # An unconsumed offer sealed under an older production policy is held by
+        # the node forever (POLICY_DRIFT_HELD); retire it so it is re-offered.
+        # Any execution evidence refuses and keeps it held.
+        for _drifted in retire_policy_drifted(
+            default_fleet_paths(), Path(HOME) / ".skcapstone"
+        ):
+            if _drifted["state"] == "retired-prestart":
+                log(d, "REVIEW_POLICY_DRIFT_RETIRED|%s|%s|request=%s|old=%s|new=%s" % (
+                    HOST, _drifted["card"], _drifted["request_id"],
+                    _drifted["old_digest"], _drifted["new_digest"]))
+            else:
+                log(d, "REVIEW_POLICY_DRIFT_HELD|%s|%s|%s" % (
+                    HOST, _drifted["card"], _drifted.get("reason", "")))
         # A finished review whose sealed reviewer claim was released can never
         # be accepted; supersede it so a fresh review generation is offered.
         for _superseded in supersede_released_reviews(
