@@ -4700,6 +4700,7 @@ def _human_gate(cid):
     return "human-gate" in labels or "[HUMAN]" in str(core.get("title") or "").upper()
 
 def _human_resolution_epoch(cid,referent,threshold):
+    from skcapstone.human_wait import _is_human_actor
     target_match=_CARD_REFERENT_RE.match(referent)
     target=target_match.group(1).lower() if target_match else cid
     needle=re.sub(r"[^a-z0-9]+","",referent.lower())
@@ -4707,14 +4708,14 @@ def _human_resolution_epoch(cid,referent,threshold):
     for event in event_rows(target):
         if event.get("action")!="void": continue
         actor=str(event.get("writer") or "").lower()
-        if actor in ("chef","human") or "human-decision-recorder" in actor:
+        if _is_human_actor(actor):
             latest=max(latest,_ts_epoch(event.get("ts")))
     for event in _load_evidence_events().get(target,[]):
         if event.get("action") not in ("link","add_label"): continue
         blob=" ".join(str(event.get(key) or "") for key in ("link_key","link_value","label"))
         flat=re.sub(r"[^a-z0-9]+","",blob.lower())
         actor=str(event.get("writer") or "").lower()
-        authorized=actor in ("chef","human") or "human-decision-recorder" in actor
+        authorized=_is_human_actor(actor)
         key=str(event.get("link_key") or "").lower().replace("-","_")
         direct=bool(re.search(r"\b(APPROVE(?:D)?|VOID)\b",blob,re.I))
         gate_decision=("human" in key and ("approval" in key or "void" in key)
