@@ -18,7 +18,8 @@ from skcapstone.fleet.staged_rollout import _DEPLOY_STEPS, _ROLLBACK_STEPS
 
 ROOT = Path(__file__).resolve().parents[1]
 CONSTRAINTS = ROOT / "deploy" / "fleet-constraints.txt"
-SK_RUNTIME = ("skcoord", "skmemory", "skskills", "cloud9")
+# skskills is intentionally unpinned: production runs a git build the CI index lacks.
+SK_RUNTIME = ("skcoord", "skmemory", "cloud9")
 
 
 def _pins():

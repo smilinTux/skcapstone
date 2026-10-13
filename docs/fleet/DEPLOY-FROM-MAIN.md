@@ -93,8 +93,8 @@ ownership notes are in `scripts/fleet/systemd/skfleet-auto-rollout.service`.
 Exactly one host runs it.
 
 Dependency parity: `deploy/fleet-constraints.txt` is the single source of truth
-for the SK* runtime dependency set production runs (skcoord, skmemory, skskills,
-cloud9), as exact `==` pins. CI installs with `pip install -c`, rollout installs
+for the SK* runtime dependency set production runs (skcoord, skmemory, cloud9;
+skskills is excluded because production runs a git build the CI index lacks), as exact `==` pins. CI installs with `pip install -c`, rollout installs
 with the same `-c`, and the `verify_dependency_parity` step right after
 `pip_install` runs `src/skcapstone/fleet/dependency_parity.py`. If any installed
 version differs, the host's deploy halts with a `DEPENDENCY_DRIFT: ...` reason

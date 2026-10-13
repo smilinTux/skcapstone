@@ -8,11 +8,17 @@
 #   3. The rollout gate runs `src/skcapstone/fleet/dependency_parity.py`
 #      and halts with DEPENDENCY_DRIFT if an installed version differs.
 #
+# Scope: only packages CI can install from the same index production used.
+# skskills is deliberately NOT pinned: hosts run 0.2.0 built from git commit
+# 14266f0 (direct_url.json), but the index CI uses only has 0.1.0/0.1.1, so a
+# pin makes resolution impossible. skmemory 0.11.25 on hosts was built from git
+# 51aa16c21ac3; the same version number is on the index. Pin skskills here once
+# 0.2.0 is published to the index.
+#
 # Rules: exact `==` pins only. A pyproject floor must never exceed its pin
 # (tests/test_fleet_dependency_parity.py). To bump, see
 # docs/fleet/DEPLOY-FROM-MAIN.md "Bumping a fleet dependency": the upstream
 # release ships first, then the pin moves in the same PR as the code needing it.
-skcoord==0.1.87
+skcoord==0.1.88
 skmemory==0.11.25
-skskills==0.2.0
 cloud9==1.2.4
