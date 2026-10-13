@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 import tomllib
 from packaging.requirements import Requirement
+from packaging.version import Version
 
 from skcapstone.fleet import production_test_plan as plan
 from skcapstone.fleet import rollout_drift
@@ -21,8 +22,11 @@ def test_skcoord_floor_includes_voided_projection_claim_recovery():
     config = tomllib.loads((root / "pyproject.toml").read_text())
     requirements = [Requirement(item) for item in config["project"]["dependencies"]]
     skcoord = next(item for item in requirements if item.name == "skcoord")
-    assert skcoord.specifier.contains("0.1.86")
+    # The floor must exclude every release without voided-projection claim
+    # recovery (added in 0.1.86); it may sit higher when a newer pin is required.
     assert not skcoord.specifier.contains("0.1.85")
+    floors = [Version(s.version) for s in skcoord.specifier if s.operator in (">=", "==")]
+    assert floors and max(floors) >= Version("0.1.86")
 
 
 def test_packaging_extra_covers_fingerprinted_tools_and_both_install_directions():
