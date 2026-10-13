@@ -374,6 +374,10 @@ def test_wrapper_reuses_heartbeat_and_preserves_unit_invocation(policy, inputs, 
     assert "/installed/skfleet-worker-wrapper.py" in command
     assert command[command.index("--worker-executable") + 1] == str(executable.parent / "index.js")
     assert "--live-snapshot" in command and "--claim-revision" in command
+    home = workspace.parent / "sovereign"
+    assert "SKCAPSTONE_HOME=" + str(home) in command
+    assert Path(command[command.index("--stdout") + 1]).is_relative_to(home)
+    assert Path(command[command.index("--evidence-dir") + 1]).is_relative_to(home)
     assert "skcapstone.fleet.production_cursor_worker" in " ".join(command)
     assert "shell-liveness" in " ".join(command)
     child = [

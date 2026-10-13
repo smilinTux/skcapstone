@@ -8,6 +8,8 @@ import socket
 import sys
 from pathlib import Path
 
+from ..estate import sovereign_home
+
 HOST = "chiap08"
 # Deliberately finite: new vendor aliases require review, never prefix matching.
 MODELS = frozenset({"composer-2.5", "cursor-grok-4.6-high"})
@@ -107,7 +109,7 @@ def worker_command(request: dict, owner: str, claim: str, workspace: Path) -> li
     if expected is None or any(bound.get(k) != v for k, v in expected.items()):
         raise ValueError("Cursor worker route changed")
     executable, _ = runtime()
-    home = Path(os.environ.get("SKCAPSTONE_HOME", str(Path.home() / ".skcapstone")))
+    home = sovereign_home()
     logs = home / "fleet/cursor-logs"
     logs.mkdir(parents=True, exist_ok=True, mode=0o700)
     environment = [
