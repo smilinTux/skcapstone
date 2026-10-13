@@ -276,7 +276,10 @@ def test_real_guarded_native_completion_review_before_source_and_replay_without_
 
 
 @pytest.mark.host_systemd
-def test_review_completion_accepts_released_producer_claim_from_sealed_source(pair):
+@pytest.mark.parametrize("captured_after_release", [False, True])
+def test_review_completion_accepts_released_producer_claim_from_sealed_source(
+    pair, captured_after_release
+):
     home, directory, context, store, _, _ = pair
     producer = context["source"]["owner"]
     claim = context["source"]["claim"]
@@ -289,7 +292,8 @@ def test_review_completion_accepts_released_producer_claim_from_sealed_source(pa
         transition_id="e" * 32,
         abandon_reason="not-abandoned",
     )
-    context["source"]["live_revision"] = native_revision(home, context["source"]["card"])
+    if captured_after_release:
+        context["source"]["live_revision"] = native_revision(home, context["source"]["card"])
 
     def debug_command(home, args):
         import subprocess

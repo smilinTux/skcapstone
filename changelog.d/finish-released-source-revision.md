@@ -1,0 +1,1 @@
+- Allow review acceptance after the captured producer claim is cleanly released, using the shared custody proof and unchanged source bindings. Preserve the released starting revision in the finish journal so replay remains fenced against later custody or content changes.
