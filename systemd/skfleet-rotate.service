@@ -1,0 +1,12 @@
+[Unit]
+Description=SKFleet card rotation
+After=network-online.target
+OnFailure=skcapstone-alert@skfleet-rotate.service
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.skenv/bin/python3 %h/.local/bin/skfleet-rotate.py --go
+
+[Install]
+WantedBy=default.target
