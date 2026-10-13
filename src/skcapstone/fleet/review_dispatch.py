@@ -270,7 +270,12 @@ def _source(home, card, *, historical=False):
         from .released_source import current_attempt, prove, revision_matches
 
         release = prove(home, source, manifest)
-        if not revision_matches(home, source, release, _binding(core, "source_revision")):
+        # Historical acceptance is bound to the sealed source bundle and its
+        # exact producer outcome above. Later live-card links must not revoke
+        # a review that already ran against those immutable bytes.
+        if not historical and not revision_matches(
+            home, source, release, _binding(core, "source_revision")
+        ):
             raise ValueError("review source generation changed")
     if historical or released:
         owner, claim = manifest.get("owner"), manifest.get("claim_revision")

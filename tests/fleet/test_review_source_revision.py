@@ -1,6 +1,7 @@
 """Late native readback links must not strand an unopened source review."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from skcoord.card_store import CardCore, CardStore
 
@@ -139,4 +140,65 @@ def test_hold_reason_exposes_only_fixed_source_bundle_detail():
         hold_reason(ValueError("original source custody unavailable"))
         == "ValueError:original-source-custody-unavailable"
     )
+
+
+def test_historical_review_uses_sealed_source_after_governed_release(tmp_path, monkeypatch):
+    from skcapstone.fleet import production_acceptance, released_source, review_dispatch
+
+    home = tmp_path / ".skcapstone"
+    home.mkdir()
+    store = CardStore(home)
+    store.create(
+        CardCore(
+            id="source01",
+            title="[M] Source",
+            created_by="link",
+            initial_labels=["source-only"],
+        )
+    )
+    owner = "pi-glm-builder-node-chiap01-source01"
+    claim = "a" * 32
+    head = "b" * 40
+    tree = "c" * 40
+    evidence = "d" * 64
+    manifest = {
+        "owner": owner,
+        "claim_revision": claim,
+        "head": head,
+        "tree": tree,
+        "evidence_sha256": evidence,
+    }
+    core = {
+        "links": {},
+        "meta": {
+            "link_source_card": "source01",
+            "link_head_revision": head,
+            "repository": "https://skgit.example/smilinTux/sklegal.git",
+            "source_revision": "e" * 64,
+            "producer_identity": owner,
+        },
+    }
+    review = SimpleNamespace(id="review01", model_dump=lambda mode: core)
+    monkeypatch.setattr(review_dispatch, "_review_manifest", lambda *_: (manifest, b""))
+    monkeypatch.setattr(released_source, "prove", lambda *_: {"event_id": "release01"})
+    monkeypatch.setattr(released_source, "revision_matches", lambda *_: False)
+    monkeypatch.setattr(
+        production_acceptance,
+        "_sealed_source_outcome",
+        lambda *_: {
+            "action": "verdict",
+            "verdict": "PASS_FOR_REVIEW",
+            "writer": owner,
+            "candidate_commit": head,
+            "candidate_tree": tree,
+        },
+    )
+    monkeypatch.setattr(production_acceptance, "_producer_terminal", lambda *_: {"family": "glm"})
+
+    result = review_dispatch._source(home, review, historical=True)
+
+    assert result["head"] == head
+    assert result["tree"] == tree
+    assert result["claim"] == claim
+    assert result["revision"] == "e" * 64
     assert hold_reason(SourceBundleError("/private/path")) == "SourceBundleError"
