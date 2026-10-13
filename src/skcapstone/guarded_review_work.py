@@ -70,6 +70,14 @@ def open_guarded_review(
         store = CardStore(home)
         source = store.fold(card_id)
         snapshot = LiveCardStoreGateway(home).read_card(card_id)
+        current_revision = snapshot.revision
+        released_manifest = None
+        if source is not None and source.owner is None:
+            from .fleet.released_source import direct_review_view
+
+            store, released_manifest, _ = direct_review_view(home, source)
+            source = store.fold(card_id)
+            snapshot = LiveCardStoreGateway(home).read_card(card_id, _store=store)
         if (
             source is None
             or source.owner != producer
@@ -79,7 +87,7 @@ def open_guarded_review(
             or source.status.value not in {"ready", "doing", "review"}
             or "source-only" not in source.labels
             or "review" in source.labels
-            or snapshot.revision != expected_source_revision
+            or current_revision != expected_source_revision
         ):
             raise ValueError("guarded review source or claim changed")
         outcome = _latest_outcome(store, card_id)
@@ -94,10 +102,17 @@ def open_guarded_review(
         digest = outcome["candidate_sha256"]
         from .review_replacement import replacement_binding
 
-        lineage = replacement_binding(home, card_id, outcome["candidate_commit"])
+        def lineage_binding():
+            if released_manifest is not None:
+                from .fleet.released_source import review_lineage
+
+                return review_lineage(home, source, released_manifest)
+            return replacement_binding(home, card_id, outcome["candidate_commit"])
+
+        lineage = lineage_binding()
         review_id = lineage.pop("review_card_id")
         binding = {
-            "source_revision": expected_source_revision,
+            "source_revision": snapshot.revision,
             "producer_identity": producer,
             "candidate_evidence_sha256": digest,
             **{key: outcome[key] for key in ("candidate_path", "candidate_tree", "candidate_ref")},
@@ -125,10 +140,7 @@ def open_guarded_review(
         if LiveCardStoreGateway(home).read_card(card_id).revision != expected_source_revision:
             raise ValueError("guarded review source changed during reconciliation")
         _candidate(home, card_id, outcome)
-        if (
-            replacement_binding(home, card_id, outcome["candidate_commit"]).get("review_card_id")
-            != review_id
-        ):
+        if lineage_binding().get("review_card_id") != review_id:
             raise ValueError("guarded review replacement changed during reconciliation")
         if not result.launchable:
             raise ValueError("guarded review refused: " + result.reason)

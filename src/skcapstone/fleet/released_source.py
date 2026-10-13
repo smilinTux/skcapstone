@@ -162,3 +162,72 @@ def terminal(home, source, manifest, status, path):
         family=bound["family"],
         node=status["node"],
     )
+
+
+def direct_review_view(home, source, manifest=None):
+    """Read one proven released direct generation without restoring its claim."""
+    from ..seraph_review_cardstore import _latest_outcome
+    from .paths import FleetPaths
+    from .production_acceptance import _direct_seat_terminal
+    from .production_custody import retains_source_custody, source_binding
+    from .production_review_custody import unit_terminal
+    from .source_transport import _packet
+
+    home = Path(home)
+    if source is None or source.owner is not None:
+        raise ValueError("released direct source must be unowned")
+    if manifest is None:
+        outcome = _latest_outcome(CardStore(home), source.id)
+        manifest = _packet(home, source.id, outcome.get("candidate_commit", ""))["manifest"]
+    release = prove(home, source, manifest)
+    view = _before_release(home, source, release)
+    original = view.fold(source.id)
+    binding = source_binding(original)
+    if any(
+        manifest.get(k) != binding[k] for k in ("repository", "base_revision")
+    ) or not retains_source_custody(
+        home,
+        source.id,
+        manifest["owner"],
+        manifest["claim_revision"],
+        fleet_paths=FleetPaths(home / "fleet"),
+        store=view,
+    ):
+        raise ValueError("released direct launch custody differs")
+    terminal = _direct_seat_terminal(
+        home, original, manifest, manifest["owner"], manifest["claim_revision"]
+    )
+    receipt = json.loads(bundle._read(Path(terminal["receipt_path"]), bundle.MAX_EVIDENCE))
+    launches = [
+        e
+        for e in view._read_events(source.id)
+        if e.get("action") == "production_assignment_launch"
+        and e.get("schema") == "skfleet.production-assignment-launch/v1"
+        and e.get("writer") == manifest["owner"]
+        and e.get("worker") == manifest["owner"]
+        and e.get("claim_revision") == manifest["claim_revision"]
+        and e.get("launched") is True
+        and e.get("source_binding") == binding
+    ]
+    if (
+        len(launches) != 1
+        or receipt.get("schema") != "skfleet.direct-seat/v1"
+        or any(
+            receipt.get(k) != launches[0].get("route_identity", {}).get(k)
+            for k in ("provider", "logical_route", "capacity_domains", "model_or_bucket")
+        )
+    ):
+        raise ValueError("released direct terminal route differs")
+    unit_terminal(terminal["unit"], terminal["invocation"], host=terminal["host"])
+    return view, manifest, release
+
+
+def review_lineage(home, source, manifest):
+    """Resolve the same authorized attempt from the proven original generation."""
+    from ..review_replacement import _record_binding
+    from ..review_work_identity import card_generation, review_card_id
+
+    predecessor = review_card_id(
+        source.id, manifest["head"], card_generation(source), manifest["evidence_sha256"]
+    )
+    return _record_binding(Path(home), predecessor, live_source=False)
