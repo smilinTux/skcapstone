@@ -76,7 +76,7 @@ def test_released_requalified_recovery_survives_crashes(
 
 
 @pytest.mark.host_systemd
-@pytest.mark.parametrize("change", ["claim", "foreign", "head", "outcome", "requalification"])
+@pytest.mark.parametrize("change", ["claim", "foreign", "tree", "outcome", "requalification"])
 def test_released_reseal_refuses_changed_history_even_with_fresh_guards(
     interrupted, change  # noqa: F811
 ):
@@ -93,7 +93,7 @@ def test_released_reseal_refuses_changed_history_even_with_fresh_guards(
             card,
             "link",
             "other",
-            link_key="verdict" if change == "outcome" else "head",
+            link_key="verdict" if change == "outcome" else "tree",
             link_value="PASS" if change == "outcome" else "f" * 40,
         )
     guards = interrupted[2]
