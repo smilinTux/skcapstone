@@ -347,10 +347,15 @@ class CardIndex:
     def _legacy_mapping(store: Any) -> dict:
         """Mirror ``CardStore._legacy_events`` loading exactly (including failure)."""
         if store._legacy_cache is None:
-            from skcoord.card_store import load_legacy_mutations_cached
+            # skcoord >= 0.1.87 ships the cached loader; 0.1.86 (the declared
+            # floor) only has the plain one. Both return the same mapping.
+            try:
+                from skcoord.card_store import load_legacy_mutations_cached as _load
+            except ImportError:
+                from skcoord.card_store import load_legacy_mutations as _load
 
             try:
-                store._legacy_cache = load_legacy_mutations_cached(store.home)
+                store._legacy_cache = _load(store.home)
             except Exception as exc:  # noqa: BLE001 - same fail-soft as the store
                 logger.warning("Legacy mutation load failed: %s", exc)
                 store._legacy_cache = {}

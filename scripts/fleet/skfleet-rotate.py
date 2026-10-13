@@ -3804,7 +3804,9 @@ def folded_labels(cid,core):
         try:
             if _cardstore_label_store is None:
                 _cardstore_label_store = CardStore(Path(HOME) / ".skcapstone")
-            card = pool_fold_cache.fold_one(_cardstore_label_store, cid)
+            _cache_mod = globals().get("pool_fold_cache")
+            card = (_cache_mod.fold_one(_cardstore_label_store, cid) if _cache_mod is not None
+                    else _cardstore_label_store.fold(cid))
             _cardstore_label_cache[cid] = (
                 None if card is None else tuple(str(x) for x in card.labels)
             )
