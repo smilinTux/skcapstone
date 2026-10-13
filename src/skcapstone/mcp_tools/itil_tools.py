@@ -303,6 +303,25 @@ TOOLS: list[Tool] = [
         },
     ),
     Tool(
+        name="itil_change_preflight",
+        description=(
+            "Record the fail-closed execution preflight for a change. A failed verdict "
+            "must state why execution stopped. Destructive and high-risk changes cannot "
+            "enter implementing unless their latest preflight passes and their immutable "
+            "change record states both a preflight plan and rollback plan."
+        ),
+        inputSchema={
+            "properties": {
+                "change_id": {"description": "Change ID", "type": "string"},
+                "agent": {"description": "Agent/system running the preflight", "type": "string"},
+                "passed": {"description": "Whether the preflight passed", "type": "boolean"},
+                "reason": {"description": "Outcome or failure reason", "type": "string"},
+            },
+            "required": ["change_id", "agent", "passed", "reason"],
+            "type": "object",
+        },
+    ),
+    Tool(
         name="itil_change_schedule",
         description=(
             "Schedule an APPROVED change for deployment: ASAP (now + a "
@@ -712,6 +731,39 @@ async def _handle_itil_change_update(args: dict) -> list[TextContent]:
         return _error_response(str(exc))
 
 
+async def _handle_itil_change_preflight(args: dict) -> list[TextContent]:
+    """Record a fail-closed change execution preflight."""
+    from ..itil import ITILManager
+
+    change_id = args.get("change_id", "").strip()
+    agent = args.get("agent", "").strip()
+    reason = args.get("reason", "").strip()
+    passed = args.get("passed")
+    if not change_id or not agent:
+        return _error_response("change_id and agent are required")
+    if passed is None:
+        return _error_response("passed is required")
+
+    mgr = ITILManager(_shared_root())
+    try:
+        chg = mgr.record_change_preflight(
+            change_id,
+            agent,
+            passed=bool(passed),
+            reason=reason,
+        )
+    except ValueError as exc:
+        return _error_response(str(exc))
+    return _json_response(
+        {
+            "recorded": True,
+            "id": chg.id,
+            "status": chg.status.value,
+            "preflight": chg.preflight,
+        }
+    )
+
+
 async def _handle_itil_change_validate(args: dict) -> list[TextContent]:
     """Attach a CI validation verdict to a change's draft PR."""
     from ..itil import Change, ITILManager
@@ -925,6 +977,7 @@ HANDLERS: dict = {
     "itil_problem_update": _handle_itil_problem_update,
     "itil_change_propose": _handle_itil_change_propose,
     "itil_change_update": _handle_itil_change_update,
+    "itil_change_preflight": _handle_itil_change_preflight,
     "itil_change_validate": _handle_itil_change_validate,
     "itil_change_schedule": _handle_itil_change_schedule,
     "itil_change_unschedule": _handle_itil_change_unschedule,
