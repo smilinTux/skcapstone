@@ -152,3 +152,37 @@ def test_custom_max_bytes_is_respected() -> None:
     text = "\n".join(f"unique line {i}" for i in range(500))
     result = condense_dispatcher_output(text, max_bytes=512)
     assert len(result.encode("utf-8")) <= 512
+
+
+def test_dedupe_lines_collapses_non_adjacent_repeats_keeping_last_position() -> None:
+    from skcapstone.receipt_output import dedupe_lines
+
+    text, total, unique = dedupe_lines("noise\nreal A\nnoise\nreal B\nnoise\n")
+    assert (total, unique) == (5, 3)
+    assert text == "real A\nreal B\nnoise  [x3]\n"
+
+
+def test_condense_dispatcher_tail_keeps_last_bytes_after_dedupe() -> None:
+    from skcapstone.receipt_output import condense_dispatcher_tail
+
+    noise = "".join(
+        "fold warning card %d\nfold warning card %d\n" % (i % 2, (i + 1) % 2) for i in range(2000)
+    )
+    stderr = "startup banner\n" + noise + "Traceback\nTimeoutExpired in pool_fold\n"
+    result = condense_dispatcher_tail(stderr, max_bytes=512)
+    assert result.endswith("TimeoutExpired in pool_fold\n")
+    assert "fold warning card 0  [x2000]" in result
+    assert "[deduplicated 4003 lines to 5]" in result
+    assert len(result.encode()) < 1024
+
+
+def test_condense_dispatcher_tail_trims_oversized_unique_output_from_the_front() -> None:
+    from skcapstone.receipt_output import condense_dispatcher_tail
+
+    stderr = "".join("unique line %05d\n" % i for i in range(5000)) + "the cause\n"
+    result = condense_dispatcher_tail(stderr, max_bytes=2048)
+    assert result.endswith("the cause\n")
+    assert "bytes elided" in result
+    assert "unique line 00000" not in result
+    assert len(result.encode()) <= 2048 + 64
+    assert condense_dispatcher_tail(None) is None

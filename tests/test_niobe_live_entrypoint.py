@@ -401,3 +401,111 @@ def test_live_wrapper_refuses_stale_well_formed_card_revision(tmp_path: Path) ->
     dispatcher.write_text("#!/bin/sh\n")
     with pytest.raises(ValueError, match="revision is stale"):
         run_live(activation_path=path, dispatcher=dispatcher, local_host="chiap08")
+
+
+def _timeout_setup(tmp_path: Path, monkeypatch):
+    revision = approval_card(tmp_path)
+    path = tmp_path / "home/coordination/niobe-activation.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(activation(revision)))
+    dispatcher = tmp_path / "skfleet-rotate.py"
+    dispatcher.write_text("#!/bin/sh\n")
+    mailbox = SimpleNamespace(as_dict=lambda: {"mailbox_ok": True})
+    monkeypatch.setattr("skcapstone.niobe_live_entrypoint.startup_hello", lambda *a, **k: True)
+    monkeypatch.setattr("skcapstone.niobe_live_entrypoint.poll_mail", lambda *a, **k: mailbox)
+    return path, dispatcher
+
+
+def test_timeout_records_phase_in_progress_and_last_phase_timings(
+    tmp_path: Path, monkeypatch
+) -> None:
+    path, dispatcher = _timeout_setup(tmp_path, monkeypatch)
+    seen = {}
+
+    def timeout(*args, **kwargs):
+        seen["timeout_env"] = kwargs["env"]["SKFLEET_DISPATCH_TIMEOUT_S"]
+        evidence = (
+            tmp_path
+            / "home/evidence/fleet-rotation"
+            / f"chiap08-{kwargs['env']['SKFLEET_ROTATION_ID']}/actions.log"
+        )
+        evidence.parent.mkdir(parents=True)
+        evidence.write_text(
+            "SLOTS|chiap08|x\n"
+            "PHASE_TIMING|chiap08|phase=startup_slots|elapsed_s=3.0|phase_s=3.0\n"
+            "PHASE_TIMING|chiap08|phase=startup_sweeps|elapsed_s=20.5|phase_s=17.5\n"
+            "PHASE_DEADLINE|chiap08|pool_fold|done=900|remaining=40|elapsed_s=160.0|limit_s=162.0\n"
+            "PHASE_BUDGET_WARN|chiap08|startup_sweeps|phase_s=17.5|share=0.07|warn_share=0.04|budget_s=250\n"
+            "PHASE_TIMING|chiap08|phase=review_sweeps|elapsed_s=40.0|phase_s=19.5\n"
+        )
+        raise subprocess.TimeoutExpired(args[0], kwargs["timeout"], output=b"", stderr=b"x\n")
+
+    assert (
+        run_live(activation_path=path, dispatcher=dispatcher, local_host="chiap08", runner=timeout)
+        == 70
+    )
+    receipt = json.loads(
+        (tmp_path / "home/coordination/seat-cycles/niobe.health.jsonl").read_text()
+    )
+    assert seen["timeout_env"] == "270"
+    assert receipt["timeout_phase"] == "pool_fold"
+    assert [t["phase"] for t in receipt["last_phase_timings"]] == [
+        "startup_slots",
+        "startup_sweeps",
+        "review_sweeps",
+    ]
+    assert receipt["last_phase_timings"][1]["phase_s"] == 17.5
+    assert len(receipt["phase_alerts"]) == 2
+    assert receipt["phase_alerts"][0].startswith("PHASE_DEADLINE|chiap08|pool_fold")
+
+
+def test_timeout_without_actions_log_still_names_the_gap(tmp_path: Path, monkeypatch) -> None:
+    path, dispatcher = _timeout_setup(tmp_path, monkeypatch)
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], kwargs["timeout"], output=b"", stderr=b"")
+
+    assert (
+        run_live(activation_path=path, dispatcher=dispatcher, local_host="chiap08", runner=timeout)
+        == 70
+    )
+    receipt = json.loads(
+        (tmp_path / "home/coordination/seat-cycles/niobe.health.jsonl").read_text()
+    )
+    assert receipt["timeout_phase"] == "unknown_no_actions_log"
+    assert receipt["last_phase_timings"] == []
+
+
+def test_timeout_after_launch_phase_reports_final_receipt(tmp_path: Path) -> None:
+    from skcapstone.niobe_live_entrypoint import timeout_diagnostics
+
+    log = tmp_path / "actions.log"
+    log.write_text("PHASE_TIMING|h|phase=lane_launch|elapsed_s=240.0|phase_s=30.0\n")
+    assert timeout_diagnostics(log)["timeout_phase"] == "final_receipt"
+    log.write_text("garbage\n")
+    assert timeout_diagnostics(log)["timeout_phase"] == "before_startup_slots"
+
+
+def test_timeout_keeps_last_stderr_after_deduplicating_repeated_noise(
+    tmp_path: Path, monkeypatch
+) -> None:
+    path, dispatcher = _timeout_setup(tmp_path, monkeypatch)
+    noise = "".join(f"WARN fold card {i % 3}\nWARN other {i % 2}\n" for i in range(3000))
+    stderr = noise + "Traceback (most recent call last):\nsubprocess.TimeoutExpired in pool_fold\n"
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(
+            args[0], kwargs["timeout"], output=b"", stderr=stderr.encode()
+        )
+
+    assert (
+        run_live(activation_path=path, dispatcher=dispatcher, local_host="chiap08", runner=timeout)
+        == 70
+    )
+    receipt = json.loads(
+        (tmp_path / "home/coordination/seat-cycles/niobe.health.jsonl").read_text()
+    )
+    text = receipt["dispatcher_stderr"]
+    assert text.endswith("subprocess.TimeoutExpired in pool_fold\n")
+    assert "[deduplicated 6002 lines to 7]" in text
+    assert "WARN fold card 0  [x1000]" in text

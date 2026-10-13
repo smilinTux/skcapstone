@@ -218,10 +218,10 @@ jobs:
     # Step limit 40m and job limit 50m restore headroom; parallelising the
     # suite is the real fix.
     # 2026-10-13: the serial suite reached ~13,570 tests / 38-39 minutes. The
-    # full run now uses pytest-xdist (-n auto, --dist loadfile) across the
-    # 4 vCPUs of a public-repo runner, so the limits drop back to a value that
-    # still fails a genuine hang in minutes.
-    timeout-minutes: 35
+    # full run now uses pytest-xdist (-n auto, --dist loadfile) on the
+    # 2 vCPUs of a runner (non-PR runs) and, on PRs, split over 4 shards. The
+    # serial 55m/65m stopgap (#1187) is replaced by 35m step / 45m job.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -266,7 +266,7 @@ jobs:
           # serially; parallelism is across files. Tests that must not share a
           # machine with others are marked xdist_group (honoured only by
           # --dist loadgroup, so none exist today by design).
-          timeout --kill-after=10s 25m python -m pytest tests/ \
+          timeout --kill-after=10s 35m python -m pytest tests/ \
             -n auto --dist loadfile \
             --strict-markers \
             -m "not integration and not e2e" \

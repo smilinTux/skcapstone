@@ -127,3 +127,65 @@ def condense_dispatcher_output(
         return text
     except Exception:
         return ""
+
+
+#: Default budget for the tail view used when a cycle dies (timeout/crash).
+MAX_DISPATCHER_TAIL_BYTES = 16_384
+
+
+def dedupe_lines(text: str) -> tuple[str, int, int]:
+    """Collapse repeated lines ANYWHERE in ``text``, keeping the last occurrence.
+
+    ``_collapse_repeated_lines`` only merges adjacent runs, so a noise line that
+    alternates with other lines survives in full and fills the budget. Here every
+    distinct line (compared after ``rstrip``) appears once, at the position of its
+    last occurrence, suffixed ``  [xN]`` when it occurred N > 1 times, so the final
+    state of the stream is preserved. Returns ``(text, total_lines, unique_lines)``.
+    """
+
+    lines = text.split("\n")
+    trailing = bool(lines) and lines[-1] == ""
+    if trailing:
+        lines.pop()
+    counts: dict[str, int] = {}
+    last_index: dict[str, int] = {}
+    for index, line in enumerate(lines):
+        key = line.rstrip()
+        counts[key] = counts.get(key, 0) + 1
+        last_index[key] = index
+    kept = []
+    for index, line in enumerate(lines):
+        key = line.rstrip()
+        if last_index[key] != index:
+            continue
+        count = counts[key]
+        kept.append(f"{line}  [x{count}]" if count > 1 else line)
+    return "\n".join(kept) + ("\n" if trailing and kept else ""), len(lines), len(kept)
+
+
+def condense_dispatcher_tail(
+    value: object, *, max_bytes: int = MAX_DISPATCHER_TAIL_BYTES
+) -> object:
+    """De-duplicate repeated lines, then keep the LAST ``max_bytes`` bytes.
+
+    Used when a dispatcher cycle is killed: the head of its stderr is startup
+    noise, and the cause (the traceback or the last progress lines) is at the
+    end. None passes through; never raises.
+    """
+
+    if value is None:
+        return None
+    try:
+        text, total, unique = dedupe_lines(_to_text(value))
+        raw = text.encode("utf-8", errors="replace")
+        if len(raw) > max_bytes:
+            keep = max(max_bytes - _ELISION_MARKER_BUDGET, 0)
+            tail = raw[len(raw) - keep :].decode("utf-8", errors="ignore") if keep else ""
+            tail = tail.partition("\n")[2] if "\n" in tail else tail
+            marker = _ELISION_TEMPLATE.format(count=len(raw) - len(tail.encode("utf-8")))
+            text = f"{marker}\n{tail}"
+        if total != unique:
+            text = f"[deduplicated {total} lines to {unique}]\n{text}"
+        return text
+    except Exception:
+        return ""
