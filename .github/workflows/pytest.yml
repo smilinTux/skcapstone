@@ -143,7 +143,10 @@ jobs:
     # 1437-1440s) and the 24m step kill failed green runs on #1041 and #1044.
     # Step limit 40m and job limit 50m restore headroom; parallelising the
     # suite is the real fix.
-    timeout-minutes: 50
+    # 2026-10-13: ~13,570 tests now take 38-39 minutes, so the 40m kill fired
+    # at 98% on green runs (#1183). Step 55m / job 65m as a stopgap while the
+    # suite is parallelised.
+    timeout-minutes: 65
     strategy:
       fail-fast: false
       matrix:
@@ -304,7 +307,7 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: |
           set -o pipefail
-          timeout --kill-after=10s 40m python -m pytest tests/ \
+          timeout --kill-after=10s 55m python -m pytest tests/ \
             --strict-markers \
             -m "not integration and not e2e" \
             --durations=40 -o faulthandler_timeout=60 \
