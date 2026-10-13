@@ -367,3 +367,20 @@ def test_non_boolean_reviewer_eligibility_is_blocked_before_feed_emission(tmp_pa
             output_path=tmp_path / "feed.json",
             producer=producer(),
         )
+
+
+def test_slow_forge_reads_do_not_look_like_a_clock_ahead(monkeypatch) -> None:
+    import skcapstone.link_observation_producer as module
+
+    base = datetime.now(timezone.utc)
+    clock = iter([base] + [base + timedelta(seconds=60)] * 50)
+    monkeypatch.setattr(module, "_now", lambda: next(clock))
+    stamped = (base + timedelta(seconds=50)).isoformat()
+    payload, result = build_feed(
+        FakeConnector([row(snapshot_at=stamped)]),
+        repositories=["smilinTux/skcapstone"],
+        lineage=lineage(),
+        producer=producer(),
+    )
+    assert result.healthy is True
+    assert len(payload["records"]) == 1
