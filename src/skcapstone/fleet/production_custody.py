@@ -11,6 +11,7 @@ from skcoord.card_store import CardStore
 from .paths import FleetPaths
 from .production_receipts import load_production_snapshot
 from .production_routes import served_backend_matches
+from .refusal_log import reason_of, refuse
 from .source_bundle import MAX_EVIDENCE, _binding, _read
 
 
@@ -39,22 +40,26 @@ def reviewable_source_candidate(
         producer, path, evidence_sha, head, tree, ref = candidate
         store = store or CardStore(home)
         card = store.fold(card_id)
-        if (
-            not policy
-            or card is None
-            or card.owner != producer
-            or card.meta.get("claim_conflicts")
-            or {"hold", "do-not-claim"}.intersection(card.labels)
-            or not retains_source_custody(
-                home,
-                card_id,
-                producer,
-                card.meta.get("_claim_revision"),
-                fleet_paths=FleetPaths(home / "fleet"),
-                store=store,
-            )
+        site = "source-review-candidate"
+        if not policy:
+            return refuse(site, card_id, "no production policy")
+        if card is None:
+            return refuse(site, card_id, "card not found")
+        if card.owner != producer:
+            return refuse(site, card_id, "card owner differs from verdict producer")
+        if card.meta.get("claim_conflicts"):
+            return refuse(site, card_id, "claim conflicts present")
+        if {"hold", "do-not-claim"}.intersection(card.labels):
+            return refuse(site, card_id, "card carries hold or do-not-claim")
+        if not retains_source_custody(
+            home,
+            card_id,
+            producer,
+            card.meta.get("_claim_revision"),
+            fleet_paths=FleetPaths(home / "fleet"),
+            store=store,
         ):
-            return False
+            return refuse(site, card_id, "source custody not retained")
         gateway = LiveCardStoreGateway(home)
         snapshot = gateway.read_card(card_id, _store=store)
         outcome = _current_outcome(store, card)
@@ -68,10 +73,11 @@ def reviewable_source_candidate(
             "candidate_path": path,
             "candidate_sha256": evidence_sha,
         }
-        if any(outcome.get(key) != value for key, value in expected.items()):
-            return False
+        for key, value in expected.items():
+            if outcome.get(key) != value:
+                return refuse(site, card_id, f"current outcome {key} differs from candidate")
         if snapshot.verdict != "PASS_FOR_REVIEW" or snapshot.producer_identity != producer:
-            return False
+            return refuse(site, card_id, "card snapshot verdict or producer differs")
         binding = source_binding(card)
         # Read already transferred bytes only; eligibility never initiates a transfer.
         manifest = _packet(home, card_id, head)["manifest"]
@@ -87,13 +93,14 @@ def reviewable_source_candidate(
             "repository": binding["repository"],
             "base_revision": binding["base_revision"],
         }
-        if any(manifest.get(key) != value for key, value in expected.items()):
-            return False
+        for key, value in expected.items():
+            if manifest.get(key) != value:
+                return refuse(site, card_id, f"source bundle manifest {key} differs")
         if (
             _root(home, card_id).parent not in Path(path).parents
             or _sha(_read(Path(path), MAX_EVIDENCE)) != evidence_sha
         ):
-            return False
+            return refuse(site, card_id, "candidate evidence path or sha256 differs")
         terminal = _producer_terminal(home, card, manifest)
         request = read_json(home / "fleet/dispatch" / terminal["node"] / (card_id + ".json"))
         _request_matches_current_card(home, request, retained_claim=True)
@@ -115,18 +122,27 @@ def reviewable_source_candidate(
             or (production.get("policy_sha256") != digest(policy) and not continued)
             or production.get("authority") != policy["authority_host"]
         ):
-            return False
+            return refuse(site, card_id, "builder request differs from current binding or policy")
         process = process_check(card_id)
         if process.get("sessions") != [] or process.get("units") != []:
-            return False
+            return refuse(site, card_id, "card still has a live session or unit")
         unit_terminal(terminal["unit"], terminal["invocation"], host=terminal["host"])
         if not verify_fresh:
             return True
         # Re-read with a new store so the check notices events appended while
         # the shared inspection snapshot was in use.
-        return gateway.read_card(card_id).revision == snapshot.revision
-    except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
-        return False
+        if gateway.read_card(card_id).revision != snapshot.revision:
+            return refuse(site, card_id, "card revision changed during inspection")
+        return True
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        AttributeError,
+        subprocess.SubprocessError,
+    ) as exc:
+        return refuse("source-review-candidate", card_id, reason_of(exc))
 
 
 def source_binding(card) -> dict:
@@ -220,8 +236,8 @@ def retains_source_custody(
             except (OSError, ValueError, KeyError, TypeError):
                 continue
         return _remote_custody(fleet_paths, card_id, owner, claim, binding)
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        return False
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        return refuse("source-custody", card_id, reason_of(exc))
 
 
 def _remote_custody(fleet_paths, card_id, owner, claim, binding):
@@ -349,5 +365,5 @@ def retains_review_custody(
             and status.get("claim_revision") == claim
             and status.get("state") in REVIEW_CUSTODY_STATES
         )
-    except (OSError, ValueError, KeyError, TypeError):
-        return False
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return refuse("review-custody", card_id, reason_of(exc))

@@ -27,6 +27,7 @@ from . import production_builder, production_policy, scheduler, store
 from .churn_breaker import ClaimRefusedError, assert_claim_permitted
 from .node_controller import NodeView, node_views
 from .paths import SOVEREIGN_HOME, FleetPaths, valid_name
+from .refusal_log import reason_of, refuse
 
 ROLE = "builder-standby"
 PROVIDER = "skgateway"
@@ -689,7 +690,8 @@ def _offer(paths, core, labels, *, writer, now=None):
                     production, card_id, route, normalized_labels, host=binding["host"]
                 )
             )
-        except production_builder.production_routes.RouteUnavailableError:
+        except production_builder.production_routes.RouteUnavailableError as exc:
+            refuse("builder-offer-route", card_id, reason_of(exc))
             return None
         # Offer only a route that answers right now. A builder cannot claim
         # without passing this same probe, so an offer on a dead route is
@@ -1709,7 +1711,8 @@ def _consume_available(
             heartbeat = datetime.strptime(status["heartbeat_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
                 tzinfo=timezone.utc
             )
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError) as exc:
+            refuse("orphan-heartbeat", card_id, "unreadable heartbeat: " + reason_of(exc))
             continue
         if _now() <= heartbeat + timedelta(seconds=LEASE_SECONDS):
             continue
@@ -1740,13 +1743,15 @@ def _consume_available(
                 continue
             try:
                 continuing = builder_continue.attach(coordination_home, request, prior)
-            except (ValueError, OSError):
+            except (ValueError, OSError) as exc:
+                refuse("builder-continue-attach", request["card_id"], reason_of(exc))
                 continue
             retry_handler = builder_continue if continuing else builder_retry
             if continuing or builder_retry.pending(request, prior):
                 try:
                     retry_handler.check_attempt(paths, coordination_home, request, prior)
-                except (ValueError, OSError):
+                except (ValueError, OSError) as exc:
+                    refuse("builder-attempt-check", request["card_id"], reason_of(exc))
                     if continuing:
                         continue  # Preserve changed continuation custody for the operator.
                 else:
@@ -1769,14 +1774,16 @@ def _consume_available(
             )
             try:
                 continuing = builder_continue.attach(coordination_home, request, prior)
-            except (ValueError, OSError):
+            except (ValueError, OSError) as exc:
+                refuse("builder-continue-attach", request["card_id"], reason_of(exc))
                 continue
             retry_handler = builder_continue if continuing else builder_retry
             retrying = continuing or builder_retry.pending(request, prior)
             if retrying:
                 try:
                     retry_handler.check_attempt(paths, coordination_home, request, prior)
-                except (ValueError, OSError):
+                except (ValueError, OSError) as exc:
+                    refuse("builder-attempt-check", request["card_id"], reason_of(exc))
                     continue
             if request["card_id"] in reconciled_orphans:
                 continue
@@ -1850,7 +1857,8 @@ def _consume_available(
             launch_request = request
             try:
                 production = production_builder.validate_request(paths, node, request, local=True)
-            except production_builder.production_routes.RouteUnavailableError:
+            except production_builder.production_routes.RouteUnavailableError as exc:
+                refuse("builder-consume-route", request["card_id"], reason_of(exc))
                 continue
             except ValueError:
                 if continuing:
@@ -1863,7 +1871,8 @@ def _consume_available(
                     except (
                         ValueError,
                         production_builder.production_routes.RouteUnavailableError,
-                    ):
+                    ) as exc:
+                        refuse("builder-rebind", request["card_id"], reason_of(exc))
                         continue
                     launch_request = dict(request, production=production)
                 elif retrying:

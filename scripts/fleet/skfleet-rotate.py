@@ -6830,6 +6830,7 @@ def _provisional_candidate(parent, outcome_ts, token):
 def _production_review_plan(parent, outcome_ts, candidate, store=None):
     """Bind the qualified native review identity to exact retained source custody."""
     try:
+        from skcapstone.fleet.refusal_log import note
         from skcoord.card_store import CardStore
         from skcapstone.fleet.production_custody import reviewable_source_candidate, source_binding
         from skcapstone.link_review_work import card_generation
@@ -6840,14 +6841,16 @@ def _production_review_plan(parent, outcome_ts, candidate, store=None):
         store = store or CardStore(home)
         gateway = LiveCardStoreGateway(home)
         snapshot = gateway.read_card(parent, _store=store)
-        if (HOST != PRODUCTION_POLICY["authority_host"] or
-                not reviewable_source_candidate(
-                    home, parent, outcome_ts, candidate,
-                    policy=PRODUCTION_POLICY,
-                    process_check=_card_process_snapshot,
-                    store=store,
-                    verify_fresh=False)):
+        if HOST != PRODUCTION_POLICY["authority_host"]:
+            note(parent, "host is not the authority host")
             return None
+        if not reviewable_source_candidate(
+                home, parent, outcome_ts, candidate,
+                policy=PRODUCTION_POLICY,
+                process_check=_card_process_snapshot,
+                store=store,
+                verify_fresh=False):
+            return None  # reviewable_source_candidate recorded and logged why
         source = store.fold(parent)
         producer, path, digest, commit, tree, ref = candidate
         lineage = replacement_binding(home, parent, commit)
@@ -6870,8 +6873,14 @@ def _production_review_plan(parent, outcome_ts, candidate, store=None):
         # shared per-plan snapshot.
         if gateway.read_card(parent).revision == snapshot.revision:
             return plan
-    except (ImportError, OSError, ValueError, KeyError, TypeError, AttributeError):
-        pass
+        note(parent, "card revision changed while planning review")
+    except (ImportError, OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        try:
+            from skcapstone.fleet.refusal_log import reason_of, refuse
+
+            refuse("source-review-plan", parent, reason_of(exc))
+        except ImportError:
+            pass
     return None
 
 
@@ -6880,13 +6889,16 @@ def _open_production_review(parent, outcome_ts, candidate, plan):
     try:
         from skcoord.card_store import CardStore
 
+        from skcapstone.fleet.refusal_log import refuse
+
         # Selection is not authority for a later write. Recheck terminal custody
         # and the exact planned generation immediately before the guarded CLI.
+        site = "source-review-open"
         if _production_review_plan(parent, outcome_ts, candidate) != plan:
-            return False
+            return refuse(site, parent, "plan changed before guarded write")
         if any(lifecycle_state(cid) in {"open", "claimed"}
                for cid in _reviews_by_parent().get(parent, ())):
-            return False
+            return refuse(site, parent, "an open or claimed review already exists")
         result = subprocess.run(
             [SKC, "coord", "review-work", parent, "--producer", candidate[0],
              "--expected-source-revision", plan["meta"]["source_revision"],
@@ -6895,19 +6907,21 @@ def _open_production_review(parent, outcome_ts, candidate, plan):
             capture_output=True, text=True, timeout=60,
             env=dict(os.environ, SKCOORD_CARD_STORE="1"))
         if result.returncode:
-            return False
+            return refuse(site, parent, "review-work refused rc=%s %s" % (
+                result.returncode,
+                ((result.stderr or "") + " " + (result.stdout or "")).strip()[:160]))
         receipt = json.loads(result.stdout)
         review_id = plan["review_id"]
         if (receipt.get("review_card_id") != review_id or
                 receipt.get("source_card") != parent or
                 receipt.get("head_revision") != candidate[3] or
                 receipt.get("launchable") is not True):
-            return False
+            return refuse(site, parent, "review-work receipt does not match plan")
         _rows.pop(review_id, None)
         review = CardStore(Path(CARDS).parent).fold(review_id)
         from skcapstone.fleet.production_custody import source_binding
 
-        return bool(
+        confirmed = bool(
             review and not review.archived and not review.owner and
             review.status.value == "review" and
             {"source-only", "review", "seat-seraph"}.issubset(review.labels) and
@@ -6919,9 +6933,15 @@ def _open_production_review(parent, outcome_ts, candidate, plan):
             _production_review_plan(parent, outcome_ts, candidate) == plan and
             {cid for cid in _reviews_by_parent().get(parent, set())
              if lifecycle_state(cid) in {"open", "claimed"}} == {review_id})
+        return confirmed or refuse(site, parent, "readback of the opened review differs from plan")
     except (ImportError, OSError, ValueError, KeyError, TypeError, AttributeError,
-            subprocess.SubprocessError):
-        return False
+            subprocess.SubprocessError) as exc:
+        try:
+            from skcapstone.fleet.refusal_log import reason_of, refuse
+
+            return refuse("source-review-open", parent, reason_of(exc))
+        except ImportError:
+            return False
 
 
 def _eligible_provisional_reviews(capacity):
@@ -7000,6 +7020,15 @@ def _eligible_provisional_reviews(capacity):
                 parent, str(outcome_ts or ""), generation[1:], store=review_store
             )
             if not plan:
+                from skcapstone.fleet.refusal_log import last_reason
+
+                _log_once_per_hour(
+                    d,
+                    "OPEN_REVIEW_PLAN_REFUSED",
+                    parent,
+                    "OPEN_REVIEW_PLAN_REFUSED|%s|%s|outcome=%s|reason=%s" %
+                    (HOST, parent, str(outcome_ts or ""), last_reason(parent, "unspecified")),
+                )
                 continue
             review_id = plan["review_id"]
         else:
@@ -7091,8 +7120,10 @@ def open_provisional_reviews(capacity, dry_run=False):
         if len(row) == 12:
             if not _open_production_review(parent, outcome_ts, row[5:11], row[11]):
                 _REVIEW_READBACK_BLOCKED.add(review_id)
-                log(d, "OPEN_REVIEW_NATIVE_BLOCKED|%s|%s|review=%s" %
-                    (HOST, parent, review_id))
+                from skcapstone.fleet.refusal_log import last_reason
+
+                log(d, "OPEN_REVIEW_NATIVE_BLOCKED|%s|%s|review=%s|reason=%s" %
+                    (HOST, parent, review_id, last_reason(parent, "unspecified")))
                 break
             opened += 1
             log(d, "OPENED_REVIEW|%s|%s|review=%s|%s|producer=%s|sha256=%s" %
@@ -7232,7 +7263,16 @@ def close_reviewed_parents():
         if not os.path.isdir(os.path.join(CARDS, parent)): continue
         if lifecycle_state(parent) != "open": continue
         generation = _parent_review_generation(parent, _pts, match.group(1).upper())
-        if not generation: continue
+        if not generation:
+            _log_once_per_hour(
+                d,
+                "CLOSE_REVIEW_EVIDENCE_BLOCKED",
+                parent,
+                "CLOSE_REVIEW_EVIDENCE_BLOCKED|%s|%s|outcome=%s|no single verified "
+                "candidate evidence for the parent outcome" %
+                (HOST, parent, str(_pts or "")),
+            )
+            continue
         generation_id = generation[0]
         for rev in sorted(reviews):
             if lifecycle_state(rev) != "complete": continue
@@ -7241,6 +7281,14 @@ def close_reviewed_parents():
             if not rv.strip() or not _PASS_ONLY_RE.match(rv):
                 continue          # BLOCKED, or said nothing: the parent stays open
             if not _review_names_generation(rev, generation_id, _rts, rv):
+                _log_once_per_hour(
+                    d,
+                    "CLOSE_REVIEW_GENERATION_MISMATCH",
+                    parent,
+                    "CLOSE_REVIEW_GENERATION_MISMATCH|%s|%s|review=%s|PASS does not "
+                    "name the parent outcome generation or the review core is unreadable" %
+                    (HOST, parent, rev),
+                )
                 continue
             parent_event = _matching_outcome_events(
                 parent, _pts, match.group(1).upper()
@@ -8372,6 +8420,7 @@ for _held_id in _remote_held_ids:
 owned = [row for row in owned
          if not ("review" in row[4] and row[2] in _builder_held_ids)]
 if PRODUCTION_POLICY and PRODUCTION_POLICY.get("remote_review", {}).get("enabled"):
+    from skcapstone.fleet import refusal_log as _refusal_log
     from skcapstone.fleet import review_dispatch
 
     _rollout = PRODUCTION_POLICY["remote_review"]
@@ -8390,7 +8439,9 @@ if PRODUCTION_POLICY and PRODUCTION_POLICY.get("remote_review", {}).get("enabled
                     log(d, "REVIEW_OFFERED|%s|%s|node=%s|request=%s" %
                         (HOST, _candidate[2], _request["node"], _request["request_id"]))
                 else:
-                    log(d, "REVIEW_REMOTE_DEFERRED|%s|%s" % (HOST, _candidate[2]))
+                    log(d, "REVIEW_REMOTE_DEFERRED|%s|%s|reason=%s" % (
+                        HOST, _candidate[2],
+                        _refusal_log.last_reason(_candidate[2], "unspecified")))
             except (OSError, ValueError, KeyError, TypeError) as _exc:
                 log(d, "REVIEW_REMOTE_HELD|%s|%s|reason=%s" %
                     (HOST, _candidate[2], review_dispatch.hold_reason(_exc)))

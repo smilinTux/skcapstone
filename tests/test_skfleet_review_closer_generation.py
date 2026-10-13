@@ -90,6 +90,9 @@ class Harness:
                 "lifecycle_state": lambda card_id: self.states.get(card_id, "open"),
                 "subprocess": type("Subprocess", (), {"run": self.run}),
                 "log": lambda _directory, message: self.logs.append(message),
+                "_log_once_per_hour": lambda _directory, _event, _cid, message: (
+                    self.logs.append(message)
+                ),
                 "_rows": {},
             }
         )

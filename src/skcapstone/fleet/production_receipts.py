@@ -14,6 +14,7 @@ from pathlib import Path
 
 from ..fleet_lane_health import MAX_AGE_SECONDS
 from .production_dispatch import resolve_production_routes
+from .refusal_log import reason_of, refuse
 from .review_capacity import _review_capacity_truth_is_current
 
 _BOUND = 4 * 1024 * 1024
@@ -122,20 +123,40 @@ def production_receipt_allowed(home: Path, policy: dict, launch: dict, card, eve
         snapshot = load_production_snapshot(home, reference)
         stamp = datetime.datetime.fromisoformat(event["ts"].replace("Z", "+00:00"))
         size = card_required_size(card)
-        if (
-            stamp.tzinfo is None
-            or not 0 <= stamp.timestamp() - snapshot["observed_at"] <= MAX_AGE_SECONDS
-            or snapshot["endpoint"].rstrip("/") != policy["gateway_url"].rstrip("/")
-            or (not remote and launch["host"] != policy["authority_host"])
-            or event.get("writer") != launch["owner"]
-            or event.get("claim_revision") != launch["revision"]
-            or route.get("provider") != "skgateway"
-            or route.get("model_or_bucket") != launch["model"]
-            or route.get("logical_route") != _SIZES.get(size)
-            or not isinstance(route.get("capacity_domains"), list)
-            or len(route["capacity_domains"]) != 1
-        ):
-            return False
+        checks = (
+            ("naive launch timestamp", stamp.tzinfo is None),
+            (
+                "route snapshot older than max age or from the future",
+                not 0 <= stamp.timestamp() - snapshot["observed_at"] <= MAX_AGE_SECONDS,
+            ),
+            (
+                "snapshot endpoint differs from policy gateway",
+                snapshot["endpoint"].rstrip("/") != policy["gateway_url"].rstrip("/"),
+            ),
+            (
+                "launch host is not the authority host",
+                not remote and launch["host"] != policy["authority_host"],
+            ),
+            ("launch event writer differs from owner", event.get("writer") != launch["owner"]),
+            (
+                "launch event claim revision differs",
+                event.get("claim_revision") != launch["revision"],
+            ),
+            ("route provider is not skgateway", route.get("provider") != "skgateway"),
+            ("route model differs from launch", route.get("model_or_bucket") != launch["model"]),
+            (
+                "logical route differs from card size",
+                route.get("logical_route") != _SIZES.get(size),
+            ),
+            (
+                "route capacity domains are not exactly one",
+                not isinstance(route.get("capacity_domains"), list)
+                or len(route["capacity_domains"]) != 1,
+            ),
+        )
+        for name, failed in checks:
+            if failed:
+                return refuse("production-receipt", getattr(card, "id", ""), name)
         eligible = resolve_production_routes(
             snapshot["routes"],
             policy=policy,
@@ -143,13 +164,17 @@ def production_receipt_allowed(home: Path, policy: dict, launch: dict, card, eve
             labels=getattr(card, "labels", ()),
             lane=launch["lane"],
         )
-        return any(
+        if any(
             row["model_or_bucket"] == launch["model"]
             and row["capacity_domain"] == route["capacity_domains"][0]
             for row in eligible
+        ):
+            return True
+        return refuse(
+            "production-receipt", getattr(card, "id", ""), "launch route no longer eligible"
         )
-    except (OSError, ValueError, TypeError, KeyError, AttributeError):
-        return False
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+        return refuse("production-receipt", getattr(card, "id", ""), reason_of(exc))
 
 
 def validate_review_execution(home, policy, launch, card, event, *, recorded=True):
