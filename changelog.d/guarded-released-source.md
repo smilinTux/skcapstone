@@ -1,0 +1,1 @@
+- Allow the native acceptance link and completion steps to use exact released producer custody with unchanged source bindings. Preserve strict ownership for ordinary callers and replay fences for all changes except the proven release itself.

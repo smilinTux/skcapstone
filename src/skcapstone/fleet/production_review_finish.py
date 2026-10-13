@@ -12,6 +12,7 @@ from ..seraph_review_cardstore import LiveCardStoreGateway, card_revision
 from ..seraph_review_contracts import _digest
 from . import production_test_plan
 from .production_review_evidence import ReviewEvidenceError
+from .production_review_steps import steps  # Re-export for historical recovery callers.
 from .source_bundle import MAX_EVIDENCE, _once, _read, _sha
 
 
@@ -106,34 +107,6 @@ def artifacts(context):
         or review["proposal"]["verdict"] != "PASS"
     ):
         raise ReviewEvidenceError("independent review is not exact PASS")
-
-
-def steps(context, acceptance, *, source_claim_current=True):
-    """Complete reviewer first; source completion joins its exact final revision."""
-    source, review = context["source"], context["review"]
-    audit = json.dumps(acceptance, sort_keys=True, separators=(",", ":"))
-    # The reviewer has already sealed exactly one applicability receipt after
-    # its report and verdict. Reissuing those links would invalidate its order
-    # or create a duplicate receipt. Add only independent controller test proof.
-    values = [("test_acceptance", audit)]
-    result = [("review", "link", key, value) for key, value in values]
-    result.append(("review", "complete", "", ""))
-    repo = source["repository"].rstrip("/").removesuffix(".git").rsplit("/", 1)[-1]
-    values = [
-        ("review_join", review["card"]),
-        ("test_acceptance", audit),
-        ("commit_sha", source["head"]),
-        ("branch", repo + ":" + source["ref"].removeprefix("refs/heads/")),
-        ("head", source["head"]),
-        ("candidate_evidence_sha256", source["evidence_sha256"]),
-        ("verdict", "PASS"),
-        ("evidence", source["evidence_path"]),
-        ("evidence_sha256", source["evidence_sha256"]),
-    ]
-    if source_claim_current:
-        result.extend(("source", "link", key, value) for key, value in values)
-    result.append(("source", "complete", "", ""))
-    return result
 
 
 def _historical_acceptance(home, context, historical, inspect):
@@ -341,6 +314,8 @@ def _finish_pair(home, directory, context, *, guard, command, inspect, historica
         if prior_binding != binding:
             raise ReviewEvidenceError("historical acceptance intent changed")
     else:
+        # This historical journal flag selects the full producer-link sequence.
+        source_claim_current = source_claim_current or released_source
         binding = {**binding_base, "source_claim_current": source_claim_current}
         if released_source:
             binding["released_source_revision"] = source_before["revision"]
@@ -399,13 +374,19 @@ def _finish_pair(home, directory, context, *, guard, command, inspect, historica
             current_owner = (
                 before["owner"] == item["owner"] and before["claim_revision"] == item["claim"]
             )
-            released_owner = (
-                role == "source"
-                and not source_claim_current
-                and before["owner"] is None
-                and before["status"] in {"backlog", "ready", "review"}
-            )
-            if before["revision"] != expected[role] or not (current_owner or released_owner):
+            released_owner = role == "source" and released_source
+            if released_owner:
+                from ..guarded_released_source import released_revision_guard
+
+                released_revision_guard(
+                    home,
+                    item["owner"],
+                    item["card"],
+                    expected[role],
+                    item["claim"],
+                    json.dumps(source),
+                )()
+            elif before["revision"] != expected[role] or not current_owner:
                 raise ReviewEvidenceError("acceptance claim or source changed")
             step = dict(request, native_before=before)
             once(step_path, step)
@@ -437,8 +418,10 @@ def _finish_pair(home, directory, context, *, guard, command, inspect, historica
         if action == "link":
             args += [key, value, "--transition-id", _digest(step), "--json"]
         args += ["--agent", item["owner"], "--expected-source-revision", expected[role]]
-        if role != "source" or source_claim_current:
+        if role != "source" or source_claim_current or released_source:
             args += ["--expected-claim-revision", item["claim"]]
+        if role == "source" and released_source:
+            args += ["--released-source-binding", json.dumps(source, sort_keys=True)]
         if action == "complete" and role == "source":
             args += [
                 "--review-card",
@@ -456,7 +439,10 @@ def _finish_pair(home, directory, context, *, guard, command, inspect, historica
                 raise ReviewEvidenceError("guarded link readback differs")
         else:
             after = inspect(home, item["card"])
-            if after["revision"] == expected[role]:
+            if after["revision"] == expected[role] or (
+                role == "source" and released_source and after["status"] != "done"
+            ):
+                # The native guard proves a pending completion across release.
                 command(home, args)
                 after = inspect(home, item["card"])
             last = after["last_complete"] or {}

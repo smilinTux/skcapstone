@@ -24,6 +24,7 @@ def record_guarded_link(
     expected_source_revision: str,
     expected_claim_revision: str,
     transition_id: str,
+    released_source_binding: str | None = None,
 ) -> dict:
     """Append once for an exact owned card; recover an interrupted projection.
 
@@ -37,6 +38,17 @@ def record_guarded_link(
     guard = owned_revision_guard(
         home, agent, card_id, expected_source_revision, expected_claim_revision
     )
+    if released_source_binding is not None:
+        from .guarded_released_source import released_revision_guard
+
+        guard = released_revision_guard(
+            home,
+            agent,
+            card_id,
+            expected_source_revision,
+            expected_claim_revision,
+            released_source_binding,
+        )
     if not isinstance(transition_id, str) or not re.fullmatch(r"[0-9a-f]{64}", transition_id):
         raise ValueError("guarded link transition invalid")
     request = dict(
@@ -49,7 +61,13 @@ def record_guarded_link(
     with card_mutation_lock(home, card_id):
         store = CardStore(home)
         card = store.fold(card_id)
-        if (
+        released = False
+        if released_source_binding is not None:
+            from .guarded_released_source import released_view
+
+            released_view(home, card_id, agent, expected_claim_revision, released_source_binding)
+            released = True
+        if not released and (
             card is None
             or card.owner != agent
             or card.archived
@@ -65,10 +83,22 @@ def record_guarded_link(
             if len(matches) != 1:
                 raise ValueError("guarded link ambiguous transition")
             event = matches[0]
+            replay_revision = card_revision(card) == event.get("guarded_after_card_revision")
+            if not replay_revision and released:
+                from .guarded_released_source import released_replay_matches
+
+                replay_revision = released_replay_matches(
+                    home,
+                    card_id,
+                    agent,
+                    expected_claim_revision,
+                    released_source_binding,
+                    event.get("guarded_after_card_revision"),
+                )
             if (
                 event.get("action") != "link"
                 or any(event.get(name) != expected for name, expected in request.items())
-                or card_revision(card) != event.get("guarded_after_card_revision")
+                or not replay_revision
             ):
                 raise ValueError("guarded link replay changed")
         else:
@@ -87,6 +117,9 @@ def record_guarded_link(
                 guarded_prior_outcome_sha256=_digest(_latest_outcome(store, card_id)),
                 transition_id=transition_id,
             )
+        projected_revision = (
+            card_revision(card) if matches and released else event["guarded_after_card_revision"]
+        )
         outcome = _latest_outcome(store, card_id)
         if (is_outcome_key(key) and outcome.get("event_id") != event["event_id"]) or (
             not is_outcome_key(key)
@@ -110,7 +143,7 @@ def record_guarded_link(
             CardEventLog(home).append(projected)
         if _digest(_latest_outcome(CardStore(home), card_id)) != _digest(outcome):
             raise ValueError("guarded link outcome changed during projection")
-        if card_revision(CardStore(home).fold(card_id)) != event["guarded_after_card_revision"]:
+        if card_revision(CardStore(home).fold(card_id)) != projected_revision:
             raise ValueError("guarded link source changed during projection")
         return {
             "event_id": event["event_id"],
