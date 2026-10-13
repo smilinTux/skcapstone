@@ -237,6 +237,6 @@ def test_incomplete_pass_records_rejection_without_release(tmp_path: Path) -> No
 
 def test_release_runs_before_same_cycle_pool_build() -> None:
     source = ROTATE.read_text(encoding="utf-8")
-    call = source.index("    release_finished_review_claims()")
+    call = source.index('("release_finished_review_claims",release_finished_review_claims)')
     pool = source.index("pool=[]", call)
     assert call < pool
