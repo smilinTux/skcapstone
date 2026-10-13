@@ -891,3 +891,22 @@ def test_superseded_archived_offer_source_matches_exact_prior_candidate(tmp_path
     assert not review_retire._superseded_source_matches(
         tmp_path, review_card, {"source": request_source}
     )
+
+
+def test_receipt_directories_leave_card_evidence_dir_private(tmp_path):
+    """A 0775 evidence/work/<card> made reviewers refuse their own handoff."""
+    import os
+
+    from skcapstone.fleet import review_retire
+
+    card_dir = tmp_path / "evidence/work/abcd1234"
+    card_dir.mkdir(parents=True)
+    card_dir.chmod(0o775)
+    receipt = review_retire._receipt_path(tmp_path, "abcd1234", "a" * 64)
+    old = os.umask(0o002)
+    try:
+        review_retire._private_receipt_dirs(receipt)
+    finally:
+        os.umask(old)
+    for directory in (card_dir, card_dir / "retired-reviews", receipt.parent):
+        assert directory.stat().st_mode & 0o777 == 0o700, directory
