@@ -24,6 +24,11 @@
     },
     "kimi": {
       "enabled": false
+    },
+    "cursor": {
+      "enabled": false,
+      "provider": "cursor",
+      "host": "chiap08"
     }
   },
   "node_quotas": {

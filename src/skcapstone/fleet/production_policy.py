@@ -98,7 +98,7 @@ def load_production_policy(path: Path, *, host: str) -> dict:
     if not valid_url:
         raise ValueError("production policy gateway URL is invalid")
     lanes = value["lanes"]
-    if not isinstance(lanes, dict) or set(lanes) - {"gateway"} != {*LANES, "kimi"}:
+    if not isinstance(lanes, dict) or set(lanes) - {"gateway", "cursor"} != {*LANES, "kimi"}:
         raise ValueError("production policy lanes are invalid")
     for lane in LANES | ({"gateway"} & set(lanes)):
         row = lanes[lane]
@@ -111,6 +111,14 @@ def load_production_policy(path: Path, *, host: str) -> dict:
             raise ValueError("production policy route is invalid")
     if lanes["kimi"] != {"enabled": False} or lanes["kimi"].get("enabled") is not False:
         raise ValueError("production policy must disable Kimi")
+    if "cursor" in lanes:
+        row = lanes["cursor"]
+        if (
+            not isinstance(row, dict)
+            or type(row.get("enabled")) is not bool
+            or row != {"enabled": row.get("enabled"), "provider": "cursor", "host": "chiap08"}
+        ):
+            raise ValueError("Cursor policy requires the fixed chiap08 plan lane")
     quotas = value.get("node_quotas", {})
     if not isinstance(quotas, dict):
         raise ValueError("production policy node quotas are invalid")
@@ -125,7 +133,7 @@ def load_production_policy(path: Path, *, host: str) -> dict:
             raise ValueError("production policy worker resources are invalid")
     lane_runtime = value.get("lane_runtime_max_seconds", {})
     if not isinstance(lane_runtime, dict) or any(
-        lane not in LANES
+        lane not in LANES | {"cursor"}
         or type(seconds) is not int
         or seconds <= 0
         or seconds > _MAX_LANE_RUNTIME_SECONDS

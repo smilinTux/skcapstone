@@ -207,7 +207,7 @@ def test_mailbox_canary_is_one_hello_and_one_direct_plus_all_poll(
 
 
 @pytest.mark.parametrize(
-    "fault", [None, "heartbeat", "session", "executable", "attribution", "node"]
+    "fault", [None, "heartbeat", "session", "executable", "attribution", "node", "cursor"]
 )
 def test_real_child_startup_requires_matching_proofs(tmp_path, monkeypatch, fault):
     module = wrapper()
@@ -262,6 +262,18 @@ def test_real_child_startup_requires_matching_proofs(tmp_path, monkeypatch, faul
         args.worker_executable = str(link)
         args.startup_timeout = 2.0
         command = [str(link)]
+    if fault == "cursor":
+        node = shutil.which("node")
+        if (
+            not node
+            or subprocess.run([node, "--use-system-ca", "-e", ""], capture_output=True).returncode
+        ):
+            pytest.skip("Cursor requires Node with system CA support")
+        script = tmp_path / "index.js"
+        script.write_text("setTimeout(() => {}, 10000);\n")
+        args.lane = "cursor"
+        args.worker_executable = str(script)
+        command = [node, "--use-system-ca", str(script)]
     child = subprocess.Popen(command, env=env)
     try:
         if fault == "node":
@@ -269,10 +281,10 @@ def test_real_child_startup_requires_matching_proofs(tmp_path, monkeypatch, faul
         module.monitor_startup(args, child, threading.Event())
         (record,) = (tmp_path / "evidence/worker-startup").glob("*.json")
         result = json.loads(record.read_text())
-        assert (result["state"] == "startup-ready") is (fault in {None, "node"})
+        assert (result["state"] == "startup-ready") is (fault in {None, "node", "cursor"})
         assert result["release_recommended"] is False
         assert child.poll() is None
-        if fault in {None, "node"}:
+        if fault in {None, "node", "cursor"}:
             assert result["executable_evidence"]["pid"] == child.pid
             assert result["executable_evidence"]["session_id"] == args.session
     finally:

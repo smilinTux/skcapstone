@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 _ALIASES = {
+    "cursor": "cursor",
     "codex": "codex",
     "openai": "codex",
     "skgw-codex": "codex",
@@ -28,7 +29,9 @@ _ALIASES = {
     "sk-l": "gateway",
     "sk-xl": "gateway",
 }
-_IDENTITY = re.compile(r"pi-(codex|glm|zai|deepseek|qwen|escalate|gateway)-[a-z0-9][a-z0-9._-]*\Z")
+_IDENTITY = re.compile(
+    r"pi-(codex|glm|zai|deepseek|qwen|escalate|gateway|cursor)-[a-z0-9][a-z0-9._-]*\Z"
+)
 _GLM_DISTINCT_REVIEW_LABELS = {"review", "glm-only", "review-distinct-agent"}
 
 

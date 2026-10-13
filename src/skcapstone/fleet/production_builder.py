@@ -74,9 +74,23 @@ def ready_nodes(paths, views: list, value: dict, card: str) -> list:
 
 
 def route_binding(
-    value: dict, card: str, route: str, labels: list[str], *, family=None, model=None
+    value: dict,
+    card: str,
+    route: str,
+    labels: list[str],
+    *,
+    family=None,
+    model=None,
+    host="chiap08",
 ) -> dict:
     """Select the smallest qualified route from actual card and gateway requirements."""
+    from .production_cursor import candidate
+
+    cursor = candidate(value, route, labels, host=host)
+    if cursor and family in (None, "cursor") and model in (None, cursor["model"]):
+        return cursor
+    if family == "cursor" or "cursor-only" in labels:
+        raise production_routes.RouteUnavailableError("Cursor plan route unavailable")
     eligible = [
         row
         for row in production_routes.candidates(value, route, labels)
@@ -114,6 +128,7 @@ def validate_request(paths, node: str, request: dict, *, local: bool = False) ->
             request["logical_route"],
             request["labels"],
             family=bound.get("family"),
+            host=expected["host"],
             model=bound.get("model"),
         )
     )
@@ -151,6 +166,7 @@ def rebind_request(paths, node: str, request: dict, *, local: bool = False) -> d
             request["logical_route"],
             request["labels"],
             family=bound.get("family"),
+            host=expected["host"],
         )
     )
     if expected.get("family") != bound.get("family"):
@@ -171,6 +187,18 @@ def unit_name(request: dict, attempt: int) -> str:
 def service_command(request: dict, attempt: int, command: list[str], workspace: Path) -> list[str]:
     """Apply per-worker quotas to the actual service, without a worker ceiling."""
     limits = request["production"]["resources"]
+    if request["production"].get("family") == "cursor":
+        # Capture the new unit's invocation, not the controller's invocation.
+        # The clean env prefix is also checked by worker_git before admission.
+        if command[:2] != ["/usr/bin/env", "-i"]:
+            raise ValueError("Cursor wrapper requires a clean environment")
+        command = [
+            "/bin/bash",
+            "-c",
+            'exec "$1" "$2" "INVOCATION_ID=${INVOCATION_ID:?}" "${@:3}"',
+            "skfleet-cursor-unit",
+            *command,
+        ]
     return [
         "/usr/bin/systemd-run",
         "--user",
