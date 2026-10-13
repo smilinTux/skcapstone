@@ -1057,3 +1057,12 @@ def test_regression_4cd4dd62_combined_dependency_blocker_suppresses_redispatch(
         "".join(json.dumps(row) + "\n" for row in legacy), encoding="utf-8"
     )
     assert namespace["blocked_backoff"](card) is False
+
+
+def test_unreadable_gate_core_fails_closed(board: BackoffHarness) -> None:
+    """A corrupt core.json must not turn a human gate into plain completion."""
+    gate = "44444444"
+    path = board.cards / gate
+    path.mkdir()
+    (path / "core.json").write_text("{not json", encoding="utf-8")
+    assert board.ns["_human_gate"](gate) is True
