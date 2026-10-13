@@ -110,3 +110,14 @@ def test_acceptance_reconciliation_logs_every_result_after_work_finishes() -> No
     # but must not hide later per-card results from actions.log.
     assert "reconcile_source_reviews(" in step
     assert "CYCLE.stop(" not in step
+
+
+def test_acceptance_reconciliation_runs_before_opening_new_reviews() -> None:
+    source = ROTATE.read_text()
+    start = source.index('CYCLE.run_steps("review_sweeps"')
+    end = source.index('_phase_timing("review_sweeps")', start)
+    phase = source[start:end]
+
+    assert phase.index('("reconcile_source_reviews",') < phase.index(
+        '("open_provisional_reviews",'
+    )
