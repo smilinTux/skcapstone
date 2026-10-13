@@ -4,7 +4,7 @@ Pane evidence uses explicitly configured real tmux sockets. The packaged unit
 shares the host /tmp namespace and names the established default socket.
 Its opt-in process/socket audit requires every own-user tmux server to be
 reachable, including runtime sockets. An absent default socket is empty only
-when a successful own-user process view proves no tmux process exists.
+when the kernel proves no listener and the audit maps every own-user server.
 Custom missing sockets, denied probes and unlinked live servers fail closed.
 CLI failures publish separate non-authoritative systemd diagnostics.
 
@@ -167,9 +167,42 @@ def _tmux_server_pids(runner: Callable[..., object]) -> set[int]:
     return servers
 
 
+def _listening_unix_sockets() -> set[Path]:
+    """Read kernel stream listeners; unreadable or malformed evidence is unknown."""
+    lines = Path("/proc/net/unix").read_text(encoding="utf-8").splitlines()
+    if not lines or lines[0].split() != [
+        "Num",
+        "RefCount",
+        "Protocol",
+        "Flags",
+        "Type",
+        "St",
+        "Inode",
+        "Path",
+    ]:
+        raise RuntimeError("invalid kernel unix socket table")
+    listeners = set()
+    for line in lines[1:]:
+        fields = line.split(None, 7)
+        try:
+            if len(fields) < 7:
+                raise ValueError("short socket row")
+            flags, kind, state = (int(value, 16) for value in fields[3:6])
+            int(fields[6])
+        except ValueError as exc:
+            raise RuntimeError("invalid kernel unix socket table") from exc
+        # SO_ACCEPTCON identifies listeners, not bound or connected socket files.
+        if flags & 0x10000 and kind == 1 and state == 1 and len(fields) == 8:
+            listeners.add(Path(fields[7]))
+    return listeners
+
+
 def _audited_tmux_sessions(primary: Path, runner: Callable[..., object]) -> tuple[str, list[str]]:
     """Join every live server to a real socket, never assume an orphan is empty."""
     before = _tmux_server_pids(runner)
+    listeners = _listening_unix_sockets()
+    if primary in listeners and not primary.exists():
+        raise RuntimeError("listening default tmux socket is not visible")
     candidates = {primary} if primary.exists() else set()
     for directory, pattern in (
         (Path(f"/tmp/tmux-{os.getuid()}"), "*"),
@@ -186,6 +219,8 @@ def _audited_tmux_sessions(primary: Path, runner: Callable[..., object]) -> tupl
     sessions = []
     sockets = []
     for path in sorted(candidates):
+        if path not in listeners:
+            continue
         pid = _probe(
             ["tmux", "-S", str(path), "display-message", "-p", "#{pid}"], runner=runner
         ).strip()
@@ -196,6 +231,8 @@ def _audited_tmux_sessions(primary: Path, runner: Callable[..., object]) -> tupl
         sessions.extend(names.splitlines())
         sockets.append(str(path))
     after = _tmux_server_pids(runner)
+    if candidates & listeners != candidates & _listening_unix_sockets():
+        raise RuntimeError("tmux listener inventory changed during audit")
     if before != after or observed != after:
         raise RuntimeError(
             f"tmux server coverage incomplete: processes={sorted(after)} "
@@ -222,8 +259,8 @@ def publish_host_snapshot(
         host: Exact local host name used as the snapshot identity.
         tmux_socket: Explicit socket path, defaulting to SKFLEET_TMUX_SOCKET.
             The packaged unit shares the producer host namespace.
-        allow_absent_default: Permit an absent shared default socket only after
-            a successful own-user process probe proves no tmux process exists.
+        allow_absent_default: Permit an absent or stale shared default socket
+            only after kernel listener evidence and a complete server audit.
             Requires the host shared /tmp namespace, as configured by the unit.
         audit_tmux_servers: Require all live own-user tmux servers to map to
             real default-directory or runtime-directory sockets.
@@ -253,18 +290,19 @@ def publish_host_snapshot(
             or socket_path != Path(f"/tmp/tmux-{os.getuid()}/default")
         ):
             raise
-        processes = _probe(["ps", "-u", str(os.getuid()), "-o", "comm="], runner=runner)
-        if any(line.strip().startswith("tmux") for line in processes.splitlines()):
-            raise RuntimeError("default socket absent but tmux processes exist") from exc
-        sessions = ""
+    absent_default = (
+        allow_absent_default
+        and socket_path == Path(f"/tmp/tmux-{os.getuid()}/default")
+        and socket_path not in _listening_unix_sockets()
+    )
+    if audit_tmux_servers or absent_default:
+        sessions, tmux_sockets = _audited_tmux_sessions(socket_path, runner)
     else:
         sessions = _probe(
             ["tmux", "-S", str(socket_path), "ls", "-F", "#{session_name}"],
             runner=runner,
         )
-    tmux_sockets = [str(socket_path)] if socket_path.exists() else []
-    if audit_tmux_servers:
-        sessions, tmux_sockets = _audited_tmux_sessions(socket_path, runner)
+        tmux_sockets = [str(socket_path)]
     units = _probe(
         [
             "systemctl",
