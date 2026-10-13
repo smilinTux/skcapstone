@@ -4,7 +4,11 @@ import copy
 
 import pytest
 
-from skcapstone.fleet.production_review import independent_review_routes, producer_family
+from skcapstone.fleet.production_review import (
+    independent_review_routes,
+    producer_family,
+    review_family_allowed,
+)
 
 
 def policy():
@@ -15,7 +19,7 @@ def policy():
                 lane: {"enabled": True, "provider": "skgateway"}
                 for lane in ("codex", "glm", "deepseek", "qwen")
             },
-            "kimi": {"enabled": False},
+            "kimi": {"enabled": False, "provider": "skgateway"},
         }
     }
 
@@ -40,6 +44,7 @@ def route(model, provider, domain=None):
         ("pi-deepseek-builder-ziowk01-1234abcd", None, "deepseek"),
         ("pi-qwen-chiap08-1234abcd", "chiap01-qwen38", "qwen"),
         ("pi-escalate-chiap08-1234abcd", "codex", "codex"),
+        ("jarvis", None, "codex"),
         ("codex-production-review-746626c9", "openai", "codex"),
         ("opaque-author", "zai", "zai"),
         ("opaque-author", "skgateway", "gateway"),
@@ -54,7 +59,6 @@ def test_source_family_from_actual_identity_or_typed_provider(identity, provider
     "identity,provider",
     [
         ("pi-seraph-chiap08-1234abcd", None),
-        ("jarvis", None),
         ("pretend-pi-codex-chiap08-id", None),
         ("pi-codex", None),
         ("pi-codex-chiap08-id", "zai"),
@@ -104,6 +108,45 @@ def test_glm_only_pin_admits_only_glm_routes():
     ) == [routes[1]]
 
 
+@pytest.mark.parametrize(
+    "label,family,lane",
+    [
+        ("glm-only", "zai", "glm"),
+        ("deepseek-only", "deepseek", "deepseek"),
+        ("qwen-only", "qwen", "qwen"),
+        ("kimi-only", "kimi", "kimi"),
+    ],
+)
+def test_disabled_review_family_pin_falls_back_and_rebinds(label, family, lane):
+    p = policy()
+    p["lanes"][lane]["enabled"] = False
+    routes = [route(name, name) for name in ("codex", "zai", "deepseek", "qwen", "kimi")]
+    routes = [row | {"capacity_domain": row["provider"]} for row in routes]
+    kwargs = {
+        "policy": p,
+        "producer_identity": "pi-codex-builder-chiap08-1234abcd",
+        "reviewer_identity": "pi-seraph-chiap04-5678abcd",
+        "labels": ["review", label],
+    }
+
+    fallback = independent_review_routes(routes, **kwargs)
+    assert all(row["provider"] != family for row in fallback)
+    assert fallback
+
+    p["lanes"][lane]["enabled"] = True
+    rebound = independent_review_routes(routes, **kwargs)
+    assert rebound == [next(row for row in routes if row["provider"] == family)]
+
+
+def test_disabled_glm_pin_falls_back_in_family_check_and_rebinds():
+    p = policy()
+    p["lanes"]["glm"]["enabled"] = False
+    assert review_family_allowed("codex", "codex", ["glm-only"], policy=p)
+    p["lanes"]["glm"]["enabled"] = True
+    assert not review_family_allowed("codex", "codex", ["glm-only"], policy=p)
+    assert review_family_allowed("codex", "zai", ["glm-only"], policy=p)
+
+
 def test_explicit_glm_distinct_agent_policy_admits_glm_for_untyped_source():
     routes = [route("sk-zai-m", "zai"), route("gpt-5.6-sol", "codex")]
     assert independent_review_routes(
@@ -113,6 +156,20 @@ def test_explicit_glm_distinct_agent_policy_admits_glm_for_untyped_source():
         reviewer_identity="pi-seraph-chiap08-1234abcd",
         labels=["review", "glm-only", "review-distinct-agent"],
     ) == [routes[0]]
+
+
+def test_unknown_producer_glm_fallback_relaxes_when_glm_is_disabled():
+    routes = [route("sk-zai-m", "zai"), route("gpt-5.6-sol", "codex")]
+    p = policy()
+    p["lanes"]["glm"]["enabled"] = False
+    result = independent_review_routes(
+        routes,
+        policy=p,
+        producer_identity="unmapped-producer",
+        reviewer_identity="pi-seraph-chiap08-1234abcd",
+        labels=["review", "glm-only", "review-distinct-agent"],
+    )
+    assert result == [routes[1]]
 
 
 def test_explicit_glm_distinct_agent_policy_rejects_same_principal():
@@ -209,27 +266,44 @@ def test_result_does_not_mutate_or_alias_input_evidence():
 def test_no_unknown_source_fallback_even_with_healthy_routes():
     with pytest.raises(ValueError, match="authoritative source evidence"):
         independent_review_routes(
-            [route("deepseek-flash", "deepseek")], policy=policy(), producer_identity="jarvis"
+            [route("deepseek-flash", "deepseek")],
+            policy=policy(),
+            producer_identity="unmapped-producer",
         )
+
+
+def test_jarvis_maps_to_codex_and_preserves_distinct_principal_rule():
+    routes = [route("deepseek-flash", "deepseek"), route("sk-zai-m", "zai")]
+    kwargs = dict(
+        policy=policy(),
+        producer_identity="jarvis",
+        reviewer_identity="pi-seraph-chiap08-1234abcd",
+        labels=["review"],
+    )
+    assert independent_review_routes(routes, **kwargs) == routes
+    assert independent_review_routes(routes, **(kwargs | {"reviewer_identity": "jarvis"})) == []
+    assert independent_review_routes(
+        routes, **(kwargs | {"labels": kwargs["labels"] + ["glm-only"]})
+    ) == [routes[1]]
 
 
 def test_verified_legacy_hosted_review_keeps_provider_unknown_and_distinct():
     routes = [route("deepseek-flash", "deepseek"), route("sk-zai-m", "zai")]
     kwargs = dict(
         policy=policy(),
-        producer_identity="jarvis",
+        producer_identity="legacy-producer",
         reviewer_identity="pi-seraph-chiap08-1234abcd",
         labels=["review", "review-distinct-agent"],
         legacy_producer_verified=True,
     )
     assert independent_review_routes(routes, **kwargs) == routes
     with pytest.raises(ValueError):
-        independent_review_routes(routes, **(kwargs | {"reviewer_identity": "jarvis"}))
+        independent_review_routes(routes, **(kwargs | {"reviewer_identity": "legacy-producer"}))
     assert independent_review_routes(
         routes, **(kwargs | {"labels": kwargs["labels"] + ["glm-only"]})
     ) == [routes[1]]
     with pytest.raises(ValueError):
-        producer_family("jarvis")
+        producer_family("unmapped-producer")
     with pytest.raises(ValueError):
         independent_review_routes(routes, **(kwargs | {"producer_provider": "unknown"}))
     with pytest.raises(ValueError):

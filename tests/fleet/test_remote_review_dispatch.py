@@ -90,6 +90,27 @@ def test_same_family_review_is_allowed_with_a_distinct_reviewer(
     dispatch.validate_contract(request_record, remote_policy, host="chiap03")
 
 
+def test_disabled_family_pin_falls_back_then_binds_again(dispatch, request_record, remote_policy):
+    from skcapstone.fleet.production_builder import digest
+
+    request_record["labels"].append("glm-only")
+    request_record["production"].update(
+        family="codex", provider_family="codex", capacity_domain="codex"
+    )
+    request_record["policy"] = remote_policy
+    remote_policy["lanes"]["glm"]["enabled"] = False
+    request_record["production"]["policy_sha256"] = digest(remote_policy)
+    dispatch.validate_contract(request_record, remote_policy, host="chiap03")
+
+    remote_policy["lanes"]["glm"]["enabled"] = True
+    request_record["production"]["policy_sha256"] = digest(remote_policy)
+    with pytest.raises(ValueError, match="request contract differs"):
+        dispatch.validate_contract(request_record, remote_policy, host="chiap03")
+
+    request_record["production"].update(family="zai", provider_family="zai", capacity_domain="zai")
+    dispatch.validate_contract(request_record, remote_policy, host="chiap03")
+
+
 def test_remote_partition_keeps_legacy_reviews_on_the_existing_seat(dispatch):
     native = (0, "review", "a1b2c3d4", {}, ["review", "seat-seraph", "source-only"])
     legacy = (1, "review", "e5f6a7b8", {}, ["review", "seat-seraph"])

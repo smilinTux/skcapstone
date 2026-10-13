@@ -682,9 +682,14 @@ def test_actual_capacity_gate_requires_checked_legacy_source(tmp_path, monkeypat
         }
     )
     result = ns["evaluate_review_capacity"](
-        {}, "M", ["review", "review-distinct-agent"], "jarvis", "reviewer", source_core=core
+        {},
+        "M",
+        ["review", "review-distinct-agent"],
+        "unmapped-producer",
+        "reviewer",
+        source_core=core,
     )
-    assert observed == [(tmp_path / ".skcapstone", core, "jarvis")]
+    assert observed == [(tmp_path / ".skcapstone", core, "unmapped-producer")]
     assert result["routes"] == (rows if verified else [])
     assert result["reason"] == ("eligible" if verified else "source-provider-evidence-required")
 

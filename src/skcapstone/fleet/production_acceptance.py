@@ -640,7 +640,10 @@ def collect(home, policy, card, claim, *, process_check):
     domain = launches[0]["route_identity"]["capacity_domains"][0]
     source_terminal = _producer_terminal(home, source, manifest)
     if not review_family_allowed(
-        producer_family(producer_owner, source_terminal["family"]), domain, review.labels
+        producer_family(producer_owner, source_terminal["family"]),
+        domain,
+        review.labels,
+        policy=review_policy,
     ):
         raise ReviewEvidenceError("review family is not independent")
     review_workspace = Path(terminal["workspace"])

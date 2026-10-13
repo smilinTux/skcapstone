@@ -17,6 +17,7 @@ _ALIASES = {
     "deepseek": "deepseek",
     "skgw-deepseek": "deepseek",
     "qwen": "qwen",
+    "kimi": "kimi",
     "skgw-qwen": "qwen",
     "chiap01-qwen38": "qwen",
     "chiap08-qwen38": "qwen",
@@ -40,7 +41,26 @@ def provider_family(provider: object) -> str | None:
     return _ALIASES.get(provider.strip().lower()) if isinstance(provider, str) else None
 
 
-def review_family_allowed(source: str, reviewer: str, labels) -> bool:
+_REVIEW_FAMILY_PINS = {
+    "glm-only": "zai",
+    "deepseek-only": "deepseek",
+    "qwen-only": "qwen",
+    "kimi-only": "kimi",
+}
+
+
+def _enabled_review_families(policy: Mapping[str, Any]) -> set[str]:
+    """Return gateway families enabled by the production policy."""
+    return {
+        family
+        for name, lane in policy.get("lanes", {}).items()
+        if lane.get("enabled") is True
+        and lane.get("provider") == "skgateway"
+        and (family := provider_family(name)) is not None
+    }
+
+
+def review_family_allowed(source: str, reviewer: str, labels, *, policy=None) -> bool:
     """Allow any known reviewer family; independence is a distinct reviewer agent.
 
     Same-family review used to require explicit GLM labels, and cross-family was
@@ -52,7 +72,12 @@ def review_family_allowed(source: str, reviewer: str, labels) -> bool:
     source, reviewer = provider_family(source), provider_family(reviewer)
     if source is None or reviewer is None:
         return False
-    return not ("glm-only" in labels and reviewer != "zai")
+    pins = {family for label, family in _REVIEW_FAMILY_PINS.items() if label in labels}
+    if len(pins) > 1:
+        return False
+    if policy is not None:
+        pins.intersection_update(_enabled_review_families(policy))
+    return not pins or reviewer in pins
 
 
 def producer_family(identity: str, provider: str | None = None) -> str:
@@ -64,7 +89,7 @@ def producer_family(identity: str, provider: str | None = None) -> str:
     """
     identity = identity.strip().lower() if isinstance(identity, str) else ""
     match = _IDENTITY.fullmatch(identity)
-    from_identity = None
+    from_identity = "codex" if identity == "jarvis" else None
     if match:
         from_identity = "codex" if match[1] == "escalate" else provider_family(match[1])
     elif re.fullmatch(r"codex-[a-z0-9][a-z0-9._-]*", identity):
@@ -98,7 +123,7 @@ def independent_review_routes(
     Any enabled family may review (Chef, 2026-10-10: the cross-family rule
     parked every DeepSeek build while GLM was the only other lane). This is
     the dispatch-side twin of ``review_family_allowed``: independence is a
-    distinct reviewer agent, and an explicit ``glm-only`` pin admits only GLM.
+    distinct reviewer agent, and an enabled family pin restricts the route.
     A local legacy hosted review may instead supply an exact native source
     proof. This does not assign a family or authorize remote acceptance.
     """
@@ -126,11 +151,19 @@ def independent_review_routes(
 
     if reviewer_identity is not None and not distinct_principals:
         return []
-    glm_only = "glm-only" in normalized_labels or (source is None and not allow_legacy)
+    pins = {family for label, family in _REVIEW_FAMILY_PINS.items() if label in normalized_labels}
+    if len(pins) > 1:
+        return []
+    enabled = _enabled_review_families(policy)
+    pins.intersection_update(enabled)
+    if source is None and not allow_legacy and "zai" in enabled:
+        if pins and pins != {"zai"}:
+            return []
+        pins = {"zai"}
 
     def is_independent(route: Mapping[str, Any]) -> bool:
         family = provider_family(route["provider"])
-        return family is not None and (not glm_only or family == "zai")
+        return family is not None and (not pins or family in pins)
 
     return [
         route for route in enabled_family_routes(routes, policy=policy) if is_independent(route)
