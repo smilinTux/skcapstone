@@ -7697,12 +7697,11 @@ def _reconcile_source_reviews_step():
 
 
 CYCLE.run_steps("review_sweeps",(
-    ("open_provisional_reviews",lambda: open_provisional_reviews(review_capacity, dry_run=DRY)),
 )+(() if DRY else (
     ("reconcile_source_reviews",_reconcile_source_reviews_step),
     ("close_reviewed_parents",close_reviewed_parents),
     ("release_finished_review_claims",release_finished_review_claims),
-)))
+))+(("open_provisional_reviews",lambda: open_provisional_reviews(review_capacity, dry_run=DRY)),))
 _phase_timing("review_sweeps")
 
 _PINNED_IDS=set()
