@@ -168,6 +168,7 @@ dev = [
     "setuptools_scm>=8",
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    "pytest-xdist>=3.5",
     "pytest-asyncio>=0.23",
     "black>=24.0",
     "ruff>=0.3",

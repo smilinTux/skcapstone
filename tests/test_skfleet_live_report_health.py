@@ -69,7 +69,11 @@ def test_four_of_five_exposes_missing_host_and_age_without_authoritative_absence
             "host": "chiap08",
             "reason": "missing",
             "age_seconds": None,
-            "detail": "[Errno 2] No such file or directory: '%s/chiap08.json'" % tmp_path,
+            # Production truncates the detail to 120 chars; a long worker
+            # tmp_path (pytest-of-user/pytest-N/popen-gwN/...) hits that cut.
+            "detail": (
+                "[Errno 2] No such file or directory: '%s/chiap08.json'" % tmp_path
+            )[:120],
         },
     }
 
