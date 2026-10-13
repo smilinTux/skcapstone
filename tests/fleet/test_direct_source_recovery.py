@@ -85,6 +85,66 @@ def run(value, process=None):
     )
 
 
+def defer_terminal_observation(value):
+    receipt = read_json(value["receipt_path"])
+    receipt["completion_state"] = "running"
+    receipt["source_disposition"].update(
+        process_terminal=False, reason="exact-process-and-cgroup-death-unproven"
+    )
+    value["receipt_path"].write_text(json.dumps(receipt))
+    return receipt
+
+
+@pytest.mark.parametrize("source", ["https"], indirect=True)
+def test_sweep_reproves_death_after_successful_exit_preceded_terminal_observation(
+    direct, monkeypatch
+):
+    original = defer_terminal_observation(direct)
+    events = direct["store"]._read_events(direct["card"])
+    probes = []
+    monkeypatch.setattr(recovery, "unit_terminal", lambda *a, **k: probes.append((a, k)))
+    result = recovery.recover_pending_direct_sources(
+        direct["home"],
+        {"authority_host": "worker"},
+        process_check=lambda _: {"sessions": [], "units": []},
+    )
+    assert result == [{"card": direct["card"], "state": "published", "head": direct["head"]}]
+    assert len(probes) == 2
+    assert direct["store"]._read_events(direct["card"]) == events
+    assert read_json(direct["receipt_path"])["source_disposition"]["process_terminal"] is True
+    audit = next((direct["home"] / "fleet/source-publication-recovery").glob("*.json"))
+    assert read_json(audit)["original_receipt"] == original
+
+
+@pytest.mark.parametrize("source", ["https"], indirect=True)
+@pytest.mark.parametrize(
+    "missing", ["unit", "process", "exit", "boolean-exit", "reason", "invocation"]
+)
+def test_deferred_terminal_exit_still_requires_every_fresh_proof(direct, monkeypatch, missing):
+    receipt = defer_terminal_observation(direct)
+    if missing == "exit":
+        receipt.pop("exit_code")
+    elif missing == "boolean-exit":
+        receipt["exit_code"] = False
+    elif missing == "reason":
+        receipt["source_disposition"]["reason"] = "unknown"
+    elif missing == "invocation":
+        receipt.pop("invocation")
+    elif missing == "unit":
+
+        def live_unit(*args, **kwargs):
+            raise ValueError("unit still active")
+
+        monkeypatch.setattr(recovery, "unit_terminal", live_unit)
+    direct["receipt_path"].write_text(json.dumps(receipt))
+    original = direct["receipt_path"].read_bytes()
+    process = (lambda _: {"sessions": [], "units": ["live"]}) if missing == "process" else None
+    with pytest.raises(ValueError):
+        run(direct, process)
+    assert direct["receipt_path"].read_bytes() == original
+    assert not (direct["home"] / "fleet/source-publication-recovery").exists()
+
+
 @pytest.mark.parametrize("source", ["https"], indirect=True)
 def test_recovers_exact_candidate_without_board_write_and_is_idempotent(direct):
     before = direct["store"]._read_events(direct["card"])

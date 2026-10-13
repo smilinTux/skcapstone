@@ -174,6 +174,26 @@ def _producer_terminal(home, source, manifest):
     return matches[0]
 
 
+def deferred_direct_terminal(receipt):
+    """Recognize a native successful exit awaiting fresh process-death proof.
+
+    This is not terminal proof. Publication recovery must independently check
+    the exact managed unit and absence of card processes before using it.
+    """
+    disposition = receipt.get("source_disposition")
+    return (
+        receipt.get("schema") == "skfleet.direct-seat/v1"
+        and receipt.get("completion_state") == "running"
+        and type(receipt.get("exit_code")) is int
+        and receipt["exit_code"] == 0
+        and isinstance(disposition, dict)
+        and disposition.get("state") == "awaiting-evidence"
+        and disposition.get("process_terminal") is False
+        and disposition.get("claim_released") is False
+        and disposition.get("reason") == "exact-process-and-cgroup-death-unproven"
+    )
+
+
 def _direct_seat_terminal(
     home, source, manifest, producer_owner, producer_claim, *, publication_pending=False
 ):
@@ -192,6 +212,7 @@ def _direct_seat_terminal(
         schema = receipt.get("schema")
         explicit_receipt = schema == "skfleet.direct-seat/v1"
         expected_state = "awaiting-evidence" if publication_pending else "awaiting-review"
+        deferred = publication_pending and deferred_direct_terminal(receipt)
         parts = source.owner.split("-")
         owner_host = parts[-2] if len(parts) >= 4 else ""
         host = str(receipt.get("host") or owner_host)
@@ -201,16 +222,17 @@ def _direct_seat_terminal(
             or receipt.get("card") != source.id
             or receipt.get("owner") != producer_owner
             or receipt.get("claim_revision") != producer_claim
-            or receipt.get("completion_state") != expected_state
+            or (receipt.get("completion_state") != expected_state and not deferred)
             or type(receipt.get("pid")) is not int
             or receipt["pid"] <= 0
             or host != owner_host
             or host != socket.gethostname().split(".")[0].lower()
             or disposition.get("state") != expected_state
             or disposition.get("claim_released") is not False
-            or disposition.get("process_terminal") is not True
+            or (disposition.get("process_terminal") is not True and not deferred)
             or not isinstance(artifact, dict)
             or (publication_pending and (not explicit_receipt or artifact or manifest))
+            or (publication_pending and type(receipt.get("exit_code")) is not int)
             or any(artifact.get(key) != value for key, value in manifest.items())
             or receipt.get("route_schema") != "skfleet.runtime-route/v1"
             or not receipt.get("logical_route")

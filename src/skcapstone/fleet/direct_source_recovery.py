@@ -9,7 +9,11 @@ from pathlib import Path
 from skcoord.atomic_io import atomic_write_text
 from skcoord.card_store import CardStore, card_mutation_lock
 
-from .production_acceptance import _current_outcome, _direct_seat_terminal
+from .production_acceptance import (
+    _current_outcome,
+    _direct_seat_terminal,
+    deferred_direct_terminal,
+)
 from .production_custody import source_binding
 from .production_receipts import load_production_snapshot
 from .production_review_custody import unit_terminal
@@ -39,7 +43,9 @@ def inspect_direct_source(home, card, *, store=None):
         raise ValueError("direct source requires current typed PASS_FOR_REVIEW")
     path = home / "fleet/direct-seats" / f"{card.owner}.json"
     receipt = read_json(path)
-    pending = receipt.get("completion_state") == "awaiting-evidence"
+    pending = receipt.get("completion_state") == "awaiting-evidence" or deferred_direct_terminal(
+        receipt
+    )
     artifact = (receipt.get("source_disposition") or {}).get("source_artifact") or {}
     terminal = _direct_seat_terminal(
         home,
@@ -206,7 +212,9 @@ def recover_pending_direct_sources(home, policy, *, process_check, cycle=None, l
         card_id = ""
         try:
             receipt = read_json(path)
-            if receipt.get("completion_state") != "awaiting-evidence":
+            if receipt.get(
+                "completion_state"
+            ) != "awaiting-evidence" and not deferred_direct_terminal(receipt):
                 continue
             card_id = receipt.get("card") or ""
             if not re.fullmatch(r"[0-9a-f]{8}", card_id):
