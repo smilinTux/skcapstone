@@ -319,6 +319,8 @@ def governed_review_gate_reasons(
     owned: bool = False,
     capacity_available: bool = True,
     dependency_blocker_holds: bool = False,
+    awaiting_acceptance: bool = False,
+    claim_ceiling: bool = False,
 ) -> tuple[str, ...]:
     """Return stable reason codes used by CLI and POOL_V2 diagnostics."""
     normalized = {str(label).strip().lower() for label in labels}
@@ -333,8 +335,12 @@ def governed_review_gate_reasons(
         reasons.append("absent-source-binding")
     if dependency_blocked:
         reasons.append("dependency")
-    if dependency_blocker_holds:
-        reasons.append("dependency-blocker")
+    if claim_ceiling:
+        reasons.append("backoff:claim-ceiling")
+    elif awaiting_acceptance:
+        reasons.append("backoff:pass-awaiting-acceptance")
+    elif dependency_blocker_holds:
+        reasons.append("backoff:blocked")
     if owned:
         reasons.append("ownership")
     if not capacity_available:

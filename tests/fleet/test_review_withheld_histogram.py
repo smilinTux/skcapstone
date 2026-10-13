@@ -22,9 +22,9 @@ def _load(name: str):
 
 def test_counts_every_reason_not_just_the_first_twelve_cards():
     histogram = _load("_review_withheld_reason_histogram")
-    withheld = [("%08x" % i, "dependency-blocker") for i in range(20)]
+    withheld = [("%08x" % i, "backoff:blocked") for i in range(20)]
     withheld += [("aaaa0001", "wrong-seat,absent-typed-metadata")]
-    assert histogram(withheld) == "dependency-blocker=20,absent-typed-metadata=1,wrong-seat=1"
+    assert histogram(withheld) == "backoff:blocked=20,absent-typed-metadata=1,wrong-seat=1"
 
 
 def test_orders_by_weight_then_name_so_the_line_is_stable():

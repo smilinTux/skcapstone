@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from datetime import datetime
 from pathlib import Path
 
 from .card_store import CardStore
@@ -13,6 +15,42 @@ from .review_admission import (
     qualified_reviewer_seats,
     reviewer_capacity_evaluation,
 )
+
+
+def _awaiting_acceptance(home: Path, store: CardStore, card) -> bool:
+    """Read pending PASS without launching the rotator or clearing any hold."""
+    from .fleet.review_retire import retired_offers
+    from .seraph_review_cardstore import _latest_outcome
+
+    if "review" not in card.labels or card.archived or card.status.value == "done":
+        return False
+    outcome = _latest_outcome(store, card.id)
+    value = (
+        outcome.get("verdict")
+        if outcome.get("action") == "verdict"
+        else outcome.get("link_value", outcome.get("value"))
+    )
+    if not re.match(r"^\s*PASS(?:_FOR_[A-Z_]+)?\b", str(value or ""), re.I):
+        return False
+    rows = store._read_events(card.id) + store._legacy_events(card.id)
+    try:
+        boundary = datetime.fromisoformat(outcome["ts"].replace("Z", "+00:00"))
+        later = [
+            e for e in rows if datetime.fromisoformat(e["ts"].replace("Z", "+00:00")) > boundary
+        ]
+    except (KeyError, TypeError, ValueError):
+        return True
+    if any(
+        e.get("action") == "move" and str(e.get("column") or "").strip().lower() == "ready"
+        for e in later
+    ):
+        return False
+    supersessions = [e for e in later if e.get("action") == "remote_review_supersede"]
+    if supersessions:
+        retired = retired_offers(home, card.id, rows)
+        if any(e.get("request_id") in retired for e in supersessions):
+            return False
+    return True
 
 
 def diagnose(home: Path, card_id: str) -> dict[str, object]:
@@ -49,6 +87,7 @@ def diagnose(home: Path, card_id: str) -> dict[str, object]:
             owned=card.owner is not None,
             capacity_available=capacity["reason"] == "eligible",
             dependency_blocker_holds=dependency_blocker_unresolved(home, core, card.labels),
+            awaiting_acceptance=_awaiting_acceptance(home, store, card),
         )
     )
     if "do-not-claim" in labels:
