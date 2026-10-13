@@ -133,7 +133,7 @@ def test_existing_mutations_remain_after_assessment_and_dry_fenced():
     source = ROTATE.read_text(encoding="utf-8")
     assessment = source.index("assessment=_validate_reassessment(")
     dry = source.index("if DRY:", source.index("def reap_dead_claims"))
-    reap = source.index("reap_dead_claims()", dry)
+    reap = source.index('("reap_dead_claims",reap_dead_claims)', dry)
     reviews = source.index("open_provisional_reviews(review_capacity", reap)
     claims = source.index('claim=subprocess.run([SKC,"coord","claim"', reviews)
     assert assessment < dry < reap < reviews < claims
@@ -145,4 +145,6 @@ def test_source_review_queue_is_not_limited_by_free_worker_slots():
     source = ROTATE.read_text(encoding="utf-8")
     review_call = source.index("open_provisional_reviews(review_capacity, dry_run=DRY)")
     assignment = source.rfind("review_capacity =", 0, review_call)
-    assert source[assignment:review_call].strip() == "review_capacity = MAX_LAUNCH"
+    assert source[assignment:].startswith("review_capacity = MAX_LAUNCH\n")
+    # The review sweep steps follow the assignment directly and never read free slots.
+    assert "free" not in source[assignment:review_call]
