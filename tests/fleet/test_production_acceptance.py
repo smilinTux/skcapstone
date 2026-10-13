@@ -424,5 +424,138 @@ def test_controller_requires_trusted_tests_and_finishes_without_legacy_release(
         assert store._read_events(review["card"]) == before
 
 
+def test_existing_finish_intent_requalifies_stale_plan_without_rewriting_intent(
+    tmp_path, monkeypatch
+):
+    from skcapstone.fleet import (
+        production_review_finish,
+        production_test_plan,
+        production_test_profile,
+        production_tests,
+    )
+
+    home = tmp_path / "home"
+    directory = home / "evidence" / "production-acceptance" / ("7907fdaf-" + "b" * 32)
+    directory.mkdir(parents=True, mode=0o700)
+    workspace = tmp_path / "source"
+    workspace.mkdir(mode=0o700)
+    context = {
+        "test_binding": {"source_card": "2587020f"},
+        "source_workspace": str(workspace),
+        "source": {"repository": "https://example.invalid/sklegal.git"},
+    }
+    policy = {"authority_host": "chiap08"}
+    prior = {"receipt_sha256": "a" * 64, "plan_sha256": "b" * 64}
+    current = {"receipt_sha256": "c" * 64, "plan_sha256": "d" * 64}
+    production_review_finish.once(directory / "finish-intent.json", {"test_receipt": prior})
+    calls = []
+
+    def stale(*args, **kwargs):
+        calls.append("stale")
+        raise production_test_plan.TestEvidenceError("operator test plan is invalid or stale")
+
+    monkeypatch.setattr(production_test_plan, "load_plan", stale)
+    monkeypatch.setattr(production_tests, "validate_test_receipt", lambda *a: current)
+    monkeypatch.setattr(production_tests, "run_or_read_tests", lambda *args: current)
+    monkeypatch.setattr(
+        production_test_profile, "seal_candidate", lambda *args: calls.append("sealed")
+    )
+    monkeypatch.setattr(
+        production_test_profile,
+        "refresh_accepted_profile",
+        lambda *args: calls.append("profile-refreshed"),
+    )
+
+    assert acceptance._requalify_finished_acceptance(home, directory, context, policy) is True
+    assert calls == ["stale", "sealed", "profile-refreshed"]
+    recovery = production_review_finish.read_json(directory / "test-requalification.json")
+    assert recovery["prior_test_receipt"] == prior
+    assert recovery["current_test_receipt"] == current
+    assert production_review_finish._finish_test_receipt(directory, context, current) == prior
+    assert (
+        production_review_finish.read_json(directory / "finish-intent.json")["test_receipt"]
+        == prior
+    )
+
+
+def _requalify_setup(tmp_path, monkeypatch, *, plan_sha, tests):
+    from skcapstone.fleet import (
+        production_review_finish,
+        production_test_plan,
+        production_test_profile,
+        production_tests,
+    )
+
+    directory = tmp_path / "acceptance"
+    directory.mkdir(mode=0o700)
+    workspace = tmp_path / "source"
+    workspace.mkdir(mode=0o700)
+    context = {
+        "test_binding": {"source_card": "2587020f"},
+        "source_workspace": str(workspace),
+        "source": {"repository": "https://example.invalid/x.git"},
+    }
+    prior = {"receipt_sha256": "a" * 64, "plan_sha256": "b" * 64}
+    current = {"receipt_sha256": "c" * 64, "plan_sha256": "d" * 64}
+    production_review_finish.once(directory / "finish-intent.json", {"test_receipt": prior})
+    calls = []
+    monkeypatch.setattr(production_test_plan, "load_plan", lambda *a, **k: ({}, None, plan_sha))
+    monkeypatch.setattr(production_tests, "run_or_read_tests", lambda *a: tests(calls, current))
+    monkeypatch.setattr(production_tests, "validate_test_receipt", lambda *a: current)
+    monkeypatch.setattr(production_test_profile, "seal_candidate", lambda *a: calls.append("seal"))
+    monkeypatch.setattr(
+        production_test_profile, "refresh_accepted_profile", lambda *a: calls.append("refresh")
+    )
+    return directory, context, calls, current
+
+
+def test_requalification_waits_for_tests_then_resumes_on_successor_plan(tmp_path, monkeypatch):
+    state = {"ready": False}
+    directory, context, calls, current = _requalify_setup(
+        tmp_path,
+        monkeypatch,
+        plan_sha="d" * 64,
+        tests=lambda calls, cur: cur if state["ready"] else None,
+    )
+    policy = {"authority_host": "chiap08"}
+    # Cycle 1: successor plan sealed, tests still running.
+    assert acceptance._requalify_finished_acceptance(tmp_path, directory, context, policy) is None
+    assert not (directory / "test-requalification.json").exists()
+    # Cycle 2: current successor plan (sha differs from the intent's), tests done.
+    state["ready"] = True
+    assert acceptance._requalify_finished_acceptance(tmp_path, directory, context, policy) is True
+    # Cycle 3: record exists, nothing is rewritten or re-run.
+    calls.clear()
+    assert acceptance._requalify_finished_acceptance(tmp_path, directory, context, policy) is False
+    assert calls == []
+
+
+def test_current_plan_matching_intent_never_seals_or_runs(tmp_path, monkeypatch):
+    def boom(calls, cur):
+        raise AssertionError("must not run tests")
+
+    directory, context, calls, _ = _requalify_setup(
+        tmp_path, monkeypatch, plan_sha="b" * 64, tests=boom
+    )
+    policy = {"authority_host": "chiap08"}
+    assert acceptance._requalify_finished_acceptance(tmp_path, directory, context, policy) is False
+    assert calls == []
+    assert not (directory / "test-requalification.json").exists()
+
+
+def test_finish_requalification_requires_exact_immutable_record(tmp_path):
+    from skcapstone.fleet import production_review_finish
+    from skcapstone.fleet.production_review_evidence import ReviewEvidenceError
+
+    directory = tmp_path / "acceptance"
+    directory.mkdir(mode=0o700)
+    context = {"source": {"card": "2587020f"}}
+    prior = {"receipt_sha256": "a" * 64}
+    current = {"receipt_sha256": "c" * 64}
+    production_review_finish.once(directory / "finish-intent.json", {"test_receipt": prior})
+    with pytest.raises(ReviewEvidenceError, match="historical acceptance intent changed"):
+        production_review_finish._finish_test_receipt(directory, context, current)
+
+
 def _unreachable(*args, **kwargs):
     raise AssertionError("finished pair must not replay live launch policy")

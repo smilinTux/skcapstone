@@ -1,0 +1,1 @@
+- A resumed acceptance with an immutable finish intent now requalifies stale test plans and records the fresh receipt before continuing the existing journal.

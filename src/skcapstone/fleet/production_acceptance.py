@@ -36,6 +36,70 @@ def digest(value):
     return _sha(json.dumps(value, sort_keys=True, separators=(",", ":")).encode())
 
 
+def _requalify_finished_acceptance(home, directory, context, policy):
+    """Refresh a stale test plan without rewriting an interrupted finish intent."""
+    from . import production_test_plan as plan
+    from .production_test_profile import refresh_accepted_profile, seal_candidate
+    from .production_tests import run_or_read_tests, validate_test_receipt
+
+    directory = Path(directory)
+    intent = read_json(directory / "finish-intent.json")
+    prior = intent["test_receipt"]
+    # An existing record is validated exactly by finish_pair; never rewrite it.
+    if (directory / "test-requalification.json").exists():
+        return False
+    binding = context["test_binding"]
+    try:
+        _, _, plan_sha = plan.load_plan(
+            home, binding, allow_completed=True, allow_remote_host=True
+        )
+    except plan.TestEvidenceError as exc:
+        if str(exc) != "operator test plan is invalid or stale":
+            raise
+    else:
+        # A plan that is still current and is the one the intent was written
+        # against resumes exactly as before: no sealing, no test execution.
+        if plan_sha == prior.get("plan_sha256"):
+            return False
+    # Idempotent: seal_candidate only appends a successor to the current tip.
+    seal_candidate(
+        home,
+        binding,
+        Path(context["source_workspace"]),
+        policy,
+        context["source"]["repository"],
+    )
+    receipt = run_or_read_tests(
+        home, context["test_binding"], Path(context["source_workspace"]), policy
+    )
+    if receipt is None:
+        return None
+    receipt = validate_test_receipt(
+        home, context["test_binding"], Path(context["source_workspace"])
+    )
+    refresh_accepted_profile(
+        home,
+        context["test_binding"],
+        policy,
+        context["source"]["repository"],
+        receipt["receipt_sha256"],
+    )
+    recovery = {
+        "schema": "skfleet.acceptance-test-requalification/v1",
+        "context_sha256": digest(context),
+        "finish_intent_sha256": digest(intent),
+        "prior_test_receipt": intent["test_receipt"],
+        "current_test_receipt": receipt,
+    }
+    path = directory / "test-requalification.json"
+    if path.exists():
+        if read_json(path) != recovery:
+            raise ReviewEvidenceError("acceptance test requalification changed")
+    else:
+        once(path, recovery)
+    return True
+
+
 def review_directory(home, card, claim):
     """Restrict acceptance state to an exact native review claim."""
     if not re.fullmatch(r"[0-9a-f]{8}", card) or not re.fullmatch(r"[0-9a-f]{32}", claim):
@@ -850,6 +914,9 @@ def reconcile(home, policy, *, process_check):
                     context["source"]["repository"],
                     receipt["receipt_sha256"],
                 )
+            elif _requalify_finished_acceptance(home, directory, context, policy) is None:
+                results.append({"card": card, "state": "awaiting-trusted-tests"})
+                continue
             result = finish_pair(home, directory, context, guard=guard)
             results.append({"card": card, "state": "accepted", "receipt": result})
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:

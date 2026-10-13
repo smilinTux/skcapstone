@@ -18,7 +18,9 @@ def pending_finish(tmp_path, monkeypatch):
     (home / "evidence/production-review-exits" / f"{CARD}-{CLAIM}.json").write_text("{}")
     directory = acceptance.review_directory(home, CARD, CLAIM)
     directory.mkdir(parents=True)
-    (directory / "context.json").write_text(json.dumps({"review": {}, "source": {}}))
+    (directory / "context.json").write_text(
+        json.dumps({"review": {}, "source": {}, "test_binding": {}, "source_workspace": "/x"})
+    )
     (directory / "context.json").chmod(0o600)
     directory.chmod(0o700)
     host = socket.gethostname().split(".")[0].lower()
@@ -42,13 +44,26 @@ def pending_finish(tmp_path, monkeypatch):
     return home, directory, policy, finished
 
 
-def test_interrupted_finish_resumes_without_replaying_the_receipt(pending_finish):
+def test_interrupted_finish_resumes_without_replaying_the_receipt(pending_finish, monkeypatch):
     home, directory, policy, finished = pending_finish
-    (directory / "finish-intent.json").write_text("{}")
+    prior = {"receipt_sha256": "a" * 64, "plan_sha256": "b" * 64}
+    (directory / "finish-intent.json").write_text(json.dumps({"test_receipt": prior}))
     (directory / "finish-intent.json").chmod(0o600)
+    # The intent's plan is still current: no requalification, no sealing, no tests.
+    monkeypatch.setattr(
+        "skcapstone.fleet.production_test_plan.load_plan", lambda *a, **k: ({}, None, "b" * 64)
+    )
+
+    def forbidden(*a, **k):
+        raise AssertionError("current plan must resume without sealing or running tests")
+
+    monkeypatch.setattr("skcapstone.fleet.production_test_profile.seal_candidate", forbidden)
+    monkeypatch.setattr("skcapstone.fleet.production_tests.run_or_read_tests", forbidden)
+    assert not (directory / "test-requalification.json").exists()
     results = acceptance.reconcile(home, policy, process_check=lambda card: {})
     assert results == [{"card": CARD, "state": "accepted", "receipt": {"accepted": True}}]
     assert finished == [directory]
+    assert not (directory / "test-requalification.json").exists()
 
 
 def test_before_finishing_the_receipt_replay_still_refuses(pending_finish):
