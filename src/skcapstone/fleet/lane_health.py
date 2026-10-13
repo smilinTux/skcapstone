@@ -71,10 +71,16 @@ def select_lane_with_fallthrough(
     withdraws one lane, so the loop is bounded by the lane count.
     """
     hops: list[dict] = []
+    tried: set[str] = set()
     while True:
         name, reason = select(health)
         if name is None:
             break
+        if name in tried:
+            # A selector that ignores health must not spin the cycle forever.
+            name, reason = None, "lane already withdrawn this cycle: " + name
+            break
+        tried.add(name)
         model = model_for_lane(name)
         if model is None:
             break

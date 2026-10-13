@@ -132,3 +132,21 @@ def test_effective_lanes_line_reports_allowed_healthy_unhealthy():
     assert line == (
         "EFFECTIVE_LANES|chiap08|allowed=glm,codex|healthy=codex|unhealthy=glm:HTTP 429"
     )
+
+
+def test_selector_ignoring_health_cannot_loop_forever():
+    from skcapstone.fleet import lane_health
+
+    calls = []
+
+    def preflight(model):
+        calls.append(model)
+        return False, "dead"
+
+    name, reason, hops = lane_health.select_lane_with_fallthrough(
+        lambda health: ("glm", "always glm"), lambda lane: "sk-glm-m", preflight, {}
+    )
+    assert name is None
+    assert "already withdrawn" in reason
+    assert calls == ["sk-glm-m"]
+    assert [hop["from"] for hop in hops] == ["glm"]
