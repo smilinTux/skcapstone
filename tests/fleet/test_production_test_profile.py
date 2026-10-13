@@ -989,6 +989,26 @@ def test_acceptance_seals_a_base_revision_profile_for_requalification(
     assert sealed["acceptance_requalification"] is True
 
 
+def test_acceptance_reuses_current_unlaunched_requalification_plan(
+    setup,  # noqa: F811
+):
+    s = setup
+    _core, binding = _base_profile_setup(s)
+    repository = "https://example.org/public.git"
+
+    profile.seal_candidate(s.home, binding, s.workspace, s.policy, repository)
+    sealed, path, before = plan.load_plan(s.home, binding)
+    assert sealed["acceptance_requalification"] is True
+    assert not (plan.run_directory(s.home, before) / "launch.json").exists()
+
+    profile.seal_candidate(s.home, binding, s.workspace, s.policy, repository)
+
+    current, current_path, after = plan.load_plan(s.home, binding)
+    assert current["acceptance_requalification"] is True
+    assert current_path == path
+    assert after == before
+
+
 def test_acceptance_reseals_legacy_collection_plan_for_requalification(
     setup,  # noqa: F811
     monkeypatch,
