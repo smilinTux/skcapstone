@@ -824,7 +824,9 @@ def _source_workspace_spec(core, labels):
         base_ref = meta_ref if meta_ref and meta_ref.lower() != legacy_revision else ""
     else:
         if link_ref and meta_ref and link_ref != meta_ref:
-            raise ValueError("source binding conflict: base_ref")
+            from skcapstone.source_ref_amendment import amended_source_ref
+
+            link_ref = amended_source_ref(core, emit=lambda message: log(d, message))
         base_ref = link_ref or meta_ref
     parsed = urlsplit(repository)
     if (

@@ -238,10 +238,21 @@ COORD_SEAT_CAPABILITIES: Mapping[Seat, frozenset[Action]] = {
 }
 
 #: Humans and standing personal agents. They are not seats: no charter bounds
-#: them, and the board is theirs to operate. Bare identities only; a compound
-#: identity is classified by the delegate grammar below.
+#: them, and the board is theirs to operate. Exact identities only; other compound
+#: identities are classified by the delegate grammar below.
 OPERATOR_PRINCIPALS = frozenset(
-    {"chef", "casey", "david", "human", "lumina", "opus", "kimi", "codex", "skuser01"}
+    {
+        "chef",
+        "casey",
+        "david",
+        "human",
+        "lumina",
+        "lumina-nor",
+        "opus",
+        "kimi",
+        "codex",
+        "skuser01",
+    }
 )
 
 #: Bare (unhyphenated) writer identities used by repo-owned automation and
