@@ -239,3 +239,59 @@ def import_remote_exits(home, policy):
             once(exit_path(home, card.id, launch["revision"]), terminal)
         except (OSError, ValueError, TypeError, KeyError, AttributeError):
             continue  # Missing or delayed sync retains existing custody.
+
+
+def released_source_matches(home, source, revision):
+    """Prove the exact released custody and retained candidate under one card lock."""
+    from skcoord.card_store import CardStore, card_mutation_lock
+
+    from ..seraph_review_cardstore import LiveCardStoreGateway, _binding, _latest_outcome
+    from .production_admission import _released_custody
+
+    with card_mutation_lock(home, source["card"]):
+        store = CardStore(home)
+        row = store.fold(source["card"])
+        binding = dict(
+            card_id=source["card"], owner=source["owner"], claim_revision=source["claim"]
+        )
+        if row is None or not _released_custody(home, row, binding):
+            return False
+        if LiveCardStoreGateway(home).read_card(row.id, _store=store).revision != revision:
+            return False
+        # A release changes custody, not the producer's typed Git proposal.
+        events = store._read_events(row.id) + store._legacy_events(row.id)
+        outcome = max(
+            (event for event in events if event.get("action") == "verdict"),
+            key=lambda event: (event.get("ts", ""), event.get("writer", ""), event.get("seq", 0)),
+            default={},
+        )
+        current = _latest_outcome(store, row.id)
+        if (
+            (current.get("verdict") or current.get("link_value"))
+            not in {"PASS_FOR_REVIEW", "PASS"}
+            or outcome.get("verdict") != "PASS_FOR_REVIEW"
+            or outcome.get("writer") != source["owner"]
+            or outcome.get("expected_claim_revision") not in (None, source["claim"])
+            or outcome.get("candidate_commit") != source["head"]
+            or outcome.get("candidate_tree") != source["tree"]
+            or outcome.get("candidate_ref") != source["ref"]
+            or outcome.get("candidate_sha256") != source["evidence_sha256"]
+        ):
+            return False
+        try:
+            return (
+                _binding(row, "repository") == source["repository"]
+                and _binding(
+                    row,
+                    "link_head_revision",
+                    "head",
+                    "head_commit",
+                    "commit",
+                    "commit_sha",
+                    "candidate_commit",
+                )
+                in (None, source["head"])
+                and _binding(row, "tree", "candidate_tree") in (None, source["tree"])
+            )
+        except ValueError:
+            return False
