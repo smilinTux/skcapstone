@@ -3,6 +3,9 @@ Description=SKFleet Seraph independent production review dispatcher
 After=network-online.target skfleet-link.service
 
 [Service]
+# Fleet authority/node service: files and dirs created here must be owner-only
+# (a 0002 umask made evidence dirs 0775 and the guarded reviewer handoff refused them).
+UMask=0077
 Type=oneshot
 Environment=SKAGENT=seraph
 Environment=SKCAPSTONE_AGENT=seraph
