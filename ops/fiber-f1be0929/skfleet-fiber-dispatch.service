@@ -1,0 +1,13 @@
+[Unit]
+Description=Single-authority fiber worker admission (f1be0929)
+ConditionHost=chiap08
+
+[Service]
+Type=oneshot
+ExecStart=%h/.skenv/bin/python %h/.local/lib/skfleet-fiber/fiber_control.py --once
+Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+TimeoutStartSec=240
+CPUQuota=100%
+MemoryMax=1G
+TasksMax=64
+Nice=10

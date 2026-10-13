@@ -9,7 +9,9 @@ from click.testing import CliRunner
 from skcapstone.cli import main
 
 
-def test_checkpoint_cli_create_verify_and_review(tmp_path) -> None:
+def test_checkpoint_cli_create_verify_and_review(tmp_path, monkeypatch) -> None:
+    # This assertion checks the receipt path, not Rich's terminal wrapping.
+    monkeypatch.setenv("COLUMNS", "200")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     (workspace / "app.py").write_text("print('ok')\n", encoding="utf-8")

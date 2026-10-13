@@ -1,0 +1,8 @@
+[Unit]
+Description=SKFleet fiber readiness swap reserve (card f1be0929)
+
+[Swap]
+What=/var/lib/skfleetfiberf1be0929
+
+[Install]
+WantedBy=swap.target
