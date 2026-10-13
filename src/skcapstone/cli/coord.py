@@ -887,8 +887,27 @@ def register_coord_commands(main: click.Group) -> None:
             "records unspecified."
         ),
     )
+    @click.option(
+        "--release-finished-work",
+        "release_finished_work",
+        is_flag=True,
+        help=(
+            "Operator override: release a claim whose holder already recorded a "
+            "PASS* verdict for it. Requires --reason; refused for production workers."
+        ),
+    )
+    @click.option("--reason", default=None, help="Required with --release-finished-work.")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
-    def coord_release_claim(task_id, owner, expected_claim_revision, agent, abandon_reason, home):
+    def coord_release_claim(
+        task_id,
+        owner,
+        expected_claim_revision,
+        agent,
+        abandon_reason,
+        release_finished_work,
+        reason,
+        home,
+    ):
         """Release one exact claim generation without completing the task."""
         import uuid
 
@@ -943,6 +962,18 @@ def register_coord_commands(main: click.Group) -> None:
                             f"{expected_claim_revision}, current {current_revision}"
                         )
                 owner_projection = board.load_agent(owner)
+                override_audit = None
+                if current_revision is not None:
+                    from ..release_guard import require_release_allowed
+
+                    override_audit = require_release_allowed(
+                        home_path,
+                        task_id,
+                        owner,
+                        current_revision,
+                        override=release_finished_work,
+                        reason=reason,
+                    )
                 if current_revision is not None:
                     # Inlined from skcoord.card_store.mirror_coord_release, which
                     # does not accept abandon_reason. This is the one CardStore
@@ -956,6 +987,7 @@ def register_coord_commands(main: click.Group) -> None:
                         expected_claim_revision=expected_claim_revision,
                         transition_id=uuid.uuid4().hex,
                         abandon_reason=abandon_reason,
+                        **(override_audit or {}),
                     )
                     if restore_review:
                         CardStore(home_path).append_event(task_id, "move", agent, column="review")
