@@ -22,7 +22,7 @@ five directories have `test-requalification.json`; none has `reseal.json`.
 This is a valid replay refusal, not evidence of an incorrect first-write digest.
 Ignoring those changes in ordinary replay would weaken the documented revision
 fence. The existing operator-attributed acceptance-reseal path is designed for
-these exact PR/commit corrections, but currently requires a held source claim
+these exact PR/commit corrections, but previously required a held source claim
 and the original trusted test receipt. Supporting the clean release and the
 already governed requalification in that recovery path is the narrow fix.
 Retain exact expected hashes, history checks, operator attribution, artifact
@@ -30,3 +30,11 @@ validation, and the step-09 continuation. Never issue another PASS or review
 completion, and never reclaim under the producer identity.
 
 No board writes or live acceptance retries were performed for this inspection.
+
+The hotfix extends that explicit recovery, not ordinary link replay. It reuses
+the clean-release proof under the existing acceptance and card locks, validates
+the governed bridge from current test evidence to the original finish receipt,
+and hashes the requalification file into the immutable recovery receipt. The
+receipt records the exact release event; its existing history guards continue
+to fence all later events. The operator must still invoke acceptance-reseal
+with exact guards and correction preimages before finish can resume at step 09.

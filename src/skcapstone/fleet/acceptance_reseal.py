@@ -339,6 +339,7 @@ def checkpoint(home, directory, context):
 
 def reseal(home, card, claim, actor, changes, guards):
     """Record one exact operator checkpoint; never write PASS or complete a card."""
+    from .acceptance_reseal_source import correction_view, validated_acceptance
     from .production_acceptance import review_directory
 
     if actor != ACTOR or set(guards) != set(GUARDS):
@@ -373,12 +374,12 @@ def reseal(home, card, claim, actor, changes, guards):
             ):
                 checkpoint(home, directory, context)
                 if (
-                    _validate_artifacts(home, context)
+                    validated_acceptance(home, directory, context)
                     != read_json(directory / "finish-intent.json")["test_receipt"]
                 ):
                     raise ValueError("reseal trusted tests changed")
                 return existing
-        acceptance = _validate_artifacts(home, context)
+        acceptance = validated_acceptance(home, directory, context)
         step, files = _journal(directory, context, acceptance)
         store = CardStore(home)
         source, review = context["source"], context["review"]
@@ -422,12 +423,9 @@ def reseal(home, card, claim, actor, changes, guards):
         source_state, review_state = (
             native_state(home, context[role]["card"]) for role in ("source", "review")
         )
+        corrections = correction_view(home, source, source_state, guards["claim_revision"])
         if (
-            source_state["owner"] != source["owner"]
-            or source_state["claim_revision"] != source["claim"]
-            or source_state["status"] not in {"ready", "doing", "review"}
-            or source_state["claim_revision"] != guards["claim_revision"]
-            or review_state["status"] != "done"
+            review_state["status"] != "done"
             or review_state["owner"] is not None
             or review_state["revision"] != step["before"]["review"]
         ):
@@ -443,6 +441,9 @@ def reseal(home, card, claim, actor, changes, guards):
         files.update(
             {name: _file_hash(directory / name) for name in ("context.json", "finish-intent.json")}
         )
+        qualification = directory / "test-requalification.json"
+        if qualification.exists():
+            files[qualification.name] = _file_hash(qualification)
         actual = dict(
             context_sha256=files["context.json"],
             finish_sha256=files["finish-intent.json"],
@@ -456,7 +457,7 @@ def reseal(home, card, claim, actor, changes, guards):
         )
         if actual != guards:
             raise ValueError("reseal preimage changed")
-        _corrections(store, source, event, changes, actor, set())
+        _corrections(corrections, source, event, changes, actor, set())
         receipt = dict(
             schema=SCHEMA,
             actor=actor,
@@ -468,6 +469,8 @@ def reseal(home, card, claim, actor, changes, guards):
             source_event_ids=[e["event_id"] for e in store._read_events(source["card"])],
             after={"source": source_state["revision"], "review": review_state["revision"]},
         )
+        if hasattr(corrections, "release"):
+            receipt["released_custody"] = corrections.release
         once(path, receipt)
         store.append_event(
             source["card"],
