@@ -8,6 +8,7 @@ Fixes two defects found 03:50Z:
      rotation deadlocked at busy=8 and NOOPed. Workers launched with -p exit on
      their own, so a slot is simply a live codex-auto-* session. No retire logic.
 """
+import random
 import bisect,json,os,glob,subprocess,sys,time,fcntl,datetime,hashlib,collections,re,importlib.util,shlex
 import importlib.metadata
 import stat
@@ -56,6 +57,7 @@ from skcapstone.fleet.production_dispatch import (
     cycle_budget_seconds,
     authoritative_owner_state,
 )
+from skcapstone.fleet import pool_fold_cache
 from skcapstone.fleet.production_review import independent_review_routes
 from skcapstone.fleet.lane_health import (
     effective_lanes_line,
@@ -2148,6 +2150,38 @@ if ONLY_SEAT:
 free=sum(_L["free"] for _L in LANES)
 log(d, "SLOTS|%s|%s" % (HOST, _slot_summary(LANES)))
 _phase_timing("startup_slots")
+
+# ---- incremental pool fold --------------------------------------------------
+# pool_fold took 125-135 s per healthy cycle and 213 s on a failed one (niobe
+# health 2026-10-13: dispatcher_exit_70, TimeoutExpired at the 270 s wrapper
+# limit). Profile on a copy of the chiap08 home: 18 whole-board CardStore folds
+# (~175,000 card folds) from LiveCardStoreGateway.read_card, ~82 s of 122 s. The
+# board index re-folds only cards whose change signature moved, and the per-card
+# claimability snapshot is cached the same way across cycles. Both caches are
+# private files under ~/.skcapstone/fleet, keyed by file signatures, discarded on
+# any doubt; SKFLEET_POOL_FOLD_CACHE=0 restores the uncached behaviour exactly.
+_FLEET_STATE_DIR = os.path.join(HOME, ".skcapstone/fleet")
+_POOL_FOLD_CURSOR = os.path.join(_FLEET_STATE_DIR, "pool-fold-cursor.json")
+_CARD_INDEX = None
+_SNAPSHOT_CACHE = None
+_SNAPSHOT_AUDIT = {"remaining": pool_fold_cache.AUDIT_SAMPLE, "failures": 0,
+                   "hits": 0, "misses": 0, "stored": 0}
+_SNAPSHOT_DIGESTS = {"overlay": pool_fold_cache.LegacyDigests(),
+                     "native": pool_fold_cache.LegacyDigests()}
+if pool_fold_cache.enabled():
+    try:
+        _CARD_INDEX = pool_fold_cache.enable(
+            Path(HOME) / ".skcapstone",
+            os.path.join(_FLEET_STATE_DIR, "pool-fold-cards.json"))
+        _stamp = "%s|rotate-%s" % (pool_fold_cache.skcoord_stamp(), hashlib.sha256(
+            open(os.path.abspath(__file__), "rb").read()).hexdigest()[:16])
+        _SNAPSHOT_CACHE = pool_fold_cache.SigCache(
+            os.path.join(_FLEET_STATE_DIR, "pool-fold-snapshots.json"),
+            "claimability-snapshot", _stamp)
+    except Exception as _cache_exc:
+        _CARD_INDEX = _SNAPSHOT_CACHE = None
+        pool_fold_cache.disable()
+        log(d, "POOL_FOLD_CACHE_DISABLED|%s|%s" % (HOST, type(_cache_exc).__name__))
 try:
     WORKER_MAIL_RECIPIENTS = _worker_mail_routing()
 except ValueError as exc:
@@ -3291,20 +3325,9 @@ def _claimability_reason(core, state):
     return "review" if review_marked else "claimable"
 
 
-def _authoritative_card_snapshot(cid, core=None, fresh=False):
-    """Read and fold one card from one core and event snapshot."""
+def _compute_authoritative_snapshot(cid, core, fresh=False):
+    """Fold one card from its events. The only place the fold itself happens."""
     global _production_native_store
-    snapshots = globals().get("_selection_snapshots")
-    if not fresh and snapshots is not None and cid in snapshots:
-        snapshot = snapshots[cid]
-        if core is None or core == snapshot[0]:
-            return copy.deepcopy(snapshot)
-    if core is None:
-        with open(os.path.join(CARDS, cid, "core.json"), encoding="utf-8") as fh:
-            core = json.load(fh)
-    if (not isinstance(core, dict) or not isinstance(core.get("id"), str) or
-            core.get("id") != cid):
-        raise ValueError("core identity mismatch")
     rows = list(_strict_card_events(cid, fresh=fresh))
     rows.extend(_legacy_claimability_events(fresh=fresh).get(cid, []))
     legacy_owners = _legacy_projection_owners(cid, fresh=fresh)
@@ -3316,7 +3339,98 @@ def _authoritative_card_snapshot(cid, core=None, fresh=False):
         {"core": core, "events": rows, "legacy_owners": legacy_owners},
         sort_keys=True, separators=(",", ":")
     ).encode()).hexdigest()
-    snapshot = core, state, source_revision
+    return core, state, source_revision
+
+
+def _snapshot_cache_key(cid, core):
+    """Return (signature, key) for the persistent snapshot cache, or (None, None).
+
+    Everything the fold reads is in the key: the card's own file signature, the
+    exact core handed in, this card's rows in both legacy overlays (the
+    dispatcher's and the native store's), the legacy claim owners, and whether
+    the production owner fold applies. Unsafe layouts yield no key, so the
+    caller folds normally.
+    """
+    global _production_native_store
+    signature = pool_fold_cache.card_signature(CARDS, cid)
+    if signature is None or signature == pool_fold_cache.ABSENT:
+        return None, None
+    overlay = _legacy_claimability_events()
+    native = {}
+    if globals().get("PRODUCTION_POLICY"):
+        if _production_native_store is None:
+            _production_native_store = _cache_card_store_event_reads(
+                CardStore(Path(HOME) / ".skcapstone")
+            )
+        native = pool_fold_cache.CardIndex._legacy_mapping(_production_native_store)
+    key = pool_fold_cache.make_key(
+        signature,
+        pool_fold_cache.CACHE_SCHEMA,
+        _SNAPSHOT_DIGESTS["overlay"].digest(overlay, cid),
+        _SNAPSHOT_DIGESTS["native"].digest(native, cid),
+        list(_legacy_projection_owners(cid)),
+        bool(globals().get("PRODUCTION_POLICY")),
+        pool_fold_cache._digest(core),
+    )
+    return signature, key
+
+
+def _authoritative_card_snapshot(cid, core=None, fresh=False):
+    """Read and fold one card from one core and event snapshot."""
+    snapshots = globals().get("_selection_snapshots")
+    if not fresh and snapshots is not None and cid in snapshots:
+        snapshot = snapshots[cid]
+        if core is None or core == snapshot[0]:
+            return copy.deepcopy(snapshot)
+    if core is None:
+        with open(os.path.join(CARDS, cid, "core.json"), encoding="utf-8") as fh:
+            core = json.load(fh)
+    if (not isinstance(core, dict) or not isinstance(core.get("id"), str) or
+            core.get("id") != cid):
+        raise ValueError("core identity mismatch")
+    signature = key = None
+    cache = globals().get("_SNAPSHOT_CACHE")
+    if cache is not None and not fresh:
+        try:
+            signature, key = _snapshot_cache_key(cid, core)
+        except Exception:
+            signature = key = None
+        blob = cache.get(cid, key) if key is not None else None
+        if blob is not None:
+            payload = json.loads(blob)
+            state = payload["state"]
+            state["legacy_owners"] = _legacy_projection_owners(cid)
+            snapshot = core, state, payload["revision"]
+            audit = _SNAPSHOT_AUDIT
+            audit["hits"] += 1
+            if (audit["remaining"] > 0 and cid in cache.persisted
+                    and random.random() < 0.02):
+                audit["remaining"] -= 1
+                if _compute_authoritative_snapshot(cid, core) != snapshot:
+                    audit["failures"] += 1
+                    cache.clear()
+                    log(d, "POOL_FOLD_CACHE_MISMATCH|%s|%s|snapshot cache discarded"
+                        % (HOST, cid))
+                    snapshot = _compute_authoritative_snapshot(cid, core)
+            if snapshots is not None:
+                snapshots[cid] = copy.deepcopy(snapshot)
+            return snapshot
+    snapshot = _compute_authoritative_snapshot(cid, core, fresh=fresh)
+    if key is not None:
+        _SNAPSHOT_AUDIT["misses"] += 1
+        try:
+            if (not pool_fold_cache.is_racy(signature, time.time_ns())
+                    and pool_fold_cache.card_signature(CARDS, cid) == signature):
+                stored = {k: v for k, v in snapshot[1].items() if k != "legacy_owners"}
+                blob = json.dumps({"state": stored, "revision": snapshot[2]},
+                                  separators=(",", ":"))
+                check = json.loads(blob)["state"]
+                check["legacy_owners"] = snapshot[1]["legacy_owners"]
+                if check == snapshot[1] and list(check) == list(snapshot[1]):
+                    cache.put(cid, key, blob)
+                    _SNAPSHOT_AUDIT["stored"] += 1
+        except Exception:
+            pass
     if not fresh and snapshots is not None:
         snapshots[cid] = copy.deepcopy(snapshot)
     return snapshot
@@ -3690,7 +3804,9 @@ def folded_labels(cid,core):
         try:
             if _cardstore_label_store is None:
                 _cardstore_label_store = CardStore(Path(HOME) / ".skcapstone")
-            card = _cardstore_label_store.fold(cid)
+            _cache_mod = globals().get("pool_fold_cache")
+            card = (_cache_mod.fold_one(_cardstore_label_store, cid) if _cache_mod is not None
+                    else _cardstore_label_store.fold(cid))
             _cardstore_label_cache[cid] = (
                 None if card is None else tuple(str(x) for x in card.labels)
             )
@@ -5750,6 +5866,13 @@ def _startup_release_ready(report):
         pid = report["child_pid"]
         if not isinstance(pid, int) or pid <= 0 or Path("/proc", str(pid)).exists():
             return False
+        # The claim fence is a pure file read and fails for almost every retained
+        # report (the claim moved on long ago), so test it BEFORE spawning
+        # systemctl and tmux per report. Every other check below is also a pure
+        # test that returns False, so the order changes cost, not the decision.
+        fresh_owner, _, fresh_revision = _current_claim_identity_fresh(cid)
+        if (fresh_owner, fresh_revision) != (owner, revision):
+            return False
         status = subprocess.run(
             ["systemctl", "--user", "show", unit,
              "--property=LoadState,ActiveState,MainPID,ControlPID"],
@@ -5789,9 +5912,6 @@ def _startup_release_ready(report):
                 else:
                     return False
         else:
-            return False
-        fresh_owner, _, fresh_revision = _current_claim_identity_fresh(cid)
-        if (fresh_owner, fresh_revision) != (owner, revision):
             return False
         observation = StartupObservation(
             owner=owner, card_id=cid, session_id=report["session_id"],
@@ -7596,8 +7716,29 @@ structural_leaf=leaf_eligibility_counts(Path(HOME) / ".skcapstone").leaves
 human_gated=0
 ENG=("SKGW","SKCP","SKCOORD","SKHARNESS","SKMEM","CAPAUTH","FLEET","INC",
      "SKW","QWEN38","CARD-CORE","CARD-EVENT","SKDASH","SKGATEWAY","SKSEC","SKL-")
-for cd in sorted(glob.glob(CARDS+"/*")):
+# Soft deadline: stop ADMITTING more cards once the cycle has spent this much of
+# its budget, so the cycle still finishes, launches, and writes its receipt
+# inside the 270 s wrapper. Cards not reached are not decided either way (they
+# simply are not in this cycle's pool), and a persisted cursor makes the next
+# cycle start where this one stopped so no card is starved. Disabled outside
+# production policy and by SKFLEET_POOL_FOLD_SOFT_DEADLINE_S=0.
+_POOL_FOLD_MIN_CARDS = 64
+_pool_fold_soft_deadline = pool_fold_cache.soft_deadline_seconds(
+    _production_cycle_budget if PRODUCTION_POLICY else None,
+    os.environ.get("SKFLEET_POOL_FOLD_SOFT_DEADLINE_S"))
+_pool_fold_cards = sorted(glob.glob(CARDS+"/*"))
+_pool_fold_cards = pool_fold_cache.rotate_from_cursor(
+    _pool_fold_cards, pool_fold_cache.read_cursor(_POOL_FOLD_CURSOR))
+_pool_fold_visited = 0
+_pool_fold_stopped_at = None
+for cd in _pool_fold_cards:
     cid=os.path.basename(cd)
+    if (_pool_fold_soft_deadline is not None
+            and _pool_fold_visited >= _POOL_FOLD_MIN_CARDS
+            and time.monotonic() - _cycle_started >= _pool_fold_soft_deadline):
+        _pool_fold_stopped_at = cid
+        break
+    _pool_fold_visited += 1
     core_p=os.path.join(cd,"core.json")
     if not os.path.exists(core_p): continue
     try:
@@ -7721,8 +7862,16 @@ for cd in sorted(glob.glob(CARDS+"/*")):
 # the head of a dependency chain is worth far more than an isolated one, because
 # finishing it converts dependency_blocked cards into assignable work.
 unblocks={}
+_unblocks_visited = 0
+_unblocks_stopped = False
 for cd in glob.glob(CARDS+"/*"):
     ocid=os.path.basename(cd)
+    _unblocks_visited += 1
+    if (_pool_fold_soft_deadline is not None and _unblocks_visited % 64 == 0
+            and time.monotonic() - _cycle_started >= _pool_fold_soft_deadline
+            * pool_fold_cache.UNBLOCKS_DEADLINE_FACTOR):
+        _unblocks_stopped = True
+        break
     cp=os.path.join(cd,"core.json")
     if not os.path.exists(cp): continue
     if lifecycle_state(ocid) in ("complete","void"): continue
@@ -7732,6 +7881,28 @@ for cd in glob.glob(CARDS+"/*"):
         unblocks[str(dep)]=unblocks.get(str(dep),0)+1
 for row in pool: row.append(unblocks.get(row[2],0))
 pool_ids=",".join(sorted(row[2] for row in pool)) or "-"
+if _pool_fold_stopped_at is not None or _unblocks_stopped:
+    log(d,"POOL_FOLD_DEADLINE|%s|soft_deadline_s=%.0f|elapsed_s=%.1f|visited=%d|total=%d|"
+        "unvisited=%d|admitted=%d|unblocks_complete=%s|resume_at=%s"%(
+        HOST,_pool_fold_soft_deadline,time.monotonic()-_cycle_started,_pool_fold_visited,
+        len(_pool_fold_cards),len(_pool_fold_cards)-_pool_fold_visited,len(pool),
+        "no" if _unblocks_stopped else "yes",_pool_fold_stopped_at or "-"))
+if not DRY:
+    pool_fold_cache.write_cursor(_POOL_FOLD_CURSOR,_pool_fold_stopped_at)
+if _CARD_INDEX is not None or _SNAPSHOT_CACHE is not None:
+    try:
+        _saved = [bool(_CARD_INDEX and _CARD_INDEX.save()),
+                  bool(_SNAPSHOT_CACHE and _SNAPSHOT_CACHE.save())]
+        _ci = _CARD_INDEX.stats() if _CARD_INDEX else {}
+        log(d,"POOL_FOLD_CACHE|%s|index_refolded=%s|index_reused=%s|index_fallbacks=%s|"
+            "index_loaded=%s|index_scans=%s|index_scan_s=%s|snapshot_hits=%d|snapshot_misses=%d|snapshot_stored=%d|"
+            "audit_failures=%d|saved=%s"%(
+            HOST,_ci.get("refolded"),_ci.get("reused"),_ci.get("fallbacks"),_ci.get("loaded"),
+            _ci.get("scans"),_ci.get("scan_seconds"),_SNAPSHOT_AUDIT["hits"],_SNAPSHOT_AUDIT["misses"],_SNAPSHOT_AUDIT["stored"],
+            _SNAPSHOT_AUDIT["failures"]+int(_ci.get("audit_failures") or 0),
+            "".join("1" if x else "0" for x in _saved)))
+    except Exception as _cache_exc:
+        log(d,"POOL_FOLD_CACHE_SAVE_FAILED|%s|%s"%(HOST,type(_cache_exc).__name__))
 _phase_timing("pool_fold")
 log(d,"POOL_IDS|%s|ids=%s"%(HOST,pool_ids))
 # lane, then most-unblocking first, then priority, then stable id

@@ -30,6 +30,7 @@ def _load_claimability() -> dict[str, object]:
         "_complete_governed_review",
         "_claimability_reason",
         "_authoritative_card_snapshot",
+        "_compute_authoritative_snapshot",
         "_authoritative_card_state",
         "authoritative_claimability",
         "_governed_review_metadata",
