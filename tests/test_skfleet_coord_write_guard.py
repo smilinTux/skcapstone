@@ -57,12 +57,49 @@ def test_current_fleet_card_cannot_be_reclaimed_but_worker_continues() -> None:
     }
 
 
-def test_other_card_claim_and_nonfleet_claim_remain_available() -> None:
+def test_fleet_worker_cannot_claim_another_card() -> None:
     event = {
         "toolName": "bash",
         "input": {"command": "skcapstone coord claim feedbeef --agent worker"},
     }
+    verdict = _hook(event, env={"SKFLEET_CARD_ID": "deadbeef"})
+    assert verdict and verdict["block"] is True
+    assert "only mutate custody of its dispatched card" in verdict["reason"]
+
+
+def test_fleet_worker_can_release_its_own_card() -> None:
+    event = {
+        "toolName": "bash",
+        "input": {
+            "command": (
+                "skcapstone coord release-claim deadbeef --owner builder "
+                "--expected-claim-revision revision --agent worker"
+            )
+        },
+    }
     assert _hook(event, env={"SKFLEET_CARD_ID": "deadbeef"}) is None
+
+
+def test_explicit_worker_operator_role_allows_off_card_custody() -> None:
+    event = {
+        "toolName": "bash",
+        "input": {"command": "skcapstone coord release-claim feedbeef --owner builder"},
+    }
+    assert (
+        _hook(
+            event,
+            env={"SKFLEET_CARD_ID": "deadbeef", "SKFLEET_OPERATOR_ROLE": "coord-custody"},
+        )
+        is None
+    )
+
+
+def test_non_worker_reaper_custody_command_remains_available() -> None:
+    event = {
+        "toolName": "bash",
+        "input": {"command": "skcapstone coord release-claim feedbeef --owner builder"},
+    }
+    assert _hook(event, env={"SKFLEET_CARD_ID": ""}) is None
     assert _hook(event, env={"SKFLEET_CARD_ID": ""}) is None
 
 

@@ -728,6 +728,9 @@ def _offer(paths, core, labels, *, writer, now=None):
         "lease_expires_at": _iso(stamp + timedelta(seconds=LEASE_SECONDS)),
         "writer": {"role": writer.role, "node": writer.node, "identity": writer.identity},
     }
+    card_meta = core.get("meta")
+    if isinstance(card_meta, dict) and card_meta.get("operator_role") == "coord-custody":
+        request["operator_role"] = "coord-custody"
     if binding is not None:
         request["production"] = binding
         request["test_profile"] = test_profile
@@ -1456,6 +1459,7 @@ def worker_command(request: dict, owner: str, claim_revision: str, workspace: Pa
         f"SKCAPSTONE_HOME={sovereign_home}",
         f"SKFLEET_CARD_ID={request['card_id']}",
         f"SKFLEET_CLAIM_REVISION={claim_revision}",
+        f"SKFLEET_OPERATOR_ROLE={request.get('operator_role', '')}",
         *(f"{key}={value}" for key, value in git_environment.items()),
         worker,
         "--no-approve",

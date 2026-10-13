@@ -556,7 +556,12 @@ def register_coord_commands(main: click.Group) -> None:
         from ..seat_boundaries import Action
 
         authorize_coord_mutation(
-            agent, Action.CLAIM, task_id, casey_authorization, casey_change_id
+            agent,
+            Action.CLAIM,
+            task_id,
+            casey_authorization,
+            casey_change_id,
+            home=home_path,
         )
         board = Board(home_path)
         try:
@@ -893,10 +898,10 @@ def register_coord_commands(main: click.Group) -> None:
         from ..jarvis_emergency import authorize_coord_mutation
         from ..seat_boundaries import Action
 
-        authorize_coord_mutation(agent, Action.RELEASE, task_id, None, None)
+        home_path = Path(home).expanduser()
+        authorize_coord_mutation(agent, Action.RELEASE, task_id, None, None, home=home_path)
         if not str(expected_claim_revision).strip():
             raise click.ClickException("expected claim revision must not be empty")
-        home_path = Path(home).expanduser()
         board = Board(home_path)
         try:
             with _board_mutation_lock(home_path), card_mutation_lock(home_path, task_id):
@@ -1519,6 +1524,7 @@ def register_coord_commands(main: click.Group) -> None:
             f"{task_id}:{column}",
             casey_authorization,
             casey_change_id,
+            home=home_path,
         )
 
         try:
