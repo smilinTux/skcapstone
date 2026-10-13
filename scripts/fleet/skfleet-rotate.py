@@ -7001,14 +7001,24 @@ def _production_review_plan(parent, outcome_ts, candidate, store=None):
             return None  # reviewable_source_candidate recorded and logged why
         source = store.fold(parent)
         producer, path, digest, commit, tree, ref = candidate
-        lineage = replacement_binding(home, parent, commit)
+        released = source.owner is None
+        bound_snapshot = snapshot
+        if released:
+            from skcapstone.fleet.released_source import direct_review_view, review_lineage
+
+            view, manifest, _ = direct_review_view(home, source)
+            source = view.fold(parent)
+            bound_snapshot = gateway.read_card(parent, _store=view)
+            lineage = review_lineage(home, source, manifest)
+        else:
+            lineage = replacement_binding(home, parent, commit)
         review_id = lineage.pop("review_card_id")
         plan = {
             "review_id": review_id,
             "claim_revision": source.meta["_claim_revision"],
             "source": source_binding(source),
             "meta": {
-                "source_revision": snapshot.revision,
+                "source_revision": bound_snapshot.revision,
                 "link_source_card": parent, "link_head_revision": commit,
                 "link_card_generation": card_generation(source),
                 "link_evidence_sha256": digest, "link_review_class": "review",
@@ -7017,6 +7027,8 @@ def _production_review_plan(parent, outcome_ts, candidate, store=None):
                 "candidate_tree": tree, "candidate_ref": ref, **lineage,
             },
         }
+        if released:
+            plan["current_source_revision"] = snapshot.revision
         # Compare against an independent current read before accepting the
         # shared per-plan snapshot.
         if gateway.read_card(parent).revision == snapshot.revision:
@@ -7049,7 +7061,7 @@ def _open_production_review(parent, outcome_ts, candidate, plan):
             return refuse(site, parent, "an open or claimed review already exists")
         result = subprocess.run(
             [SKC, "coord", "review-work", parent, "--producer", candidate[0],
-             "--expected-source-revision", plan["meta"]["source_revision"],
+             "--expected-source-revision", plan.get("current_source_revision", plan["meta"]["source_revision"]),
              "--expected-claim-revision", plan["claim_revision"], "--agent", "link",
              "--home", str(Path(CARDS).parent)],
             capture_output=True, text=True, timeout=60,

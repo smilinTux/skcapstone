@@ -180,6 +180,7 @@ def direct_review_view(home, source, manifest=None):
         outcome = _latest_outcome(CardStore(home), source.id)
         manifest = _packet(home, source.id, outcome.get("candidate_commit", ""))["manifest"]
     release = prove(home, source, manifest)
+    outcome = _latest_outcome(CardStore(home), source.id)
     view = _before_release(home, source, release)
     original = view.fold(source.id)
     binding = source_binding(original)
@@ -212,6 +213,8 @@ def direct_review_view(home, source, manifest=None):
     if (
         len(launches) != 1
         or receipt.get("schema") != "skfleet.direct-seat/v1"
+        or type(receipt.get("exit_code")) is not int
+        or datetime.fromisoformat(launches[0]["ts"]) > datetime.fromisoformat(outcome["ts"])
         or any(
             receipt.get(k) != launches[0].get("route_identity", {}).get(k)
             for k in ("provider", "logical_route", "capacity_domains", "model_or_bucket")

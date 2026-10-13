@@ -75,7 +75,10 @@ def open_guarded_review(
         if source is not None and source.owner is None:
             from .fleet.released_source import direct_review_view
 
-            store, released_manifest, _ = direct_review_view(home, source)
+            try:
+                store, released_manifest, _ = direct_review_view(home, source)
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise ValueError("guarded review released custody unavailable") from exc
             source = store.fold(card_id)
             snapshot = LiveCardStoreGateway(home).read_card(card_id, _store=store)
         if (
