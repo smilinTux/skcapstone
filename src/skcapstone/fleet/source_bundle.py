@@ -48,9 +48,49 @@ def _root(home: Path, card: str) -> Path:
     return home / "evidence" / "work" / card / "source-bundles"
 
 
+def mkdir_private(directory: Path) -> None:
+    """Create a directory chain with every NEW component mode 0700.
+
+    ``Path.mkdir(parents=True, mode=...)`` applies the mode to the leaf only;
+    intermediate directories get the process umask (0775 under chi's 0002).
+    The review retirement receipts created ``evidence/work/<card>`` that way, and
+    the reviewer's private-evidence handoff then refused it ("card evidence
+    directory must be owned and mode 0700"), so 19 finished reviews never wrote
+    their native verdict (2026-10-13).
+    """
+    missing = []
+    current = directory
+    while not current.exists() and current != current.parent:
+        missing.append(current)
+        current = current.parent
+    for component in reversed(missing):
+        component.mkdir(mode=0o700, exist_ok=True)
+        os.chmod(component, 0o700)
+
+
+def narrow_owned_dirs(*directories: Path) -> None:
+    """Strip group/other bits from existing directories this user owns.
+
+    Only ever removes permissions, never follows a symlink and never touches a
+    directory owned by someone else.
+    """
+    for directory in directories:
+        try:
+            info = directory.lstat()
+        except FileNotFoundError:
+            continue
+        if (
+            stat.S_ISDIR(info.st_mode)
+            and info.st_uid == os.getuid()
+            and stat.S_IMODE(info.st_mode) & 0o077
+            and directory.resolve() == directory
+        ):
+            os.chmod(directory, stat.S_IMODE(info.st_mode) & ~0o077)
+
+
 def _once(path: Path, raw: bytes) -> None:
     """Publish complete immutable bytes by exclusive link, preserving retries."""
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    mkdir_private(path.parent)
     parent = path.parent
     info = parent.lstat()
     if (

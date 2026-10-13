@@ -276,6 +276,17 @@ def _raw(path: Path) -> bytes:
     return source_bundle._read(path, source_bundle.MAX_EVIDENCE)
 
 
+def _private_receipt_dirs(receipt: Path) -> None:
+    """Keep the card evidence directory private for the reviewer's later handoff.
+
+    Receipts live at evidence/work/<card>/retired-reviews/<request>/. A card
+    directory left 0775 here made the next reviewer's guarded evidence staging
+    refuse it, so the review finished with no native verdict.
+    """
+    source_bundle.mkdir_private(receipt.parent)
+    source_bundle.narrow_owned_dirs(receipt.parent.parent, receipt.parent.parent.parent)
+
+
 def _receipt_path(home: Path, card: str, request_id: str) -> Path:
     if not CARD.fullmatch(card) or not SHA.fullmatch(request_id):
         raise ValueError("invalid review retirement identity")
@@ -1155,6 +1166,7 @@ def retire_prestart(
         if not apply:
             return {"state": "qualified-check-only", "binding": binding}
         receipt = _receipt_path(home, card, request_id)
+        _private_receipt_dirs(receipt)
         source_bundle._once(receipt.parent / "request.json", raw_request)
         if pending:
             source_bundle._once(receipt.parent / "status.json", raw_status)
@@ -1468,6 +1480,7 @@ def retire(
         if not apply:
             return {"state": "qualified-check-only", "binding": binding}
         receipt = _receipt_path(home, card, request_id)
+        _private_receipt_dirs(receipt)
         source_bundle._once(receipt.parent / "request.json", raw_request)
         source_bundle._once(receipt.parent / "status.json", raw_status)
         exit_name = exit_source + ".json"
@@ -1866,6 +1879,7 @@ def supersede_released_reviews(paths, home: Path, *, actor: str = "niobe") -> li
                     reason=SUPERSEDE_REASON,
                 )
                 receipt = _supersession_receipt(home, card, request_id)
+                _private_receipt_dirs(receipt)
                 source_bundle._once(receipt.parent / "request.json", raw_request)
                 source_bundle._once(receipt.parent / "status.json", raw_status)
                 source_bundle._once(receipt.parent / "context.json", raw_context)

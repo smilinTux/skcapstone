@@ -427,3 +427,40 @@ def test_once_narrows_our_own_group_writable_directory(tmp_path):
     bundle._once(directory / "EVIDENCE.md", b"evidence")
     assert (directory / "EVIDENCE.md").read_bytes() == b"evidence"
     assert stat_module.S_IMODE(directory.stat().st_mode) & 0o022 == 0
+
+
+def test_once_creates_every_new_ancestor_private_under_group_umask(tmp_path):
+    """mkdir(parents=True, mode=0o700) leaves intermediates at umask (0775).
+
+    The reviewer's evidence staging requires evidence/work/<card> to be 0700.
+    """
+    import os
+
+    from skcapstone.fleet import source_bundle as bundle
+
+    old = os.umask(0o002)
+    try:
+        leaf = tmp_path / "work" / "abcd1234" / "retired-reviews" / "req"
+        bundle._once(leaf / "request.json", b"{}")
+    finally:
+        os.umask(old)
+    for directory in (
+        tmp_path / "work",
+        tmp_path / "work" / "abcd1234",
+        tmp_path / "work" / "abcd1234" / "retired-reviews",
+        leaf,
+    ):
+        assert directory.stat().st_mode & 0o777 == 0o700, directory
+
+
+def test_narrow_owned_dirs_only_removes_group_and_other_bits(tmp_path):
+    from skcapstone.fleet import source_bundle as bundle
+
+    shared = tmp_path / "card"
+    shared.mkdir()
+    shared.chmod(0o775)
+    missing = tmp_path / "missing"
+    link = tmp_path / "link"
+    link.symlink_to(shared)
+    bundle.narrow_owned_dirs(shared, missing, link)
+    assert shared.stat().st_mode & 0o777 == 0o700
