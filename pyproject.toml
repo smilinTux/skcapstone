@@ -81,7 +81,7 @@ dependencies = [
     # Production versions live in deploy/fleet-constraints.txt (CI and rollout
     # install with -c). Bump the pin there in the same PR; the floor here must
     # never exceed the pin.
-    "skcoord>=0.1.86",
+    "skcoord>=0.1.88",
     "skmemory>=0.5.0",
     "skskills>=0.1.1",
 ]
