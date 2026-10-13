@@ -253,11 +253,30 @@ class Slow(Pages):
 
     count = 40
     delay = 0.05
+    _lock = None
+
+    @classmethod
+    def _init_lock(cls):
+        import threading
+
+        cls._lock = threading.Lock()
+        return cls._lock
+
+    inflight = 0
+    peak = 0
 
     def request(self, method, path, payload=None):
         import time
 
-        time.sleep(self.delay)
+        lock = Slow.__dict__.get("_lock") or Slow._init_lock()
+        with lock:
+            Slow.inflight += 1
+            Slow.peak = max(Slow.peak, Slow.inflight)
+        try:
+            time.sleep(self.delay)
+        finally:
+            with lock:
+                Slow.inflight -= 1
         if "/pulls?" in path:
             if "page=1&" in path:
                 return [self.pr(n) for n in range(1, self.count + 1)]
@@ -269,13 +288,17 @@ def test_slow_forge_reads_overlap_and_keep_order():
     import time
 
     transport = Slow()
+    Slow.inflight = Slow.peak = 0
     started = time.perf_counter()
     rows = ForgejoReadOnlyConnector(transport).list_open(SKGIT_REPOSITORY)
     elapsed = time.perf_counter() - started
     assert [r["number"] for r in rows] == list(range(1, Slow.count + 1))
     # 2 list pages + 3 requests per PR is ~6s one after another at 50ms each.
     serial = (2 + 3 * Slow.count) * Slow.delay
-    assert elapsed < serial / 3
+    # Overlap is asserted deterministically; the wall clock is only a loose
+    # backstop so a loaded CI runner cannot flake the test.
+    assert Slow.peak >= 2
+    assert elapsed < serial * 0.75
 
 
 def test_first_error_in_pr_order_wins_under_concurrency():
