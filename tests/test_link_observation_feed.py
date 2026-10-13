@@ -85,6 +85,22 @@ def test_valid_feed_drives_advisory_handoff(tmp_path: Path) -> None:
     assert "c" * 64 in handoff
 
 
+def test_replayed_evidence_is_rejected(tmp_path: Path) -> None:
+    feed_path = tmp_path / "link-observations.json"
+    value = payload()
+    write_feed(feed_path, value)
+    supplied = value["evidence_sha256"]
+    with pytest.raises(ObservationFeedError, match="observation_feed_replayed"):
+        load_observation_feed(feed_path, prior_evidence_sha256=supplied)
+
+
+def test_malformed_json_is_fail_closed(tmp_path: Path) -> None:
+    feed_path = tmp_path / "link-observations.json"
+    feed_path.write_text("{not-json", encoding="utf-8")
+    with pytest.raises(ObservationFeedError, match="observation_feed_unreadable"):
+        load_observation_feed(feed_path)
+
+
 def test_jarvis_reviewer_candidate_is_rejected(tmp_path: Path) -> None:
     feed_path = tmp_path / "link-observations.json"
     value = payload()
