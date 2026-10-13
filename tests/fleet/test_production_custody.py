@@ -174,6 +174,10 @@ def test_review_custody_reuses_one_snapshot_and_rechecks_fresh_state(
         return original(home)
 
     monkeypatch.setattr(card_store_module, "load_legacy_mutations", counted)
+    # skcoord >= 0.1.87 memoizes parses process-wide; start from an empty cache
+    # so this test counts its own loads, not an earlier test's.
+    if hasattr(card_store_module, "_LEGACY_PROCESS_CACHE"):
+        monkeypatch.setattr(card_store_module, "_LEGACY_PROCESS_CACHE", {})
     assert candidate_allowed(value)
     # The fold, custody, and gateway reads share one overlay snapshot. The
     # final comparison still uses a fresh store for concurrency safety.
