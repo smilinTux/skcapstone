@@ -1,0 +1,110 @@
+{
+  "review_card_id": "6c418ad3",
+  "source_card_id": "a743f500",
+  "reviewer": "pi-glm-chiap02-6c418ad3",
+  "review_timestamp": "2026-08-28T12:54:00.000000+00:00",
+  "partition": 11,
+  "source_pr": "https://github.com/smilinTux/skcapstone/pull/244",
+  "artifact_under_review": {
+    "path": "/home/skuser01/.skcapstone/evidence/work/a743f500/partition-11-corrected-replacement.json",
+    "sha256": "cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c",
+    "sha256_verified": true
+  },
+  "manifest_verification": {
+    "manifest_path": "/home/skuser01/.skcapstone/evidence/work/a743f500/manifest.json",
+    "partition_11_entry": {
+      "partition": 11,
+      "path": "docs/reviews/artifacts/a743f500/partition-11-corrected-replacement.json",
+      "sha256": "cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c",
+      "shared_path": "/home/skuser01/.skcapstone/evidence/work/a743f500/partition-11-corrected-replacement.json"
+    },
+    "manifest_sha256_matches_artifact": true
+  },
+  "acceptance_criteria_verification": {
+    "criterion_1_reproduced_artifact": {
+      "status": "PASS",
+      "evidence": "SHA-256 cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c reproduced from shared evidence path /home/skuser01/.skcapstone/evidence/work/a743f500/partition-11-corrected-replacement.json matches PR 244 manifest entry"
+    },
+    "criterion_2_verified_corrections": {
+      "status": "PASS",
+      "correction_9535bc80": {
+        "defect_type": "omitted_verdict",
+        "evidence_source": "/home/skuser01/.skcapstone/cards/9535bc80/acceptance_criteria_evidence.jsonl:1",
+        "verdict_found": "BLOCKED",
+        "verification": "Read acceptance_criteria_evidence.jsonl directly, confirmed BLOCKED verdict at line 1 with artifact_sha256 0890f14e099073207558ca2060f8de1cfd6234c096f7f612ad9ec2de8743b14b",
+        "result": "VERIFIED"
+      },
+      "correction_f10a0e73": {
+        "defect_type": "omitted_verdicts_and_unsafe_transition",
+        "evidence_source": "/home/skuser01/.skcapstone/cards/f10a0e73/events/pi-codex-f10a0e73@chiap08.jsonl",
+        "verdicts_found": [
+          {
+            "line": 13,
+            "verdict": "BLOCKED",
+            "blocked_on": {"referent": "ac:2", "type": "card"},
+            "artifact_sha256": "6df545076b6a1750ed5249622cc4550b52918cf1b06621a99afe84e6d11b64b0"
+          },
+          {
+            "line": 18,
+            "verdict": "BLOCKED",
+            "blocked_on": {"referent": "ac:2", "type": "card"},
+            "artifact_sha256": "f1e5b3294fe0b26d0bb124ff32261365e35b7fd0f327559fd1134239dce35557"
+          }
+        ],
+        "verification": "Read card event JSONL directly, confirmed BLOCKED verdicts at lines 13 and 18 with blocked_on card ac:2",
+        "result": "VERIFIED"
+      }
+    },
+    "criterion_3_remedies_verified": {
+      "status": "PASS",
+      "summary": "All remedies are either no action or exact supported append-only commands with explicit authority and preconditions",
+      "details": {
+        "no_action_proposed_cards": ["9535bc80", "f10a0e73"],
+        "string_proposal_cards": ["0994c010", "5236382f", "65e00fd9"],
+        "verification": "String proposals describe append-only evidence events with explicit authority (Chef) and preconditions. Command objects have null command and NO_ACTION_PROPOSED execution status. No execution commands present."
+      }
+    },
+    "criterion_4_verdict_recorded": {
+      "status": "PENDING",
+      "artifact_hash": "cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c",
+      "notifications_pending": "jarvis and lumina to be notified via skmail after verdict finalization"
+    }
+  },
+  "two_store_join_verification": {
+    "reasoning_contract": {
+      "structural_store": "Fold core.json and structural CardStore events for lifecycle, archive, owner, labels, and dependencies",
+      "evidence_store": "Read direct evidence and verdict events separately, including card event JSONL and acceptance criteria evidence JSONL",
+      "join_rule": "Join the two stores only by exact card_id. Lifecycle, links, labels, and dependency completion never imply an evidence verdict",
+      "human_authority_rule": "Only explicit Chef approval or explicit Chef void discharges a human gate. A machine card is not a substitute"
+    },
+    "verification": "Artifact correctly applies two-store reasoning contract. No verdict inferred from lifecycle state, links, labels, or dependency completion. All verdicts derived from direct evidence events.",
+    "records_count": 40,
+    "explicit_verdicts_found": 3,
+    "inferred_from_completion": 0,
+    "result": "VERIFIED"
+  },
+  "proposal_only_remedy_verification": {
+    "cards_with_remedies": 5,
+    "string_proposals": 3,
+    "no_action_proposed": 2,
+    "all_proposal_only": true,
+    "no_execution_commands": true,
+    "explicit_authority_present": true,
+    "preconditions_present": true,
+    "result": "VERIFIED"
+  },
+  "external_action_verification": {
+    "no_audited_card_repair_applied": true,
+    "no_deploy_or_restart": true,
+    "no_live_gateway_or_config_mutation": true,
+    "no_credential_disclosure": true,
+    "no_wake_02_enablement": true,
+    "no_live_execution": true,
+    "no_automerge": true,
+    "result": "VERIFIED"
+  },
+  "verdict": "PASS",
+  "verdict_reason": "Independent read-only verification confirms: (1) Artifact SHA-256 cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c reproduced from shared evidence path and matches PR 244 manifest. (2) All corrections verified against separate structural CardStore and direct evidence events: 9535bc80 BLOCKED from acceptance_criteria_evidence.jsonl, f10a0e73 BLOCKED from pi-codex-f10a0e73@chiap08.jsonl lines 13 and 18 with blocked_on ac:2. (3) All remedies are proposal-only append-only commands with explicit authority and preconditions; no execution commands. (4) Two-store reasoning contract applied correctly; no verdict inferred from lifecycle, links, labels, or dependencies. No external actions executed.",
+  "verdict_hash": "1e7a9f8c3b5d2e6a4f8c9b0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1",
+  "schema": "skcapstone.fleet_unblock.corrected_replacement_independent_review.v1"
+}
