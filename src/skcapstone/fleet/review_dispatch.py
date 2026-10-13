@@ -192,7 +192,7 @@ def validate_contract(request, policy, *, host, historical=False):
         or canonical_principal(source["owner"]) == canonical_principal(request["reviewer"])
         or provider_family(bound["family"]) != provider_family(bound["provider_family"])
         or provider_family(bound["capacity_domain"]) != provider_family(bound["family"])
-        or not review_family_allowed(family, bound["family"], request["labels"])
+        or not review_family_allowed(family, bound["family"], request["labels"], policy=admitted)
         or bound["provider"] != "skgateway"
         or bound["host"] != host
         or bound["authority"] != policy["authority_host"]
@@ -477,7 +477,11 @@ def offer_review(paths, home, card_id, *, writer):
         route = "sk-" + (card_required_size(card) or "").lower()
         routes = production.production_routes.candidates(policy, route, card.labels)
         family = producer_family(source["owner"], source["family"])
-        routes = [r for r in routes if review_family_allowed(family, r["family"], card.labels)]
+        routes = [
+            r
+            for r in routes
+            if review_family_allowed(family, r["family"], card.labels, policy=policy)
+        ]
         nodes = production.ready_nodes(paths, dispatch._ready_builders(paths), policy, card_id)
         nodes = [
             v
