@@ -44,7 +44,7 @@ from skcapstone.fleet_lane_health import (
     cycle_id as new_cycle_id,
     lane_health,
 )
-from skcapstone.fleet_route_preflight import preflight_failure_expired, resolve_and_preflight
+from skcapstone.fleet_route_preflight import resolve_and_preflight
 from skcapstone.fleet import builder_dispatch, store as fleet_store
 from skcapstone.fleet import builder_offer_memory as _offer_memory
 from skcapstone.fleet.production_dispatch import (
@@ -9314,7 +9314,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             return _res is not None,_why
         _attempt_lane_name,_attempt_defer,_hops=select_lane_with_fallthrough(
             _select_attempt_lane,
-            lambda _n: _lane_model(next(l for l in LANES if l["name"]==_n),core,_labels),
+            lambda _n: _lane_model(next(_ln for _ln in LANES if _ln["name"]==_n),core,_labels),
             _fallthrough_preflight,_attempt_health)
         for _hop in _hops:
             _lane_unhealthy[_hop["from"]]=_hop["reason"] or "preflight-failed"
