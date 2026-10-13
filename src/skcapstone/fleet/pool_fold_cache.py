@@ -62,9 +62,13 @@ def _stat_key(st: os.stat_result) -> tuple[int, int, int, int]:
     return (st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
 
-def card_signature(cards_dir: str | os.PathLike[str], card_id: str,
-                   memo: Optional[dict] = None, now_ns: Optional[int] = None,
-                   dir_checked: bool = False) -> Optional[tuple]:
+def card_signature(
+    cards_dir: str | os.PathLike[str],
+    card_id: str,
+    memo: Optional[dict] = None,
+    now_ns: Optional[int] = None,
+    dir_checked: bool = False,
+) -> Optional[tuple]:
     """Return a hashable change signature for one card, or ``None`` when unsafe.
 
     ``ABSENT`` means the directory has no ``core.json`` (``CardStore`` skips such
@@ -182,8 +186,13 @@ class LegacyDigests:
 class SigCache:
     """A card id to ``(key, JSON text)`` map with an optional private on-disk copy."""
 
-    def __init__(self, path: str | os.PathLike[str] | None, namespace: str,
-                 stamp: str, clock: Callable[[], int] = time.time_ns) -> None:
+    def __init__(
+        self,
+        path: str | os.PathLike[str] | None,
+        namespace: str,
+        stamp: str,
+        clock: Callable[[], int] = time.time_ns,
+    ) -> None:
         self.path = os.fspath(path) if path else None
         self.namespace = namespace
         self.stamp = stamp
@@ -310,9 +319,13 @@ class CardIndex:
     read-only snapshots (``LiveCardStoreGateway.read_card`` only reads them).
     """
 
-    def __init__(self, home: Path, path: str | os.PathLike[str] | None = None,
-                 clock: Callable[[], int] = time.time_ns,
-                 rng: Optional[random.Random] = None) -> None:
+    def __init__(
+        self,
+        home: Path,
+        path: str | os.PathLike[str] | None = None,
+        clock: Callable[[], int] = time.time_ns,
+        rng: Optional[random.Random] = None,
+    ) -> None:
         self.home = Path(home)
         self.clock = clock
         self.rng = rng or random.Random()
@@ -426,8 +439,9 @@ class CardIndex:
         self.cache.keep_only(name for name, _signature, _key in plan)
         return out  # type: ignore[return-value]
 
-    def _resolve(self, store: Any, plan: list, cards_dir: str,
-                 degrade_unreadable: bool = False) -> Optional[list]:
+    def _resolve(
+        self, store: Any, plan: list, cards_dir: str, degrade_unreadable: bool = False
+    ) -> Optional[list]:
         now = self.clock()
         out: list = []
         persisted_hits: list[tuple[str, str, Any]] = []
@@ -480,7 +494,9 @@ class CardIndex:
             for name, _key, cached in sample:
                 fresh = store.fold(name)
                 # cached is None for an archived-card marker: it must still be archived.
-                stale = (fresh is None or not fresh.archived) if cached is None else fresh != cached
+                stale = (
+                    (fresh is None or not fresh.archived) if cached is None else fresh != cached
+                )
                 if stale:
                     self.audit_failures += 1
                     logger.error("pool fold cache audit mismatch on card %s", name)
@@ -506,7 +522,9 @@ class CardIndex:
             return held[1]
         card = store.fold(card_id)
         self.refolded += 1
-        if card_signature(cards_dir, card_id) == signature and not is_racy(signature, self.clock()):
+        if card_signature(cards_dir, card_id) == signature and not is_racy(
+            signature, self.clock()
+        ):
             self.objects[card_id] = (key, card)
         return card
 

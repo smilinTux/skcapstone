@@ -24,8 +24,17 @@ def _board(tmp_path: Path, count: int = 12) -> tuple[Path, CardStore]:
         events = home / "cards" / cid / "events"
         events.mkdir(exist_ok=True)
         (events / "w.jsonl").write_text(
-            json.dumps({"action": "move", "column": "ready", "ts": "2026-01-01T00:00:0%dZ" % (index % 9),
-                        "writer": "w", "seq": 1}) + "\n")
+            json.dumps(
+                {
+                    "action": "move",
+                    "column": "ready",
+                    "ts": "2026-01-01T00:00:0%dZ" % (index % 9),
+                    "writer": "w",
+                    "seq": 1,
+                }
+            )
+            + "\n"
+        )
     return home, store
 
 
@@ -60,8 +69,18 @@ def test_append_and_new_card_invalidate(tmp_path):
     index.cards(store)
     target = home / "cards" / "ab000003" / "events" / "w.jsonl"
     with open(target, "a") as handle:
-        handle.write(json.dumps({"action": "move", "column": "done", "ts": "2026-02-01T00:00:00Z",
-                                 "writer": "w", "seq": 2}) + "\n")
+        handle.write(
+            json.dumps(
+                {
+                    "action": "move",
+                    "column": "done",
+                    "ts": "2026-02-01T00:00:00Z",
+                    "writer": "w",
+                    "seq": 2,
+                }
+            )
+            + "\n"
+        )
     got = index.cards(store)
     assert index.refolded == 13
     assert _dump(got) == _dump(CardStore(home).list_cards())
