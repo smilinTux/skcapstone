@@ -269,28 +269,23 @@ jobs:
           python -m pip install --force-reinstall --no-deps --no-cache-dir \
             "skcoord @ git+https://github.com/smilinTux/skcoord@47cf3b1d6cbfbda5a07f32ae3a9ed9ad59de6217"
           python -c "import skcoord.owner_helpers, skcoord.review_replacement"
-      - name: Resolve exact sibling revisions
+      # These are reviewed, immutable sibling revisions. Nothing here may
+      # resolve a branch or HEAD: a foreign repository change must never
+      # alter this workflow's dependency graph without an SKCapstone review
+      # (card 2bd7d1c8). Both pins are the exact revisions the green main
+      # suite consumed at run 36444475070 (2026-09-28), and each is the
+      # commit its repository's reviewed release tag points at:
+      #   skdashboard d4c132284cda9186b5f9069803573c561f2f83b8 = tag v0.1.107
+      #   skharness    7409a1ab28f9c8fed87cd40226f4c031ca9e3f6e (main head)
+      # Bump either pin only through an SKCapstone review that reruns this
+      # suite against the new revision.
+      - name: Install reviewed sibling releases
         if: needs.classify.outputs.docs-only != 'true'
-        id: siblings
-        run: |
-          set -euo pipefail
-          dashboard="$(git ls-remote https://github.com/smilinTux/skdashboard HEAD | cut -f1)"
-          harness="$(git ls-remote https://github.com/smilinTux/skharness HEAD | cut -f1)"
-          [[ "$dashboard" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$harness" =~ ^[0-9a-f]{40}$ ]]
-          echo "dashboard=$dashboard" >> "$GITHUB_OUTPUT"
-          echo "harness=$harness" >> "$GITHUB_OUTPUT"
-          printf 'Sibling freshness fence: skdashboard=%s skharness=%s\n' "$dashboard" "$harness"
-      - name: Install extracted siblings at exact revisions
-        if: needs.classify.outputs.docs-only != 'true'
-        env:
-          DASHBOARD_SHA: ${{ steps.siblings.outputs.dashboard }}
-          HARNESS_SHA: ${{ steps.siblings.outputs.harness }}
         run: |
           python scripts/ci/test_environment.py
           python -m pip install --force-reinstall --no-deps --no-cache-dir \
-            "skdashboard @ git+https://github.com/smilinTux/skdashboard@${DASHBOARD_SHA}" \
-            "skharness @ git+https://github.com/smilinTux/skharness@${HARNESS_SHA}"
+            "skdashboard @ git+https://github.com/smilinTux/skdashboard@d4c132284cda9186b5f9069803573c561f2f83b8" \
+            "skharness @ git+https://github.com/smilinTux/skharness@7409a1ab28f9c8fed87cd40226f4c031ca9e3f6e"
       - name: Run complete deterministic unit suite
         # PR-scoped (pull_request or merge_group): only py3.12 runs the full
         # suite, matching the 2-version matrix above. Anything else (push to
