@@ -1,0 +1,130 @@
+name: test-env
+description: >-
+  Provision the unit-test environment (sandbox support, package with all
+  extras and dev tools, pinned skcoord, exact sibling revisions). Shared by
+  the sharded py3.12 jobs and the py3.11 / non-PR unit jobs so the two cannot
+  drift. The caller must have checked out the repo and set up Python.
+
+runs:
+  using: composite
+  steps:
+    - name: Install system deps and isolated-test sandbox support
+      run: |
+        sudo apt-get update \
+          -o Dir::Etc::sourcelist="sources.list.d/ubuntu.sources" \
+          -o Dir::Etc::sourceparts="-"
+        sudo apt-get install -y libfuse-dev bubblewrap dbus-user-session
+        # The deployed source-inspection tests exercise real sandbox and
+        # descendant cleanup guarantees. Provision their user manager on the
+        # disposable runner; never substitute successful sandbox results.
+        sudo loginctl enable-linger "$(id -un)"
+        sudo systemctl start "user@$(id -u).service"
+        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+        echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+        systemctl --user show-environment > /dev/null
+        scripts/ci/check-native-sandbox.sh
+    - name: Install package with all extras and dev tools
+      run: |
+        python scripts/ci/test_environment.py
+        python -m pip install --upgrade pip
+        python scripts/ci/test_environment.py
+        python -m pip install -e ".[all,dev]"
+    - name: Verify resolved package dependencies
+      run: python -m pip check
+    - name: Verify registry skcoord contract before source overlay
+      run: |
+        python scripts/ci/test_environment.py
+        python -m pip install --force-reinstall --no-deps --no-cache-dir \
+          --only-binary=:all: "skcoord==0.1.86"
+        python -m pip show skcoord
+        python - <<'PY'
+        import os
+        import tempfile
+        from importlib.metadata import version
+        from pathlib import Path
+
+        from packaging.version import Version
+        from skcoord.card_event_recovery import (
+            apply_overlay_recovery,
+            plan_overlay_recovery,
+            rollback_overlay_recovery,
+            save_recovery_plan,
+            scan_overlay_records,
+        )
+        from skcoord.card_store import CardCore, CardStore
+        from skcoord.cmdb_scheduler import ReconcileLease, ScheduledReconcileConfig
+        from skcoord.coordination import Board
+        from skcoord.lifecycle import audit_lifecycle, repair_lifecycle, transition_task
+
+        assert Version(version("skcoord")) == Version("0.1.86")
+        assert callable(scan_overlay_records)
+        assert callable(plan_overlay_recovery)
+        assert callable(save_recovery_plan)
+        assert callable(apply_overlay_recovery)
+        assert callable(rollback_overlay_recovery)
+        assert callable(audit_lifecycle)
+        assert callable(repair_lifecycle)
+        assert callable(transition_task)
+        assert ReconcileLease
+        assert not ScheduledReconcileConfig().enabled
+
+        os.environ["SKCOORD_CARD_STORE"] = "1"
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            store = CardStore(home)
+            store.create(
+                CardCore(
+                    id="registry-contract",
+                    title="Registry contract",
+                    acceptance_criteria=["birth criterion"],
+                )
+            )
+            store.append_event(
+                "registry-contract",
+                "amend_criteria",
+                "ci",
+                criteria=["amended criterion"],
+            )
+            card = store.fold("registry-contract")
+            assert card is not None
+            assert card.acceptance_criteria == ["amended criterion"]
+            view = next(
+                item
+                for item in Board(home).get_task_views()
+                if item.task.id == "registry-contract"
+            )
+            assert view.task.acceptance_criteria == ["amended criterion"]
+        PY
+        python -m pytest -q \
+          tests/test_cli_kanban.py \
+          tests/test_coord_kanban_mcp.py \
+          tests/test_coord_amend.py
+    - name: Install preserved production SKCoord candidate
+      # Draft sibling reconciliation: smilinTux/skcoord#131.
+      # Keep the registry-only contract above; this exact overlay supplies
+      # the unpublished helper/replacement APIs used by production.
+      run: |
+        python scripts/ci/test_environment.py
+        python -m pip install --force-reinstall --no-deps --no-cache-dir \
+          "skcoord @ git+https://github.com/smilinTux/skcoord@47cf3b1d6cbfbda5a07f32ae3a9ed9ad59de6217"
+        python -c "import skcoord.owner_helpers, skcoord.review_replacement"
+    - name: Resolve exact sibling revisions
+      id: siblings
+      run: |
+        set -euo pipefail
+        dashboard="$(git ls-remote https://github.com/smilinTux/skdashboard HEAD | cut -f1)"
+        harness="$(git ls-remote https://github.com/smilinTux/skharness HEAD | cut -f1)"
+        [[ "$dashboard" =~ ^[0-9a-f]{40}$ ]]
+        [[ "$harness" =~ ^[0-9a-f]{40}$ ]]
+        echo "dashboard=$dashboard" >> "$GITHUB_OUTPUT"
+        echo "harness=$harness" >> "$GITHUB_OUTPUT"
+        printf 'Sibling freshness fence: skdashboard=%s skharness=%s\n' "$dashboard" "$harness"
+    - name: Install extracted siblings at exact revisions
+      env:
+        DASHBOARD_SHA: ${{ steps.siblings.outputs.dashboard }}
+        HARNESS_SHA: ${{ steps.siblings.outputs.harness }}
+      run: |
+        python scripts/ci/test_environment.py
+        python -m pip install --force-reinstall --no-deps --no-cache-dir \
+          "skdashboard @ git+https://github.com/smilinTux/skdashboard@${DASHBOARD_SHA}" \
+          "skharness @ git+https://github.com/smilinTux/skharness@${HARNESS_SHA}"

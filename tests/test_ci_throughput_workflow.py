@@ -10,6 +10,7 @@ import yaml
 
 ROOT = Path(__file__).parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "pytest.yml"
+TEST_ENV = ROOT / ".github" / "actions" / "test-env" / "action.yml"
 CLASSIFIER = ROOT / "scripts" / "ci" / "classify-test-impact.sh"
 
 
@@ -77,7 +78,10 @@ def test_workflow_preserves_required_checks_and_coverage() -> None:
     assert "github.event_name != 'pull_request'" in workflow
     assert "matrix.python-version == '3.12'" in workflow
     assert "run-python311-compat.sh" in workflow
-    assert "python -m pip check" in workflow
+    # The install/verify steps live in the shared composite action so the
+    # sharded py3.12 jobs and the py3.11 / push jobs cannot drift.
+    assert "./.github/actions/test-env" in workflow
+    assert "python -m pip check" in TEST_ENV.read_text(encoding="utf-8")
     assert "uses: ./.github/workflows/pytest.yml" in (
         ROOT / ".github" / "workflows" / "publish.yml"
     ).read_text(encoding="utf-8")
@@ -100,3 +104,22 @@ def test_workflow_preserves_required_checks_and_coverage() -> None:
                 assert step["with"]["fail_ci_if_error"] is False
                 assert "run" not in step
     assert "|| true" not in workflow
+
+
+def test_py312_pull_request_suite_is_sharded_behind_the_required_check() -> None:
+    """`unit tests (py3.12)` stays the required name and aggregates 4 shards."""
+    data = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    shard = data["jobs"]["shard"]
+    unit = data["jobs"]["unit"]
+
+    assert shard["strategy"]["matrix"]["shard"] == [1, 2, 3, 4]
+    assert shard["name"] != unit["name"]
+    assert "shard" in unit["needs"]
+    assert not shard.get("continue-on-error")
+    run = next(s["run"] for s in shard["steps"] if s.get("name") == "Run unit shard")
+    assert "--shard ${{ matrix.shard }}/4" in run
+    assert "not integration and not e2e" in run
+    assert "|| true" not in run
+    final = unit["steps"][-1]
+    assert final["name"] == "Require every py3.12 shard to pass"
+    assert "needs.shard.result" in yaml.dump(final)
