@@ -7680,12 +7680,8 @@ def _reconcile_source_reviews_step():
     from skcapstone.fleet.production_acceptance import reconcile as reconcile_source_reviews
 
     _retired_exits = {"historical": 0, "not-applicable": 0}
-    _acceptance_seen = 0
     for _acceptance in reconcile_source_reviews(
             Path(CARDS).parent, PRODUCTION_POLICY, process_check=_card_process_snapshot):
-        if CYCLE.stop("review_sweeps", _acceptance_seen, min_done=1):
-            break
-        _acceptance_seen += 1
         # Already-finished pairs and non-source-only exits are inert; count
         # them so live pending acceptances stay visible in the cycle log.
         if _acceptance.get("historical"):
