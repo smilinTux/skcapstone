@@ -19,8 +19,9 @@ _ROOT = "/api/v1/repos/smilinTux/sklegal"
 _MAX_BYTES = 4 * 1024 * 1024
 _MAX_PAGES = 100
 _SHA = re.compile(r"[0-9a-f]{40}")
-#: Concurrent per-PR observations; modest so the forge is never hammered.
-_FETCH_WORKERS = 8
+#: Concurrent per-PR observations. Kept low: 8 workers tripped a forge 403 (rate
+#: limit) on the third back-to-back pass of ~160 requests from chiap08.
+_FETCH_WORKERS = 4
 
 
 class ForgejoError(ValueError):
