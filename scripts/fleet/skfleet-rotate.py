@@ -59,6 +59,7 @@ from skcapstone.fleet.production_dispatch import (
 )
 from skcapstone.fleet import pool_fold_cache
 from skcapstone.fleet.production_review import independent_review_routes
+from skcapstone.fleet.cycle_deadline import CycleDeadline
 from skcapstone.fleet.lane_health import (
     effective_lanes_line,
     fallthrough_log_lines,
@@ -633,6 +634,14 @@ REVIEW_MAXIMUM=_SCAN_BUDGET if PRODUCTION_POLICY else _required_lane_target("SKF
 _SEAT_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 DRY = "--go" not in sys.argv
 HOME=os.path.expanduser("~")
+#: The single cycle deadline. Every phase reads it (stop/mark/cursors); it is
+#: created here, at cycle start, from the same budget the launch loop uses.
+#: `log` and `d` are bound later, so the emitter resolves them lazily.
+CYCLE=CycleDeadline.from_environment(
+    _production_cycle_budget,started=_cycle_started,host=HOST,
+    emit=lambda _line:log(d,_line),
+    state_dir=os.path.join(HOME,".skcapstone/fleet"),
+    persist="--go" in sys.argv)
 CARDS=os.path.join(HOME,".skcapstone/cards")
 EVID=os.path.join(HOME,".skcapstone/evidence/fleet-rotation")
 PI="/home/skuser01/.npm-global/bin/pi"
@@ -1810,6 +1819,9 @@ def _phase_timing(phase):
         _PHASE_MARK[0]=now
         log(d,"PHASE_TIMING|%s|phase=%s|elapsed_s=%.1f|phase_s=%.1f"%(
             HOST,phase,now-_cycle_started,now-prior))
+        _cycle=globals().get("CYCLE")
+        if _cycle is not None:
+            _cycle.mark(phase)
     except Exception:
         pass
 
@@ -6556,9 +6568,15 @@ if DRY:
            "close_reviewed_parents skipped; "
            "pass --go to mutate the board" % HOST)
 else:
-    _release_failed_startups()
-    reap_dead_claims()
-    _expire_idle_claims()
+    # Rotating sweeps: each is idempotent and rerun next cycle, so past the
+    # phase soft deadline the cycle skips the rest and resumes at the first
+    # skipped sweep (cursor) instead of letting the head sweep starve the tail.
+    CYCLE.run_steps("startup_sweeps",(
+        ("release_failed_startups",_release_failed_startups),
+        ("reap_dead_claims",reap_dead_claims),
+        ("expire_idle_claims",_expire_idle_claims),
+    ))
+_phase_timing("startup_sweeps")
 
 # ---- open provisional outcomes for review, then close reviewed work --------
 # A card that produced a candidate and had it independently reviewed and PASSED
@@ -7666,28 +7684,42 @@ def _legacy_selector_decision(cid, core_p):
 # of currently free execution lanes, so completed producers cannot be stranded
 # behind a full worker pool.
 review_capacity = MAX_LAUNCH
-open_provisional_reviews(review_capacity, dry_run=DRY)
-if not DRY:
-    if PRODUCTION_POLICY and HOST == AUTHORITY_HOST:
-        from skcapstone.fleet.production_acceptance import reconcile as reconcile_source_reviews
 
-        _retired_exits = {"historical": 0, "not-applicable": 0}
-        for _acceptance in reconcile_source_reviews(
-                Path(CARDS).parent, PRODUCTION_POLICY, process_check=_card_process_snapshot):
-            # Already-finished pairs and non-source-only exits are inert; count
-            # them so live pending acceptances stay visible in the cycle log.
-            if _acceptance.get("historical"):
-                _retired_exits["historical"] += 1
-                continue
-            if _acceptance["state"] == "not-applicable":
-                _retired_exits["not-applicable"] += 1
-                continue
-            log(d, "SOURCE_REVIEW_ACCEPTANCE|%s|%s|%s|%s" % (
-                HOST, _acceptance["card"], _acceptance["state"], _acceptance.get("reason", "")))
-        log(d, "SOURCE_REVIEW_ACCEPTANCE_RETIRED|%s|historical=%d|not_applicable=%d" % (
-            HOST, _retired_exits["historical"], _retired_exits["not-applicable"]))
-    close_reviewed_parents()
-    release_finished_review_claims()
+
+def _reconcile_source_reviews_step():
+    if not (PRODUCTION_POLICY and HOST == AUTHORITY_HOST):
+        return
+    from skcapstone.fleet.production_acceptance import reconcile as reconcile_source_reviews
+
+    _retired_exits = {"historical": 0, "not-applicable": 0}
+    _acceptance_seen = 0
+    for _acceptance in reconcile_source_reviews(
+            Path(CARDS).parent, PRODUCTION_POLICY, process_check=_card_process_snapshot):
+        if CYCLE.stop("review_sweeps", _acceptance_seen, min_done=1):
+            break
+        _acceptance_seen += 1
+        # Already-finished pairs and non-source-only exits are inert; count
+        # them so live pending acceptances stay visible in the cycle log.
+        if _acceptance.get("historical"):
+            _retired_exits["historical"] += 1
+            continue
+        if _acceptance["state"] == "not-applicable":
+            _retired_exits["not-applicable"] += 1
+            continue
+        log(d, "SOURCE_REVIEW_ACCEPTANCE|%s|%s|%s|%s" % (
+            HOST, _acceptance["card"], _acceptance["state"], _acceptance.get("reason", "")))
+    log(d, "SOURCE_REVIEW_ACCEPTANCE_RETIRED|%s|historical=%d|not_applicable=%d" % (
+        HOST, _retired_exits["historical"], _retired_exits["not-applicable"]))
+
+
+CYCLE.run_steps("review_sweeps",(
+    ("open_provisional_reviews",lambda: open_provisional_reviews(review_capacity, dry_run=DRY)),
+)+(() if DRY else (
+    ("reconcile_source_reviews",_reconcile_source_reviews_step),
+    ("close_reviewed_parents",close_reviewed_parents),
+    ("release_finished_review_claims",release_finished_review_claims),
+)))
+_phase_timing("review_sweeps")
 
 _PINNED_IDS=set()
 pool=[]
@@ -7716,29 +7748,22 @@ structural_leaf=leaf_eligibility_counts(Path(HOME) / ".skcapstone").leaves
 human_gated=0
 ENG=("SKGW","SKCP","SKCOORD","SKHARNESS","SKMEM","CAPAUTH","FLEET","INC",
      "SKW","QWEN38","CARD-CORE","CARD-EVENT","SKDASH","SKGATEWAY","SKSEC","SKL-")
-# Soft deadline: stop ADMITTING more cards once the cycle has spent this much of
-# its budget, so the cycle still finishes, launches, and writes its receipt
-# inside the 270 s wrapper. Cards not reached are not decided either way (they
-# simply are not in this cycle's pool), and a persisted cursor makes the next
-# cycle start where this one stopped so no card is starved. Disabled outside
-# production policy and by SKFLEET_POOL_FOLD_SOFT_DEADLINE_S=0.
-_POOL_FOLD_MIN_CARDS = 64
-_pool_fold_soft_deadline = pool_fold_cache.soft_deadline_seconds(
-    _production_cycle_budget if PRODUCTION_POLICY else None,
-    os.environ.get("SKFLEET_POOL_FOLD_SOFT_DEADLINE_S"))
-_pool_fold_cards = sorted(glob.glob(CARDS+"/*"))
-_pool_fold_cards = pool_fold_cache.rotate_from_cursor(
-    _pool_fold_cards, pool_fold_cache.read_cursor(_POOL_FOLD_CURSOR))
-_pool_fold_visited = 0
-_pool_fold_stopped_at = None
+# Soft deadline: stop ADMITTING cards at the pool_fold share of the cycle budget
+# so the cycle still launches and writes its receipt. Unreached cards are not
+# decided either way this cycle; a persisted cursor starts the next cycle at the
+# first unreached card so none is starved. At least 64 cards are always folded.
+_pool_fold_cards=CYCLE.rotate_from(
+    sorted(glob.glob(CARDS+"/*")),CYCLE.read_cursor("pool_fold"),
+    key=os.path.basename)
+_pool_fold_visited=0
+_pool_fold_stopped_at=None
 for cd in _pool_fold_cards:
     cid=os.path.basename(cd)
-    if (_pool_fold_soft_deadline is not None
-            and _pool_fold_visited >= _POOL_FOLD_MIN_CARDS
-            and time.monotonic() - _cycle_started >= _pool_fold_soft_deadline):
-        _pool_fold_stopped_at = cid
+    if CYCLE.stop("pool_fold",_pool_fold_visited,
+                  len(_pool_fold_cards)-_pool_fold_visited,min_done=64):
+        _pool_fold_stopped_at=cid
         break
-    _pool_fold_visited += 1
+    _pool_fold_visited+=1
     core_p=os.path.join(cd,"core.json")
     if not os.path.exists(core_p): continue
     try:
@@ -7862,15 +7887,11 @@ for cd in _pool_fold_cards:
 # the head of a dependency chain is worth far more than an isolated one, because
 # finishing it converts dependency_blocked cards into assignable work.
 unblocks={}
-_unblocks_visited = 0
-_unblocks_stopped = False
+_unblocks_visited=0
 for cd in glob.glob(CARDS+"/*"):
     ocid=os.path.basename(cd)
-    _unblocks_visited += 1
-    if (_pool_fold_soft_deadline is not None and _unblocks_visited % 64 == 0
-            and time.monotonic() - _cycle_started >= _pool_fold_soft_deadline
-            * pool_fold_cache.UNBLOCKS_DEADLINE_FACTOR):
-        _unblocks_stopped = True
+    _unblocks_visited+=1
+    if _unblocks_visited%64==0 and CYCLE.stop("pool_unblocks",_unblocks_visited):
         break
     cp=os.path.join(cd,"core.json")
     if not os.path.exists(cp): continue
@@ -7880,15 +7901,12 @@ for cd in glob.glob(CARDS+"/*"):
     for dep in folded_dependencies(ocid,oc):
         unblocks[str(dep)]=unblocks.get(str(dep),0)+1
 for row in pool: row.append(unblocks.get(row[2],0))
+CYCLE.write_cursor("pool_fold",_pool_fold_stopped_at)
 pool_ids=",".join(sorted(row[2] for row in pool)) or "-"
-if _pool_fold_stopped_at is not None or _unblocks_stopped:
-    log(d,"POOL_FOLD_DEADLINE|%s|soft_deadline_s=%.0f|elapsed_s=%.1f|visited=%d|total=%d|"
-        "unvisited=%d|admitted=%d|unblocks_complete=%s|resume_at=%s"%(
-        HOST,_pool_fold_soft_deadline,time.monotonic()-_cycle_started,_pool_fold_visited,
-        len(_pool_fold_cards),len(_pool_fold_cards)-_pool_fold_visited,len(pool),
-        "no" if _unblocks_stopped else "yes",_pool_fold_stopped_at or "-"))
-if not DRY:
-    pool_fold_cache.write_cursor(_POOL_FOLD_CURSOR,_pool_fold_stopped_at)
+if _pool_fold_stopped_at is not None:
+    log(d,"POOL_FOLD_DEADLINE|%s|elapsed_s=%.1f|visited=%d|total=%d|unvisited=%d|admitted=%d|resume_at=%s"%(
+        HOST,time.monotonic()-_cycle_started,_pool_fold_visited,len(_pool_fold_cards),
+        len(_pool_fold_cards)-_pool_fold_visited,len(pool),_pool_fold_stopped_at))
 if _CARD_INDEX is not None or _SNAPSHOT_CACHE is not None:
     try:
         _saved = [bool(_CARD_INDEX and _CARD_INDEX.save()),
@@ -8645,8 +8663,14 @@ if PRODUCTION_POLICY and PRODUCTION_POLICY.get("remote_review", {}).get("enabled
     # A remote refusal is a deferral, never permission to fall back to local 08.
     _remote_reviews, owned = review_dispatch.partition_remote_reviews(owned, _rollout)
     if not DRY:
-        for _candidate in _remote_reviews[:MAX_CANDIDATE_SCAN]:
-            if time.monotonic() - _cycle_started >= _production_cycle_budget:
+        _remote_batch = CYCLE.rotate_from(
+            _remote_reviews[:MAX_CANDIDATE_SCAN],
+            CYCLE.read_cursor("remote_review_offers"), key=lambda row: row[2])
+        _remote_offers_stopped_at = None
+        for _remote_index, _candidate in enumerate(_remote_batch):
+            if CYCLE.stop("remote_review_offers", _remote_index,
+                          len(_remote_batch) - _remote_index):
+                _remote_offers_stopped_at = _candidate[2]
                 break
             try:
                 _request = review_dispatch.offer_review(
@@ -8662,6 +8686,7 @@ if PRODUCTION_POLICY and PRODUCTION_POLICY.get("remote_review", {}).get("enabled
             except (OSError, ValueError, KeyError, TypeError) as _exc:
                 log(d, "REVIEW_REMOTE_HELD|%s|%s|reason=%s" %
                     (HOST, _candidate[2], review_dispatch.hold_reason(_exc)))
+        CYCLE.write_cursor("remote_review_offers", _remote_offers_stopped_at)
 
 _phase_timing("remote_review_offers")
 owned, _builder_withheld_ids, _builder_returned_ids = _builder_partition(
@@ -8721,14 +8746,16 @@ if not DRY and _is_niobe_builder_host(HOST):
     _profile_requalifications_offered = 0
     _profile_requalification_limit = 16
     _builder_phase_started = time.monotonic()
+    _builder_offered = 0  # resume order comes from the persisted offer memory
     for _candidate in tuple(_builder_candidates)[:MAX_CANDIDATE_SCAN]:
         if time.monotonic() - _builder_phase_started >= _BUILDER_OFFER_SECONDS:
             log(d, "BUILDER_OFFER_PHASE_CAPPED|%s|next=%s|cap_s=%.0f" % (
                 HOST, _candidate[2], _BUILDER_OFFER_SECONDS))
             break
-        if PRODUCTION_POLICY and time.monotonic() - _cycle_started >= _production_cycle_budget:
+        if PRODUCTION_POLICY and CYCLE.stop("builder_offers", _builder_offered):
             log(d, "BUILDER_OFFER_BUDGET_EXHAUSTED|%s|next=%s" % (HOST, _candidate[2]))
             break
+        _builder_offered += 1
         _remote_core = dict(_candidate[3], id=_candidate[2])
         try:
             _remote_request = builder_dispatch.offer(
@@ -9249,6 +9276,8 @@ def _route_preflight_cache_key(model, snapshot):
 
 
 while _i<len(owned) and _i<len(_candidate_scan):
+    if CYCLE.stop("lane_selection",_i,len(_candidate_scan)-_i,min_done=1):
+        break
     _refresh_review_route_snapshot_if_stale()
     _card=_candidate_scan[_i]; _i+=1
     _labels=_card[4]
@@ -9366,6 +9395,11 @@ def _observe_assigned_reviews():
     if globals().get("DRY"):
         return
     observation_deadline=(time.monotonic()+5 if globals().get("PRODUCTION_POLICY") else None)
+    _cycle=globals().get("CYCLE")
+    if observation_deadline is not None and _cycle is not None:
+        # Never run past the wrapper timeout minus the final-write reserve.
+        observation_deadline=min(
+            observation_deadline,time.monotonic()+max(_cycle.hard_remaining()-_cycle.final_reserve_s,0))
     live_sessions = set(sh("tmux", "ls", "-F", "#{session_name}").split())
     live_units = active_worker_units()
     outcomes = _load_outcomes()
@@ -9378,9 +9412,11 @@ def _observe_assigned_reviews():
             for label in (admission.get("labels") or ())
         }
     )
-    for cid in review_ids:
+    for _obs_index,cid in enumerate(review_ids):
         if observation_deadline is not None and time.monotonic() >= observation_deadline:
             log(d,"REVIEW_OBSERVATION_DEFERRED|%s|reason=cycle-observation-budget"%HOST)
+            if _cycle is not None:
+                _cycle.report("review_observation",_obs_index,len(review_ids)-_obs_index)
             break
         # POOL_V2 already folded every review candidate. Reuse that immutable
         # per-cycle index instead of probing all review streams a second time.
@@ -9517,6 +9553,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         log(d,"CYCLE_DEADLINE_REACHED|%s|processed=%d remaining=%d deferred=%d ids=%s omitted=%d"%
             (HOST,processed_picks,len(picks)-_pick_index,len(_deferred_ids),
              _deferred_ids,_deferred_omitted))
+        CYCLE.report("lane_launch",processed_picks,len(picks)-_pick_index)
         break
     if not _has_launchable_pick(
             picks[_pick_index:],launch_remaining,elastic_launch_remaining,
@@ -10107,6 +10144,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         log(d,"CYCLE_DEADLINE_REACHED|%s|processed=%d remaining=%d deferred=%d ids=%s omitted=%d"%
             (HOST,processed_picks,len(picks)-_pick_index,len(_deferred_ids),
              _deferred_ids,_deferred_omitted))
+        CYCLE.report("lane_launch",processed_picks,len(picks)-_pick_index)
         break
     default_workspace=os.path.join(HOME,".skcapstone/fleet/workspaces",name)
     try:

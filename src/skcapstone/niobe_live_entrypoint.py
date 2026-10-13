@@ -18,11 +18,80 @@ from pathlib import Path
 
 from .fleet.production_policy import LEGACY_CEILING_VARIABLES, load_production_policy
 from .niobe_activation import LIVE_UNIT, parse_activation
-from .receipt_output import condense_dispatcher_output
+from .receipt_output import condense_dispatcher_output, condense_dispatcher_tail
 from .seat_mail import poll_mail, startup_hello
 
 _DISPATCH_TIMEOUT_SECONDS = 270
 _TERMINATE_GRACE_SECONDS = 5
+#: Phase boundaries in the order the rotator reaches them (each PHASE_TIMING line
+#: closes the named phase). The phase in progress when the wrapper timeout fires
+#: is the one after the last closed phase.
+PHASE_ORDER = (
+    "startup_slots",
+    "startup_sweeps",
+    "review_sweeps",
+    "pool_fold",
+    "pool_v2_authority",
+    "remote_review_offers",
+    "builder_offers",
+    "lane_selection",
+    "review_withheld",
+    "lane_launch",
+)
+_PHASE_TIMING_TAIL = 12
+_PHASE_ALERT_TAIL = 8
+
+
+def timeout_diagnostics(evidence_path: Path | None) -> dict[str, object]:
+    """Read the rotation actions.log tail to say where a timed-out cycle was.
+
+    ``last_phase_timings`` are the last PHASE_TIMING lines (closed phases);
+    ``timeout_phase`` is the phase that was still running. Never raises.
+    """
+
+    result: dict[str, object] = {
+        "timeout_phase": None,
+        "last_phase_timings": [],
+        "phase_alerts": [],
+    }
+    try:
+        if evidence_path is None or not evidence_path.is_file():
+            result["timeout_phase"] = "unknown_no_actions_log"
+            return result
+        lines = evidence_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        result["timeout_phase"] = "unknown_unreadable_actions_log"
+        return result
+    timings: list[dict[str, object]] = []
+    alerts: list[str] = []
+    for line in lines:
+        if line.startswith("PHASE_TIMING|"):
+            fields = line.split("|")
+            entry: dict[str, object] = {}
+            for field in fields[2:]:
+                key, _, value = field.partition("=")
+                try:
+                    entry[key] = float(value) if key.endswith("_s") else value
+                except ValueError:
+                    entry[key] = value
+            if "phase" in entry:
+                timings.append(entry)
+        elif line.startswith(("PHASE_DEADLINE|", "PHASE_BUDGET_WARN|", "CYCLE_DEADLINE_REACHED|")):
+            alerts.append(line[:300])
+    result["last_phase_timings"] = timings[-_PHASE_TIMING_TAIL:]
+    result["phase_alerts"] = alerts[-_PHASE_ALERT_TAIL:]
+    if not timings:
+        result["timeout_phase"] = "before_" + PHASE_ORDER[0]
+        return result
+    last = str(timings[-1]["phase"])
+    if last in PHASE_ORDER:
+        index = PHASE_ORDER.index(last) + 1
+        result["timeout_phase"] = (
+            PHASE_ORDER[index] if index < len(PHASE_ORDER) else "final_receipt"
+        )
+    else:
+        result["timeout_phase"] = "after_" + last
+    return result
 
 
 def _production_environment(
@@ -119,6 +188,7 @@ def _append_health(
     outcome: str | None = None,
     dispatcher_stdout: str = "",
     dispatcher_stderr: str = "",
+    timeout: bool = False,
 ) -> None:
     """Append one truthful receipt for every live dispatcher invocation."""
 
@@ -136,7 +206,13 @@ def _append_health(
         "dispatcher_returncode": returncode,
         "exception_type": exception_type,
         "dispatcher_stdout": condense_dispatcher_output(dispatcher_stdout),
-        "dispatcher_stderr": condense_dispatcher_output(dispatcher_stderr),
+        # A killed or failing cycle keeps the LAST bytes (the cause is at the
+        # end), after de-duplicating repeated lines with counts.
+        "dispatcher_stderr": (
+            condense_dispatcher_tail(dispatcher_stderr)
+            if timeout or returncode
+            else condense_dispatcher_output(dispatcher_stderr)
+        ),
         "activation_decision": activation.decision_id,
         "activation_card_revision": activation.card_revision,
         "unit": LIVE_UNIT,
@@ -149,6 +225,8 @@ def _append_health(
         "slot_summary": None,
         **mailbox.as_dict(),
     }
+    if timeout:
+        payload.update(timeout_diagnostics(evidence_path))
     if evidence_path and evidence_path.is_file():
         lines = evidence_path.read_text(encoding="utf-8", errors="replace").splitlines()
         payload.update(
@@ -203,6 +281,8 @@ def run_live(
         else hashlib.sha256(f"{activation.card_revision}:{started_at}".encode()).hexdigest()[:32]
     )
     environment["SKFLEET_ROTATION_ID"] = cycle_id
+    # The rotator derives its final-write reserve from the real wrapper timeout.
+    environment["SKFLEET_DISPATCH_TIMEOUT_S"] = str(_DISPATCH_TIMEOUT_SECONDS)
     evidence_path = home / "evidence" / "fleet-rotation" / f"{host}-{cycle_id}" / "actions.log"
     command = [sys.executable, str(dispatcher), "--go"]
     try:
@@ -241,6 +321,7 @@ def run_live(
             evidence_path=evidence_path,
             dispatcher_stdout=stdout,
             dispatcher_stderr=stderr,
+            timeout=True,
         )
         return 70
     except OSError as exc:
@@ -282,6 +363,8 @@ def run_live(
         cycle_id=cycle_id,
         evidence_path=evidence_path,
         outcome=outcome,
+        dispatcher_stdout=(getattr(completed, "stdout", "") or "") if returncode else "",
+        dispatcher_stderr=(getattr(completed, "stderr", "") or "") if returncode else "",
     )
     return returncode
 
