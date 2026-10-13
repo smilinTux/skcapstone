@@ -9,6 +9,7 @@ runs:
   using: composite
   steps:
     - name: Install system deps and isolated-test sandbox support
+      shell: bash --noprofile --norc -p -e -o pipefail {0}
       run: |
         sudo apt-get update \
           -o Dir::Etc::sourcelist="sources.list.d/ubuntu.sources" \
@@ -24,14 +25,17 @@ runs:
         systemctl --user show-environment > /dev/null
         scripts/ci/check-native-sandbox.sh
     - name: Install package with all extras and dev tools
+      shell: bash --noprofile --norc -p -e -o pipefail {0}
       run: |
         python scripts/ci/test_environment.py
         python -m pip install --upgrade pip
         python scripts/ci/test_environment.py
         python -m pip install -e ".[all,dev]"
     - name: Verify resolved package dependencies
+      shell: bash --noprofile --norc -p -e -o pipefail {0}
       run: python -m pip check
     - name: Verify registry skcoord contract before source overlay
+      shell: bash --noprofile --norc -p -e -o pipefail {0}
       run: |
         python scripts/ci/test_environment.py
         python -m pip install --force-reinstall --no-deps --no-cache-dir \
@@ -103,6 +107,7 @@ runs:
       # Draft sibling reconciliation: smilinTux/skcoord#131.
       # Keep the registry-only contract above; this exact overlay supplies
       # the unpublished helper/replacement APIs used by production.
+      shell: bash --noprofile --norc -p -e -o pipefail {0}
       run: |
         python scripts/ci/test_environment.py
         python -m pip install --force-reinstall --no-deps --no-cache-dir \
@@ -110,6 +115,7 @@ runs:
         python -c "import skcoord.owner_helpers, skcoord.review_replacement"
     - name: Resolve exact sibling revisions
       id: siblings
+      shell: bash --noprofile --norc -p -e -o pipefail {0}
       run: |
         set -euo pipefail
         dashboard="$(git ls-remote https://github.com/smilinTux/skdashboard HEAD | cut -f1)"
@@ -123,6 +129,7 @@ runs:
       env:
         DASHBOARD_SHA: ${{ steps.siblings.outputs.dashboard }}
         HARNESS_SHA: ${{ steps.siblings.outputs.harness }}
+      shell: bash --noprofile --norc -p -e -o pipefail {0}
       run: |
         python scripts/ci/test_environment.py
         python -m pip install --force-reinstall --no-deps --no-cache-dir \
