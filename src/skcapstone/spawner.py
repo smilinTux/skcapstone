@@ -416,7 +416,7 @@ class SubAgentSpawner:
             from .baby_agents import BABY_AGENTS
 
             available = ", ".join(sorted(BABY_AGENTS.keys()))
-            raise ValueError(f"Unknown baby agent '{name}'. " f"Available: {available}")
+            raise ValueError(f"Unknown baby agent '{name}'. Available: {available}")
 
         logger.info("Spawning baby agent: %s", baby.name)
         return self.spawn(
@@ -502,10 +502,12 @@ class SubAgentSpawner:
     def _claim_coord_task(self, task_id: str, agent_name: str) -> None:
         """Claim a coordination board task for the spawned agent."""
         try:
+            from .coord_gate_diagnostic import assert_claim_admitted
             from .coordination import Board
             from .fleet.churn_breaker import assert_claim_permitted
 
             board = Board(home=self._home)
+            assert_claim_admitted(self._home, task_id)
             assert_claim_permitted(self._home, task_id, agent_name)
             board.claim_task(agent_name, task_id)
             logger.info("Claimed coord task %s for %s", task_id, agent_name)

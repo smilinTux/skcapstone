@@ -246,12 +246,14 @@ async def _handle_coord_claim(args: dict) -> list[TextContent]:
     )
     board = Board(_home())
     try:
+        from ..coord_gate_diagnostic import assert_claim_admitted
         from ..fleet.churn_breaker import assert_claim_permitted
         from ..human_wait import assert_human_claim
         from ..review_admission import assert_governed_review_claim
 
         # Same two asserts as the CLI claim path, for the same reason:
         # Board.claim_task is not a gate, it is a mutation.
+        assert_claim_admitted(_home(), task_id)
         assert_human_claim(_home(), task_id, agent_name)
         assert_governed_review_claim(_home(), task_id, agent_name)
         assert_claim_permitted(_home(), task_id, agent_name)

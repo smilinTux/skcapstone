@@ -341,8 +341,10 @@ def _handle_coord(args: list[str]) -> None:
     elif sub == "claim" and len(args) > 1:
         agent = args[2] if len(args) > 2 else name
         try:
+            from .coord_gate_diagnostic import assert_claim_admitted
             from .fleet.churn_breaker import assert_claim_permitted
 
+            assert_claim_admitted(board.home, args[1])
             assert_claim_permitted(board.home, args[1], agent)
             board.claim_task(agent, args[1])
             console.print(f"  [green]Claimed:[/] {args[1]} by {agent}")

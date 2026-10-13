@@ -544,6 +544,7 @@ def register_coord_commands(main: click.Group) -> None:
         )
         board = Board(home_path)
         try:
+            from ..coord_gate_diagnostic import assert_claim_admitted
             from ..fleet.churn_breaker import assert_claim_permitted
             from ..human_wait import assert_human_claim
             from ..review_admission import assert_governed_review_claim
@@ -557,6 +558,7 @@ def register_coord_commands(main: click.Group) -> None:
             # the operator can never be claimed by anyone, a governed review
             # can only be claimed by its seat, and only then do we ask whether
             # this particular card has been churning.
+            assert_claim_admitted(home_path, task_id)
             assert_human_claim(home_path, task_id, agent)
             assert_governed_review_claim(home_path, task_id, agent)
             assert_claim_permitted(home_path, task_id, agent)

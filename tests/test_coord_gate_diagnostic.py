@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from click.testing import CliRunner
@@ -10,6 +11,7 @@ from skcoord.card_store import CardCore
 
 from skcapstone.card_store import CardStore
 from skcapstone.cli import main
+from skcapstone.coord_gate_diagnostic import diagnose
 from skcapstone.review_admission import (
     assert_governed_review_claim,
     governed_review_gate_reasons,
@@ -373,6 +375,82 @@ def test_coord_gates_aggregates_all_qualified_gateway_slots(tmp_path, monkeypatc
     assert claim.exit_code == 0, claim.output
     assert store.fold("aabb0001").owner == "pi-seraph-first"
     assert store.fold("aabb0002").owner == "pi-seraph-second"
+
+
+@pytest.mark.parametrize(
+    ("card_id", "labels", "dependencies", "expected"),
+    [
+        ("733e74a1", (), ("733e74ff",), "dependency"),
+        ("733e74a2", ("do-not-claim",), (), "do-not-claim"),
+        ("733e74a3", ("human-gate",), (), "human-gate"),
+    ],
+)
+def test_coord_gates_reads_authoritative_fold_holds(
+    tmp_path, monkeypatch, card_id, labels, dependencies, expected
+) -> None:
+    """Nonterminal dependencies and folded labels never remain eligible."""
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    CardStore(tmp_path).create(
+        CardCore(
+            id=card_id,
+            title="Held source card",
+            created_by="scheduler",
+            initial_labels=labels,
+            dependencies=dependencies,
+        )
+    )
+
+    result = CliRunner().invoke(main, ["coord", "gates", card_id, "--home", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert report["eligible"] is False
+    assert expected in report["reasons"]
+
+
+def test_coord_gates_voided_card_and_dependency_are_not_eligible(tmp_path, monkeypatch) -> None:
+    """Authoritative voids hold both the candidate and its dependents."""
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    from skcapstone.coord_amendments import void_card
+
+    store = CardStore(tmp_path)
+    store.create(CardCore(id="733e74a5", title="Voided", created_by="scheduler"))
+    store.create(
+        CardCore(
+            id="733e74a6",
+            title="Dependent",
+            created_by="scheduler",
+            dependencies=("733e74a5",),
+        )
+    )
+    void_card(tmp_path, "733e74a5", reason="test", agent="scheduler")
+
+    assert diagnose(tmp_path, "733e74a5")["eligible"] is False
+    dependent = diagnose(tmp_path, "733e74a6")
+    assert dependent["eligible"] is False
+    assert "dependency" in dependent["reasons"]
+
+
+def test_coord_gates_concurrent_reads_are_idempotent(tmp_path, monkeypatch) -> None:
+    """Readback folds afresh and returns stable holds under concurrent reads."""
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    CardStore(tmp_path).create(
+        CardCore(
+            id="733e74a4",
+            title="Held",
+            created_by="scheduler",
+            initial_labels=["do-not-claim"],
+        )
+    )
+
+    def gates():
+        return diagnose(tmp_path, "733e74a4")
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        reports = list(pool.map(lambda _: gates(), range(8)))
+
+    assert reports == [reports[0]] * len(reports)
+    assert reports[0]["reasons"] == ["do-not-claim"]
 
 
 def test_coord_gates_reports_do_not_claim_exclusion(tmp_path, monkeypatch) -> None:

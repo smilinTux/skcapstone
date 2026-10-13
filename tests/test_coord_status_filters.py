@@ -194,6 +194,12 @@ def test_status_leaf_eligible_known_mix_uses_folded_cards(tmp_path):
     add("review01", "Needs reviewer")
     store.append_event("review01", "move", "fixture", column="review")
     add("noise001", "x")
+    add("voided01", "Voided candidate")
+    store.append_event("voided01", "void", "fixture", reason="withdrawn")
+    add("voiddep1", "Done then void dependency")
+    store.append_event("voiddep1", "move", "fixture", column="done")
+    store.append_event("voiddep1", "void", "fixture", reason="invalid result")
+    add("voidkid1", "Must not run", dependencies=("voiddep1",))
 
     result = CliRunner().invoke(_main(), ["coord", "status", "--home", str(tmp_path)])
     assert result.exit_code == 0, result.output

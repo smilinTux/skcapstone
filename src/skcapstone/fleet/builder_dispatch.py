@@ -120,8 +120,8 @@ def _source(core: dict) -> tuple[str, str, str]:
     return repository, base_ref, revision
 
 
-def _request_matches_current_card(coordination_home: Path, request: dict) -> None:
-    """Reject an offered request after any source or eligibility amendment."""
+def _request_matches_current_card(coordination_home: Path, request: dict):
+    """Return the fresh matching fold or reject a changed offered request."""
     card = CardStore(coordination_home).fold(str(request.get("card_id") or ""))
     if card is None:
         raise BuilderDispatchError("offered card is no longer foldable")
@@ -135,14 +135,14 @@ def _request_matches_current_card(coordination_home: Path, request: dict) -> Non
         or labels != expected_labels
     ):
         raise BuilderDispatchError("offered card changed after dispatch request")
+    return card
 
 
-def _ensure_request_matches_current_card(coordination_home: Path, request: dict) -> None:
+def _ensure_request_matches_current_card(coordination_home: Path, request: dict):
     """Re-fold a request briefly before treating a mismatch as durable."""
     for check in range(MATCH_RETRY_LIMIT):
         try:
-            _request_matches_current_card(coordination_home, request)
-            return
+            return _request_matches_current_card(coordination_home, request)
         except BuilderDispatchError:
             if check == MATCH_RETRY_LIMIT - 1:
                 raise
@@ -763,7 +763,7 @@ def _consume_available(
                     claim_released=False,
                 )
             try:
-                _ensure_request_matches_current_card(coordination_home, request)
+                admission_card = _ensure_request_matches_current_card(coordination_home, request)
             except BuilderDispatchError as exc:
                 _write_status(
                     paths,
@@ -776,8 +776,11 @@ def _consume_available(
                 )
                 continue
             try:
+                from ..coord_gate_diagnostic import assert_claim_admitted
+
+                assert_claim_admitted(coordination_home, request["card_id"], card=admission_card)
                 assert_claim_permitted(coordination_home, request["card_id"], owner)
-            except ClaimRefusedError as exc:
+            except (ClaimRefusedError, ValueError) as exc:
                 _write_status(
                     paths,
                     node,

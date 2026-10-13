@@ -285,10 +285,12 @@ class AuctionManager:
 
         # Claim the task on behalf of the winner
         try:
+            from .coord_gate_diagnostic import assert_claim_admitted
             from .coordination import Board
             from .fleet.churn_breaker import assert_claim_permitted
 
             board = Board(self.shared_root)
+            assert_claim_admitted(self.shared_root, task_id)
             assert_claim_permitted(self.shared_root, task_id, winner)
             board.claim_task(winner, task_id)
             logger.info(
