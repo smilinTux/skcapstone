@@ -140,7 +140,14 @@ def _latest_outcome(store: CardStore, card_id: str) -> dict:
         )
     ]
     return max(
-        outcomes, key=lambda e: (e.get("ts", ""), e.get("writer", ""), e.get("seq", 0)), default={}
+        outcomes,
+        key=lambda e: (
+            e.get("ts", ""),
+            e.get("writer", ""),
+            e.get("seq", 0),
+            bool(e.get("expected_claim_revision")),
+        ),
+        default={},
     )
 
 

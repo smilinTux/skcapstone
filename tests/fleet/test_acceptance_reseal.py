@@ -28,8 +28,7 @@ def interrupted(pair, request):  # noqa: F811
         )
     if shape != "a4ed7c20":
         stale["commit"] = "2bb17f0"
-    # Old links precede the typed candidate generation and are hidden until PASS.
-    # Insert via an overlay with the timestamp preceding the current claim.
+    # Old links precede the typed candidate generation and are hidden after PASS.
     for key, value in stale.items():
         CardEventLog(home).append(
             CardEvent(
@@ -43,8 +42,19 @@ def interrupted(pair, request):  # noqa: F811
         )
     context["source"]["revision"] = finish.native_state(home, producer["card"])["revision"]
     finish.once(directory / "context.json", context)
-    with pytest.raises(ValueError, match="card_(pr_|binding_conflict)"):
-        finish.finish_pair(home, directory, context, guard=lambda: None)
+
+    def lose_step_eight_reply(path, args):
+        reply = finish.native_command(path, args)
+        if (directory / "step-08.intent.json").exists() and not (
+            directory / "step-08.ack.json"
+        ).exists():
+            raise RuntimeError("simulated lost native reply")
+        return reply
+
+    with pytest.raises(RuntimeError, match="simulated lost native reply"):
+        finish.finish_pair(
+            home, directory, context, guard=lambda: None, command=lose_step_eight_reply
+        )
     step = finish.read_json(directory / "step-08.intent.json")
     assert not (directory / "step-08.ack.json").exists()
     changes = []
