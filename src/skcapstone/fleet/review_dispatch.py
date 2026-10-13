@@ -27,6 +27,7 @@ from . import store
 from .production_policy import require_destination, validate_execution_policy
 from .production_review import producer_family, provider_family, review_family_allowed
 from .production_review_finish import native_command, read_json
+from .refusal_log import note, reason_of, refuse
 from .source_bundle import SourceBundleError, _binding, _review_manifest
 
 SCHEMA = "skfleet.builder-dispatch/v2"
@@ -391,20 +392,32 @@ def _offer_directory_safe(paths, node, card_id):
     directory = dispatch.request_path(paths, node, card_id).parent
     try:
         if directory.resolve(strict=False) != directory:
-            return False
+            return refuse(
+                "offer-directory",
+                card_id,
+                f"node={node} offer directory path is a symlink or not canonical",
+            )
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         if directory.resolve() != directory:
-            return False
+            return refuse(
+                "offer-directory",
+                card_id,
+                f"node={node} offer directory path is a symlink or not canonical",
+            )
         info = directory.stat(follow_symlinks=False)
-    except OSError:
-        return False
+    except OSError as exc:
+        return refuse("offer-directory", card_id, f"node={node} {reason_of(exc)}")
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
-        return False
+        return refuse(
+            "offer-directory",
+            card_id,
+            f"node={node} offer directory is not a directory owned by this user",
+        )
     if info.st_mode & 0o022:
         try:
             fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        except OSError:
-            return False
+        except OSError as exc:
+            return refuse("offer-directory", card_id, f"node={node} {reason_of(exc)}")
         try:
             opened = os.fstat(fd)
             if (
@@ -412,11 +425,15 @@ def _offer_directory_safe(paths, node, card_id):
                 or opened.st_ino != info.st_ino
                 or opened.st_uid != os.getuid()
             ):
-                return False
+                return refuse(
+                    "offer-directory",
+                    card_id,
+                    f"node={node} offer directory changed while opening",
+                )
             os.fchmod(fd, stat.S_IMODE(opened.st_mode) & ~0o022)
             info = os.fstat(fd)
-        except OSError:
-            return False
+        except OSError as exc:
+            return refuse("offer-directory", card_id, f"node={node} {reason_of(exc)}")
         finally:
             os.close(fd)
     return stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and not info.st_mode & 0o022
@@ -438,11 +455,20 @@ def _recorded(home, request):
         raise ValueError("exact native authority offer is missing")
 
 
+def _defer(card_id, reason, *, expected=True):
+    """Record why an offer was deferred; unexpected reasons also log a warning."""
+    if expected:
+        note(card_id, reason)
+    else:
+        refuse("review-offer", card_id, reason)
+    return None
+
+
 def offer_review(paths, home, card_id, *, writer):
     """Offer once under the existing serialized authority placement lock."""
     policy = production.policy()
     if not policy or not policy.get("remote_review", {}).get("enabled"):
-        return None
+        return _defer(card_id, "remote review disabled")
     if (
         socket.gethostname().split(".")[0].lower() != policy["authority_host"]
         or writer.role != "scheduler"
@@ -451,7 +477,7 @@ def offer_review(paths, home, card_id, *, writer):
         raise ValueError("only the current authority may offer a remote review")
     with dispatch._request_exclusion(paths.root / "dispatch/.production-offer"):
         if not store.actuation_allowed(paths):
-            return None
+            return _defer(card_id, "fleet actuation paused")
         # Any generation, including expired or orphaned custody, suppresses
         # reassignment. An operator must resolve uncertain custody explicitly.
         existing = list((paths.root / "dispatch").glob("*/" + card_id + ".json"))
@@ -464,13 +490,13 @@ def offer_review(paths, home, card_id, *, writer):
             for e in events
         )
         if existing or offered or card_id in dispatch.held_card_ids(paths):
-            return None
+            return _defer(card_id, "offer or custody already exists")
         rollout = policy["remote_review"]
         if rollout["card_ids"] is not None and card_id not in rollout["card_ids"]:
-            return None
+            return _defer(card_id, "card outside remote review rollout")
         card = CardStore(home).fold(card_id)
         if not governed_review_assignment_ready(card):
-            return None
+            return _defer(card_id, "review not ready for assignment", expected=False)
         source = _source(home, card)
         from .production_receipts import card_required_size
 
@@ -483,6 +509,7 @@ def offer_review(paths, home, card_id, *, writer):
             if review_family_allowed(family, r["family"], card.labels, policy=policy)
         ]
         nodes = production.ready_nodes(paths, dispatch._ready_builders(paths), policy, card_id)
+        ready_count = len(nodes)
         nodes = [
             v
             for v in nodes
@@ -490,9 +517,18 @@ def offer_review(paths, home, card_id, *, writer):
             and production.node_binding(paths, v.name, policy)["host"] in rollout["destinations"]
             and _offer_directory_safe(paths, v.name, card_id)
         ]
+        capable_count = len(nodes)
         nodes = dispatch._production_ready(paths, nodes, policy, card_id)
         if not routes or not nodes:
-            return None
+            if not routes:
+                why = "no eligible review route (candidates or producer family)"
+            elif not ready_count:
+                why = "no ready builder node"
+            elif not capable_count:
+                why = "no node with review capability, allowed destination and safe offer dir"
+            else:
+                why = "no node passed production readiness"
+            return _defer(card_id, why, expected=False)
         primary = [
             v
             for v in nodes

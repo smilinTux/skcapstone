@@ -10,6 +10,8 @@ import stat
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+from .fleet.refusal_log import reason_of, refuse
+
 LOGICAL_REVIEWER_SEATS = frozenset({"link", "mero", "seraph"})
 
 _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$", re.IGNORECASE)
@@ -111,7 +113,10 @@ def dependency_blocker_unresolved(
                     for child in path.iterdir():
                         if child.is_file() and not child.is_symlink():
                             return False
-        except OSError:
+        except OSError as exc:
+            refuse(
+                "dependency-blocker", dep_id, "work root unreadable, hold kept: " + reason_of(exc)
+            )
             return True
     return True
 
@@ -209,7 +214,9 @@ def reviewer_capacity_evaluation(
         # A stale host file must not shadow a newer gateway observation from
         # the older publisher. The newest failure still overrides older health.
         snapshot = max(observations, key=lambda value: value["observed_at"], default={})
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        # Fail closed exactly as before (empty snapshot), but say why capacity reads empty.
+        refuse("review-capacity-evidence", reviewer, reason_of(exc))
         snapshot = {}
     return evaluate_review_capacity(
         snapshot,
