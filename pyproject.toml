@@ -77,6 +77,10 @@ dependencies = [
     # omit optional exit_gates/non_goals/spec_version in that successor check.
     # Bumped 2026-10-07: skcoord 0.1.86 skips stale projections to voided tasks
     # during claim, avoiding a terminal-card demotion that blocks new claims.
+    #
+    # Production versions live in deploy/fleet-constraints.txt (CI and rollout
+    # install with -c). Bump the pin there in the same PR; the floor here must
+    # never exceed the pin.
     "skcoord>=0.1.86",
     "skmemory>=0.5.0",
     "skskills>=0.1.1",

@@ -69,7 +69,7 @@ jobs:
           python scripts/ci/test_environment.py
           python -m pip install --upgrade pip
           python scripts/ci/test_environment.py
-          python -m pip install -e ".[${{ matrix.extra }},dev]"
+          python -m pip install -c deploy/fleet-constraints.txt -e ".[${{ matrix.extra }},dev]"
 
       - name: Run ${{ matrix.extra }} provider tests (SDKs mocked, no creds)
         run: |

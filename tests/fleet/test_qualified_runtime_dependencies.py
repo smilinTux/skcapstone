@@ -44,7 +44,7 @@ def test_packaging_extra_covers_fingerprinted_tools_and_both_install_directions(
     }
     for steps in (_DEPLOY_STEPS, _ROLLBACK_STEPS):
         command = dict(steps)["pip_install"]
-        assert "pip install '.[fleet-qualify]'" in command
+        assert "'.[fleet-qualify]'" in command and "pip install" in command
 
 
 def test_missing_tools_probe_uses_the_target_prefix(tmp_path):

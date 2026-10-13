@@ -156,12 +156,28 @@ def _copy_steps(
     )
 
 
+#: Halts the rollout with a DEPENDENCY_DRIFT message when the installed SK*
+#: runtime dependencies differ from deploy/fleet-constraints.txt. Run by path
+#: from the checkout (stdlib + packaging only) so it also works for a revision
+#: whose installed package predates the module, and is a no-op for a revision
+#: that predates the constraints file (rollback to an old manifest).
+_PARITY_CHECK = (
+    "if test -f {repo}/deploy/fleet-constraints.txt "
+    "&& test -f {repo}/src/skcapstone/fleet/dependency_parity.py; then "
+    "~/.skenv/bin/python {repo}/src/skcapstone/fleet/dependency_parity.py "
+    "--constraints {repo}/deploy/fleet-constraints.txt; fi"
+)
+
 #: The deploy steps, in the load-bearing order described in the module
 #: docstring: package before scripts. Formatted with ``repo=`` (the remote
 #: checkout path) at call time.
 _DEPLOY_STEPS: tuple[tuple[str, str], ...] = (
     ("git_pull", "git -C {repo} pull"),
-    ("pip_install", "cd {repo} && pip install '.[fleet-qualify]'"),
+    (
+        "pip_install",
+        "cd {repo} && pip install -c deploy/fleet-constraints.txt '.[fleet-qualify]'",
+    ),
+    ("verify_dependency_parity", _PARITY_CHECK),
     (
         "qualify_env",
         "if test -f {repo}/src/skcapstone/fleet/qualify_env.py; then "
@@ -216,7 +232,14 @@ _ROLLBACK_STEPS: tuple[tuple[str, str], ...] = (
         'git -C {repo} checkout "$branch" && '
         "git -C {repo} reset --hard {git_sha}",
     ),
-    ("pip_install", "cd {repo} && pip install '.[fleet-qualify]'"),
+    (
+        "pip_install",
+        # A revision older than the constraints file installs unconstrained, as before.
+        "cd {repo} && if test -f deploy/fleet-constraints.txt; then "
+        "pip install -c deploy/fleet-constraints.txt '.[fleet-qualify]'; "
+        "else pip install '.[fleet-qualify]'; fi",
+    ),
+    ("verify_dependency_parity", _PARITY_CHECK),
     (
         "qualify_env",
         "if test -f {repo}/src/skcapstone/fleet/qualify_env.py; then "

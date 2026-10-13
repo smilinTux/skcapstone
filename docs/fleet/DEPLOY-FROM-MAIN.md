@@ -92,11 +92,25 @@ deploying it lived in an operator's chat session and had ended. Install and
 ownership notes are in `scripts/fleet/systemd/skfleet-auto-rollout.service`.
 Exactly one host runs it.
 
-Dependency floors: rollout installs the repo and keeps any dependency that
-already satisfies its floor. When a fix ships in a new skcoord (or another
-SK* package) release, raise the floor in `pyproject.toml` (and the matching
-CI pin in `.github/workflows/pytest.yml`) in its own PR, or the fleet keeps
-the old version. Example: #980, #983, #985 for skcoord 0.1.84 to 0.1.86.
+Dependency parity: `deploy/fleet-constraints.txt` is the single source of truth
+for the SK* runtime dependency set production runs (skcoord, skmemory, skskills,
+cloud9), as exact `==` pins. CI installs with `pip install -c`, rollout installs
+with the same `-c`, and the `verify_dependency_parity` step right after
+`pip_install` runs `src/skcapstone/fleet/dependency_parity.py`. If any installed
+version differs, the host's deploy halts with a `DEPENDENCY_DRIFT: ...` reason
+naming the package, installed version and pinned version. Fix the host or the
+file; never edit the check. (Background: 2026-10-13, PR #1181 used a skcoord
+0.1.87 symbol while CI resolved the 0.1.86 floor.)
+
+Bumping a fleet dependency (for example skcoord):
+1. The upstream release ships first (a published tag; never an unreleased git
+   overlay, never "one past the newest tag").
+2. In the SAME PR as the code that needs it, raise the `==` pin in
+   `deploy/fleet-constraints.txt` and the floor in `pyproject.toml`. The floor
+   may equal the pin but must never exceed it
+   (`tests/test_fleet_dependency_parity.py`).
+3. Merge. The next auto-rollout installs exactly the pins on each host and halts
+   at the first host that does not match, so a bad bump stops at the canary.
 
 **5b. Deploy by hand (canary, emergencies, or with the timer stopped).** Dry run first, then
 one canary host, then the rest. Rollout pulls main on each host, installs,
