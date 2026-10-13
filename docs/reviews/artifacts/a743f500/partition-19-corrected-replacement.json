@@ -1,0 +1,2263 @@
+{
+  "actions_applied": [],
+  "blocked_review_reproduced": {
+    "card_id": "9c9c8496",
+    "path": "/home/skuser01/.skcapstone/evidence/work/9c9c8496/partition-19-independent-review.json",
+    "sha256": "b85602901c3c5bb2e649935f8ae2262535eb74bc59434d113068ea8d37d8ae6d",
+    "verdict": "BLOCKED"
+  },
+  "card_id": "a743f500",
+  "correction_ledger": [
+    {
+      "after": "card_contradiction",
+      "before": "exhausted capability",
+      "card_id": "8d43bd03",
+      "defect_type": "wrong_obstruction_class"
+    },
+    {
+      "after": "blocked_contract_defect",
+      "before": "exhausted capability",
+      "card_id": "e86bf6cd",
+      "defect_type": "unsupported_obstruction_class"
+    }
+  ],
+  "partition": 19,
+  "reasoning_contract": {
+    "evidence_store": "Read direct evidence and verdict events separately, including card event JSONL and acceptance criteria evidence JSONL.",
+    "human_authority_rule": "Only explicit Chef approval or explicit Chef void discharges a human gate. A machine card is not a substitute.",
+    "join_rule": "Join the two stores only by exact card_id. Lifecycle, links, labels, and dependency completion never imply an evidence verdict.",
+    "structural_store": "Fold core.json and structural CardStore events for lifecycle, archive, owner, labels, and dependencies."
+  },
+  "records": [
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "01b87ba7",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "independent_review": "PASS 0915ab73: /tmp/sklegal-sidecar-review-0915ab73/report.md",
+          "independent_review_card": "0915ab73"
+        }
+      },
+      "labels": [
+        "sklegal",
+        "capauth",
+        "issuer-custody",
+        "sidecar",
+        "security",
+        "mandatory-correctness-security-boundary"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/01b87ba7/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/01b87ba7/events/codex-skl-s1-01@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "374f8636",
+            "core_path": "/home/skuser01/.skcapstone/cards/374f8636/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "b463a17d",
+            "core_path": "/home/skuser01/.skcapstone/cards/b463a17d/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "49910aea",
+            "core_path": "/home/skuser01/.skcapstone/cards/49910aea/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKL-S1-03A-R1C][L] Implement and qualify production issuer sidecar prerequisite"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "01edc063",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "blocked_review": "335c91c6",
+          "disposition": "PASS_FOR_INDEPENDENT_REVIEW",
+          "independent_review": "95e192fd"
+        }
+      },
+      "labels": [
+        "skgateway",
+        "replacement-chain",
+        "pi-isolation",
+        "exact-manifest",
+        "security"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/01edc063/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/01edc063/events/codex-skgw-pi-manifest-pin@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/01edc063/events/codex-skgw-pi-runtime-independent-review@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "335c91c6",
+            "core_path": "/home/skuser01/.skcapstone/cards/335c91c6/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKGW-COMPAT-R2-06S1R3][S] Pin exact Pi provider and default model"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "080417b6",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "disposition": "SUPERSEDED_BLOCKED_CARD_PRESERVED",
+          "existing_independent_rereview": "656180fc=PASS|candidate=7cacd19df585b7750301599b9b64d75b335546ca|receipt=/home/skuser01/.skcapstone/evidence/work/656180fc/reviews/pi-refresh-migration-rereview/receipt.json|receipt_sha256=794b34b2e002386213655ea02d950465be08c7ed85f451ca72daf0f15656eaf8|current_exact_card_left_for_independent_rereview",
+          "independent_rereview": "card:656180fc receipt_sha256:794b34b2e002386213655ea02d950465be08c7ed85f451ca72daf0f15656eaf8",
+          "predecessor_review": "ac892dfe",
+          "superseded_by": "f09b1b7e",
+          "verdict": "PASS"
+        }
+      },
+      "labels": [
+        "skdashboard",
+        "durable-session",
+        "repair",
+        "migration"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/080417b6/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/080417b6/events/codex-skdashboard-session-refresh-080417b6@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/080417b6/events/lumina@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/080417b6/events/pi-codex-080417b6@chiap03.jsonl",
+          "/home/skuser01/.skcapstone/cards/080417b6/events/pi-skd-refresh-080417b6@chiap01.jsonl",
+          "/home/skuser01/.skcapstone/cards/080417b6/events/pi-skd-refresh-080417b6@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "ac892dfe",
+            "core_path": "/home/skuser01/.skcapstone/cards/ac892dfe/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKCP-05F8-R4][S] Repair legacy refresh reservation migration state"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "09c527da",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "blocked_candidate": "d03305180c050f90243a63dee866cf657612f033",
+          "disposition": "READY_FOR_INDEPENDENT_REREVIEW",
+          "rereview_card": "cf83cb57",
+          "source_review": "b417bc62"
+        }
+      },
+      "labels": [
+        "sklegal",
+        "mvp",
+        "contract-repair",
+        "wave-0",
+        "size-m"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/09c527da/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/09c527da/events/codex-skl-mvp-contract-repair@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "b417bc62",
+            "core_path": "/home/skuser01/.skcapstone/cards/b417bc62/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKL-MVP-ARCH-02F][M] Repair canonical V2 contract invariants"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "0ddd3df6",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "base_blocked_review": "65dacc50f6dae84fd4ec35eac38876c19aa1d641",
+          "blocked_review_commit": "65dacc50f6dae84fd4ec35eac38876c19aa1d641",
+          "independent_rereview": "599037a2",
+          "preserved_blocked_review": "cd879333",
+          "preserved_review": "cd879333:docs/evidence/mvp/SKL-MVP-LAN-AUTH-COLLECTOR-01R-INDEPENDENT-REVIEW-2026-08-28.md",
+          "rereview": "599037a2"
+        }
+      },
+      "labels": [
+        "sklegal",
+        "mvp",
+        "stable-lan",
+        "firewalla",
+        "repair",
+        "codex-only",
+        "size-m"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/0ddd3df6/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/0ddd3df6/events/codex-luna-0ddd3df6-repairer@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/0ddd3df6/events/fleet-liveness-reaper@chiap02.jsonl",
+          "/home/skuser01/.skcapstone/cards/0ddd3df6/events/pi-glm-0ddd3df6@chiap02.jsonl",
+          "/home/skuser01/.skcapstone/cards/0ddd3df6/events/pi-glm-0ddd3df6@chiap03.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "fc3689c8",
+            "core_path": "/home/skuser01/.skcapstone/cards/fc3689c8/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKL-MVP-LAN-AUTH-COLLECTOR-01F][M][REPAIR] Repair bounded Firewalla collector review findings"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "0eb63051",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {}
+      },
+      "labels": [
+        "skgateway",
+        "sse",
+        "independent-review",
+        "credential-free",
+        "no-provider-traffic",
+        "immutable-candidate",
+        "false-completion"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/0eb63051/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/0eb63051/events/codex-skgw-sse-content-finish-independent-review@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/0eb63051/events/jarvis@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "3bec9f06",
+            "core_path": "/home/skuser01/.skcapstone/cards/3bec9f06/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKGW-STRAT-07D6R][M][REVIEW] Independently qualify complete per-choice SSE completion contract"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "128ce1c2",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {}
+      },
+      "labels": [
+        "skcapstone",
+        "fleet",
+        "onboarding",
+        "feature",
+        "fleet-learning",
+        "reviewer-veritas",
+        "chef-move",
+        "merged-to-main"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/128ce1c2/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/128ce1c2/events/jarvis@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/128ce1c2/events/kimi@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/128ce1c2/events/reconcile@chiap04.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKCapstone][M] Non-interactive provisioning path for fleet worker and reviewer agents"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "1a3e21bd",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "pass_for_review": "sha256=032301f1330e36649e60f4450720f22b1929307e7def8b88556644fd32a4fe86|path=/home/skuser01/.skcapstone/evidence/work/1a3e21bd/PASS_FOR_REVIEW.md"
+        }
+      },
+      "labels": [
+        "skcoord",
+        "status-query",
+        "integration",
+        "defensive",
+        "size-m"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/1a3e21bd/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/1a3e21bd/events/pi-blast-skgateway-00582b34@chiap02.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "04e9b590",
+            "core_path": "/home/skuser01/.skcapstone/cards/04e9b590/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "658dd722",
+            "core_path": "/home/skuser01/.skcapstone/cards/658dd722/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKCOORD-VERDICT-01C][M] Integrate verdict and supersession status queries"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "1bc1ecf4",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "verdict": "PASS"
+        }
+      },
+      "labels": [
+        "skgateway",
+        "cmdb",
+        "independent-review",
+        "identity-compatibility"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/1bc1ecf4/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/1bc1ecf4/events/codex-skgw-cmdb-final-rereview-2@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "f7a9acb1",
+            "core_path": "/home/skuser01/.skcapstone/cards/f7a9acb1/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKGW-CMDB-00FR-FU2-R][S][REVIEW] Independently review non-service identity repair"
+    },
+    {
+      "byte_backed_reasoning": "A current nonterminal card carries a human-gate label; only explicit Chef approval or Chef void can discharge it.",
+      "card_id": "2433d32d",
+      "classification": "human gate",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "supersedes_packet_preparation_artifact": "20260828T012905Z#sha256=00aed377571d20cfef365b313d7d5951f2135c1a895375e302f3bd86596204db"
+        }
+      },
+      "labels": [
+        "skgateway",
+        "authz",
+        "human-gate",
+        "chiap01",
+        "human-decision-recorded-no-action",
+        "human-authorization-packet-preparation-only",
+        "governing-consolidated-amendment-recorded"
+      ],
+      "proposed_supported_append_only_remedy": "Retain the card and dependencies; an authorized human writer may append explicit Chef approval or explicit Chef void only.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/2433d32d/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/2433d32d/events/jarvis@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "d2d6e208",
+            "core_path": "/home/skuser01/.skcapstone/cards/d2d6e208/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "a060fa3d",
+            "core_path": "/home/skuser01/.skcapstone/cards/a060fa3d/core.json",
+            "status": "ready"
+          }
+        ],
+        "owner": null,
+        "status": "backlog"
+      },
+      "title": "[SKGW-AUTHZ-ENFORCE-01][HUMAN] Decide and stage gateway authz enforcement"
+    },
+    {
+      "byte_backed_reasoning": "At least one folded dependency is nonterminal; links were not considered dependencies.",
+      "card_id": "269f3536",
+      "classification": "dependency",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {}
+      },
+      "labels": [
+        "skw-autonomy",
+        "skgateway",
+        "routing",
+        "cost"
+      ],
+      "proposed_supported_append_only_remedy": "When dependency 119db735 reaches an independently supported acceptable state, an authorized writer may append the appropriate lifecycle transition after re-evaluation.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/269f3536/core.json",
+        "events": []
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "119db735",
+            "core_path": "/home/skuser01/.skcapstone/cards/119db735/core.json",
+            "status": "backlog"
+          }
+        ],
+        "owner": null,
+        "status": "backlog"
+      },
+      "title": "[SKW-ROUTE-02][M] Cost-ranked selectMember, replacing blind round-robin"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "2f33ecc9",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "approval_decision": "APPROVE_CREDENTIAL_ONLY"
+        }
+      },
+      "labels": [
+        "capauth",
+        "sklegal",
+        "credential-custody"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/2f33ecc9/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/2f33ecc9/events/jarvis@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[CAPAUTH-AUTHZ-01B][S][HUMAN] Provision CAPAUTH_AUTHZ_TOKEN for the authz decide endpoint"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "36361e40",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "disposition": "READY_FOR_INDEPENDENT_REVIEW_CLAIM_GATES_DENY",
+          "independent_review": "17b8f330"
+        }
+      },
+      "labels": [
+        "sklegal",
+        "mvp",
+        "board",
+        "dependency-gate",
+        "fail-closed",
+        "size-s",
+        "ready-for-independent-review"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/36361e40/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/36361e40/events/codex-root@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/36361e40/events/codex-skl-mvp-board-04@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "9a06fcf7",
+            "core_path": "/home/skuser01/.skcapstone/cards/9a06fcf7/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKL-MVP-BOARD-04][S] Enforce artifact repair gates on durable integration"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "384c7615",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "independent-rereview-artifact": "sha256:99b05413f176b524b88246019611a442d4e97cca00f9995d1bcbd18acbd1e8c3",
+          "independent-rereview-verdict": "PASS:formatted-skcoord-overlay"
+        }
+      },
+      "labels": [
+        "portfolio",
+        "skcoord",
+        "formatting",
+        "independent-review",
+        "codex",
+        "size-m"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/384c7615/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/384c7615/events/codex-skpm-mut-01-rp5-review-terra@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "4b0bcec7",
+            "core_path": "/home/skuser01/.skcapstone/cards/4b0bcec7/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKPM-MUT-01-RP5-R][M][REVIEW] Independently rereview formatted SKCoord overlay"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "3881f890",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {}
+      },
+      "labels": [
+        "chatgpt-client",
+        "sprint-0",
+        "epic-01d3c31c",
+        "sprint-card",
+        "not-claimable",
+        "architecture",
+        "security"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/3881f890/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/3881f890/events/pi-review-c0b-2cf01887@chiap01.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[CHATGPT-CLIENT][SPRINT 0] Research, threat boundaries, and architecture"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "3a37e4c8",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "blocked_on": "capability",
+          "blocked_referent": "free",
+          "independent_review": "BLOCKED",
+          "verdict": "BLOCKED",
+          "verdict_artifact": "/home/skuser01/.skcapstone/evidence/work/3a37e4c8/verdict.json",
+          "verdict_sha256": "e943b307a26339986baf9b846f0761b619c8dcb8246300d91928edf62d693508"
+        }
+      },
+      "labels": [
+        "review",
+        "containment-successor"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/3a37e4c8/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/3a37e4c8/events/jarvis@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/3a37e4c8/events/pi-codex-3a37e4c8@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/3a37e4c8/events/pi-review-f361-r2-3a37e4c8@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[CONTAINMENT-F361-R2][REVIEW] Fresh serialized review of exact coldstart candidate"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "41cdecbc",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "rereview-successor": "5ef5d5e4|distinct PASS required",
+          "review-receipt": "sha256=9db9c54a85af73610e86f20e398b973853b8437206c19127321c5a73dffe30a8|bytes=1622|stdout_only_not_durable",
+          "verdict": "FAIL|retirement_preconditions_not_accepted|no_retirement_or_human_gate"
+        }
+      },
+      "labels": [
+        "sklegal",
+        "review",
+        "retirement",
+        "backup",
+        "codex"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/41cdecbc/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/41cdecbc/events/codex-sol-41cdecbc@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "80aa147d",
+            "core_path": "/home/skuser01/.skcapstone/cards/80aa147d/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKGW-AUTHZ-06E-TR-P-R][M][REVIEW] Independently review retirement preconditions"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "4cdbf780",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "verdict": "PASS_FOR_REVIEW"
+        }
+      },
+      "labels": [
+        "skref",
+        "ci-repair",
+        "reproduction",
+        "source-53c718ad",
+        "size-m"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/4cdbf780/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/4cdbf780/events/codex-terra-skref-4cdbf780@chiap02.jsonl",
+          "/home/skuser01/.skcapstone/cards/4cdbf780/events/codex-terra-skref-4cdbf780@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/4cdbf780/events/lumina@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/4cdbf780/events/pi-codex-4cdbf780@chiap02.jsonl",
+          "/home/skuser01/.skcapstone/cards/4cdbf780/events/pi-skref-repair-4cdbf780@chiap01.jsonl",
+          "/home/skuser01/.skcapstone/cards/4cdbf780/events/pi-skref-repair-4cdbf780@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKREF-CI-REPRO][M] Reproduce expired default-head CI failure and repair only a proven cause"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "5674f675",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "verdict": "PASS_FOR_REVIEW"
+        }
+      },
+      "labels": [
+        "skpdf",
+        "ci-repair",
+        "packaging",
+        "source-53c718ad",
+        "size-s"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/5674f675/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/5674f675/events/codex-luna-skpdf-5674f675@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/5674f675/events/fleet-liveness-reaper@chiap02.jsonl",
+          "/home/skuser01/.skcapstone/cards/5674f675/events/lumina-ghost-reaper@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/5674f675/events/pi-codex-5674f675@chiap02.jsonl",
+          "/home/skuser01/.skcapstone/cards/5674f675/events/pi-codex-5674f675@chiap04.jsonl",
+          "/home/skuser01/.skcapstone/cards/5674f675/events/pi-glm-5674f675@chiap02.jsonl",
+          "/home/skuser01/.skcapstone/cards/5674f675/events/pi-skpdf-pgpy-5674f675@chiap02.jsonl",
+          "/home/skuser01/.skcapstone/cards/5674f675/events/pi-skpdf-pgpy-5674f675@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/5674f675/events/skw-chi@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKPDF-CI-PGPY][S] Align bridge tests with the PGPy dependency contract"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "75c5826d",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "review_bundle": "7541ee856e3827df046ddac23c8bca90694736c6c0308721104ec552f351bc1c",
+          "review_receipt": "/home/skuser01/.skcapstone/evidence/artifacts/sha256/7541ee856e3827df046ddac23c8bca90694736c6c0308721104ec552f351bc1c/receipt.json",
+          "review_report": "/home/skuser01/.skcapstone/evidence/artifacts/sha256/7541ee856e3827df046ddac23c8bca90694736c6c0308721104ec552f351bc1c/files/report.md",
+          "review_validation": "/home/skuser01/.skcapstone/evidence/artifacts/sha256/7541ee856e3827df046ddac23c8bca90694736c6c0308721104ec552f351bc1c/files/validation.json",
+          "reviewed_repair_commit": "4897fb3d7d8a08e49e560839e9da589743bc41e7",
+          "reviewed_repair_tree": "11eb4c58972ea8255aad057cda366cf4b98aa184",
+          "verdict": "PASS"
+        }
+      },
+      "labels": [
+        "sklegal",
+        "mvp",
+        "independent-review",
+        "browser",
+        "durable-authz",
+        "size-m"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/75c5826d/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/75c5826d/events/codex-sol-75c5826d@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "73be3561",
+            "core_path": "/home/skuser01/.skcapstone/cards/73be3561/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKL-MVP-QUAL-01R4][M][REVIEW] Independently rereview durable synthetic Matter authorization repair"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "760d26f3",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "verdict": "PASS_REPAIR_ANALYSIS_ONLY|sha256=8545f0e42dd3b96f45708261c661487b22d6f4fdbd85817f3f4fe90ffcb3f856|no_qualification_pass|no_retirement_execution"
+        }
+      },
+      "labels": [
+        "sklegal",
+        "skgateway",
+        "authz",
+        "retirement",
+        "dependency-repair",
+        "no-secret-access",
+        "size-m"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/760d26f3/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/760d26f3/events/codex-skgw-authz-06e-dr-760d26f3@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "f44b73a9",
+            "core_path": "/home/skuser01/.skcapstone/cards/f44b73a9/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "f864f3d3",
+            "core_path": "/home/skuser01/.skcapstone/cards/f864f3d3/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "2ead9e49",
+            "core_path": "/home/skuser01/.skcapstone/cards/2ead9e49/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKGW-AUTHZ-06E-DR][M] Repair expired-lifecycle retirement eligibility"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "78b8984f",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "disposition": "PASS",
+          "review-view": "fresh-independent-remote-clones-no-shared-checkout",
+          "reviewer": "huygens-distinct-from-04ad810e-implementer"
+        }
+      },
+      "labels": [
+        "sklegal",
+        "skgateway",
+        "authz",
+        "source-custody",
+        "independent-review"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/78b8984f/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/78b8984f/events/huygens-78b8984f-custody-review@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "04ad810e",
+            "core_path": "/home/skuser01/.skcapstone/cards/04ad810e/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKGW-AUTHZ-06B3-SKL-CUSTODY-RR][M][REVIEW] Verify recovered SKLegal verifier source custody"
+    },
+    {
+      "byte_backed_reasoning": "At least one folded dependency is nonterminal; links were not considered dependencies.",
+      "card_id": "80b23ffa",
+      "classification": "dependency",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {}
+      },
+      "labels": [
+        "skgateway",
+        "retirement",
+        "legacy",
+        "rollback",
+        "replacement-chain",
+        "post-mvp-hardening"
+      ],
+      "proposed_supported_append_only_remedy": "When dependency 33c86902 reaches an independently supported acceptable state, an authorized writer may append the appropriate lifecycle transition after re-evaluation.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/80b23ffa/core.json",
+        "events": []
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "33c86902",
+            "core_path": "/home/skuser01/.skcapstone/cards/33c86902/core.json",
+            "status": "backlog"
+          }
+        ],
+        "owner": null,
+        "status": "backlog"
+      },
+      "title": "[SKGW-COMPAT-R2-11][M] Retire legacy 18790 only after zero-consumer proof"
+    },
+    {
+      "byte_backed_reasoning": "Direct evidence records blocked_on card referent ac:2. Capability is a distinct contract class and was not recorded.",
+      "card_id": "8d43bd03",
+      "classification": "card_contradiction",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "blocked_on": "card referent:ac:2",
+          "verdict": "BLOCKED",
+          "verdict_artifact": "/home/skuser01/.skcapstone/evidence/work/8d43bd03/BLOCKED.md",
+          "verdict_artifact_sha256": "a5c6f0ff088aebda3d4c0af8b60a63f05687ef8aa0a304da81dea53fdd919f5c"
+        }
+      },
+      "labels": [
+        "sk-orch",
+        "independent-review",
+        "state-machine",
+        "pi-pool",
+        "failed-review",
+        "retry-after-launcher-fix"
+      ],
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The acceptance criterion contradiction must be amended or explicitly accepted by an authorized card owner before a rerun."
+      },
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/8d43bd03/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/8d43bd03/events/codex-pi-spawn-state-independent-review@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/8d43bd03/events/jarvis@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/8d43bd03/events/pi-codex-8d43bd03@chiap03.jsonl",
+          "/home/skuser01/.skcapstone/cards/8d43bd03/events/pi-night-spawn-review-8d43bd03@chiap01.jsonl",
+          "/home/skuser01/.skcapstone/cards/8d43bd03/events/pi-night-spawn-review-8d43bd03@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/8d43bd03/events/pi-skh-spawnreview-8d43bd03@chiap02.jsonl",
+          "/home/skuser01/.skcapstone/cards/8d43bd03/events/pi-skh-spawnreview-8d43bd03@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/8d43bd03/events/pi@chiap01.jsonl",
+          "/home/skuser01/.skcapstone/cards/8d43bd03/events/pi@chiap03.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "eff95fb8",
+            "core_path": "/home/skuser01/.skcapstone/cards/eff95fb8/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": "pi",
+        "status": "ready"
+      },
+      "title": "[SK-ORCH-05R2R][M][REVIEW] Independently qualify Pi spawn-control history candidate 9ab43e7"
+    },
+    {
+      "byte_backed_reasoning": "At least one folded dependency is nonterminal; links were not considered dependencies.",
+      "card_id": "915f26ef",
+      "classification": "dependency",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {}
+      },
+      "labels": [
+        "skgateway",
+        "non-matter",
+        "canary",
+        "migration"
+      ],
+      "proposed_supported_append_only_remedy": "When dependency bc626306 reaches an independently supported acceptable state, an authorized writer may append the appropriate lifecycle transition after re-evaluation.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/915f26ef/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/915f26ef/events/jarvis@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "bc626306",
+            "core_path": "/home/skuser01/.skcapstone/cards/bc626306/core.json",
+            "status": "backlog"
+          }
+        ],
+        "owner": null,
+        "status": "backlog"
+      },
+      "title": "[SKGW-STRAT-07C][M] Migrate one approved timeout-qualified non-Matter canary"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "93798faf",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {}
+      },
+      "labels": [
+        "howtowinincourt",
+        "epic-c6e40f8d",
+        "parent-b3bc1e8f",
+        "htwc-s2",
+        "leaf-task",
+        "size-m",
+        "cdp"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/93798faf/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/93798faf/events/jarvis@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[HTWC-S2-04][M] Capture and segregate account-visible chat and forum material"
+    },
+    {
+      "byte_backed_reasoning": "At least one folded dependency is nonterminal; links were not considered dependencies.",
+      "card_id": "98cbe010",
+      "classification": "dependency",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "supersedes": "653124eb"
+        }
+      },
+      "labels": [
+        "skgateway",
+        "sklegal",
+        "independent-review",
+        "security",
+        "operations",
+        "mandatory-correctness-security-boundary",
+        "dependency-repair-required"
+      ],
+      "proposed_supported_append_only_remedy": "When dependency 87f90ae0 reaches an independently supported acceptable state, an authorized writer may append the appropriate lifecycle transition after re-evaluation.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/98cbe010/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/98cbe010/events/jarvis@chiap02.jsonl",
+          "/home/skuser01/.skcapstone/cards/98cbe010/events/lumina@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/98cbe010/events/pi-auto-52404419@chiap03.jsonl",
+          "/home/skuser01/.skcapstone/cards/98cbe010/events/pi-auto-b57bbca5@chiap02.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "458a3a70",
+            "core_path": "/home/skuser01/.skcapstone/cards/458a3a70/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "87f90ae0",
+            "core_path": "/home/skuser01/.skcapstone/cards/87f90ae0/core.json",
+            "status": "backlog"
+          }
+        ],
+        "owner": null,
+        "status": "backlog"
+      },
+      "title": "[SKGW-STRAT-05][L][REVIEW] Independently review dual-profile live evidence"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "9988f753",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "verdict": "FAIL"
+        }
+      },
+      "labels": [
+        "capauth",
+        "skdashboard",
+        "oidc",
+        "review",
+        "independent"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/9988f753/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/9988f753/events/jarvis@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKCP-05F8-Q4R][M][REVIEW] Independently rereview issuer identity repair after restart"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "9d460f2c",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "approval": "docs/approval/SKGW-STRAT-07D26-ISOLATED-COMPOSITION-APPROVAL-2026-08-27.md|sha256=2fa100785ebc4992f266695c6249aaabba4452540113766fec7ccb097df3eef6"
+        }
+      },
+      "labels": [
+        "skgateway",
+        "human-gate",
+        "canary",
+        "immutable-composition",
+        "qwen",
+        "public-synthetic"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/9d460f2c/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/9d460f2c/events/human-owner@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/9d460f2c/events/jarvis@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "e49f40e2",
+            "core_path": "/home/skuser01/.skcapstone/cards/e49f40e2/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKGW-STRAT-07D26][HUMAN] Approve exact immutable isolated 785e4ff4 canary composition"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "9e4474ee",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {}
+      },
+      "labels": [
+        "sklegal",
+        "parent-3457eb15",
+        "leaf-task",
+        "size-m",
+        "sprint-5",
+        "wave-6-pilot"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/9e4474ee/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/9e4474ee/events/jarvis@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/9e4474ee/events/zai-skl-s5-03a@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "b04de409",
+            "core_path": "/home/skuser01/.skcapstone/cards/b04de409/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "fa81f43e",
+            "core_path": "/home/skuser01/.skcapstone/cards/fa81f43e/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "07cca7a9",
+            "core_path": "/home/skuser01/.skcapstone/cards/07cca7a9/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKL-S5-03A][M] Email and calendar connector simulation qualification"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "aa926a9b",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "verdict": "FAIL|blocking idempotent replay defect: stored denied 403, expected-version conflict 409, and non-retryable failure 503 receipts replay as HTTP 200 with Idempotent-Replay true; no repair made; downstream remains unauthorized"
+        }
+      },
+      "labels": [
+        "skcp",
+        "review",
+        "codex",
+        "fail"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/aa926a9b/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/aa926a9b/events/codex-skcp-03-independent-review@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "e6326000",
+            "core_path": "/home/skuser01/.skcapstone/cards/e6326000/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKCP-03-R][L][REVIEW] Independently review governed idempotent control-plane command APIs"
+    },
+    {
+      "byte_backed_reasoning": "At least one folded dependency is nonterminal; links were not considered dependencies.",
+      "card_id": "ae994e91",
+      "classification": "dependency",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {}
+      },
+      "labels": [
+        "skharness",
+        "wake-02",
+        "autonomy",
+        "actuation",
+        "default-off",
+        "shadow-mode",
+        "no-deploy"
+      ],
+      "proposed_supported_append_only_remedy": "When dependency 17eba4a3 reaches an independently supported acceptable state, an authorized writer may append the appropriate lifecycle transition after re-evaluation.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/ae994e91/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/ae994e91/events/jarvis@chiap02.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "17eba4a3",
+            "core_path": "/home/skuser01/.skcapstone/cards/17eba4a3/core.json",
+            "status": "ready"
+          },
+          {
+            "card_id": "04e11c53",
+            "core_path": "/home/skuser01/.skcapstone/cards/04e11c53/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "910edb7f",
+            "core_path": "/home/skuser01/.skcapstone/cards/910edb7f/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "5bcecb3b",
+            "core_path": "/home/skuser01/.skcapstone/cards/5bcecb3b/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "backlog"
+      },
+      "title": "[SKHARNESS-WAKE-02][L] Build bounded autonomous wake coordinator default-off"
+    },
+    {
+      "byte_backed_reasoning": "The card is nonterminal, unclaimed, all folded dependencies are terminal, and no human-gate label is present.",
+      "card_id": "aedd6aaf",
+      "classification": "genuinely assignable",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "supersedes": "6b79379d"
+        }
+      },
+      "labels": [
+        "sklegal",
+        "skgateway",
+        "live-qualification",
+        "synthetic-only",
+        "supersedes-6b79379d"
+      ],
+      "proposed_supported_append_only_remedy": "An eligible worker may append a normal claim after verifying scope and supersession direction; the supersedes label does not discharge any human gate.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/aedd6aaf/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/aedd6aaf/events/jarvis@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "bc9ced8e",
+            "core_path": "/home/skuser01/.skcapstone/cards/bc9ced8e/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "d4cd0bf4",
+            "core_path": "/home/skuser01/.skcapstone/cards/d4cd0bf4/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "backlog"
+      },
+      "title": "[SKL-S3-10D][L] Run dependency-correct exact chiap01 live synthetic qualification"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "b8ddae61",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "review_sha256": "efe4b99db042c2806475be7f9b782bfc9aedffd320fd47f272c13068ee5536d2",
+          "verdict": "PASS"
+        }
+      },
+      "labels": [
+        "jarvis-night-loop",
+        "decomposed"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/b8ddae61/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/b8ddae61/events/pi-hostd-review-b8ddae61@chiap01.jsonl",
+          "/home/skuser01/.skcapstone/cards/b8ddae61/events/pi-hostd-review-b8ddae61@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[HOSTD-C503-R1][REVIEW] Independently review exact c50357bd hostd candidate"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "bb5cb31d",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {}
+      },
+      "labels": [
+        "sklegal",
+        "mvp-ui",
+        "mvp-critical-functional-path",
+        "mvp-nonnegotiable-boundaries"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/bb5cb31d/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/bb5cb31d/events/codex-skl-mvp-api@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/bb5cb31d/events/codex-skl-mvp-coordination@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/bb5cb31d/events/codex-skl-s3-08@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "84c6f30c",
+            "core_path": "/home/skuser01/.skcapstone/cards/84c6f30c/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "0ef8eb48",
+            "core_path": "/home/skuser01/.skcapstone/cards/0ef8eb48/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "8137c2f5",
+            "core_path": "/home/skuser01/.skcapstone/cards/8137c2f5/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "61c43e1e",
+            "core_path": "/home/skuser01/.skcapstone/cards/61c43e1e/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "bb103650",
+            "core_path": "/home/skuser01/.skcapstone/cards/bb103650/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "c4ef2a90",
+            "core_path": "/home/skuser01/.skcapstone/cards/c4ef2a90/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "d3514f35",
+            "core_path": "/home/skuser01/.skcapstone/cards/d3514f35/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "07cca7a9",
+            "core_path": "/home/skuser01/.skcapstone/cards/07cca7a9/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKL-MVP-01][M] Compose fail-closed internal application API"
+    },
+    {
+      "byte_backed_reasoning": "The folded lifecycle is review and the card requests a capability-qualified independent review.",
+      "card_id": "c0b5fdbf",
+      "classification": "awaiting review",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "blocked_artifact": "path=/home/skuser01/.skcapstone/evidence/work/c0b5fdbf/blocked-verdict-pi-codex-20260827.json|sha256=f2c0802c221dbc71de32ec12b13d9df49815444401c1c304e7eebe476e6850cd",
+          "blocked_on": "capability referent=ac:2",
+          "verdict": "PASS_FOR_REVIEW|pr=https://github.com/smilinTux/skcapstone/pull/209|commit=7362a6ba74c92ac18c528673d6b2e1208d6116fa|artifact_sha256=abe9fc1b1b9698c3aa3d49df69f012eba7e9d7914b9d7057ef6f76887c6c81b6"
+        }
+      },
+      "labels": [
+        "repair",
+        "needs-stronger-model"
+      ],
+      "proposed_supported_append_only_remedy": "A capability-qualified independent reviewer may append a review verdict bound to the frozen candidate and evidence bytes.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/c0b5fdbf/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/c0b5fdbf/events/fleet-liveness-reaper@chiap03.jsonl",
+          "/home/skuser01/.skcapstone/cards/c0b5fdbf/events/lumina-ghost-reaper@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/c0b5fdbf/events/lumina@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/c0b5fdbf/events/pi-codex-c0b5fdbf@chiap01.jsonl",
+          "/home/skuser01/.skcapstone/cards/c0b5fdbf/events/pi-codex-c0b5fdbf@chiap02.jsonl",
+          "/home/skuser01/.skcapstone/cards/c0b5fdbf/events/pi-codex-c0b5fdbf@chiap03.jsonl",
+          "/home/skuser01/.skcapstone/cards/c0b5fdbf/events/pi-codex-c0b5fdbf@chiap04.jsonl",
+          "/home/skuser01/.skcapstone/cards/c0b5fdbf/events/pi-escalate-c0b5fdbf@chiap03.jsonl",
+          "/home/skuser01/.skcapstone/cards/c0b5fdbf/events/pi-repair-pr203-dep-c0b5fdbf-r1@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/c0b5fdbf/events/pi-repair-pr203-dep-c0b5fdbf@chiap02.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "review"
+      },
+      "title": "[SKCOORD-PARITY-PR203-R1][REPAIR] Bind runtime to the minimum CardStore-compatible skcoord release"
+    },
+    {
+      "byte_backed_reasoning": "At least one folded dependency is nonterminal; links were not considered dependencies.",
+      "card_id": "c5e8ab55",
+      "classification": "dependency",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "deployment_approval": "e7c36f05 DONE for exact 1b43641 source-only prerequisite installation; expiry 2026-08-25T23:59:59Z",
+          "deployment_approval_card": "e7c36f05",
+          "exact_human_approval": "49910aea DONE; exact commit 137715a4b20ed356f81b0b1b7b3e543d4a8b46be and reviewed hashes; expires 2026-08-25T23:59:59Z",
+          "human_approval": "d9552c4c APPROVED_FOR_REMEDIATION_ONLY; no production activation, protected Matter, provider traffic, external action, or general capability issuance."
+        }
+      },
+      "labels": [
+        "sklegal",
+        "capauth",
+        "production-gate",
+        "human-approved-remediation",
+        "issuer-custody",
+        "mandatory-correctness-security-boundary"
+      ],
+      "proposed_supported_append_only_remedy": "Await the independent review dependency fa1ce4e1; any later production action still requires its separate explicit human authorization.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/c5e8ab55/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/c5e8ab55/events/codex-skl-s1-01@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/c5e8ab55/events/jarvis@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "374f8636",
+            "core_path": "/home/skuser01/.skcapstone/cards/374f8636/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "b463a17d",
+            "core_path": "/home/skuser01/.skcapstone/cards/b463a17d/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "07a3bd6a",
+            "core_path": "/home/skuser01/.skcapstone/cards/07a3bd6a/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "49910aea",
+            "core_path": "/home/skuser01/.skcapstone/cards/49910aea/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "01b87ba7",
+            "core_path": "/home/skuser01/.skcapstone/cards/01b87ba7/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "e7c36f05",
+            "core_path": "/home/skuser01/.skcapstone/cards/e7c36f05/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "fa1ce4e1",
+            "core_path": "/home/skuser01/.skcapstone/cards/fa1ce4e1/core.json",
+            "status": "review"
+          }
+        ],
+        "owner": null,
+        "status": "backlog"
+      },
+      "title": "[SKL-S1-03A-R1B][M] Execute reviewed chiap01 issuer custody ceremony"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "cb31cdc0",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "review_artifact": "/home/skuser01/worktrees/skcapstone-cb31cdc0-review/docs/reviews/2026-08-25-cb31cdc0-portfolio-shadow-qualification-review-FAIL.md",
+          "review_artifact_sha256": "62cc267588ed8618840fa3bab85dcedf93292a47d6326139f761a06762245322",
+          "review_patch_sha256": "a62447e6020b35691d22d4dad19f72934e8f927a732cb6516ffa18585634fed1",
+          "review_tree": "62ba3b39f422d72cbc27ecace30d419ae27524f2",
+          "verdict": "FAIL"
+        }
+      },
+      "labels": [
+        "portfolio-steward",
+        "independent-review",
+        "qualification-review",
+        "shadow-mode",
+        "no-mutation",
+        "leaf-task",
+        "size-l",
+        "repo:skcapstone",
+        "parent-b43537a8"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/cb31cdc0/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/cb31cdc0/events/codex-skpm-shadow-qual-review-sol@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "f0820248",
+            "core_path": "/home/skuser01/.skcapstone/cards/f0820248/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "f67ae8cb",
+            "core_path": "/home/skuser01/.skcapstone/cards/f67ae8cb/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKPM-05QR][L][REVIEW] Independently review 20-cycle shadow qualification"
+    },
+    {
+      "byte_backed_reasoning": "A current nonterminal card carries a human-gate label; only explicit Chef approval or Chef void can discharge it.",
+      "card_id": "ceace260",
+      "classification": "human gate",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "invalid-review": "22aceee0",
+          "preserved-blocked-review": "1a41c161",
+          "preserved-review-state": "22aceee0 invalid completion preserved and non-authoritative; 57e67f0b BLOCKED preserved; pi-glm-14a9ac8a stale unauthorized verdict preserved and non-authoritative",
+          "replacement-review": "57e67f0b",
+          "required-rereview": "22aceee0",
+          "runtime-review-pass": "14a9ac8a commit=26f177f8adc359e532077cd138f1344ca51c893f tree=91309ab3c78ea33d0f2b384b976f35ed09c66362 report_sha256=5402444b1db37e7c3c22850d329d4bea293dd01e5466761fa73aed695616f78a result_sha256=7e7d6d1ac73f73194e6aff2ec60001f89e66691866de0dcd990bfaccc1c14c62 verdict=PASS"
+        }
+      },
+      "labels": [
+        "sklegal",
+        "mvp",
+        "deployment",
+        "custody",
+        "tls",
+        "codex-only",
+        "human-gate"
+      ],
+      "proposed_supported_append_only_remedy": "Retain fail-closed state until explicit Chef approval or explicit Chef void is appended; machine completion or supersession is insufficient.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/ceace260/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/ceace260/events/codex-luna-beb6eb15@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/ceace260/events/jarvis@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "1a41c161",
+            "core_path": "/home/skuser01/.skcapstone/cards/1a41c161/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "22aceee0",
+            "core_path": "/home/skuser01/.skcapstone/cards/22aceee0/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "57e67f0b",
+            "core_path": "/home/skuser01/.skcapstone/cards/57e67f0b/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "ff12e849",
+            "core_path": "/home/skuser01/.skcapstone/cards/ff12e849/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "14a9ac8a",
+            "core_path": "/home/skuser01/.skcapstone/cards/14a9ac8a/core.json",
+            "status": "review"
+          }
+        ],
+        "owner": null,
+        "status": "backlog"
+      },
+      "title": "[SKL-MVP-CUSTODY-H][S] Approve exact custody and activation sequence"
+    },
+    {
+      "byte_backed_reasoning": "At least one folded dependency is nonterminal; links were not considered dependencies.",
+      "card_id": "cebf7b24",
+      "classification": "dependency",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {}
+      },
+      "labels": [
+        "skcoord",
+        "skcapstone",
+        "review-hygiene",
+        "verdict",
+        "supersession",
+        "graph-truth",
+        "leaf-task",
+        "size-m"
+      ],
+      "proposed_supported_append_only_remedy": "When dependency 00bb0a6a reaches an independently supported acceptable state, append a fresh graph-truth review outcome.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/cebf7b24/core.json",
+        "events": []
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "e5df6dfb",
+            "core_path": "/home/skuser01/.skcapstone/cards/e5df6dfb/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "00bb0a6a",
+            "core_path": "/home/skuser01/.skcapstone/cards/00bb0a6a/core.json",
+            "status": "backlog"
+          }
+        ],
+        "owner": null,
+        "status": "backlog"
+      },
+      "title": "[SKCOORD-REVIEW-HYGIENE-01][M] Reclassify historical review backlog after verdict-aware fold"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "d66b8a19",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {}
+      },
+      "labels": [
+        "sklegal",
+        "parent-3457eb15",
+        "leaf-task",
+        "size-m",
+        "sprint-3",
+        "wave-3-assurance"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/d66b8a19/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/d66b8a19/events/kimi-skl-s3-03a@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "b04de409",
+            "core_path": "/home/skuser01/.skcapstone/cards/b04de409/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "0ef8eb48",
+            "core_path": "/home/skuser01/.skcapstone/cards/0ef8eb48/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "f8d425e1",
+            "core_path": "/home/skuser01/.skcapstone/cards/f8d425e1/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "b0c6495c",
+            "core_path": "/home/skuser01/.skcapstone/cards/b0c6495c/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKL-S3-03A][M] Versioned agent specification schema and registry"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "e5a70856",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "verdict": "PASS_FOR_REVIEW"
+        }
+      },
+      "labels": [
+        "cli",
+        "integrity",
+        "fold-divergence"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/e5a70856/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/e5a70856/events/pi-codex-e5a70856@chiap04.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKCP-VOID-01][M] coord void reports success on a completed card and changes nothing"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "e5ff5976",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {}
+      },
+      "labels": [
+        "sklegal",
+        "parent-3457eb15",
+        "sprint-4",
+        "leaf-task",
+        "size-l",
+        "fullstack",
+        "wave-2-first-workspace"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/e5ff5976/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/e5ff5976/events/codex-skl-s4-05@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/e5ff5976/events/jarvis@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/e5ff5976/events/kimi-skl-s4-02@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/e5ff5976/events/kimi-skl-swarm@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "b04de409",
+            "core_path": "/home/skuser01/.skcapstone/cards/b04de409/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "8137c2f5",
+            "core_path": "/home/skuser01/.skcapstone/cards/8137c2f5/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "18ba75ba",
+            "core_path": "/home/skuser01/.skcapstone/cards/18ba75ba/core.json",
+            "status": "done"
+          },
+          {
+            "card_id": "b688c5db",
+            "core_path": "/home/skuser01/.skcapstone/cards/b688c5db/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKL-S4-02][L] Build the client and matter workspace"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "e841f9d3",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "independent_review_card": "69c0ddcf",
+          "review_card": "cb89b247",
+          "supersedes_blocked_commit": "0ffb1d6dc280d4304369bb767df483bb5fc9f3a7"
+        }
+      },
+      "labels": [
+        "skgateway",
+        "cmdb",
+        "repair",
+        "skcapstone"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/e841f9d3/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/e841f9d3/events/codex-skgw-cmdb-repair@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "cb89b247",
+            "core_path": "/home/skuser01/.skcapstone/cards/cb89b247/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKGW-CMDB-00F][M] Repair governed ingress CMDB identity and relationship integrity"
+    },
+    {
+      "byte_backed_reasoning": "The separate BLOCKED assertion states that frozen bytes are unavailable but records no blocked_on value or referent. Capability, dependency, human, and card classes are all unsupported by that evidence.",
+      "card_id": "e86bf6cd",
+      "classification": "blocked_contract_defect",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "review-evidence": "authoritative source card 229336b2 names baseline 275a5c6dd38ebd05725dce51862c354b2661f127 and exact staged-diff-sha256=944b907febcec524cce8013fc06b5031eb6b3dc4b393ddc72e7c0952f8d37073 at /home/skuser01/worktrees/pi-229336b2 on chiap01; independent review host chiap08 has no such path; local /home and /mnt/c/Users repository scan found no repository containing the baseline commit; local post-freeze patch/diff/bundle scan found no candidate artifact; source-agent transcript is retained evidence but is not an independently reviewable staged index",
+          "review-evidence-correction": "Correction to prior review-evidence host wording: this process is on chiap02 (hostname read back); the legacy agent projection said chiap08. /home/skuser01/worktrees/pi-229336b2 and the baseline object are unavailable on chiap02. The source evidence records the candidate on chiap01. BLOCKED verdict is unchanged.",
+          "verdict": "BLOCKED: exact frozen staged bytes are unavailable on the review host, so SHA-256 identity, truthful matrix, and repository-supported focused checks cannot be independently reproduced; no PASS inferred from producer-reported results; no source/index/identity/commit/merge/push/release/deploy/cleanup/runtime/provider/credential/protected-data action performed"
+        }
+      },
+      "labels": [
+        "smilintux-org",
+        "review",
+        "source-229336b2"
+      ],
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "Do not infer a class or rerun from an untyped BLOCKED assertion. Preserve the historical assertion. A fresh authorized evidence verdict would need its own contract compliant blocked_on event."
+      },
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/e86bf6cd/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/e86bf6cd/events/pi-orgci-review-e86bf6cd@chiap02.jsonl",
+          "/home/skuser01/.skcapstone/cards/e86bf6cd/events/pi-orgci-review-e86bf6cd@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/e86bf6cd/events/pi@chiap02.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "backlog"
+      },
+      "title": "[SMILINTUX-ORG-CI-R1][M][REVIEW] Independently review frozen staged workflow matrix repair"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "ebe7f5e8",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "review-evidence": "/home/skuser01/reviews/ebe7f5e8/review.json",
+          "review-evidence-sha256": "ea276755d1a1ea0f25d24791b03aa234317ffc8b71a97f027c2f06e5da18353b",
+          "review-manifest-sha256": "75b22cd0bf44a212a918b2c539f117a473613309d5b4a1a4f62af3d7eb9e1115",
+          "verdict": "PASS"
+        }
+      },
+      "labels": [
+        "sksovereign-agent",
+        "review",
+        "source-f10e3cb3"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/ebe7f5e8/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/ebe7f5e8/events/pi-review-f10-ebe7f5e8@chiap03.jsonl",
+          "/home/skuser01/.skcapstone/cards/ebe7f5e8/events/pi-review-f10-ebe7f5e8@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKSOV-CI-INTEGRATION-R1][S][REVIEW] Independently review non-secret fixture repair"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "ed7155a9",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {}
+      },
+      "labels": [
+        "skcapstone",
+        "learning",
+        "testing",
+        "hermetic",
+        "qualification",
+        "reliability",
+        "size-m"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/ed7155a9/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/ed7155a9/events/jarvis@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/ed7155a9/events/kimi-skcapstone-hermetic-lanes@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/ed7155a9/events/pi-skc-hermetic-ed7155a9@chiap01.jsonl",
+          "/home/skuser01/.skcapstone/cards/ed7155a9/events/pi-skc-hermetic-ed7155a9@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/ed7155a9/events/reconcile@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKCapstone][M] Separate hermetic tests from host-backed integration qualification"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "f1b92980",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "disposition": "PASS"
+        }
+      },
+      "labels": [
+        "sklegal",
+        "mvp",
+        "board",
+        "projection",
+        "independent-review",
+        "size-s"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/f1b92980/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/f1b92980/events/codex-skl-mvp-board-12r-review@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "9fe745cf",
+            "core_path": "/home/skuser01/.skcapstone/cards/9fe745cf/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKL-MVP-BOARD-12R][S][REVIEW] Independently review DONE overlay and corpus gate repair"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "f320abaa",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "review_verdict": "BLOCKED artifact_sha256=54167ad357916bc0de27c05a97f34eaa31e10e281921c63fa14aff70efd3c7f8; signature, fingerprint, and public key hash PASS; private key mode and roster entry BLOCKED because artifacts are absent; historical FAIL preserved; no repository change was needed, so no PR exists.",
+          "verdict": "PASS:931684577d94b51b69c8329739284ba4a77266fb00d7246d9f07f2f724c73c00"
+        }
+      },
+      "labels": [
+        "capauth",
+        "signer-migration",
+        "independent-review",
+        "successor",
+        "chiap08"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/f320abaa/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/f320abaa/events/lumina-ghost-reaper@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/f320abaa/events/pi-cap-rereview-f320abaa@chiap03.jsonl",
+          "/home/skuser01/.skcapstone/cards/f320abaa/events/pi-cap-rereview-f320abaa@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/f320abaa/events/pi-codex-f320abaa@chiap01.jsonl",
+          "/home/skuser01/.skcapstone/cards/f320abaa/events/pi-codex-f320abaa@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/f320abaa/events/pi-diag2@chiap01.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[CAPAUTH-SIGNER-P3R2][REVIEW] Rereview repaired scoped signer custody evidence"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "f7d1182b",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {}
+      },
+      "labels": [
+        "skgateway",
+        "recovery",
+        "immutable-candidate"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/f7d1182b/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/f7d1182b/events/codex-skgw-candidate-recovery@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/f7d1182b/events/jarvis@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "d69e61a4",
+            "core_path": "/home/skuser01/.skcapstone/cards/d69e61a4/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKGW-STRAT-07D19F][S] Restore exact candidate 785e4ff4 as durable ref and immutable bundle"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "f9271f7b",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "verdict": "BLOCKED|exact frozen candidate bytes absent; independent verification impossible"
+        }
+      },
+      "labels": [
+        "review",
+        "false-completion"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/f9271f7b/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/f9271f7b/events/pi-review-22a-f9271f7b@chiap01.jsonl",
+          "/home/skuser01/.skcapstone/cards/f9271f7b/events/pi-review-22a-f9271f7b@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/f9271f7b/events/pi@chiap02.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKCP-51-R2][REVIEW] Independently review bounded control-plane performance repair"
+    },
+    {
+      "byte_backed_reasoning": "Folded lifecycle is terminal; evidence assertions remain separately reported and were not promoted to PASS.",
+      "card_id": "fb55c93a",
+      "classification": "terminal; no obstruction classified",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {}
+      },
+      "labels": [
+        "skw-autonomy",
+        "sk-standards",
+        "standards-accretion"
+      ],
+      "proposed_supported_append_only_remedy": "No lifecycle remedy proposed by this audit; completion is structural only and does not imply PASS.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/fb55c93a/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/fb55c93a/events/pi-sks-s4-fb55c93a@chiap08.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "5534d681",
+            "core_path": "/home/skuser01/.skcapstone/cards/5534d681/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "done"
+      },
+      "title": "[SKW-STD-S4][M] ACTUATION_SURFACE_GOVERNANCE standard, and two stale registry rows"
+    },
+    {
+      "byte_backed_reasoning": "The card contains a separate BLOCKED/capability or unavailable-byte assertion that prevents the currently implied execution or review.",
+      "card_id": "fb614a7a",
+      "classification": "exhausted capability",
+      "evidence_assertions": {
+        "interpretation": "separate assertions only; no PASS inferred from lifecycle; links are not dependencies",
+        "values": {
+          "blocked_on": "card referent ac:2",
+          "independent-rereview": "BLOCKED|sha256:063d69c529786d16c293b166fc430772a9943b25e466ca0a12becdaa0a7e2ff1|/home/skuser01/.skcapstone/evidence/work/fb614a7a/fb614a7a-independent-rereview.md",
+          "independent-review": "BLOCKED",
+          "pr_disposition": "No repository change; review-only BLOCKED verdict; no PR required",
+          "verdict": "BLOCKED artifact_sha256=063d69c529786d16c293b166fc430772a9943b25e466ca0a12becdaa0a7e2ff1; blocked_on=card referent=ac:2; deterministic replaced-core-inode probe allowed ordinary and helper critical sections to overlap; no repository change was needed, so no PR exists"
+        }
+      },
+      "labels": [
+        "skcoord",
+        "review",
+        "graph-truth",
+        "blocked"
+      ],
+      "proposed_supported_append_only_remedy": "Append a capability-qualified reassignment or supported follow-up card reference; preserve the BLOCKED evidence assertion separately from lifecycle.",
+      "source_paths": {
+        "core": "/home/skuser01/.skcapstone/cards/fb614a7a/core.json",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/fb614a7a/events/lumina-ghost-reaper@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/fb614a7a/events/lumina@chiap08.jsonl",
+          "/home/skuser01/.skcapstone/cards/fb614a7a/events/pi-codex-fb614a7a@chiap01.jsonl",
+          "/home/skuser01/.skcapstone/cards/fb614a7a/events/pi-codex-fb614a7a@chiap02.jsonl",
+          "/home/skuser01/.skcapstone/cards/fb614a7a/events/pi-codex-fb614a7a@chiap03.jsonl",
+          "/home/skuser01/.skcapstone/cards/fb614a7a/events/pi-codex-fb614a7a@chiap04.jsonl",
+          "/home/skuser01/.skcapstone/cards/fb614a7a/events/pi-skcoord-race-rereview-fb614a7a@chiap02.jsonl"
+        ]
+      },
+      "structural": {
+        "dependencies": [
+          {
+            "card_id": "e146e2ef",
+            "core_path": "/home/skuser01/.skcapstone/cards/e146e2ef/core.json",
+            "status": "done"
+          }
+        ],
+        "owner": null,
+        "status": "backlog"
+      },
+      "title": "[SKCOORD-GRAPH-TRUTH-01][S][REVIEW] Adversarially rereview raced-core no-artifact repair"
+    }
+  ],
+  "repository_or_external_action_applied": false,
+  "schema": "skcapstone.fleet_unblock.corrected_replacement.v1",
+  "source_snapshot_metadata": {
+    "actions_applied": [],
+    "audit_card_id": "2fd3a65c",
+    "audit_partition": {
+      "modulus": 33,
+      "remainder": 19
+    },
+    "counts": {
+      "by_classification": {
+        "awaiting review": 1,
+        "dependency": 7,
+        "exhausted capability": 3,
+        "genuinely assignable": 1,
+        "human gate": 2,
+        "terminal; no obstruction classified": 39
+      },
+      "by_status": {
+        "backlog": 12,
+        "done": 39,
+        "ready": 1,
+        "review": 1
+      },
+      "nonterminal": 14,
+      "selected": 53,
+      "terminal": 39
+    },
+    "interpretation_rules": [
+      "Structural lifecycle, current claim, and folded dependencies are reported independently from evidence assertions and labels.",
+      "Completion does not imply PASS.",
+      "A link is not a dependency.",
+      "Machine supersession does not discharge a human gate.",
+      "Only explicit Chef approval or explicit Chef void may discharge a HUMAN gate."
+    ],
+    "prohibited_actions_applied": [],
+    "report_hash_contract": "SHA-256 is computed over the exact UTF-8 bytes of this JSON file and recorded in the adjacent .sha256 file and the audit-card link event.",
+    "schema": "fleet-unblock-audit-report/v1",
+    "selection_algorithm": "Enumerate immediate directory names under /home/skuser01/.skcapstone/cards; retain names matching lowercase hexadecimal ^[0-9a-f]{8}$ where int(id, 16) % 33 == 19; fold each with skcoord.card_store.CardStore; exclude folded cards whose labels contain fleet-unblock-audit.",
+    "snapshot_timestamp_utc": "2026-08-28T11:04:17.506552+00:00",
+    "source_roots": {
+      "audit_core": "/home/skuser01/.skcapstone/cards/2fd3a65c/core.json",
+      "audit_events": "/home/skuser01/.skcapstone/cards/2fd3a65c/events",
+      "cardstore": "/home/skuser01/.skcapstone/cards"
+    }
+  },
+  "supersedes_report": {
+    "card_id": "2fd3a65c",
+    "path": "/home/skuser01/.skcapstone/evidence/work/2fd3a65c/partition-19-audit.json",
+    "preserved_unchanged": true,
+    "sha256": "a77142e42b8ae733c2e61bd58cf0b8b436ff1d8ba061363a6124743074b3e638"
+  }
+}
