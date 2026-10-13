@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 from skcoord.card_store import CardStore
 
 from .blocked_verdict import is_outcome_key
+from .fleet.pool_fold_cache import sibling_cards
 from .review_verdict import is_review_card
 from .seraph_review_contracts import CardSnapshot, ReviewPublicationError, _digest
 
@@ -208,7 +209,7 @@ class LiveCardStoreGateway:
                 raise ReviewPublicationError("card_evidence_link_mismatch")
         unresolved = False
         if is_review:
-            for sibling in store.list_cards():
+            for sibling in sibling_cards(store):
                 if (
                     not (is_review_card(sibling.title) or "review" in sibling.labels)
                     or sibling.id == card_id
