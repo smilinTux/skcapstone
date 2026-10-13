@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import logging
 import os
 import re
 import socket
@@ -365,6 +366,15 @@ def reap_orphaned_test_units(home: Path, host: str, store=None) -> list[str]:
     return states
 
 
+LOG = logging.getLogger(__name__)
+_ADMISSION_REFUSALS: dict[str, str] = {}
+
+
+def admission_refusal(source_card: str) -> str | None:
+    """Reason the last launch attempt for this source was refused, if it was."""
+    return _ADMISSION_REFUSALS.get(source_card)
+
+
 def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) -> dict | None:
     """Launch once after caller proves source/reviewer termination, or verify real tests.
 
@@ -386,6 +396,7 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
     )
     if remote_plan and plan.get("authority_host") != policy.get("authority_host"):
         raise TestEvidenceError("remote test plan authority differs from production policy")
+    _ADMISSION_REFUSALS.pop(binding["source_card"], None)
     workspace = workspace.resolve()
     source_state(workspace, binding)
     root = home / "fleet/test-runs"
@@ -432,6 +443,7 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
                         service_argv(launch, plan_path, directory, workspace),
                         invocation=terminal["InvocationID"],
                         expected_card_revision=card_revision(card),
+                        allow_released_source=True,
                     )
                 elif card is not None:
                     # Failed tests used to leave the reservation charged forever:
@@ -451,6 +463,7 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
                             service_argv(launch, plan_path, directory, workspace),
                             invocation=terminal["InvocationID"],
                             expected_card_revision=card_revision(card),
+                            allow_released_source=True,
                         )
                     except (AdmissionError, KeyError, ValueError, OSError):
                         pass
@@ -477,9 +490,21 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
                 request["unit"],
                 _admission_binding(binding, plan_sha),
                 argv,
+                allow_released_source=True,
             )
-        except AdmissionError:
+        except AdmissionError as exc:
+            # A refused reservation used to return None exactly like "tests are
+            # still running", so six acceptances reported awaiting-trusted-tests
+            # for a day with no trace of the refusal (chiap08, 2026-10-12).
+            reason = str(exc) or type(exc).__name__
+            _ADMISSION_REFUSALS[binding["source_card"]] = reason
+            LOG.warning(
+                "trusted tests not launched for source %s: admission refused: %s",
+                binding["source_card"],
+                reason,
+            )
             return None
+        _ADMISSION_REFUSALS.pop(binding["source_card"], None)
         request["service_argv"] = argv
         request["admission_protocol"] = 1
         write_once(directory / "launch.json", request)
@@ -498,6 +523,7 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
                 start_new_session=True,
                 close_fds=True,
             ),
+            allow_released_source=True,
         )
         return None
 

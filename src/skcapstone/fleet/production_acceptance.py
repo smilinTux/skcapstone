@@ -906,7 +906,15 @@ def reconcile(home, policy, *, process_check):
                     home, context["test_binding"], Path(context["source_workspace"]), policy
                 )
                 if receipt is None:
-                    results.append({"card": card, "state": "awaiting-trusted-tests"})
+                    from .production_tests import admission_refusal
+
+                    refused = admission_refusal(context["test_binding"]["source_card"])
+                    state = (
+                        "awaiting-test-admission:" + refused[:120]
+                        if refused
+                        else "awaiting-trusted-tests"
+                    )
+                    results.append({"card": card, "state": state})
                     continue
                 from .production_test_profile import refresh_accepted_profile
 

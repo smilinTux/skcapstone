@@ -122,3 +122,53 @@ def test_unknown_spawn_retains_consumed_reservation(native):
         admission.start_reserved(native[0], HOST, argv, fail)
     assert len(list(native[0].glob("fleet/resource-admission/*/*/start.json"))) == 1
     assert native[1].fold(BINDING["card_id"]).owner == BINDING["owner"]
+
+
+def reserve_released_ok(native, binding=BINDING):
+    return admission.reserve_launch(
+        native[0], POLICY, HOST, UNIT, binding, command(), allow_released_source=True
+    )
+
+
+def test_cleanly_released_claim_reserves_only_when_trusted_tests_opt_in(native):
+    # chiap08 2026-10-12: a stale-claim release returned the reviewed source to
+    # backlog, and every trusted-test launch was refused as "claim changed".
+    release(native)
+    argv = reserve_released_ok(native)
+    spawned = []
+    admission.start_reserved(
+        native[0], HOST, argv, spawned.append, allow_released_source=True
+    )
+    assert len(spawned) == 1
+
+
+def test_released_start_without_opt_in_still_refused(native):
+    release(native)
+    argv = reserve_released_ok(native)
+    with pytest.raises(admission.AdmissionError, match="claim changed"):
+        admission.start_reserved(native[0], HOST, argv, lambda _: pytest.fail("spawned"))
+
+
+def test_released_custody_is_broken_by_a_newer_claim(native):
+    release(native)
+    native[1].append_event(
+        BINDING["card_id"],
+        "claim",
+        "someone-else",
+        owner="someone-else",
+        claim_revision="newer",
+    )
+    with pytest.raises(admission.AdmissionError, match="claim changed"):
+        reserve_released_ok(native)
+
+
+def test_release_of_a_different_revision_is_not_this_custody(native):
+    other = dict(BINDING, claim_revision="other-revision")
+    release(native)
+    with pytest.raises(admission.AdmissionError, match="claim changed"):
+        reserve_released_ok(native, other)
+
+
+def test_released_custody_requires_unclaimed_card(native):
+    # Still claimed by the bound owner: opt-in must not weaken the live path.
+    assert reserve_released_ok(native)
