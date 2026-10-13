@@ -1,0 +1,1 @@
+Refuse linking a github.com PR to a card whose repository is on skgit (the canonical forge), in both the plain and the guarded `coord link` paths. Such a pair could never be accepted (`card_pr_repository_mismatch`, e.g. 38119435) and was only discovered at acceptance. Cards whose repository is on GitHub are unaffected.

@@ -2045,6 +2045,11 @@ def register_coord_commands(main: click.Group) -> None:
                 raise ValueError("released acceptance requires all link guards")
             if as_json and not all(guards):
                 raise ValueError("guarded link JSON readback requires revision guards")
+            from skcoord.card_store import CardStore as _LinkCardStore
+
+            from ..pr_binding import check_link_write
+
+            check_link_write(_LinkCardStore(home_path).fold(task_id), key, value)
             if all(guards):
                 from ..guarded_coord_link import record_guarded_link
 
