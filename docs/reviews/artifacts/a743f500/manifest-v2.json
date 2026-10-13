@@ -1,0 +1,41 @@
+{
+  "actions_applied": [],
+  "artifacts": [
+    {
+      "blocking_review_sha256": "caf39351887bc9c4f635d8be722f94eb5d2a18df64f97f63f6d0661f2633a444",
+      "partition": 0,
+      "path": "docs/reviews/artifacts/a743f500/partition-00-corrected-replacement-v2.json",
+      "replaces_sha256": "e315f72bc38b07f48f15d6c1b28230b3fb07899402b8397579a6957fc8ae4b0a",
+      "sha256": "451dbd2ac7d7297601117c2a7114c52eb320c566499129ffa96b4b3a28c9c0fe",
+      "shared_path": "/home/skuser01/.skcapstone/evidence/work/a743f500/partition-00-corrected-replacement-v2.json"
+    },
+    {
+      "blocking_review_sha256": "24728ed7e976910860d018379d6d88bec756edd309b79c679844df804ad16f09",
+      "partition": 11,
+      "path": "docs/reviews/artifacts/a743f500/partition-11-corrected-replacement-v2.json",
+      "replaces_sha256": "cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c",
+      "sha256": "51aa08d6ba94b471943016c53df68ce13664bd2632d4f9846093c58fa0b352ec",
+      "shared_path": "/home/skuser01/.skcapstone/evidence/work/a743f500/partition-11-corrected-replacement-v2.json"
+    },
+    {
+      "blocking_review_sha256": "88277b9066099c5894bc1831580d7d4027256ec5565aee3704e37d29a4b95a45",
+      "partition": 30,
+      "path": "docs/reviews/artifacts/a743f500/partition-30-corrected-replacement-v2.json",
+      "replaces_sha256": "783875c5a86a5cd06ffec5a1a1f431f137724b26adab1c8be797896b9bb38458",
+      "sha256": "883fa9dcf26cee01d7bca97293a8f0347d71309bb44897774e9bf5c74cf5ce8f",
+      "shared_path": "/home/skuser01/.skcapstone/evidence/work/a743f500/partition-30-corrected-replacement-v2.json"
+    }
+  ],
+  "card_id": "a743f500",
+  "schema": "skcapstone.fleet_unblock.corrected_manifest.v2",
+  "unchanged_prior_passed_partitions": [
+    {
+      "partition": 15,
+      "sha256": "aa5e138dccf6d4c904ab42d0c6e1b60a699048ae960517509a7410efca3d20d0"
+    },
+    {
+      "partition": 19,
+      "sha256": "5853f94c8aef8f6022af578ab1b8898b7c8cbfb276d9668d709acd6c6e6ebc00"
+    }
+  ]
+}

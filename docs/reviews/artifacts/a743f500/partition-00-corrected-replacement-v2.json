@@ -1,0 +1,3567 @@
+{
+  "actions_applied": [],
+  "blocked_review_reproduced": {
+    "card_id": "64384b83",
+    "path": "/home/skuser01/.skcapstone/evidence/work/64384b83/BLOCKED-pi-codex-64384b83.json",
+    "sha256": "fa353609b4568d785a1465248a29498c32cd924b9092849feeadec24b04b26ce",
+    "verdict": "BLOCKED"
+  },
+  "card_id": "a743f500",
+  "correction_ledger": [
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "0a0e2a27",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "1834d880",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "22af09f1",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "2850e05b",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "2bb30717",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "2e5462d8",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "335c91c6",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "357bcccd",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "3e037abc",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "47e8d509",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "48e966e5",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "53897fc1",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "559c8c48",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "58fbf9c3",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "599037a2",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "5a447d3b",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "5ef5d5e4",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "60cb0c9a",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "61bc82e3",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "631f90bf",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "70994052",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "73e446c7",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "78277c6b",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "79bb2305",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "7b697c3b",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "7b90a104",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "7fbb0628",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "812d55e0",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "8b9ee8b3",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "98e41462",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "9b2aeaeb",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "9dd76c45",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "a060fa3d",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "a3ff6791",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "a4863fe3",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "bb11e415",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "c05960b8",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "c672529e",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "c7e21b3a",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "c8f60460",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "cf12b21d",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "d6c5f135",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "dd4bb79d",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "de712b36",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "none",
+        "reason": "terminal or no supported mutation identified"
+      },
+      "card_id": "f3b3bcfb",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "f3fc2c25",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "before": {
+        "action": "append_evidence_or_structural_event_by_authorized_owner_only",
+        "reason": "proposal only; preserve explicit dependency, claim, review, and Chef-only human-gate semantics"
+      },
+      "card_id": "f44b73a9",
+      "defect_type": "unsupported_pseudo_action"
+    },
+    {
+      "after": {
+        "classification": "human_gate",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/61bc82e3/events/pi-cgc-terminal-61bc82e3@chiap04.jsonl:2-4",
+          "/home/skuser01/.skcapstone/cards/61bc82e3/events/pi-codex-61bc82e3@chiap04.jsonl:10-12,15-17,20-22"
+        ],
+        "reason": "Direct BLOCKED evidence has blocked_on human and referent approval:chatgpt-restart-canary-retry-after-memory-preflight."
+      },
+      "before": {
+        "classification": "human_gate",
+        "verdict_events": []
+      },
+      "card_id": "61bc82e3",
+      "defect_type": "omitted_direct_verdict_and_classification"
+    },
+    {
+      "after": {
+        "classification": "blocked_contract_defect",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/73e446c7/events/pi-auto-73e446c7@chiap03.jsonl:2-3,6-7"
+        ],
+        "reason": "Direct BLOCKED verdicts exist but the cited verdict events contain no machine readable blocked_on referent. No obstruction class is inferred."
+      },
+      "before": {
+        "classification": "card_contradiction",
+        "verdict_events": [
+          {
+            "key": "review_verdict",
+            "line": 117,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap01.jsonl",
+            "timestamp": "2026-08-26T01:57:01.917716+00:00",
+            "value": "FAIL: acceptance criteria not fully proven. The exact evidenced policy and detached signature paths are absent, and the pinned signature bytes are unavailable.",
+            "writer": "pi-cap-policy-73e446c7"
+          },
+          {
+            "key": "independent_rereview_verdict",
+            "line": 172,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap03.jsonl",
+            "timestamp": "2026-08-26T20:25:21.035683+00:00",
+            "value": "FAIL (terminal for exact card pin): authoritative CardStore core requires docs/evidence/capauth/SKDashboard-SCOPED-TRUST-POLICY-SIGNED.json plus detached signature sha256 469199995c8a7244ee21895484f0fd4783cb25d14761eb2098b36de82da392cf. Fresh readback finds both exact evidence paths absent; available host-local policy matches 1db1fd95cbb5dd5c97d204c63acf3d6dd5e485b438a3fee6d4a755613876bbcd, but available detached PGP signature is corrected successor sha256 55c4913a8dfe9775af96391bfb2076f39cd790f376b09a514e6616c6c1b7a512 and cannot satisfy this card. Therefore exact evidence existence/hash and verification under DCE38ED7BC9D95D724B5FE7FECF9D6A423EC83F5 remain unproven. Prior separate FAIL evidence links preserved. Scope evidence remains read-only, and no source/runtime/canonical-policy mutation occurred.",
+            "writer": "pi-night-policy-review-73e446c7"
+          }
+        ]
+      },
+      "card_id": "73e446c7",
+      "defect_type": "omitted_direct_verdict_and_classification"
+    },
+    {
+      "after": {
+        "classification": "dependency",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/79bb2305/events/SKAGENT@chiap02.jsonl:2-3",
+          "/home/skuser01/.skcapstone/cards/79bb2305/events/pi-auto-79bb2305@chiap02.jsonl:2-3,6-7",
+          "/home/skuser01/.skcapstone/cards/79bb2305/events/pi-auto-79bb2305@chiap03.jsonl:2-3"
+        ],
+        "reason": "Direct BLOCKED evidence includes blocked_on dependency. Events without a referent remain preserved and are not used to infer another class."
+      },
+      "before": {
+        "classification": "card_contradiction",
+        "verdict_events": [
+          {
+            "key": "verdict",
+            "line": 659,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap01.jsonl",
+            "timestamp": "2026-08-27T15:28:02.800713+00:00",
+            "value": "BLOCKED",
+            "writer": "pi-codex-79bb2305"
+          }
+        ]
+      },
+      "card_id": "79bb2305",
+      "defect_type": "omitted_direct_verdict_and_classification"
+    },
+    {
+      "after": {
+        "classification": "pass_for_review_evidence",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/9b2aeaeb/events/pi-glm-9b2aeaeb@chiap03.jsonl:2"
+        ],
+        "reason": "A direct completion event records PASS_FOR_REVIEW. It does not imply final PASS or lifecycle completion."
+      },
+      "before": {
+        "classification": "card_contradiction",
+        "verdict_events": []
+      },
+      "card_id": "9b2aeaeb",
+      "defect_type": "omitted_direct_verdict_and_classification"
+    },
+    {
+      "after": {
+        "classification": "human_gate",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/a060fa3d/events/pi-auto-a060fa3d@chiap02.jsonl:2-3",
+          "/home/skuser01/.skcapstone/cards/a060fa3d/events/pi-glm-a060fa3d@chiap01.jsonl:2-3"
+        ],
+        "reason": "The latest direct verdict records blocked_on human with referent approval:night-handoff-deployment-and-live-execution-constraints. The prior card contradiction class was wrong."
+      },
+      "before": {
+        "classification": "card_contradiction",
+        "verdict_events": []
+      },
+      "card_id": "a060fa3d",
+      "defect_type": "omitted_direct_verdict_and_classification"
+    },
+    {
+      "after": {
+        "classification": "card_contradiction",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/bb11e415/events/pi-codex-bb11e415@chiap08.jsonl:2-4"
+        ],
+        "reason": "Direct BLOCKED evidence records blocked_on card with referent ac:2."
+      },
+      "before": {
+        "classification": "dependency",
+        "verdict_events": [
+          {
+            "key": "verdict",
+            "line": 504,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap01.jsonl",
+            "timestamp": "2026-08-27T06:07:46.765559+00:00",
+            "value": "BLOCKED",
+            "writer": "pi-codex-bb11e415"
+          },
+          {
+            "key": "verdict",
+            "line": 867,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap02.jsonl",
+            "timestamp": "2026-08-27T21:38:59.469599+00:00",
+            "value": "BLOCKED blocked_on=card referent=card:bb11e415 criterion=ac:2. AC2 requires live install and operation, while this card's non-negotiable constraints prohibit deploy, restart, live gateway mutation, config mutation, and live_execution.",
+            "writer": "pi-codex-bb11e415"
+          },
+          {
+            "key": "result",
+            "line": 6020,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-24T16:49:38.243551+00:00",
+            "value": "BLOCKED_LIVE_SSE_FAILURE",
+            "writer": "codex-skgw-cross-host-canary"
+          }
+        ]
+      },
+      "card_id": "bb11e415",
+      "defect_type": "omitted_direct_verdict_and_classification"
+    },
+    {
+      "after": {
+        "classification": "blocked_contract_defect",
+        "events": [
+          "/home/skuser01/.skcapstone/cards/f3fc2c25/events/pi-auto-f3fc2c25@chiap02.jsonl:2"
+        ],
+        "reason": "A direct BLOCKED verdict exists without a machine readable blocked_on referent. No dependency class is inferred from structure."
+      },
+      "before": {
+        "classification": "dependency",
+        "verdict_events": []
+      },
+      "card_id": "f3fc2c25",
+      "defect_type": "omitted_direct_verdict_and_classification"
+    },
+    {
+      "after": "pass_evidence_awaiting_structural_reconciliation",
+      "before": "card_contradiction",
+      "card_id": "0a0e2a27",
+      "defect_type": "wrong_obstruction_class"
+    },
+    {
+      "after": {
+        "classification": "no_current_obstruction_terminal",
+        "reason": "Direct BLOCKED evidence is preserved as historical evidence, including its dependency referent. The exact two store join shows no folded dependency, no claim owner, and lifecycle done. The named referent db431f61 was structurally done before this snapshot, so no current dependency obstruction is supported."
+      },
+      "before": {
+        "classification": "dependency",
+        "reason": "Direct BLOCKED evidence includes blocked_on dependency. Events without a referent remain preserved and are not used to infer another class."
+      },
+      "card_id": "79bb2305",
+      "defect_type": "reviewed_replacement_wrong_obstruction_class",
+      "review_finding": "f55c5023:F1"
+    },
+    {
+      "after": {
+        "counts": {
+          "by_classification": {
+            "blocked_contract_defect": 2,
+            "card_contradiction": 11,
+            "dependency": 3,
+            "human_gate": 2,
+            "no_current_obstruction_terminal": 24,
+            "pass_evidence_awaiting_structural_reconciliation": 1,
+            "pass_for_review_evidence": 1,
+            "supersession": 1,
+            "void_dependency": 2
+          },
+          "nonterminal": 8,
+          "selected": 47,
+          "terminal": 39,
+          "with_claim": 3,
+          "with_dependencies": 37,
+          "with_verdict_event": 23
+        },
+        "derivation": "Recomputed only from the serialized replacement records."
+      },
+      "before": "Counts copied from the superseded partition report did not describe the corrected records.",
+      "card_id": "a743f500",
+      "defect_type": "reviewed_replacement_stale_summary_counts",
+      "review_finding": "f55c5023:F2"
+    }
+  ],
+  "partition": 0,
+  "reasoning_contract": {
+    "evidence_store": "Read direct evidence and verdict events separately, including card event JSONL and acceptance criteria evidence JSONL.",
+    "human_authority_rule": "Only explicit Chef approval or explicit Chef void discharges a human gate. A machine card is not a substitute.",
+    "join_rule": "Join the two stores only by exact card_id. Lifecycle, links, labels, and dependency completion never imply an evidence verdict.",
+    "structural_store": "Fold core.json and structural CardStore events for lifecycle, archive, owner, labels, and dependencies."
+  },
+  "records": [
+    {
+      "card_id": "0a0e2a27",
+      "classification": "pass_evidence_awaiting_structural_reconciliation",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/0a0e2a27/core.json",
+      "corrected_reason": "Separate legacy evidence records PASS while structural lifecycle is ready. PASS is not inferred from lifecycle, and card contradiction is unsupported.",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/0a0e2a27/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": false
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "skcoord",
+          "security",
+          "repair",
+          "source-0088adc2"
+        ],
+        "latest_verdict_event": {
+          "key": "verdict",
+          "line": 453,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap03.jsonl",
+          "timestamp": "2026-08-27T14:03:03.341578+00:00",
+          "value": "PASS",
+          "writer": "pi-glm-0a0e2a27"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "verdict",
+            "line": 453,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap03.jsonl",
+            "timestamp": "2026-08-27T14:03:03.341578+00:00",
+            "value": "PASS",
+            "writer": "pi-glm-0a0e2a27"
+          }
+        ]
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": "skcapstone-agent",
+        "dependencies": [],
+        "lifecycle": "ready"
+      }
+    },
+    {
+      "card_id": "1834d880",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/1834d880/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/1834d880/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "capauth",
+          "signer-migration",
+          "evidence-repair",
+          "needs-stronger-model"
+        ],
+        "latest_verdict_event": {
+          "key": "verdict",
+          "line": 993,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap02.jsonl",
+          "timestamp": "2026-08-28T02:52:29.912459+00:00",
+          "value": "PASS_FOR_REVIEW artifact_sha256=9bb62d662f2f9f5d6cb7c3cc5143a8f917700c261dd0551e72948152ed7410a8 PR=https://github.com/smilinTux/capauth/pull/93 commit=44c6dd42c4eae27af83deac434e6a2d140f50d5f",
+          "writer": "pi-escalate-1834d880"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "verdict",
+            "line": 554,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap02.jsonl",
+            "timestamp": "2026-08-27T10:39:23.957260+00:00",
+            "value": "BLOCKED artifact_sha256=4bc84218b743a8ed418453d76763abea2cbeffe5d5876dbdab92cf9e2455720a; blocked_on=capability referent=ac:2; no repository change was needed because origin/main already contains the exact roster row, so no PR exists.",
+            "writer": "pi-codex-1834d880"
+          },
+          {
+            "key": "verdict",
+            "line": 993,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap02.jsonl",
+            "timestamp": "2026-08-28T02:52:29.912459+00:00",
+            "value": "PASS_FOR_REVIEW artifact_sha256=9bb62d662f2f9f5d6cb7c3cc5143a8f917700c261dd0551e72948152ed7410a8 PR=https://github.com/smilinTux/capauth/pull/93 commit=44c6dd42c4eae27af83deac434e6a2d140f50d5f",
+            "writer": "pi-escalate-1834d880"
+          }
+        ]
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "572e5d4c",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/572e5d4c",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "22af09f1",
+      "classification": "dependency",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/22af09f1/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/22af09f1/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": false
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "greg-break-house",
+          "sprint-1",
+          "validation",
+          "foreign-project"
+        ],
+        "latest_verdict_event": {
+          "key": "verdict",
+          "line": 394,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap02.jsonl",
+          "timestamp": "2026-08-27T03:55:02.602574+00:00",
+          "value": "BLOCKED",
+          "writer": "pi-auto-22af09f1"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "verdict",
+            "line": 394,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap02.jsonl",
+            "timestamp": "2026-08-27T03:55:02.602574+00:00",
+            "value": "BLOCKED",
+            "writer": "pi-auto-22af09f1"
+          }
+        ]
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "d6c7ed08",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "backlog",
+            "source_path": "/home/skuser01/.skcapstone/cards/d6c7ed08",
+            "state": "nonterminal"
+          }
+        ],
+        "lifecycle": "backlog"
+      }
+    },
+    {
+      "card_id": "2850e05b",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/2850e05b/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/2850e05b/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "portfolio-steward",
+          "allocator",
+          "deterministic",
+          "simulation-only",
+          "no-mutation",
+          "control-plane",
+          "leaf-task",
+          "size-l",
+          "repo:skcapstone",
+          "epic-b43537a8",
+          "parent-b43537a8"
+        ],
+        "latest_verdict_event": {
+          "key": "verdict",
+          "line": 9758,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+          "timestamp": "2026-08-25T21:54:51.442157+00:00",
+          "value": "PASS; simulation-only deterministic AllocationDecisionV1; authorization remains pending; no commit merge push deploy or board mutation",
+          "writer": "codex-skpm-allocation-sol"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "verdict",
+            "line": 9758,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-25T21:54:51.442157+00:00",
+            "value": "PASS; simulation-only deterministic AllocationDecisionV1; authorization remains pending; no commit merge push deploy or board mutation",
+            "writer": "codex-skpm-allocation-sol"
+          }
+        ]
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "215edee5",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/215edee5",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "79a189a9",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/79a189a9",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "008bd490",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/008bd490",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "50e36b06",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/50e36b06",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "bea13a70",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/bea13a70",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "d0edbff1",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/d0edbff1",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "7e72aca6",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/7e72aca6",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "62406541",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/62406541",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "637d1a95",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/637d1a95",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "7c596aec",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/7c596aec",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "384c7615",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/384c7615",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "2bb30717",
+      "classification": "void_dependency",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/2bb30717/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/2bb30717/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "sklegal",
+          "mvp",
+          "review",
+          "board-integrity",
+          "dependency-gate",
+          "wave-0"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": true,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "289315d7",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "backlog",
+            "source_path": "/home/skuser01/.skcapstone/cards/289315d7",
+            "state": "archived"
+          }
+        ],
+        "lifecycle": "backlog"
+      }
+    },
+    {
+      "card_id": "2e5462d8",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/2e5462d8/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/2e5462d8/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "sklegal",
+          "parent-3457eb15",
+          "sprint-4",
+          "leaf-task",
+          "size-l",
+          "documents",
+          "wave-5-actions",
+          "not-claimable"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "b04de409",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/b04de409",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "1fcd3076",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/1fcd3076",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "d3514f35",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/d3514f35",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "b688c5db",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/b688c5db",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "335c91c6",
+      "classification": "card_contradiction",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/335c91c6/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/335c91c6/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "skgateway",
+          "replacement-chain",
+          "independent-review",
+          "pi-isolation",
+          "security",
+          "post-mvp-hardening",
+          "false-completion"
+        ],
+        "latest_verdict_event": {
+          "key": "result",
+          "line": 2878,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+          "timestamp": "2026-08-23T10:00:38.018338+00:00",
+          "value": "BLOCKED",
+          "writer": "codex-skgw-pi-runtime-independent-review"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "result",
+            "line": 2878,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-23T10:00:38.018338+00:00",
+            "value": "BLOCKED",
+            "writer": "codex-skgw-pi-runtime-independent-review"
+          }
+        ]
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "6dd21df9",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/6dd21df9",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "357bcccd",
+      "classification": "card_contradiction",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/357bcccd/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/357bcccd/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "sklegal",
+          "mvp",
+          "deployment",
+          "approval-packet",
+          "codex-only",
+          "size-m"
+        ],
+        "latest_verdict_event": {
+          "key": "verdict",
+          "line": 12147,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+          "timestamp": "2026-08-27T23:02:36.051831+00:00",
+          "value": "CHANGES_REQUIRED",
+          "writer": "jarvis"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "verdict",
+            "line": 12147,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-27T23:02:36.051831+00:00",
+            "value": "CHANGES_REQUIRED",
+            "writer": "jarvis"
+          }
+        ]
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "13473fb6",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/13473fb6",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "3e037abc",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/3e037abc/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/3e037abc/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "capauth",
+          "source-repo",
+          "key-lifecycle",
+          "syncthing",
+          "security",
+          "problem-remediation"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "47e8d509",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/47e8d509/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/47e8d509/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "48e966e5",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/48e966e5/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/48e966e5/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "sklegal",
+          "parent-3457eb15",
+          "sprint-2",
+          "leaf-task",
+          "size-l",
+          "corpus-ops",
+          "qwen-required"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "b04de409",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/b04de409",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "0ef8eb48",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/0ef8eb48",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "61c43e1e",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/61c43e1e",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "5ab203ce",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/5ab203ce",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "53897fc1",
+      "classification": "card_contradiction",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/53897fc1/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/53897fc1/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "skgateway",
+          "sse",
+          "tool-calls",
+          "finish-reason",
+          "independent-review",
+          "mandatory-correctness-security-boundary",
+          "leaf-task",
+          "size-m",
+          "post-mvp-hardening",
+          "false-completion"
+        ],
+        "latest_verdict_event": {
+          "key": "result",
+          "line": 5292,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+          "timestamp": "2026-08-24T05:52:27.616716+00:00",
+          "value": "BLOCKED_CONTENT_FINISH_REASON_NOT_VALIDATED",
+          "writer": "codex-skgw-sse-finish-independent-review"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "result",
+            "line": 5292,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-24T05:52:27.616716+00:00",
+            "value": "BLOCKED_CONTENT_FINISH_REASON_NOT_VALIDATED",
+            "writer": "codex-skgw-sse-finish-independent-review"
+          }
+        ]
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "48f3e7fc",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/48f3e7fc",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "559c8c48",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/559c8c48/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/559c8c48/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "skdashboard",
+          "control-plane",
+          "architecture-remediation",
+          "review-package",
+          "scheduling",
+          "sprint-0",
+          "leaf-task",
+          "size-m"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "90a02b0e",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/90a02b0e",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "f701b0d3",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/f701b0d3",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "58fbf9c3",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/58fbf9c3/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/58fbf9c3/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "skdashboard",
+          "control-plane",
+          "security",
+          "leaf-task",
+          "size-s"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "3d8ef65f",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/3d8ef65f",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "599037a2",
+      "classification": "card_contradiction",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/599037a2/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/599037a2/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "sklegal",
+          "mvp",
+          "stable-lan",
+          "firewalla",
+          "rereview",
+          "codex-only",
+          "size-s"
+        ],
+        "latest_verdict_event": {
+          "key": "verdict",
+          "line": 12758,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+          "timestamp": "2026-08-28T05:30:00Z",
+          "value": "BLOCKED",
+          "writer": "pi-glm-599037a2"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "rereview_result",
+            "line": 12741,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-28T04:21:00.631902+00:00",
+            "value": "docs/evidence/mvp/SKL-MVP-LAN-AUTH-COLLECTOR-01FR-REREVIEW-RESULT-2026-08-28.json",
+            "writer": "codex-sol-599037a2-rereviewer"
+          },
+          {
+            "key": "rereview_result_sha256",
+            "line": 12742,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-28T04:21:00.963389+00:00",
+            "value": "41c4e609fcc9ec2bd03f5f6f418b6574150497f5c856452a87406887cb69c37b",
+            "writer": "codex-sol-599037a2-rereviewer"
+          },
+          {
+            "key": "rereview_verdict",
+            "line": 12748,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-28T04:21:37.943459+00:00",
+            "value": "BLOCKED blocked_on=card referent=card:0ddd3df6 because its exact repair still fails AUTHORITY_BINDING, SECRET_SHAPE_BYPASS, and SCHEMA_UNDERCONSTRAINED and contains stale packet hashes",
+            "writer": "codex-sol-599037a2-rereviewer"
+          },
+          {
+            "key": "verdict",
+            "line": 12758,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-28T05:30:00Z",
+            "value": "BLOCKED",
+            "writer": "pi-glm-599037a2"
+          }
+        ]
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "0ddd3df6",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/0ddd3df6",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "5a447d3b",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/5a447d3b/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/5a447d3b/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "capauth",
+          "service-identity",
+          "zero-trust",
+          "design"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "5ef5d5e4",
+      "classification": "card_contradiction",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/5ef5d5e4/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/5ef5d5e4/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "sklegal",
+          "review",
+          "retirement",
+          "evidence-publication",
+          "codex",
+          "size-s"
+        ],
+        "latest_verdict_event": {
+          "key": "verdict",
+          "line": 10153,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+          "timestamp": "2026-08-26T03:19:15.606525+00:00",
+          "value": "PASS|corrected_retained_evidence_accepted|41cdecbc_FAIL_preserved|retirement_unauthorized",
+          "writer": "codex-sol-5ef5d5e4"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "verdict",
+            "line": 10153,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-26T03:19:15.606525+00:00",
+            "value": "PASS|corrected_retained_evidence_accepted|41cdecbc_FAIL_preserved|retirement_unauthorized",
+            "writer": "codex-sol-5ef5d5e4"
+          }
+        ]
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "159c7d01",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/159c7d01",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "270d161e",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/270d161e",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "60cb0c9a",
+      "classification": "card_contradiction",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/60cb0c9a/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/60cb0c9a/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "sklegal",
+          "skgateway",
+          "chiap01",
+          "live-qualification",
+          "release-gate",
+          "parent-3457eb15",
+          "size-l"
+        ],
+        "latest_verdict_event": {
+          "key": "result",
+          "line": 1583,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+          "timestamp": "2026-08-23T03:19:35.774212+00:00",
+          "value": "FAIL_CLOSED: exact chiap01 endpoint unavailable; source and synthetic contracts pass; protected traffic remains denied",
+          "writer": "chiap08"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "result",
+            "line": 1579,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-23T03:18:53.545484+00:00",
+            "value": "FAIL_CLOSED",
+            "writer": "codex-skl-s3-10c-qualification"
+          },
+          {
+            "key": "result",
+            "line": 1583,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-23T03:19:35.774212+00:00",
+            "value": "FAIL_CLOSED: exact chiap01 endpoint unavailable; source and synthetic contracts pass; protected traffic remains denied",
+            "writer": "chiap08"
+          }
+        ]
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "a53695e8",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/a53695e8",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "171315a5",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/171315a5",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "61bc82e3",
+      "classification": "human_gate",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/61bc82e3/core.json",
+      "corrected_evidence_join": {
+        "direct_event_sources": [
+          "/home/skuser01/.skcapstone/cards/61bc82e3/events/pi-cgc-terminal-61bc82e3@chiap04.jsonl:2-4",
+          "/home/skuser01/.skcapstone/cards/61bc82e3/events/pi-codex-61bc82e3@chiap04.jsonl:10-12,15-17,20-22"
+        ],
+        "reason": "Direct BLOCKED evidence has blocked_on human and referent approval:chatgpt-restart-canary-retry-after-memory-preflight."
+      },
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/61bc82e3/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": false
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "chatgpt-client",
+          "epic-01d3c31c",
+          "parent-98ad56e7",
+          "chiap04",
+          "regression",
+          "terminal-safety",
+          "verdict-contract-rerun"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [],
+        "lifecycle": "backlog"
+      }
+    },
+    {
+      "card_id": "631f90bf",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/631f90bf/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/631f90bf/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "skdashboard",
+          "control-plane",
+          "ai-first",
+          "sprint-3",
+          "epic-6f7fd828",
+          "parent-ef218eb9",
+          "leaf-task",
+          "reports",
+          "subscriptions",
+          "exports",
+          "outbox",
+          "human-gate",
+          "size-m"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "38731952",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/38731952",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "94cbf19a",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/94cbf19a",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "847e250a",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/847e250a",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "70994052",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/70994052/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/70994052/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "skgateway",
+          "sse",
+          "repair",
+          "usage",
+          "credential-free",
+          "no-provider-traffic",
+          "immutable-candidate"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "df1adbf6",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/df1adbf6",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "73e446c7",
+      "classification": "blocked_contract_defect",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/73e446c7/core.json",
+      "corrected_evidence_join": {
+        "direct_event_sources": [
+          "/home/skuser01/.skcapstone/cards/73e446c7/events/pi-auto-73e446c7@chiap03.jsonl:2-3,6-7"
+        ],
+        "reason": "Direct BLOCKED verdicts exist but the cited verdict events contain no machine readable blocked_on referent. No obstruction class is inferred."
+      },
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/73e446c7/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "capauth",
+          "signer-migration",
+          "independent-review",
+          "successor"
+        ],
+        "latest_verdict_event": {
+          "key": "independent_rereview_verdict",
+          "line": 172,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap03.jsonl",
+          "timestamp": "2026-08-26T20:25:21.035683+00:00",
+          "value": "FAIL (terminal for exact card pin): authoritative CardStore core requires docs/evidence/capauth/SKDashboard-SCOPED-TRUST-POLICY-SIGNED.json plus detached signature sha256 469199995c8a7244ee21895484f0fd4783cb25d14761eb2098b36de82da392cf. Fresh readback finds both exact evidence paths absent; available host-local policy matches 1db1fd95cbb5dd5c97d204c63acf3d6dd5e485b438a3fee6d4a755613876bbcd, but available detached PGP signature is corrected successor sha256 55c4913a8dfe9775af96391bfb2076f39cd790f376b09a514e6616c6c1b7a512 and cannot satisfy this card. Therefore exact evidence existence/hash and verification under DCE38ED7BC9D95D724B5FE7FECF9D6A423EC83F5 remain unproven. Prior separate FAIL evidence links preserved. Scope evidence remains read-only, and no source/runtime/canonical-policy mutation occurred.",
+          "writer": "pi-night-policy-review-73e446c7"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "review_verdict",
+            "line": 117,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap01.jsonl",
+            "timestamp": "2026-08-26T01:57:01.917716+00:00",
+            "value": "FAIL: acceptance criteria not fully proven. The exact evidenced policy and detached signature paths are absent, and the pinned signature bytes are unavailable.",
+            "writer": "pi-cap-policy-73e446c7"
+          },
+          {
+            "key": "independent_rereview_verdict",
+            "line": 172,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap03.jsonl",
+            "timestamp": "2026-08-26T20:25:21.035683+00:00",
+            "value": "FAIL (terminal for exact card pin): authoritative CardStore core requires docs/evidence/capauth/SKDashboard-SCOPED-TRUST-POLICY-SIGNED.json plus detached signature sha256 469199995c8a7244ee21895484f0fd4783cb25d14761eb2098b36de82da392cf. Fresh readback finds both exact evidence paths absent; available host-local policy matches 1db1fd95cbb5dd5c97d204c63acf3d6dd5e485b438a3fee6d4a755613876bbcd, but available detached PGP signature is corrected successor sha256 55c4913a8dfe9775af96391bfb2076f39cd790f376b09a514e6616c6c1b7a512 and cannot satisfy this card. Therefore exact evidence existence/hash and verification under DCE38ED7BC9D95D724B5FE7FECF9D6A423EC83F5 remain unproven. Prior separate FAIL evidence links preserved. Scope evidence remains read-only, and no source/runtime/canonical-policy mutation occurred.",
+            "writer": "pi-night-policy-review-73e446c7"
+          }
+        ]
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "78277c6b",
+      "classification": "supersession",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/78277c6b/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/78277c6b/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "sklegal",
+          "mvp-ui",
+          "mandatory-correctness-security-boundary",
+          "review",
+          "mvp-gate",
+          "blocked",
+          "superseded",
+          "do-not-claim",
+          "false-completion"
+        ],
+        "latest_verdict_event": {
+          "key": "verdict",
+          "line": 2900,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+          "timestamp": "2026-08-23T10:02:14.659391+00:00",
+          "value": "BLOCKED: three independent read-only review slices agree; do not advance MVP-05.",
+          "writer": "jarvis"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "result",
+            "line": 2872,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-23T10:00:12.530893+00:00",
+            "value": "BLOCKED",
+            "writer": "jarvis"
+          },
+          {
+            "key": "verdict",
+            "line": 2900,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-23T10:02:14.659391+00:00",
+            "value": "BLOCKED: three independent read-only review slices agree; do not advance MVP-05.",
+            "writer": "jarvis"
+          }
+        ]
+      },
+      "structural": {
+        "archived": true,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "9dcda941",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/9dcda941",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "backlog"
+      }
+    },
+    {
+      "card_id": "79bb2305",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/79bb2305/core.json",
+      "corrected_evidence_join": {
+        "direct_event_sources": [
+          "/home/skuser01/.skcapstone/cards/79bb2305/events/SKAGENT@chiap02.jsonl:2-3",
+          "/home/skuser01/.skcapstone/cards/79bb2305/events/pi-auto-79bb2305@chiap02.jsonl:2-3,6-7",
+          "/home/skuser01/.skcapstone/cards/79bb2305/events/pi-auto-79bb2305@chiap03.jsonl:2-3"
+        ],
+        "reason": "Direct BLOCKED evidence is preserved as historical evidence, including its dependency referent. The exact two store join shows no folded dependency, no claim owner, and lifecycle done. The named referent db431f61 was structurally done before this snapshot, so no current dependency obstruction is supported."
+      },
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/79bb2305/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "skgateway",
+          "review",
+          "source-db431f61"
+        ],
+        "latest_verdict_event": {
+          "key": "verdict",
+          "line": 659,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap01.jsonl",
+          "timestamp": "2026-08-27T15:28:02.800713+00:00",
+          "value": "BLOCKED",
+          "writer": "pi-codex-79bb2305"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "verdict",
+            "line": 659,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap01.jsonl",
+            "timestamp": "2026-08-27T15:28:02.800713+00:00",
+            "value": "BLOCKED",
+            "writer": "pi-codex-79bb2305"
+          }
+        ]
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "7b697c3b",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/7b697c3b/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/7b697c3b/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "sk-control-plane",
+          "atlas",
+          "independent-review",
+          "successor",
+          "codex"
+        ],
+        "latest_verdict_event": {
+          "key": "verdict",
+          "line": 9575,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+          "timestamp": "2026-08-25T18:12:26.507033+00:00",
+          "value": "PASS|reviewer=jarvis|artifact_sha256=4a65f7a3582f6e7b2e841a9c9afa11d937ec4d8f2ee1b98ad3568e09ec86d7b8|verdict_sha256=5afedaf9ac8142b8ede4c9de63b849ac873674a31350d59b57bc5b0016b14b76",
+          "writer": "jarvis"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "verdict",
+            "line": 9575,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-25T18:12:26.507033+00:00",
+            "value": "PASS|reviewer=jarvis|artifact_sha256=4a65f7a3582f6e7b2e841a9c9afa11d937ec4d8f2ee1b98ad3568e09ec86d7b8|verdict_sha256=5afedaf9ac8142b8ede4c9de63b849ac873674a31350d59b57bc5b0016b14b76",
+            "writer": "jarvis"
+          }
+        ]
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "0828d8a4",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/0828d8a4",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "7b90a104",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/7b90a104/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/7b90a104/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "SKCP-05F8",
+          "capauth",
+          "oidc",
+          "packaging"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "46ad28a5",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/46ad28a5",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "7fbb0628",
+      "classification": "card_contradiction",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/7fbb0628/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/7fbb0628/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "portfolio-steward",
+          "independent-review",
+          "canary-packet-review",
+          "human-gate-input",
+          "leaf-task",
+          "size-m",
+          "repo:skcapstone",
+          "parent-b43537a8"
+        ],
+        "latest_verdict_event": {
+          "key": "verdict",
+          "line": 10000,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+          "timestamp": "2026-08-26T01:41:15.633824+00:00",
+          "value": "FAIL",
+          "writer": "codex-skpm-canary-packet-review-sol"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "verdict",
+            "line": 10000,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-26T01:41:15.633824+00:00",
+            "value": "FAIL",
+            "writer": "codex-skpm-canary-packet-review-sol"
+          }
+        ]
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "b866f452",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/b866f452",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "0de334c1",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/0de334c1",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "812d55e0",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/812d55e0/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/812d55e0/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "sklegal",
+          "skgateway",
+          "authz",
+          "retirement",
+          "independent-review",
+          "no-secret-access",
+          "size-m"
+        ],
+        "latest_verdict_event": {
+          "key": "verdict",
+          "line": 8807,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+          "timestamp": "2026-08-25T11:51:04.874824+00:00",
+          "value": "PASS|scope=replace 49d34274 on 5e082ce8 with 812d55e0|qualification_pass=false|credential_use=false|retirement_executed=false|final_addendum_sha256=cce6b82e6c1755f9bebe5d9abf71823257f0c31a38ca72dabcaaeb52fc37e10a",
+          "writer": "codex-skgw-authz-06e-dr-rmreview-independent"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "verdict",
+            "line": 8807,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-25T11:51:04.874824+00:00",
+            "value": "PASS|scope=replace 49d34274 on 5e082ce8 with 812d55e0|qualification_pass=false|credential_use=false|retirement_executed=false|final_addendum_sha256=cce6b82e6c1755f9bebe5d9abf71823257f0c31a38ca72dabcaaeb52fc37e10a",
+            "writer": "codex-skgw-authz-06e-dr-rmreview-independent"
+          }
+        ]
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "760d26f3",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/760d26f3",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "8b9ee8b3",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/8b9ee8b3/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/8b9ee8b3/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "chatgpt-client",
+          "epic-01d3c31c",
+          "parent-bcb58c60",
+          "sprint-2",
+          "leaf-task",
+          "size-l",
+          "skcapstone",
+          "mcp",
+          "configuration"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "26e1d53b",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/26e1d53b",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "98e41462",
+      "classification": "void_dependency",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/98e41462/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/98e41462/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "sklegal",
+          "mvp",
+          "review",
+          "contract-repair",
+          "wave-0",
+          "size-s"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": true,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "4aa00000",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": null,
+            "source_path": "/home/skuser01/.skcapstone/cards/4aa00000",
+            "state": "missing"
+          }
+        ],
+        "lifecycle": "backlog"
+      }
+    },
+    {
+      "card_id": "9b2aeaeb",
+      "classification": "pass_for_review_evidence",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/9b2aeaeb/core.json",
+      "corrected_evidence_join": {
+        "direct_event_sources": [
+          "/home/skuser01/.skcapstone/cards/9b2aeaeb/events/pi-glm-9b2aeaeb@chiap03.jsonl:2"
+        ],
+        "reason": "A direct completion event records PASS_FOR_REVIEW. It does not imply final PASS or lifecycle completion."
+      },
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/9b2aeaeb/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "sklegal",
+          "mvp",
+          "deployment",
+          "stable-lan",
+          "repair"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": "pi-glm-9b2aeaeb",
+        "dependencies": [
+          {
+            "card_id": "cdcdc503",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/cdcdc503",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "9dd76c45",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/9dd76c45/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/9dd76c45/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "sklegal",
+          "mvp",
+          "board",
+          "projection",
+          "independent-review",
+          "size-s"
+        ],
+        "latest_verdict_event": {
+          "key": "disposition",
+          "line": 6414,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+          "timestamp": "2026-08-24T18:37:20.389923+00:00",
+          "value": "PASS",
+          "writer": "codex-skl-mvp-board-10r-final-review"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "disposition",
+            "line": 6414,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-24T18:37:20.389923+00:00",
+            "value": "PASS",
+            "writer": "codex-skl-mvp-board-10r-final-review"
+          }
+        ]
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "9dcba975",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/9dcba975",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "a6c7fd2f",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/a6c7fd2f",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "a060fa3d",
+      "classification": "human_gate",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/a060fa3d/core.json",
+      "corrected_evidence_join": {
+        "direct_event_sources": [
+          "/home/skuser01/.skcapstone/cards/a060fa3d/events/pi-auto-a060fa3d@chiap02.jsonl:2-3",
+          "/home/skuser01/.skcapstone/cards/a060fa3d/events/pi-glm-a060fa3d@chiap01.jsonl:2-3"
+        ],
+        "reason": "The latest direct verdict records blocked_on human with referent approval:night-handoff-deployment-and-live-execution-constraints. The prior card contradiction class was wrong."
+      },
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/a060fa3d/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": false
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "sklegal",
+          "parent-3457eb15",
+          "sprint-3",
+          "capauth",
+          "model-gateway",
+          "skgateway",
+          "chiap01",
+          "live-qualification",
+          "size-l"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": "pi",
+        "dependencies": [
+          {
+            "card_id": "0ef8eb48",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/0ef8eb48",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "ready"
+      }
+    },
+    {
+      "card_id": "a3ff6791",
+      "classification": "dependency",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/a3ff6791/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/a3ff6791/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": false
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "skgateway",
+          "cmdb",
+          "topology",
+          "cutover",
+          "post-mvp-hardening",
+          "blocked-dependency"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "a4863fe3",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "backlog",
+            "source_path": "/home/skuser01/.skcapstone/cards/a4863fe3",
+            "state": "nonterminal"
+          }
+        ],
+        "lifecycle": "backlog"
+      }
+    },
+    {
+      "card_id": "a4863fe3",
+      "classification": "dependency",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/a4863fe3/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/a4863fe3/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": false
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "skgateway",
+          "canary",
+          "codex",
+          "pi",
+          "post-mvp-hardening"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "a7220561",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "backlog",
+            "source_path": "/home/skuser01/.skcapstone/cards/a7220561",
+            "state": "nonterminal"
+          }
+        ],
+        "lifecycle": "backlog"
+      }
+    },
+    {
+      "card_id": "bb11e415",
+      "classification": "card_contradiction",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/bb11e415/core.json",
+      "corrected_evidence_join": {
+        "direct_event_sources": [
+          "/home/skuser01/.skcapstone/cards/bb11e415/events/pi-codex-bb11e415@chiap08.jsonl:2-4"
+        ],
+        "reason": "Direct BLOCKED evidence records blocked_on card with referent ac:2."
+      },
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/bb11e415/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": false
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "skgateway",
+          "canary",
+          "cross-host",
+          "pi"
+        ],
+        "latest_verdict_event": {
+          "key": "result",
+          "line": 6020,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+          "timestamp": "2026-08-24T16:49:38.243551+00:00",
+          "value": "BLOCKED_LIVE_SSE_FAILURE",
+          "writer": "codex-skgw-cross-host-canary"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "verdict",
+            "line": 504,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap01.jsonl",
+            "timestamp": "2026-08-27T06:07:46.765559+00:00",
+            "value": "BLOCKED",
+            "writer": "pi-codex-bb11e415"
+          },
+          {
+            "key": "verdict",
+            "line": 867,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap02.jsonl",
+            "timestamp": "2026-08-27T21:38:59.469599+00:00",
+            "value": "BLOCKED blocked_on=card referent=card:bb11e415 criterion=ac:2. AC2 requires live install and operation, while this card's non-negotiable constraints prohibit deploy, restart, live gateway mutation, config mutation, and live_execution.",
+            "writer": "pi-codex-bb11e415"
+          },
+          {
+            "key": "result",
+            "line": 6020,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-24T16:49:38.243551+00:00",
+            "value": "BLOCKED_LIVE_SSE_FAILURE",
+            "writer": "codex-skgw-cross-host-canary"
+          }
+        ]
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "2bf44229",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/2bf44229",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "fcb4147f",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "backlog",
+            "source_path": "/home/skuser01/.skcapstone/cards/fcb4147f",
+            "state": "nonterminal"
+          }
+        ],
+        "lifecycle": "backlog"
+      }
+    },
+    {
+      "card_id": "c05960b8",
+      "classification": "card_contradiction",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/c05960b8/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/c05960b8/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "skcoord",
+          "review",
+          "source-9ccc42ec"
+        ],
+        "latest_verdict_event": {
+          "key": "review-verdict",
+          "line": 492,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap02.jsonl",
+          "timestamp": "2026-08-27T06:30:26.015320+00:00",
+          "value": "BLOCKED|candidate=1dc8abddcc8d5ba1e9dd245ed0cb289ac274fdf5|tree=852b9da3e1314f80c5b506a18e8b195f019110a7|dependency_floor_skcoord_0.1.44_reproduces_false_mismatch|no_repair_or_reconcile",
+          "writer": "pi-codex-c05960b8"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "review-verdict",
+            "line": 297,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap02.jsonl",
+            "timestamp": "2026-08-26T20:49:19.814260+00:00",
+            "value": "BLOCKED|PR203_1dc8abddcc8d5ba1e9dd245ed0cb289ac274fdf5_leaves_skcoord_floor_at_0.1.44|statusless_complete_fixture_reproduces_false_mismatch_on_allowed_floor|no_repair_or_reconcile",
+            "writer": "pi-skcoord-review-c05960b8"
+          },
+          {
+            "key": "review-verdict",
+            "line": 492,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap02.jsonl",
+            "timestamp": "2026-08-27T06:30:26.015320+00:00",
+            "value": "BLOCKED|candidate=1dc8abddcc8d5ba1e9dd245ed0cb289ac274fdf5|tree=852b9da3e1314f80c5b506a18e8b195f019110a7|dependency_floor_skcoord_0.1.44_reproduces_false_mismatch|no_repair_or_reconcile",
+            "writer": "pi-codex-c05960b8"
+          }
+        ]
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "c672529e",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/c672529e/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/c672529e/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "skw-autonomy",
+          "epic",
+          "skharness",
+          "sprint-3"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "d2fbe65b",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/d2fbe65b",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "c7e21b3a",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/c7e21b3a/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/c7e21b3a/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "skgateway",
+          "public-prep",
+          "security"
+        ],
+        "latest_verdict_event": {
+          "key": "result",
+          "line": 212,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap01.jsonl",
+          "timestamp": "2026-08-26T14:06:22.377869+00:00",
+          "value": "read-only-docs-quality-review-no-repository-changes",
+          "writer": "pi-skg-public-prep-c7e21b3a"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "result",
+            "line": 212,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap01.jsonl",
+            "timestamp": "2026-08-26T14:06:22.377869+00:00",
+            "value": "read-only-docs-quality-review-no-repository-changes",
+            "writer": "pi-skg-public-prep-c7e21b3a"
+          }
+        ]
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "c8f60460",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/c8f60460/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/c8f60460/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "chiwk13",
+          "skcoord",
+          "itil",
+          "cardstore",
+          "syncthing"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "cf12b21d",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/cf12b21d/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/cf12b21d/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "skw-autonomy",
+          "epic",
+          "skcapstone",
+          "atlas",
+          "itil",
+          "sprint-2"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "3925d012",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/3925d012",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "d6c5f135",
+      "classification": "card_contradiction",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/d6c5f135/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/d6c5f135/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "sklegal",
+          "mvp",
+          "handoff",
+          "coordination",
+          "wave-0",
+          "size-m"
+        ],
+        "latest_verdict_event": {
+          "key": "disposition",
+          "line": 3241,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+          "timestamp": "2026-08-23T16:59:27.439402+00:00",
+          "value": "PASS_INVENTORY_BASE_BLOCKED_PENDING_IMMUTABLE_HANDOFFS",
+          "writer": "codex-skl-mvp-v2-final-review"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "disposition",
+            "line": 3241,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-23T16:59:27.439402+00:00",
+            "value": "PASS_INVENTORY_BASE_BLOCKED_PENDING_IMMUTABLE_HANDOFFS",
+            "writer": "codex-skl-mvp-v2-final-review"
+          }
+        ]
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "5195197c",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/5195197c",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "dd4bb79d",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/dd4bb79d/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/dd4bb79d/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "sklegal",
+          "mvp",
+          "review",
+          "integration-base",
+          "wave-0"
+        ],
+        "latest_verdict_event": {
+          "key": "browser_result_sha256",
+          "line": 3689,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+          "timestamp": "2026-08-23T19:36:40.675421+00:00",
+          "value": "3250fa3a33b4ec990cc3f4dc8093e05ebb99359571dabaa7cc09a1000770277b",
+          "writer": "codex-skl-mvp-base-f4-review"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "disposition",
+            "line": 3681,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-23T19:36:38.963712+00:00",
+            "value": "PASS",
+            "writer": "codex-skl-mvp-base-f4-review"
+          },
+          {
+            "key": "browser_result_sha256",
+            "line": 3689,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-23T19:36:40.675421+00:00",
+            "value": "3250fa3a33b4ec990cc3f4dc8093e05ebb99359571dabaa7cc09a1000770277b",
+            "writer": "codex-skl-mvp-base-f4-review"
+          }
+        ]
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "c9162ae6",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/c9162ae6",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "de712b36",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/de712b36/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/de712b36/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "portfolio-steward",
+          "skharness",
+          "handoff",
+          "producer",
+          "authenticated-envelope",
+          "simulation-only",
+          "leaf-task",
+          "size-m",
+          "repo:skcapstone",
+          "epic-b43537a8",
+          "parent-b43537a8"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "2850e05b",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/2850e05b",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "7e72aca6",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/7e72aca6",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "90ebc6a7",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/90ebc6a7",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "59b6b5a6",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/59b6b5a6",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "d63e8c02",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/d63e8c02",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "f3b3bcfb",
+      "classification": "no_current_obstruction_terminal",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/f3b3bcfb/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/f3b3bcfb/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "skdashboard",
+          "control-plane",
+          "governed-actions",
+          "repair",
+          "codex",
+          "size-m",
+          "skcp-40"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "637d1a95",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/637d1a95",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    },
+    {
+      "card_id": "f3fc2c25",
+      "classification": "blocked_contract_defect",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/f3fc2c25/core.json",
+      "corrected_evidence_join": {
+        "direct_event_sources": [
+          "/home/skuser01/.skcapstone/cards/f3fc2c25/events/pi-auto-f3fc2c25@chiap02.jsonl:2"
+        ],
+        "reason": "A direct BLOCKED verdict exists without a machine readable blocked_on referent. No dependency class is inferred from structure."
+      },
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/f3fc2c25/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": false
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "greg-break-house",
+          "sprint-2",
+          "compliance",
+          "foreign-project"
+        ],
+        "latest_verdict_event": null,
+        "links_are_not_dependencies": true,
+        "verdict_events": []
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "5a0e0d6d",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "backlog",
+            "source_path": "/home/skuser01/.skcapstone/cards/5a0e0d6d",
+            "state": "nonterminal"
+          }
+        ],
+        "lifecycle": "backlog"
+      }
+    },
+    {
+      "card_id": "f44b73a9",
+      "classification": "card_contradiction",
+      "core_source_path": "/home/skuser01/.skcapstone/cards/f44b73a9/core.json",
+      "event_source_glob": "/home/skuser01/.skcapstone/cards/f44b73a9/events/*.jsonl",
+      "proposed_supported_append_only_remedy": {
+        "command": null,
+        "execution_status": "NO_ACTION_PROPOSED",
+        "reason": "The source pseudo action was not a supported command. This replacement does not invent an audited card repair."
+      },
+      "reason": {
+        "basis": "deterministic folded structural fields plus separately folded legacy evidence bytes",
+        "terminal": true
+      },
+      "separate_evidence": {
+        "completion_is_not_pass": true,
+        "labels": [
+          "skgateway",
+          "sklegal",
+          "authz",
+          "deployment",
+          "mandatory-correctness-security-boundary"
+        ],
+        "latest_verdict_event": {
+          "key": "disposition",
+          "line": 2654,
+          "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+          "timestamp": "2026-08-23T09:06:25.446523+00:00",
+          "value": "BLOCKED_SYSTEMD_CREDENTIAL_MODE_CONTRACT",
+          "writer": "codex-skgw-protected-deployment-r2"
+        },
+        "links_are_not_dependencies": true,
+        "verdict_events": [
+          {
+            "key": "disposition",
+            "line": 2654,
+            "source_path": "/home/skuser01/.skcapstone/coordination/card_events/chiap08.jsonl",
+            "timestamp": "2026-08-23T09:06:25.446523+00:00",
+            "value": "BLOCKED_SYSTEMD_CREDENTIAL_MODE_CONTRACT",
+            "writer": "codex-skgw-protected-deployment-r2"
+          }
+        ]
+      },
+      "structural": {
+        "archived": false,
+        "claim_owner": null,
+        "dependencies": [
+          {
+            "card_id": "ec1c4b6b",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/ec1c4b6b",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "c891e1b0",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/c891e1b0",
+            "state": "satisfied_structurally"
+          },
+          {
+            "card_id": "99926e05",
+            "evidence_verdict_not_inferred": true,
+            "lifecycle": "done",
+            "source_path": "/home/skuser01/.skcapstone/cards/99926e05",
+            "state": "satisfied_structurally"
+          }
+        ],
+        "lifecycle": "done"
+      }
+    }
+  ],
+  "replacement_chain": {
+    "blocking_review_path": "/home/skuser01/.skcapstone/evidence/work/f55c5023/partition-00-corrected-replacement-review.json",
+    "blocking_review_sha256": "caf39351887bc9c4f635d8be722f94eb5d2a18df64f97f63f6d0661f2633a444",
+    "blocking_review_verdict": "BLOCKED",
+    "preserves_replaced_bytes": true,
+    "replaces_path": "docs/reviews/artifacts/a743f500/partition-00-corrected-replacement.json",
+    "replaces_sha256": "e315f72bc38b07f48f15d6c1b28230b3fb07899402b8397579a6957fc8ae4b0a"
+  },
+  "repository_or_external_action_applied": false,
+  "schema": "skcapstone.fleet_unblock.corrected_replacement.v2",
+  "source_snapshot_metadata": {
+    "audit_card_id": "2f9846b9",
+    "constraints_observed": [
+      "read-only audit of selected cards",
+      "no repair or target-card mutation",
+      "no protected-data access",
+      "no external action",
+      "no repository change"
+    ],
+    "counts": {
+      "by_classification": {
+        "blocked_contract_defect": 2,
+        "card_contradiction": 11,
+        "dependency": 3,
+        "human_gate": 2,
+        "no_current_obstruction_terminal": 24,
+        "pass_evidence_awaiting_structural_reconciliation": 1,
+        "pass_for_review_evidence": 1,
+        "supersession": 1,
+        "void_dependency": 2
+      },
+      "nonterminal": 8,
+      "selected": 47,
+      "terminal": 39,
+      "with_claim": 3,
+      "with_dependencies": 37,
+      "with_verdict_event": 23
+    },
+    "overall": "PASS_FOR_REVIEW",
+    "partition": {
+      "index": 0,
+      "modulus": 33,
+      "selection_algorithm": "CardStore current IDs matching lowercase hexadecimal regex ^[0-9a-f]+$ where int(id,16) modulo 33 equals 0; include archived; exclude folded label fleet-unblock-audit"
+    },
+    "schema": "skcapstone.fleet-unblock-audit.v1",
+    "semantic_guards": {
+      "completion_implies_pass": false,
+      "human_gate_discharge_authority": [
+        "explicit Chef approval",
+        "explicit Chef void"
+      ],
+      "link_implies_dependency": false,
+      "machine_supersession_discharges_human_gate": false
+    },
+    "source_paths": {
+      "audit_card_core": "/home/skuser01/.skcapstone/cards/2f9846b9/core.json",
+      "audit_card_legacy_projection": "/home/skuser01/.skcapstone/coordination/tasks/2f9846b9-fleet-unblock-wave-01-00saudit-audit-blo.json",
+      "cardstore_root": "/home/skuser01/.skcapstone/cards",
+      "separate_evidence_events": "/home/skuser01/.skcapstone/coordination/card_events/*.jsonl",
+      "structural_core": "/home/skuser01/.skcapstone/cards/*/core.json",
+      "structural_events": "/home/skuser01/.skcapstone/cards/*/events/*.jsonl"
+    },
+    "timestamp_utc": "2026-08-28T11:04:19.343281+00:00",
+    "value_free": true
+  },
+  "supersedes_report": {
+    "card_id": "2f9846b9",
+    "path": "/home/skuser01/.skcapstone/evidence/work/2f9846b9/fleet-unblock-partition-00.json",
+    "preserved_unchanged": true,
+    "sha256": "2c7491e935b00fef9ea060ae55ae3fa0091fc62c97ae2b39e01219416ed6939b"
+  }
+}
