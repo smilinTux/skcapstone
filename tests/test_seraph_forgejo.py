@@ -566,3 +566,43 @@ def test_verdict_without_its_writers_claim_keeps_every_link():
     _, events = _generation_events("2026-09-01T00:00:00")
     events = [event for event in events if event["action"] != "claim"]
     assert _current_generation_view(card, events, events[-1]) is card
+
+
+def test_guarded_link_outcome_ignores_candidate_links_from_an_older_claim(tmp_path):
+    """A native claim-bound PASS link may follow a newer candidate head link."""
+    store = CardStore(tmp_path)
+    owner = "pi-glm-builder-node-chiap04-source01"
+    claim = "a" * 32
+    store.create(
+        CardCore(
+            id="source01",
+            title="[M] Source",
+            created_by="link",
+            initial_labels=["source-only"],
+            meta={"repository": SKGIT_REPOSITORY},
+        )
+    )
+    store.append_event("source01", "link", owner, link_key="commit", link_value="1" * 40)
+    store.append_event("source01", "claim", owner, owner=owner, claim_revision=claim)
+    store.append_event(
+        "source01",
+        "link",
+        owner,
+        link_key="head",
+        link_value=HEAD,
+        expected_claim_revision=claim,
+    )
+    store.append_event(
+        "source01",
+        "link",
+        owner,
+        link_key="verdict",
+        link_value="PASS",
+        expected_claim_revision=claim,
+    )
+    store.append_event("source01", "move", owner, column="done")
+
+    snapshot = LiveCardStoreGateway(tmp_path).read_card("source01")
+
+    assert snapshot.head_sha == HEAD
+    assert snapshot.verdict == "PASS"

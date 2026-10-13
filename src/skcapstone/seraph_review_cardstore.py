@@ -96,14 +96,19 @@ def _current_generation_view(card: object, events: list[dict], outcome: dict) ->
     written during the current claim still bind and still conflict.
     """
     writer, verdict_ts = outcome.get("writer"), outcome.get("ts", "")
+    expected_claim = outcome.get("expected_claim_revision")
     claims = [
         event.get("ts", "")
         for event in events
         if event.get("action") == "claim"
         and event.get("writer") == writer
+        and (
+            not expected_claim
+            or (event.get("claim_revision") or event.get("event_id")) == expected_claim
+        )
         and event.get("ts", "") <= verdict_ts
     ]
-    if not writer or not claims:
+    if not writer or len(claims) != 1:
         return card
     started = max(claims)
     written: dict[str, str] = {}
@@ -178,9 +183,14 @@ class LiveCardStoreGateway:
             else (outcome.get("link_value", outcome.get("value")))
         )
         writer = outcome.get("writer")
+        claim_bound_link_outcome = (
+            outcome.get("action") == "link"
+            and is_outcome_key(outcome.get("link_key") or outcome.get("key"))
+            and isinstance(outcome.get("expected_claim_revision"), str)
+        )
         repository, number, head = _candidate(
             _current_generation_view(card, events, outcome)
-            if outcome.get("action") == "verdict"
+            if outcome.get("action") == "verdict" or claim_bound_link_outcome
             else card
         )
         if outcome.get("action") == "verdict":
