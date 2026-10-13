@@ -97,7 +97,7 @@ def check_custody(home, request, status, *, allow_final_attempt=False):
         or not re.fullmatch(r"[0-9a-f]{32}", str(status.get("claim_revision", "")))
         or sorted(card.labels) != request.get("labels")
         or any(
-            source_bundle._binding({"meta": card.meta, "links": card.links}, key)
+            source_bundle._binding({"id": card.id, "meta": card.meta, "links": card.links}, key)
             != request.get(key)
             for key in ("repository", "base_ref", "base_revision")
         )
