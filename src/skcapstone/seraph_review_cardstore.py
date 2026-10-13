@@ -108,8 +108,12 @@ def _current_generation_view(card: object, events: list[dict], outcome: dict) ->
         )
         and event.get("ts", "") <= verdict_ts
     ]
-    if not writer or len(claims) != 1:
+    if not writer or not claims:
         return card
+    # Older verdicts do not carry a claim revision. A producer may have
+    # released and reclaimed the same card, so bind that verdict to its most
+    # recent claim before the verdict instead of abandoning generation
+    # filtering whenever the same identity appears more than once.
     started = max(claims)
     written: dict[str, str] = {}
     for event in events:

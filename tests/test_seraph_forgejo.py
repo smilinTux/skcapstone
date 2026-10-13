@@ -561,6 +561,57 @@ def test_candidate_links_written_during_the_current_claim_still_bind():
     assert _current_generation_view(card, events, events[-1]) is card
 
 
+def test_repeated_owner_verdict_uses_latest_claim_for_legacy_generation():
+    """A producer identity can reclaim a card before publishing its verdict."""
+    card = SimpleNamespace(
+        links={
+            "repository": SKGIT_REPOSITORY,
+            "commit": "1" * 40,
+            "head": "2" * 40,
+        },
+        meta={},
+    )
+    owner = "pi-glm-builder-node-chiap04-source01"
+    events = [
+        {"action": "link", "link_key": "commit", "ts": "2026-10-08T10:00:00"},
+        {"action": "claim", "ts": "2026-10-08T10:01:00", "writer": owner},
+        {"action": "claim", "ts": "2026-10-09T10:00:00", "writer": owner},
+        {"action": "link", "link_key": "head", "ts": "2026-10-09T10:01:00"},
+        {
+            "action": "verdict",
+            "ts": "2026-10-09T10:02:00",
+            "writer": owner,
+            "verdict": "PASS_FOR_REVIEW",
+        },
+    ]
+
+    view = _current_generation_view(card, events, events[-1])
+
+    assert "commit" not in view.links
+    assert view.links["head"] == "2" * 40
+
+
+def test_link_during_latest_repeated_claim_still_participates_in_binding():
+    card = SimpleNamespace(
+        links={"repository": SKGIT_REPOSITORY, "commit": "2" * 40},
+        meta={},
+    )
+    owner = "pi-glm-builder-node-chiap04-source01"
+    events = [
+        {"action": "claim", "ts": "2026-10-08T10:00:00", "writer": owner},
+        {"action": "claim", "ts": "2026-10-09T10:00:00", "writer": owner},
+        {"action": "link", "link_key": "commit", "ts": "2026-10-09T10:01:00"},
+        {
+            "action": "verdict",
+            "ts": "2026-10-09T10:02:00",
+            "writer": owner,
+            "verdict": "PASS_FOR_REVIEW",
+        },
+    ]
+
+    assert _current_generation_view(card, events, events[-1]) is card
+
+
 def test_verdict_without_its_writers_claim_keeps_every_link():
     card = SimpleNamespace(links={"repository": SKGIT_REPOSITORY, "commit": HEAD}, meta={})
     _, events = _generation_events("2026-09-01T00:00:00")
