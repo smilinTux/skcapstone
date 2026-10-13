@@ -1167,3 +1167,81 @@ def test_future_fresh_timestamp_fails_closed_on_clock_skew(tmp_path: Path) -> No
     assert namespace["reap_dead_claims"]() == 0
     assert released == []
     assert any(message.startswith("REAP_CLOCK_SKEW|") for message in messages)
+
+
+@pytest.mark.parametrize("lane", ("codex", "glm", "deepseek", "qwen", "kimi", "gateway"))
+def test_builder_node_owner_requires_exact_lane_host_card(lane: str) -> None:
+    """Production builder identities map to their actual reporting host."""
+    parser = _load_functions("_parse_worker_owner")["_parse_worker_owner"]
+    assert parser(f"pi-{lane}-builder-node-chiap02-deadbeef", "deadbeef") == (
+        "builder",
+        lane,
+        "chiap02",
+    )
+
+
+@pytest.mark.parametrize(
+    "owner",
+    (
+        "pi-deepseek-builder-node-unknown-deadbeef",
+        "pi-unknown-builder-node-chiap02-deadbeef",
+        "pi-deepseek-builder-node-chiap02-feedface",
+        "pi-deepseek-builder-node-chiap02-deadbeef-extra",
+        "codex-typed-claim-deadbeef",
+        "codex-development-browser-qa-deadbeef",
+    ),
+)
+def test_builder_node_recognition_does_not_admit_manual_or_mismatched_owners(owner):
+    """A known card suffix alone is never release authority."""
+    parser = _load_functions("_parse_worker_owner")["_parse_worker_owner"]
+    assert parser(owner, "deadbeef") is None
+
+
+def test_dead_builder_node_claim_uses_existing_exact_release(tmp_path):
+    """An absent unprotected builder now reaches the same CAS release path."""
+    owner = "pi-deepseek-builder-node-chiap02-deadbeef"
+    namespace, released, _messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner=owner,
+        claim_revision="builder-claim",
+        launch_revision=None,
+    )
+    assert namespace["reap_dead_claims"]() == 1
+    assert len(released) == 1
+    assert released[0][released[0].index("--owner") + 1] == owner
+    assert released[0][released[0].index("--expected-claim-revision") + 1] == "builder-claim"
+
+
+@pytest.mark.parametrize("gate", ("live", "missing-host", "grace", "changed-claim"))
+def test_builder_node_recognition_preserves_dead_worker_proofs(tmp_path, gate):
+    """Recognizing a new identity cannot waive any existing death proof."""
+    owner = "pi-deepseek-builder-node-chiap02-deadbeef"
+    namespace, released, _messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner=owner,
+        claim_revision="builder-claim",
+        launch_revision=None,
+    )
+    if gate == "live":
+        namespace["live_report"] = lambda: (time.time(), {"deadbeef"}, 3)
+    elif gate == "missing-host":
+        namespace["live_report"] = lambda: {
+            "oldest": time.time(),
+            "running": set(),
+            "reporting": {"chiap01", "chiap02", "chiap03"},
+            "expected": {"chiap01", "chiap02", "chiap03", "chiap04"},
+            "faults": [],
+            "authoritative": False,
+        }
+    elif gate == "grace":
+        namespace["CLAIM_GRACE"] = 1800
+    else:
+        namespace["_current_claim_identity_fresh"] = lambda _cid: (
+            owner,
+            time.time() - 900,
+            "new-builder-claim",
+        )
+    assert namespace["reap_dead_claims"]() == 0
+    assert released == []

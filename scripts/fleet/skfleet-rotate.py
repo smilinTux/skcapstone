@@ -5588,6 +5588,9 @@ def _parse_worker_owner(owner, cid, expected_seat=None):
     if not re.fullmatch(r"[0-9a-f]{8}", cid):
         return None
     for host in FLEET_WORKER_HOSTS:
+        for lane in ("codex", "glm", "deepseek", "qwen", "kimi", "gateway"):
+            if owner == "pi-%s-builder-node-%s-%s" % (lane, host, cid):
+                return "builder", lane, host
         for lane in ("codex", "glm", "deepseek", "qwen", "kimi", "escalate"):
             if owner == "pi-%s-%s-%s" % (lane, host, cid):
                 return "lane", lane, host
@@ -5910,7 +5913,7 @@ def _fleet_launch_provenance(cid, owner, claim_revision):
                             or parts[2] != session_prefix + parts[3]
                             or parsed_owner is None
                             or parsed_owner[2] != parts[1]
-                            or (parsed_owner[0] == "lane" and parsed_owner[1] != lane)
+                            or (parsed_owner[0] in {"lane", "builder"} and parsed_owner[1] != lane)
                         ):
                             continue
                         _fleet_launch_claims[(parts[3], launch_owner, launch_revision)] += 1
