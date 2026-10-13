@@ -109,3 +109,21 @@ def test_review_opened_before_release_keeps_same_generation(tmp_path):
     assert json.loads(replay.output)["review_card_id"] == review_id
     assert json.loads(replay.output)["created"] is False
     assert len(store.list_card_ids()) == 2
+
+
+def test_cross_host_claim_drift_after_reconciliation_refuses(tmp_path, monkeypatch):
+    from skcapstone import guarded_review_work as opener
+
+    store, card, _, _, args, _, _ = released(tmp_path)
+    original = opener.reconcile_review_work
+
+    def race(*a, **kw):
+        result = original(*a, **kw)
+        store.append_event(card, "claim", "other", owner="other", claim_revision="d" * 32)
+        return result
+
+    monkeypatch.setattr(opener, "reconcile_review_work", race)
+    result = _run(tmp_path, *args)
+    assert result.exit_code != 0
+    assert "source changed during reconciliation" in result.output
+    assert store.fold(card).owner == "other"

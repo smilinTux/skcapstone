@@ -8,3 +8,18 @@ Goal: use one locked event snapshot to distinguish HELD, RELEASED_CLEAN and CHAN
 4. Run Ruff and Black on changed Python, add changelog, open a separate non-draft PR. Do not merge or deploy the refactor.
 
 Native writes remain through coord only. The snapshot/view never writes CardStore files. No second PASS or review completion is introduced. Scope excludes scheduler, runtime deployment, and the separate identical-projection hotfix.
+
+Implemented policy boundaries:
+
+| Caller | Held policy | Released policy |
+|---|---|---|
+| Trusted test admission | Exact doing claim | Exact newest release, before publication content may be unavailable |
+| Acceptance finish | Preserve the original held-owner predicate | Exact newest release plus sealed candidate and outcome binding |
+| Guarded link and completion | Existing strict owner fence | Explicit binding, exact release proof and current or pre-release revision |
+| Operator reseal | Existing ready/doing/review claim | Same released proof, operator corrections and full history preimages |
+| Sealed producer recovery | Caller artifact and lifecycle policy | Shared custody proof plus exact sealed outcome and bundle checks |
+| Review-work | Existing ready/doing/review producer | Typed candidate bytes intact, no source revision change after release, original generation and producer claim |
+
+`EventSnapshot` reads each source ledger once while the card lock is held. Writers retain their enclosing lock until the operation is finished. The shared view removes only the proven release; the review opener additionally compares the snapshot at release to the current projection. Native writes use the ordinary store, never the read-only source view. After review reconciliation the live source revision is re-read to detect cross-host changes despite advisory locks.
+
+Existing held review metadata remains compatible. Newly opened released reviews record `released_producer_claim`; an already-opened held review is reused at its same pre-release source revision and generation. No source claim, verdict, or completion is written by review-work.
