@@ -136,9 +136,7 @@ def test_cleanly_released_claim_reserves_only_when_trusted_tests_opt_in(native):
     release(native)
     argv = reserve_released_ok(native)
     spawned = []
-    admission.start_reserved(
-        native[0], HOST, argv, spawned.append, allow_released_source=True
-    )
+    admission.start_reserved(native[0], HOST, argv, spawned.append, allow_released_source=True)
     assert len(spawned) == 1
 
 
