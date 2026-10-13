@@ -38,3 +38,6 @@ and hashes the requalification file into the immutable recovery receipt. The
 receipt records the exact release event; its existing history guards continue
 to fence all later events. The operator must still invoke acceptance-reseal
 with exact guards and correction preimages before finish can resume at step 09.
+
+Exact transition IDs and compared digests are retained in
+[the read-only diff](released-replay-diff-20261013.json).
