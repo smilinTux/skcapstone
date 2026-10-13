@@ -236,3 +236,40 @@ def test_credential_bearing_repository_refused_before_probe(git_source):
     with pytest.raises(ValueError, match="credential-free"):
         amendment.prove_ref("https://secret@example.test/source.git", REF, base)
     assert calls == []
+
+
+def test_fetch_timeout_refuses(git_source, monkeypatch):
+    import subprocess
+
+    remote, base, _, _ = git_source
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], 30)
+
+    monkeypatch.setattr(amendment.subprocess, "run", timeout)
+    with pytest.raises(ValueError, match="proof unavailable"):
+        amendment.prove_ref(remote, REF, base)
+
+
+def test_ref_moving_between_advertisement_and_fetch_refuses(git_source, monkeypatch):
+    remote, base, _, _ = git_source
+    run = amendment.subprocess.run
+
+    def changed(command, **kwargs):
+        result = run(command, **kwargs)
+        if "ls-remote" in command:
+            result.stdout = f"{'b' * 40}\trefs/heads/{REF}\n"
+        return result
+
+    monkeypatch.setattr(amendment.subprocess, "run", changed)
+    with pytest.raises(ValueError, match="changed during fetch"):
+        amendment.prove_ref(remote, REF, base)
+
+
+def test_dispatch_validator_uses_explicit_coordination_home(binding, tmp_path, monkeypatch):
+    from skcapstone.fleet.builder_dispatch import _source
+
+    _, link, _, _ = binding
+    core = link()
+    monkeypatch.setenv("SKCAPSTONE_HOME", str(tmp_path / "other-home"))
+    assert _source(core, home=tmp_path)[1] == REF

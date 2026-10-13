@@ -823,6 +823,7 @@ def _source_workspace_spec(core, labels):
     else:
         if link_ref and meta_ref and link_ref != meta_ref:
             from skcapstone.source_ref_amendment import amended_source_ref
+
             link_ref = amended_source_ref(core, emit=lambda message: log(d, message))
         base_ref = link_ref or meta_ref
     parsed = urlsplit(repository)

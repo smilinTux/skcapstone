@@ -43,6 +43,7 @@ def _evidence(core, home):
     for key in ("repository", "base_revision"):
         if not meta.get(key) or links.get(key, meta[key]) != meta[key]:
             raise ValueError("source amendment requires unchanged repository and base_revision")
+    source_binding_meta([], meta["repository"], meta.get("base_ref"), meta["base_revision"])
     ref = links.get("base_ref")
     binding = source_binding_meta([], meta["repository"], ref, meta["base_revision"])
     if not meta.get("base_ref") or ref == meta["base_ref"]:
