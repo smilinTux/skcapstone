@@ -9,6 +9,7 @@ from skcoord.card_store import CardStore, card_mutation_lock
 
 from .card import CardEvent, CardEventLog
 from .coord_completion import owned_revision_guard
+from .pr_binding import check_link_write
 from .review_verdict import _card_events
 from .seraph_review_cardstore import LiveCardStoreGateway, _latest_outcome, card_revision
 from .seraph_review_contracts import _digest
@@ -103,6 +104,7 @@ def record_guarded_link(
                 raise ValueError("guarded link replay changed")
         else:
             guard()
+            check_link_write(card, key, value)
             after = card.model_copy(deep=True)
             after.links[key] = value
             event = store.append_event(
