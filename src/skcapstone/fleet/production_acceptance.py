@@ -395,12 +395,24 @@ def _source_applicability_error(store, card, home):
     """Explain why an invalid source-only applicability receipt cannot pass."""
     if _source_only_applicability(card, home):
         return None
-    receipts = [
-        event
-        for event in store._read_events(card) + store._legacy_events(card)
-        if event.get("action") == "link"
-        and (event.get("link_key") or event.get("key")) == "applicability_receipt"
-    ]
+    receipts = {}
+    for event in store._read_events(card) + store._legacy_events(card):
+        if (
+            event.get("action") != "link"
+            or (event.get("link_key") or event.get("key")) != "applicability_receipt"
+        ):
+            continue
+        # CardStore can expose the same physical event through its current and
+        # legacy projections. Legacy copies omit event_id and claim binding,
+        # so use the common immutable event coordinates to count receipts.
+        value = event.get("link_value", event.get("value"))
+        identity = (
+            event.get("ts"),
+            event.get("writer"),
+            event.get("seq"),
+            json.dumps(value, sort_keys=True, separators=(",", ":"), default=str),
+        )
+        receipts[identity] = event
     if len(receipts) > 1:
         return "duplicate source-only applicability receipts"
     return "source-only applicability receipt differs"
