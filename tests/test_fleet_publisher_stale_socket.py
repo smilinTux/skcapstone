@@ -69,7 +69,7 @@ def estate(tmp_path, monkeypatch):
             host="chiap08",
             tmux_socket=str(default),
             allow_absent_default=True,
-            audit_tmux_servers=True,
+            audit_tmux_servers=kw.pop("audit_tmux_servers", True),
             store=object(),
             runner=runner,
             **kw,
@@ -78,9 +78,10 @@ def estate(tmp_path, monkeypatch):
     return SimpleNamespace(**locals())
 
 
-def test_stale_default_and_recovered_sockets_do_not_hide_audited_runtime(estate):
+@pytest.mark.parametrize("audit", [True, False])
+def test_stale_default_and_recovered_sockets_do_not_hide_audited_runtime(estate, audit):
     e = estate
-    result = json.loads(e.publish().read_text())
+    result = json.loads(e.publish(audit_tmux_servers=audit).read_text())
     assert result["complete"] is True
     assert result["tmux_sockets"] == [str(e.runtime)]
     assert result["tmux_sessions"] == ["skfleet-anchor"]
@@ -88,9 +89,12 @@ def test_stale_default_and_recovered_sockets_do_not_hide_audited_runtime(estate)
     assert e.primary.exists() and e.stale.exists()
 
 
-def test_missing_default_accepts_mapped_runtime_server(estate):
+@pytest.mark.parametrize("audit", [True, False])
+def test_missing_default_accepts_mapped_runtime_server(estate, audit):
     estate.primary.unlink()
-    assert json.loads(estate.publish().read_text())["tmux_sockets"] == [str(estate.runtime)]
+    assert json.loads(estate.publish(audit_tmux_servers=audit).read_text())["tmux_sockets"] == [
+        str(estate.runtime)
+    ]
 
 
 def test_stale_sockets_with_no_server_are_authoritative_absence(estate):
@@ -105,7 +109,8 @@ def test_audit_alone_skips_stale_socket_files(estate):
 
 
 @pytest.mark.parametrize("failure", ["hidden", "extra-server", "live-probe", "process-probe"])
-def test_incomplete_evidence_preserves_previous_snapshot(estate, failure):
+@pytest.mark.parametrize("audit", [True, False])
+def test_incomplete_evidence_preserves_previous_snapshot(estate, failure, audit):
     e = estate
     target = e.tmp_path / "evidence/fleet-live/chiap08.json"
     target.parent.mkdir(parents=True)
@@ -120,5 +125,59 @@ def test_incomplete_evidence_preserves_previous_snapshot(estate, failure):
     else:
         e.processes[:] = ["invalid"]
     with pytest.raises(RuntimeError):
+        e.publish(audit_tmux_servers=audit)
+    assert target.read_text() == "previous"
+
+
+def test_kernel_table_distinguishes_bound_listening_and_stale(tmp_path):
+    path = tmp_path / "s"
+    with socket.socket(socket.AF_UNIX) as sock:
+        sock.bind(str(path))
+        assert path not in publisher._listening_unix_sockets()
+        sock.listen(1)
+        assert path in publisher._listening_unix_sockets()
+    assert path.exists()
+    assert path not in publisher._listening_unix_sockets()
+
+
+@pytest.mark.parametrize(
+    "table",
+    [
+        "",
+        "wrong header\n",
+        "Num RefCount Protocol Flags Type St Inode Path\nshort\n",
+        "Num RefCount Protocol Flags Type St Inode Path\n0000: 2 0 bad-hex 0001 01 123 /socket\n",
+        None,
+    ],
+)
+def test_kernel_table_failure_preserves_previous_snapshot(estate, monkeypatch, table):
+    e = estate
+    target = e.tmp_path / "evidence/fleet-live/chiap08.json"
+    target.parent.mkdir(parents=True)
+    target.write_text("previous")
+    original = Path.read_text
+
+    def read(path, *args, **kw):
+        if path == Path("/proc/net/unix"):
+            if table is None:
+                raise PermissionError("kernel table denied")
+            return table
+        return original(path, *args, **kw)
+
+    monkeypatch.setattr(Path, "read_text", read)
+    with pytest.raises((RuntimeError, PermissionError)):
         e.publish()
     assert target.read_text() == "previous"
+
+
+def test_new_listener_during_audit_is_not_published_as_absent(estate):
+    e = estate
+
+    def runner(command, **kw):
+        result = e.runner(command, **kw)
+        if "display-message" in command:
+            e.listeners.add(e.default)
+        return result
+
+    with pytest.raises(RuntimeError, match="listener inventory changed"):
+        publisher._audited_tmux_sessions(e.default, runner)
