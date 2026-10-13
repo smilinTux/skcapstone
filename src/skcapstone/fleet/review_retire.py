@@ -17,7 +17,7 @@ from skcoord.card_store import CardStore, card_mutation_lock
 from ..seat_runtime import governed_review_assignment_ready, review_state_revision
 from . import builder_dispatch as dispatch
 from . import production_builder, review_pending, review_recovery, source_bundle
-from .production_review_custody import unit_terminal
+from .production_review_custody import unit_terminal, unused_failed_unit
 
 SCHEMA = "skfleet.remote-review-retirement/v1"
 PRESTART_SCHEMA = "skfleet.remote-review-prestart-retirement/v1"
@@ -439,6 +439,7 @@ def retired_offers(home: Path, card: str, events: list[dict]) -> set[str]:
                 and (
                     pending_proven
                     or proof_value.get("unit_state", {}).get("LoadState") == "not-found"
+                    or (not launches and unused_failed_unit(proof_value.get("unit_state", {})))
                 )
                 and proof_value.get("matching_sessions") == 0
                 and (pending_proven or proof_value.get("dispatch_status_absent") is True)
@@ -594,9 +595,9 @@ def _prestart_state(unit: str, host: str, card: str, *, pending: bool = False) -
     state = (
         review_pending.unit_state(unit, host)
         if pending
-        else unit_terminal(unit, "0" * 32, host=host)
+        else unit_terminal(unit, None, host=host, unused_offer=True)
     )
-    if not pending and state.get("LoadState") != "not-found":
+    if not pending and state.get("LoadState") != "not-found" and not unused_failed_unit(state):
         raise ValueError("review worker unit is present; prestart retirement refused")
     command = ["tmux", "ls", "-F", "#{session_name}"]
     if host != socket.gethostname().split(".")[0].lower():

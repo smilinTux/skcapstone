@@ -84,22 +84,39 @@ def retain_review_exit(home, args, card, *, terminal_proven):
     return state
 
 
-def unit_terminal(unit, invocation, *, host=None):
+def unused_failed_unit(values):
+    """Recognize a stopped transient failure without attributing its old invocation."""
+    return (
+        values.get("LoadState") == "loaded"
+        and values.get("ActiveState") == "failed"
+        and values.get("SubState") == "failed"
+        and values.get("MainPID") == "0"
+        and values.get("ControlPID") == "0"
+        and values.get("Transient") == "yes"
+    )
+
+
+def unit_terminal(unit, invocation, *, host=None, unused_offer=False):
     """Recheck a recorded terminal invocation; collected units may be absent.
 
     Callers must first verify the native terminal observation for this exact
     claim. A missing unit alone never proves that any worker ran or succeeded.
+    unused_offer is reserved for callers proving no status or launch exists;
+    it observes an older stopped transient failure without binding that run.
     """
-    if not re.fullmatch(
-        r"skfleet-(?:worker|builder)-[A-Za-z0-9_.-]+\.service", unit
-    ) or not re.fullmatch(r"[0-9a-f]{32}", str(invocation)):
+    if not re.fullmatch(r"skfleet-(?:worker|builder)-[A-Za-z0-9_.-]+\.service", unit) or not (
+        unused_offer
+        and invocation is None
+        or not unused_offer
+        and re.fullmatch(r"[0-9a-f]{32}", str(invocation))
+    ):
         raise ReviewEvidenceError("worker unit identity invalid")
     command = [
         "systemctl",
         "--user",
         "show",
         unit,
-        "--property=LoadState,ActiveState,SubState,MainPID,ControlPID,InvocationID,Result,ExecMainStatus",
+        "--property=LoadState,ActiveState,SubState,MainPID,ControlPID,InvocationID,Result,ExecMainStatus,Transient",
     ]
     if host is not None and host != socket.gethostname().split(".")[0].lower():
         if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,252}", host):
@@ -122,6 +139,10 @@ def unit_terminal(unit, invocation, *, host=None):
         and values.get("ControlPID") == "0"
     ):
         return values
+    if unused_offer:
+        if result.returncode == 0 and unused_failed_unit(values):
+            return values
+        raise ReviewEvidenceError("unused review worker death unproven")
     if (
         result.returncode
         or values.get("InvocationID") != invocation
