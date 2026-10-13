@@ -1,0 +1,190 @@
+{
+  "card_id": "6c418ad3",
+  "title": "[FLEET-UNBLOCK-WAVE-01-11R2][S][REVIEW] Review corrected partition 11 replacement",
+  "reviewed_artifact": {
+    "name": "partition-11-corrected-replacement.json",
+    "path": "docs/reviews/artifacts/a743f500/partition-11-corrected-replacement.json",
+    "source_pr": "https://github.com/smilinTux/skcapstone/pull/244",
+    "producer_card": "a743f500"
+  },
+  "acceptance_criteria_verification": {
+    "criterion_1_reproduce_artifact": {
+      "status": "PASS",
+      "artifact_sha256": "cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c",
+      "verified_from": "docs/reviews/artifacts/a743f500/partition-11-corrected-replacement.json.sha256",
+      "shared_path": "/home/skuser01/.skcapstone/evidence/work/a743f500/partition-11-corrected-replacement.json",
+      "shared_path_sha256": "cf2e3120d119ba693bb123b013aa1d4377a0bdd6e58e81c2b7c447f44706fb1c",
+      "verification_timestamp": "2026-08-28T19:05:00Z",
+      "notes": "SHA-256 matches between PR artifact and shared evidence path. Reproduction verified."
+    },
+    "criterion_2_verify_corrections_against_evidence": {
+      "status": "PASS",
+      "corrections_verified": [
+        {
+          "card_id": "9535bc80",
+          "defect_type": "omitted_verdict",
+          "evidence_path": "/home/skuser01/.skcapstone/cards/9535bc80/acceptance_criteria_evidence.jsonl:1",
+          "verified_verdict": "BLOCKED",
+          "verification_method": "Read acceptance_criteria_evidence.jsonl directly, found BLOCKED verdict with artifact_sha256 0890f14e099073207558ca2060f8de1cfd6234c096f7f612ad9ec2de8743b14b",
+          "notes": "Correction ledger correctly identified omitted BLOCKED verdict from direct evidence file."
+        },
+        {
+          "card_id": "f10a0e73",
+          "defect_type": "omitted_verdicts_and_unsafe_transition",
+          "evidence_paths": [
+            "/home/skuser01/.skcapstone/cards/f10a0e73/events/pi-codex-f10a0e73@chiap08.jsonl:13",
+            "/home/skuser01/.skcapstone/cards/f10a0e73/events/pi-codex-f10a0e73@chiap08.jsonl:18"
+          ],
+          "verified_verdict": "BLOCKED",
+          "blocked_on": "ac:2",
+          "blocked_on_type": "card",
+          "verification_method": "Read pi-codex-f10a0e73@chiap08.jsonl, found evidence events at lines 13 and 18 with verdict BLOCKED, blocked_on ac:2 type card",
+          "notes": "Correction ledger correctly identified omitted direct BLOCKED verdict events. Link metadata shows PASS_FOR_REVIEW but direct evidence events are BLOCKED - contradiction correctly classified as card_contradiction."
+        }
+      ],
+      "structural_store_join": {
+        "status": "PASS",
+        "method": "Verified core.json and event JSONL files were parsed separately for structural data (lifecycle, dependencies, labels)",
+        "evidence_store_join": {
+          "status": "PASS",
+          "method": "Verified direct evidence events (evidence, verdict) and acceptance_criteria_evidence.jsonl were read separately from structural data"
+        },
+        "join_rule_verified": "Evidence section correctly reports explicit_events, link_metadata_only separately. No verdict inferred from lifecycle state or links."
+      }
+    },
+    "criterion_3_verify_remedies_supported": {
+      "status": "PASS",
+      "verified_remedies": [
+        {
+          "card_id": "0994c010",
+          "remedy_type": "proposal_only",
+          "text": "Append an evidence event for the review only after dependency 5a0e0d6d receives supported disposition; then move this card to review without treating its verdict link as a dependency.",
+          "is_append_only": true,
+          "requires_authority": "dependency 5a0e0d6d must have disposition",
+          "notes": "Supported append-only proposal"
+        },
+        {
+          "card_id": "5236382f",
+          "remedy_type": "proposal_only",
+          "text": "Chef may append explicit approval or explicit void to 3f7da35a. Only after explicit approval may this collection card be claimed under its bounded authority.",
+          "is_append_only": true,
+          "requires_authority": "Chef",
+          "notes": "Supported append-only proposal with explicit authority requirement"
+        },
+        {
+          "card_id": "65e00fd9",
+          "remedy_type": "proposal_only",
+          "text": "Obtain explicit Chef approval or Chef void on 357ba8f4 only after a fresh reviewed lifecycle is recorded. If the lifecycle cannot be refreshed, append a supported void disposition to this unreachable execution card; do not detach the HUMAN gate.",
+          "is_append_only": true,
+          "requires_authority": "Chef",
+          "notes": "Supported append-only proposal with explicit authority requirement and preconditions"
+        },
+        {
+          "card_id": "9535bc80",
+          "remedy_type": "no_action",
+          "text": "Human gate remains blocked. Only explicit Chef authority may append approval or void evidence.",
+          "is_append_only": true,
+          "requires_authority": "Chef only",
+          "notes": "Correctly identifies NO_ACTION_PROPOSED for human gate"
+        },
+        {
+          "card_id": "f10a0e73",
+          "remedy_type": "no_action",
+          "text": "Do not move to review while the latest direct outcome is BLOCKED. The card criteria or constraints require a separately authorized amendment before rerun.",
+          "is_append_only": true,
+          "requires_authority": "separately authorized amendment",
+          "notes": "Correctly identifies NO_ACTION_PROPOSED for card_contradiction"
+        }
+      ],
+      "no_unsupported_pseudo_actions": {
+        "status": "PASS",
+        "verification": "No pseudo-commands, no audited-card repair, no external actions found in proposed_supported_append_only_remedies"
+      }
+    },
+    "criterion_4_verdict": {
+      "status": "PASS",
+      "verdict": "PASS",
+      "reason": "All acceptance criteria satisfied. Correction ledger entries verified against direct structural and evidence stores. All remedies are proposal-only append-only commands with explicit authority and preconditions. No repository or external action was applied (repository_or_external_action_applied: false, actions_applied: [])."
+    }
+  },
+  "two_store_join_verification": {
+    "structural_store": {
+      "description": "Core.json and structural CardStore events for lifecycle, archive, owner, labels, dependencies",
+      "verified": true,
+      "method": "Sample verification of core.json files for cards 5236382f, 9535bc80, f10a0e73 confirmed structural data separation"
+    },
+    "evidence_store": {
+      "description": "Direct evidence and verdict events from card event JSONL and acceptance criteria evidence JSONL",
+      "verified": true,
+      "method": "Verified evidence events in pi-codex-f10a0e73@chiap08.jsonl and acceptance_criteria_evidence.jsonl for 9535bc80"
+    },
+    "join_by_card_id_only": {
+      "verified": true,
+      "method": "Review correctly separates structural.status from evidence.latest_explicit_verdict and evidence.link_metadata_only. No verdict inferred from structural status or labels."
+    }
+  },
+  "partition_selection_verification": {
+    "algorithm": "From CardStore.list_cards(include_archived=False), retain IDs matching exactly 8 hexadecimal characters and int(id,16) % 33 == 11, then exclude cards whose folded labels contain fleet-unblock-audit.",
+    "verified_card_count": 40,
+    "sample_modulo_verification": "Verified sample cards (01478825, 0994c010, f10a0e73, fd2f5735) all satisfy int(id,16) % 33 == 11",
+    "exclusions_verified": "No cards with fleet-unblock-audit labels present in records"
+  },
+  "superseded_report_verification": {
+    "source_audit_card": "482cc241",
+    "source_path": "/home/skuser01/.skcapstone/evidence/work/482cc241/fleet-unblock-partition-11-audit.json",
+    "reported_sha256": "d7f5b4b0eff35c1401bef95c84a3c576f68adc3ddd54b645c742752d51afc70d",
+    "verified_sha256": "d7f5b4b0eff35c1401bef95c84a3c576f68adc3ddd54b645c742752d51afc70d",
+    "preserved_unchanged": true,
+    "status": "PASS"
+  },
+  "blocked_review_reproduced": {
+    "card_id": "567e6b09",
+    "path": "/home/skuser01/.skcapstone/evidence/work/567e6b09/BLOCKED-review.json",
+    "reported_sha256": "f84ea516f634c8ee118d2b094673c3d5fad4f95a0a07f652e68e900269040e12",
+    "verified_sha256": "f84ea516f634c8ee118d2b094673c3d5fad4f95a0a07f652e68e900269040e12",
+    "verdict": "BLOCKED",
+    "status": "PASS"
+  },
+  "governance_rules_verification": {
+    "rules_applied": [
+      "Structural lifecycle, current claim, and folded dependencies are reported separately from evidence outcomes and labels.",
+      "Completion never implies PASS.",
+      "Links are metadata and never treated as dependencies or evidence events.",
+      "Machine supersession never discharges a HUMAN gate; only explicit Chef approval or explicit Chef void can discharge it.",
+      "No repair or non-audit action was applied."
+    ],
+    "verified": true
+  },
+  "human_authority_rule_verification": {
+    "rule": "Only explicit Chef approval or explicit Chef void discharges a human gate. A machine card is not a substitute.",
+    "verified": true,
+    "evidence": "Cards 5236382f, 65e00fd9, 9535bc80 correctly identify human gates requiring Chef authority. No machine approval treated as human gate discharge."
+  },
+  "constraint_compliance": {
+    "no_audited_card_repair": true,
+    "no_external_action": true,
+    "no_repository_action": true,
+    "no_deploy": true,
+    "no_restart": true,
+    "no_live_gateway_config_mutation": true,
+    "no_credential_disclosure": true,
+    "no_wake02_enablement": true,
+    "no_live_execution": true,
+    "no_automerge": true,
+    "verified_from_artifact": {
+      "repository_or_external_action_applied": false,
+      "actions_applied": []
+    }
+  },
+  "independent_review_identity": {
+    "agent": "pi-glm-chiap02-6c418ad3",
+    "node": "chiap02",
+    "reviewer_card": "6c418ad3",
+    "ownership_verified": true,
+    "ownership_evidence": "skcapstone coord status shows card 6c418ad3 IN_PROGRESS with assignee pi-glm-chiap02. Workspace name pi-glm-chiap02-6c418ad3 confirms ownership."
+  },
+  "pull_request": "https://github.com/smilinTux/skcapstone/pull/291",
+  "review_timestamp_utc": "2026-08-28T19:15:00Z",
+  "overall_verdict": "PASS",
+  "schema": "skcapstone.fleet_unblock.verification_report.v1"
+}
