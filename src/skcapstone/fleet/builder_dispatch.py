@@ -970,13 +970,27 @@ def _process_state(status: dict) -> tuple[bool | None, int | None]:
 def _release_exact(
     coordination_home: Path, card_id: str, owner: str, revision: str, *, actor: str
 ) -> bool:
-    """Release only the generation still authoritative in CardStore."""
-    card = CardStore(coordination_home).fold(card_id)
-    if not card or card.owner != owner or card.meta.get("_claim_revision") != revision:
-        return False
-    return Board(coordination_home).release_claim(
-        owner, card_id, actor=actor, expected_claim_revision=revision
-    )
+    """Release an unfinished exact generation under the board/card locks."""
+    from skcoord.card_store import card_mutation_lock
+    from skcoord.coordination import AgentFile, _board_mutation_lock
+
+    from ..release_guard import FinishedWorkReleaseRefusedError, require_release_allowed
+
+    owner = AgentFile.validate_agent_name(owner)
+    actor = AgentFile.validate_agent_name(actor or owner)
+    with _board_mutation_lock(coordination_home), card_mutation_lock(coordination_home, card_id):
+        card = CardStore(coordination_home).fold(card_id)
+        if not card or card.owner != owner or card.meta.get("_claim_revision") != revision:
+            return False
+        try:
+            require_release_allowed(coordination_home, card_id, owner, revision)
+        except FinishedWorkReleaseRefusedError:
+            return False
+        # The public entrypoint acquires these same non-reentrant locks.
+        # Keep the guard and mutation together so a verdict cannot race them.
+        return Board(coordination_home)._release_claim_locked(
+            owner, card_id, actor=actor, expected_claim_revision=revision
+        )
 
 
 def _frozen_claim_status(

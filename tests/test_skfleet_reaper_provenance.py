@@ -1167,3 +1167,142 @@ def test_future_fresh_timestamp_fails_closed_on_clock_skew(tmp_path: Path) -> No
     assert namespace["reap_dead_claims"]() == 0
     assert released == []
     assert any(message.startswith("REAP_CLOCK_SKEW|") for message in messages)
+
+
+@pytest.mark.parametrize("lane", ("codex", "glm", "deepseek", "qwen", "kimi", "gateway"))
+def test_builder_node_owner_requires_exact_lane_host_card(lane: str) -> None:
+    """Production builder identities map to their actual reporting host."""
+    parser = _load_functions("_parse_worker_owner")["_parse_worker_owner"]
+    assert parser(f"pi-{lane}-builder-node-chiap02-deadbeef", "deadbeef") == (
+        "builder",
+        lane,
+        "chiap02",
+    )
+
+
+@pytest.mark.parametrize(
+    "owner",
+    (
+        "pi-deepseek-builder-node-unknown-deadbeef",
+        "pi-unknown-builder-node-chiap02-deadbeef",
+        "pi-deepseek-builder-node-chiap02-feedface",
+        "pi-deepseek-builder-node-chiap02-deadbeef-extra",
+        "codex-typed-claim-deadbeef",
+        "codex-development-browser-qa-deadbeef",
+    ),
+)
+def test_builder_node_recognition_does_not_admit_manual_or_mismatched_owners(owner):
+    """A known card suffix alone is never release authority."""
+    parser = _load_functions("_parse_worker_owner")["_parse_worker_owner"]
+    assert parser(owner, "deadbeef") is None
+
+
+def test_dead_builder_node_claim_uses_existing_exact_release(tmp_path):
+    """An absent unprotected builder now reaches the same CAS release path."""
+    owner = "pi-deepseek-builder-node-chiap02-deadbeef"
+    namespace, released, _messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner=owner,
+        claim_revision="builder-claim",
+        launch_revision=None,
+    )
+    assert namespace["reap_dead_claims"]() == 1
+    assert len(released) == 1
+    assert released[0][released[0].index("--owner") + 1] == owner
+    assert released[0][released[0].index("--expected-claim-revision") + 1] == "builder-claim"
+
+
+@pytest.mark.parametrize("gate", ("live", "missing-host", "grace", "changed-claim"))
+def test_builder_node_recognition_preserves_dead_worker_proofs(tmp_path, gate):
+    """Recognizing a new identity cannot waive any existing death proof."""
+    owner = "pi-deepseek-builder-node-chiap02-deadbeef"
+    namespace, released, _messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner=owner,
+        claim_revision="builder-claim",
+        launch_revision=None,
+    )
+    if gate == "live":
+        namespace["live_report"] = lambda: (time.time(), {"deadbeef"}, 3)
+    elif gate == "missing-host":
+        namespace["live_report"] = lambda: {
+            "oldest": time.time(),
+            "running": set(),
+            "reporting": {"chiap01", "chiap02", "chiap03"},
+            "expected": {"chiap01", "chiap02", "chiap03", "chiap04"},
+            "faults": [],
+            "authoritative": False,
+        }
+    elif gate == "grace":
+        namespace["CLAIM_GRACE"] = 1800
+    else:
+        namespace["_current_claim_identity_fresh"] = lambda _cid: (
+            owner,
+            time.time() - 900,
+            "new-builder-claim",
+        )
+    assert namespace["reap_dead_claims"]() == 0
+    assert released == []
+
+
+@pytest.mark.parametrize("verdict", ("PASS", "PASS_FOR_REVIEW", "PASS_FOR_REREVIEW"))
+@pytest.mark.parametrize("legacy", (False, True))
+def test_dead_builder_pass_is_preserved_before_reaper_evidence(tmp_path, verdict, legacy):
+    """A stopped builder's finished work is not overwritten with WORKER_DIED."""
+    from skcoord.card_store import CardCore, CardStore
+
+    from skcapstone.card import CardEvent, CardEventLog
+
+    owner = "pi-deepseek-builder-node-chiap02-deadbeef"
+    revision = "builder-claim"
+    namespace, released, messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner=owner,
+        claim_revision=revision,
+        launch_revision=None,
+    )
+    home = tmp_path / ".skcapstone"
+    home.mkdir()
+    store = CardStore(home)
+    store.create(CardCore(id="deadbeef", kind="task", title="finished builder", created_by="test"))
+    store.append_event("deadbeef", "claim", owner, owner=owner, claim_revision=revision)
+    if legacy:
+        CardEventLog(home).append(
+            CardEvent(
+                card_id="deadbeef",
+                action="link",
+                link_key="verdict",
+                link_value=verdict,
+                writer=owner,
+            )
+        )
+    else:
+        store.append_event("deadbeef", "verdict", owner, verdict=verdict)
+    assert namespace["reap_dead_claims"]() == 0
+    assert released == []
+    assert not (tmp_path / "card_events" / "fleet-liveness-reaper.jsonl").exists()
+    assert any("REAP_PRESERVED_FINISHED_WORK" in message for message in messages)
+
+
+@pytest.mark.parametrize("failure", (OSError("unreadable"), ValueError("invalid events")))
+def test_dead_builder_refuses_when_finished_work_cannot_be_read(tmp_path, monkeypatch, failure):
+    """Unavailable outcome evidence cannot turn a stopped builder into a release."""
+    from skcapstone import release_guard
+
+    def unavailable(*_args):
+        raise failure
+
+    namespace, released, messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner="pi-glm-builder-node-chiap02-deadbeef",
+        claim_revision="builder-claim",
+        launch_revision=None,
+    )
+    monkeypatch.setattr(release_guard, "finished_work_verdict", unavailable)
+    assert namespace["reap_dead_claims"]() == 0
+    assert released == []
+    assert any("REAP_FINISHED_WORK_UNAVAILABLE" in message for message in messages)

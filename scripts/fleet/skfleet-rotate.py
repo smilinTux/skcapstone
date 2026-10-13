@@ -5597,6 +5597,9 @@ def _parse_worker_owner(owner, cid, expected_seat=None):
     if not re.fullmatch(r"[0-9a-f]{8}", cid):
         return None
     for host in FLEET_WORKER_HOSTS:
+        for lane in ("codex", "glm", "deepseek", "qwen", "kimi", "gateway"):
+            if owner == "pi-%s-builder-node-%s-%s" % (lane, host, cid):
+                return "builder", lane, host
         for lane in ("codex", "glm", "deepseek", "qwen", "kimi", "escalate"):
             if owner == "pi-%s-%s-%s" % (lane, host, cid):
                 return "lane", lane, host
@@ -5919,7 +5922,7 @@ def _fleet_launch_provenance(cid, owner, claim_revision):
                             or parts[2] != session_prefix + parts[3]
                             or parsed_owner is None
                             or parsed_owner[2] != parts[1]
-                            or (parsed_owner[0] == "lane" and parsed_owner[1] != lane)
+                            or (parsed_owner[0] in {"lane", "builder"} and parsed_owner[1] != lane)
                         ):
                             continue
                         _fleet_launch_claims[(parts[3], launch_owner, launch_revision)] += 1
@@ -6137,6 +6140,19 @@ def reap_dead_claims():
         if oldest < fresh_ts + CLAIM_GRACE:
             log(d, "REAP_GRACE|%s|%s|%s|fresh claim generation remains inside "
                    "grace; leaving it alone this tick" % (HOST, cid, fresh_owner))
+            continue
+        # Inspect fresh native and legacy outcomes before writing WORKER_DIED.
+        # The CLI checks again under its mutation lock before the release.
+        try:
+            from skcapstone.release_guard import finished_work_verdict
+            finished = finished_work_verdict(
+                Path(HOME) / ".skcapstone", cid, fresh_owner, fresh_revision)
+        except (ImportError, OSError, ValueError, TypeError) as exc:
+            log(d, "REAP_FINISHED_WORK_UNAVAILABLE|%s|%s|%s" % (HOST, cid, exc))
+            continue
+        if finished:
+            log(d, "REAP_PRESERVED_FINISHED_WORK|%s|%s|%s|verdict=%s" %
+                (HOST, cid, fresh_owner, finished))
             continue
         if globals().get("PRODUCTION_POLICY"):
             from skcapstone.fleet.production_custody import retains_source_custody
