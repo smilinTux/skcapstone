@@ -97,3 +97,16 @@ def test_cycle_receipt_remains_writable_after_deadline_stop() -> None:
     idx_deadline = source.index("CYCLE_DEADLINE_REACHED")
     idx_receipt = source.index('log(d,"CYCLE_RECEIPT|')
     assert idx_deadline < idx_receipt
+
+
+def test_acceptance_reconciliation_logs_every_result_after_work_finishes() -> None:
+    source = ROTATE.read_text()
+    start = source.index("def _reconcile_source_reviews_step():")
+    end = source.index('CYCLE.run_steps("review_sweeps"', start)
+    step = source[start:end]
+
+    # reconcile_source_reviews has already completed the guarded acceptance
+    # work before returning this list. A cycle deadline can skip later phases,
+    # but must not hide later per-card results from actions.log.
+    assert "reconcile_source_reviews(" in step
+    assert "CYCLE.stop(" not in step
