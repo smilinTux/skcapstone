@@ -221,3 +221,9 @@ def test_rotator_wires_every_phase_to_the_single_cycle_deadline() -> None:
 
     positions = [source.index('_phase_timing("%s")' % name) for name in PHASE_ORDER]
     assert positions == sorted(positions)
+
+
+def test_tiny_timeout_still_leaves_a_positive_budget_and_never_blocks(tmp_path: Path) -> None:
+    deadline = make(tmp_path, Clock(), [], budget_s=250.0, hard_timeout_s=0.2, final_reserve_s=20)
+    assert 0 < deadline.budget_s <= 0.1
+    assert deadline.run_steps("s", [("a", lambda: None)]) == 1

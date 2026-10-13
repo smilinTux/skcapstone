@@ -85,7 +85,8 @@ class CycleDeadline:
         self.clock = clock
         self.started = clock() if started is None else started
         self.hard_timeout_s = float(hard_timeout_s)
-        self.final_reserve_s = float(final_reserve_s)
+        # A reserve larger than half the timeout would leave no budget at all.
+        self.final_reserve_s = min(float(final_reserve_s), self.hard_timeout_s / 2)
         # The budget can never reach into the final-write reserve.
         self.budget_s = min(float(budget_s), self.hard_timeout_s - self.final_reserve_s)
         self.warn_share = float(warn_share)
