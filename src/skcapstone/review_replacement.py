@@ -30,14 +30,14 @@ def _fold_digest(card) -> str:
     return _digest(value)
 
 
-def _source(home: Path, source_card: str) -> tuple[dict, str]:
+def _source(home: Path, source_card: str, *, _store: CardStore | None = None) -> tuple[dict, str]:
     """Resolve the current exact producer candidate and attempt-zero identity."""
     from .fleet.production_custody import source_work
     from .guarded_review_work import _candidate
     from .link_review_work import card_generation, review_card_id
     from .seraph_review_cardstore import LiveCardStoreGateway, _latest_outcome
 
-    store = CardStore(home)
+    store = _store if _store is not None else CardStore(home)
     card = store.fold(source_card)
     if (
         card is None
@@ -63,7 +63,7 @@ def _source(home: Path, source_card: str) -> tuple[dict, str]:
         source_card=source_card,
         producer=card.owner,
         producer_claim=card.meta["_claim_revision"],
-        source_revision=LiveCardStoreGateway(home).read_card(source_card).revision,
+        source_revision=LiveCardStoreGateway(home).read_card(source_card, _store=store).revision,
         source_native_revision=_fold_digest(card),
         source_events_sha256=_digest(_events(store, source_card)),
         source_head=outcome["candidate_commit"],
@@ -186,7 +186,7 @@ def _validate(
         raise ValueError("replacement authorization malformed")
     store = _store if _store is not None else CardStore(home)
     if live_source:
-        binding, predecessor = _source(home, request["source_card"])
+        binding, predecessor = _source(home, request["source_card"], _store=store)
     else:
         # Reading a completed review is not permission to complete its producer.
         # Feature A checks the live source initially, then uses its guarded intent.
@@ -263,12 +263,14 @@ def _validate(
     return binding, predecessor
 
 
-def replacement_binding(home: Path, source_card: str, head: str) -> dict:
+def replacement_binding(
+    home: Path, source_card: str, head: str, *, _store: CardStore | None = None
+) -> dict:
     """Return validated lineage for the only authorized current attempt."""
-    binding, predecessor = _source(home, source_card)
+    binding, predecessor = _source(home, source_card, _store=_store)
     if binding["source_head"] != head:
         raise ValueError("replacement requested source head changed")
-    return _record_binding(home, predecessor)
+    return _record_binding(home, predecessor, _store=_store)
 
 
 def _record_binding(

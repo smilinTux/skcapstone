@@ -30,6 +30,7 @@ from .source_bundle import (
     _sha,
     import_review_source,
 )
+from .source_custody import sealed_source_outcome as _sealed_source_outcome
 
 
 def digest(value):
@@ -410,31 +411,6 @@ def _current_outcome(store, row):
         or str(outcome.get("ts", "")) < str(claims[0].get("ts", ""))
     ):
         raise ReviewEvidenceError("native outcome predates current claim")
-    return outcome
-
-
-def _sealed_source_outcome(store, card_id, owner, claim, head, tree):
-    """Find the exact producer PASS bound by the immutable review source bundle."""
-    rows = store._read_events(card_id) + store._legacy_events(card_id)
-    claims = [
-        event
-        for event in rows
-        if event.get("action") == "claim"
-        and (event.get("claim_revision") or event.get("event_id")) == claim
-        and event.get("owner") == owner
-    ]
-    outcome = _latest_outcome(store, card_id)
-    if (
-        len(claims) != 1
-        or outcome.get("action") != "verdict"
-        or outcome.get("verdict") != "PASS_FOR_REVIEW"
-        or outcome.get("writer") != owner
-        or outcome.get("expected_claim_revision") not in (None, claim)
-        or outcome.get("candidate_commit") != head
-        or outcome.get("candidate_tree") != tree
-        or outcome.get("ts", "") < claims[0].get("ts", "")
-    ):
-        raise ReviewEvidenceError("sealed producer outcome is unavailable")
     return outcome
 
 
@@ -1031,10 +1007,17 @@ def reconcile(home, policy, *, process_check):
                             state["status"] == "done"
                             and (directory / "finish-intent.json").exists()
                         )
-                        if not resumable_done and (
-                            state["status"] not in {"backlog", "ready", "review"}
-                            or state["revision"] != item.get("live_revision", item["revision"])
-                        ):
+                        from .source_custody import CustodyState, inspect_custody
+
+                        proof = inspect_custody(
+                            home,
+                            item["card"],
+                            item["owner"],
+                            item["claim"],
+                            source=item,
+                            revision=item.get("live_revision", item["revision"]),
+                        )
+                        if not resumable_done and proof.state != CustodyState.RELEASED_CLEAN:
                             raise ReviewEvidenceError(
                                 "released source changed before trusted tests"
                             )

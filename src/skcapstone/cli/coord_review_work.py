@@ -14,7 +14,9 @@ def register_coord_review_work(coord: click.Group) -> None:
 
     @coord.command("review-work")
     @click.argument("task_id")
-    @click.option("--producer", required=True, help="Current exact source-claim owner.")
+    @click.option(
+        "--producer", required=True, help="Exact held or cleanly released source-claim producer."
+    )
     @click.option("--expected-source-revision", required=True)
     @click.option("--expected-claim-revision", required=True)
     @click.option(

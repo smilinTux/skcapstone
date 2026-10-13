@@ -297,8 +297,8 @@ def _finish_pair(
 ):
     """Run the existing journal, or an explicitly authenticated step-08 checkpoint."""
     from .acceptance_reseal import checkpoint
-    from .production_review_custody import released_source_matches
     from .production_tests import validate_test_receipt
+    from .source_custody import CustodyState, inspect_custody
 
     directory = Path(directory)
     source = context["source"]
@@ -339,13 +339,17 @@ def _finish_pair(
         binding_base["review_initial_revision"] = review_initial_revision
         binding_base["review_pair_refresh_sha256"] = _digest(refresh)
     source_before = inspect(home, source["card"])
-    source_claim_current = (
-        source_before["owner"] == source["owner"]
-        and source_before["claim_revision"] == source["claim"]
+    custody = inspect_custody(
+        home,
+        source["card"],
+        source["owner"],
+        source["claim"],
+        held_statuses=frozenset({source_before["status"]}),
+        source=source,
+        revision=source_before["revision"],
     )
-    released_source = source_before["owner"] is None and released_source_matches(
-        home, source, source_before["revision"]
-    )
+    source_claim_current = custody.state == CustodyState.HELD
+    released_source = custody.state == CustodyState.RELEASED_CLEAN
     if not source_claim_current and not released_source and source_before["status"] != "done":
         raise ReviewEvidenceError("source claim changed before review acceptance")
     intent = directory / "finish-intent.json"

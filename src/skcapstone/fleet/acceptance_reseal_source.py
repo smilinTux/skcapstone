@@ -1,24 +1,19 @@
 """Reuse exact released custody and governed test requalification during reseal."""
 
-import json
-
-from skcoord.card_store import CardStore
-
-from ..guarded_released_source import released_view
 from .production_review_finish import _finish_test_receipt
+from .source_custody import CustodyState, inspect_custody
 
 
 def correction_view(home, source, state, claim):
     """Prove custody under the reseal locks; hide only its exact release for diffing."""
     if claim != source["claim"]:
         raise ValueError("reseal custody changed")
-    if (
-        state["owner"] == source["owner"]
-        and state["claim_revision"] == claim
-        and state["status"] in {"ready", "doing", "review"}
-    ):
-        return CardStore(home)
-    return released_view(home, source["card"], source["owner"], claim, json.dumps(source))
+    proof = inspect_custody(home, source["card"], source["owner"], claim, source=source)
+    if proof.state == CustodyState.HELD:
+        return proof.store
+    if proof.state != CustodyState.RELEASED_CLEAN:
+        raise ValueError("reseal custody changed")
+    return proof.before_release()
 
 
 def validated_acceptance(home, directory, context):

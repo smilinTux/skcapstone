@@ -2,24 +2,10 @@
 
 import json
 
-from skcoord.card_store import CardStore, card_mutation_lock
+from skcoord.card_store import card_mutation_lock
 
-from .fleet.production_review_custody import released_source_matches
+from .fleet.source_custody import CustodyState, inspect_custody
 from .seraph_review_cardstore import LiveCardStoreGateway, card_revision
-
-
-class _WithoutRelease(CardStore):
-    """Read-only counterfactual: retain every event except one proven release."""
-
-    def __init__(self, home, release):
-        super().__init__(home)
-        self.release = release
-
-    def _read_events(self, card_id):
-        return [e for e in super()._read_events(card_id) if e != self.release]
-
-    def _legacy_events(self, card_id):
-        return [e for e in super()._legacy_events(card_id) if e != self.release]
 
 
 def released_view(home, card_id, agent, claim, binding):
@@ -28,26 +14,12 @@ def released_view(home, card_id, agent, claim, binding):
         source = json.loads(binding)
         if (source["card"], source["owner"], source["claim"]) != (card_id, agent, claim):
             raise ValueError("released source identity changed")
-        revision = LiveCardStoreGateway(home).read_card(card_id).revision
-        if not released_source_matches(home, source, revision):
+        proof = inspect_custody(home, card_id, agent, claim, source=source)
+        if proof.state != CustodyState.RELEASED_CLEAN:
             raise ValueError("released source custody or content changed")
     except (KeyError, TypeError) as exc:
         raise ValueError("released source binding invalid") from exc
-    store = CardStore(home)
-    # The shared proof above establishes that the latest custody event is this release.
-    release = max(
-        (
-            e
-            for e in store._read_events(card_id) + store._legacy_events(card_id)
-            if e.get("action") == "release_claim"
-        ),
-        key=lambda e: (e.get("ts", ""), e.get("writer", ""), e.get("seq", 0)),
-    )
-    view = _WithoutRelease(home, release)
-    row = view.fold(card_id)
-    if row.owner != agent or row.meta.get("_claim_revision") != claim:
-        raise ValueError("release did not relinquish the captured claim")
-    return view
+    return proof.before_release()
 
 
 def released_revision_guard(home, agent, card_id, revision, claim, binding):
