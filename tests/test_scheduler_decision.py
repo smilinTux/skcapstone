@@ -224,19 +224,20 @@ def _authoritative_claimability_for(card_home: Path):
         },
     )
     store = CardStore(card_home)
-    snapshot = _launcher_function(
-        "_authoritative_card_snapshot",
-        {
-            "os": __import__("os"),
-            "json": json,
-            "hashlib": hashlib,
-            "CARDS": str(card_home / "cards"),
-            "_strict_card_events": lambda cid, fresh=False: store._read_events(cid),
-            "_legacy_claimability_events": lambda fresh=False: {},
-            "_legacy_projection_owners": lambda cid, fresh=False: (),
-            "_fold_claimability": fold,
-        },
+    namespace = {
+        "os": __import__("os"),
+        "json": json,
+        "hashlib": hashlib,
+        "CARDS": str(card_home / "cards"),
+        "_strict_card_events": lambda cid, fresh=False: store._read_events(cid),
+        "_legacy_claimability_events": lambda fresh=False: {},
+        "_legacy_projection_owners": lambda cid, fresh=False: (),
+        "_fold_claimability": fold,
+    }
+    namespace["_compute_authoritative_snapshot"] = _launcher_function(
+        "_compute_authoritative_snapshot", dict(namespace)
     )
+    snapshot = _launcher_function("_authoritative_card_snapshot", namespace)
     return _launcher_function(
         "authoritative_claimability",
         {
