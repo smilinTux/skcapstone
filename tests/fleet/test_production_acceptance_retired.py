@@ -142,8 +142,22 @@ def test_exact_retired_request_exit_is_historical_not_accepted(tmp_path, directo
 def test_duplicate_applicability_receipts_are_reported_as_ambiguous(tmp_path, monkeypatch):
     store = _Store(tmp_path, {})
     store.events[CARD] = [
-        {"action": "link", "link_key": "applicability_receipt", "link_value": "{}"},
-        {"action": "link", "link_key": "applicability_receipt", "link_value": "{}"},
+        {
+            "action": "link",
+            "link_key": "applicability_receipt",
+            "link_value": "{}",
+            "ts": "2026-10-13T00:00:00+00:00",
+            "writer": "producer-a",
+            "seq": 1,
+        },
+        {
+            "action": "link",
+            "link_key": "applicability_receipt",
+            "link_value": "{}",
+            "ts": "2026-10-13T00:00:01+00:00",
+            "writer": "producer-a",
+            "seq": 2,
+        },
     ]
     monkeypatch.setattr(acceptance, "_source_only_applicability", lambda card, home: False)
 
