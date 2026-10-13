@@ -4,6 +4,9 @@ After=network-online.target
 OnFailure=skfleet-rotate-alert.service
 
 [Service]
+# Fleet authority/node service: files and dirs created here must be owner-only
+# (a 0002 umask made evidence dirs 0775 and the guarded reviewer handoff refused them).
+UMask=0077
 Type=oneshot
 EnvironmentFile=-%h/.config/skcapstone/skfleet-niobe-live.env
 Environment=SKAGENT=niobe

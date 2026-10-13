@@ -2,6 +2,9 @@
 Description=Publish host-local SKFleet worker liveness
 
 [Service]
+# Fleet authority/node service: files and dirs created here must be owner-only
+# (a 0002 umask made evidence dirs 0775 and the guarded reviewer handoff refused them).
+UMask=0077
 Type=oneshot
 Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=SKFLEET_TMUX_SOCKET=/tmp/tmux-%U/default

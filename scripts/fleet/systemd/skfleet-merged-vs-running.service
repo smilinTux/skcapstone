@@ -23,6 +23,9 @@ OnFailure=skcapstone-alert@skfleet-merged-vs-running.service
 After=network-online.target
 
 [Service]
+# Fleet authority/node service: files and dirs created here must be owner-only
+# (a 0002 umask made evidence dirs 0775 and the guarded reviewer handoff refused them).
+UMask=0077
 Type=oneshot
 Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/.skenv/bin/python3 %h/work/skcapstone/scripts/fleet/skfleet_merged_vs_running.py --repo-root %h/work/skcapstone --fetch --gtd-capture --verdict-path %h/.skcapstone/fleet/status/node-%H/merged-vs-running/verdict.json

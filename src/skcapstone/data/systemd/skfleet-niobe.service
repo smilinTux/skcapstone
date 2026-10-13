@@ -3,6 +3,9 @@ Description=SKFleet Niobe bounded lifecycle cycle (staging, no dispatch)
 After=network-online.target
 
 [Service]
+# Fleet authority/node service: files and dirs created here must be owner-only
+# (a 0002 umask made evidence dirs 0775 and the guarded reviewer handoff refused them).
+UMask=0077
 Type=oneshot
 Environment=SKAGENT=niobe
 Environment=SKCAPSTONE_AGENT=niobe

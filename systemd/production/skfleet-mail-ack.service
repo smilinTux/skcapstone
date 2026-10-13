@@ -3,6 +3,9 @@ Description=Bounded SKMail worker status acknowledgments
 After=default.target
 
 [Service]
+# Fleet authority/node service: files and dirs created here must be owner-only
+# (a 0002 umask made evidence dirs 0775 and the guarded reviewer handoff refused them).
+UMask=0077
 ExecStart=%h/.skenv/bin/python3 %h/.local/bin/skfleet-mail-ack.py
 Restart=always
 RestartSec=5
