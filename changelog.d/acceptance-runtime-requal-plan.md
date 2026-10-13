@@ -1,0 +1,1 @@
+- Acceptance now seals a fresh trusted test plan when a completed plan has the current policy but its qualified profile is stale by fingerprint.

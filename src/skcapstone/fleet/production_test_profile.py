@@ -697,10 +697,12 @@ def seal_candidate(
 ) -> None:
     """Seal once only after acceptance has independently validated current custody."""
     predecessor_sha256 = None
+    existing_policy_current = False
     try:
         existing, _, predecessor_sha256 = plan.load_plan(home, binding, allow_completed=True)
-        if existing["policy_sha256"] == plan.execution_policy_fingerprint(policy):
-            return
+        existing_policy_current = existing["policy_sha256"] == plan.execution_policy_fingerprint(
+            policy
+        )
     except FileNotFoundError:
         pass
     except plan.TestEvidenceError as exc:
@@ -712,7 +714,12 @@ def seal_candidate(
         "repository": repository,
         "criteria_sha256": binding["criteria_sha256"],
     }
-    value, _ = read_profile(home, expected["card"])
+    try:
+        value, _ = read_profile(home, expected["card"])
+    except FileNotFoundError:
+        if existing_policy_current:
+            return
+        raise
     if "source_sha256" in value:
         expected["source_sha256"] = plan.source_fingerprint(
             repository, binding["source_head"], binding["source_tree"]
@@ -729,6 +736,8 @@ def seal_candidate(
         if not acceptance_requalifiable(value, expected, policy):
             raise
         requalifying = True
+    if existing_policy_current and not requalifying:
+        return
     plan.seal_plan(
         home,
         binding,

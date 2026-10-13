@@ -398,6 +398,83 @@ def test_policy_change_reseals_as_acceptance_requalification(setup):  # noqa: F8
     assert latest["policy_sha256"] == plan.execution_policy_fingerprint(changed_policy)
 
 
+def test_runtime_change_reseals_same_policy_for_acceptance_requalification(setup, monkeypatch):
+    s = setup
+    s.plan_path.unlink()
+    core = {
+        "id": "89508f84",
+        "meta": {"repository": "https://example.org/public.git"},
+        "acceptance_criteria": ["Run parser checks"],
+    }
+    custody(s.home, core)
+    binding = dict(
+        s.binding,
+        source_card=core["id"],
+        source_owner=CLAIM["owner"],
+        source_claim_revision=CLAIM["claim_revision"],
+        criteria_sha256=profile.contract(core)["criteria_sha256"],
+    )
+    monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "a" * 64)
+    recipe = {"pytest": {"tests/test_parser.py": 1}, "compile": [], "lint": [], "changelog": False}
+    profile.qualify_profile(
+        s.home,
+        core,
+        s.policy,
+        recipe,
+        "operator",
+        "b" * 64,
+        source_sha256=plan.source_fingerprint(
+            core["meta"]["repository"], binding["source_head"], binding["source_tree"]
+        ),
+    )
+    profile.seal_candidate(s.home, binding, s.workspace, s.policy, core["meta"]["repository"])
+    _, _, predecessor = plan.load_plan(s.home, binding)
+    run = plan.run_directory(s.home, predecessor)
+    plan.private_dir(run.parent, create=True)
+    plan.private_dir(run, create=True)
+    launch = {"request_id": predecessor, "unit": "skfleet-builder-test.service"}
+    launch_path = run / "launch.json"
+    terminal_path = run / "terminal.json"
+    receipt_path = run / "receipt.json"
+    launch_path.write_text(json.dumps(launch))
+    receipt_path.write_text("{}")
+    terminal_path.write_text(
+        json.dumps(
+            {
+                "unit": launch["unit"],
+                "InvocationID": "c" * 32,
+                "LoadState": "loaded",
+                "ActiveState": "active",
+                "SubState": "exited",
+                "ExecMainPID": "123",
+                "ExecMainStatus": "0",
+            }
+        )
+    )
+    launch_path.chmod(0o600)
+    receipt_path.chmod(0o600)
+    terminal_path.chmod(0o600)
+
+    monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "d" * 64)
+    stale_profile, _ = profile.read_profile(s.home, core["id"])
+    assert profile.acceptance_requalifiable(
+        stale_profile,
+        {
+            "card": core["id"],
+            "repository": core["meta"]["repository"],
+            "criteria_sha256": binding["criteria_sha256"],
+        },
+        s.policy,
+    )
+    assert plan._completed_test_attempt(s.home, predecessor)
+    profile.seal_candidate(s.home, binding, s.workspace, s.policy, core["meta"]["repository"])
+
+    successor_plan, _, _ = plan.load_plan(s.home, binding)
+    assert successor_plan["acceptance_requalification"] is True
+    assert successor_plan["predecessor_sha256"] == predecessor
+    assert successor_plan["runtime_sha256"] == "d" * 64
+
+
 def test_runtime_successor_restores_preflight_without_repinning(qualified, monkeypatch):
     home, core, policy, _, original = qualified
     custody(home, core)
