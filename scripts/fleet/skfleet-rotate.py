@@ -4566,8 +4566,11 @@ def _authored_change_epoch(cid,threshold):
     return latest if latest>threshold else 0
 
 def _human_gate(cid):
+    # Fail closed: an unreadable core must not turn a human-gated dependency
+    # into an automatically satisfied one (the blocker wake path below would
+    # then wake on plain completion with no human resolution).
     try: core=json.load(open(os.path.join(CARDS,cid,"core.json")))
-    except Exception: return False
+    except Exception: return True
     labels={str(x).strip().lower().replace("_","-") for x in folded_labels(cid,core)}
     return "human-gate" in labels or "[HUMAN]" in str(core.get("title") or "").upper()
 
