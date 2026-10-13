@@ -155,3 +155,21 @@ def test_installer_wires_wrapper_and_units() -> None:
     packaging = (Path(__file__).parents[1] / "pyproject.toml").read_text()
     assert '"scripts/fleet/link-lineage.py"' in packaging
     assert '"scripts/fleet/skfleet-link-producer.py"' in packaging
+
+
+def test_wrapper_gives_both_stages_one_private_run_cache(tmp_path, monkeypatch):
+    configure(monkeypatch)
+    seen = []
+
+    def run(command, **kwargs):
+        env = kwargs["env"]
+        seen.append((env["SKFLEET_LINK_FETCH_CACHE"], env["SKFLEET_LINK_RUN_ID"]))
+        assert Path(env["SKFLEET_LINK_FETCH_CACHE"]).parent.is_dir()
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(MODULE.subprocess, "run", run)
+    assert MODULE.run(home=tmp_path) == 0
+    assert seen[0] == seen[1]
+    assert not Path(seen[0][0]).parent.exists()  # removed when the run ends
+    MODULE.run(home=tmp_path)
+    assert seen[2][1] != seen[0][1]  # a new run id every run

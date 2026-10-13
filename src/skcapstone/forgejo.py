@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
@@ -22,6 +23,15 @@ _SHA = re.compile(r"[0-9a-f]{40}")
 #: Concurrent per-PR observations. Kept low: 8 workers tripped a forge 403 (rate
 #: limit) on the third back-to-back pass of ~160 requests from chiap08.
 _FETCH_WORKERS = 4
+
+
+_COUNT_LOCK = threading.Lock()
+_COUNT = 0
+
+
+def request_count() -> int:
+    """Forge requests this process has attempted (for the per-stage budget log)."""
+    return _COUNT
 
 
 class ForgejoError(ValueError):
@@ -49,6 +59,9 @@ class ForgejoClient:
 
     def request(self, method: str, path: str, payload: dict | None = None) -> Any:
         """Send bounded JSON without exposing authentication in error details."""
+        global _COUNT
+        with _COUNT_LOCK:
+            _COUNT += 1
         parsed = urlsplit(path)
         query = parse_qs(parsed.query, keep_blank_values=True)
         if (

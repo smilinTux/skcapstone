@@ -471,7 +471,9 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     producer = ProducerIdentity(args.producer_identity, args.host, args.session, args.workspace)
     try:
-        connector = MultiForgeReadOnlyConnector()
+        from .link_fetch_share import SharedFetch
+
+        connector = SharedFetch(MultiForgeReadOnlyConnector(), "producer").log_at_exit()
         lineage = load_lineage(args.lineage)
         if args.dry_run:
             _, result = build_feed(
