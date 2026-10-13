@@ -1,0 +1,1 @@
+Test plan successors are now always named from the chain base (`<base>.<predecessor sha>.json`). A second-generation successor used to be named from the first successor's file, so `load_plan` could not reach it and reported "test plan chain is disconnected", which stranded acceptance requalification.
