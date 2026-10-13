@@ -5,11 +5,15 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
+import uuid
 from pathlib import Path
 
 from skcapstone.forgejo import SKGIT_REPOSITORY
+from skcapstone.link_fetch_share import fresh_run_env
 
 REPOSITORY_SCOPE_ENV = "SKFLEET_LINK_REPOSITORIES"
 REQUIRED_REPOSITORIES = frozenset(
@@ -45,6 +49,19 @@ def run(
     *,
     home: Path,
 ) -> int:
+    """Run the pipeline with one forge fetch shared by both stages.
+
+    The cache lives in a private directory removed when the run ends, under a run
+    id that is new every run, so no later run can be served this run's PR data.
+    """
+    scratch = Path(tempfile.mkdtemp(prefix="skfleet-link-run-"))
+    try:
+        return _run(home=home, env={**os.environ, **fresh_run_env(scratch, uuid.uuid4().hex)})
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def _run(*, home: Path, env: dict[str, str]) -> int:
     """Run the role-bounded producer pipeline and preserve incomplete fallback."""
     if (
         os.environ.get("SKAGENT") != "link-producer"
@@ -72,6 +89,7 @@ def run(
         ]
         + [argument for repository in repositories for argument in ("--repo", repository)],
         check=False,
+        env=env,
     )
     if reconcile.returncode:
         return reconcile.returncode
@@ -88,6 +106,7 @@ def run(
         ]
         + [argument for repository in repositories for argument in ("--repo", repository)],
         check=False,
+        env=env,
         capture_output=True,
         text=True,
     )

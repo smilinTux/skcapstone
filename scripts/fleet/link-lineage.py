@@ -410,9 +410,22 @@ def reconcile(
     return body
 
 
+_SHARED: Any = None
+
+
+def _connector() -> Any:
+    """One connector per run, sharing its fetches with the producer stage."""
+    global _SHARED
+    if _SHARED is None:
+        from skcapstone.link_fetch_share import SharedFetch
+
+        _SHARED = SharedFetch(MultiForgeReadOnlyConnector(), "lineage").log_at_exit()
+    return _SHARED
+
+
 def fetch_prs(repo: str) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for item in MultiForgeReadOnlyConnector().list_open(repo):
+    for item in _connector().list_open(repo):
         rows.append(
             {
                 "number": item["number"],
