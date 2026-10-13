@@ -370,6 +370,21 @@ LOG = logging.getLogger(__name__)
 _ADMISSION_REFUSALS: dict[str, str] = {}
 
 
+def _record_admission_refusal(source_card: str, reason: str) -> None:
+    """Remember a refusal for every caller, but warn once per distinct reason.
+
+    The same refusal for the same source repeats every dispatcher cycle.
+    """
+    previous = _ADMISSION_REFUSALS.get(source_card)
+    _ADMISSION_REFUSALS[source_card] = reason
+    if previous != reason:
+        LOG.warning(
+            "trusted tests not launched for source %s: admission refused: %s",
+            source_card,
+            reason,
+        )
+
+
 def admission_refusal(source_card: str) -> str | None:
     """Reason the last launch attempt for this source was refused, if it was."""
     return _ADMISSION_REFUSALS.get(source_card)
@@ -497,12 +512,7 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
             # still running", so six acceptances reported awaiting-trusted-tests
             # for a day with no trace of the refusal (chiap08, 2026-10-12).
             reason = str(exc) or type(exc).__name__
-            _ADMISSION_REFUSALS[binding["source_card"]] = reason
-            LOG.warning(
-                "trusted tests not launched for source %s: admission refused: %s",
-                binding["source_card"],
-                reason,
-            )
+            _record_admission_refusal(binding["source_card"], reason)
             return None
         _ADMISSION_REFUSALS.pop(binding["source_card"], None)
         request["service_argv"] = argv
