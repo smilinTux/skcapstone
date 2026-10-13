@@ -21,6 +21,7 @@ import runpy
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.parse
@@ -38,6 +39,21 @@ def _packaging_install_boundary(request):
     if request.path.name in {"test_package_data.py", "test_python311_compat_boundary.py"}:
         guard = Path(__file__).resolve().parents[1] / "scripts/ci/test_environment.py"
         runpy.run_path(str(guard))["check_environment"]()
+
+
+@pytest.fixture(autouse=True)
+def _reset_dreaming_job_loop_registry():
+    """Never let one test's registered consciousness loop leak into another.
+
+    ``dreaming_job.set_consciousness_loop`` writes a process-global that daemon
+    tests set to a mock. Serial ordering happened to hide the leak; once the
+    suite is sharded/xdist-split the same worker can run a leaker before
+    ``test_dreaming_reflection_job_fires_end_to_end`` (CI, 2026-10-13).
+    """
+    yield
+    module = sys.modules.get("skcapstone.dreaming_job")
+    if module is not None:
+        module.set_consciousness_loop(None)
 
 
 @pytest.fixture(autouse=True)

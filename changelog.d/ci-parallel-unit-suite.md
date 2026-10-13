@@ -1,0 +1,1 @@
+The py3.12 pull request unit suite now runs as four balanced file-level shards, each using pytest-xdist (--dist loadfile), with coverage and logs merged by the required "unit tests (py3.12)" job. pytest-xdist is added to the dev extra.

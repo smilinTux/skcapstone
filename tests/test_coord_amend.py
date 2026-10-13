@@ -110,7 +110,9 @@ def test_skcoord_pins_agree_between_pyproject_and_ci():
         f"CI registry pin must equal the pyproject floor {declared}; "
         "a stale pin makes the two test runs assert different contracts"
     )
-    workflow = (PROJECT_ROOT / ".github" / "workflows" / "pytest.yml").read_text(encoding="utf-8")
+    workflow = (PROJECT_ROOT / ".github" / "actions" / "test-env" / "action.yml").read_text(
+        encoding="utf-8"
+    )
     assert "deploy/fleet-constraints.txt" in workflow
 
 
