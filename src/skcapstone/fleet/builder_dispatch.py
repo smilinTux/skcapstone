@@ -23,7 +23,7 @@ from skcoord.coordination import TaskUnclaimable
 from ..atomic_io import atomic_write_text
 from ..coordination import Board
 from ..seat_mail import startup_hello
-from . import production_builder, scheduler, store
+from . import production_builder, production_policy, scheduler, store
 from .churn_breaker import ClaimRefusedError, assert_claim_permitted
 from .node_controller import NodeView, node_views
 from .paths import SOVEREIGN_HOME, FleetPaths, valid_name
@@ -1650,7 +1650,12 @@ def _consume_available(
             if (
                 current_policy is not None
                 and isinstance(request.get("policy"), dict)
-                and request["policy"] != current_policy
+                and not production_policy.offer_policy_compatible(
+                    request["policy"],
+                    current_policy,
+                    (request.get("production") or {}).get("family"),
+                    (request.get("production") or {}).get("host"),
+                )
             ):
                 # Keep stale offers and their custody untouched. The authority
                 # can retire and reoffer them through the governed lifecycle.

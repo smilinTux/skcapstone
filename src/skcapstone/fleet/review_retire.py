@@ -886,10 +886,12 @@ def retire_prestart(
             except ValueError as exc:
                 raise ValueError("expired offer lease is invalid") from exc
             if policy_drifted:
+                from . import review_dispatch as _offers
+
                 if (
                     pending
                     or not isinstance(request.get("policy"), dict)
-                    or request["policy"] == policy
+                    or _offers._offer_policy_current(request, policy)
                 ):
                     raise ValueError("offer policy has not drifted")
             elif lease_expiry.tzinfo is None or lease_expiry > datetime.now(timezone.utc):

@@ -103,6 +103,7 @@ def retire_policy_drifted_offers(paths, home, actor):
     Retired offers no longer exist as request files, so cycles are idempotent.
     The normal offer path then re-offers under the current policy.
     """
+    from . import review_dispatch
     from . import review_retire as retire
 
     try:
@@ -122,7 +123,7 @@ def retire_policy_drifted_offers(paths, home, actor):
             if (
                 request.get("work_kind") != "review"
                 or not isinstance(request.get("policy"), dict)
-                or request["policy"] == current_policy
+                or review_dispatch._offer_policy_current(request, current_policy)
                 or os.path.lexists(retire.dispatch.status_path(paths, node, card))
             ):
                 continue
