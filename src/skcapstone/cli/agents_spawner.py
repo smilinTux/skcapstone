@@ -35,13 +35,23 @@ def _resolve_provider_backend(provider: Optional[str], home_path: Path):
             from ..providers import DockerProvider, LocalProvider, ProxmoxProvider
 
             if prov_type == ProviderType.LOCAL:
-                prov_backend = LocalProvider(agents_root=home_path / "agents" / "local")
+                # LocalProvider uses ``work_dir`` for the local agent root.
+                # Keep this explicit so the CLI remains compatible with the
+                # provider constructor and does not silently fall back to a
+                # dry-run deployment when initialization fails.
+                prov_backend = LocalProvider(
+                    home=home_path,
+                    work_dir=home_path / "agents" / "local",
+                )
             elif prov_type == ProviderType.DOCKER:
                 prov_backend = DockerProvider()
             elif prov_type == ProviderType.PROXMOX:
                 prov_backend = ProxmoxProvider()
-        except Exception as exc:
-            logger.warning("Failed to initialize provider backend for %s: %s", provider, exc)
+        except Exception:
+            # A missing backend is not a dry-run request. Let the command
+            # abort before SubAgentSpawner/TeamEngine can create a pending
+            # deployment or claim coordination work.
+            raise
     return prov_backend, prov_type
 
 
@@ -163,7 +173,14 @@ def register_agents_spawner_commands(agents: click.Group) -> None:
         from ..spawner import SubAgentSpawner, classify_task
 
         home_path = Path(home).expanduser()
-        prov_backend, prov_type = _resolve_provider_backend(provider, home_path)
+        try:
+            prov_backend, prov_type = _resolve_provider_backend(provider, home_path)
+        except Exception as exc:
+            # Do not continue with a null provider: TeamEngine interprets that
+            # as a dry-run and persists a pending deployment.
+            raise click.ClickException(
+                f"Unable to initialize {provider} provider: {exc}"
+            ) from exc
 
         # Baby agent mode: spawn a pre-defined baby agent by name
         if baby:
