@@ -180,7 +180,16 @@ class LiveCardStoreGateway:
                 and is_outcome_key(event.get("link_key") or event.get("key"))
             )
         ]
-        outcome = outcomes[-1] if outcomes else {}
+        outcome = max(
+            outcomes,
+            key=lambda event: (
+                event.get("ts", ""),
+                event.get("writer", ""),
+                event.get("seq", 0),
+                bool(event.get("expected_claim_revision")),
+            ),
+            default={},
+        )
         verdict = (
             outcome.get("verdict")
             if outcome.get("action") == "verdict"

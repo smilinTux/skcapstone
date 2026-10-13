@@ -657,3 +657,45 @@ def test_guarded_link_outcome_ignores_candidate_links_from_an_older_claim(tmp_pa
 
     assert snapshot.head_sha == HEAD
     assert snapshot.verdict == "PASS"
+
+
+def test_claim_bound_outcome_wins_tie_with_legacy_unbound_copy(tmp_path):
+    """A duplicate legacy row must not hide a claim-bound outcome at the same time."""
+    store = CardStore(tmp_path)
+    owner = "pi-glm-builder-node-chiap04-source01"
+    claim = "b" * 32
+    store.create(
+        CardCore(
+            id="source01",
+            title="[M] Source",
+            created_by="link",
+            initial_labels=["source-only"],
+            meta={"repository": SKGIT_REPOSITORY},
+        )
+    )
+    store.append_event("source01", "link", owner, link_key="commit", link_value="1" * 40)
+    store.append_event("source01", "claim", owner, owner=owner, claim_revision=claim)
+    store.append_event(
+        "source01",
+        "link",
+        owner,
+        link_key="head",
+        link_value=HEAD,
+        expected_claim_revision=claim,
+    )
+    store.append_event(
+        "source01",
+        "link",
+        owner,
+        link_key="verdict",
+        link_value="PASS",
+        expected_claim_revision=claim,
+    )
+    outcome = store._read_events("source01")[-1]
+    legacy = {key: value for key, value in outcome.items() if key != "expected_claim_revision"}
+    store._legacy_events = lambda card_id: [legacy] if card_id == "source01" else []
+
+    snapshot = LiveCardStoreGateway(tmp_path).read_card("source01", _store=store)
+
+    assert snapshot.head_sha == HEAD
+    assert snapshot.verdict == "PASS"
