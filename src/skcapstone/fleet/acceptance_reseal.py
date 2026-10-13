@@ -415,7 +415,9 @@ def reseal(home, card, claim, actor, changes, guards):
         projections = [
             e for e in _card_events(source["card"], home) if e.get("event_id") == event["event_id"]
         ]
-        if len(projections) != 1 or any(
+        # Syncthing may retain identical copies of one canonical event.
+        # Compare the whole projection so conflicting copies still fail closed.
+        if len({_digest(e) for e in projections}) != 1 or any(
             projections[0].get(k) != event.get(k)
             for k in ("writer", "action", "link_key", "link_value", "ts", "seq")
         ):
