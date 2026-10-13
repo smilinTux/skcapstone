@@ -1,9 +1,4 @@
-"""Crash-safe source acceptance through the authority's guarded native CLI.
-
-The guarded authority CLI is an explicit deployment dependency. Worker model
-text never authorizes a completion; a committed proposal and qualified native
-test receipt are independently revalidated before every mutation.
-"""
+"""Crash-safe acceptance via guarded CLI, revalidating review and trusted test evidence."""
 
 import json
 import subprocess
@@ -296,9 +291,11 @@ def finish_pair(home, directory, context, *, guard, command=native_command, insp
 def _finish_pair(home, directory, context, *, guard, command, inspect, historical_only=False):
     """Run the existing journal, or an explicitly authenticated step-08 checkpoint."""
     from .acceptance_reseal import checkpoint
+    from .production_review_custody import released_source_matches
     from .production_tests import validate_test_receipt
 
     directory = Path(directory)
+    source = context["source"]
     recovery = checkpoint(home, directory, context)
     journal = directory / "resealed" if recovery else directory
     artifacts(context)
@@ -320,16 +317,13 @@ def _finish_pair(home, directory, context, *, guard, command, inspect, historica
         "context_sha256": _digest(context),
         "test_receipt": acceptance,
     }
-    source_before = inspect(home, context["source"]["card"])
+    source_before = inspect(home, source["card"])
     source_claim_current = (
-        source_before["owner"] == context["source"]["owner"]
-        and source_before["claim_revision"] == context["source"]["claim"]
+        source_before["owner"] == source["owner"]
+        and source_before["claim_revision"] == source["claim"]
     )
-    released_source = (
-        source_before["owner"] is None
-        and source_before["status"] in {"backlog", "ready", "review"}
-        and source_before["revision"]
-        == context["source"].get("live_revision", context["source"]["revision"])
+    released_source = source_before["owner"] is None and released_source_matches(
+        home, source, source_before["revision"]
     )
     if not source_claim_current and not released_source and source_before["status"] != "done":
         raise ReviewEvidenceError("source claim changed before review acceptance")
@@ -342,12 +336,18 @@ def _finish_pair(home, directory, context, *, guard, command, inspect, historica
         binding = dict(binding_base)
         if "source_claim_current" in prior_binding:
             binding["source_claim_current"] = source_claim_current
+        if "released_source_revision" in prior_binding:
+            binding["released_source_revision"] = prior_binding["released_source_revision"]
         if prior_binding != binding:
             raise ReviewEvidenceError("historical acceptance intent changed")
     else:
         binding = {**binding_base, "source_claim_current": source_claim_current}
+        if released_source:
+            binding["released_source_revision"] = source_before["revision"]
     initial = {
-        "source": context["source"].get("live_revision", context["source"]["revision"]),
+        "source": binding.get(
+            "released_source_revision", source.get("live_revision", source["revision"])
+        ),
         "review": context["review"]["revision"],
     }
     if not intent.exists():
@@ -485,7 +485,7 @@ def _finish_pair(home, directory, context, *, guard, command, inspect, historica
         "controller": context["controller"],
         "context_sha256": _digest(context),
         "revisions": expected,
-        "source_card": context["source"]["card"],
+        "source_card": source["card"],
         "review_card": context["review"]["card"],
         "accepted": True,
         "test_receipt": acceptance,
