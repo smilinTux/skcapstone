@@ -148,7 +148,7 @@ def reviewable_source_candidate(
 def source_binding(card) -> dict:
     """Return the exact native source binding, rejecting incomplete/conflicting data."""
     value = {
-        key: _binding({"meta": card.meta, "links": card.links}, key)
+        key: _binding({"id": card.id, "meta": card.meta, "links": card.links}, key)
         for key in ("repository", "base_ref", "base_revision")
     }
     url = urlsplit(value["repository"] or "")

@@ -210,7 +210,7 @@ def eligible(core: dict, labels: list[str] | tuple[str, ...]) -> bool:
     )
 
 
-def _source(core: dict) -> tuple[str, str, str]:
+def _source(core: dict, *, home: Path | None = None) -> tuple[str, str, str]:
     """Read and validate exact credential-free source metadata."""
     raw_meta = core.get("meta")
     raw_links = core.get("links")
@@ -230,6 +230,13 @@ def _source(core: dict) -> tuple[str, str, str]:
             meta_value = meta_value.lower()
             link_value = link_value.lower()
         if meta_value and link_value and meta_value != link_value:
+            if field == "base_ref":
+                from ..source_ref_amendment import amended_source_ref
+
+                try:
+                    return amended_source_ref(core, home=home)
+                except ValueError as exc:
+                    raise BuilderDispatchError(f"source binding conflict: {field}") from exc
             raise BuilderDispatchError(f"source binding conflict: {field}")
         return link_value or meta_value
 
@@ -257,7 +264,7 @@ def _request_matches_current_card(
     expected_labels = request.get("labels")
     if (
         not eligible(core, labels)
-        or _source(core)
+        or _source(core, home=coordination_home)
         != (request.get("repository"), request.get("base_ref"), request.get("base_revision"))
         or labels != expected_labels
     ):
@@ -601,7 +608,7 @@ def _offer(paths, core, labels, *, writer, now=None):
     card_id = core["id"].lower()
     if not valid_name(card_id):
         raise BuilderDispatchError("invalid card id")
-    repository, base_ref, revision = _source(core)
+    repository, base_ref, revision = _source(core, home=paths.root.parent)
     normalized_labels = sorted(str(label).strip().lower() for label in labels)
     route = logical_route(labels)
     if route is None:
@@ -818,7 +825,7 @@ def decline_reason(
     if not valid_name(card_id):
         return "invalid-card-id"
     try:
-        repository, base_ref, revision = _source(core)
+        repository, base_ref, revision = _source(core, home=paths.root.parent)
     except BuilderDispatchError as exc:
         return f"invalid-source: {exc}"
     normalized_labels = sorted(str(label).strip().lower() for label in labels)

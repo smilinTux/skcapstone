@@ -405,6 +405,13 @@ def _binding(core: dict, key: str) -> str | None:
         if (core.get(container) or {}).get(key) is not None
     }
     if len(values) > 1:
+        if key == "base_ref":
+            from ..source_ref_amendment import amended_source_ref
+
+            try:
+                return amended_source_ref(core)
+            except ValueError as exc:
+                raise SourceBundleError(f"review source binding conflict: {exc}") from exc
         raise SourceBundleError("review source binding conflict")
     return next(iter(values), None)
 
