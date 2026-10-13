@@ -1793,6 +1793,95 @@ def _supersedable(store, home: Path, card: str, claim: str, owner: str):
     return request_id, node
 
 
+def supersede_generation(
+    paths,
+    home: Path,
+    card: str,
+    claim: str,
+    owner: str,
+    *,
+    actor: str,
+    reason: str,
+    raw_context: bytes,
+) -> str:
+    """Archive and supersede one review generation whose reviewer claim is released.
+
+    Shared by the sealed-context sweep and review handoff recovery. Returns
+    "superseded" or the reason nothing was written.
+    """
+    # Locate the generation first, then lock in retire()'s order
+    # (offer exclusion, request exclusion, card) and re-verify inside.
+    located = _supersedable(CardStore(home), home, card, claim, owner)
+    if located is None:
+        return "not-supersedable"
+    request_id, node = located
+    request_path = dispatch.request_path(paths, node, card)
+    status_path = dispatch.status_path(paths, node, card)
+    with (
+        dispatch._request_exclusion(paths.root / "dispatch/.production-offer"),
+        dispatch._request_exclusion(request_path),
+        card_mutation_lock(home, card),
+    ):
+        store = CardStore(home)
+        if _supersedable(store, home, card, claim, owner) != located:
+            return "not-supersedable"
+        events = store._read_events(card)
+        raw_request, raw_status = _raw(request_path), _raw(status_path)
+        request, status = json.loads(raw_request), json.loads(raw_status)
+        offers = [
+            row
+            for row in events
+            if row.get("action") == "remote_review_offer" and row.get("request_id") == request_id
+        ]
+        if (
+            request.get("request_id") != request_id
+            or status.get("request_id") != request_id
+            or status.get("work_kind") != "review"
+            or status.get("state") == "running"
+            or len(offers) != 1
+            or offers[0].get("request_sha256") != production_builder.digest(request)
+        ):
+            return "not-supersedable"
+        binding = dict(
+            schema=SUPERSEDE_SCHEMA,
+            card_id=card,
+            node=node,
+            request_id=request_id,
+            request_sha256=source_bundle._sha(raw_request),
+            status_sha256=source_bundle._sha(raw_status),
+            context_sha256=source_bundle._sha(raw_context),
+            released_owner=owner,
+            released_claim=claim,
+            actor=actor,
+            reason=reason,
+        )
+        receipt = _supersession_receipt(home, card, request_id)
+        _private_receipt_dirs(receipt)
+        source_bundle._once(receipt.parent / "request.json", raw_request)
+        source_bundle._once(receipt.parent / "status.json", raw_status)
+        source_bundle._once(receipt.parent / "context.json", raw_context)
+        source_bundle._once(receipt, json.dumps(binding, sort_keys=True).encode())
+        store.append_event(
+            card,
+            "remote_review_supersede",
+            actor,
+            schema=SUPERSEDE_SCHEMA,
+            request_id=request_id,
+            request_sha256=binding["request_sha256"],
+            offer_request_sha256=production_builder.digest(request),
+            status_sha256=binding["status_sha256"],
+            context_sha256=binding["context_sha256"],
+            released_owner=owner,
+            released_claim=claim,
+            actor=actor,
+            reason=reason,
+            receipt_sha256=source_bundle._sha(_raw(receipt)),
+        )
+        _remove_pointer(status_path)
+        _remove_pointer(request_path)
+    return "superseded"
+
+
 def supersede_released_reviews(paths, home: Path, *, actor: str = "niobe") -> list[dict]:
     """Supersede finished review generations whose sealed reviewer claim is gone.
 
@@ -1831,77 +1920,18 @@ def supersede_released_reviews(paths, home: Path, *, actor: str = "niobe") -> li
             owner = sealed.get("owner")
             if sealed.get("card") != card or sealed.get("claim") != claim or not owner:
                 continue
-            # Locate the generation first, then lock in retire()'s order
-            # (offer exclusion, request exclusion, card) and re-verify inside.
-            located = _supersedable(CardStore(home), home, card, claim, owner)
-            if located is None:
+            outcome = supersede_generation(
+                paths,
+                home,
+                card,
+                claim,
+                owner,
+                actor=actor,
+                reason=SUPERSEDE_REASON,
+                raw_context=raw_context,
+            )
+            if outcome != "superseded":
                 continue
-            request_id, node = located
-            request_path = dispatch.request_path(paths, node, card)
-            status_path = dispatch.status_path(paths, node, card)
-            with (
-                dispatch._request_exclusion(paths.root / "dispatch/.production-offer"),
-                dispatch._request_exclusion(request_path),
-                card_mutation_lock(home, card),
-            ):
-                store = CardStore(home)
-                if _supersedable(store, home, card, claim, owner) != located:
-                    continue
-                events = store._read_events(card)
-                raw_request, raw_status = _raw(request_path), _raw(status_path)
-                request, status = json.loads(raw_request), json.loads(raw_status)
-                offers = [
-                    row
-                    for row in events
-                    if row.get("action") == "remote_review_offer"
-                    and row.get("request_id") == request_id
-                ]
-                if (
-                    request.get("request_id") != request_id
-                    or status.get("request_id") != request_id
-                    or status.get("work_kind") != "review"
-                    or status.get("state") == "running"
-                    or len(offers) != 1
-                    or offers[0].get("request_sha256") != production_builder.digest(request)
-                ):
-                    continue
-                binding = dict(
-                    schema=SUPERSEDE_SCHEMA,
-                    card_id=card,
-                    node=node,
-                    request_id=request_id,
-                    request_sha256=source_bundle._sha(raw_request),
-                    status_sha256=source_bundle._sha(raw_status),
-                    context_sha256=source_bundle._sha(raw_context),
-                    released_owner=owner,
-                    released_claim=claim,
-                    actor=actor,
-                    reason=SUPERSEDE_REASON,
-                )
-                receipt = _supersession_receipt(home, card, request_id)
-                _private_receipt_dirs(receipt)
-                source_bundle._once(receipt.parent / "request.json", raw_request)
-                source_bundle._once(receipt.parent / "status.json", raw_status)
-                source_bundle._once(receipt.parent / "context.json", raw_context)
-                source_bundle._once(receipt, json.dumps(binding, sort_keys=True).encode())
-                store.append_event(
-                    card,
-                    "remote_review_supersede",
-                    actor,
-                    schema=SUPERSEDE_SCHEMA,
-                    request_id=request_id,
-                    request_sha256=binding["request_sha256"],
-                    offer_request_sha256=production_builder.digest(request),
-                    status_sha256=binding["status_sha256"],
-                    context_sha256=binding["context_sha256"],
-                    released_owner=owner,
-                    released_claim=claim,
-                    actor=actor,
-                    reason=SUPERSEDE_REASON,
-                    receipt_sha256=source_bundle._sha(_raw(receipt)),
-                )
-                _remove_pointer(status_path)
-                _remove_pointer(request_path)
             results.append({"card": card, "claim": claim, "state": "superseded"})
         except (OSError, ValueError, KeyError, TypeError) as exc:
             results.append(

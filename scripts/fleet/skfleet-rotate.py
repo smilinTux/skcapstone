@@ -8397,6 +8397,30 @@ if (
                 _superseded.get("reason", "")))
     except Exception as _exc:  # noqa: BLE001 - recovery must never stop a cycle
         log(d, "REVIEW_GENERATION_RECOVERY_FAILED|%s|%s" % (HOST, str(_exc)[:160]))
+    # A finished review whose guarded handoff failed (no native verdict for its
+    # claim) is recovered by re-running the reviewer's own handoff on its host;
+    # if its workspace or packet is gone, the dead claim is released instead.
+    try:
+        from skcapstone.fleet.review_handoff_recovery import recover_review_handoffs
+
+        for _handoff in recover_review_handoffs(
+            default_fleet_paths(), Path(HOME) / ".skcapstone"
+        ):
+            if _handoff["state"] in ("recovered", "already-handed-off"):
+                log(d, "REVIEW_HANDOFF_RECOVERED|%s|%s|node=%s|%s" % (
+                    HOST, _handoff["card"], _handoff["node"], _handoff["state"]))
+            elif _handoff["state"] == "refused":
+                _log_once_per_hour(
+                    d, "REVIEW_HANDOFF_RECOVERY_REFUSED", _handoff["card"],
+                    "REVIEW_HANDOFF_RECOVERY_REFUSED|%s|%s|node=%s|%s" % (
+                        HOST, _handoff["card"], _handoff["node"], _handoff["reason"]))
+            else:
+                log(d, "REVIEW_HANDOFF_RECOVERY|%s|%s|node=%s|state=%s|%s" % (
+                    HOST, _handoff["card"], _handoff["node"], _handoff["state"],
+                    _handoff.get("reason", "")))
+    except Exception as _exc:  # noqa: BLE001 - recovery must never stop a cycle
+        log(d, "REVIEW_HANDOFF_RECOVERY_REFUSED|%s|-|recovery-failed: %s" % (
+            HOST, str(_exc)[:160]))
 # Baseline recipes, authority-only: a full-suite qualification that ran and
 # failed at the card's pinned base (host-dependent tests) can never pass, so
 # every skcapstone card failed forever (2026-10-11). Attach the exact baseline

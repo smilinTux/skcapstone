@@ -1687,6 +1687,13 @@ def _consume_available(
                 # every remote review refusal on builder nodes (2026-10-08).
                 _log_review_consume_failure(node, request, exc)
                 continue
+    try:
+        # Authority-requested, fenced re-run of a failed reviewer handoff.
+        from . import review_handoff_recovery
+
+        review_handoff_recovery.consume(paths, coordination_home, node)
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
+        refuse("review-handoff-recovery", node, reason_of(exc))
     active_cards: set[str] = set()
     reconciled_orphans: set[str] = set()
     for card_id, status in _dispatch_statuses(paths, node).items():
