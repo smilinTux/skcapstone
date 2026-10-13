@@ -53,7 +53,7 @@ def test_unresolved_dependency_blocker_holds_without_do_not_claim(tmp_path: Path
     core = _review_core(dep)
     labels = ["review", "seat-seraph", f"parent-{dep}"]
     assert dependency_blocker_unresolved(tmp_path, core, labels) is True
-    assert "dependency-blocker" in governed_review_gate_reasons(
+    assert "backoff:blocked" in governed_review_gate_reasons(
         core, labels, dependency_blocker_holds=True
     )
     store.create(
@@ -68,7 +68,7 @@ def test_unresolved_dependency_blocker_holds_without_do_not_claim(tmp_path: Path
             meta=dict(core["meta"]),  # type: ignore[arg-type]
         )
     )
-    with pytest.raises(ValueError, match="dependency-blocker"):
+    with pytest.raises(ValueError, match="backoff:blocked"):
         assert_governed_review_claim(tmp_path, "4cd4dd62", "pi-seraph-chiap08-4cd4dd62")
 
 

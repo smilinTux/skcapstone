@@ -9049,15 +9049,20 @@ for _cid,_admission in sorted(_POOL_V2_ADMISSIONS.items()):
     if "review" not in {str(_label).strip().lower() for _label in _labels}:
         continue
     _overlay=_admission.get("overlay") or {}
-    _reasons=governed_review_gate_reasons(
-        _admission.get("core") or {},_labels,
-        dependency_blocked=_overlay.get("reason")=="dependency",
+    _reasons = governed_review_gate_reasons(
+        _admission.get("core") or {},
+        _labels,
+        dependency_blocked=_overlay.get("reason") == "dependency",
         owned=str(_overlay.get("reason") or "").startswith("owned-"),
         capacity_available=_cid not in _lane_deferred_cards,
         dependency_blocker_holds=_overlay.get("backoff") is True,
+        awaiting_acceptance=(
+            _overlay.get("backoff") is True and _overlay.get("awaiting_review") is True
+        ),
+        claim_ceiling=(_overlay.get("backoff") is True and _overlay.get("claim_ceiling") is True),
     )
     if _cid in _SEAT_BLOCKED:
-        _reasons=tuple((*_reasons,"wrong-seat"))
+        _reasons = tuple((*_reasons, "wrong-seat"))
     if not _pool_v2_dispatchable(_admission) or _reasons:
         _fallback=str(_admission.get("reason") or "withheld")
         _review_withheld.append((_cid,",".join(dict.fromkeys(_reasons or (_fallback,)))))
