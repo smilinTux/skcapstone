@@ -571,13 +571,18 @@ def test_reap_outcome_is_machine_readable_and_idempotent(tmp_path: Path) -> None
     assert namespace["_record_reap_outcome"]("deadbeef", owner, revision, claim_ts)
     path = tmp_path / "card_events" / "fleet-liveness-reaper.jsonl"
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-    assert len(rows) == 2
-    verdict = next(row for row in rows if row["action"] == "verdict")
-    evidence = next(row for row in rows if row["action"] == "link")
-    assert verdict["verdict"] == "WORKER_DIED"
+    # One schema-valid link row. The old action=verdict row carried a field
+    # CardEvent forbids and was rejected by the fold on every read.
+    assert len(rows) == 1
+    assert not [row for row in rows if row["action"] == "verdict"]
+    evidence = rows[0]
+    assert evidence["action"] == "link"
     assert evidence["link_key"] == "worker_died"
     assert evidence["link_value"] == f"owner={owner} claim_revision={revision}"
-    assert len({row["event_id"] for row in rows}) == 2
+    from skcoord.card import CardEvent, validate_overlay_event
+
+    for row in rows:
+        validate_overlay_event(CardEvent.model_validate(row))
 
 
 @pytest.mark.parametrize(
@@ -601,16 +606,14 @@ def test_preexisting_outcome_requires_exact_canonical_lf_bytes(
     assert namespace["_record_reap_outcome"]("deadbeef", owner, revision, claim_ts)
     path = tmp_path / "card_events" / "fleet-liveness-reaper.jsonl"
     canonical = path.read_bytes()
-    first, second = canonical.splitlines(keepends=True)
+    (first,) = canonical.splitlines(keepends=True)
     mutations = {
         "crlf": canonical.replace(b"\n", b"\r\n"),
         "missing-lf": canonical[:-1],
         "duplicate": canonical + first,
         "extra": canonical + b"extra",
-        "malformed": b"not-json\n" + second,
-        "noncanonical": json.dumps(json.loads(first), sort_keys=True).encode("utf-8")
-        + b"\n"
-        + second,
+        "malformed": b"not-json\n" + first,
+        "noncanonical": json.dumps(json.loads(first), sort_keys=True).encode("utf-8") + b"\n",
     }
     path.write_bytes(mutations[mutation])
 
@@ -712,14 +715,15 @@ def test_conflicting_existing_outcome_id_prevents_release(tmp_path: Path) -> Non
         launch_revision=revision,
     )
     identity = f"deadbeef\0{owner}\0{revision}"
-    verdict_id = hashlib.sha256(("fleet-reap-verdict-v1\0" + identity).encode()).hexdigest()
+    verdict_id = hashlib.sha256(("fleet-reap-evidence-v1\0" + identity).encode()).hexdigest()
     event_dir = tmp_path / "card_events"
     event_dir.mkdir()
     conflicting = {
         "event_id": verdict_id,
         "card_id": "deadbeef",
-        "action": "verdict",
-        "verdict": "PASS",
+        "action": "link",
+        "link_key": "worker_died",
+        "link_value": "owner=somebody-else claim_revision=other",
         "writer": "fleet-liveness-reaper",
         "ts": "2026-08-31T00:00:00+00:00",
     }

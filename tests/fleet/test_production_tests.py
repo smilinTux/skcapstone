@@ -1090,3 +1090,18 @@ def test_admission_refusal_is_recorded_not_silent(monkeypatch, caplog):
     assert pt.admission_refusal("abcd1234") == "memory_available=1 required=2"
     assert pt.admission_refusal("other000") is None
     pt._ADMISSION_REFUSALS.clear()
+
+
+def test_repeated_admission_refusal_warns_once_per_reason(caplog):
+    import logging
+
+    from skcapstone.fleet import production_tests as pt
+
+    pt._ADMISSION_REFUSALS.clear()
+    with caplog.at_level(logging.WARNING, logger=pt.LOG.name):
+        for _ in range(5):
+            pt._record_admission_refusal("abcd1234", "worker occupancy cap reached")
+        pt._record_admission_refusal("abcd1234", "memory_available=1 required=2")
+    assert len([r for r in caplog.records if "not launched" in r.getMessage()]) == 2
+    assert pt.admission_refusal("abcd1234") == "memory_available=1 required=2"
+    pt._ADMISSION_REFUSALS.clear()

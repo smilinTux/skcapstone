@@ -4344,17 +4344,10 @@ def _record_wedge_outcome(record):
     Written before the release and through the same canonical, idempotent
     append the absence reaper uses.
 
-    The WHY lives in the LINK row, not in the verdict row, and that is not a
-    stylistic choice. Verified against a fresh-process CardStore fold on
-    2026-09-19: ``_OVERLAY_TO_STORE_ACTION`` in skcoord maps move, priority,
-    swimlane, labels, link, assign, unassign and describe, and **nothing
-    else**, so an ``action: "verdict"`` row appended to the card_events
-    overlay is silently DROPPED by the fold. The absence reaper's WORKER_DIED
-    row has the same property and always has. The verdict row is still
-    written, because direct readers of the evidence store (review_verdict.py
-    and friends) glob every ``*.jsonl`` and do read it, and because diverging
-    from the sibling path would be worse than matching it. But the audit trail
-    that survives the fold is the link, so the link carries everything a human
+    Only the LINK row is written. A companion ``action: "verdict"`` row used
+    to be written too, but CardEvent forbids its ``verdict`` field, so the fold
+    rejected it as an unreadable line on every read (and the absence reaper's
+    WORKER_DIED row had the same defect). The link carries everything a human
     needs to check the decision without re-deriving it: the verdict, how long
     the workspace had been silent, when it was last written, and how long the
     claim had been held.
@@ -4363,8 +4356,6 @@ def _record_wedge_outcome(record):
     owner = str(record["owner"])
     revision = str(record["claim_revision"])
     identity = "%s\0%s\0%s" % (cid, owner, revision)
-    verdict_id = hashlib.sha256(
-        ("fleet-wedge-verdict-v1\0" + identity).encode()).hexdigest()
     evidence_id = hashlib.sha256(
         ("fleet-wedge-evidence-v1\0" + identity).encode()).hexdigest()
     # Stamped from the immutable claim time, not from now, so two hosts that
@@ -4382,8 +4373,6 @@ def _record_wedge_outcome(record):
                int(record["claim_age_s"] or 0), int(DEFAULT_WEDGE_TIMEOUT_S),
                owner, revision))
     rows = [
-        {"event_id": verdict_id, "card_id": cid, "action": "verdict",
-         "verdict": "WORKER_WEDGED", "writer": _WEDGE_WRITER, "ts": stamp},
         {"event_id": evidence_id, "card_id": cid, "action": "link",
          "link_key": "worker_wedged", "link_value": detail,
          "writer": _WEDGE_WRITER, "ts": stamp},
@@ -6063,21 +6052,18 @@ def _record_reap_outcome(cid, owner, claim_revision, claim_ts):
     the structural ``release_claim`` event by design.
     """
     identity = "%s\0%s\0%s" % (cid, owner, claim_revision)
-    verdict_id = hashlib.sha256(("fleet-reap-verdict-v1\0" + identity).encode()).hexdigest()
     evidence_id = hashlib.sha256(("fleet-reap-evidence-v1\0" + identity).encode()).hexdigest()
     # The claim time is part of the immutable generation. Using it here makes
     # independently appended rows byte-identical on every host.
     stamp = datetime.datetime.fromtimestamp(
         claim_ts, tz=datetime.timezone.utc).isoformat()
+    # The old companion row {"action": "verdict", "verdict": "WORKER_DIED"} is
+    # no longer written. CardEvent forbids a ``verdict`` field, so the fold
+    # rejected every such row with a ValidationError (297 unreadable lines on
+    # chiap08), and a schema-valid verdict (link_key="verdict") would instead
+    # become the card's recorded review verdict. The worker_died link below
+    # already carries owner and claim revision and is what the fold uses.
     rows = [
-        {
-            "event_id": verdict_id,
-            "card_id": str(cid),
-            "action": "verdict",
-            "verdict": "WORKER_DIED",
-            "writer": _REAP_WRITER,
-            "ts": stamp,
-        },
         {
             "event_id": evidence_id,
             "card_id": str(cid),
@@ -7820,7 +7806,9 @@ for cd in _pool_fold_cards:
             skipped_claim_ceiling += 1
             _cc_total=acts(cid).get("claim",0)
             _cc_died=sum(1 for _e in _load_evidence_events().get(cid,[])
-                         if str(_e.get("verdict") or "").upper()=="WORKER_DIED")
+                         if str(_e.get("verdict") or "").upper()=="WORKER_DIED"
+                         or (_e.get("action")=="link"
+                             and _fold_key(_e.get("link_key"))=="worker_died"))
             log(d,"CLAIM_CEILING_EXCLUDED|%s|%s|max_claims=%d|claims=%d|counted=%d|worker_died=%d|amnesty=%s"%
                 (HOST,cid,_MAX_CLAIMS,_cc_total,_countable_claims(cid,_cc_total),_cc_died,
                  "granted" if _claim_amnesty_epoch(cid)>0 else "none"))
