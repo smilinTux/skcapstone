@@ -14,8 +14,8 @@ from skcapstone import fleet_live_publisher as publisher
 @pytest.mark.parametrize(
     "processes,rc,success",
     [
-        ("bash\npython3\n", 0, True),
-        ("tmux: server\n", 0, False),
+        ("10 bash\n20 python3\n", 0, True),
+        ("11 tmux: server\n", 0, False),
         ("", 1, False),
     ],
 )
@@ -117,15 +117,17 @@ def test_rotation_capacity_write_preserves_authoritative_snapshot(tmp_path):
     ],
 )
 def test_tmux_audit_requires_every_stable_server_to_be_reachable(
-    tmp_path, monkeypatch, before, after, accepted
+    tmp_path, monkeypatch, request, before, after, accepted
 ):
     """An orphaned or concurrently appearing server prevents authoritative emptiness."""
     import socket
 
     monkeypatch.setattr(publisher.os, "getuid", lambda: 987654321)
     primary = tmp_path / "default"
-    with socket.socket(socket.AF_UNIX) as sock:
-        sock.bind(str(primary))
+    sock = socket.socket(socket.AF_UNIX)
+    request.addfinalizer(sock.close)
+    sock.bind(str(primary))
+    sock.listen(1)
     calls = 0
 
     def runner(command, **kwargs):
