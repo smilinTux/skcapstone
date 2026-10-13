@@ -1,0 +1,1 @@
+Authority retires unconsumed remote review offers sealed under an older production policy (REVIEW_POLICY_DRIFT_RETIRED) so they are re-offered under the current one; any claim, launch, status, unit or session evidence keeps the offer held.
