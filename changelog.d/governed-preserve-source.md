@@ -1,0 +1,1 @@
+- Add `skcapstone fleet preserve-source` for operator-only immutable skgit base preservation, verified credential-free ref fetching, and audited coord binding readback without changing repository or commit identity.
