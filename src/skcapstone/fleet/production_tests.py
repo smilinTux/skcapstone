@@ -101,6 +101,25 @@ def without_account_databases(argv: list[str]) -> list[str]:
     return argv
 
 
+def without_tests_pythonpath(argv: list[str]) -> list[str]:
+    """Rebuild the predecessor PYTHONPATH before /work/tests was included."""
+    result = list(argv)
+    settings = [
+        index
+        for index in range(len(result) - 2)
+        if result[index : index + 2] == ["--setenv", "PYTHONPATH"]
+    ]
+    if len(settings) != 1:
+        return result
+    value_index = settings[0] + 2
+    paths = result[value_index].split(os.pathsep)
+    if paths.count("/work/tests") != 1:
+        return result
+    paths.remove("/work/tests")
+    result[value_index] = os.pathsep.join(paths)
+    return result
+
+
 def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
     """Rehash real output, argv, JUnit, source and independently observed unit exit."""
     plan, plan_path, plan_sha = load_plan(
@@ -186,6 +205,15 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
 
     for check, result in zip(plan["checks"], results):
         actual = sandbox_command(workspace, directory / "output", check["argv"], profile)
+        without_tests = without_tests_pythonpath(actual)
+        accepted_sandbox_argv = (
+            actual,
+            without_account_databases(actual),
+            without_tests,
+            without_account_databases(without_tests),
+        )
+        # Before the qualification test path was added, PYTHONPATH omitted
+        # /work/tests. Keep that exact predecessor shape valid.
         # A run sealed before the account binds existed ran in a strictly
         # smaller sandbox and stays valid evidence. Without this, every such
         # acceptance waited forever on "native command or raw output mismatch"
@@ -193,7 +221,7 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
         if (
             result.get("id") != check["id"]
             or result.get("argv") != check["argv"]
-            or result.get("sandbox_argv") not in (actual, without_account_databases(actual))
+            or result.get("sandbox_argv") not in accepted_sandbox_argv
             or type(result.get("exit_code")) is not int
             or result.get("exit_code") != 0
             or result.get("output_sha256") != sha(read_private(directory / (check["id"] + ".log")))
