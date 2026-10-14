@@ -246,3 +246,41 @@ def test_curator_links_a_large_recipe_through_stdin(tmp_path, monkeypatch):
     assert big not in seen["argv"] and max(len(a) for a in seen["argv"]) < 131072
     assert seen["argv"][4:7] == ["test_profile_recipe", "-", "--value-from-stdin"]
     assert seen["input"] == big
+
+
+def test_extension_does_not_require_a_pass_from_a_fully_excluded_file(workspace):
+    current = json.loads(
+        br.baseline_recipe(
+            ["tests/test_a.py::test_bad"], workspace, ["tests/test_a.py", "tests/fleet/test_b.py"]
+        )
+    )
+    raw = junit(
+        ("tests.test_a", "test_ok", "<failure/>"), ("tests.fleet.test_b.TestC", "test_x", "")
+    )
+    result = json.loads(br.extended_recipe(current, raw, workspace))
+    assert result["pytest"] == {"tests/fleet/test_b.py": 1}
+    assert result["deselect"] == []
+
+
+def test_extension_keeps_unobserved_targets(workspace):
+    (workspace / "tests/test_unobserved.py").write_text("def test_unknown(): pass\n")
+    current = json.loads(
+        br.baseline_recipe(
+            ["tests/test_a.py::test_bad"],
+            workspace,
+            ["tests/test_a.py", "tests/fleet/test_b.py", "tests/test_unobserved.py"],
+        )
+    )
+    raw = junit(
+        ("tests.test_a", "test_ok", ""), ("tests.fleet.test_b.TestC", "test_x", "<failure/>")
+    )
+    result = json.loads(br.extended_recipe(current, raw, workspace))
+    assert result["pytest"] == {"tests/test_a.py": 1, "tests/test_unobserved.py": 1}
+
+
+def test_extension_refuses_when_no_target_can_still_pass(workspace):
+    current = json.loads(
+        br.baseline_recipe(["tests/test_a.py::test_bad"], workspace, ["tests/test_a.py"])
+    )
+    with pytest.raises(br.BaselineError, match="no test target passes"):
+        br.extended_recipe(current, junit(("tests.test_a", "test_ok", "<failure/>")), workspace)

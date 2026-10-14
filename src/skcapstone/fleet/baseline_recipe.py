@@ -239,13 +239,22 @@ def extended_recipe(current: dict, raw: bytes, workspace: Path) -> str:
     """
     if "deselect" not in current or not isinstance(current.get("pytest"), dict):
         raise BaselineError("only a curated baseline recipe is extended")
-    _passing, failing, untargetable = analyze_junit(raw, workspace)
+    passing, failing, untargetable = analyze_junit(raw, workspace)
     if untargetable:
         raise BaselineError("collection error or anonymous test case")
     merged = sorted(set(current["deselect"]) | set(failing))
     if merged == sorted(current["deselect"]):
         raise BaselineError("no new failing tests to add to the baseline")
-    return baseline_recipe(merged, workspace, list(current["pytest"]))
+    # Like initial curation, an explicit file with only observed failures has
+    # no passing baseline left. Keeping its minimum of one makes the next
+    # successful run impossible to qualify. Unobserved files stay mandatory.
+    failed_files = {node.split("::", 1)[0] for node in failing}
+    targets = [
+        target for target in current["pytest"] if target not in failed_files or target in passing
+    ]
+    if not targets:
+        raise BaselineError("no test target passes after baseline extension")
+    return baseline_recipe(merged, workspace, targets)
 
 
 def curate_failed_qualifications(

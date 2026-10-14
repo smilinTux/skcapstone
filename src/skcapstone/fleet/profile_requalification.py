@@ -560,6 +560,21 @@ def _recent_failure(
         # Back off only on verdicts the same source will repeat. Plan staleness
         # after a deploy, claim races and Syncthing lag clear on their own.
         if any(marker in reason for marker in DETERMINISTIC_FAILURES):
+            # A fixed trusted harness is a new attempt even when qualify-env
+            # itself was not rebuilt. Validate the old plan before comparing;
+            # unreadable evidence retains the conservative failure backoff.
+            try:
+                prior, _, _ = plan.load_plan(
+                    root.parent.parent,
+                    job["binding"],
+                    require_current=False,
+                    allow_completed=True,
+                    allow_remote_host=True,
+                )
+                if prior["runtime_sha256"] != plan.runtime_fingerprint():
+                    continue
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
             return True
     return False
 
