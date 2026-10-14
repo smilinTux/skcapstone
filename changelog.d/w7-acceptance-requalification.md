@@ -1,0 +1,1 @@
+- Distinguish native test execution failures from custody mismatches, and preserve the executed operator recipe when publishing a freshly qualified acceptance profile.
