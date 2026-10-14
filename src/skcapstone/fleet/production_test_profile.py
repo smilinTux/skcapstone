@@ -694,15 +694,21 @@ def refresh_accepted_profile(
         value, predecessor = read_profile(home, expected["card"])
     except FileNotFoundError:
         return False  # a legacy plan without a reusable profile has nothing to refresh
+    from .acceptance_recipe import executed_profile
+
+    executed = executed_profile(home, binding, value, receipt_sha256)
+    recipe_changed = executed["recipe"] != value["recipe"]
     source_sha256 = plan.source_fingerprint(
         repository, binding["source_head"], binding["source_tree"]
     )
     try:
         validate_profile(value, dict(expected, source_sha256=source_sha256), policy)
-        return False
+        if not recipe_changed:
+            return False
     except plan.TestEvidenceError:
         if not acceptance_requalifiable(value, expected, policy):
             raise
+    value = executed
     card = CardStore(home).fold(expected["card"])
     if card is None:
         raise plan.TestEvidenceError("profile source claim changed")

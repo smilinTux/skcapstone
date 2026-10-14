@@ -1105,3 +1105,59 @@ def test_repeated_admission_refusal_warns_once_per_reason(caplog):
     assert len([r for r in caplog.records if "not launched" in r.getMessage()]) == 2
     assert pt.admission_refusal("abcd1234") == "memory_available=1 required=2"
     pt._ADMISSION_REFUSALS.clear()
+
+
+def test_failed_native_run_is_not_reported_as_custody_change(setup, monkeypatch):
+    receipt, terminal = receipt_fixture(setup, monkeypatch)
+    receipt["failure"] = {"type": "TestEvidenceError", "message": "required tests failed"}
+    private_bytes(setup.directory / "receipt.json", json.dumps(receipt).encode())
+    terminal.update(
+        ActiveState="failed",
+        SubState="failed",
+        ExecMainStatus="1",
+        receipt_sha256=native.sha(native.read_private(setup.directory / "receipt.json")),
+    )
+    private_bytes(setup.directory / "terminal.json", json.dumps(terminal).encode())
+    with pytest.raises(
+        native.TestEvidenceError, match="native test execution failed: required tests failed"
+    ):
+        native.validate_test_receipt(setup.home, setup.binding, setup.workspace)
+    terminal["InvocationID"] = "a" * 32
+    private_bytes(setup.directory / "terminal.json", json.dumps(terminal).encode())
+    with pytest.raises(native.TestEvidenceError, match="custody"):
+        native.validate_test_receipt(setup.home, setup.binding, setup.workspace)
+
+
+def test_operator_recipe_successor_retains_failed_plan_history(setup, monkeypatch):
+    with monkeypatch.context() as fixture_patch:
+        receipt_fixture(setup, fixture_patch)
+    core = CardStore(setup.home).fold(setup.binding["source_card"]).model_dump(mode="json")
+    recipe = {"pytest": {"tests/test_parser.py": 1}, "compile": [], "lint": [], "changelog": False}
+    provisional = profile.profile_value(
+        core,
+        setup.policy,
+        recipe,
+        "lumina-nor",
+        "b" * 64,
+        source_sha256=plan.source_fingerprint(
+            core["meta"]["repository"], setup.binding["source_head"], setup.binding["source_tree"]
+        ),
+    )
+    before = setup.plan_path.read_bytes()
+    sealed_path = plan.seal_plan(
+        setup.home,
+        setup.binding,
+        setup.workspace,
+        setup.policy,
+        "lumina-nor",
+        "b" * 64,
+        profile=provisional,
+        predecessor_sha256=setup.digest,
+        initial_profile_qualification=True,
+        acceptance_requalification=True,
+    )
+    value, loaded_path, _ = plan.load_plan(setup.home, setup.binding)
+    assert sealed_path == loaded_path
+    assert value["profile"]["recipe"] == recipe
+    assert value["predecessor_sha256"] == setup.digest
+    assert setup.plan_path.read_bytes() == before

@@ -134,6 +134,11 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
             _admission_binding(binding, plan_sha),
             expected_argv,
         )
+    failed_execution = (
+        isinstance(receipt.get("failure"), dict)
+        and (terminal.get("ActiveState"), terminal.get("SubState")) == ("failed", "failed")
+        and terminal.get("ExecMainStatus") == "1"
+    )
     if (
         launch.get("binding") != binding
         or launch.get("request_id") != plan_sha
@@ -149,20 +154,31 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
         or receipt.get("plan_sha256") != plan_sha
         or receipt.get("source_before") != expected
         or receipt.get("source_after") != expected
-        or receipt.get("failure") is not None
         or not re.fullmatch(r"[0-9a-f]{32}", str(receipt.get("invocation", "")))
         or terminal.get("unit") != unit
         or terminal.get("InvocationID") != receipt["invocation"]
         or terminal.get("LoadState") != "loaded"
-        or terminal.get("ActiveState") != "active"
-        or terminal.get("SubState") != "exited"
+        or (not failed_execution and terminal.get("ActiveState") != "active")
+        or (not failed_execution and terminal.get("SubState") != "exited")
+        or (not failed_execution and terminal.get("ExecMainStatus") != "0")
         or not terminal_cgroup(terminal)
         or terminal.get("ExecMainCode") != "1"
-        or terminal.get("ExecMainStatus") != "0"
         or terminal.get("ExecMainPID") != str(receipt.get("pid"))
         or terminal.get("receipt_sha256") != sha(read_private(directory / "receipt.json"))
     ):
         raise TestEvidenceError("native unit, source or receipt custody mismatch")
+    if (
+        receipt.get("failure") is not None
+        or terminal.get("ActiveState") != "active"
+        or terminal.get("SubState") != "exited"
+        or terminal.get("ExecMainStatus") != "0"
+    ):
+        failure = receipt.get("failure")
+        reason = failure.get("message", "") if isinstance(failure, dict) else ""
+        raise TestEvidenceError(
+            "native test execution failed: "
+            + (str(reason)[:240] or "unit exit=" + str(terminal.get("ExecMainStatus")))
+        )
     results = receipt.get("checks")
     if not isinstance(results, list) or len(results) != len(plan["checks"]):
         raise TestEvidenceError("required check receipts are missing")
