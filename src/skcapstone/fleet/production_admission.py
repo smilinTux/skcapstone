@@ -957,54 +957,23 @@ def reserve_launch(
         raise AdmissionError("node-resource-evidence-unavailable") from exc
 
 
-def _released_custody(home: Path, card, binding: dict) -> bool:
-    """True when the bound claim was cleanly released and nothing claimed since.
-
-    A source producer parks in review holding its claim until acceptance. If the
-    claim is then released (a stale-claim release, abandon_reason=error), the
-    card returns to backlog with no owner, and trusted tests can no longer
-    prove the original claim by status. The claim ledger still proves it: the
-    newest custody event must be the release of exactly this owner and
-    revision. Any later claim, assign, completion or void breaks the proof.
-    """
-    if (
-        card.archived
-        or card.meta.get("claim_conflicts")
-        or card.owner is not None
-        or card.status.value not in {"backlog", "ready", "review"}
-    ):
-        return False
-    store = CardStore(home)
-    events = store._read_events(binding["card_id"]) + store._legacy_events(binding["card_id"])
-    events.sort(key=lambda e: (e.get("ts", ""), e.get("writer", ""), e.get("seq", 0)))
-    custody = [
-        e
-        for e in events
-        if e.get("action") in {"claim", "release_claim", "assign", "unassign", "complete", "void"}
-    ]
-    if not custody:
-        return False
-    last = custody[-1]
-    return (
-        last.get("action") == "release_claim"
-        and last.get("released_owner") == binding["owner"]
-        and last.get("expected_claim_revision") == binding["claim_revision"]
-    )
-
-
 def _claim_held(home: Path, card, binding: dict, *, allow_released: bool = False) -> bool:
-    """Exact live claim, or (opt-in) its clean release for trusted source tests."""
+    """Apply launch policy to the shared exact custody proof."""
+    from .source_custody import CustodyState, inspect_custody
+
     if card is None:
         return False
-    if (
-        not card.archived
-        and not card.meta.get("claim_conflicts")
-        and card.status.value == "doing"
-        and card.owner == binding["owner"]
-        and card.meta.get("_claim_revision") == binding["claim_revision"]
-    ):
-        return True
-    return allow_released and _released_custody(home, card, binding)
+    proof = inspect_custody(
+        home,
+        binding["card_id"],
+        binding["owner"],
+        binding["claim_revision"],
+        held_statuses=frozenset({"doing"}),
+        _card=card,
+    )
+    return proof.state == CustodyState.HELD or (
+        allow_released and proof.state == CustodyState.RELEASED_CLEAN
+    )
 
 
 def _require_claim(home: Path, binding: dict, *, allow_released: bool = False) -> None:

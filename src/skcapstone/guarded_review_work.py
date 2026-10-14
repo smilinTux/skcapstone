@@ -10,6 +10,7 @@ from pathlib import Path
 
 from skcoord.card_store import CardStore, card_mutation_lock
 
+from .fleet.source_custody import BeforeRelease, CustodyState, inspect_custody
 from .link_review_work import (
     ReviewWorkResult,
     card_generation,
@@ -78,18 +79,20 @@ def open_guarded_review(
             from .fleet.released_source import direct_review_view
 
             try:
-                store, released_manifest, _ = direct_review_view(home, source)
+                store, released_manifest, release = direct_review_view(home, source)
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 raise ValueError("guarded review released custody unavailable") from exc
             source = store.fold(card_id)
             snapshot = LiveCardStoreGateway(home).read_card(card_id, _store=store)
+            captured = BeforeRelease(store.store, release, at_release=True)
+            if (
+                LiveCardStoreGateway(home).read_card(card_id, _store=captured).revision
+                != snapshot.revision
+            ):
+                raise ValueError("guarded review released source changed after release")
+        custody = inspect_custody(home, card_id, producer, expected_claim_revision, _card=source)
         if (
-            source is None
-            or source.owner != producer
-            or source.meta.get("_claim_revision") != expected_claim_revision
-            or source.meta.get("claim_conflicts")
-            or source.archived
-            or source.status.value not in {"ready", "doing", "review"}
+            custody.state != CustodyState.HELD
             or not source_work(source)
             or "review" in source.labels
             or current_revision != expected_source_revision

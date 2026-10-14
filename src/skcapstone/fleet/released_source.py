@@ -5,14 +5,23 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from skcoord.card_store import CardStore
+from skcoord.card_store import CardStore, card_mutation_lock
 
 from . import source_bundle as bundle
+from .source_custody import BeforeRelease, CustodyState, EventSnapshot, inspect_custody
 
 
 def prove(home, source, manifest):
     """Require intact bytes, the latest exact PASS/claim, and its native release."""
-    from .production_acceptance import _sealed_source_outcome
+    if source is None:
+        raise ValueError("released producer custody changed")
+    with card_mutation_lock(home, source.id):
+        return _prove(home, source, manifest)
+
+
+def _prove(home, source, manifest):
+    """Validate legacy artifact policy against the shared locked custody snapshot."""
+    from .source_custody import sealed_source_outcome
 
     owner, claim = manifest.get("owner"), manifest.get("claim_revision")
     if (
@@ -28,8 +37,11 @@ def prove(home, source, manifest):
         or not re.fullmatch(r"[0-9a-f]{40}", str(manifest.get("head")))
     ):
         raise ValueError("released producer custody changed")
-    store = CardStore(home)
-    outcome = _sealed_source_outcome(
+    proof = inspect_custody(home, source.id, owner, claim)
+    if proof.state != CustodyState.RELEASED_CLEAN:
+        raise ValueError("released producer custody changed")
+    store = proof.store
+    outcome = sealed_source_outcome(
         store, source.id, owner, claim, manifest["head"], manifest["tree"]
     )
     events = store._read_events(source.id) + store._legacy_events(source.id)
@@ -69,24 +81,9 @@ def prove(home, source, manifest):
 
 
 def _before_release(home, source, release):
-    """Build a read-only event view with one exact release excluded."""
-
-    class BeforeRelease(CardStore):
-        def _read_events(self, card):
-            return [
-                e
-                for e in super()._read_events(card)
-                if card != source.id or e.get("event_id") != release["event_id"]
-            ]
-
-        def _legacy_events(self, card):
-            return [
-                e
-                for e in super()._legacy_events(card)
-                if card != source.id or e.get("event_id") != release["event_id"]
-            ]
-
-    return BeforeRelease(home)
+    """Reuse the shared read-only view with one exact release excluded."""
+    with card_mutation_lock(home, source.id):
+        return BeforeRelease(EventSnapshot(home, source.id), release)
 
 
 def revision_matches(home, source, release, pinned):
