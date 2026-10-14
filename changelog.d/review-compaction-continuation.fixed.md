@@ -1,0 +1,1 @@
+Keep source-only reviewers working through their decision packet and guarded handoff after native compaction. Remove the two-compaction stop instruction that left successful tests stranded in a checkpoint without a review verdict.
