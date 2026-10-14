@@ -184,24 +184,28 @@ def test_importlib_collection_can_import_pinned_sibling_test_helpers(tmp_path, m
     )
     (older / "test_helpers.py").write_text("VALUE='wrong-host-checkout'\n")
     monkeypatch.setenv("PYTHONPATH", str(older))
-    executable = plan.PREFIX / "bin/python"
-    if not executable.is_file():
-        pytest.skip("native qualification interpreter unavailable")
+    # CI has no production qualification install. Relocate its own test runner,
+    # as the adjacent asyncio sandbox regression does, and execute the proof.
+    monkeypatch.setattr(worker, "PREFIX", Path("/test-runtime"))
+    command = worker.sandbox_command(
+        source,
+        output,
+        [
+            str(worker.PREFIX / "bin/python"),
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "--import-mode=importlib",
+            "tests",
+        ],
+    )
+    command[command.index("/test-runtime")] = sys.prefix
+    boundary = command.index("--")
+    command[boundary:boundary] = ["--setenv", "LD_LIBRARY_PATH", "/test-runtime/lib"]
     result = subprocess.run(
-        worker.sandbox_command(
-            source,
-            output,
-            [
-                str(executable),
-                "-m",
-                "pytest",
-                "-q",
-                "-p",
-                "no:cacheprovider",
-                "--import-mode=importlib",
-                "tests",
-            ],
-        ),
+        command,
         capture_output=True,
         text=True,
         timeout=20,
