@@ -14,6 +14,7 @@ from ..seat_boundaries import CoordActorClass, classify_coord_actor
 from ..source_binding import source_binding_meta
 from ..source_ref_amendment import prove_ref
 from .builder_dispatch import SSH_SOURCE_TRANSPORTS
+from .source_bundle import _binding
 
 
 def _git(*args, cwd=None, check=True):
@@ -152,7 +153,7 @@ def find_source(roots, revision):
     raise ValueError("exact base_revision not found in bounded local clones or source bundles")
 
 
-def publish(source, remote, ref, revision):
+def publish(source, remote, ref, revision, *, ancestor=None):
     """Create only: an absent-ref lease rejects even a concurrent fast-forward."""
     current = _git("ls-remote", remote, ref).stdout.splitlines()
     if current:
@@ -167,6 +168,13 @@ def publish(source, remote, ref, revision):
             _git("fetch", "--no-tags", source, revision, cwd=tmp)
         if _git("cat-file", "-t", revision, cwd=tmp).stdout.strip() != "commit":
             raise ValueError("source preservation requires the exact commit object")
+        if (
+            ancestor is not None
+            and _git(
+                "merge-base", "--is-ancestor", ancestor, revision, cwd=tmp, check=False
+            ).returncode
+        ):
+            raise ValueError("producer base is not an ancestor of the exact review candidate")
         # Empty expected value is compare-and-create, NOT permission to update.
         # No '+' refspec or '--force': even an existing ancestor must refuse.
         result = _git(
@@ -195,11 +203,20 @@ def preserve(home, card_id, agent, roots=None):
     card = _coord(home, "show", card_id, "--json")
     original = binding(card)
     revision = original["base_revision"]
+    review = _binding(card, "link_source_card") is not None
+    if review:
+        revision = _binding(card, "link_head_revision")
+        if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+            raise ValueError("review source head binding invalid")
     ref = f"preserve/{card_id}-{revision[:8]}"
     parsed = urlsplit(original["repository"])
     remote = SSH_SOURCE_TRANSPORTS[parsed.hostname] + parsed.path.lstrip("/")
     source = find_source(default_roots(home, card_id) if roots is None else roots, revision)
-    publish(source, remote, "refs/heads/" + ref, revision)
+    if review:
+        publish(source, remote, "refs/heads/" + ref, revision, ancestor=original["base_revision"])
+        prove_ref(original["repository"], "refs/heads/" + ref, original["base_revision"])
+    else:
+        publish(source, remote, "refs/heads/" + ref, revision)
     prove_ref(original["repository"], "refs/heads/" + ref, revision)
     before = _coord(home, "show", card_id, "--json")
     if before != card:
@@ -208,7 +225,12 @@ def preserve(home, card_id, agent, roots=None):
         _coord(home, "link", card_id, "base_ref", ref, "--agent", agent)
     after = _coord(home, "show", card_id, "--json")
     expected = dict(original, base_ref=ref)
-    if binding(after) != expected:
+    if binding(after) != expected or any(
+        _binding(after, key) != _binding(card, key)
+        for key in ("link_source_card", "link_head_revision")
+    ):
         raise ValueError("source preservation binding readback differs")
     prove_ref(expected["repository"], "refs/heads/" + ref, revision)
+    if review:
+        prove_ref(expected["repository"], "refs/heads/" + ref, original["base_revision"])
     return dict(card=card_id, agent=agent, source=str(source), **expected, verified=True)

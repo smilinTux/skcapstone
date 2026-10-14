@@ -22,3 +22,9 @@ an immutable preservation ref but refuses the binding write. Retry after inspect
 the reported change. The command does not change repository, revision, criteria,
 verdict, ownership, or lifecycle. GitHub-to-skgit repository migrations require a
 separate governed binding correction; a skgit ref cannot repair a GitHub binding.
+
+For a native review card, SHA8 names its exact `link_head_revision` candidate,
+matching the production review checkout. Publication first requires the unchanged
+producer `base_revision` to be an ancestor of that candidate. Both commits must
+pass the credential-free remote proof. Conflicting review bindings refuse. This
+preserves candidate reachability without changing provenance or inventing custody.

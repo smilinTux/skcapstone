@@ -211,3 +211,59 @@ def test_cli_refuses_worker_without_board_io():
     result = CliRunner().invoke(fleet, ["preserve-source", "1234abcd", "--agent", "pi-glm-test"])
     assert result.exit_code != 0
     assert "authorized operator" in result.output
+
+
+def test_review_preserves_exact_candidate_and_proves_producer_base(tmp_path, monkeypatch):
+    current = copy.deepcopy(CARD)
+    head = "b" * 40
+    current["meta"].update(link_source_card="8765abcd", link_head_revision=head)
+    proofs, publications = [], []
+
+    def coord(home, *args):
+        if args[0] == "link":
+            current["links"]["base_ref"] = args[3]
+        return copy.deepcopy(current)
+
+    monkeypatch.setattr(ps, "_coord", coord)
+    monkeypatch.setattr(ps, "find_source", lambda roots, revision: tmp_path)
+    monkeypatch.setattr(ps, "publish", lambda *a, **kw: publications.append((a, kw)))
+    monkeypatch.setattr(ps, "prove_ref", lambda *a: proofs.append(a))
+    result = ps.preserve(tmp_path, CARD["id"], "lumina-nor", [tmp_path])
+    assert result["base_revision"] == SHA
+    assert result["base_ref"] == "preserve/1234abcd-bbbbbbbb"
+    assert publications[0][0][-1] == head
+    assert publications[0][1]["ancestor"] == SHA
+    assert {p[-1] for p in proofs} == {SHA, head}
+
+
+def test_review_conflicting_candidate_refuses_before_publication(tmp_path, monkeypatch):
+    current = copy.deepcopy(CARD)
+    current["meta"].update(link_source_card="8765abcd", link_head_revision="b" * 40)
+    current["links"]["link_head_revision"] = "c" * 40
+    monkeypatch.setattr(ps, "_coord", lambda *a: current)
+    monkeypatch.setattr(ps, "publish", lambda *a, **kw: pytest.fail("published conflict"))
+    with pytest.raises(ValueError):
+        ps.preserve(tmp_path, CARD["id"], "lumina-nor", [])
+
+
+def test_candidate_without_producer_base_refuses_publication(tmp_path):
+    source, remote = tmp_path / "source", tmp_path / "remote.git"
+    git("init", "-q", source)
+    git(
+        "-C",
+        source,
+        "-c",
+        "user.name=T",
+        "-c",
+        "user.email=t@example.test",
+        "commit",
+        "--allow-empty",
+        "-qm",
+        "candidate",
+    )
+    head = git("-C", source, "rev-parse", "HEAD")
+    git("init", "--bare", "-q", remote)
+    ref = "refs/heads/preserve/1234abcd-" + head[:8]
+    with pytest.raises(ValueError, match="ancestor"):
+        ps.publish(source, str(remote), ref, head, ancestor=SHA)
+    assert not git("ls-remote", remote, ref)
