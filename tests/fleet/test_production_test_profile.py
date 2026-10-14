@@ -40,9 +40,13 @@ def test_runtime_fingerprint_ignores_install_provenance_and_subject_code(qualifi
     assert plan.runtime_fingerprint() == before
 
 
-def test_runtime_fingerprint_tracks_harness_and_startup_bytes(qualified_runtime):
+def test_runtime_fingerprint_tracks_harness_version_and_startup_bytes(
+    qualified_runtime, monkeypatch
+):
     before = plan.runtime_fingerprint()
     (plan.HARNESS_ROOT / "production_test_worker.py").write_text("changed trusted executor\n")
+    assert plan.runtime_fingerprint() == before  # bytes are not the pin
+    monkeypatch.setattr(plan, "HARNESS_EXECUTION_VERSION", plan.HARNESS_EXECUTION_VERSION + 1)
     changed = plan.runtime_fingerprint()
     assert changed != before
     site = _site(qualified_runtime)
