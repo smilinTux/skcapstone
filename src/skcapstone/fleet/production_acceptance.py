@@ -226,7 +226,6 @@ def _direct_seat_terminal(
             or type(receipt.get("pid")) is not int
             or receipt["pid"] <= 0
             or host != owner_host
-            or host != socket.gethostname().split(".")[0].lower()
             or disposition.get("state") != expected_state
             or disposition.get("claim_released") is not False
             or (disposition.get("process_terminal") is not True and not deferred)
@@ -270,6 +269,16 @@ def _direct_seat_terminal(
             raw_manifest = _read(expected_path, MAX_EVIDENCE)
             if hashlib.sha256(raw_manifest).hexdigest() != artifact_sha256:
                 raise ReviewEvidenceError("direct producer manifest digest differs")
+        if host != socket.gethostname().split(".")[0].lower():
+            # A synced receipt is portable; terminal proof still belongs to
+            # the producer's host, never the consuming review node.
+            if not explicit_receipt or type(receipt.get("exit_code")) is not int:
+                raise ReviewEvidenceError(
+                    "remote direct producer requires modern terminal receipt"
+                )
+            from .production_review_custody import unit_terminal
+
+            unit_terminal(unit, invocation, host=host)
         return {
             "receipt_kind": "direct-seat",
             "receipt_path": str(path),
