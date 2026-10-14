@@ -168,15 +168,11 @@ def harvest_completed(
     # first fold, and a publication may write the board, so each publication
     # drops the store and the next read starts fresh.
     store = None
+    job_bindings = set()
     with _lock(root) as acquired, node.artifact_digest_memo():
         if not acquired:
             return "busy"
         for path in sorted(root.glob("*.job.json")):
-            if any(
-                path.with_name(path.stem + suffix).exists()
-                for suffix in (".done.json", ".failed.json")
-            ):
-                continue
             try:
                 job = json.loads(plan.read_private(path))
                 if job.get("schema") != "skfleet.profile-requalification/v1" or (
@@ -184,6 +180,15 @@ def harvest_completed(
                 ):
                     continue
                 binding = job["binding"]
+                # The orphan pass must not revisit a managed generation, including
+                # failed/done jobs. Its owner-derived workspace is only a fallback
+                # for plans whose job handoff was genuinely lost.
+                job_bindings.add(json.dumps(binding, sort_keys=True))
+                if any(
+                    path.with_name(path.stem + suffix).exists()
+                    for suffix in (".done.json", ".failed.json")
+                ):
+                    continue
                 workspace = Path(job["workspace"])
                 sealed, plan_path, plan_sha = plan.load_plan(
                     home, binding, allow_completed=True, allow_remote_host=True
@@ -294,6 +299,8 @@ def harvest_completed(
                         or not isinstance(candidate_id, str)
                         or (card_id is not None and candidate_id != card_id)
                     ):
+                        continue
+                    if json.dumps(binding, sort_keys=True) in job_bindings:
                         continue
                     # Historical plans are discovery hints, not a veto on fresh
                     # qualification. Skip only provably obsolete generations;

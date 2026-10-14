@@ -1,2 +1,3 @@
 - Ignore terminal qualification jobs and obsolete orphan plan generations during harvest, so old plan failures cannot block a fresh exact qualification. Current plan and receipt validation remain required.
 - Allow fresh requalification when returning to exact source bytes already present in the validated profile history with unchanged recipe, criteria, repository, authority and interpreter. Seal and revalidate the historical profile digest; never reuse its old execution receipt or admit unknown source drift.
+- Exclude exact managed job bindings from orphan-plan discovery, so completed or failed generations cannot block fresh qualification through an incorrect owner-derived workspace.
