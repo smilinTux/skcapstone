@@ -1,0 +1,1 @@
+- Resume sealed source review acceptance when its old revision differs only by the exact legacy projection of the current claim-bound native PASS event. Keep the original context immutable, journal the proven live review fence, and refuse changed card facts, claims or outcomes.

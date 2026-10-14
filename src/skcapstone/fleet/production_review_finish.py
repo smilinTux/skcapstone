@@ -363,6 +363,8 @@ def _finish_pair(
             binding["source_claim_current"] = source_claim_current
         if "released_source_revision" in prior_binding:
             binding["released_source_revision"] = prior_binding["released_source_revision"]
+        if "review_revision" in prior_binding:
+            binding["review_revision"] = prior_binding["review_revision"]
         if prior_binding != binding:
             raise ReviewEvidenceError("historical acceptance intent changed")
     else:
@@ -371,11 +373,18 @@ def _finish_pair(
         binding = {**binding_base, "source_claim_current": source_claim_current}
         if released_source:
             binding["released_source_revision"] = source_before["revision"]
+        if inspect(home, context["review"]["card"])["revision"] != context["review"]["revision"]:
+            from .acceptance_revision import review_start_revision
+
+            binding["review_revision"] = review_start_revision(home, context["review"])
     initial = {
         "source": binding.get(
             "released_source_revision", source.get("live_revision", source["revision"])
         ),
-        "review": binding.get("review_initial_revision", context["review"]["revision"]),
+        "review": binding.get(
+            "review_revision",
+            binding.get("review_initial_revision", context["review"]["revision"]),
+        ),
     }
     if not intent.exists():
         if historical is not None:
