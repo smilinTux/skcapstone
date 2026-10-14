@@ -546,6 +546,34 @@ def test_prestart_retirement_requires_exact_release_or_expired_unclaimed_offer(
     assert result["state"] == "retired-prestart"
     assert not request_path.exists() and not status_path.exists()
     assert review_retire.retired_offers(home, card, events) == {request_id}
+    if retirement_mode == "expired-unclaimed":
+        # A later review generation cannot resurrect this retired unused offer.
+        events.append(
+            {
+                "action": "claim",
+                "owner": "pi-seraph-chiap04-c60a542e",
+                "claim_revision": "9" * 32,
+                "ts": "2999-01-01T00:00:00+00:00",
+            }
+        )
+        assert review_retire.retired_offers(home, card, events) == {request_id}
+        # An actual claim before retirement still contradicts unused custody.
+        events[-1]["ts"] = "2026-10-08T12:05:00+00:00"
+        assert review_retire.retired_offers(home, card, events) == set()
+        for invalid in ("invalid", "2999-01-01T00:00:00"):
+            events[-1]["ts"] = invalid
+            assert review_retire.retired_offers(home, card, events) == set()
+        events.pop()
+        # Exact launch contradictions still refuse, even if reported later.
+        events.append(
+            {
+                "action": "review_assignment_launch",
+                "recommendation_id": request_id,
+                "launched": True,
+                "ts": "2999-01-01T00:00:00+00:00",
+            }
+        )
+        assert review_retire.retired_offers(home, card, events) == set()
 
 
 def test_prestart_retirement_refuses_when_status_or_launch_exists(tmp_path, monkeypatch):
