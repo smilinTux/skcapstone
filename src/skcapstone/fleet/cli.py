@@ -49,6 +49,31 @@ def fleet() -> None:
     """SKWorld fleet control plane (skfleet)."""
 
 
+@fleet.command("preserve-source")
+@click.argument("card_id")
+@click.option("--agent", required=True, help="Authorized operator writer, never a worker.")
+@click.option(
+    "--home",
+    type=click.Path(path_type=Path),
+    default=lambda: Path(os.environ.get("SKCAPSTONE_HOME", Path.home() / ".skcapstone")),
+)
+@click.option(
+    "--search-root",
+    multiple=True,
+    type=click.Path(exists=True, path_type=Path),
+    help="Explicit bounded local clone/bundle roots; replaces default roots.",
+)
+def preserve_source_cmd(card_id, agent, home, search_root):
+    """Preserve CARD_ID's exact base on skgit and verify its operator ref amendment."""
+    from .preserve_source import preserve
+
+    try:
+        result = preserve(home, card_id, agent, list(search_root) or None)
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(jsonlib.dumps(result, sort_keys=True))
+
+
 @fleet.command("nudge")
 @click.argument("card_id")
 @click.argument("text")
