@@ -64,7 +64,11 @@ def _source_workspace_binding(source: Any, item: dict[str, Any]) -> tuple[str, s
     """Resolve one exact recommendation or folded-parent workspace binding."""
 
     links = source.links if hasattr(source, "links") else source.get("links", {})
-    parent_raw = (links.get("repository"), links.get("base_ref"))
+    meta = source.meta if hasattr(source, "meta") else source.get("meta", {})
+    parent_raw = (
+        links.get("repository", meta.get("repository")),
+        links.get("base_ref", meta.get("base_ref")),
+    )
     recommendation_present = "workspace_repository" in item or "base_ref" in item
     parent_present = bool(parent_raw[0] or parent_raw[1])
     recommendation = None
