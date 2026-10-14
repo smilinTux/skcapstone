@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
 import subprocess
 import tempfile
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -119,12 +122,102 @@ def prove_ref(repository, ref, revision):
         raise ValueError("source amended ref proof unavailable") from exc
 
 
+#: One cycle asks about the same amended ref from the offer loop, the requalification
+#: workspace and the review bundle; each ask was a fresh ls-remote, init, fetch and
+#: merge-base against the remote (1.5-8 s). A proof, or its failure, holds this long
+#: in the process, and (with a home) across the dispatcher's one-process-per-cycle
+#: runs: a base revision that is an ancestor of a named ref stays one, and a failed
+#: proof (usually the network) is retried soon.
+PROOF_TTL_SECONDS = 300.0
+PROOF_SUCCESS_TTL_SECONDS = 900.0
+PROOF_FAILURE_TTL_SECONDS = 300.0
+_PROOFS: dict[tuple, tuple[float, str | None]] = {}
+_PROOF_LOCKS: dict[tuple, threading.Lock] = {}
+_PROOF_LOCKS_GUARD = threading.Lock()
+
+
+def _proof_store(home) -> Path | None:
+    return Path(home) / "fleet" / "source-ref-proofs.json" if home else None
+
+
+def _stored_proof(home, key: str, now: float) -> tuple[bool, str | None]:
+    """(found, error) for a still-fresh persisted proof of ``key``."""
+    path = _proof_store(home)
+    try:
+        row = json.loads(path.read_text()).get(key) if path else None
+        stamp, error = float(row[0]), row[1]
+    except (OSError, ValueError, TypeError, IndexError, AttributeError):
+        return False, None
+    ttl = PROOF_FAILURE_TTL_SECONDS if error else PROOF_SUCCESS_TTL_SECONDS
+    return (0 <= now - stamp < ttl), (error if error else None)
+
+
+def _store_proof(home, key: str, now: float, error: str | None) -> None:
+    path = _proof_store(home)
+    if path is None:
+        return
+    try:
+        try:
+            rows = json.loads(path.read_text())
+        except (OSError, ValueError):
+            rows = {}
+        rows = {
+            k: v
+            for k, v in (rows if isinstance(rows, dict) else {}).items()
+            if isinstance(v, list) and len(v) == 2 and 0 <= now - float(v[0]) < 3600
+        }
+        rows[key] = [now, error]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".source-ref-proofs.")
+        with os.fdopen(fd, "w") as handle:
+            json.dump(rows, handle, sort_keys=True)
+        os.replace(tmp, path)
+    except (OSError, ValueError, TypeError):
+        pass  # the persisted copy is only an optimisation
+
+
+def _prove_once(repository, ref, revision, *, clock=time.monotonic, home=None):
+    """Run :func:`prove_ref` at most once per TTL for one exact (repository, ref, revision).
+
+    Single flight: the requalification prefetch threads and the offer loop can ask
+    for the same proof at the same moment, and the second caller waits for the first
+    instead of repeating the network round trips. The key includes the prover itself,
+    so a test that swaps ``prove_ref`` never sees another prover's answer. Only
+    ``ValueError`` failures are remembered.
+    """
+    key = (prove_ref, repository, ref, revision)
+    with _PROOF_LOCKS_GUARD:
+        lock = _PROOF_LOCKS.setdefault(key, threading.Lock())
+    with lock:
+        now = clock()
+        prior = _PROOFS.get(key)
+        if prior is not None and now - prior[0] < PROOF_TTL_SECONDS:
+            if prior[1] is not None:
+                raise ValueError(prior[1])
+            return
+        text = "\0".join((repository, ref, revision))
+        found, stored_error = _stored_proof(home, text, time.time())
+        if found:
+            _PROOFS[key] = (now, stored_error)
+            if stored_error is not None:
+                raise ValueError(stored_error)
+            return
+        try:
+            prove_ref(repository, ref, revision)
+        except ValueError as exc:
+            _PROOFS[key] = (now, str(exc))
+            _store_proof(home, text, time.time(), str(exc))
+            raise
+        _PROOFS[key] = (now, None)
+        _store_proof(home, text, time.time(), None)
+
+
 def amended_source_ref(core, *, home=None, emit=None):
     """Accept only an attributed, unchanged-source, currently fetchable amendment."""
     home = Path(home or os.environ.get("SKCAPSTONE_HOME", Path.home() / ".skcapstone"))
     before = _evidence(core, home)
     binding, original, writer, _event = before
-    prove_ref(binding["repository"], binding["base_ref"], binding["base_revision"])
+    _prove_once(binding["repository"], binding["base_ref"], binding["base_revision"], home=home)
     if _evidence(core, home) != before:
         raise ValueError("source amendment changed during proof")
     (emit or _LOG.info)(

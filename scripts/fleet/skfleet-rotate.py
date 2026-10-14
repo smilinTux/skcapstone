@@ -58,6 +58,7 @@ from skcapstone.fleet.production_dispatch import (
     authoritative_owner_state,
 )
 from skcapstone.fleet import pool_fold_cache
+from skcapstone.fleet import recipe_accel
 from skcapstone.fleet.production_review import independent_review_routes
 from skcapstone.fleet.cycle_deadline import CycleDeadline
 from skcapstone.fleet.lane_health import (
@@ -73,6 +74,10 @@ from skcapstone.fleet.production_brief import production_worker_brief, productio
 from skcapstone.fleet.production_hosted_review_brief import production_hosted_review_brief
 
 SKFLEET_PRODUCTION_POLICY_V1 = True
+# Linear recipe coverage and a per-process recipe_checks memo. Installed here, not
+# edited into production_pytest_recipe.py: that harness module's bytes pin every
+# card profile (runtime_fingerprint), so editing it would requalify the whole board.
+recipe_accel.install()
 from skcapstone.fleet.review_capacity import (
     acquire_review_route_snapshot,
     choose_review_route,
@@ -8541,6 +8546,91 @@ log(
         len(_builder_candidate_ids - {row[2] for row in pool}),
     ),
 )
+
+def _profile_workspace(core, labels):
+    """Rebuild the exact source a requalification offer will bind (network fetch)."""
+    repository, base_ref, revision = builder_dispatch._source(core)
+    destination = (
+        Path(HOME) / ".skcapstone/fleet/workspaces" /
+        ("niobe-profile-requal-%s-%s" % (core["id"], revision[:12]))
+    )
+    return builder_dispatch.materialize_source(
+        {
+            "repository": repository,
+            "base_ref": base_ref,
+            "base_revision": revision,
+        },
+        destination,
+    )
+
+
+def _start_requal_prefetch(candidates, limit):
+    """Start the source fetches the offer loop will need, in loop order.
+
+    Called before continuation, review recovery and remote review offers (the
+    quarter of the cycle those take), so the network half overlaps them instead of
+    queueing in front of the first requalification offer.
+
+    Read-only prediction: a card needs one when its profile preflight fails (what
+    makes ``offer`` raise required-test-profile-unqualified) and it is still an
+    unowned offerable card. Returns None when disabled or nothing is predicted.
+    """
+    if os.environ.get("SKFLEET_REQUAL_PREFETCH", "1") == "0":
+        return None
+    from skcapstone.fleet import production_test_profile as _profiles
+    from skcapstone.fleet.profile_requalification import (
+        OFFERABLE_COLUMNS,
+        requalification_core,
+    )
+    from skcapstone.fleet.source_prefetch import SourcePrefetch, predict_requalifications
+
+    _home = Path(HOME) / ".skcapstone"
+    _store = CardStore(_home)
+    # The order the offer loop will use: qualified first, then least recently tried.
+    candidates = _offer_memory.order(
+        list(candidates),
+        _offer_memory.load(_home / "fleet/builder-offer-memory.json"),
+        lambda _cid: (_home / "fleet/test-profiles" / (str(_cid) + ".json")).is_file(),
+    )
+
+    def _needs(core, labels):
+        # Mirrors the gate at the top of offer_stale_candidate: only a stale profile
+        # or a missing one proceeds to the source rebuild; any other error is
+        # reported "ineligible" before a workspace is touched.
+        try:
+            _profiles.preflight(_home, core, labels, PRODUCTION_POLICY)
+        except _profiles.ProfileRequalificationRequired:
+            return True
+        except (OSError, ValueError) as exc:
+            return str(exc) == "required-test-profile-unqualified"
+        return False
+
+    def _folded(core):
+        card = _store.fold(core["id"])
+        if card is None or card.status.value not in OFFERABLE_COLUMNS or card.owner:
+            return None
+        return requalification_core(core, card)
+
+    predicted = predict_requalifications(
+        candidates, needs_requalification=_needs, folded_core=_folded, limit=limit)
+    if not predicted:
+        return None
+    prefetch = SourcePrefetch(
+        _profile_workspace,
+        workers=int(os.environ.get("SKFLEET_REQUAL_PREFETCH_WORKERS", "6") or "6"))
+    for _core, _labels in predicted:
+        prefetch.submit(_core, _labels)
+    log(d, "REQUAL_SOURCE_PREFETCH|%s|started=%d|workers=%d" % (
+        HOST, len(predicted), prefetch._workers))
+    return prefetch
+
+
+_requal_prefetch = None
+if not DRY and PRODUCTION_POLICY and _is_niobe_builder_host(HOST):
+    try:
+        _requal_prefetch = _start_requal_prefetch(_builder_candidates, 16)
+    except Exception as _prefetch_exc:  # noqa: BLE001 - prefetch is only an optimisation
+        log(d, "REQUAL_SOURCE_PREFETCH_FAILED|%s|%s" % (HOST, str(_prefetch_exc)[:160]))
 # Fail-safe build continuation, authority-only: a builder that committed or staged
 # real work and stopped before its typed handoff held the card in
 # awaiting-evidence forever (fef9698e, 2026-10-10). Grant one preserved
@@ -8757,8 +8847,12 @@ def _record_offer_state(card_id, state):
 # 45s still left the cycle over its 270s limit (lane selection + launch ~90s).
 # After the cycle read reuse (#1071) lane selection takes ~10s and a whole
 # cycle ~110s, while the 20s cap held qualification to 1-2 offers per cycle
-# (2026-10-09 20:51Z). 80s keeps the cycle near 170s.
-_BUILDER_OFFER_SECONDS = float(os.environ.get("SKFLEET_BUILDER_OFFER_SECONDS", "80"))
+# (2026-10-09 20:51Z). 80s kept the cycle near 170s; on 2026-10-14 it was the
+# 84.5s that, with lane selection at 57s, left lane_launch 9.6s and launched 0 of
+# 98 ready cards. The source fetches now overlap (source_prefetch) and the phase
+# also stops at its PHASE_FRACTIONS share of the cycle, so the cap is a ceiling.
+_BUILDER_OFFER_SECONDS = float(os.environ.get("SKFLEET_BUILDER_OFFER_SECONDS", "45"))
+
 
 # Niobe offers source cards to Ready builders within the shared cycle budget.
 # The remote node claims the card itself, so the CardStore fence remains the
@@ -8789,6 +8883,11 @@ if not DRY and _is_niobe_builder_host(HOST):
             )
         except (builder_dispatch.BuilderDispatchError, OSError) as _exc:
             log(d, "BUILDER_DISPATCH_BLOCKED|%s|%s|%s" % (HOST, _candidate[2], _exc))
+            if str(_exc).startswith("source binding conflict: base_ref"):
+                # Reaching this means the amended-ref proof failed (network). The
+                # card does not change until an operator amends it again, so back
+                # off instead of re-proving it every cycle.
+                _record_offer_state(_candidate[2], "ineligible:" + str(_exc))
             if str(_exc) == "required-test-profile-unqualified":
                 if _profile_requalifications_offered >= _profile_requalification_limit:
                     log(d, "PROFILE_REQUALIFICATION_DEFERRED|%s|%s|reason=cycle-offer-limit" %
@@ -8797,22 +8896,6 @@ if not DRY and _is_niobe_builder_host(HOST):
                 try:
                     from skcapstone.fleet.profile_requalification import offer_stale_candidate
 
-                    def _profile_workspace(core, labels):
-                        repository, base_ref, revision = builder_dispatch._source(core)
-                        destination = (
-                            Path(HOME) / ".skcapstone/fleet/workspaces" /
-                            ("niobe-profile-requal-%s-%s" %
-                             (core["id"], revision[:12]))
-                        )
-                        return builder_dispatch.materialize_source(
-                            {
-                                "repository": repository,
-                                "base_ref": base_ref,
-                                "base_revision": revision,
-                            },
-                            destination,
-                        )
-
                     _requal_state = offer_stale_candidate(
                         Path(HOME) / ".skcapstone",
                         PRODUCTION_POLICY,
@@ -8820,7 +8903,7 @@ if not DRY and _is_niobe_builder_host(HOST):
                         DISPATCH_AGENT,
                         dict(_candidate[3], id=_candidate[2]),
                         _candidate[4],
-                        _profile_workspace,
+                        _requal_prefetch.prepare if _requal_prefetch else _profile_workspace,
                     )
                     log(d, "PROFILE_REQUALIFICATION_OFFER|%s|%s|state=%s" %
                         (HOST, _candidate[2], _requal_state))
@@ -9111,7 +9194,8 @@ if PRODUCTION_POLICY:
         # Harvest and advance are independent: a harvest failure must not stop
         # the advance that finalizes finished local runs (2026-10-11).
         try:
-            _harvest_state = harvest_completed(Path(HOME) / ".skcapstone", PRODUCTION_POLICY)
+            _harvest_state = harvest_completed(
+                Path(HOME) / ".skcapstone", PRODUCTION_POLICY, deadline=CYCLE)
             if _harvest_state != "idle":
                 log(d, "PROFILE_REQUALIFICATION_HARVEST|%s|state=%s" % (HOST, _harvest_state))
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
