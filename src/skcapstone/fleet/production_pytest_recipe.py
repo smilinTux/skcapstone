@@ -294,3 +294,33 @@ def selected_junit_counts(raw: bytes, profile: dict, selection: dict | None) -> 
         "skipped": 0,
         "deselected": baseline,
     }
+
+
+def equivalent_target_order(actual, expected, recipe):
+    """JSON sorts recipe maps but must not rewrite a sealed argv's target order."""
+    targets = recipe.get("pytest")
+    if not isinstance(targets, dict) or not targets or not isinstance(actual, list):
+        return False
+    if len(actual) != len(expected):
+        return False
+    count = len(targets)
+    for observed, wanted in zip(actual, expected):
+        if observed == wanted:
+            continue
+        if (
+            not isinstance(observed, dict)
+            or set(observed) != {"id", "argv"}
+            or observed.get("id") != "pytest"
+            or wanted.get("id") != "pytest"
+            or not isinstance(observed.get("argv"), list)
+        ):
+            return False
+        left, right = observed["argv"], wanted["argv"]
+        if (
+            len(left) != len(right)
+            or left[:-count] != right[:-count]
+            or sorted(left[-count:]) != sorted(targets)
+            or sorted(right[-count:]) != sorted(targets)
+        ):
+            return False
+    return True

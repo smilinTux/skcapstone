@@ -29,6 +29,8 @@ def corrected_receipt(home, card, receipt, expected_head, events):
     matching = []
     for event in corrections:
         value = json.loads(event.get("link_value", event.get("value", "")))
+        if not isinstance(value, dict):
+            raise ValueError("correction is not an object")
         # Corrections for another generation never authorize this receipt.
         if value.get("claim_revision") != row.meta.get("_claim_revision"):
             continue
