@@ -22,6 +22,15 @@ DEAD_PREFIXES = (
 )
 DEAD_SECONDS = 1800
 KEEP_SECONDS = 86400
+#: Dead outcomes that cost a network round trip to reach (a depth-1 fetch that
+#: failed, an amended-ref proof that failed). Retrying them every DEAD_SECONDS
+#: spent 10-30 s of each retry cycle on cards that had not changed, so their
+#: window doubles with each consecutive failure up to MAX_BACKOFF_SECONDS.
+BACKOFF_PREFIXES = (
+    "ineligible:exact source reconstruction failed",
+    "ineligible:source binding conflict: base_ref",
+)
+MAX_BACKOFF_SECONDS = 7200
 
 
 def load(path: Path) -> dict:
@@ -42,11 +51,27 @@ def _last(memory: dict, card: str) -> tuple[float, str]:
         return 0.0, ""
 
 
+def _failures(memory: dict, card: str) -> int:
+    row = memory.get(card)
+    try:
+        return max(1, int(row.get("fails", 1))) if isinstance(row, dict) else 1
+    except (TypeError, ValueError):
+        return 1
+
+
+def dead_window(memory: dict, card: str) -> float:
+    """Seconds a dead outcome keeps a card out of the offer loop."""
+    _ts, state = _last(memory, card)
+    if state.startswith(BACKOFF_PREFIXES):
+        return min(DEAD_SECONDS * 2 ** (_failures(memory, card) - 1), MAX_BACKOFF_SECONDS)
+    return DEAD_SECONDS
+
+
 def skip(memory: dict, card: str, now: float | None = None) -> bool:
     """True while a card's last outcome is dead and recent."""
     now = time.time() if now is None else now
     ts, state = _last(memory, card)
-    return state.startswith(DEAD_PREFIXES) and now - ts < DEAD_SECONDS
+    return state.startswith(DEAD_PREFIXES) and now - ts < dead_window(memory, card)
 
 
 def order(candidates, memory: dict, qualified, now: float | None = None) -> list:
@@ -68,7 +93,15 @@ def record(path: Path, card: str, state: str, now: float | None = None) -> None:
         for key, row in load(path).items()
         if isinstance(row, dict) and now - float(row.get("ts", 0) or 0) < KEEP_SECONDS
     }
-    memory[card] = {"ts": now, "state": str(state)[:120]}
+    state = str(state)[:120]
+    row = {"ts": now, "state": state}
+    if state.startswith(BACKOFF_PREFIXES):
+        prior = memory.get(card)
+        repeated = isinstance(prior, dict) and str(prior.get("state", "")).startswith(
+            BACKOFF_PREFIXES
+        )
+        row["fails"] = min(_failures(memory, card) + 1, 8) if repeated else 1
+    memory[card] = row
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(memory, sort_keys=True))

@@ -42,14 +42,21 @@ DEFAULT_WARN_SHARE = 0.4
 #: Cumulative fraction of the budget by which each phase must stop admitting
 #: work. The launch phase keeps the whole budget (its existing behaviour); the
 #: phases before it leave it room.
+#:
+#: The offer phases used to own the whole budget (1.0), so on 2026-10-14 builder
+#: offers (84.5 s) plus lane selection (57 s) pushed lane_launch to the last 9.6 s of
+#: a 250 s cycle and 98 ready cards launched 0. They now stop at 0.55 and 0.7, which
+#: keeps at least 30% of the budget (75 s of 250) for selection and launch; the
+#: profile harvest that opens lane selection stops at 0.85.
 PHASE_FRACTIONS: dict[str, float] = {
     "startup_sweeps": 0.25,
     "review_sweeps": 0.35,
     "pool_fold": 0.65,
     "pool_unblocks": 0.7,
-    "remote_review_offers": 1.0,
-    "builder_offers": 1.0,
-    "lane_selection": 0.92,
+    "remote_review_offers": 0.55,
+    "builder_offers": 0.7,
+    "profile_harvest": 0.85,
+    "lane_selection": 0.88,
     "lane_launch": 1.0,
     "review_observation": 1.0,
 }

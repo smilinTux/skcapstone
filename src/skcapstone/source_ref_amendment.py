@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -119,12 +120,40 @@ def prove_ref(repository, ref, revision):
         raise ValueError("source amended ref proof unavailable") from exc
 
 
+#: One cycle asks about the same amended ref from the offer loop, the requalification
+#: workspace and the review bundle; each ask was a fresh ls-remote, init, fetch and
+#: merge-base against the remote (1.5-8 s). A proof, or its failure, holds this long.
+PROOF_TTL_SECONDS = 300.0
+_PROOFS: dict[tuple, tuple[float, str | None]] = {}
+
+
+def _prove_once(repository, ref, revision, *, clock=time.monotonic):
+    """Run :func:`prove_ref` at most once per TTL for one exact (repository, ref, revision).
+
+    The key includes the prover itself, so a test that swaps ``prove_ref`` never
+    sees another prover's answer. Only ``ValueError`` failures are remembered.
+    """
+    key = (prove_ref, repository, ref, revision)
+    now = clock()
+    prior = _PROOFS.get(key)
+    if prior is not None and now - prior[0] < PROOF_TTL_SECONDS:
+        if prior[1] is not None:
+            raise ValueError(prior[1])
+        return
+    try:
+        prove_ref(repository, ref, revision)
+    except ValueError as exc:
+        _PROOFS[key] = (now, str(exc))
+        raise
+    _PROOFS[key] = (now, None)
+
+
 def amended_source_ref(core, *, home=None, emit=None):
     """Accept only an attributed, unchanged-source, currently fetchable amendment."""
     home = Path(home or os.environ.get("SKCAPSTONE_HOME", Path.home() / ".skcapstone"))
     before = _evidence(core, home)
     binding, original, writer, _event = before
-    prove_ref(binding["repository"], binding["base_ref"], binding["base_revision"])
+    _prove_once(binding["repository"], binding["base_ref"], binding["base_revision"])
     if _evidence(core, home) != before:
         raise ValueError("source amendment changed during proof")
     (emit or _LOG.info)(

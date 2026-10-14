@@ -1526,6 +1526,13 @@ def _gh_binary() -> str:
     return shutil.which("gh", path=search) or "gh"
 
 
+#: Bound for each Git step of a source reconstruction (the depth-1 fetch is the only
+#: one that touches the network).
+SOURCE_MATERIALIZE_TIMEOUT_SECONDS = float(
+    os.environ.get("SKFLEET_SOURCE_MATERIALIZE_TIMEOUT_S", "60")
+)
+
+
 def materialize_source(request: dict, workspace: Path) -> Path:
     """Reconstruct and verify exact source without inheriting host Git settings."""
     # Match preseed custody literally; host insteadOf or Git environment must
@@ -1606,9 +1613,19 @@ def materialize_source(request: dict, workspace: Path) -> Path:
             [*git, "checkout", "--quiet", "--detach", request["base_revision"]],
         )
         for command in commands:
-            result = subprocess.run(
-                command, cwd=temporary, env=environment, capture_output=True, text=True
-            )
+            try:
+                result = subprocess.run(
+                    command,
+                    cwd=temporary,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    timeout=SOURCE_MATERIALIZE_TIMEOUT_SECONDS,
+                )
+            except subprocess.TimeoutExpired as exc:
+                # An unbounded fetch from a stalled remote used to hold the whole
+                # offer phase; a timeout is a failed reconstruction like any other.
+                raise BuilderDispatchError("exact source reconstruction failed") from exc
             if result.returncode:
                 raise BuilderDispatchError("exact source reconstruction failed")
         temporary.replace(workspace)

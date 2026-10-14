@@ -137,9 +137,21 @@ def _claim_is_current(home: Path, job: dict) -> bool:
 
 
 def harvest_completed(
-    home: Path, policy: dict, card_id: str | None = None, *, limit: int = 4
+    home: Path,
+    policy: dict,
+    card_id: str | None = None,
+    *,
+    limit: int = 4,
+    deadline=None,
+    phase: str = "profile_harvest",
 ) -> str:
-    """Publish a bounded batch of validated completed refreshes."""
+    """Publish a bounded batch of validated completed refreshes.
+
+    ``deadline`` (a CycleDeadline) bounds the sealed-plan scan: it stops at the
+    ``phase`` share of the cycle and the next cycle resumes at the first plan not
+    reached, so a long plan directory cannot starve lane selection and launch. With
+    time to spare the whole directory is scanned and nothing changes.
+    """
     home = Path(home)
     if socket.gethostname().split(".")[0].lower() != policy.get("authority_host"):
         return "not-authority"
@@ -250,8 +262,21 @@ def harvest_completed(
         # Discover those plans directly so selection (and a new claim) is not
         # required to finish publication.
         plans = home / "fleet/test-plans"
+        stopped_at = None
         if plans.is_dir():
-            for plan_path in sorted(plans.glob("*.json")):
+            plan_paths = sorted(plans.glob("*.json"))
+            if deadline is not None and card_id is None:
+                plan_paths = deadline.rotate_from(
+                    plan_paths, deadline.read_cursor(phase), key=lambda path: path.name
+                )
+            for scanned, plan_path in enumerate(plan_paths):
+                if (
+                    deadline is not None
+                    and card_id is None
+                    and deadline.stop(phase, scanned, len(plan_paths) - scanned, min_done=1)
+                ):
+                    stopped_at = plan_path.name
+                    break
                 try:
                     sealed_candidate = json.loads(plan.read_private(plan_path))
                     binding = sealed_candidate.get("binding")
@@ -352,6 +377,8 @@ def harvest_completed(
                 ) as exc:
                     if card_id is not None:
                         return "blocked:" + str(exc)[:160]
+        if plans.is_dir() and deadline is not None and card_id is None:
+            deadline.write_cursor(phase, stopped_at)
     if qualified:
         return "qualified:" + ",".join(qualified)
     return held_state or "idle"
@@ -512,6 +539,15 @@ def _recent_failure(
     return False
 
 
+def requalification_core(core: dict, card) -> dict:
+    """The pool core merged with the folded card's labels and links (see below)."""
+    return dict(
+        core,
+        labels=sorted(getattr(card, "labels", None) or []),
+        links=dict(core.get("links") or {}, **(getattr(card, "links", None) or {})),
+    )
+
+
 def offer_stale_candidate(
     home: Path,
     policy: dict,
@@ -558,11 +594,7 @@ def offer_stale_candidate(
     # sealed pytest_all while the builder chose the operator recipe and failed
     # every such job the same way (ead91896, c33a1004, 2026-10-09).
     origin_column = card.status.value
-    core = dict(
-        core,
-        labels=sorted(getattr(card, "labels", None) or []),
-        links=dict(core.get("links") or {}, **(getattr(card, "links", None) or {})),
-    )
+    core = requalification_core(core, card)
     try:
         workspace = Path(prepare_workspace(core, labels))
         expected = profile.contract(dict(core, id=card_id))
@@ -702,8 +734,14 @@ def _release_exact_claim(
     return True
 
 
+def _settled_marker(path: Path) -> Path:
+    return path.with_name(path.stem + ".claim-settled")
+
+
 def _failed_records(root: Path):
     for path in sorted(root.glob("*.job.json")):
+        if _settled_marker(path).exists():
+            continue
         if path.with_name(path.stem + ".failed.json").exists():
             try:
                 yield path, json.loads(plan.read_private(path))
@@ -747,6 +785,14 @@ def _release_failed_claims(home: Path, skc: str, actor: str, root: Path, limit: 
             result = _release_exact_claim(home, skc, actor, card_id, owner, revision, store=store)
         except (OSError, ValueError, subprocess.SubprocessError):
             result = False
+        if result is None:
+            # No longer the exact holder: claim revisions are unique, so this job can
+            # never hold its claim again. Remember that instead of re-folding the card
+            # every cycle (620 settled records cost ~7 s per cycle on chiap08).
+            try:
+                _settled_marker(_path).touch(mode=0o600)
+            except OSError:
+                pass
         if result is not None:
             store = None
             states.append(card_id + "=" + ("released" if result else "release-refused"))
