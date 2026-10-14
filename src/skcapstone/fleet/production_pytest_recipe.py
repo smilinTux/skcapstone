@@ -1,7 +1,9 @@
 """Bounded Python recipes, sealed-source paths and exact collection evidence."""
 
+import copy
+import json
 import re
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from xml.etree import ElementTree
 
 from . import production_test_node as node
@@ -23,7 +25,9 @@ def safe_target(path: str, *, pytest: bool = False) -> str:
         or not _PATH.fullmatch(path)
     ):
         raise plan.TestEvidenceError("unsafe test target")
-    parts = PurePosixPath(path).parts
+    # _PATH admits only non-empty "/"-joined literal components, so splitting is
+    # exactly PurePosixPath(path).parts without building a Path per target.
+    parts = path.split("/")
     if pytest:
         if "tests" not in parts:
             raise plan.TestEvidenceError("pytest requires explicit test files or test directories")
@@ -33,10 +37,22 @@ def safe_target(path: str, *, pytest: bool = False) -> str:
 
 
 def covered(path: str, targets: dict[str, int]) -> str:
-    """Return the one explicit file/directory covering a collected source file."""
-    matches = [
-        t for t in targets if path == t or (not t.endswith(".py") and path.startswith(t + "/"))
-    ]
+    """Return the one explicit file/directory covering a collected source file.
+
+    A target covers ``path`` when it is the path itself, or a directory (any
+    target not ending in ``.py``) that is a proper "/"-prefix of it. Looking up
+    the path and each of its prefixes is O(depth) instead of a scan of every
+    target, which made validating a 4,096-target recipe quadratic.
+    """
+    matches = []
+    if path in targets:
+        matches.append(path)
+    index = path.find("/")
+    while index != -1:
+        prefix = path[:index]
+        if prefix in targets and not prefix.endswith(".py") and prefix != path:
+            matches.append(prefix)
+        index = path.find("/", index + 1)
     if len(matches) != 1:
         raise plan.TestEvidenceError("test file outside or overlapping approved targets")
     return matches[0]
@@ -69,7 +85,68 @@ def requires_selection(recipe: dict) -> bool:
     )
 
 
+def _plain(value) -> bool:
+    """True for JSON-shaped data whose canonical text identifies it exactly.
+
+    Exact type checks: a tuple, a bool/int mix or a non-string key would encode
+    like another value, and the validator tells those apart, so they bypass the
+    cache instead of sharing an entry.
+    """
+    kind = type(value)
+    if kind in (str, int, bool) or value is None:
+        return True
+    if kind is list:
+        return all(_plain(item) for item in value)
+    if kind is dict:
+        return all(type(key) is str and _plain(item) for key, item in value.items())
+    return False
+
+
+_CHECKS_CACHE: dict[str, tuple[bool, object]] = {}
+_CHECKS_CACHE_MAX = 4096
+_CHECKS_STATS = {"hits": 0, "misses": 0}
+
+
 def recipe_checks(recipe: dict) -> list[dict]:
+    """Compile operator-approved bounded inputs to fixed command argv.
+
+    The result is a pure function of the recipe, and the dispatcher validates the
+    same few hundred recipes (every sealed plan and every card profile) on each
+    cycle, so one process validates each distinct recipe once. The key keeps dict
+    order because target order is argv order. Each call returns a fresh copy and a
+    cached failure raises the same error again.
+    """
+    if not _plain(recipe):
+        return _recipe_checks(recipe)
+    # The argv embeds these two interpreter paths, so they are part of the key.
+    key = "%s\0%s\0%s" % (plan.PREFIX, node.NODE, json.dumps(recipe, separators=(",", ":")))
+    entry = _CHECKS_CACHE.get(key)
+    if entry is None:
+        _CHECKS_STATS["misses"] += 1
+        try:
+            entry = (True, _recipe_checks(recipe))
+        except plan.TestEvidenceError as exc:
+            entry = (False, str(exc))
+        if len(_CHECKS_CACHE) >= _CHECKS_CACHE_MAX:
+            _CHECKS_CACHE.clear()
+        _CHECKS_CACHE[key] = entry
+    else:
+        _CHECKS_STATS["hits"] += 1
+    if not entry[0]:
+        raise plan.TestEvidenceError(entry[1])
+    return copy.deepcopy(entry[1])
+
+
+def cache_clear() -> None:
+    _CHECKS_CACHE.clear()
+    _CHECKS_STATS.update(hits=0, misses=0)
+
+
+def cache_stats() -> dict[str, int]:
+    return dict(_CHECKS_STATS)
+
+
+def _recipe_checks(recipe: dict) -> list[dict]:
     """Compile operator-approved bounded inputs to fixed command argv."""
     if recipe == {"pytest_all": True}:
         return [
