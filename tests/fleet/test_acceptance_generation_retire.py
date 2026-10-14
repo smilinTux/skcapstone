@@ -277,3 +277,32 @@ def test_coord_command_preserves_operator_identity_and_check_default(tmp_path, m
     assert result.exit_code == 0, result.output
     assert calls[-1]["apply"] and calls[-1]["actor"] == "lumina-nor"
     assert authorities[-1][0] == "lumina-nor"
+
+
+def test_imported_review_is_preserved_without_granting_acceptance(candidate):
+    c = candidate
+    artifact = c.context.parent / "imported-review" / "REVIEW-DECISION.json"
+    _write(artifact, {"verdict": "FAIL"})
+    c.outcomes[CARD] = {"action": "link", "link_key": "verdict", "link_value": "FAIL"}
+    c.outcomes[c.source.id]["candidate_commit"] = "f" * 40
+    before = artifact.read_bytes()
+    assert run(c, True) == "superseded"
+    assert artifact.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "context.json",
+        "finish-intent.json",
+        "negative-disposition.json",
+        "step-00.intent.json",
+        "unknown.json",
+    ],
+)
+def test_retirement_still_refuses_transaction_artifacts(candidate, name):
+    c = candidate
+    _write(c.context.parent / name, {})
+    with pytest.raises(ValueError, match="acceptance custody"):
+        run(c, True)
+    assert c.rp.exists() and c.sp.exists()

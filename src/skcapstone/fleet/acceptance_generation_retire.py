@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 from ..seraph_review_cardstore import _latest_outcome
-from . import production_builder, review_recovery, review_retire
+from . import production_builder, review_retire
 from .source_custody import CustodyState, inspect_custody
 
 
@@ -48,7 +48,12 @@ def prove(home, store, card, claim, owner, request_raw, status_raw, expected):
         != CustodyState.RELEASED_CLEAN
     ):
         raise ValueError("released review custody changed")
-    review_recovery.acceptance_absent(home, card, claim)
+    directory = Path(home) / "evidence/production-acceptance" / f"{card}-{claim}"
+    # Imported Git objects do not seal an acceptance transaction. Keep them;
+    # every context, journal, disposition or unknown root artifact still fences
+    # retirement. The worker release and terminal proof remain mandatory.
+    if directory.exists() and any(p.name != "imported-review" for p in directory.iterdir()):
+        raise ValueError("review acceptance custody exists")
     execution = status.get("execution") or {}
     launches = [
         e

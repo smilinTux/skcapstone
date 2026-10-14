@@ -942,6 +942,36 @@ def _retired_exit(home, card, directory, *, claim=None):
                     "historical": True,
                 }
     if (directory / "context.json").exists():
+        if (directory / "finish-intent.json").exists():
+            context = read_json(directory / "context.json")
+            intent = read_json(directory / "finish-intent.json")
+            source_id = context.get("source", {}).get("card")
+            source = store.fold(source_id) if isinstance(source_id, str) else None
+            review = store.fold(card)
+            if (
+                context.get("review", {}).get("card") == card
+                and source_id != card
+                and intent.get("context_sha256") == digest(context)
+                and all(
+                    row is not None
+                    and row.status.value == "done"
+                    and row.owner is None
+                    and not row.archived
+                    for row in (source, review)
+                )
+                and review.meta.get("link_source_card") == source_id
+                and all(
+                    any(e.get("action") == "complete" for e in store._read_events(cid))
+                    for cid in (source_id, card)
+                )
+            ):
+                return {
+                    "card": card,
+                    "state": "completed-outside-acceptance",
+                    "accepted": False,
+                    "historical": True,
+                    "source_card": source_id,
+                }
         return None
     review = store.fold(card)
     if review is None or "source-only" not in review.labels:

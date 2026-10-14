@@ -1,0 +1,1 @@
+- Retire obsolete released review generations with retained imported artifacts only, while continuing to refuse acceptance journals or sealed contexts. Classify an interrupted pair that was natively completed outside acceptance separately, without claiming acceptance or replaying writes.
