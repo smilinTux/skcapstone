@@ -1241,3 +1241,34 @@ def test_rotate_advance_survives_a_harvest_failure():
     blocked = source.index("PROFILE_REQUALIFICATION_HARVEST_BLOCKED", harvest)
     advance = source.index("_requal_state = requalify_or_advance(", harvest)
     assert harvest < blocked < advance
+
+
+@pytest.mark.parametrize("state", ["older", "current", "unreadable"])
+def test_failure_backoff_is_scoped_to_validated_harness_runtime(tmp_path, monkeypatch, state):
+    root = tmp_path / "fleet/profile-requalifications"
+    root.mkdir(parents=True, mode=0o700)
+    binding = {"source_card": "1234abcd"}
+    plan.write_once(
+        root / ("a" * 64 + ".job.json"),
+        {"card": "1234abcd", "source_sha256": "s" * 64, "binding": binding},
+    )
+    plan.write_once(
+        root / ("a" * 64 + ".job.failed.json"),
+        {"card": "1234abcd", "reason": "native unit, source or receipt custody mismatch"},
+    )
+    monkeypatch.setattr(plan, "PREFIX", tmp_path / "no-runtime-manifest")
+    monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "b" * 64)
+
+    def load(home, actual, **kwargs):
+        assert home == tmp_path and actual == binding
+        assert kwargs == {
+            "require_current": False,
+            "allow_completed": True,
+            "allow_remote_host": True,
+        }
+        if state == "unreadable":
+            raise plan.TestEvidenceError("untrusted plan")
+        return {"runtime_sha256": ("a" if state == "older" else "b") * 64}, None, None
+
+    monkeypatch.setattr(plan, "load_plan", load)
+    assert refresh._recent_failure(root, "1234abcd", "s" * 64) is (state != "older")

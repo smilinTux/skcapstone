@@ -1,2 +1,3 @@
 - Keep baseline extension satisfiable when every remaining test in an explicit file fails: omit that fully excluded file, retain unobserved targets, and refuse an empty passing scope. Exact failed-test evidence and all qualification validation remain required.
 - Include the pinned tests directory in the existing bounded sandbox Python path so importlib-mode tests can import sibling fixtures. Redirected test roots refuse; host paths remain excluded.
+- Treat a validated failure from an older trusted harness as a new qualification attempt after a harness fix; same-runtime failures and unreadable prior plans keep their backoff.
