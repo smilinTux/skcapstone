@@ -1066,3 +1066,62 @@ def test_unreadable_gate_core_fails_closed(board: BackoffHarness) -> None:
     path.mkdir()
     (path / "core.json").write_text("{not json", encoding="utf-8")
     assert board.ns["_human_gate"](gate) is True
+
+
+@pytest.mark.parametrize("writer", ["lumina-nor", "casey", "capauth:lumina-nor@chi"])
+def test_authorized_operator_resolves_exact_human_blocker(board, writer):
+    card = "91680b72"
+    referent = "approval:source-ownership-91680b72"
+    board.outcome(card, "2026-10-12T01:00:00Z", f"BLOCKED|human|{referent}")
+    board.evidence_event(
+        card,
+        "2026-10-13T01:00:00Z",
+        "link",
+        writer=writer,
+        link_key="human_approval",
+        link_value=f"APPROVED by Chef via operator {referent}",
+    )
+    assert board.blocked(card) is False
+
+
+@pytest.mark.parametrize(
+    "writer",
+    [
+        "pi-glm-chiap08-91680b72",
+        "link",
+        "niobe",
+        "unknown",
+        "",
+        "pi-human-decision-recorder-chiap08",
+    ],
+)
+def test_worker_cannot_resolve_human_blocker(board, writer):
+    card = "91680b72"
+    referent = "approval:source-ownership-91680b72"
+    board.outcome(card, "2026-10-12T01:00:00Z", f"BLOCKED|human|{referent}")
+    board.evidence_event(
+        card,
+        "2026-10-13T01:00:00Z",
+        "link",
+        writer=writer,
+        link_key="human_approval",
+        link_value=f"APPROVED {referent}",
+    )
+    assert board.blocked(card) is True
+
+
+@pytest.mark.parametrize(
+    "stamp,value",
+    [
+        ("2026-10-11T01:00:00Z", "APPROVED approval:source-ownership-91680b72"),
+        ("2026-10-13T01:00:00Z", "APPROVED approval:other-card"),
+        ("2026-10-13T01:00:00Z", "no_approval approval:source-ownership-91680b72"),
+    ],
+)
+def test_operator_resolution_keeps_exact_referent_and_freshness(board, stamp, value):
+    card = "91680b72"
+    board.outcome(card, "2026-10-12T01:00:00Z", "BLOCKED|human|approval:source-ownership-91680b72")
+    board.evidence_event(
+        card, stamp, "link", writer="lumina-nor", link_key="human_approval", link_value=value
+    )
+    assert board.blocked(card) is True

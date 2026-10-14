@@ -23,8 +23,9 @@ label gate is real but lives only in the rotate pool's SELECTION, so any caller
 that claims a card by id walks around it.
 
 That is why a later outcome recorded by an AGENT does not discharge a human
-hold here. Only a person can. If any writer could clear it, 83e498b6 would clear
-itself on the first relaunch, which is precisely what happened.
+hold here. Only an authorized operator decision can. If any writer could clear
+it, 83e498b6 would clear itself on the first relaunch, which is precisely what
+happened.
 
 SECOND, NOTHING SHOWED THE QUEUE TO ANYONE. Sixteen open cards sat at latest
 outcome ``BLOCKED blocked_on=human`` and were surfaced to nobody: not to the
@@ -55,13 +56,13 @@ from typing import Any, Iterable, Iterator, Sequence
 
 from .blocked_verdict import blocked_on_category, blocked_on_referent, is_blocked_verdict
 from .review_admission import parse_blocked_on_link
+from .seat_boundaries import CoordActorClass, classify_coord_actor
 
 logger = logging.getLogger(__name__)
 
 #: Writers whose events can discharge a hold held for a person. Same set the
 #: fleet rotation's ``_human_resolution_epoch`` authorizes, so a discharge that
 #: releases a card here releases it there too.
-_HUMAN_ACTORS = ("chef", "human")
 _HUMAN_RECORDER = "human-decision-recorder"
 
 #: The label gate. ``human-gate`` is the spelling ``coord create`` documents and
@@ -133,9 +134,13 @@ _TERMINAL_STATUSES = frozenset({"done"})
 
 
 def _is_human_actor(name: object) -> bool:
-    """True when this writer is the operator rather than an agent."""
+    """Recognize standing operators and the dedicated historical decision recorder."""
     actor = str(name or "").strip().lower()
-    return actor in _HUMAN_ACTORS or _HUMAN_RECORDER in actor
+    return (
+        classify_coord_actor(actor)[0] is CoordActorClass.OPERATOR
+        or actor == _HUMAN_RECORDER
+        or actor.startswith(_HUMAN_RECORDER + "-")
+    )
 
 
 def needed_system(referent: str) -> str:

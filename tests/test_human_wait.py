@@ -251,3 +251,12 @@ def test_sync_gtd_is_idempotent_on_source_and_card_id(
     assert waiting[0]["source_ref"] == "00000011"
     assert "approval:perform-tailscale-admin-delete-chiap06" in waiting[0]["text"]
     assert gtd_text(rows[0]).startswith("[00000011]")
+
+
+def test_standing_operator_approval_releases_claim_hold(tmp_path):
+    store = CardStore(tmp_path)
+    _card(store, "91680b72", "source ownership audit")
+    _link(tmp_path, "91680b72", "verdict", TAILSCALE_VERDICT, "pi-glm-worker")
+    _link(tmp_path, "91680b72", "human_approval", "APPROVED by Chef via lumina-nor", "lumina-nor")
+    assert waiting_on_human(tmp_path) == ()
+    assert_human_claim(tmp_path, "91680b72", "pi-glm-worker")

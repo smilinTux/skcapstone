@@ -1,0 +1,1 @@
+Honor explicit blocker approvals recorded by standing coordination operators, including lumina-nor, consistently in fleet backoff and claim admission. Preserve the scheduler's exact referent and freshness checks, reject worker and seat approvals, and restrict the legacy decision-recorder exception to its own identity prefix.
