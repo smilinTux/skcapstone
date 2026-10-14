@@ -436,10 +436,13 @@ def test_builder_offers_are_bounded_and_do_not_stop_after_first_success():
         "d": None,
         "_record_offer_state": lambda *args: None,
         "_BUILDER_OFFER_SECONDS": 45.0,
+        "_builder_attempted_ids": set(),
     }
     exec(compile(ast.Module(body=[block], type_ignores=[]), str(ROTATE), "exec"), ns)
     assert offers == ["0", "1", "2"]
     assert [row[2] for row in ns["owned"]] == ["3", "4"]
+    # The cap fall-through must not re-offer cards this phase already tried.
+    assert {"0", "1", "2"} <= ns["_builder_attempted_ids"]
 
 
 def test_serial_seat_budgets_reserve_cleanup_inside_generation():

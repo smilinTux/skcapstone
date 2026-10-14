@@ -190,24 +190,81 @@ def logical_route(labels: list[str] | tuple[str, ...]) -> str | None:
     return next(iter(routes)) if len(routes) == 1 else None
 
 
-def eligible(core: dict, labels: list[str] | tuple[str, ...]) -> bool:
-    """Return whether a card is eligible for governed remote source dispatch."""
+def ineligibility(core: dict, labels: list[str] | tuple[str, ...]) -> str | None:
+    """Name the first fence that keeps a card off the builders, or None.
+
+    Pure and cheap (labels only, no I/O), so the rotation loop can classify a
+    whole pool in microseconds and skip card classes that can never run on a
+    builder instead of paying a claim, workspace and release for each.
+
+    Fences, in the order they are checked:
+
+    * ``invalid-card``: no string card id.
+    * ``no-logical-route``: not exactly one of sk-s/sk-m/sk-l/sk-xl.
+    * ``not-source-work``: a builder reconstructs the card from an exact,
+      credential-free https source at a pinned revision and holds no host-local
+      state, so only ``source-only`` cards (or, in production, glm-only plus
+      dispatch-approved) are accepted. ``source-only`` also states the
+      no-external-action constraint, and the downstream test-profile, custody,
+      retry and exit chains key on that label.
+    * ``seat-pinned``: ``seat-*`` work belongs to a standing seat identity and
+      its placement-manifest host, never to a builder-node identity.
+    * ``parked``: ``parked-*`` is an operator hold.
+    * ``host-pin`` / ``do-not-claim``: operator placement and claim fences.
+    * ``lane-only-label``: codex/qwen/glm-only outside production.
+    """
     normalized = {str(label).strip().lower() for label in labels}
     production = "SKFLEET_PRODUCTION_POLICY" in os.environ
-    excluded = {"host-pin", "do-not-claim"}
-    if not production:
-        excluded.update({"codex-only", "qwen-only", "glm-only"})
+    if not isinstance(core.get("id"), str):
+        return "invalid-card"
+    if logical_route(labels) is None:
+        return "no-logical-route"
     remote_source_work = "source-only" in normalized or (
         production and {"glm-only", "dispatch-approved"} <= normalized
     )
-    return (
-        logical_route(labels) is not None
-        and remote_source_work
-        and not any(label.startswith("seat-") for label in normalized)
-        and not any(label.startswith("parked-") for label in normalized)
-        and not normalized.intersection(excluded)
-        and isinstance(core.get("id"), str)
-    )
+    if not remote_source_work:
+        return "not-source-work"
+    if any(label.startswith("seat-") for label in normalized):
+        return "seat-pinned"
+    if any(label.startswith("parked-") for label in normalized):
+        return "parked"
+    for fence in ("host-pin", "do-not-claim"):
+        if fence in normalized:
+            return fence
+    if not production and normalized.intersection({"codex-only", "qwen-only", "glm-only"}):
+        return "lane-only-label"
+    return None
+
+
+def eligible(core: dict, labels: list[str] | tuple[str, ...]) -> bool:
+    """Return whether a card is eligible for governed remote source dispatch."""
+    return ineligibility(core, labels) is None
+
+
+def fallthrough_offers(rows, attempted) -> tuple[list[tuple], dict[str, int]]:
+    """Split rows the authority could not launch into builder offers and skips.
+
+    Args:
+        rows: ``(card_id, core, labels)`` for cards left when the authority's
+            local worker occupancy cap stopped lane launches.
+        attempted: Card ids already offered to builders earlier this cycle.
+
+    Returns:
+        (rows still worth offering, skip counts by fence name). Only the
+        builder-eligible fence set decides, so no existing fence is relaxed.
+    """
+    offerable: list[tuple] = []
+    skipped: dict[str, int] = {}
+    for card_id, core, labels in rows:
+        if card_id in attempted:
+            reason = "already-offered-this-cycle"
+        else:
+            reason = ineligibility(dict(core, id=card_id), labels)
+        if reason is None:
+            offerable.append((card_id, core, labels))
+        else:
+            skipped[reason] = skipped.get(reason, 0) + 1
+    return offerable, skipped
 
 
 def _source(core: dict, *, home: Path | None = None) -> tuple[str, str, str]:
