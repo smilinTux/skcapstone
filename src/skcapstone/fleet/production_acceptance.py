@@ -1002,6 +1002,11 @@ def reconcile(home, policy, *, process_check):
                 for role in ("source", "review"):
                     item = context[role]
                     state = native_state(home, item["card"])
+                    expected_revision = item.get("live_revision", item["revision"])
+                    if role == "review" and state["revision"] != expected_revision:
+                        from .acceptance_revision import review_start_revision
+
+                        expected_revision = review_start_revision(home, item)
                     if role == "source" and state["owner"] is None:
                         resumable_done = (
                             state["status"] == "done"
@@ -1029,7 +1034,7 @@ def reconcile(home, policy, *, process_check):
                         ):
                             raise ReviewEvidenceError("native pair changed before trusted tests")
                     elif (
-                        state["revision"] != item.get("live_revision", item["revision"])
+                        state["revision"] != expected_revision
                         or state["owner"] != item["owner"]
                         or state["claim_revision"] != item["claim"]
                     ):
