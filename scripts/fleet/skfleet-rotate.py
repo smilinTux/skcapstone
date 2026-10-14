@@ -269,6 +269,41 @@ def _bounded_ids(card_ids, limit=12):
     return ",".join(shown) or "-", max(0, len(values) - len(shown))
 
 
+def _fallthrough_to_builders(rows, attempted, offer, log_line, deadline, clock):
+    """Offer cards the authority could not launch to builders, within the deadline.
+
+    The authority's local worker occupancy cap is node-wide, so once it is
+    reached no later card can launch HERE this cycle. Builders have their own
+    admission headroom, so a card a builder may take must not be stranded by
+    the authority being full. Pure of the rotator's globals so the decision and
+    the fences are testable: `offer(card_id, core, labels)` returns a request
+    dict or None (idle) or raises, `log_line(text)` records one line.
+
+    Returns:
+        (offered, blocked, skipped counts by fence)
+    """
+    offerable, skipped = builder_dispatch.fallthrough_offers(rows, attempted)
+    offered = blocked = 0
+    for card_id, core, labels in offerable:
+        if clock() >= deadline:
+            skipped["cycle-deadline"] = skipped.get("cycle-deadline", 0) + 1
+            continue
+        attempted.add(card_id)
+        try:
+            request = offer(card_id, core, labels)
+        except (builder_dispatch.BuilderDispatchError, OSError) as exc:
+            blocked += 1
+            log_line("BUILDER_FALLTHROUGH_BLOCKED|%s|%s" % (card_id, exc))
+            continue
+        if request is None:
+            skipped["builder-idle"] = skipped.get("builder-idle", 0) + 1
+            continue
+        offered += 1
+        log_line("BUILDER_FALLTHROUGH_OFFERED|%s|node=%s|request_id=%s" % (
+            card_id, request["node"], request["request_id"]))
+    return offered, blocked, skipped
+
+
 def _builder_partition(owned_rows, candidate_ids, held_ids):
     """Split this host's owned rows by whether the builder path holds the card.
 
@@ -8857,6 +8892,7 @@ _BUILDER_OFFER_SECONDS = float(os.environ.get("SKFLEET_BUILDER_OFFER_SECONDS", "
 # Niobe offers source cards to Ready builders within the shared cycle budget.
 # The remote node claims the card itself, so the CardStore fence remains the
 # authority and this scheduler never impersonates a remote worker.
+_builder_attempted_ids = set()  # offered (or tried) this cycle; cap fall-through skips them
 if not DRY and _is_niobe_builder_host(HOST):
     _profile_requalifications_offered = 0
     _profile_requalification_limit = 16
@@ -8871,6 +8907,7 @@ if not DRY and _is_niobe_builder_host(HOST):
             log(d, "BUILDER_OFFER_BUDGET_EXHAUSTED|%s|next=%s" % (HOST, _candidate[2]))
             break
         _builder_offered += 1
+        _builder_attempted_ids.add(_candidate[2])
         _remote_core = dict(_candidate[3], id=_candidate[2])
         try:
             _remote_request = builder_dispatch.offer(
@@ -10579,6 +10616,20 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             # 10 cards cost ~120s of lane_launch (chiap08 2026-10-09 21:19Z).
             if "worker occupancy cap reached" in str(_admission_exc):
                 log(d,"LANE_LAUNCH_STOPPED|%s|reason=node-occupancy-cap"%HOST)
+                if not DRY and _is_niobe_builder_host(HOST):
+                    _ft_offered,_ft_blocked,_ft_skipped=_fallthrough_to_builders(
+                        [(_p[1][2],_p[1][3],_p[1][4]) for _p in picks[_pick_index:]],
+                        _builder_attempted_ids,
+                        lambda _cid,_core,_labels: builder_dispatch.offer(
+                            default_fleet_paths(),dict(_core,id=_cid),_labels,
+                            writer=fleet_store.Writer(
+                                role="scheduler",node="niobe",identity="niobe")),
+                        lambda _line: log(d,"%s|%s"%(_line.split("|",1)[0],
+                                                     HOST+"|"+_line.split("|",1)[1])),
+                        _cycle_deadline,time.monotonic)
+                    log(d,"LANE_LAUNCH_FALLTHROUGH|%s|offered=%d|blocked=%d|skipped=%s"%(
+                        HOST,_ft_offered,_ft_blocked,
+                        ",".join("%s:%d"%kv for kv in sorted(_ft_skipped.items())) or "-"))
                 break
             continue
         except AdmissionError:
