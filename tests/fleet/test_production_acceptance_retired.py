@@ -165,3 +165,45 @@ def test_duplicate_applicability_receipts_are_reported_as_ambiguous(tmp_path, mo
         acceptance._source_applicability_error(store, CARD, tmp_path)
         == "duplicate source-only applicability receipts"
     )
+
+
+@pytest.mark.parametrize(
+    "change", [None, "source-open", "review-open", "context", "parent", "completion"]
+)
+def test_external_native_completion_is_not_acceptance(tmp_path, directory, monkeypatch, change):
+    from types import SimpleNamespace
+
+    context = {"source": {"card": "99887766"}, "review": {"card": CARD}}
+    once(directory / "context.json", context)
+    once(
+        directory / "finish-intent.json",
+        {"context_sha256": acceptance.digest(context) if change != "context" else "wrong"},
+    )
+    rows = {
+        cid: SimpleNamespace(
+            status=SimpleNamespace(value="done"),
+            owner=None,
+            archived=False,
+            meta={"link_source_card": "99887766"},
+        )
+        for cid in ("99887766", CARD)
+    }
+    store = _Store(tmp_path, rows)
+    store.events = {cid: [{"action": "complete"}] for cid in rows}
+    if change == "source-open":
+        rows["99887766"].status.value = "review"
+    if change == "review-open":
+        rows[CARD].status.value = "review"
+    if change == "parent":
+        rows[CARD].meta["link_source_card"] = "different"
+    if change == "completion":
+        store.events["99887766"] = []
+    monkeypatch.setattr(acceptance, "CardStore", lambda home: store)
+    before = sorted((p.name, p.read_bytes()) for p in directory.iterdir())
+    result = acceptance._retired_exit(tmp_path, CARD, directory)
+    if change is None:
+        assert result["state"] == "completed-outside-acceptance"
+        assert result["accepted"] is False and result["historical"] is True
+    else:
+        assert result is None
+    assert sorted((p.name, p.read_bytes()) for p in directory.iterdir()) == before
