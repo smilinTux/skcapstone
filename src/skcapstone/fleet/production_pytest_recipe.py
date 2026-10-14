@@ -102,6 +102,18 @@ def _plain(value) -> bool:
     return False
 
 
+def _copy(value):
+    """Copy the plain list/dict/str structure checks are made of (deepcopy is 5x slower)."""
+    kind = type(value)
+    if kind is list:
+        return [_copy(item) for item in value]
+    if kind is dict:
+        return {key: _copy(item) for key, item in value.items()}
+    if kind in (str, int, bool) or value is None:
+        return value
+    return copy.deepcopy(value)
+
+
 _CHECKS_CACHE: dict[str, tuple[bool, object]] = {}
 _CHECKS_CACHE_MAX = 4096
 _CHECKS_STATS = {"hits": 0, "misses": 0}
@@ -134,7 +146,7 @@ def recipe_checks(recipe: dict) -> list[dict]:
         _CHECKS_STATS["hits"] += 1
     if not entry[0]:
         raise plan.TestEvidenceError(entry[1])
-    return copy.deepcopy(entry[1])
+    return _copy(entry[1])
 
 
 def cache_clear() -> None:
