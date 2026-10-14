@@ -476,7 +476,14 @@ def test_superseded_main_releases_once_retires_capacity_and_exits_75(
     assert len(releases) == 1
 
 
-def test_typed_verdict_candidate_wins_over_a_stale_legacy_link():
+@pytest.mark.parametrize(
+    "writer",
+    [
+        "pi-glm-builder-node-chiap03-a9b4266c",
+        "pi-glm-chiap08-a9b4266c",
+    ],
+)
+def test_typed_verdict_candidate_wins_over_a_stale_legacy_link(writer):
     """A production source's stale commit link must not supersede its review."""
     module = load_module()
     reviewed = "e" * 40
@@ -488,7 +495,7 @@ def test_typed_verdict_candidate_wins_over_a_stale_legacy_link():
                 {
                     "action": "verdict",
                     "candidate_commit": reviewed,
-                    "writer": "pi-glm-builder-node-chiap03-a9b4266c",
+                    "writer": writer,
                 }
             ]
         },
@@ -496,7 +503,14 @@ def test_typed_verdict_candidate_wins_over_a_stale_legacy_link():
     assert module.review_supersession(args()) is None
 
 
-def test_a_newer_typed_candidate_still_supersedes():
+@pytest.mark.parametrize(
+    "writer",
+    [
+        "pi-glm-builder-node-chiap03-a9b4266c",
+        "pi-glm-chiap08-a9b4266c",
+    ],
+)
+def test_a_newer_typed_candidate_still_supersedes(writer):
     module = load_module()
     install_store(
         module,
@@ -506,12 +520,29 @@ def test_a_newer_typed_candidate_still_supersedes():
                 {
                     "action": "verdict",
                     "candidate_commit": "f" * 40,
-                    "writer": "pi-glm-builder-node-chiap03-a9b4266c",
+                    "writer": writer,
                 }
             ]
         },
     )
     assert module.review_supersession(args())["current_head"] == "f" * 40
+
+
+@pytest.mark.parametrize("head", ["e" * 40, "f" * 40, "not-a-sha"])
+def test_commit_sha_link_is_a_legacy_supersession_fallback(head):
+    module = load_module()
+    install_store(
+        module,
+        {
+            "3a11f071": review("e" * 40),
+            "a9b4266c": SimpleNamespace(links={"commit_sha": head}),
+        },
+    )
+    result = module.review_supersession(args())
+    if head == "f" * 40:
+        assert result["current_head"] == head
+    else:
+        assert result is None
 
 
 def test_legacy_source_repaired_head_in_links_is_current():
