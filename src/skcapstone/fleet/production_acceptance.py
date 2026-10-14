@@ -14,6 +14,7 @@ from skcoord.card_store import CardStore
 
 from ..review_verdict import _source_only_applicability, is_review_card
 from ..seraph_review_cardstore import LiveCardStoreGateway, _latest_outcome
+from ..seraph_review_contracts import ReviewPublicationError
 from .production_receipts import production_receipt_allowed
 from .production_review import producer_family, review_family_allowed
 from .production_review_custody import read_exit, unit_terminal
@@ -105,6 +106,100 @@ def review_directory(home, card, claim):
     if not re.fullmatch(r"[0-9a-f]{8}", card) or not re.fullmatch(r"[0-9a-f]{32}", claim):
         raise ReviewEvidenceError("acceptance identity invalid")
     return Path(home) / "evidence/production-acceptance" / (card + "-" + claim)
+
+
+def _review_context_still_bound(home, context, state):
+    """Check the sealed review identity and evidence after an ancillary link update."""
+    store = CardStore(home)
+    review_item = context["review"]
+    source_item = context["source"]
+    row = store.fold(review_item["card"])
+    if row is None or row.owner != review_item["owner"]:
+        return False
+    if (
+        row.meta.get("_claim_revision") != review_item["claim"]
+        or state.get("owner") != review_item["owner"]
+        or state.get("claim_revision") != review_item["claim"]
+        or row.status.value not in {"doing", "review"}
+        or {"hold", "do-not-claim"}.intersection(row.labels)
+        or not is_review_card(row.title)
+        or "source-only" not in row.labels
+        or "review" not in row.labels
+    ):
+        return False
+
+    proposal = review_item["proposal"]
+    snapshot = LiveCardStoreGateway(home).read_card(review_item["card"], _store=store)
+    if (
+        snapshot.parent_id != source_item["card"]
+        or snapshot.head_sha != proposal["source_head"]
+        or snapshot.producer_identity != source_item["owner"]
+        or snapshot.reviewer_identity != review_item["owner"]
+        or snapshot.candidate_evidence_sha256 != source_item["evidence_sha256"]
+        or snapshot.evidence_sha256 != review_item["evidence_sha256"]
+        or snapshot.verdict != "PASS"
+        or snapshot.unresolved_review
+        or row.links.get("reviewer_evidence_sha256") != review_item["evidence_sha256"]
+        or row.meta.get("link_source_card") != source_item["card"]
+        or row.meta.get("link_head_revision") != proposal["source_head"]
+        or row.meta.get("producer_identity") != source_item["owner"]
+        or row.meta.get("candidate_evidence_sha256") != source_item["evidence_sha256"]
+        or row.meta.get("source_revision") != source_item["revision"]
+    ):
+        return False
+    try:
+        _current_outcome(store, row)
+    except ReviewEvidenceError:
+        return False
+    return _source_applicability_error(store, row.id, home) is None
+
+
+def acceptance_review_revision(home, directory, context):
+    """Resolve the exact review revision authorized by a sealed acceptance context.
+
+    A same-claim applicability receipt can arrive after context collection. The
+    receipt records that revision transition, but only when the sealed source,
+    reviewer, claim, candidate, decision, evidence, and valid applicability
+    receipt still match. Any later card change remains a refusal.
+    """
+    directory = Path(directory)
+    intent_path = directory / "finish-intent.json"
+    if intent_path.exists():
+        intent = read_json(intent_path)
+        return intent.get("review_initial_revision", context.get("review", {}).get("revision"))
+
+    original = context["review"]["revision"]
+
+    try:
+        state = native_state(home, context["review"]["card"])
+    except ReviewPublicationError as exc:
+        raise ReviewEvidenceError("review card evidence binding is inconsistent") from exc
+    if state["revision"] == original:
+        return original
+
+    path = directory / "review-pair-refresh.json"
+    refresh = {
+        "schema": "skfleet.acceptance-review-pair-refresh/v1",
+        "context_sha256": digest(context),
+        "review_card": context["review"]["card"],
+        "review_owner": context["review"]["owner"],
+        "review_claim": context["review"]["claim"],
+        "original_revision": original,
+        "review_initial_revision": state["revision"],
+        "source_card": context["source"]["card"],
+        "source_head": context["source"]["head"],
+        "source_evidence_sha256": context["source"]["evidence_sha256"],
+        "review_evidence_sha256": context["review"]["evidence_sha256"],
+        "decision_sha256": context["review"]["decision_sha256"],
+    }
+    if not _review_context_still_bound(home, context, state):
+        raise ReviewEvidenceError("native pair changed before trusted tests")
+    if path.exists():
+        if read_json(path) != refresh:
+            raise ReviewEvidenceError("review pair refresh changed")
+    else:
+        once(path, refresh)
+    return state["revision"]
 
 
 def _producer_terminal(home, source, manifest):
@@ -890,6 +985,7 @@ def reconcile(home, policy, *, process_check):
 
             if not (directory / "finish-intent.json").exists():
                 guard()
+                review_initial_revision = acceptance_review_revision(home, directory, context)
                 for role in ("source", "review"):
                     item = context[role]
                     state = native_state(home, item["card"])
@@ -905,6 +1001,13 @@ def reconcile(home, policy, *, process_check):
                             raise ReviewEvidenceError(
                                 "released source changed before trusted tests"
                             )
+                    elif role == "review":
+                        if (
+                            state["revision"] != review_initial_revision
+                            or state["owner"] != item["owner"]
+                            or state["claim_revision"] != item["claim"]
+                        ):
+                            raise ReviewEvidenceError("native pair changed before trusted tests")
                     elif (
                         state["revision"] != item.get("live_revision", item["revision"])
                         or state["owner"] != item["owner"]
@@ -945,7 +1048,15 @@ def reconcile(home, policy, *, process_check):
             elif _requalify_finished_acceptance(home, directory, context, policy) is None:
                 results.append({"card": card, "state": "awaiting-trusted-tests"})
                 continue
-            result = finish_pair(home, directory, context, guard=guard)
+            else:
+                review_initial_revision = acceptance_review_revision(home, directory, context)
+            result = finish_pair(
+                home,
+                directory,
+                context,
+                guard=guard,
+                review_initial_revision=review_initial_revision,
+            )
             results.append({"card": card, "state": "accepted", "receipt": result})
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
             results.append({"card": card, "state": "pending", "reason": str(exc)[:200]})

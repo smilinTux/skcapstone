@@ -193,6 +193,69 @@ def test_review_acceptance_uses_sealed_producer_generation_after_claim_release(
     assert context["policy_sha256"] == acceptance.digest(policy)
 
 
+def test_acceptance_refreshes_review_revision_for_valid_same_claim_receipt(stopped_pair):
+    home, policy, review, _, _, store = stopped_pair
+    context = acceptance.collect(
+        home,
+        policy,
+        review["card"],
+        review["claim"],
+        process_check=lambda card: {"sessions": [], "units": []},
+    )
+    receipt = {
+        "type": "source-only-applicability",
+        "card_id": review["card"],
+        "source_head": context["review"]["proposal"]["source_head"],
+        "reviewer": review["owner"],
+        "evidence_digest": context["review"]["evidence_sha256"],
+        "governed_pr_ci": False,
+    }
+    before = native_state(home, review["card"])
+    store.append_event(
+        review["card"],
+        "link",
+        review["owner"],
+        link_key="applicability_receipt",
+        link_value=json.dumps(receipt, sort_keys=True, indent=2),
+    )
+    after = native_state(home, review["card"])
+
+    assert after["revision"] != before["revision"]
+    assert (
+        acceptance.acceptance_review_revision(
+            home, acceptance.review_directory(home, review["card"], review["claim"]), context
+        )
+        == after["revision"]
+    )
+
+
+def test_acceptance_refresh_refuses_changed_review_evidence(stopped_pair):
+    home, policy, review, _, _, store = stopped_pair
+    context = acceptance.collect(
+        home,
+        policy,
+        review["card"],
+        review["claim"],
+        process_check=lambda card: {"sessions": [], "units": []},
+    )
+    store.append_event(
+        review["card"],
+        "link",
+        review["owner"],
+        link_key="review_evidence_sha256",
+        link_value="0" * 64,
+    )
+
+    with pytest.raises(
+        acceptance.ReviewEvidenceError, match="review card evidence binding is inconsistent"
+    ):
+        acceptance.acceptance_review_revision(
+            home,
+            acceptance.review_directory(home, review["card"], review["claim"]),
+            context,
+        )
+
+
 def test_collected_producer_terminal_can_enter_independent_review(stopped_pair):
     home, _, review, status_path, _, store = stopped_pair
     status = json.loads(status_path.read_text())

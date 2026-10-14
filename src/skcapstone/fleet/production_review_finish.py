@@ -247,7 +247,16 @@ def _finish_test_receipt(directory, context, current):
     return prior
 
 
-def finish_pair(home, directory, context, *, guard, command=native_command, inspect=native_state):
+def finish_pair(
+    home,
+    directory,
+    context,
+    *,
+    guard,
+    command=native_command,
+    inspect=native_state,
+    review_initial_revision=None,
+):
     """Finish an exact tested pair idempotently, recovering even lost CLI replies."""
     from .acceptance_reseal import acceptance_lock
 
@@ -261,14 +270,31 @@ def finish_pair(home, directory, context, *, guard, command=native_command, insp
             command=command,
             inspect=inspect,
             historical_only=True,
+            review_initial_revision=review_initial_revision,
         )
     with acceptance_lock(directory):
         return _finish_pair(
-            home, directory, context, guard=guard, command=command, inspect=inspect
+            home,
+            directory,
+            context,
+            guard=guard,
+            command=command,
+            inspect=inspect,
+            review_initial_revision=review_initial_revision,
         )
 
 
-def _finish_pair(home, directory, context, *, guard, command, inspect, historical_only=False):
+def _finish_pair(
+    home,
+    directory,
+    context,
+    *,
+    guard,
+    command,
+    inspect,
+    historical_only=False,
+    review_initial_revision=None,
+):
     """Run the existing journal, or an explicitly authenticated step-08 checkpoint."""
     from .acceptance_reseal import checkpoint
     from .production_review_custody import released_source_matches
@@ -292,11 +318,26 @@ def _finish_pair(home, directory, context, *, guard, command, inspect, historica
     )
     if historical is None:
         acceptance = _finish_test_receipt(directory, context, acceptance)
+    refresh_path = directory / "review-pair-refresh.json"
+    if review_initial_revision is None:
+        if refresh_path.exists():
+            refresh = read_json(refresh_path)
+            review_initial_revision = refresh.get("review_initial_revision")
+        else:
+            review_initial_revision = context["review"]["revision"]
     binding_base = {
         "controller": context["controller"],
         "context_sha256": _digest(context),
         "test_receipt": acceptance,
     }
+    if review_initial_revision != context["review"]["revision"]:
+        if not refresh_path.exists():
+            raise ReviewEvidenceError("review pair refresh missing")
+        refresh = read_json(refresh_path)
+        if refresh.get("review_initial_revision") != review_initial_revision:
+            raise ReviewEvidenceError("review pair refresh changed")
+        binding_base["review_initial_revision"] = review_initial_revision
+        binding_base["review_pair_refresh_sha256"] = _digest(refresh)
     source_before = inspect(home, source["card"])
     source_claim_current = (
         source_before["owner"] == source["owner"]
@@ -330,7 +371,7 @@ def _finish_pair(home, directory, context, *, guard, command, inspect, historica
         "source": binding.get(
             "released_source_revision", source.get("live_revision", source["revision"])
         ),
-        "review": context["review"]["revision"],
+        "review": binding.get("review_initial_revision", context["review"]["revision"]),
     }
     if not intent.exists():
         if historical is not None:

@@ -30,7 +30,7 @@ def pending_finish(tmp_path, monkeypatch):
     def replay(*args):
         raise ReviewEvidenceError("sealed review launch receipt is no longer valid")
 
-    def finish(home_, directory_, context, *, guard):
+    def finish(home_, directory_, context, *, guard, review_initial_revision=None):
         finished.append(directory_)
         return {"accepted": True}
 

@@ -1,0 +1,1 @@
+- Acceptance now preserves a review whose sealed evidence and claim remain unchanged when its valid applicability receipt updates the card revision.
