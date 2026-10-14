@@ -172,6 +172,11 @@ def harvest_completed(
         if not acquired:
             return "busy"
         for path in sorted(root.glob("*.job.json")):
+            if any(
+                path.with_name(path.stem + suffix).exists()
+                for suffix in (".done.json", ".failed.json")
+            ):
+                continue
             try:
                 job = json.loads(plan.read_private(path))
                 if job.get("schema") != "skfleet.profile-requalification/v1" or (
@@ -289,6 +294,17 @@ def harvest_completed(
                         or (card_id is not None and candidate_id != card_id)
                     ):
                         continue
+                    # Historical plans are discovery hints, not a veto on fresh
+                    # qualification. Skip only provably obsolete generations;
+                    # current plans still pass every native plan/receipt check.
+                    old_runtime = sealed_candidate.get("runtime_sha256")
+                    old_profile = sealed_candidate.get("profile_predecessor_sha256")
+                    if old_runtime is not None and old_runtime != plan.runtime_fingerprint():
+                        continue
+                    if old_profile is not None:
+                        _, current_profile = profile.read_profile(home, candidate_id)
+                        if old_profile != current_profile:
+                            continue
                     sealed, _, plan_sha = plan.load_plan(
                         home, binding, allow_completed=True, allow_remote_host=True
                     )

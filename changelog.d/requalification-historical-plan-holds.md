@@ -1,0 +1,1 @@
+- Ignore terminal qualification jobs and obsolete orphan plan generations during harvest, so old plan failures cannot block a fresh exact qualification. Current plan and receipt validation remain required.
