@@ -193,6 +193,9 @@ def test_review_acceptance_uses_sealed_producer_generation_after_claim_release(
     assert context["policy_sha256"] == acceptance.digest(policy)
 
 
+@pytest.mark.parametrize(
+    "pair", ["review_evidence_sha256", "reviewer_evidence_sha256"], indirect=True
+)
 def test_acceptance_refreshes_review_revision_for_valid_same_claim_receipt(stopped_pair):
     home, policy, review, _, _, store = stopped_pair
     context = acceptance.collect(

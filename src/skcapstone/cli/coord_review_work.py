@@ -97,3 +97,41 @@ def register_coord_review_work(coord: click.Group) -> None:
         except (OSError, ValueError, KeyError, TypeError) as exc:
             raise click.ClickException(str(exc)) from None
         click.echo(json.dumps(result, sort_keys=True))
+
+    @coord.command("review-generation-retire")
+    @click.argument("task_id")
+    @click.option("--owner", required=True)
+    @click.option("--claim", required=True)
+    @click.option("--expected", required=True, type=click.Path(exists=True, dir_okay=False))
+    @click.option("--agent", required=True)
+    @click.option("--reason", required=True)
+    @click.option("--apply", is_flag=True, help="Write retirement; default verifies only.")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    def coord_review_generation_retire(
+        task_id, owner, claim, expected, agent, reason, apply, home
+    ):
+        """Retire an exact released, unusable review without impersonating its worker."""
+        from ..fleet.acceptance_generation_retire import retire
+        from ..fleet.review_retire import _raw
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        validate_task_id(task_id)
+        validate_agent_name(agent)
+        validate_agent_name(owner)
+        if apply:
+            authorize_coord_mutation(agent, Action.LINK_CARD, task_id, None, None)
+        try:
+            result = retire(
+                Path(home).expanduser(),
+                task_id,
+                claim,
+                owner,
+                json.loads(_raw(Path(expected))),
+                actor=agent,
+                reason=reason,
+                apply=apply,
+            )
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise click.ClickException(str(exc)) from None
+        click.echo(json.dumps({"card": task_id, "state": result}, sort_keys=True))

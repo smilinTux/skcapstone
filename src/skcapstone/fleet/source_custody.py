@@ -89,6 +89,56 @@ def _position(event: dict) -> tuple:
     return event.get("ts", ""), event.get("writer", ""), event.get("seq", 0)
 
 
+def _candidate_binding_view(store, row, source, events):
+    """Exclude only proven pre-claim content links superseded by the typed proposal.
+
+    Repository and metadata remain strict. A later link, an unrecorded value or
+    an ambiguous producer claim cannot be explained away as historical state.
+    """
+    core = row.model_copy(deep=True)
+    claims = [
+        event
+        for event in store._read_events(row.id)
+        if event.get("action") == "claim"
+        and (event.get("claim_revision") or event.get("event_id")) == source["claim"]
+        and event.get("owner") == source["owner"]
+    ]
+    if len(claims) != 1:
+        return core
+    keys = {
+        **dict.fromkeys(
+            (
+                "link_head_revision",
+                "head",
+                "head_commit",
+                "commit",
+                "commit_sha",
+                "candidate_commit",
+            ),
+            source["head"],
+        ),
+        **dict.fromkeys(("tree", "candidate_tree"), source["tree"]),
+    }
+    for key, expected in keys.items():
+        value = core.links.get(key)
+        if value is None or value == expected:
+            continue
+        updates = [
+            event
+            for event in events
+            if event.get("action") == "link" and (event.get("link_key") or event.get("key")) == key
+        ]
+        latest = max(updates, key=_position, default={})
+        if (
+            latest.get("ts")
+            and claims[0].get("ts")
+            and _position(latest) < _position(claims[0])
+            and latest.get("link_value", latest.get("value")) == value
+        ):
+            del core.links[key]
+    return core
+
+
 def candidate_matches(store: CardStore, row: Any, source: dict) -> bool:
     """Verify the retained typed proposal and current outcome/content bindings."""
     events = store._read_events(row.id) + store._legacy_events(row.id)
@@ -111,6 +161,7 @@ def candidate_matches(store: CardStore, row: Any, source: dict) -> bool:
     ):
         return False
     try:
+        row = _candidate_binding_view(store, row, source, events)
         return (
             _binding(row, "repository") == source["repository"]
             and _binding(
