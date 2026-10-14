@@ -425,8 +425,12 @@ Local evidence commits are allowed only when explicitly authorized by this card.
 Source {parent}: verify candidate {source_head}, tree {tree} and producer report
 docs/evidence/agents/{parent}/COMPLETION-EVIDENCE.md sha256 {digest}.
 Run ls after every write; run git rev-parse HEAD after every authorized commit.
-Stop on inconsistent tool output. After the second compaction write .handoff.md,
-finish the current step and stop. Retain all source, evidence and claim custody.
+Stop on inconsistent tool output. After native compaction, continue this same review
+through the committed decision packet and guarded handoff below. Do not stop solely
+because compaction occurred. A checkpoint alone is not a review packet. Preserve
+the exact current claim and source bindings when summarizing these instructions;
+the decision-generation and handoff scripts are embedded below, not separate files
+to search for. Retain all source, evidence and claim custody.
 
 After reviewing, write docs/evidence/agents/{card_id}/COMPLETION-EVIDENCE.md with
 actual findings, tests, limitations and a PASS, FAIL or precise BLOCKED outcome.

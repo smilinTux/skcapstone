@@ -209,6 +209,9 @@ def prepare(review):
 
 def test_actual_postclaim_review_brief_uses_existing_native_applicability(review):
     brief = prepare(review)
+    assert "After the second compaction" not in brief
+    assert "After native compaction, continue this same review" in brief
+    assert "A checkpoint alone is not a review packet" in brief
     assert "LEGACY SIX CI" not in brief and "ci_check_docs SUCCESS" not in brief
     assert "coord complete" not in brief and "release-claim" not in brief
     assert "skmail" not in brief
