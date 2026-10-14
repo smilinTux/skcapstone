@@ -170,3 +170,50 @@ def test_runtime_fingerprint_binds_explicit_asyncio_plugin(qualified_runtime, re
     before = plan.runtime_fingerprint()
     path.write_text("changed asyncio bytes\n")
     assert plan.runtime_fingerprint() != before
+
+
+@pytest.mark.skipif(shutil.which("bwrap") is None, reason="bubblewrap unavailable")
+def test_importlib_collection_can_import_pinned_sibling_test_helpers(tmp_path, monkeypatch):
+    source, output, older = (tmp_path / name for name in ("source", "output", "older"))
+    (source / "tests").mkdir(parents=True)
+    output.mkdir()
+    older.mkdir()
+    (source / "tests/test_helpers.py").write_text("VALUE='pinned'\n")
+    (source / "tests/test_consumer.py").write_text(
+        "from test_helpers import VALUE\ndef test_pinned(): assert VALUE == 'pinned'\n"
+    )
+    (older / "test_helpers.py").write_text("VALUE='wrong-host-checkout'\n")
+    monkeypatch.setenv("PYTHONPATH", str(older))
+    executable = plan.PREFIX / "bin/python"
+    if not executable.is_file():
+        pytest.skip("native qualification interpreter unavailable")
+    result = subprocess.run(
+        worker.sandbox_command(
+            source,
+            output,
+            [
+                str(executable),
+                "-m",
+                "pytest",
+                "-q",
+                "-p",
+                "no:cacheprovider",
+                "--import-mode=importlib",
+                "tests",
+            ],
+        ),
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+
+
+def test_redirected_test_helper_root_refuses(tmp_path):
+    source, outside = tmp_path / "source", tmp_path / "outside"
+    source.mkdir()
+    outside.mkdir()
+    (source / "tests").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(TestEvidenceError, match="redirected"):
+        worker.sandbox_command(source, tmp_path / "output", ["python", "-V"])

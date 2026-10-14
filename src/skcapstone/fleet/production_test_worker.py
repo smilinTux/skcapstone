@@ -34,7 +34,7 @@ def candidate_pythonpath(workspace: Path) -> str:
     roots = sorted(
         {
             path
-            for pattern in ("packages/**/src", "services/*/src", "vendor/*/src")
+            for pattern in ("packages/**/src", "services/*/src", "vendor/*/src", "tests")
             for path in workspace.glob(pattern)
         }
     )
