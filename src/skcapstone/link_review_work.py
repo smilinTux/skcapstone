@@ -172,6 +172,12 @@ def reconcile_review_work(
             return ReviewWorkResult(
                 source_card, head_revision, card_id, False, False, "source_card_missing"
             )
+        released_manifest = None
+        if source.owner is None and item.get("source_revision"):
+            from .fleet.released_source import direct_review_view
+
+            view, released_manifest, _ = direct_review_view(home, source)
+            source = view.fold(source_card)
         if card_generation(source) != supplied_generation:
             return ReviewWorkResult(
                 source_card, head_revision, card_id, False, False, "source_generation_changed"
@@ -226,7 +232,12 @@ def reconcile_review_work(
         if attempt:
             from .review_replacement import replacement_binding
 
-            lineage = replacement_binding(home, source_card, head_revision)
+            if released_manifest is not None:
+                from .fleet.released_source import review_lineage
+
+                lineage = review_lineage(home, source, released_manifest)
+            else:
+                lineage = replacement_binding(home, source_card, head_revision)
             if lineage.get("review_card_id") != card_id or any(
                 item.get(k) != v for k, v in lineage.items() if k != "review_card_id"
             ):
@@ -384,7 +395,13 @@ def reconcile_review_work(
                     False,
                     "source_workspace_binding_drifted",
                 )
-            if card_generation(store.fold(source_card)) != supplied_generation:
+            fresh_source = CardStore(home).fold(source_card)
+            if released_manifest is not None:
+                view, fresh_manifest, _ = direct_review_view(home, fresh_source)
+                if fresh_manifest != released_manifest:
+                    raise ValueError("released review manifest changed")
+                fresh_source = view.fold(source_card)
+            if card_generation(fresh_source) != supplied_generation:
                 return ReviewWorkResult(
                     source_card,
                     head_revision,

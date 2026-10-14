@@ -45,6 +45,15 @@ def reviewable_source_candidate(
             return refuse(site, card_id, "no production policy")
         if card is None:
             return refuse(site, card_id, "card not found")
+        released_revision = None
+        if card.owner is None:
+            from .released_source import direct_review_view
+
+            released_revision = (
+                LiveCardStoreGateway(home).read_card(card_id, _store=store).revision
+            )
+            store, _, _ = direct_review_view(home, card)
+            card = store.fold(card_id)
         if card.owner != producer:
             return refuse(site, card_id, "card owner differs from verdict producer")
         if card.meta.get("claim_conflicts"):
@@ -102,27 +111,33 @@ def reviewable_source_candidate(
         ):
             return refuse(site, card_id, "candidate evidence path or sha256 differs")
         terminal = _producer_terminal(home, card, manifest)
-        request = read_json(home / "fleet/dispatch" / terminal["node"] / (card_id + ".json"))
-        _request_matches_current_card(home, request, retained_claim=True)
-        production = request["production"]
-        # A consumed continuation ran under the current policy (rebind_request),
-        # so its immutable offer may name an older policy digest. Requiring the
-        # offer digest to equal today's policy kept every re-bound continuation
-        # from ever being reviewed (b1f004f2, 7ad93023 on chi, 2026-10-11).
-        status = read_json(
-            FleetPaths(home / "fleet").status_path(terminal["node"], "dispatch", card_id)
-        )
-        continued = bool(status.get("continuation_consumed")) and (
-            status.get("request_id") == request.get("request_id")
-        )
-        if (
-            request.get("schema") != "skfleet.builder-dispatch/v1"
-            or request.get("node") != terminal["node"]
-            or any(request.get(key) != value for key, value in binding.items())
-            or (production.get("policy_sha256") != digest(policy) and not continued)
-            or production.get("authority") != policy["authority_host"]
-        ):
-            return refuse(site, card_id, "builder request differs from current binding or policy")
+        if terminal.get("receipt_kind") == "direct-seat":
+            if terminal["host"] != policy["authority_host"]:
+                return refuse(site, card_id, "direct producer is not on the authority")
+        else:
+            request = read_json(home / "fleet/dispatch" / terminal["node"] / (card_id + ".json"))
+            _request_matches_current_card(home, request, retained_claim=True)
+            production = request["production"]
+            # A consumed continuation ran under the current policy (rebind_request),
+            # so its immutable offer may name an older policy digest. Requiring the
+            # offer digest to equal today's policy kept every re-bound continuation
+            # from ever being reviewed (b1f004f2, 7ad93023 on chi, 2026-10-11).
+            status = read_json(
+                FleetPaths(home / "fleet").status_path(terminal["node"], "dispatch", card_id)
+            )
+            continued = bool(status.get("continuation_consumed")) and (
+                status.get("request_id") == request.get("request_id")
+            )
+            if (
+                request.get("schema") != "skfleet.builder-dispatch/v1"
+                or request.get("node") != terminal["node"]
+                or any(request.get(key) != value for key, value in binding.items())
+                or (production.get("policy_sha256") != digest(policy) and not continued)
+                or production.get("authority") != policy["authority_host"]
+            ):
+                return refuse(
+                    site, card_id, "builder request differs from current binding or policy"
+                )
         process = process_check(card_id)
         if process.get("sessions") != [] or process.get("units") != []:
             return refuse(site, card_id, "card still has a live session or unit")
@@ -131,7 +146,7 @@ def reviewable_source_candidate(
             return True
         # Re-read with a new store so the check notices events appended while
         # the shared inspection snapshot was in use.
-        if gateway.read_card(card_id).revision != snapshot.revision:
+        if gateway.read_card(card_id).revision != (released_revision or snapshot.revision):
             return refuse(site, card_id, "card revision changed during inspection")
         return True
     except (
