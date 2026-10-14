@@ -8530,6 +8530,91 @@ log(
         len(_builder_candidate_ids - {row[2] for row in pool}),
     ),
 )
+
+def _profile_workspace(core, labels):
+    """Rebuild the exact source a requalification offer will bind (network fetch)."""
+    repository, base_ref, revision = builder_dispatch._source(core)
+    destination = (
+        Path(HOME) / ".skcapstone/fleet/workspaces" /
+        ("niobe-profile-requal-%s-%s" % (core["id"], revision[:12]))
+    )
+    return builder_dispatch.materialize_source(
+        {
+            "repository": repository,
+            "base_ref": base_ref,
+            "base_revision": revision,
+        },
+        destination,
+    )
+
+
+def _start_requal_prefetch(candidates, limit):
+    """Start the source fetches the offer loop will need, in loop order.
+
+    Called before continuation, review recovery and remote review offers (the
+    quarter of the cycle those take), so the network half overlaps them instead of
+    queueing in front of the first requalification offer.
+
+    Read-only prediction: a card needs one when its profile preflight fails (what
+    makes ``offer`` raise required-test-profile-unqualified) and it is still an
+    unowned offerable card. Returns None when disabled or nothing is predicted.
+    """
+    if os.environ.get("SKFLEET_REQUAL_PREFETCH", "1") == "0":
+        return None
+    from skcapstone.fleet import production_test_profile as _profiles
+    from skcapstone.fleet.profile_requalification import (
+        OFFERABLE_COLUMNS,
+        requalification_core,
+    )
+    from skcapstone.fleet.source_prefetch import SourcePrefetch, predict_requalifications
+
+    _home = Path(HOME) / ".skcapstone"
+    _store = CardStore(_home)
+    # The order the offer loop will use: qualified first, then least recently tried.
+    candidates = _offer_memory.order(
+        list(candidates),
+        _offer_memory.load(_home / "fleet/builder-offer-memory.json"),
+        lambda _cid: (_home / "fleet/test-profiles" / (str(_cid) + ".json")).is_file(),
+    )
+
+    def _needs(core, labels):
+        # Mirrors the gate at the top of offer_stale_candidate: only a stale profile
+        # or a missing one proceeds to the source rebuild; any other error is
+        # reported "ineligible" before a workspace is touched.
+        try:
+            _profiles.preflight(_home, core, labels, PRODUCTION_POLICY)
+        except _profiles.ProfileRequalificationRequired:
+            return True
+        except (OSError, ValueError) as exc:
+            return str(exc) == "required-test-profile-unqualified"
+        return False
+
+    def _folded(core):
+        card = _store.fold(core["id"])
+        if card is None or card.status.value not in OFFERABLE_COLUMNS or card.owner:
+            return None
+        return requalification_core(core, card)
+
+    predicted = predict_requalifications(
+        candidates, needs_requalification=_needs, folded_core=_folded, limit=limit)
+    if not predicted:
+        return None
+    prefetch = SourcePrefetch(
+        _profile_workspace,
+        workers=int(os.environ.get("SKFLEET_REQUAL_PREFETCH_WORKERS", "6") or "6"))
+    for _core, _labels in predicted:
+        prefetch.submit(_core, _labels)
+    log(d, "REQUAL_SOURCE_PREFETCH|%s|started=%d|workers=%d" % (
+        HOST, len(predicted), prefetch._workers))
+    return prefetch
+
+
+_requal_prefetch = None
+if not DRY and PRODUCTION_POLICY and _is_niobe_builder_host(HOST):
+    try:
+        _requal_prefetch = _start_requal_prefetch(_builder_candidates, 16)
+    except Exception as _prefetch_exc:  # noqa: BLE001 - prefetch is only an optimisation
+        log(d, "REQUAL_SOURCE_PREFETCH_FAILED|%s|%s" % (HOST, str(_prefetch_exc)[:160]))
 # Fail-safe build continuation, authority-only: a builder that committed or staged
 # real work and stopped before its typed handoff held the card in
 # awaiting-evidence forever (fef9698e, 2026-10-10). Grant one preserved
@@ -8753,71 +8838,6 @@ def _record_offer_state(card_id, state):
 _BUILDER_OFFER_SECONDS = float(os.environ.get("SKFLEET_BUILDER_OFFER_SECONDS", "45"))
 
 
-def _profile_workspace(core, labels):
-    """Rebuild the exact source a requalification offer will bind (network fetch)."""
-    repository, base_ref, revision = builder_dispatch._source(core)
-    destination = (
-        Path(HOME) / ".skcapstone/fleet/workspaces" /
-        ("niobe-profile-requal-%s-%s" % (core["id"], revision[:12]))
-    )
-    return builder_dispatch.materialize_source(
-        {
-            "repository": repository,
-            "base_ref": base_ref,
-            "base_revision": revision,
-        },
-        destination,
-    )
-
-
-def _start_requal_prefetch(candidates, limit):
-    """Start the source fetches the offer loop will need, in loop order.
-
-    Read-only prediction: a card needs one when its profile preflight fails (what
-    makes ``offer`` raise required-test-profile-unqualified) and it is still an
-    unowned offerable card. Returns None when disabled or nothing is predicted.
-    """
-    if os.environ.get("SKFLEET_REQUAL_PREFETCH", "1") == "0":
-        return None
-    from skcapstone.fleet import production_test_profile as _profiles
-    from skcapstone.fleet.profile_requalification import (
-        OFFERABLE_COLUMNS,
-        requalification_core,
-    )
-    from skcapstone.fleet.source_prefetch import SourcePrefetch, predict_requalifications
-
-    _home = Path(HOME) / ".skcapstone"
-    _store = CardStore(_home)
-
-    def _needs(core, labels):
-        # Mirrors the gate at the top of offer_stale_candidate: only a stale profile
-        # or a missing one proceeds to the source rebuild; any other error is
-        # reported "ineligible" before a workspace is touched.
-        try:
-            _profiles.preflight(_home, core, labels, PRODUCTION_POLICY)
-        except _profiles.ProfileRequalificationRequired:
-            return True
-        except (OSError, ValueError) as exc:
-            return str(exc) == "required-test-profile-unqualified"
-        return False
-
-    def _folded(core):
-        card = _store.fold(core["id"])
-        if card is None or card.status.value not in OFFERABLE_COLUMNS or card.owner:
-            return None
-        return requalification_core(core, card)
-
-    predicted = predict_requalifications(
-        candidates, needs_requalification=_needs, folded_core=_folded, limit=limit)
-    if not predicted:
-        return None
-    prefetch = SourcePrefetch(_profile_workspace)
-    for _core, _labels in predicted:
-        prefetch.submit(_core, _labels)
-    log(d, "REQUAL_SOURCE_PREFETCH|%s|started=%d" % (HOST, len(predicted)))
-    return prefetch
-
-
 # Niobe offers source cards to Ready builders within the shared cycle budget.
 # The remote node claims the card itself, so the CardStore fence remains the
 # authority and this scheduler never impersonates a remote worker.
@@ -8826,14 +8846,6 @@ if not DRY and _is_niobe_builder_host(HOST):
     _profile_requalification_limit = 16
     _builder_phase_started = time.monotonic()
     _builder_offered = 0  # resume order comes from the persisted offer memory
-    _requal_prefetch = None
-    if PRODUCTION_POLICY:
-        try:
-            _requal_prefetch = _start_requal_prefetch(
-                tuple(_builder_candidates)[:MAX_CANDIDATE_SCAN],
-                _profile_requalification_limit)
-        except Exception as _prefetch_exc:  # noqa: BLE001 - prefetch is only an optimisation
-            log(d, "REQUAL_SOURCE_PREFETCH_FAILED|%s|%s" % (HOST, str(_prefetch_exc)[:160]))
     for _candidate in tuple(_builder_candidates)[:MAX_CANDIDATE_SCAN]:
         if time.monotonic() - _builder_phase_started >= _BUILDER_OFFER_SECONDS:
             log(d, "BUILDER_OFFER_PHASE_CAPPED|%s|next=%s|cap_s=%.0f" % (

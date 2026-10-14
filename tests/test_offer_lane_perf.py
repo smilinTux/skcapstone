@@ -257,6 +257,69 @@ def test_concurrent_proofs_of_one_ref_are_single_flight(monkeypatch) -> None:
     assert time.perf_counter() - started < 0.9
 
 
+def test_amended_ref_proof_survives_the_process_via_the_fleet_store(tmp_path, monkeypatch) -> None:
+    """The dispatcher is a new process every cycle; a fresh proof is reused across them."""
+    runs = []
+    monkeypatch.setattr(amendment, "prove_ref", lambda *a: runs.append(a))
+    wall = [1_000_000.0]
+    monkeypatch.setattr(amendment.time, "time", lambda: wall[0])
+    args = ("https://h/r.git", "refs/heads/x", "a" * 40)
+
+    amendment._prove_once(*args, home=tmp_path)
+    assert len(runs) == 1
+    assert (tmp_path / "fleet/source-ref-proofs.json").is_file()
+
+    monkeypatch.setattr(amendment, "_PROOFS", {})  # a new process
+    amendment._prove_once(*args, home=tmp_path)
+    assert len(runs) == 1
+
+    monkeypatch.setattr(amendment, "_PROOFS", {})
+    wall[0] += amendment.PROOF_SUCCESS_TTL_SECONDS + 1
+    amendment._prove_once(*args, home=tmp_path)
+    assert len(runs) == 2  # expired: proven again
+
+
+def test_amended_ref_failure_is_remembered_briefly_across_processes(tmp_path, monkeypatch) -> None:
+    runs = []
+
+    def failing(*args):
+        runs.append(args)
+        raise ValueError("source amended ref proof unavailable")
+
+    monkeypatch.setattr(amendment, "prove_ref", failing)
+    wall = [2_000_000.0]
+    monkeypatch.setattr(amendment.time, "time", lambda: wall[0])
+    args = ("https://h/r.git", "refs/heads/x", "b" * 40)
+    for _ in range(2):
+        monkeypatch.setattr(amendment, "_PROOFS", {})
+        with pytest.raises(ValueError, match="proof unavailable"):
+            amendment._prove_once(*args, home=tmp_path)
+    assert len(runs) == 1
+    monkeypatch.setattr(amendment, "_PROOFS", {})
+    wall[0] += amendment.PROOF_FAILURE_TTL_SECONDS + 1
+    with pytest.raises(ValueError):
+        amendment._prove_once(*args, home=tmp_path)
+    assert len(runs) == 2  # the network may be back: retried soon
+
+
+def test_amended_ref_proof_store_is_optional_and_corruption_tolerant(
+    tmp_path, monkeypatch
+) -> None:
+    runs = []
+    monkeypatch.setattr(amendment, "prove_ref", lambda *a: runs.append(a))
+    monkeypatch.setattr(amendment, "_PROOFS", {})
+    amendment._prove_once("https://h/r.git", "r", "c" * 40)  # no home: no file written
+    assert not list(tmp_path.rglob("source-ref-proofs.json"))
+    store = tmp_path / "fleet/source-ref-proofs.json"
+    store.parent.mkdir(parents=True)
+    for garbage in ("not json", "[]", '{"k": 5}', '{"k": [1]}'):
+        store.write_text(garbage)
+        monkeypatch.setattr(amendment, "_PROOFS", {})
+        amendment._prove_once("https://h/r.git", "r", "d" * 40, home=tmp_path)
+    assert len(runs) == 5  # garbage is never trusted
+    assert json.loads(store.read_text())  # and is replaced by a valid file
+
+
 def test_amended_ref_proof_is_keyed_by_the_prover(monkeypatch) -> None:
     monkeypatch.setattr(amendment, "_PROOFS", {})
     first, second = [], []
