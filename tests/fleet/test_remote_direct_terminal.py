@@ -61,7 +61,11 @@ def remote_probe(monkeypatch, state):
 
 @pytest.mark.parametrize("source", ["https"], indirect=True)
 @pytest.mark.parametrize("state", ["stopped", "absent"])
-def test_remote_review_resolves_released_direct_producer(released_direct, monkeypatch, state):
+def test_remote_review_resolves_released_direct_producer(
+    released_direct,  # noqa: F811
+    monkeypatch,
+    state,
+):
     v = released_direct
     review = open_review(v)
     before = v["store"]._read_events(v["card"])
@@ -89,7 +93,11 @@ def test_remote_review_resolves_released_direct_producer(released_direct, monkey
 @pytest.mark.parametrize(
     "state", ["active", "unknown", "unreachable", "timeout", "different-invocation"]
 )
-def test_remote_review_refuses_unproved_producer_death(released_direct, monkeypatch, state):
+def test_remote_review_refuses_unproved_producer_death(
+    released_direct,  # noqa: F811
+    monkeypatch,
+    state,
+):
     v = released_direct
     review = open_review(v)
     before = v["store"]._read_events(v["card"])
@@ -104,7 +112,11 @@ def test_remote_review_refuses_unproved_producer_death(released_direct, monkeypa
 @pytest.mark.parametrize(
     "mutation", ["legacy", "wrong-host", "missing-invocation", "boolean-exit"]
 )
-def test_remote_terminal_requires_modern_exact_identity(released_direct, monkeypatch, mutation):
+def test_remote_terminal_requires_modern_exact_identity(
+    released_direct,  # noqa: F811
+    monkeypatch,
+    mutation,
+):
     v = released_direct
     receipt = v["receipt"]
     if mutation == "legacy":
