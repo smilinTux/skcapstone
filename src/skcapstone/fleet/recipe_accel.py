@@ -13,20 +13,28 @@ What it fixes. Validating a recipe is a pure function of the recipe, but:
 
 * ``covered`` scanned every target for every path, quadratic in the target count
   (up to 4,096 per recipe). One cycle called it ~900,000 times.
+* ``toolchain_fingerprint`` and ``runtime_fingerprint`` re-walk the whole qualified
+  site-packages tree (``rglob``, ``lstat`` and ``resolve`` per file) on every call, and
+  validating one plan or profile calls them again: ~520-830 walks per cycle.
 * ``recipe_checks`` re-validated the same few hundred recipes for every sealed test
   plan and every card profile on each cycle (``harvest_completed`` alone loaded about
   1,500 plans and spent 50 s here, 178-283 s under a profiler, before lane selection
   scored its first card).
 
-``install()`` swaps in a linear ``covered`` and a per-process memo around
-``recipe_checks``. Both are checked against the originals by the equivalence tests.
+``install()`` swaps in a linear ``covered``, a per-process memo around
+``recipe_checks`` and a short-lived memo around the two fingerprints (the dispatcher
+process lives about one cycle, so a toolchain swapped mid-cycle is seen next cycle,
+exactly as a swap one second after the walk would be). All are checked against the
+originals by the equivalence tests.
 """
 
 from __future__ import annotations
 
 import copy
 import json
+import os
 import sys
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -37,6 +45,9 @@ _CHECKS_CACHE: dict[str, tuple[bool, Any]] = {}
 _CHECKS_CACHE_MAX = 4096
 _STATS = {"hits": 0, "misses": 0}
 _ORIGINALS: dict[str, Callable] = {}
+#: Seconds a computed fingerprint is reused. 0 disables the memo.
+FINGERPRINT_TTL_SECONDS = float(os.environ.get("SKFLEET_FINGERPRINT_TTL_S", "30"))
+_FINGERPRINT_NAMES = ("toolchain_fingerprint", "runtime_fingerprint")
 
 
 def covered(path: str, targets: dict[str, int]) -> str:
@@ -123,8 +134,39 @@ def cached(original: Callable[[dict], list[dict]]) -> Callable[[dict], list[dict
     return recipe_checks
 
 
+def memoized_fingerprint(
+    original: Callable[[], str],
+    *,
+    ttl: Callable[[], float] = lambda: FINGERPRINT_TTL_SECONDS,
+    clock: Callable[[], float] = time.monotonic,
+) -> Callable[[], str]:
+    """Reuse a fingerprint for ``ttl`` seconds; never cache a failure.
+
+    Keyed on the qualification prefix, which tests (and a re-pointed install) change.
+    """
+    memo: dict[Any, tuple[float, str]] = {}
+
+    def fingerprint() -> str:
+        window = ttl()
+        key = str(_plan.PREFIX)
+        now = clock()
+        prior = memo.get(key)
+        if window > 0 and prior is not None and 0 <= now - prior[0] < window:
+            _STATS["fingerprint_hits"] = _STATS.get("fingerprint_hits", 0) + 1
+            return prior[1]
+        value = original()
+        memo.clear()
+        memo[key] = (now, value)
+        _STATS["fingerprint_walks"] = _STATS.get("fingerprint_walks", 0) + 1
+        return value
+
+    fingerprint.__wrapped__ = original  # type: ignore[attr-defined]
+    return fingerprint
+
+
 def cache_clear() -> None:
     _CHECKS_CACHE.clear()
+    _STATS.clear()
     _STATS.update(hits=0, misses=0)
 
 
@@ -153,6 +195,9 @@ def install() -> bool:
         if getattr(module, "recipe_checks", None) is original_checks:
             module.recipe_checks = wrapper  # type: ignore[attr-defined]
     _recipe.covered = covered
+    for name in _FINGERPRINT_NAMES:
+        _ORIGINALS[name] = getattr(_plan, name)
+        setattr(_plan, name, memoized_fingerprint(_ORIGINALS[name]))
     return True
 
 
@@ -166,5 +211,7 @@ def uninstall() -> None:
             if getattr(module, "recipe_checks", None) is wrapper:
                 module.recipe_checks = _ORIGINALS["recipe_checks"]  # type: ignore[attr-defined]
     _recipe.covered = _ORIGINALS["covered"]
+    for name in _FINGERPRINT_NAMES:
+        setattr(_plan, name, _ORIGINALS[name])
     _ORIGINALS.clear()
     cache_clear()

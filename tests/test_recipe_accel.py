@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import random
+import sys
 import time
 from pathlib import Path
 
@@ -187,3 +188,110 @@ def test_large_recipe_validation_is_fast() -> None:
     assert len(checks[0]["argv"]) > 4096
     assert cold < 1.5, cold
     assert warm < 0.2, warm
+
+
+# -- fingerprint memo ----------------------------------------------------------------
+def _fake_qualify_env(root: Path) -> Path:
+    prefix = root / "qualify-env"
+    site = prefix / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}"
+    site = site / "site-packages"
+    (prefix / "bin").mkdir(parents=True)
+    (prefix / "bin/ruff").write_text("ruff")
+    (prefix / "bin/python").symlink_to("/usr/bin/python3")
+    (prefix / "qualify-manifest.json").write_text("{}")
+    for package in (
+        "pytest",
+        "_pytest",
+        "pytest_asyncio",
+        "ruff",
+        "pluggy",
+        "iniconfig",
+        "packaging",
+    ):
+        (site / package).mkdir(parents=True)
+        (site / package / "__init__.py").write_text("# " + package)
+    return prefix
+
+
+def test_fingerprint_memo_reuses_within_ttl_and_rewalks_after() -> None:
+    calls = []
+    now = [100.0]
+
+    def walk() -> str:
+        calls.append(now[0])
+        return "fp-%d" % len(calls)
+
+    memo = accel.memoized_fingerprint(walk, ttl=lambda: 30.0, clock=lambda: now[0])
+    assert [memo(), memo(), memo()] == ["fp-1", "fp-1", "fp-1"]
+    now[0] += 29
+    assert memo() == "fp-1"
+    now[0] += 2
+    assert memo() == "fp-2"
+    assert len(calls) == 2
+
+
+def test_fingerprint_memo_never_caches_a_failure_and_ttl_zero_disables() -> None:
+    state = {"fail": True, "calls": 0}
+
+    def walk() -> str:
+        state["calls"] += 1
+        if state["fail"]:
+            raise plan.TestEvidenceError("qualified runtime manifest is missing")
+        return "fp"
+
+    memo = accel.memoized_fingerprint(walk, ttl=lambda: 30.0, clock=lambda: 0.0)
+    for _ in range(2):
+        with pytest.raises(plan.TestEvidenceError):
+            memo()
+    state["fail"] = False
+    assert memo() == "fp" and memo() == "fp"
+    assert state["calls"] == 3
+
+    off = accel.memoized_fingerprint(walk, ttl=lambda: 0.0, clock=lambda: 0.0)
+    off()
+    off()
+    assert state["calls"] == 5
+
+
+def test_fingerprint_memo_is_scoped_to_the_qualification_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = _fake_qualify_env(tmp_path / "a")
+    second = _fake_qualify_env(tmp_path / "b")
+    (second / "bin/ruff").write_text("a different ruff")
+    monkeypatch.setattr(plan, "PREFIX", first)
+    original = plan.runtime_fingerprint
+    expected_first = original()
+    monkeypatch.setattr(plan, "PREFIX", second)
+    expected_second = original()
+    assert expected_first != expected_second
+
+    accel.install()
+    monkeypatch.setattr(plan, "PREFIX", first)
+    assert plan.runtime_fingerprint() == expected_first
+    assert plan.runtime_fingerprint() == expected_first
+    monkeypatch.setattr(plan, "PREFIX", second)
+    assert plan.runtime_fingerprint() == expected_second
+    stats = accel.cache_stats()
+    assert stats["fingerprint_hits"] >= 1 and stats["fingerprint_walks"] >= 2
+
+
+def test_memoized_toolchain_fingerprint_equals_the_original(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prefix = _fake_qualify_env(tmp_path)
+    monkeypatch.setattr(plan, "PREFIX", prefix)
+    expected = plan.toolchain_fingerprint()
+    accel.install()
+    assert plan.toolchain_fingerprint() == expected
+    assert plan.toolchain_fingerprint() == expected
+    accel.uninstall()
+    assert plan.toolchain_fingerprint() == expected
+
+
+def test_uninstall_restores_the_fingerprint_functions() -> None:
+    before = (plan.runtime_fingerprint, plan.toolchain_fingerprint)
+    accel.install()
+    assert (plan.runtime_fingerprint, plan.toolchain_fingerprint) != before
+    accel.uninstall()
+    assert (plan.runtime_fingerprint, plan.toolchain_fingerprint) == before

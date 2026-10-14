@@ -231,6 +231,32 @@ def test_amended_ref_proof_runs_once_per_ttl_and_replays_failure(monkeypatch) ->
     assert len(runs) == 5
 
 
+def test_concurrent_proofs_of_one_ref_are_single_flight(monkeypatch) -> None:
+    """The prefetch threads and the offer loop ask for the same proof at once."""
+    runs = []
+
+    def slow_prover(repository, ref, revision):
+        runs.append(threading.current_thread().name)
+        time.sleep(0.3)
+
+    monkeypatch.setattr(amendment, "prove_ref", slow_prover)
+    monkeypatch.setattr(amendment, "_PROOFS", {})
+    monkeypatch.setattr(amendment, "_PROOF_LOCKS", {})
+    threads = [
+        threading.Thread(
+            target=amendment._prove_once, args=("https://h/r.git", "refs/heads/x", "a" * 40)
+        )
+        for _ in range(4)
+    ]
+    started = time.perf_counter()
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert len(runs) == 1
+    assert time.perf_counter() - started < 0.9
+
+
 def test_amended_ref_proof_is_keyed_by_the_prover(monkeypatch) -> None:
     monkeypatch.setattr(amendment, "_PROOFS", {})
     first, second = [], []

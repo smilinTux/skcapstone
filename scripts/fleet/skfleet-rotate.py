@@ -8790,10 +8790,15 @@ def _start_requal_prefetch(candidates, limit):
     _store = CardStore(_home)
 
     def _needs(core, labels):
+        # Mirrors the gate at the top of offer_stale_candidate: only a stale profile
+        # or a missing one proceeds to the source rebuild; any other error is
+        # reported "ineligible" before a workspace is touched.
         try:
             _profiles.preflight(_home, core, labels, PRODUCTION_POLICY)
-        except (OSError, ValueError):
+        except _profiles.ProfileRequalificationRequired:
             return True
+        except (OSError, ValueError) as exc:
+            return str(exc) == "required-test-profile-unqualified"
         return False
 
     def _folded(core):
