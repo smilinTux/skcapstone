@@ -17,6 +17,7 @@ from .link_review_work import (
     reconcile_review_work,
 )
 from .seraph_review_cardstore import LiveCardStoreGateway, _binding, _latest_outcome
+from .seraph_review_contracts import ReviewPublicationError
 
 
 def _candidate(home: Path, card_id: str, outcome: dict) -> None:
@@ -131,13 +132,19 @@ def open_guarded_review(
             existing.meta.get(key) != value for key, value in binding.items()
         ):
             raise ValueError("guarded review existing generation conflict")
+        try:
+            base_ref = _binding(source, "base_ref")
+        except ReviewPublicationError:
+            from .source_ref_amendment import amended_source_ref
+
+            base_ref = amended_source_ref(source.model_dump(mode="json"), home=home)
         item = {
             "source_card": card_id,
             "source_owner": producer,
             "head_revision": outcome["candidate_commit"],
             "card_generation": generation,
             "base_revision": _binding(source, "base_revision"),
-            "base_ref": _binding(source, "base_ref"),
+            "base_ref": base_ref,
             "workspace_repository": _binding(source, "repository"),
             "reviewer_candidates": [{"identity": "pi-seraph-fiber-" + review_id}],
             **binding,
