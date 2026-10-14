@@ -452,7 +452,8 @@ def test_gateway_429_is_retried_with_backoff():
     """ae812f7a: a pool-full 429 ended a nearly finished review on attempt 1."""
     node_check("""
 let calls=0;const records=[],waits=[];
-const t=gatewayTransport(async()=>{calls++;return calls<3?refused(429,'pool_full'):new Response('ok');},
+const t=gatewayTransport(async()=>{calls++;
+ return calls<3?refused(429,'pool_full'):new Response('ok');},
   e=>records.push(e),{wait:async ms=>waits.push(ms)});
 assert.equal((await t.fetch('http://fixture.invalid')).status,200);
 assert.equal(calls,3);assert.deepEqual(waits,[30000,60000]);
@@ -475,8 +476,66 @@ def test_gateway_429_honors_a_bounded_retry_after():
     node_check("""
 let calls=0;const waits=[];
 const limited=s=>new Response('{}',{status:429,headers:{'retry-after':String(s)}});
-const t=gatewayTransport(async()=>{calls++;return calls===1?limited(45):calls===2?limited(9999):new Response('ok');},
+const t=gatewayTransport(async()=>{calls++;
+ return calls===1?limited(45):calls===2?limited(9999):new Response('ok');},
   ()=>{},{wait:async ms=>waits.push(ms)});
 assert.equal((await t.fetch('http://fixture.invalid')).status,200);
 assert.deepEqual(waits,[45000,60000]);
+""")
+
+
+def test_oversized_request_compacts_before_gateway_silently_trims_history():
+    """A local byte fence preserves history for Pi's native compaction loop."""
+    node_check("""
+let calls=0;const records=[];
+const t=gatewayTransport(async()=>{calls++;return new Response('ok');},e=>records.push(e));
+const body=JSON.stringify({messages:[{role:'user',content:'é'.repeat(60000)}]});
+const response=await t.fetch('http://fixture.invalid',{body});
+assert.equal(response.status,413);
+assert.equal(calls,0);
+const error=(await response.json()).error;
+assert.equal(error.code,'request_too_large');
+assert.equal(error.actual_bytes,Buffer.byteLength(body));
+assert.equal(error.limit_bytes,120000);
+assert.equal(t.state.terminal.code,'request_too_large');
+assert.equal(records.length,1);
+assert(!JSON.stringify(records).includes('messages'));
+assert.equal((await t.fetch('http://fixture.invalid',{body:'compacted request'})).status,200);
+assert.equal(calls,1);
+""")
+
+
+def test_context_budget_checks_request_objects_without_consuming_the_body():
+    node_check("""
+const sent=[];const t=gatewayTransport(async request=>{
+ sent.push(await request.text());return new Response('ok');},()=>{});
+const exact='x'.repeat(120000);
+assert.equal((await t.fetch(new Request('http://fixture.invalid',{method:'POST',body:exact}))).status,200);
+assert.deepEqual(sent,[exact]);
+assert.equal((await t.fetch(new Request('http://fixture.invalid',{method:'POST',body:exact+'x'}))).status,413);
+assert.equal(sent.length,1);
+const abort=new AbortController();abort.abort();
+await assert.rejects(t.fetch('http://fixture.invalid',{body:exact+'x',signal:abort.signal}),{name:'AbortError'});
+""")
+
+
+def test_local_context_budget_reaches_native_overflow_and_accepts_compacted_retry():
+    node_check("""
+let calls=0;const records=[];
+const provider={id:'skgateway',streamSimple(model,context,options){
+ const result=(async()=>{const response=await options.fetch('http://fixture.invalid',{body:context.body});
+ return response.ok?{stopReason:'stop',content:[{type:'text',text:'review completed'}]}:
+ {stopReason:'error',errorMessage:'413',content:[]};})();
+ return {result:()=>result,async *[Symbol.asyncIterator](){
+  yield {type:'error',error:await result};}};
+}};
+const wrapped=wrapGatewayProvider(provider,e=>records.push(e));
+const model={provider:'skgateway',id:'sk-s'};
+const options={fetch:async()=>{calls++;return new Response('ok');}};
+const error=await wrapped.streamSimple(model,{body:'x'.repeat(120001)},options).result();
+assert.equal(calls,0);assert.equal(error.gatewayError.code,'request_too_large');
+assert.match(error.errorMessage,/context overflow/);
+const result=await wrapped.streamSimple(model,{body:'summarized history'},options).result();
+assert.equal(result.stopReason,'stop');assert.equal(calls,1);
+assert.equal(records[0].reason,'local_context_budget');
 """)

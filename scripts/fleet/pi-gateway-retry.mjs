@@ -14,6 +14,11 @@ const DELAYS_MS = [10_000, 20_000, 30_000];
 const MAX_ATTEMPTS_429 = 7;
 const DELAYS_429_MS = [30_000, 60_000, 90_000, 120_000, 120_000, 120_000];
 const GLM_CONTEXT_WINDOW = 128_000;
+// The smallest gateway backend budget. Above this the gateway may silently
+// discard history and report only the surviving tokens, defeating Pi's native
+// compaction threshold. Refuse locally while the full history is still small
+// enough for Pi to summarize, instead of waiting for the 2 MB ingress limit.
+const MAX_REQUEST_BYTES = 120_000;
 
 // Honor a gateway Retry-After (seconds) on 429, capped so one hint cannot
 // consume the whole request budget.
@@ -108,6 +113,19 @@ export function gatewayTransport(
       const replayable = options.body == null || typeof options.body === "string";
       let attempt = 0;
       try {
+        signal.throwIfAborted();
+        const body = options.body ?? (original instanceof Request ? await original.clone().text() : "");
+        const bytes = typeof body === "string" ? Buffer.byteLength(body, "utf8") : 0;
+        if (bytes > MAX_REQUEST_BYTES) {
+          const fields = { code: "request_too_large", param: "body",
+            actual_bytes: bytes, limit_bytes: MAX_REQUEST_BYTES };
+          state.terminal = { http_status: 413, ...fields, retryable: false };
+          record({ event: "result", attempt: 0, http_status: 413,
+            elapsed_ms: now() - started, delay_ms: 0, reason: "local_context_budget", ...fields });
+          return new Response(JSON.stringify({ error: fields }), {
+            status: 413, headers: { "content-type": "application/json" },
+          });
+        }
         for (;;) {
           signal.throwIfAborted();
           attempt += 1;

@@ -225,7 +225,7 @@ def review_supersession(args: argparse.Namespace) -> dict[str, str] | None:
     source_card = str(card.meta.get("link_source_card") or "").strip()
     source_head = str(card.meta.get("link_head_revision") or "").strip().lower()
     source = CardStore(Path.home() / ".skcapstone").fold(source_card) if source_card else None
-    # Production builders name the current head on their typed verdict event,
+    # Production builders and direct fleet seats name the head on their typed verdict event,
     # and their legacy links can be stale (d60f8598, #1126). The earlier
     # workflow (jarvis and crews) recorded repaired heads in the candidate,
     # commit and head links AFTER its verdict, so for those sources the links
@@ -240,11 +240,14 @@ def review_supersession(args: argparse.Namespace) -> dict[str, str] | None:
                 break
         typed = str((latest or {}).get("candidate_commit") or "").strip().lower()
         writer = str((latest or {}).get("writer") or "")
-        production = bool(re.fullmatch(r"pi-[a-z0-9]+-builder-node-[a-z0-9-]+", writer))
+        production = bool(
+            re.fullmatch(r"pi-[a-z0-9]+-builder-node-[a-z0-9-]+", writer)
+            or re.fullmatch(rf"pi-[a-z0-9]+-chiap[0-9]+-{re.escape(source_card)}", writer)
+        )
         if production and re.fullmatch(r"[0-9a-f]{40}", typed):
             current_head = typed
         else:
-            for key in ("candidate", "commit", "head"):
+            for key in ("candidate", "commit", "head", "commit_sha"):
                 value = str(source.links.get(key) or "").strip().lower()
                 if re.fullmatch(r"[0-9a-f]{40}", value):
                     current_head = value

@@ -181,7 +181,7 @@ def test_native_compaction_is_enabled_with_request_size_reserve():
     assert updated["compaction"] == {
         "enabled": True,
         "reserveTokens": 32768,
-        "keepRecentTokens": 12000,
+        "keepRecentTokens": 8000,
     }
     assert module.configure_native_compaction(updated) == (updated, False)
 

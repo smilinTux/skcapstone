@@ -406,6 +406,9 @@ def configure_native_compaction(settings: dict[str, Any]) -> tuple[dict[str, Any
     compaction = copy.deepcopy(current) if isinstance(current, dict) else {}
     compaction["enabled"] = True
     compaction["reserveTokens"] = PI_COMPACTION_RESERVE_TOKENS
+    # Leave space for the summary, system prompt and tools under the transport's
+    # 120 KB preflight fence. Pi's 20k default can leave nothing to summarize.
+    compaction["keepRecentTokens"] = 8_000
     updated["compaction"] = compaction
     return updated, updated != settings
 
