@@ -306,7 +306,12 @@ def validate_profile(value: dict, expected: dict, policy: dict, *, environment=T
 
 
 def fingerprint_only_stale(
-    value: dict, expected: dict, policy: dict, *, source_sha256: str | None = None
+    value: dict,
+    expected: dict,
+    policy: dict,
+    *,
+    source_sha256: str | None = None,
+    home: Path | None = None,
 ) -> bool:
     """Allow automatic requalification when only fingerprints moved under the recipe.
 
@@ -320,6 +325,11 @@ def fingerprint_only_stale(
     toolchain it accepted, and plan validation admits exactly that value.
     """
     _validate_shape(value)
+    source_drift = source_sha256 is not None and value.get("source_sha256") != source_sha256
+    if source_drift and (
+        home is None or source_return_profile(home, value, source_sha256) is None
+    ):
+        return False
     if (
         value["schema"]
         in {
@@ -337,7 +347,6 @@ def fingerprint_only_stale(
         or value["host"] != policy.get("authority_host")
         or value["host"] != socket.gethostname().split(".")[0].lower()
         or value["python_sha256"] != plan.sha((plan.PREFIX / "bin/python").read_bytes())
-        or (source_sha256 is not None and value["source_sha256"] != source_sha256)
     ):
         return False
     if value["toolchain_sha256"] != plan.toolchain_fingerprint():
@@ -349,7 +358,8 @@ def fingerprint_only_stale(
         environment = node.current_environment(value["node_environment"])
         runtime_drift = environment != value["node_environment"]
     return (
-        runtime_drift
+        source_drift
+        or runtime_drift
         or value["runtime_sha256"] != plan.runtime_fingerprint()
         or value["policy_sha256"] != plan.execution_policy_fingerprint(policy)
     )
@@ -415,7 +425,9 @@ def qualify_profile(
     return path
 
 
-def read_profile(home: Path, card: str, *, pinned: dict | None = None) -> tuple[dict, str]:
+def read_profile(
+    home: Path, card: str, *, pinned: dict | None = None, source_sha256: str | None = None
+) -> tuple[dict, str]:
     """Resolve an append-only chain, or an exact historical sealed-plan profile."""
     if not isinstance(card, str) or not re.fullmatch(r"[0-9a-f]{8}", card):
         raise plan.TestEvidenceError("invalid profile card")
@@ -430,7 +442,9 @@ def read_profile(home: Path, card: str, *, pinned: dict | None = None) -> tuple[
             raise plan.TestEvidenceError("invalid test profile chain")
         _validate_shape(value)
         seen.add(fingerprint)
-        if pinned is not None and value == pinned:
+        if (pinned is not None and value == pinned) or (
+            source_sha256 is not None and value.get("source_sha256") == source_sha256
+        ):
             found = (value, fingerprint)
         directory = root / card
         if directory.exists() or directory.is_symlink():
@@ -441,7 +455,7 @@ def read_profile(home: Path, card: str, *, pinned: dict | None = None) -> tuple[
         except FileNotFoundError:
             if directory.exists() and len(list(islice(directory.iterdir(), 129))) != len(seen) - 1:
                 raise plan.TestEvidenceError("ambiguous or disconnected test profile chain")
-            if pinned is None:
+            if pinned is None and source_sha256 is None:
                 return value, fingerprint
             if found is not None:
                 return found
@@ -466,6 +480,22 @@ def read_profile(home: Path, card: str, *, pinned: dict | None = None) -> tuple[
             raise plan.TestEvidenceError("invalid test profile successor")
         value = envelope["profile"]
     raise plan.TestEvidenceError("test profile chain exceeds generation bound")
+
+
+def source_return_profile(home: Path, current: dict, source_sha256: str):
+    """Prove an unchanged contract previously qualified these exact source bytes."""
+    try:
+        historical, digest = read_profile(home, current["card"], source_sha256=source_sha256)
+    except FileNotFoundError:
+        return None
+    except plan.TestEvidenceError as exc:
+        if str(exc) == "candidate test profile changed":
+            return None
+        raise
+    keys = ("card", "repository", "criteria_sha256", "recipe", "host", "python_sha256")
+    if any(historical.get(k) != current.get(k) for k in keys):
+        return None
+    return historical, digest
 
 
 def supersede_profile(
@@ -594,8 +624,14 @@ def preflight(
         and "source_sha256" in value
         and value["source_sha256"] != source_sha256
     ):
-        raise plan.TestEvidenceError("qualified test source changed")
-    if fingerprint_only_stale(value, expected, policy, source_sha256=source_sha256):
+        if not fingerprint_only_stale(
+            value, expected, policy, source_sha256=source_sha256, home=home
+        ):
+            raise plan.TestEvidenceError("qualified test source changed")
+        raise ProfileRequalificationRequired(
+            "previously qualified source requires fresh native tests"
+        )
+    if fingerprint_only_stale(value, expected, policy, source_sha256=source_sha256, home=home):
         raise ProfileRequalificationRequired(
             "profile fingerprints changed; native requalification required"
         )

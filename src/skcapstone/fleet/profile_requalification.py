@@ -168,6 +168,7 @@ def harvest_completed(
     # first fold, and a publication may write the board, so each publication
     # drops the store and the next read starts fresh.
     store = None
+    job_bindings = set()
     with _lock(root) as acquired, node.artifact_digest_memo():
         if not acquired:
             return "busy"
@@ -179,6 +180,15 @@ def harvest_completed(
                 ):
                     continue
                 binding = job["binding"]
+                # The orphan pass must not revisit a managed generation, including
+                # failed/done jobs. Its owner-derived workspace is only a fallback
+                # for plans whose job handoff was genuinely lost.
+                job_bindings.add(json.dumps(binding, sort_keys=True))
+                if any(
+                    path.with_name(path.stem + suffix).exists()
+                    for suffix in (".done.json", ".failed.json")
+                ):
+                    continue
                 workspace = Path(job["workspace"])
                 sealed, plan_path, plan_sha = plan.load_plan(
                     home, binding, allow_completed=True, allow_remote_host=True
@@ -218,6 +228,7 @@ def harvest_completed(
                     },
                     policy,
                     source_sha256=job.get("source_sha256"),
+                    home=home,
                 ):
                     continue
                 store = None
@@ -289,6 +300,19 @@ def harvest_completed(
                         or (card_id is not None and candidate_id != card_id)
                     ):
                         continue
+                    if json.dumps(binding, sort_keys=True) in job_bindings:
+                        continue
+                    # Historical plans are discovery hints, not a veto on fresh
+                    # qualification. Skip only provably obsolete generations;
+                    # current plans still pass every native plan/receipt check.
+                    old_runtime = sealed_candidate.get("runtime_sha256")
+                    old_profile = sealed_candidate.get("profile_predecessor_sha256")
+                    if old_runtime is not None and old_runtime != plan.runtime_fingerprint():
+                        continue
+                    if old_profile is not None:
+                        _, current_profile = profile.read_profile(home, candidate_id)
+                        if old_profile != current_profile:
+                            continue
                     sealed, _, plan_sha = plan.load_plan(
                         home, binding, allow_completed=True, allow_remote_host=True
                     )
@@ -336,6 +360,7 @@ def harvest_completed(
                         },
                         policy,
                         source_sha256=source_sha,
+                        home=home,
                     ):
                         continue
                     store = None
@@ -616,7 +641,9 @@ def offer_stale_candidate(
         else:
             current, _predecessor = profile.read_profile(home, card_id)
             if not (
-                profile.fingerprint_only_stale(current, expected, policy, source_sha256=source_sha)
+                profile.fingerprint_only_stale(
+                    current, expected, policy, source_sha256=source_sha, home=home
+                )
                 or profile.legacy_full_qualification_required(current, expected, policy)
             ):
                 return "ineligible:source-or-contract-changed"
@@ -845,7 +872,7 @@ def _begin(home, policy, skc, actor, card_id, core, workspace, owner, claim_revi
         if any(value.get(key) != v for key, v in expected.items()) or (
             not legacy
             and not profile.fingerprint_only_stale(
-                value, expected, policy, source_sha256=source_sha256
+                value, expected, policy, source_sha256=source_sha256, home=home
             )
         ):
             return "ineligible"

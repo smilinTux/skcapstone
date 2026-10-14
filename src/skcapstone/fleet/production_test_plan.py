@@ -670,6 +670,7 @@ def _seal_plan(
                     if "source_sha256" in current
                     else None
                 ),
+                home=home,
             ) or legacy_full_qualification_required(
                 current, {**expected_profile, "repository": current["repository"]}, policy
             )
@@ -682,6 +683,16 @@ def _seal_plan(
                 raise TestEvidenceError("profile is not eligible for native requalification")
             value["profile_requalification"] = True
             value["profile_predecessor_sha256"] = current_sha
+            requested_source = source_fingerprint(
+                current["repository"], binding["source_head"], binding["source_tree"]
+            )
+            if current.get("source_sha256") not in (None, requested_source):
+                from .production_test_profile import source_return_profile
+
+                history = source_return_profile(home, current, requested_source)
+                if history is None:
+                    raise TestEvidenceError("historical source profile is unproven")
+                value["source_profile_sha256"] = history[1]
             # fingerprint_only_stale grants a profile still bound to the
             # pre-qualify-env ~/.skenv toolchain one migration requal. Seal the
             # legacy fingerprint it accepted so the executor, whose own legacy
@@ -873,6 +884,12 @@ def _validate_plan(
         if not requalification:
             raise TestEvidenceError("operator test plan is invalid or stale")
         required.add("node_environment_refresh")
+    if "source_profile_sha256" in plan:
+        if not requalification or not re.fullmatch(
+            r"[0-9a-f]{64}", str(plan["source_profile_sha256"])
+        ):
+            raise TestEvidenceError("historical source profile is invalid")
+        required.add("source_profile_sha256")
     if requalification:
         required.update({"profile_requalification", "profile_predecessor_sha256"})
         if "legacy_toolchain_sha256" in plan:
@@ -926,6 +943,21 @@ def _validate_plan(
                 home, binding["source_card"], pinned=plan["profile"]
             )
         if requalification:
+            source_return = False
+            if "source_profile_sha256" in plan:
+                from .production_test_profile import source_return_profile
+
+                requested_source = source_fingerprint(
+                    profile["repository"], binding["source_head"], binding["source_tree"]
+                )
+                history = source_return_profile(home, profile, requested_source)
+                if (
+                    history is None
+                    or history[1] != plan["source_profile_sha256"]
+                    or profile.get("source_sha256") == requested_source
+                ):
+                    raise TestEvidenceError("historical source profile differs")
+                source_return = True
             if (
                 profile != plan["profile"]
                 or profile_sha != plan["profile_predecessor_sha256"]
@@ -939,7 +971,8 @@ def _validate_plan(
                     not in {toolchain_fingerprint(), plan.get("legacy_toolchain_sha256")}
                 )
                 or (
-                    "source_sha256" in profile
+                    not source_return
+                    and "source_sha256" in profile
                     and profile["source_sha256"]
                     != source_fingerprint(
                         profile.get("repository", ""),
@@ -948,7 +981,8 @@ def _validate_plan(
                     )
                 )
                 or (
-                    profile.get("runtime_sha256") == plan.get("runtime_sha256")
+                    not source_return
+                    and profile.get("runtime_sha256") == plan.get("runtime_sha256")
                     and profile.get("policy_sha256") == plan.get("policy_sha256")
                     and not str(profile.get("schema", "")).endswith("/v1")
                     and "legacy_toolchain_sha256" not in plan
