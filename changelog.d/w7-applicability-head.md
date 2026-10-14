@@ -1,0 +1,1 @@
+- Support exact operator-attributed correction of a review receipt that names its evidence commit instead of the reviewed source, and recognize .mjs frontend scope during initial recipe selection.
