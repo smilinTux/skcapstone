@@ -318,7 +318,9 @@ def publish_source(
     with card_mutation_lock(home, card_id):
         store = CardStore(home)
         row = store.fold(card_id)
-        if row is None or "source-only" not in row.labels:
+        from .production_custody import source_work
+
+        if not source_work(row):
             raise SourceBundleError("source proposal claim changed")
         for key in ("repository", "base_revision"):
             if _binding({"meta": row.meta, "links": row.links}, key) != request.get(key):

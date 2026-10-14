@@ -299,7 +299,7 @@ def test_production_opener_rejects_inexact_or_unavailable_custody(
 
 
 @pytest.fixture
-def custody(tmp_path):
+def custody(tmp_path, request):
     home = tmp_path / ".skcapstone"
     home.mkdir()
     store = CardStore(home)
@@ -308,7 +308,7 @@ def custody(tmp_path):
             id=CARD,
             title="[M] Source",
             created_by=OWNER,
-            initial_labels=["source-only"],
+            initial_labels=["source-only"] if getattr(request, "param", True) else [],
             meta=SOURCE,
         )
     )
@@ -525,3 +525,65 @@ def test_rebound_continuation_keeps_custody_on_the_same_backend(
         path.write_text(json.dumps(value))
         path.chmod(0o600)
     assert retains_source_custody(home, CARD, OWNER, CLAIM, fleet_paths=paths) is retained
+
+
+@pytest.mark.parametrize("custody", [False], indirect=True)
+def test_complete_binding_without_legacy_label_records_launch_and_retains_custody(custody):
+    from skcapstone.fleet.production_custody import retains_source_custody
+
+    home, store, event = custody
+    store.append_event(CARD, "remove_label", "lumina-nor", label="source-only")
+    launched = append_production_launch_receipt(
+        home,
+        CARD,
+        actor=OWNER,
+        claim_revision=CLAIM,
+        launched=True,
+        route_identity=event["route_identity"],
+    )
+    assert launched["source_binding"] == SOURCE
+    assert retains_source_custody(home, CARD, OWNER, CLAIM, fleet_paths=FleetPaths(home / "fleet"))
+
+
+@pytest.mark.parametrize("source", ["https"], indirect=True)
+def test_direct_terminal_opens_review_without_remote_dispatch_request(
+    review_candidate, monkeypatch
+):
+    from skcapstone.fleet import production_acceptance, production_custody
+    from skcapstone.fleet.production_review_finish import once
+
+    value = review_candidate
+    value["status_path"].unlink()
+    value["request_path"].unlink()
+    value["policy"] = {"authority_host": "worker"}
+    monkeypatch.setattr(production_acceptance.socket, "gethostname", lambda: "worker")
+    monkeypatch.setattr(production_custody, "retains_source_custody", lambda *a, **k: True)
+    receipt = {
+        "schema": "skfleet.direct-seat/v1",
+        "card": value["card"],
+        "owner": value["owner"],
+        "claim_revision": value["claim"],
+        "completion_state": "awaiting-review",
+        "host": "worker",
+        "lane": "glm",
+        "unit": f"skfleet-worker-glm-{value['card']}.service",
+        "invocation": "e" * 32,
+        "exit_code": 0,
+        "pid": 123,
+        "route_schema": "skfleet.runtime-route/v1",
+        "logical_route": "sk-s",
+        "provider": "skgateway",
+        "capacity_domains": ["zai"],
+        "model_or_bucket": "qualified-model",
+        "source_disposition": {
+            "state": "awaiting-review",
+            "claim_released": False,
+            "process_terminal": True,
+            "source_artifact": value["status"]["source_artifact"],
+        },
+    }
+    path = value["home"] / "fleet/direct-seats" / f"{value['owner']}.json"
+    once(path, receipt)
+    path.chmod(0o600)
+    assert candidate_allowed(value)
+    assert not candidate_allowed(value, lambda card: {"sessions": ["live"], "units": []})

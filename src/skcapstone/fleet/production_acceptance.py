@@ -269,7 +269,29 @@ def _producer_terminal(home, source, manifest):
     return matches[0]
 
 
-def _direct_seat_terminal(home, source, manifest, producer_owner, producer_claim):
+def deferred_direct_terminal(receipt):
+    """Recognize a native successful exit awaiting fresh process-death proof.
+
+    This is not terminal proof. Publication recovery must independently check
+    the exact managed unit and absence of card processes before using it.
+    """
+    disposition = receipt.get("source_disposition")
+    return (
+        receipt.get("schema") == "skfleet.direct-seat/v1"
+        and receipt.get("completion_state") == "running"
+        and type(receipt.get("exit_code")) is int
+        and receipt["exit_code"] == 0
+        and isinstance(disposition, dict)
+        and disposition.get("state") == "awaiting-evidence"
+        and disposition.get("process_terminal") is False
+        and disposition.get("claim_released") is False
+        and disposition.get("reason") == "exact-process-and-cgroup-death-unproven"
+    )
+
+
+def _direct_seat_terminal(
+    home, source, manifest, producer_owner, producer_claim, *, publication_pending=False
+):
     """Validate a completed direct worker's exact native source receipt."""
     path = Path(home) / "fleet/direct-seats" / (producer_owner + ".json")
     try:
@@ -284,6 +306,8 @@ def _direct_seat_terminal(home, source, manifest, producer_owner, producer_claim
         artifact = disposition.get("source_artifact") or {}
         schema = receipt.get("schema")
         explicit_receipt = schema == "skfleet.direct-seat/v1"
+        expected_state = "awaiting-evidence" if publication_pending else "awaiting-review"
+        deferred = publication_pending and deferred_direct_terminal(receipt)
         parts = source.owner.split("-")
         owner_host = parts[-2] if len(parts) >= 4 else ""
         host = str(receipt.get("host") or owner_host)
@@ -293,15 +317,16 @@ def _direct_seat_terminal(home, source, manifest, producer_owner, producer_claim
             or receipt.get("card") != source.id
             or receipt.get("owner") != producer_owner
             or receipt.get("claim_revision") != producer_claim
-            or receipt.get("completion_state") != "awaiting-review"
+            or (receipt.get("completion_state") != expected_state and not deferred)
             or type(receipt.get("pid")) is not int
             or receipt["pid"] <= 0
             or host != owner_host
-            or host != socket.gethostname().split(".")[0].lower()
-            or disposition.get("state") != "awaiting-review"
+            or disposition.get("state") != expected_state
             or disposition.get("claim_released") is not False
-            or disposition.get("process_terminal") is not True
+            or (disposition.get("process_terminal") is not True and not deferred)
             or not isinstance(artifact, dict)
+            or (publication_pending and (not explicit_receipt or artifact or manifest))
+            or (publication_pending and type(receipt.get("exit_code")) is not int)
             or any(artifact.get(key) != value for key, value in manifest.items())
             or receipt.get("route_schema") != "skfleet.runtime-route/v1"
             or not receipt.get("logical_route")
@@ -339,6 +364,16 @@ def _direct_seat_terminal(home, source, manifest, producer_owner, producer_claim
             raw_manifest = _read(expected_path, MAX_EVIDENCE)
             if hashlib.sha256(raw_manifest).hexdigest() != artifact_sha256:
                 raise ReviewEvidenceError("direct producer manifest digest differs")
+        if host != socket.gethostname().split(".")[0].lower():
+            # A synced receipt is portable; terminal proof still belongs to
+            # the producer's host, never the consuming review node.
+            if not explicit_receipt or type(receipt.get("exit_code")) is not int:
+                raise ReviewEvidenceError(
+                    "remote direct producer requires modern terminal receipt"
+                )
+            from .production_review_custody import unit_terminal
+
+            unit_terminal(unit, invocation, host=host)
         return {
             "receipt_kind": "direct-seat",
             "receipt_path": str(path),
@@ -631,11 +666,13 @@ def collect(home, policy, card, claim, *, process_check):
     manifest, _ = selected
     source = store.fold(parent) if parent else None
     launch_event, launch_request = _recorded_remote_review(home, review, claim)
+    from .production_custody import source_work
+
     if (
         source is None
         or source.archived
         or source.status.value in {"done", "archived"}
-        or "source-only" not in source.labels
+        or not source_work(source)
         or {"do-not-claim", "hold"}.intersection(source.labels)
         or source.meta.get("claim_conflicts")
     ):

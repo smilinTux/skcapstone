@@ -62,6 +62,8 @@ def open_guarded_review(
     Link helper owns review identity and reviewer preflight. Provider admission,
     actual worker liveness, test execution and completion remain separate gates.
     """
+    from .fleet.production_custody import source_work
+
     if not re.fullmatch(r"[0-9a-f]{64}", expected_source_revision):
         raise ValueError("guarded review source revision invalid")
     if not re.fullmatch(r"[0-9a-f]{32}", expected_claim_revision):
@@ -88,7 +90,7 @@ def open_guarded_review(
             or source.meta.get("claim_conflicts")
             or source.archived
             or source.status.value not in {"ready", "doing", "review"}
-            or "source-only" not in source.labels
+            or not source_work(source)
             or "review" in source.labels
             or current_revision != expected_source_revision
         ):

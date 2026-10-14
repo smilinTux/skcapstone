@@ -1,0 +1,1 @@
+- Remote review consumers can validate modern direct producer receipts on another host, proving the exact unit is terminal through the existing strict SSH probe. Legacy receipts, active or unknown units, unreachable hosts and invocation mismatches still refuse; source claims and outcomes are unchanged.

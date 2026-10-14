@@ -34,7 +34,7 @@ def source(tmp_path, monkeypatch, request):
     remote = tmp_path / "remote.git"
     git(tmp_path, "clone", "--bare", str(workspace), str(remote))
     repository = str(remote)
-    if getattr(request, "param", None) == "https":
+    if getattr(request, "param", None) in {"https", "https-unlabeled"}:
         repository = "https://example.invalid/source.git"
         monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
         monkeypatch.setenv("GIT_CONFIG_KEY_0", f"url.{remote}.insteadOf")
@@ -62,7 +62,9 @@ def source(tmp_path, monkeypatch, request):
             id=card,
             title="[M] Source",
             created_by=owner,
-            initial_labels=["source-only"],
+            initial_labels=(
+                [] if getattr(request, "param", None) == "https-unlabeled" else ["source-only"]
+            ),
             meta={"repository": repository, "base_revision": base, "base_ref": "main"},
         )
     )
@@ -464,3 +466,13 @@ def test_narrow_owned_dirs_only_removes_group_and_other_bits(tmp_path):
     link.symlink_to(shared)
     bundle.narrow_owned_dirs(shared, missing, link)
     assert shared.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.parametrize("source", ["https"], indirect=True)
+def test_complete_bound_unlabeled_source_publishes_exact_candidate(source):
+    source["store"].append_event(source["card"], "remove_label", "lumina-nor", label="source-only")
+    artifact = bundle.publish_source(
+        source["home"], source["request"], source["owner"], source["claim"], source["workspace"]
+    )
+    assert artifact["head"] == source["head"]
+    assert source["store"].fold(source["card"]).owner == source["owner"]
