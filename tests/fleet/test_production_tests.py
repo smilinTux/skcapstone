@@ -994,6 +994,34 @@ def test_receipts_sealed_before_account_binds_still_validate(monkeypatch):
     assert without_account_databases(["a", "b"]) == ["a", "b"]
 
 
+@pytest.mark.parametrize("extra_path", [None, "/unapproved"])
+def test_receipts_sealed_before_tests_pythonpath_still_validate(setup, monkeypatch, extra_path):
+    receipt, terminal = receipt_fixture(setup, monkeypatch)
+    check = receipt["checks"][0]
+    env = check["sandbox_argv"]
+    key = env.index("PYTHONPATH")
+    paths = env[key + 1].split(os.pathsep)
+    assert paths.count("/work/tests") == 1
+    paths.remove("/work/tests")
+    if extra_path:
+        paths.append(extra_path)
+    env[key + 1] = os.pathsep.join(paths)
+    private_bytes(setup.directory / "receipt.json", json.dumps(receipt).encode())
+    terminal["receipt_sha256"] = native.sha(native.read_private(setup.directory / "receipt.json"))
+    private_bytes(setup.directory / "terminal.json", json.dumps(terminal).encode())
+
+    if extra_path:
+        with pytest.raises(native.TestEvidenceError, match="command or raw output"):
+            native.validate_test_receipt(setup.home, setup.binding, setup.workspace)
+    else:
+        assert (
+            native.validate_test_receipt(setup.home, setup.binding, setup.workspace)["counts"][
+                "total"
+            ]
+            == 226
+        )
+
+
 class _Claims:
     """Fold a source card as owned by the given exact claim, or as released."""
 
