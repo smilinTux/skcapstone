@@ -361,6 +361,15 @@ def retired_offers(home: Path, card: str, events: list[dict]) -> set[str]:
                 retired_at = datetime.fromisoformat(
                     str(proof_value.get("retired_at") or "").replace("Z", "+00:00")
                 )
+                # This proves custody at retirement, not forever afterward.
+                # A later generation's claim must not resurrect an unused offer.
+                # Malformed or naive event times refuse below, never disappear.
+                claim_activity = [
+                    row
+                    for row in claim_activity
+                    if datetime.fromisoformat(str(row.get("ts") or "").replace("Z", "+00:00"))
+                    <= retired_at
+                ]
                 expired_before_retirement = (
                     lease_expiry.tzinfo is not None
                     and retired_at.tzinfo is not None
@@ -374,7 +383,7 @@ def retired_offers(home: Path, card: str, events: list[dict]) -> set[str]:
                     and not launches
                     and not releases
                 )
-            except ValueError:
+            except (ValueError, TypeError):
                 expired_before_retirement = False
                 expired_unclaimed = False
             archived_orphaned = retirement_mode == "archived-orphaned-claim" and (
