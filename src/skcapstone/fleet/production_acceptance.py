@@ -178,6 +178,19 @@ def acceptance_review_revision(home, directory, context):
     if state["revision"] == original:
         return original
 
+    # A legacy/native projection changes no card facts and needs no ancillary
+    # metadata refresh. Prove it before requiring the newer receipt bindings.
+    from .acceptance_revision import review_start_revision
+
+    try:
+        proven_revision = review_start_revision(home, context["review"])
+    except ReviewEvidenceError:
+        pass
+    else:
+        if proven_revision == state["revision"]:
+            return proven_revision
+        raise ReviewEvidenceError("review changed during outcome projection proof")
+
     path = directory / "review-pair-refresh.json"
     refresh = {
         "schema": "skfleet.acceptance-review-pair-refresh/v1",

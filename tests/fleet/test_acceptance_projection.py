@@ -95,9 +95,11 @@ def test_projection_does_not_accept_material_changes(pair, mutation):  # noqa: F
 
 
 @pytest.mark.host_systemd
+@pytest.mark.parametrize("ancillary_refresh", [True, False])
 def test_controller_keeps_context_and_waits_for_real_tests(
     stopped_pair,  # noqa: F811
     monkeypatch,
+    ancillary_refresh,
 ):
     import sys
 
@@ -118,6 +120,9 @@ def test_controller_keeps_context_and_waits_for_real_tests(
     path.write_text(json.dumps(context))
     original = path.read_bytes()
     calls = []
+    if not ancillary_refresh:
+        # Legacy cards can lack metadata required by the separate receipt refresh.
+        monkeypatch.setattr(acceptance, "_review_context_still_bound", lambda *a: False)
     monkeypatch.setattr(production_test_profile, "seal_candidate", lambda *a: calls.append("seal"))
     tests = sys.modules["skcapstone.fleet.production_tests"]
     monkeypatch.setattr(tests, "run_or_read_tests", lambda *a: None, raising=False)
@@ -130,3 +135,24 @@ def test_controller_keeps_context_and_waits_for_real_tests(
     assert path.read_bytes() == original
     assert not (directory / "finish-intent.json").exists()
     assert store.fold(review["card"]).owner == review["owner"]
+
+
+@pytest.mark.host_systemd
+@pytest.mark.parametrize("change", ["scope", "claim"])
+def test_early_projection_gate_refuses_changed_review(pair, monkeypatch, change):  # noqa: F811
+    """An exact projection cannot replace current claim and scope proof."""
+    from skcapstone.fleet import production_acceptance as acceptance
+
+    home, directory, context, store, _, _ = pair
+    item = context["review"]
+    item["revision"] = legacy_revision(home, store, item)
+    if change == "scope":
+        store.append_event(item["card"], "add_label", "operator", label="changed-scope")
+    else:
+        item["claim"] = "0" * 32
+    monkeypatch.setattr(acceptance, "_review_context_still_bound", lambda *a: False)
+    before = store._read_events(item["card"])
+    with pytest.raises(acceptance.ReviewEvidenceError, match="native pair changed"):
+        acceptance.acceptance_review_revision(home, directory, context)
+    assert store._read_events(item["card"]) == before
+    assert not (directory / "review-pair-refresh.json").exists()
