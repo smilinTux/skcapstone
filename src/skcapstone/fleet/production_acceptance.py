@@ -163,11 +163,12 @@ def acceptance_review_revision(home, directory, context):
     receipt still match. Any later card change remains a refusal.
     """
     directory = Path(directory)
-    original = context["review"]["revision"]
     intent_path = directory / "finish-intent.json"
     if intent_path.exists():
         intent = read_json(intent_path)
-        return intent.get("review_initial_revision", original)
+        return intent.get("review_initial_revision", context.get("review", {}).get("revision"))
+
+    original = context["review"]["revision"]
 
     try:
         state = native_state(home, context["review"]["card"])
@@ -968,7 +969,6 @@ def reconcile(home, policy, *, process_check):
                 if context_path.exists()
                 else collect(home, policy, card, claim, process_check=process_check)
             )
-            review_initial_revision = acceptance_review_revision(home, directory, context)
             # The sealed review receipt is replayed before finishing starts.
             # Once finish-intent.json exists, finish_pair itself has written
             # the source completion links (verdict PASS among them), so a replay
@@ -985,6 +985,7 @@ def reconcile(home, policy, *, process_check):
 
             if not (directory / "finish-intent.json").exists():
                 guard()
+                review_initial_revision = acceptance_review_revision(home, directory, context)
                 for role in ("source", "review"):
                     item = context[role]
                     state = native_state(home, item["card"])
@@ -1047,6 +1048,8 @@ def reconcile(home, policy, *, process_check):
             elif _requalify_finished_acceptance(home, directory, context, policy) is None:
                 results.append({"card": card, "state": "awaiting-trusted-tests"})
                 continue
+            else:
+                review_initial_revision = acceptance_review_revision(home, directory, context)
             result = finish_pair(
                 home,
                 directory,
