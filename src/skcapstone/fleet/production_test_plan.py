@@ -96,10 +96,75 @@ HARNESS_MODULES = (
     "production_builder.py",
     "production_policy.py",
 )
+#: The harness contributes this integer to ``runtime_fingerprint``, not its bytes.
+#: Bump it ONLY when test execution semantics change (what runs, how, interpreter
+#: or toolchain, selection, sandbox, evidence format): every qualified profile then
+#: restales, on purpose. Comments, docs, plan naming and acceptance plumbing must
+#: not bump it. ``harness_attest`` and tests/fleet/test_harness_fingerprint.py fail
+#: when an execution-relevant parse tree changes without a ledger update.
+HARNESS_EXECUTION_VERSION = 1
+#: Version 1 is defined as the legacy byte fingerprint of the harness deployed on
+#: 2026-10-14 (identical on chiap08 and origin/main 490b0c67), so every profile
+#: sealed before this change stays valid with no translation at the comparison sites.
+#: Later versions do not use this table.
+_LEGACY_HARNESS_SHA256 = {
+    "qualified_runtime.py": ("cba771a55d22f7f104436cd60eaa8ccbd06b5604e3f163bd9728e7780fb467f5"),
+    "production_pytest_recipe.py": (
+        "11a6c85a7936613ab08add1f03fa49f46c418de58a5262fcbde21a7d7f444691"
+    ),
+    "production_pytest_selection.py": (
+        "591008dc5c9d4dd4d149202cb4c56ad58e906873f735ddced8e0942d42d0d261"
+    ),
+    "production_test_plan.py": (
+        "1cb79fa4afab216e72096bdddcbed773ebff0ce2cbadf080f8885dfbb4858700"
+    ),
+    "production_test_profile.py": (
+        "8cf054c86091a4c296ebfc6cbf74b531e39f78747610a9987cb2c65ca44ea5a0"
+    ),
+    "production_test_worker.py": (
+        "8bb10f2dd3624bb56d3cb900fbee0cf543275b497720cef54e293b901c616a5a"
+    ),
+    "production_test_node.py": (
+        "64bfb99e73f39510fe62f1f66b02f95093a760c08f026b47f128d4b56b343137"
+    ),
+    "production_node_test_recipe.py": (
+        "acc9636e07ac5e4fcfeba10a503708d2ebf2e696d2c2295a4437cf148ece2f40"
+    ),
+    "production_test_composite.py": (
+        "e268d82fb48edd0d88a6b7bae7f869bfc47ce313098a4cf997eaadd3e89db09d"
+    ),
+    "production_tests.py": ("7eac0197803908c9ccf5ca6a5889fdaf1da19f8d6302f2a837bff14203cc9a00"),
+    "production_admission.py": (
+        "99b7548a140aef61c8544ba990833394de8c823804077d403e3621b49b792590"
+    ),
+    "production_builder.py": ("73ecbc1429dc75727e1d21b2376c61a9cdedb18c4ca06a497fdb509484125ad7"),
+    "production_policy.py": ("c93a08f355f7db5dcc778c4a545d3b77a2766e167c5455a111ee0a9adb4e38e8"),
+}
+
+
+def harness_pins() -> dict[str, str]:
+    """Per-module pins for the current execution version (version 1 only).
+
+    Version 1 reproduces the legacy byte rows so the existing board stays valid.
+    Every later version is pinned by the version integer alone.
+    """
+    if (
+        type(HARNESS_EXECUTION_VERSION) is not int  # noqa: E721 (bool is not a version)
+        or HARNESS_EXECUTION_VERSION < 1
+    ):
+        raise TestEvidenceError("harness execution version is invalid")
+    if HARNESS_EXECUTION_VERSION != 1:
+        return {}
+    if set(_LEGACY_HARNESS_SHA256) != set(HARNESS_MODULES):
+        raise TestEvidenceError("harness legacy pins do not match harness modules")
+    return dict(_LEGACY_HARNESS_SHA256)
 
 
 def runtime_fingerprint() -> str:
     """Pin the test toolchain and trusted executor, not package install provenance.
+
+    The executor is pinned by ``HARNESS_EXECUTION_VERSION``, not by its bytes, so
+    only execution-semantics changes restale profiles (see ``harness_attest``).
 
     Cache only exact inode/size/mtime/ctime observations, never a timed success.
     Candidate source is bound separately and its tests run from /work/src. A
@@ -133,7 +198,7 @@ def runtime_fingerprint() -> str:
         raise TestEvidenceError("qualified runtime fingerprint exceeds file bound")
     rows, total = [], 0
 
-    def add(path: Path, label: str, root: Path) -> None:
+    def add(path: Path, label: str, root: Path, pinned: str | None = None) -> None:
         nonlocal total
         info = path.lstat()
         if not stat.S_ISREG(info.st_mode) or not path.resolve().is_relative_to(root.resolve()):
@@ -141,6 +206,10 @@ def runtime_fingerprint() -> str:
         total += info.st_size
         if total > 64 * 1024 * 1024:
             raise TestEvidenceError("qualified runtime fingerprint exceeds byte bound")
+        if pinned is not None:
+            if pinned:
+                rows.append((label, pinned))
+            return
         key = (str(path), info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
         digest = _RUNTIME_CACHE.get(key)
         if digest is None:
@@ -163,8 +232,13 @@ def runtime_fingerprint() -> str:
         # Editable .pth filenames contain a wheel version that does not alter
         # startup behavior. Keep the package name and ordering, and hash bytes.
         add(path, "startup/" + name, PREFIX)
+    # The harness files must still exist as regular files under HARNESS_ROOT (fail
+    # closed), but their bytes are not the pin: the execution version is.
+    pins = harness_pins()
     for path in harness:
-        add(path, "harness/" + path.name, HARNESS_ROOT)
+        add(path, "harness/" + path.name, HARNESS_ROOT, pins.get(path.name, ""))
+    if not pins:
+        rows.append(("harness/execution_version", str(HARNESS_EXECUTION_VERSION)))
     return sha(json.dumps(rows, separators=(",", ":")).encode())
 
 
