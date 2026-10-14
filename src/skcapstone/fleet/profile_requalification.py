@@ -223,6 +223,7 @@ def harvest_completed(
                     },
                     policy,
                     source_sha256=job.get("source_sha256"),
+                    home=home,
                 ):
                     continue
                 store = None
@@ -352,6 +353,7 @@ def harvest_completed(
                         },
                         policy,
                         source_sha256=source_sha,
+                        home=home,
                     ):
                         continue
                     store = None
@@ -632,7 +634,9 @@ def offer_stale_candidate(
         else:
             current, _predecessor = profile.read_profile(home, card_id)
             if not (
-                profile.fingerprint_only_stale(current, expected, policy, source_sha256=source_sha)
+                profile.fingerprint_only_stale(
+                    current, expected, policy, source_sha256=source_sha, home=home
+                )
                 or profile.legacy_full_qualification_required(current, expected, policy)
             ):
                 return "ineligible:source-or-contract-changed"
@@ -861,7 +865,7 @@ def _begin(home, policy, skc, actor, card_id, core, workspace, owner, claim_revi
         if any(value.get(key) != v for key, v in expected.items()) or (
             not legacy
             and not profile.fingerprint_only_stale(
-                value, expected, policy, source_sha256=source_sha256
+                value, expected, policy, source_sha256=source_sha256, home=home
             )
         ):
             return "ineligible"
