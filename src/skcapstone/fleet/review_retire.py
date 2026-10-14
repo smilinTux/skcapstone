@@ -1803,6 +1803,8 @@ def supersede_generation(
     actor: str,
     reason: str,
     raw_context: bytes,
+    operator_expected: dict | None = None,
+    check_only: bool = False,
 ) -> str:
     """Archive and supersede one review generation whose reviewer claim is released.
 
@@ -1828,6 +1830,15 @@ def supersede_generation(
         events = store._read_events(card)
         raw_request, raw_status = _raw(request_path), _raw(status_path)
         request, status = json.loads(raw_request), json.loads(raw_status)
+        if operator_expected is not None:
+            from .acceptance_generation_retire import prove
+
+            proof = prove(
+                home, store, card, claim, owner, raw_request, raw_status, operator_expected
+            )
+            raw_context = json.dumps(proof, sort_keys=True).encode()
+            if _raw(request_path) != raw_request or _raw(status_path) != raw_status:
+                raise ValueError("retirement pointers changed during terminal check")
         offers = [
             row
             for row in events
@@ -1837,11 +1848,13 @@ def supersede_generation(
             request.get("request_id") != request_id
             or status.get("request_id") != request_id
             or status.get("work_kind") != "review"
-            or status.get("state") == "running"
+            or (status.get("state") == "running" and operator_expected is None)
             or len(offers) != 1
             or offers[0].get("request_sha256") != production_builder.digest(request)
         ):
             return "not-supersedable"
+        if check_only:
+            return "eligible"
         binding = dict(
             schema=SUPERSEDE_SCHEMA,
             card_id=card,
@@ -1877,6 +1890,11 @@ def supersede_generation(
             reason=reason,
             receipt_sha256=source_bundle._sha(_raw(receipt)),
         )
+        if operator_expected is not None:
+            if request_id not in retired_offers(home, card, store._read_events(card)):
+                raise ValueError("operator retirement event readback differs")
+            if _raw(request_path) != raw_request or _raw(status_path) != raw_status:
+                raise ValueError("retired pointers changed before cleanup")
         _remove_pointer(status_path)
         _remove_pointer(request_path)
     return "superseded"

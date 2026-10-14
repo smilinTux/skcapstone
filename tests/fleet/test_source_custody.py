@@ -102,3 +102,39 @@ def test_snapshot_reads_each_ledger_once(tmp_path, monkeypatch):
     proof = inspect_custody(tmp_path, card, owner, claim)
     proof.store.fold(card)
     assert counts == {"_read_events": 1, "_legacy_events": 1}
+
+
+@pytest.mark.parametrize("key", ["commit", "tree"])
+@pytest.mark.parametrize("history", ["old", "later", "missing", "metadata"])
+def test_candidate_only_ignores_proven_preclaim_links(tmp_path, monkeypatch, key, history):
+    from skcapstone.fleet.source_custody import candidate_matches
+
+    store, card, owner, _, _ = prepared(tmp_path)
+    row = store.fold(card)
+    outcome = _latest_outcome(store, card)
+    source = dict(
+        owner=owner,
+        claim=row.meta["_claim_revision"],
+        repository=_binding(row, "repository"),
+        head=outcome["candidate_commit"],
+        tree=outcome["candidate_tree"],
+        ref=outcome["candidate_ref"],
+        evidence_sha256=outcome["candidate_sha256"],
+    )
+    row.links[key] = "f" * 40
+    event = dict(
+        action="link",
+        link_key=key,
+        link_value="f" * 40,
+        ts="2099-01-01" if history == "later" else "2000-01-01",
+        writer="old-producer",
+        seq=0,
+    )
+    monkeypatch.setattr(
+        store, "_legacy_events", lambda card: [] if history == "missing" else [event]
+    )
+    if history == "metadata":
+        row.meta[key] = "f" * 40
+    assert candidate_matches(store, row, source) is (history == "old")
+    # Normalization is a view, never a mutation of the retained card/history.
+    assert row.links[key] == "f" * 40

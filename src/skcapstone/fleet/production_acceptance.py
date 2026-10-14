@@ -109,6 +109,16 @@ def review_directory(home, card, claim):
     return Path(home) / "evidence/production-acceptance" / (card + "-" + claim)
 
 
+def _review_evidence_matches(row, expected):
+    """Accept supported evidence link names only when every present value agrees."""
+    values = [
+        row.links[key]
+        for key in ("review_evidence_sha256", "evidence_sha256", "reviewer_evidence_sha256")
+        if key in row.links
+    ]
+    return bool(values) and all(value == expected for value in values)
+
+
 def _review_context_still_bound(home, context, state):
     """Check the sealed review identity and evidence after an ancillary link update."""
     store = CardStore(home)
@@ -140,7 +150,7 @@ def _review_context_still_bound(home, context, state):
         or snapshot.evidence_sha256 != review_item["evidence_sha256"]
         or snapshot.verdict != "PASS"
         or snapshot.unresolved_review
-        or row.links.get("reviewer_evidence_sha256") != review_item["evidence_sha256"]
+        or not _review_evidence_matches(row, review_item["evidence_sha256"])
         or row.meta.get("link_source_card") != source_item["card"]
         or row.meta.get("link_head_revision") != proposal["source_head"]
         or row.meta.get("producer_identity") != source_item["owner"]
@@ -1166,7 +1176,7 @@ def finish_remote_disposition(home, policy, card_id, claim):
         expected not in {"FAIL", "BLOCKED"}
         or not verdict
         or (verdict != "FAIL" if expected == "FAIL" else not verdict.startswith("BLOCKED "))
-        or card.links.get("reviewer_evidence_sha256") != proposal["report_sha256"]
+        or not _review_evidence_matches(card, proposal["report_sha256"])
     ):
         raise ReviewEvidenceError("negative native verdict differs from committed evidence")
     source_before = native_state(home, request["source"]["card"])
