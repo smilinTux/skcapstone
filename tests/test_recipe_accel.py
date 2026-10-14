@@ -1,13 +1,12 @@
 """The dispatcher's recipe-validation accelerator is equivalent to the sealed harness.
 
 ``production_pytest_recipe.py`` is a harness module whose bytes pin every card
-profile (``runtime_fingerprint``), so the speedups live in ``recipe_accel`` and are
-installed at runtime. These tests hold it to the original functions.
+profile (``runtime_fingerprint``) via an execution version, so the speedups live in
+``recipe_accel`` and are installed at runtime. These tests hold it to the original functions.
 """
 
 from __future__ import annotations
 
-import hashlib
 import random
 import sys
 import time
@@ -15,17 +14,13 @@ from pathlib import Path
 
 import pytest
 
+from skcapstone.fleet import harness_attest as attest
 from skcapstone.fleet import production_pytest_recipe as recipe
 from skcapstone.fleet import production_test_plan as plan
 from skcapstone.fleet import recipe_accel as accel
 
 ORIGINAL_COVERED = recipe.covered
 ORIGINAL_CHECKS = recipe.recipe_checks
-
-#: sha256 of src/skcapstone/fleet/production_pytest_recipe.py on origin/main
-#: (3486f6fb). Editing a harness module stales every qualified profile on the
-#: board; if you must, update this hash AND plan the requalification storm.
-HARNESS_RECIPE_SHA256 = "11a6c85a7936613ab08add1f03fa49f46c418de58a5262fcbde21a7d7f444691"
 
 
 @pytest.fixture(autouse=True)
@@ -43,9 +38,12 @@ def _outcome(fn, *args):
         return ("err", str(exc))
 
 
-def test_harness_module_bytes_are_untouched() -> None:
-    source = Path(recipe.__file__).read_bytes()
-    assert hashlib.sha256(source).hexdigest() == HARNESS_RECIPE_SHA256
+def test_harness_recipe_execution_tree_matches_ledger() -> None:
+    """Byte edits are free now; an execution change needs a version bump (see
+    ``harness_attest``), which is what tests/fleet/test_harness_fingerprint.py guards."""
+    name = "production_pytest_recipe.py"
+    committed = attest.HARNESS_EXECUTION_LEDGER[plan.HARNESS_EXECUTION_VERSION][name]
+    assert attest.ast_digest(Path(recipe.__file__).read_bytes()) == committed
 
 
 def test_covered_matches_original_on_fuzzed_targets() -> None:
