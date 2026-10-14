@@ -1123,3 +1123,33 @@ def test_acceptance_never_seals_a_profile_for_other_criteria(
             s.policy,
             "https://example.org/public.git",
         )
+
+
+def test_acceptance_publishes_executed_operator_recipe(qualified, monkeypatch):
+    from types import SimpleNamespace
+
+    from skcapstone.fleet import acceptance_recipe
+
+    home, core, policy, _, _ = qualified
+    original, _ = profile.read_profile(home, core["id"])
+    executed = dict(
+        original, recipe={"pytest": {"tests/test_parser.py": 1}}, qualified_by="lumina-nor"
+    )
+    monkeypatch.setattr(acceptance_recipe, "executed_profile", lambda *a: executed)
+    monkeypatch.setattr(profile, "validate_profile", lambda *a: None)
+    monkeypatch.setattr(
+        profile,
+        "CardStore",
+        lambda *a: SimpleNamespace(
+            fold=lambda card: SimpleNamespace(owner="producer", model_dump=lambda **k: core)
+        ),
+    )
+    calls = []
+    monkeypatch.setattr(profile, "supersede_profile", lambda *a, **k: calls.append((a, k)))
+    assert profile.refresh_accepted_profile(
+        home, _binding(core), policy, core["meta"]["repository"], "9" * 64
+    )
+    args, kwargs = calls[0]
+    assert args[3] == executed["recipe"]
+    assert args[4] == "lumina-nor"
+    assert args[5] == "9" * 64

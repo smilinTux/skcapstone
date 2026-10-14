@@ -638,6 +638,8 @@ def _seal_plan(
         value["remote_requalification"] = True
     if initial_profile_qualification:
         value["initial_profile_qualification"] = True
+        if acceptance_requalification and predecessor_sha256 is not None:
+            value["acceptance_requalification"] = True
     if remote_initial:
         value["authority_host"] = policy["authority_host"]
         value["remote_initial_profile_qualification"] = True
@@ -906,7 +908,7 @@ def _validate_plan(
 
         required.add("profile")
         if plan.get("acceptance_requalification") is True:
-            if requalification or initial_qualification:
+            if requalification or (initial_qualification and (not successor or remote_initial)):
                 raise TestEvidenceError("operator test plan is invalid or stale")
             required.add("acceptance_requalification")
         profile = plan["profile"]
