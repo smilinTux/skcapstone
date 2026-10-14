@@ -2001,9 +2001,10 @@ if PRODUCTION_POLICY:
 
 def _prepare_pi_glm_catalog():
     """Sync Pi's SKGateway catalog to healthy advertised logical routes."""
-    installed=Path(HOME)/".local/bin/skfleet-pi-model-catalog.py"
+    # A manual .local/bin copy can outlive rollouts and shadow deployed fixes.
+    installed=Path(HOME)/".skenv/bin/skfleet-pi-model-catalog.py"
     bundled=Path(__file__).with_name("skfleet-pi-model-catalog.py")
-    helper=installed if installed.exists() else bundled
+    helper=installed if installed.is_file() else bundled
     if not helper.is_file():
         return False,"catalog reconciler missing"
     if not _GATEWAY_ENDPOINT:

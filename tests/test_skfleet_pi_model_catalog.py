@@ -372,8 +372,9 @@ def test_cli_reports_sanitized_error_without_traceback(tmp_path: Path):
     assert "Traceback" not in result.stderr
 
 
+@pytest.mark.parametrize("deployed", [True, False])
 def test_launcher_requires_gateway_url_passes_revision_and_has_no_host_default(
-    monkeypatch, tmp_path: Path
+    monkeypatch, tmp_path: Path, deployed
 ):
     source = (ROOT / "scripts/fleet/skfleet-rotate.py").read_text(encoding="utf-8")
     assert 'os.environ.get("SKFLEET_GATEWAY_URL","http://chiap01:18790")' not in source
@@ -381,6 +382,14 @@ def test_launcher_requires_gateway_url_passes_revision_and_has_no_host_default(
     assert "--gateway-revision" in source
     assert "active_gateway_revision" in source
 
+    stale = tmp_path / ".local/bin/skfleet-pi-model-catalog.py"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("stale manual install")
+    installed = tmp_path / ".skenv/bin/skfleet-pi-model-catalog.py"
+    if deployed:
+        installed.parent.mkdir(parents=True)
+        installed.write_text("deployed helper")
+    expected = installed if deployed else ROOT / "scripts/fleet/skfleet-pi-model-catalog.py"
     calls = []
 
     def run(argv, **kwargs):
@@ -419,6 +428,7 @@ def test_launcher_requires_gateway_url_passes_revision_and_has_no_host_default(
         namespace,
     )
     assert namespace["_prepare_pi_glm_catalog"]() == (True, "PI_MODEL_CATALOG|current")
+    assert calls[0][0][1] == str(expected)
     assert calls[0][0][-2:] == ["--gateway-revision", "a" * 40]
     assert calls[0][1]["env"]["SKFLEET_GATEWAY_URL"] == "https://gateway.example"
 
