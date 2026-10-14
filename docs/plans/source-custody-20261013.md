@@ -22,4 +22,6 @@ Implemented policy boundaries:
 
 `EventSnapshot` reads each source ledger once while the card lock is held. Writers retain their enclosing lock until the operation is finished. The shared view removes only the proven release; the review opener additionally compares the snapshot at release to the current projection. Native writes use the ordinary store, never the read-only source view. After review reconciliation the live source revision is re-read to detect cross-host changes despite advisory locks.
 
-Existing held review metadata remains compatible. Newly opened released reviews record `released_producer_claim`; an already-opened held review is reused at its same pre-release source revision and generation. No source claim, verdict, or completion is written by review-work.
+The rebase retains main PR #1197's sealed direct-source manifest, launch receipt, route and terminal-process checks. The manifest binds the original producer claim; review metadata retains the pre-release source revision and generation. Unsealed releases cannot open reviews. No source claim, verdict, or completion is written by review-work.
+
+CI follow-up: admission passes its already-folded card into the shared evaluator under its enclosing lock. This preserves failed-launch finalization's authoritative snapshot rather than silently substituting a second fold. The six failing CI cases are covered by `tests/fleet/test_failed_admission_terminal.py`.

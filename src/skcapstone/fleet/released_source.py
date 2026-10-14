@@ -5,7 +5,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from skcoord.card_store import card_mutation_lock
+from skcoord.card_store import CardStore, card_mutation_lock
 
 from . import source_bundle as bundle
 from .source_custody import BeforeRelease, CustodyState, EventSnapshot, inspect_custody

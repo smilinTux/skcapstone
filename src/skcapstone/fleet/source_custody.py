@@ -138,15 +138,17 @@ def inspect_custody(
     held_statuses: frozenset[str] = frozenset({"ready", "doing", "review"}),
     source: dict | None = None,
     revision: str | None = None,
+    _card: Any = None,
 ) -> CustodyResult:
     """Classify a locked source; writers must retain their enclosing card lock.
 
     Admission before publication omits source content. Acceptance supplies its
     sealed proposal. Each caller retains its existing held-status policy.
+    _card reuses a caller's authoritative fold under the enclosing card lock.
     """
     with card_mutation_lock(home, card_id):
         store = EventSnapshot(home, card_id)
-        row = store.fold(card_id)
+        row = _card if _card is not None else store.fold(card_id)
 
         def result(state, reason="", release=None):
             return CustodyResult(state, reason, store, row, release)

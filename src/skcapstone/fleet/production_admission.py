@@ -969,6 +969,7 @@ def _claim_held(home: Path, card, binding: dict, *, allow_released: bool = False
         binding["owner"],
         binding["claim_revision"],
         held_statuses=frozenset({"doing"}),
+        _card=card,
     )
     return proof.state == CustodyState.HELD or (
         allow_released and proof.state == CustodyState.RELEASED_CLEAN
