@@ -281,12 +281,21 @@ def test_memoized_toolchain_fingerprint_equals_the_original(
 ) -> None:
     prefix = _fake_qualify_env(tmp_path)
     monkeypatch.setattr(plan, "PREFIX", prefix)
-    expected = plan.toolchain_fingerprint()
+
+    def outcome():
+        # Some runners' interpreters make the fake env "escape its base prefix";
+        # the memo must then refuse identically, so compare the full outcome.
+        try:
+            return ("ok", plan.toolchain_fingerprint())
+        except plan.TestEvidenceError as exc:
+            return ("refused", str(exc))
+
+    expected = outcome()
     accel.install()
-    assert plan.toolchain_fingerprint() == expected
-    assert plan.toolchain_fingerprint() == expected
+    assert outcome() == expected
+    assert outcome() == expected
     accel.uninstall()
-    assert plan.toolchain_fingerprint() == expected
+    assert outcome() == expected
 
 
 def test_uninstall_restores_the_fingerprint_functions() -> None:
