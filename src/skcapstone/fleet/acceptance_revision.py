@@ -56,3 +56,41 @@ def review_start_revision(home, item):
     if _digest(dict(payload, outcome=projection)) != item["revision"]:
         raise ReviewEvidenceError("sealed review facts changed beyond outcome projection")
     return snapshot.revision
+
+
+def source_recipe_revision(home, item):
+    """Accept only a source revision changed by its test-profile recipe link."""
+    store = CardStore(home)
+    card = store.fold(item["card"])
+    snapshot = LiveCardStoreGateway(home).read_card(item["card"], _store=store)
+    if (
+        card is None
+        or card.owner != item["owner"]
+        or card.meta.get("_claim_revision") != item["claim"]
+        or snapshot.revision == item["revision"]
+        or "test_profile_recipe" not in card.links
+    ):
+        raise ReviewEvidenceError("source test recipe projection is unproven")
+    links = dict(card.links)
+    links.pop("test_profile_recipe")
+    projected = card.model_copy(update={"links": links}, deep=True)
+    bindings = {
+        key: getattr(snapshot, key)
+        for key in (
+            "repository",
+            "number",
+            "head_sha",
+            "producer_identity",
+            "reviewer_identity",
+            "unresolved_review",
+            "candidate_evidence_sha256",
+        )
+    }
+    payload = {
+        "card": card_revision(projected),
+        "bindings": bindings,
+        "outcome": _latest_outcome(store, item["card"]),
+    }
+    if _digest(payload) != item["revision"]:
+        raise ReviewEvidenceError("source changed beyond test profile recipe")
+    return snapshot.revision

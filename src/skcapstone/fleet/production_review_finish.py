@@ -356,6 +356,8 @@ def _finish_pair(
             binding["source_claim_current"] = source_claim_current
         if "released_source_revision" in prior_binding:
             binding["released_source_revision"] = prior_binding["released_source_revision"]
+        if "source_recipe_revision" in prior_binding:
+            binding["source_recipe_revision"] = prior_binding["source_recipe_revision"]
         if "review_revision" in prior_binding:
             binding["review_revision"] = prior_binding["review_revision"]
         if prior_binding != binding:
@@ -372,7 +374,8 @@ def _finish_pair(
             binding["review_revision"] = review_start_revision(home, context["review"])
     initial = {
         "source": binding.get(
-            "released_source_revision", source.get("live_revision", source["revision"])
+            "released_source_revision",
+            binding.get("source_recipe_revision", source.get("live_revision", source["revision"])),
         ),
         "review": binding.get(
             "review_revision",
@@ -383,6 +386,16 @@ def _finish_pair(
         if historical is not None:
             raise ReviewEvidenceError("historical acceptance intent missing")
         guard()
+        current_source_revision = inspect(home, source["card"])["revision"]
+        if (
+            not released_source
+            and current_source_revision != initial["source"]
+            and "source_recipe_revision" not in binding
+        ):
+            from .acceptance_revision import source_recipe_revision
+
+            binding["source_recipe_revision"] = source_recipe_revision(home, source)
+            initial["source"] = binding["source_recipe_revision"]
         if any(
             inspect(home, context[name]["card"])["revision"] != initial[name] for name in initial
         ):

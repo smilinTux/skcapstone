@@ -317,6 +317,53 @@ def test_review_completion_accepts_released_producer_claim_from_sealed_source(
     assert store.fold(context["source"]["card"]).owner is None
 
 
+@pytest.mark.host_systemd
+def test_acceptance_allows_only_source_test_recipe_link_drift(pair):
+    from skcapstone.fleet.acceptance_revision import source_recipe_revision
+
+    home, directory, context, store, _, _ = pair
+    source_item = context["source"]
+    store.append_event(
+        source_item["card"],
+        "link",
+        "operator",
+        link_key="test_profile_recipe",
+        link_value='{"pytest":{"tests/test_example.py":1}}',
+    )
+
+    recipe_revision = source_recipe_revision(home, source_item)
+    result = finish.finish_pair(home, directory, context, guard=lambda: None)
+
+    assert result["accepted"]
+    assert finish.read_json(directory / "finish-intent.json")["source_recipe_revision"] == (
+        recipe_revision
+    )
+
+
+def test_source_recipe_projection_refuses_any_other_source_change(pair):
+    from skcapstone.fleet.acceptance_revision import source_recipe_revision
+
+    home, _, context, store, _, _ = pair
+    source_item = context["source"]
+    store.append_event(
+        source_item["card"],
+        "link",
+        "operator",
+        link_key="test_profile_recipe",
+        link_value='{"pytest":{"tests/test_example.py":1}}',
+    )
+    store.append_event(
+        source_item["card"],
+        "link",
+        "operator",
+        link_key="recipe_note",
+        link_value="unrelated source mutation",
+    )
+
+    with pytest.raises(finish.ReviewEvidenceError, match="source changed beyond"):
+        source_recipe_revision(home, source_item)
+
+
 @pytest.mark.parametrize("lost", ["link", "review-complete", "source-complete"])
 @pytest.mark.host_systemd
 def test_crash_after_successful_native_write_recovers_exactly_once(pair, lost):

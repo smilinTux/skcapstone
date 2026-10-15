@@ -1,0 +1,2 @@
+- Profile qualification now reseals one exact remote initial-plan predecessor after validation, allowing qualified profiles to recover instead of repeating a local-host stale-plan refusal.
+- Acceptance now tolerates a source revision changed only by its test-profile recipe link, while continuing to fence every product binding and outcome.
