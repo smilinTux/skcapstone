@@ -939,6 +939,11 @@ def _begin(home, policy, skc, actor, card_id, core, workspace, owner, claim_revi
     }
     plan.source_state(workspace, spec)
     source_sha256 = plan.workspace_source_fingerprint(expected["repository"], workspace)
+    execution_host = _execution_host(home, policy, card_id, source_sha256)
+    if execution_host == policy["authority_host"] and not _remote_source_reconstruction_failed(
+        home, policy["authority_host"], card_id, source_sha256
+    ):
+        return "deferred:no-ready-remote-host"
     if initial_profile:
         recipe, node_environment = profile.initial_recipe(core, workspace)
         recipe_sha256 = plan.sha(
@@ -972,7 +977,7 @@ def _begin(home, policy, skc, actor, card_id, core, workspace, owner, claim_revi
         "binding": binding,
         "profile_sha256": predecessor,
         "source_sha256": source_sha256,
-        "execution_host": _execution_host(home, policy, card_id, source_sha256),
+        "execution_host": execution_host,
     }
     if initial_profile:
         job.update(initial_profile=True, initial_profile_value=initial_profile)
