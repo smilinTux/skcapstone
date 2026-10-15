@@ -1,0 +1,1 @@
+- Fix source review acceptance so a completed test plan from an older runtime is resealed for a fresh native run before profile refresh.
