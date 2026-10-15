@@ -131,11 +131,11 @@ jobs:
 
   # Sharded py3.12 suite (pull_request / merge_group only). A GitHub-hosted
   # runner has 2 vCPUs, so xdist alone only gets ~2x; the suite is also split
-  # across 6 runners by scripts/ci/pytest_shard.py. The required check
+  # across 8 runners by scripts/ci/pytest_shard.py. The required check
   # "unit tests (py3.12)" is the `unit-py312` job below, which aggregates these
   # shards, so branch protection is unchanged.
   shard:
-    name: unit shard ${{ matrix.shard }}/6 (py3.12)
+    name: unit shard ${{ matrix.shard }}/8 (py3.12)
     needs: classify
     if: >-
       needs.classify.outputs.docs-only != 'true' &&
@@ -145,7 +145,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -167,7 +167,7 @@ jobs:
           # files (pytest_shard.py partitions by file, balanced by test count),
           # then xdist inside the shard with --dist loadfile.
           timeout --kill-after=10s 25m python -m pytest tests/ \
-            -p pytest_shard --shard ${{ matrix.shard }}/6 \
+            -p pytest_shard --shard ${{ matrix.shard }}/8 \
             -n auto --dist loadfile \
             --strict-markers \
             -m "not integration and not e2e" \
