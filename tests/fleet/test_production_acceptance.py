@@ -668,6 +668,92 @@ def test_missing_profile_does_not_queue_after_source_claim_changes(stopped_pair,
     assert queued == []
 
 
+def test_stale_completed_acceptance_requalification_seals_current_runtime_successor(
+    tmp_path, monkeypatch, qualified_runtime
+):
+    from skcapstone.fleet import production_test_plan, production_test_profile
+
+    binding = {
+        "source_card": "2587020f",
+        "source_head": "a" * 40,
+        "source_tree": "b" * 40,
+        "criteria_sha256": "c" * 64,
+    }
+    workspace = tmp_path / "source"
+    workspace.mkdir()
+    policy = {"authority_host": "chiap08"}
+    profile = {
+        "card": binding["source_card"],
+        "repository": "https://example.invalid/sklegal.git",
+        "criteria_sha256": binding["criteria_sha256"],
+        "qualified_by": "niobe",
+        "qualification_sha256": "d" * 64,
+        "runtime_sha256": "e" * 64,
+    }
+    predecessor = "f" * 64
+    sealed = {
+        "acceptance_requalification": True,
+        "runtime_sha256": "1" * 64,
+        "python_sha256": production_test_plan.sha(
+            (production_test_plan.PREFIX / "bin/python").read_bytes()
+        ),
+    }
+    calls = []
+
+    monkeypatch.setattr(
+        production_test_plan, "load_plan", lambda *args, **kwargs: (sealed, None, predecessor)
+    )
+    monkeypatch.setattr(production_test_plan, "runtime_fingerprint", lambda: "2" * 64)
+    monkeypatch.setattr(production_test_plan, "_completed_test_attempt", lambda *args: True)
+    monkeypatch.setattr(
+        production_test_profile,
+        "read_profile",
+        lambda *args, **kwargs: (profile, "3" * 64),
+    )
+    monkeypatch.setattr(production_test_profile, "acceptance_requalifiable", lambda *args: True)
+    monkeypatch.setattr(
+        production_test_plan,
+        "seal_plan",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    acceptance._seal_current_acceptance_plan(
+        tmp_path, binding, workspace, policy, profile["repository"]
+    )
+
+    assert len(calls) == 1
+    assert calls[0][1]["predecessor_sha256"] == predecessor
+    assert calls[0][1]["acceptance_requalification"] is True
+
+
+def test_stale_inflight_acceptance_requalification_is_not_rotated(
+    tmp_path, monkeypatch, qualified_runtime
+):
+    from skcapstone.fleet import production_test_plan
+
+    binding = {"source_card": "2587020f"}
+    sealed = {
+        "acceptance_requalification": True,
+        "runtime_sha256": "1" * 64,
+        "python_sha256": production_test_plan.sha(
+            (production_test_plan.PREFIX / "bin/python").read_bytes()
+        ),
+    }
+    calls = []
+    monkeypatch.setattr(
+        production_test_plan, "load_plan", lambda *args, **kwargs: (sealed, None, "f" * 64)
+    )
+    monkeypatch.setattr(production_test_plan, "runtime_fingerprint", lambda: "2" * 64)
+    monkeypatch.setattr(production_test_plan, "_completed_test_attempt", lambda *args: False)
+    monkeypatch.setattr(production_test_plan, "seal_plan", lambda *args, **kwargs: calls.append(1))
+
+    acceptance._seal_current_acceptance_plan(
+        tmp_path, binding, tmp_path, {"authority_host": "chiap08"}, "https://example.invalid/r.git"
+    )
+
+    assert calls == []
+
+
 def test_existing_finish_intent_requalifies_stale_plan_without_rewriting_intent(
     tmp_path, monkeypatch
 ):
