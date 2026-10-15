@@ -5,6 +5,7 @@ import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from xml.etree import ElementTree
 
 import pytest
 
@@ -499,6 +500,178 @@ def test_initial_profile_retargets_unlaunched_remote_plan_to_authority(tmp_path,
             "initial_profile_qualification": True,
         }
     ]
+
+
+@pytest.mark.parametrize("launched,completed", [(False, False), (True, True), (True, False)])
+def test_initial_profile_reseals_compatible_plan_only_after_terminal(
+    tmp_path, monkeypatch, launched, completed
+):
+    binding = {"source_card": "1234abcd"}
+    old_recipe = {"vitest": {"src/pages/Matter.test.tsx": 1}}
+    new_recipe = {
+        "vitest": {
+            "src/pages/Matter.test.tsx": 1,
+            "src/pages/Other.test.tsx": 1,
+        }
+    }
+    previous_profile = {
+        "qualified_by": "lumina-nor",
+        "qualification_sha256": plan.sha(
+            json.dumps(old_recipe, sort_keys=True, separators=(",", ":")).encode()
+        ),
+        "recipe": old_recipe,
+        "node_environment": {"artifact_sha256": "a" * 64},
+    }
+    desired_profile = {
+        **previous_profile,
+        "qualified_by": "niobe",
+        "qualification_sha256": plan.sha(
+            json.dumps(new_recipe, sort_keys=True, separators=(",", ":")).encode()
+        ),
+        "recipe": new_recipe,
+    }
+    job = {
+        "card": "1234abcd",
+        "owner": "producer",
+        "claim_revision": "claim-1",
+        "workspace": str(tmp_path),
+        "binding": binding,
+        "execution_host": "chiap08",
+        "initial_profile": True,
+        "initial_profile_value": desired_profile,
+        "plan_predecessor_sha256": "a" * 64,
+    }
+    card = SimpleNamespace(
+        status=SimpleNamespace(value="doing"),
+        owner="producer",
+        meta={"_claim_revision": "claim-1"},
+        model_dump=lambda **_kwargs: {},
+    )
+    current_plan = {
+        "initial_profile_qualification": True,
+        "profile": previous_profile,
+        "host": "chiap08",
+    }
+    monkeypatch.setattr(
+        refresh, "CardStore", lambda _home: SimpleNamespace(fold=lambda _card_id: card)
+    )
+    monkeypatch.setattr(plan, "source_state", lambda *_args: None)
+    monkeypatch.setattr(
+        plan,
+        "load_plan",
+        lambda *_args, **_kwargs: (current_plan, tmp_path / "plan.json", "a" * 64),
+    )
+    run = tmp_path / "run"
+    if launched:
+        run.mkdir()
+        (run / "launch.json").write_text("{}")
+    monkeypatch.setattr(plan, "run_directory", lambda *_args: run)
+    monkeypatch.setattr(plan, "_completed_test_attempt", lambda *_args: completed)
+    sealed = []
+    monkeypatch.setattr(plan, "seal_plan", lambda *_args, **kwargs: sealed.append(kwargs))
+    monkeypatch.setattr(tests, "run_or_read_tests", lambda *_args: None)
+
+    if launched and not completed:
+        with pytest.raises(
+            plan.TestEvidenceError, match="qualification plan changed after launch"
+        ):
+            refresh._advance(tmp_path, {}, "/skcapstone", "niobe", None, job)
+        assert sealed == []
+        return
+    assert refresh._advance(tmp_path, {}, "/skcapstone", "niobe", None, job) == "pending"
+    expected = {
+        "profile": desired_profile,
+        "predecessor_sha256": "a" * 64,
+        "execution_host": "chiap08",
+        "initial_profile_qualification": True,
+    }
+    if launched:
+        expected["acceptance_requalification"] = True
+    assert sealed == [expected]
+
+
+def test_initial_profile_expands_vitest_to_the_fixed_full_suite(tmp_path):
+    web = tmp_path / "apps/web"
+    (web / "src/pages").mkdir(parents=True)
+    (web / "src/pages/Matter.test.tsx").write_text("test\n")
+    (web / "src/pages/Other.test.ts").write_text("test\n")
+    (web / "src/__snapshots__").mkdir()
+    (web / "src/__snapshots__/Other.test.tsx.snap").write_text("snapshot\n")
+
+    recipe = refresh._all_vitest_targets(
+        {"pytest_all": True, "vitest": {"src/pages/Matter.test.tsx": 7}}, tmp_path
+    )
+    assert recipe == {
+        "pytest_all": True,
+        "vitest": {
+            "src/pages/Matter.test.tsx": 7,
+            "src/pages/Other.test.ts": 1,
+        },
+    }
+    from skcapstone.fleet import production_test_node as node
+
+    suites = ElementTree.Element(
+        "testsuites",
+        tests=str(sum(recipe["vitest"].values())),
+        failures="0",
+        errors="0",
+        skipped="0",
+    )
+    for path, minimum in recipe["vitest"].items():
+        suite = ElementTree.SubElement(
+            suites,
+            "testsuite",
+            name=path,
+            tests=str(minimum),
+            failures="0",
+            errors="0",
+            skipped="0",
+        )
+        for index in range(minimum):
+            ElementTree.SubElement(suite, "testcase", classname=path, name=f"passes-{index}")
+    assert (
+        node.junit_counts(ElementTree.tostring(suites), {"recipe": recipe})["per_file"]
+        == recipe["vitest"]
+    )
+
+
+def test_existing_failure_replay_keeps_the_first_reason(tmp_path):
+    path = tmp_path / ("a" * 64 + ".job.json")
+    plan.private_dir(tmp_path, create=True)
+    first = refresh._write_failure(path, "1234abcd", "first refusal")
+    replay = refresh._write_failure(path, "1234abcd", "later refusal")
+    assert first == replay == "first refusal"
+    assert json.loads(path.with_name(path.stem + ".failed.json").read_text())["reason"] == first
+
+
+def test_initial_profile_rejects_conflicting_profile_expansion():
+    recipe = {"vitest": {"src/a.test.ts": 2}}
+    previous = {
+        "recipe": recipe,
+        "qualification_sha256": plan.sha(
+            json.dumps(recipe, sort_keys=True, separators=(",", ":")).encode()
+        ),
+        "node_environment": {"a": 1},
+    }
+    expanded = {"vitest": {"src/a.test.ts": 2, "src/b.test.ts": 1}}
+    assert refresh._compatible_initial_profile(
+        previous,
+        {
+            "recipe": expanded,
+            "qualification_sha256": plan.sha(
+                json.dumps(expanded, sort_keys=True, separators=(",", ":")).encode()
+            ),
+            "node_environment": {"a": 1},
+        },
+    )
+    assert not refresh._compatible_initial_profile(
+        previous,
+        {"recipe": {"vitest": {"src/a.test.ts": 1}}, "node_environment": {"a": 1}},
+    )
+    assert not refresh._compatible_initial_profile(
+        previous,
+        {"recipe": {"vitest": {"src/a.test.ts": 2}}, "node_environment": {"a": 2}},
+    )
 
 
 def test_initial_profile_does_not_retarget_a_launched_plan(tmp_path, monkeypatch):
