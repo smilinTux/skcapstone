@@ -228,7 +228,7 @@ def register_status_commands(main: click.Group) -> None:
         console.print()
         console.print(
             Panel(
-                f"[bold]{m.name}[/] v{m.version}\n" f"{consciousness_banner(m.is_conscious)}",
+                f"[bold]{m.name}[/] v{m.version}\n{consciousness_banner(m.is_conscious)}",
                 title="SKCapstone Agent",
                 border_style="bright_blue",
             )
@@ -315,11 +315,9 @@ def register_status_commands(main: click.Group) -> None:
             uptime = daemon.get("uptime", "unknown")
             msgs = daemon.get("messages", 0)
             msg_part = f"  [dim]msgs={msgs}[/]" if msgs else ""
-            console.print(
-                f"  Daemon: [green]RUNNING[/]  " f"[dim]pid={pid}  up={uptime}{msg_part}[/]"
-            )
+            console.print(f"  Daemon: [green]RUNNING[/]  [dim]pid={pid}  up={uptime}{msg_part}[/]")
         else:
-            console.print("  Daemon: [red]STOPPED[/]  " "[dim](skcapstone daemon start)[/]")
+            console.print("  Daemon: [red]STOPPED[/]  [dim](skcapstone daemon start)[/]")
 
         # ── LLM backends ─────────────────────────────────────────────────────
         backends = _probe_llm_backends()
@@ -337,7 +335,7 @@ def register_status_commands(main: click.Group) -> None:
         # ── Last conversation ─────────────────────────────────────────────────
         conv = _get_last_conversation(home_path)
         if conv:
-            console.print(f"  Last convo: [cyan]{conv['peer']}[/]  " f"[dim]{conv['when']}[/]")
+            console.print(f"  Last convo: [cyan]{conv['peer']}[/]  [dim]{conv['when']}[/]")
 
         # ── Disk space warning ────────────────────────────────────────────────
         try:
@@ -393,7 +391,7 @@ def register_status_commands(main: click.Group) -> None:
         }.get(consciousness, "dim")
 
         header_text = (
-            f"[bold white]{agent.get('name', '?')}[/]  " f"[{con_color}]\u25cf {consciousness}[/]"
+            f"[bold white]{agent.get('name', '?')}[/]  [{con_color}]\u25cf {consciousness}[/]"
         )
         console.print()
         console.print(
@@ -719,7 +717,7 @@ def register_status_commands(main: click.Group) -> None:
                 if not failing and not unknowns:
                     count = len(checks)
                     console.print(
-                        f"  [bold]{label}[/]  " f"[dim green]\u2713 {count}/{count} passed[/]"
+                        f"  [bold]{label}[/]  [dim green]\u2713 {count}/{count} passed[/]"
                     )
                 else:
                     console.print(f"  [bold]{label}[/]")

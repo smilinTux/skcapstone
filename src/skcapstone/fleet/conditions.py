@@ -81,7 +81,7 @@ def probe_conditions(probes: list[dict], now_iso: str) -> list[dict]:
                 cond_type,
                 ok,
                 "TcpProbe",
-                f"{probe.get('name', cond_type)} port {port} " f"{'open' if ok else 'closed'}",
+                f"{probe.get('name', cond_type)} port {port} {'open' if ok else 'closed'}",
                 now_iso,
             )
         )

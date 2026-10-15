@@ -416,7 +416,7 @@ class SubAgentSpawner:
             from .baby_agents import BABY_AGENTS
 
             available = ", ".join(sorted(BABY_AGENTS.keys()))
-            raise ValueError(f"Unknown baby agent '{name}'. " f"Available: {available}")
+            raise ValueError(f"Unknown baby agent '{name}'. Available: {available}")
 
         logger.info("Spawning baby agent: %s", baby.name)
         return self.spawn(

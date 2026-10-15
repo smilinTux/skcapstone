@@ -145,7 +145,9 @@ def git(*args):
         check=True,capture_output=True,timeout=20).stdout
 """
 
-_EXPORT = _INSPECT_SETUP + r"""
+_EXPORT = (
+    _INSPECT_SETUP
+    + r"""
 assert git('rev-parse','HEAD^{commit}').decode().strip()==head
 assert git('rev-parse','HEAD^{tree}').decode().strip()==tree
 assert git('symbolic-ref','HEAD').decode().strip()==ref
@@ -168,6 +170,7 @@ assert git('rev-parse','HEAD^{commit}').decode().strip()==head
 print(json.dumps({'bundle_b64':base64.b64encode(bundle).decode(),
                  'evidence_sha256':hashlib.sha256(evidence).hexdigest()}))
 """
+)
 
 
 def _export(workspace: Path, card: str, base: str, outcome: dict) -> dict:
@@ -192,10 +195,13 @@ def inspect_clean_base(workspace: Path, base: str, *, allow_ignored: bool = Fals
     workspace reused for a retry must stay fully clean, so only the release
     proof passes it, and the released workspace is discarded afterwards.
     """
-    program = _INSPECT_SETUP + """
+    program = (
+        _INSPECT_SETUP
+        + """
 assert git('rev-parse','HEAD^{commit}').decode().strip()==base
 assert not git('status','--porcelain','--untracked-files=all')
 """
+    )
     if not allow_ignored:
         program += """
 assert not git('ls-files','--others','--ignored','--exclude-standard')
@@ -581,7 +587,9 @@ def import_review_source(core: dict, repository: str, base_revision: str, worksp
             shutil.rmtree(temporary)
 
 
-_REVIEW_EXPORT = _INSPECT_SETUP + r"""
+_REVIEW_EXPORT = (
+    _INSPECT_SETUP
+    + r"""
 assert git('rev-parse','HEAD^{commit}').decode().strip()==head
 assert git('rev-parse','HEAD^{tree}').decode().strip()==tree
 assert not git('status','--porcelain','--untracked-files=all')
@@ -593,6 +601,7 @@ raw=Path('/tmp/review.bundle').read_bytes()
 assert 0<len(raw)<=8388608
 print(json.dumps({'bundle':base64.b64encode(raw).decode()}))
 """
+)
 
 
 def export_review_packet(home: Path, workspace: Path, binding: dict, *, execution: dict) -> dict:

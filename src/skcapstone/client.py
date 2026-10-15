@@ -75,8 +75,7 @@ try:
     import httpx
 except ImportError as _exc:
     raise ImportError(
-        "httpx is required for SKCapstoneClient.  "
-        "Install with: pip install 'skcapstone[client]'"
+        "httpx is required for SKCapstoneClient.  Install with: pip install 'skcapstone[client]'"
     ) from _exc
 
 

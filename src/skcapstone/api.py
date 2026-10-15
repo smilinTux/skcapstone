@@ -58,8 +58,7 @@ try:
     from pydantic import BaseModel, Field
 except ImportError as _exc:
     raise ImportError(
-        "FastAPI is required for the REST API module.  "
-        "Install with: pip install skcapstone[api]"
+        "FastAPI is required for the REST API module.  Install with: pip install skcapstone[api]"
     ) from _exc
 
 # ── Security schemes ─────────────────────────────────────────────────────────
@@ -533,9 +532,7 @@ def _check_bearer(
     if fingerprint is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=(
-                "CapAuth bearer token required.  " "Obtain a token with: skcapstone token issue"
-            ),
+            detail=("CapAuth bearer token required.  Obtain a token with: skcapstone token issue"),
         )
     return fingerprint
 

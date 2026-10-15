@@ -229,7 +229,7 @@ class InstallerApp:
         self._clear()
         self._make_header("Name Your Agent")
         self._make_subheader(
-            "Give your sovereign agent a name.\n" "This is just for you - pick anything you like."
+            "Give your sovereign agent a name.\nThis is just for you - pick anything you like."
         )
 
         input_frame = tk.Frame(self.root, bg=BG)

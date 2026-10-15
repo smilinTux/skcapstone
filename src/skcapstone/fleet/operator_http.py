@@ -215,7 +215,7 @@ def _operator_rules() -> dict[str, Any]:
             required_capability=SCOPE_ACT,
             minimum_mode=EnrollmentMode.VERIFIED,
             description=(
-                "Reserved for future actuation; unimplemented in P1. observe " "NEVER implies act."
+                "Reserved for future actuation; unimplemented in P1. observe NEVER implies act."
             ),
         ),
     }

@@ -229,9 +229,7 @@ class HetznerAdapter:
         )
 
         if resp.status_code >= 400:
-            raise RuntimeError(
-                f"Hetzner API {method} {endpoint}: " f"{resp.status_code} {resp.text}"
-            )
+            raise RuntimeError(f"Hetzner API {method} {endpoint}: {resp.status_code} {resp.text}")
 
         return resp.json()
 
@@ -520,9 +518,7 @@ class AWSAdapter:
         ami = self._DEFAULT_AMIS.get(self._region)
         if ami:
             return ami
-        raise RuntimeError(
-            f"No default AMI for region {self._region}. " "Pass ami_id= explicitly."
-        )
+        raise RuntimeError(f"No default AMI for region {self._region}. Pass ami_id= explicitly.")
 
     def provision(
         self,
@@ -814,7 +810,7 @@ class GCPAdapter:
             from google.cloud import compute_v1
         except ImportError:
             raise RuntimeError(
-                "GCP adapter requires google-cloud-compute: " "pip install google-cloud-compute"
+                "GCP adapter requires google-cloud-compute: pip install google-cloud-compute"
             )
         return compute_v1.InstancesClient()
 
@@ -838,7 +834,7 @@ class GCPAdapter:
             return image.self_link
         except ImportError:
             # Fallback to well-known URI pattern.
-            return f"projects/{self._IMAGE_PROJECT}/global/images/family/" f"{self._IMAGE_FAMILY}"
+            return f"projects/{self._IMAGE_PROJECT}/global/images/family/{self._IMAGE_FAMILY}"
         except Exception as exc:
             raise RuntimeError(f"Failed to resolve GCP image: {exc}")
 
@@ -862,7 +858,7 @@ class GCPAdapter:
             from google.cloud import compute_v1
         except ImportError:
             raise RuntimeError(
-                "GCP adapter requires google-cloud-compute: " "pip install google-cloud-compute"
+                "GCP adapter requires google-cloud-compute: pip install google-cloud-compute"
             )
 
         if not self._project:

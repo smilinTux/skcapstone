@@ -22,7 +22,7 @@ def _print_monitor_report(report, iteration: int = 0):
         status_color = "red"
 
     total = report.agents_healthy + report.agents_degraded
-    line = f"  {prefix}" f"[{status_color}]{report.agents_healthy}/{total} healthy[/]"
+    line = f"  {prefix}[{status_color}]{report.agents_healthy}/{total} healthy[/]"
 
     if report.restarts_triggered:
         line += f"  [yellow]restarted: {', '.join(report.restarts_triggered)}[/]"
@@ -75,7 +75,7 @@ def _print_agent_health(result: dict) -> None:
         f"  [bold]Status:[/]      {status_str}",
         f"  [bold]Deployment:[/]  {result.get('deployment_id', '?')}",
         f"  [bold]Host:[/]        {result.get('host') or '-'}",
-        f"  [bold]Last HB:[/]     " f"{(result.get('last_heartbeat') or '-')[:19]}",
+        f"  [bold]Last HB:[/]     {(result.get('last_heartbeat') or '-')[:19]}",
     ]
     if result.get("error"):
         lines.append(f"  [bold red]Error:[/]       [red]{result['error'][:60]}[/]")
@@ -251,7 +251,7 @@ def register_agents_trustee_commands(agents: click.Group) -> None:
         "--agent",
         "agent_name",
         default=None,
-        help="Focus on one agent by name or role (e.g. sentinel), " "across all deployments.",
+        help="Focus on one agent by name or role (e.g. sentinel), across all deployments.",
     )
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     def agents_health(deployment_id: Optional[str], agent_name: Optional[str], home: str):
@@ -438,8 +438,7 @@ def register_agents_trustee_commands(agents: click.Group) -> None:
                 f"\n  [red]No comms directory found for deployment '{deployment_id}'.[/]"
             )
             console.print(
-                "  [dim]Check that the deployment exists:[/] "
-                "[cyan]skcapstone agents status[/]\n"
+                "  [dim]Check that the deployment exists:[/] [cyan]skcapstone agents status[/]\n"
             )
             return
 

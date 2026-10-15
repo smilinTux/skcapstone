@@ -126,8 +126,8 @@ def render_html(result: dict[str, Any], now_iso: str) -> str:
 <h1>Atlas operator brief</h1>
 <div class="ts">tick {html.escape(now_iso)} &middot; brain route: {route}</div>
 <div class="state">{state}</div>
-<div class="ts">firing {int(counts.get('firing', len(firing)))} &middot;
- stale {int(counts.get('stale', len(stale)))}</div>
+<div class="ts">firing {int(counts.get("firing", len(firing)))} &middot;
+ stale {int(counts.get("stale", len(stale)))}</div>
 <h2>Firing</h2>{firing_table}
 <h2>Stale</h2>{stale_table}
 <h2>Dispositions</h2>{disp_table}

@@ -344,7 +344,7 @@ def broadcast_to_team(
     """
     if channel.queen and from_agent != channel.queen:
         raise PermissionError(
-            f"Only the queen agent ('{channel.queen}') may broadcast. " f"Got: '{from_agent}'"
+            f"Only the queen agent ('{channel.queen}') may broadcast. Got: '{from_agent}'"
         )
 
     # Write to broadcast audit log

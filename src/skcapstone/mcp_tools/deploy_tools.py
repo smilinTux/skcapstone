@@ -188,9 +188,7 @@ async def _handle_deploy_status(args: dict) -> list[TextContent]:
                 "secrets_backend": _active_secrets_backend(),
                 "last_deploy": _last_deploy_commit(repo_root),
                 "argocd": None,
-                "warning": (
-                    "skstacks/v2/ not found; " "set SKSTACKS_V2_ROOT or run from repo root"
-                ),
+                "warning": ("skstacks/v2/ not found; set SKSTACKS_V2_ROOT or run from repo root"),
             }
         )
 

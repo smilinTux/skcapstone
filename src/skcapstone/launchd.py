@@ -159,9 +159,9 @@ def _build_plist(defn: dict, agent: str) -> dict:
     }
 
     # Ensure PATH includes skenv and Homebrew
-    plist["EnvironmentVariables"][
-        "PATH"
-    ] = f"{skenv}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
+    plist["EnvironmentVariables"]["PATH"] = (
+        f"{skenv}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
+    )
 
     if defn.get("keep_alive"):
         plist["RunAtLoad"] = True

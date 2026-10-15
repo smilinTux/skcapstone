@@ -91,8 +91,6 @@ def register_service_commands(main: click.Group) -> None:
             console.print(f"  [green]All {up_count}/{total} reachable services are healthy.[/]")
         else:
             console.print(
-                f"  [green]{up_count}[/] up, "
-                f"[red]{down_count}[/] down "
-                f"out of {total} services."
+                f"  [green]{up_count}[/] up, [red]{down_count}[/] down out of {total} services."
             )
         console.print()

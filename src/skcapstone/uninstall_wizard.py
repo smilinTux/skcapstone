@@ -639,7 +639,7 @@ def run_uninstall_wizard(
     # --- Confirm ---
     if not force:
         console.print(
-            "  [bold red]Are you sure?[/]\n" "  Type [bold]DELETE[/] to confirm (all caps):"
+            "  [bold red]Are you sure?[/]\n  Type [bold]DELETE[/] to confirm (all caps):"
         )
         confirmation = click.prompt("  ", default="", show_default=False)
         if confirmation != "DELETE":

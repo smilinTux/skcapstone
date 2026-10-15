@@ -55,8 +55,7 @@ def register_search_commands(main: click.Group) -> None:
         multiple=True,
         type=click.Choice(_VALID_SOURCES),
         help=(
-            "Restrict search to a specific source type. "
-            "May be repeated: -t memory -t conversation"
+            "Restrict search to a specific source type. May be repeated: -t memory -t conversation"
         ),
     )
     @click.option(

@@ -27,7 +27,7 @@ TOOLS: list[Tool] = [
                 "context": {
                     "type": "string",
                     "description": (
-                        "The task description, prompt, or action context " "to search memory for"
+                        "The task description, prompt, or action context to search memory for"
                     ),
                 },
                 "tags": {

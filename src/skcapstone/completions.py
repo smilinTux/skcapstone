@@ -84,9 +84,7 @@ def generate_script(shell: str) -> str:
         ValueError: If the shell is not supported.
     """
     if shell not in SUPPORTED_SHELLS:
-        raise ValueError(
-            f"Unsupported shell: {shell}. " f"Supported: {', '.join(SUPPORTED_SHELLS)}"
-        )
+        raise ValueError(f"Unsupported shell: {shell}. Supported: {', '.join(SUPPORTED_SHELLS)}")
     return COMPLETION_SCRIPTS[shell]
 
 

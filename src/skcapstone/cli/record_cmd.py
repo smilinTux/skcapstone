@@ -64,7 +64,7 @@ def register_record_commands(main: click.Group) -> None:
             sys.exit(1)
 
         console.print(
-            "  [dim]Auto-session saved to[/] " f"[cyan]{home_path / 'sessions'}[/]  (last 5 kept)"
+            f"  [dim]Auto-session saved to[/] [cyan]{home_path / 'sessions'}[/]  (last 5 kept)"
         )
         console.print("  [dim]Starting MCP server … (Ctrl-C to stop)[/]\n")
 
@@ -215,10 +215,10 @@ def register_record_commands(main: click.Group) -> None:
         files = list_sessions(home_path)
 
         if not files:
-            console.print("\n  [dim]No sessions found in " f"{home_path / 'sessions'}[/]\n")
+            console.print(f"\n  [dim]No sessions found in {home_path / 'sessions'}[/]\n")
             return
 
-        console.print(f"\n  [bold]{len(files)}[/] session(s) found " f"(showing up to {limit}):\n")
+        console.print(f"\n  [bold]{len(files)}[/] session(s) found (showing up to {limit}):\n")
         for f in files[:limit]:
             try:
                 entries = load_session(f)
@@ -233,7 +233,7 @@ def register_record_commands(main: click.Group) -> None:
 
             size_kb = f.stat().st_size / 1024
             console.print(
-                f"  [cyan]{f.name}[/]  " f"[dim]{count} calls  {size_kb:.1f}KB  {tools_str}[/]"
+                f"  [cyan]{f.name}[/]  [dim]{count} calls  {size_kb:.1f}KB  {tools_str}[/]"
             )
             console.print(f"    [dim]{f}[/]")
         console.print()

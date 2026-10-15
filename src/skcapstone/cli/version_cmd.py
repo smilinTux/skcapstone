@@ -120,7 +120,7 @@ def register_version_commands(main: click.Group) -> None:
 
         console.print()
         console.print(f"  [bold cyan]skcapstone[/] [bold]{__version__}[/]")
-        console.print(f"  [dim]Python {info['python_version']}  ·  " f"{info['platform']}[/]")
+        console.print(f"  [dim]Python {info['python_version']}  ·  {info['platform']}[/]")
         console.print()
 
         # ── Optional dependencies ──────────────────────────────────────────
@@ -146,7 +146,7 @@ def register_version_commands(main: click.Group) -> None:
                 f"[dim]{ollama['host']}  {model_count} model(s): {model_str}[/]"
             )
         else:
-            console.print(f"  [bold]Ollama:[/] [red]not running[/]  " f"[dim]{ollama['host']}[/]")
+            console.print(f"  [bold]Ollama:[/] [red]not running[/]  [dim]{ollama['host']}[/]")
 
         # ── Daemon PID ─────────────────────────────────────────────────────
         pid = info["daemon_pid"]

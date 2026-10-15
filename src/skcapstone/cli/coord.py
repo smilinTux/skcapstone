@@ -2150,8 +2150,7 @@ def register_coord_commands(main: click.Group) -> None:
                     action="link",
                     link_key="verdict_superseded",
                     link_value=(
-                        f"SUPERSEDED prior_event={expected_outcome_event} "
-                        f"reason={reason.strip()}"
+                        f"SUPERSEDED prior_event={expected_outcome_event} reason={reason.strip()}"
                     ),
                     writer=agent,
                 )

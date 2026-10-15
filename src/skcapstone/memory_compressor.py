@@ -133,7 +133,7 @@ class MemoryCompressor:
 
         if not eligible:
             logger.info(
-                "Found %d candidate memories but no tag group reached the " "minimum size of %d.",
+                "Found %d candidate memories but no tag group reached the minimum size of %d.",
                 len(candidates),
                 self.min_group_size,
             )

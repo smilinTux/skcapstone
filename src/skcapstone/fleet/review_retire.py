@@ -1143,7 +1143,9 @@ def retire_prestart(
                 else (
                     "expired-unclaimed"
                     if unclaimed
-                    else "archived-orphaned-claim" if archived_orphaned else "released-claim"
+                    else "archived-orphaned-claim"
+                    if archived_orphaned
+                    else "released-claim"
                 )
             )
         )
@@ -1450,7 +1452,9 @@ def retire(
         exit_source = (
             "production-review-exit"
             if production_exit is not None
-            else "worker-exit" if exits else "systemd-terminal"
+            else "worker-exit"
+            if exits
+            else "systemd-terminal"
         )
         if exits:
             exit_evidence = production_exit if production_exit is not None else exits[0][0]

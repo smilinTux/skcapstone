@@ -39,7 +39,7 @@ TOOLS: list[Tool] = [
                 "scope": {
                     "type": "string",
                     "description": (
-                        "Secret scope / service group, e.g. 'skfence'. " "Defaults to 'default'."
+                        "Secret scope / service group, e.g. 'skfence'. Defaults to 'default'."
                     ),
                 },
             },
@@ -143,9 +143,7 @@ def _load_factory():
     """
     v2_path = os.environ.get("SKSTACKS_V2_PATH", "").strip()
     if not v2_path:
-        raise RuntimeError(
-            "SKSTACKS_V2_PATH is not set. " "Point it to the skstacks/v2/ directory."
-        )
+        raise RuntimeError("SKSTACKS_V2_PATH is not set. Point it to the skstacks/v2/ directory.")
 
     import importlib
     from pathlib import Path

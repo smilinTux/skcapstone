@@ -165,8 +165,7 @@ def _show_manual_install(check: ToolCheck) -> None:
 
     if check.download_url:
         lines.append(
-            f"[bold]Or download from:[/]\n"
-            f"  [link={check.download_url}]{check.download_url}[/]\n"
+            f"[bold]Or download from:[/]\n  [link={check.download_url}]{check.download_url}[/]\n"
         )
 
     lines.append(
@@ -644,7 +643,7 @@ def _path_update_existing(
     console.print()
     console.print(
         Panel(
-            f"[bold]Updating your sovereign node[/]\n\n" f"Home: [cyan]{home_path}[/]",
+            f"[bold]Updating your sovereign node[/]\n\nHome: [cyan]{home_path}[/]",
             title="Update",
             border_style="cyan",
         )

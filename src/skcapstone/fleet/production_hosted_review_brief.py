@@ -108,8 +108,8 @@ def production_hosted_review_brief(
 CARD {card_id}; OWNER {owner}; CLAIM {claim_revision}
 WORKSPACE {workspace}
 REPOSITORY {repository}
-SOURCE {bindings['link_source_card']}; HEAD {source_head}; TREE {tree}
-PRODUCER {bindings['producer_identity']}; CANDIDATE SHA256 {bindings['candidate_evidence_sha256']}
+SOURCE {bindings["link_source_card"]}; HEAD {source_head}; TREE {tree}
+PRODUCER {bindings["producer_identity"]}; CANDIDATE SHA256 {bindings["candidate_evidence_sha256"]}
 
 You are the reviewer. Read workspace AGENTS.md and the exact card TDD below.
 Verify the folded owner, claim, dependencies and exact source before review.
@@ -155,9 +155,9 @@ Stop after handoff or any rejection; there is no unguarded fallback. Controller
 verification and native completion gates remain required. Evidence links precede
 the verdict here; no blanket rule claims that every later link invalidates it.
 
-TITLE: {core.get('title', '')}
+TITLE: {core.get("title", "")}
 TASK TDD:
-{core.get('description', '')}
+{core.get("description", "")}
 ACCEPTANCE CRITERIA:
 {criteria}
 """

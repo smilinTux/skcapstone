@@ -813,7 +813,7 @@ class DreamingEngine:
         force = similarity_ratio > (1.0 - self._config.diversity_min_unique_ratio)
         if force:
             logger.info(
-                "Diversity check: forcing exploration (similarity=%.0f%%, " "shared keywords: %s)",
+                "Diversity check: forcing exploration (similarity=%.0f%%, shared keywords: %s)",
                 similarity_ratio * 100,
                 ", ".join(sorted(all_top_intersection)[:5]),
             )

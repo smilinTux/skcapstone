@@ -355,7 +355,6 @@ def import_seed_to_memory(seed_path: Path, home: Path) -> Optional[str]:
     # Also use the existing pull_seeds machinery for identity/trust/FEBs
     try:
         if "identity" in data or "trust" in data or "febs" in data:
-
             # pull_seeds reads from inbox, but the file is already there -
             # we just log what it would pick up
             if "identity" in data:

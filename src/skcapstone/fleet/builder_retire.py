@@ -425,19 +425,25 @@ def node_check(payload, *, paths=None, home=None, locked=False):
             else status["owner"]
         )
         workspace = paths.root / "workspaces" / owner
-        inspection = source_bundle._INSPECT_SETUP + """
+        inspection = (
+            source_bundle._INSPECT_SETUP
+            + """
 git('merge-base','--is-ancestor',base,'HEAD')
 print(json.dumps({'head':git('rev-parse','HEAD^{commit}').decode().strip(),
                   'tree':git('rev-parse','HEAD^{tree}').decode().strip()}))
 """
+        )
         if preclaim:
-            inspection = source_bundle._INSPECT_SETUP + """
+            inspection = (
+                source_bundle._INSPECT_SETUP
+                + """
 assert git('rev-parse','HEAD^{commit}').decode().strip()==base
 assert git('remote','get-url','origin').decode().strip()==ref
 assert not git('status','--porcelain','--untracked-files=all')
 assert not git('ls-files','--others','--ignored','--exclude-standard')
 print(json.dumps({'head':base,'tree':git('rev-parse','HEAD^{tree}').decode().strip()}))
 """
+            )
         workspace_absent = preclaim and not workspace.exists() and not workspace.is_symlink()
         if workspace_absent:
             source = {"workspace": "absent"}

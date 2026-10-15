@@ -340,9 +340,11 @@ def read_rapl_uj(domain: str = RAPL_DEFAULT_DOMAIN, runner=None) -> int | None:
     """Read one RAPL domain's cumulative energy counter, or None."""
     path = f"{RAPL_ROOT}/{domain}/energy_uj"
     run = runner or (
-        lambda: subprocess.run(
-            ["sudo", "-n", "cat", path], capture_output=True, text=True, timeout=5
-        ).stdout
+        lambda: (
+            subprocess.run(
+                ["sudo", "-n", "cat", path], capture_output=True, text=True, timeout=5
+            ).stdout
+        )
     )
     try:
         raw = run()

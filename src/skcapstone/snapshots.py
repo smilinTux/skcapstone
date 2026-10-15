@@ -370,7 +370,7 @@ class SnapshotStore:
             lines.append("```")
             if feb.get("anchor_phrase"):
                 lines.append(
-                    f"Anchor phrase: \"{feb['anchor_phrase']}\""
+                    f'Anchor phrase: "{feb["anchor_phrase"]}"'
                     " - this is how I choose to start every session."
                 )
 

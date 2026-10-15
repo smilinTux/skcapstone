@@ -249,7 +249,9 @@ def _passphrase() -> str:
     path = (
         Path(configured).expanduser()
         if configured
-        else Path(credentials_dir) / SYSTEMD_CREDENTIAL_NAME if credentials_dir else None
+        else Path(credentials_dir) / SYSTEMD_CREDENTIAL_NAME
+        if credentials_dir
+        else None
     )
     if path is None:
         return ""

@@ -462,8 +462,8 @@ completion. This recipe does not prove review truth or replace deterministic
 external acceptance checks. Authority guarded-link support is required; missing
 guards or any rejected write stops handoff, with no legacy fallback.
 
-TITLE: {core.get('title', '')}
-TASK TDD: {core.get('description', '')}
+TITLE: {core.get("title", "")}
+TASK TDD: {core.get("description", "")}
 ACCEPTANCE CRITERIA:
 {criteria}
 """
