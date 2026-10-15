@@ -259,6 +259,83 @@ def test_acceptance_refresh_refuses_changed_review_evidence(stopped_pair):
         )
 
 
+def test_acceptance_source_recipe_link_preserves_sealed_product_revision(stopped_pair):
+    home, policy, review, _, _, store = stopped_pair
+    context = acceptance.collect(
+        home,
+        policy,
+        review["card"],
+        review["claim"],
+        process_check=lambda card: {"sessions": [], "units": []},
+    )
+    source_item = context["source"]
+    store.append_event(
+        source_item["card"],
+        "link",
+        "lumina-nor",
+        link_key="test_profile_recipe",
+        link_value='{"pytest":{"tests/test_api.py":1}}',
+    )
+    store.append_event(
+        source_item["card"],
+        "link",
+        "lumina-nor",
+        link_key="test_profile_recipe",
+        link_value='{"pytest":{"tests/test_api.py":1},"lint":[]}',
+    )
+    from skcapstone.fleet.source_custody import candidate_matches
+
+    row = store.fold(source_item["card"])
+    assert candidate_matches(store, row, source_item)
+
+    assert acceptance._source_test_recipe_revision_matches(
+        home, source_item, source_item["live_revision"]
+    )
+
+
+@pytest.mark.parametrize("change", ["writer", "repository", "claim", "outcome"])
+def test_acceptance_recipe_revision_refuses_any_other_source_change(stopped_pair, change):
+    home, policy, review, _, _, store = stopped_pair
+    context = acceptance.collect(
+        home,
+        policy,
+        review["card"],
+        review["claim"],
+        process_check=lambda card: {"sessions": [], "units": []},
+    )
+    source_item = context["source"]
+    writer = "someone-else" if change == "writer" else "lumina-nor"
+    store.append_event(
+        source_item["card"],
+        "link",
+        writer,
+        link_key="test_profile_recipe",
+        link_value='{"pytest":{"tests/test_api.py":1}}',
+    )
+    if change == "repository":
+        store.append_event(
+            source_item["card"],
+            "link",
+            "operator",
+            link_key="repository",
+            link_value="https://other/repo",
+        )
+    elif change == "claim":
+        store.append_event(
+            source_item["card"],
+            "claim",
+            "other-owner",
+            owner="other-owner",
+            claim_revision="d" * 32,
+        )
+    elif change == "outcome":
+        store.append_event(source_item["card"], "verdict", source_item["owner"], verdict="FAIL")
+
+    assert not acceptance._source_test_recipe_revision_matches(
+        home, source_item, source_item["live_revision"]
+    )
+
+
 def test_collected_producer_terminal_can_enter_independent_review(stopped_pair):
     home, _, review, status_path, _, store = stopped_pair
     status = json.loads(status_path.read_text())
