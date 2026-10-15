@@ -1041,12 +1041,6 @@ def _begin(home, policy, skc, actor, card_id, core, workspace, owner, claim_revi
         ):
             return "ineligible"
     binding = spec
-    try:
-        _, _, plan_predecessor = plan.load_plan(
-            home, binding, allow_completed=True, allow_remote_host=True
-        )
-    except FileNotFoundError:
-        plan_predecessor = None
     job = {
         "schema": "skfleet.profile-requalification/v1",
         "card": card_id,
@@ -1057,10 +1051,19 @@ def _begin(home, policy, skc, actor, card_id, core, workspace, owner, claim_revi
         "profile_sha256": predecessor,
         "source_sha256": source_sha256,
         "execution_host": execution_host,
-        "plan_predecessor_sha256": plan_predecessor,
     }
     if initial_profile:
-        job.update(initial_profile=True, initial_profile_value=initial_profile)
+        try:
+            _, _, plan_predecessor = plan.load_plan(
+                home, binding, allow_completed=True, allow_remote_host=True
+            )
+        except FileNotFoundError:
+            plan_predecessor = None
+        job.update(
+            initial_profile=True,
+            initial_profile_value=initial_profile,
+            plan_predecessor_sha256=plan_predecessor,
+        )
     root = _private_root(home)
     job_id = plan.sha(json.dumps(job, sort_keys=True, separators=(",", ":")).encode())
     path = root / (job_id + ".job.json")
