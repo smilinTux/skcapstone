@@ -183,9 +183,9 @@ def _source_test_recipe_revision_matches(home, item, expected_revision):
         or row.meta.get("_claim_revision") != item["claim"]
         or row.status.value not in {"ready", "doing", "review"}
         or not isinstance(recipe, str)
-        or len(events) != 1
-        or events[0].get("writer") != "lumina-nor"
-        or events[0].get("link_value") != recipe
+        or not events
+        or any(event.get("writer") != "lumina-nor" for event in events)
+        or events[-1].get("link_value") != recipe
         or not candidate_matches(store, row, item)
     ):
         return False

@@ -276,6 +276,13 @@ def test_acceptance_source_recipe_link_preserves_sealed_product_revision(stopped
         link_key="test_profile_recipe",
         link_value='{"pytest":{"tests/test_api.py":1}}',
     )
+    store.append_event(
+        source_item["card"],
+        "link",
+        "lumina-nor",
+        link_key="test_profile_recipe",
+        link_value='{"pytest":{"tests/test_api.py":1},"lint":[]}',
+    )
     from skcapstone.fleet.source_custody import candidate_matches
 
     row = store.fold(source_item["card"])
