@@ -447,10 +447,11 @@ def test_stale_plan_appends_current_requalification_successor(tmp_path, monkeypa
 def test_initial_profile_retargets_unlaunched_remote_plan_to_authority(tmp_path, monkeypatch):
     binding = {"source_card": "1234abcd"}
     value = {
-        "qualified_by": "lumina-nor",
+        "qualified_by": "niobe",
         "qualification_sha256": "e" * 64,
         "recipe": {"pytest_all": True},
     }
+    previous_value = {**value, "qualified_by": "lumina-nor"}
     job = {
         "card": "1234abcd",
         "owner": "producer",
@@ -468,7 +469,7 @@ def test_initial_profile_retargets_unlaunched_remote_plan_to_authority(tmp_path,
     )
     current_plan = {
         "initial_profile_qualification": True,
-        "profile": value,
+        "profile": previous_value,
         "host": "chiap03",
     }
     monkeypatch.setattr(
@@ -499,6 +500,159 @@ def test_initial_profile_retargets_unlaunched_remote_plan_to_authority(tmp_path,
             "initial_profile_qualification": True,
         }
     ]
+
+
+def test_initial_profile_reseals_completed_plan_when_recipe_checks_change(tmp_path, monkeypatch):
+    binding = {"source_card": "1234abcd"}
+    value = {
+        "qualified_by": "niobe",
+        "qualification_sha256": "e" * 64,
+        "recipe": {"vitest": {"src/pages/matterCockpit.test.tsx": 1}},
+    }
+    job = {
+        "card": "1234abcd",
+        "owner": "producer",
+        "claim_revision": "claim-1",
+        "workspace": str(tmp_path),
+        "binding": binding,
+        "execution_host": "chiap08",
+        "initial_profile": True,
+        "initial_profile_value": value,
+    }
+    card = SimpleNamespace(
+        status=SimpleNamespace(value="doing"),
+        owner="producer",
+        meta={"_claim_revision": "claim-1"},
+    )
+    current_plan = {
+        "initial_profile_qualification": True,
+        "profile": value,
+        "checks": [{"id": "vitest", "argv": ["vitest", "run"]}],
+        "host": "chiap08",
+    }
+    run = tmp_path / "run"
+    run.mkdir()
+    for name in ("launch.json", "receipt.json", "terminal.json"):
+        (run / name).write_text("{}")
+    monkeypatch.setattr(
+        refresh, "CardStore", lambda _home: SimpleNamespace(fold=lambda _card_id: card)
+    )
+    monkeypatch.setattr(plan, "source_state", lambda *_args: None)
+    monkeypatch.setattr(
+        plan,
+        "load_plan",
+        lambda *_args, **_kwargs: (current_plan, tmp_path / "plan.json", "a" * 64),
+    )
+    monkeypatch.setattr(plan, "run_directory", lambda *_args: run)
+    monkeypatch.setattr(plan, "_completed_test_attempt", lambda *_args: True)
+    monkeypatch.setattr(
+        profile,
+        "recipe_checks",
+        lambda _recipe: [
+            {"id": "vitest", "argv": ["vitest", "run", "src/pages/matterCockpit.test.tsx"]}
+        ],
+    )
+    sealed = []
+    monkeypatch.setattr(plan, "seal_plan", lambda *args, **kwargs: sealed.append(kwargs))
+    monkeypatch.setattr(tests, "run_or_read_tests", lambda *_args: None)
+
+    assert refresh._advance(tmp_path, {}, "/skcapstone", "niobe", None, job) == "pending"
+    assert sealed == [
+        {
+            "profile": value,
+            "predecessor_sha256": "a" * 64,
+            "execution_host": "chiap08",
+            "initial_profile_qualification": True,
+            "acceptance_requalification": True,
+        }
+    ]
+
+
+def test_failed_initial_job_retries_only_for_a_new_qualification_harness(tmp_path, monkeypatch):
+    root = tmp_path / "fleet"
+    root.mkdir(mode=0o700)
+    card = SimpleNamespace(
+        status=SimpleNamespace(value="doing"),
+        owner="pi-glm-chiap08-1234abcd",
+        meta={"_claim_revision": "claim-1"},
+    )
+    monkeypatch.setattr(
+        refresh, "CardStore", lambda _home: SimpleNamespace(fold=lambda _card_id: card)
+    )
+    monkeypatch.setattr(refresh, "card_revision", lambda _card: "source-revision")
+    monkeypatch.setattr(
+        refresh,
+        "_git",
+        lambda _workspace, *args: (
+            "head" if args[0] == "rev-parse" and args[-1] == "HEAD" else "tree"
+        ),
+    )
+    monkeypatch.setattr(plan, "source_state", lambda *_args: None)
+    monkeypatch.setattr(plan, "workspace_source_fingerprint", lambda *_args: "s" * 64)
+    monkeypatch.setattr(
+        profile,
+        "contract",
+        lambda _core: {
+            "criteria_sha256": "c" * 64,
+            "repository": "https://github.com/example/repo.git",
+        },
+    )
+    monkeypatch.setattr(
+        profile, "read_profile", lambda *_args: (_ for _ in ()).throw(FileNotFoundError())
+    )
+    monkeypatch.setattr(profile, "initial_recipe", lambda *_args: ({"pytest_all": True}, None))
+    monkeypatch.setattr(
+        profile,
+        "profile_value",
+        lambda *_args, **_kwargs: {
+            "card": "1234abcd",
+            "qualified_by": "niobe",
+            "recipe": {"pytest_all": True},
+            "qualification_sha256": "q" * 64,
+        },
+    )
+    monkeypatch.setattr(refresh, "_execution_host", lambda *_args: "chiap01")
+    monkeypatch.setattr(refresh, "_remote_source_reconstruction_failed", lambda *_args: False)
+    monkeypatch.setattr(refresh, "_advance", lambda *_args: "pending")
+    harness = ["a" * 64]
+    monkeypatch.setattr(refresh, "_qualification_harness_sha256", lambda: harness[0])
+    args = (
+        tmp_path,
+        {"authority_host": "chiap08"},
+        "/test/skcapstone",
+        "niobe",
+        "1234abcd",
+        {"id": "1234abcd"},
+        tmp_path,
+        "pi-glm-chiap08-1234abcd",
+        "claim-1",
+    )
+
+    assert refresh._begin(*args) == "pending"
+    first = next((tmp_path / "fleet/profile-requalifications").glob("*.job.json"))
+    plan.write_once(
+        first.with_name(first.stem + ".failed.json"),
+        {"schema": "skfleet.profile-requalification-failure/v1", "reason": "old harness"},
+    )
+    harness[0] = "b" * 64
+    assert refresh._begin(*args) == "pending"
+    jobs = list((tmp_path / "fleet/profile-requalifications").glob("*.job.json"))
+    assert len(jobs) == 2
+    assert {json.loads(path.read_text())["qualification_harness_sha256"] for path in jobs} == {
+        "a" * 64,
+        "b" * 64,
+    }
+    latest = next(
+        path
+        for path in jobs
+        if json.loads(path.read_text())["qualification_harness_sha256"] == "b" * 64
+    )
+    plan.write_once(
+        latest.with_name(latest.stem + ".failed.json"),
+        {"schema": "skfleet.profile-requalification-failure/v1", "reason": "same harness failed"},
+    )
+    assert refresh._begin(*args) == "failed:same harness failed"
+    assert len(list((tmp_path / "fleet/profile-requalifications").glob("*.job.json"))) == 2
 
 
 def test_initial_profile_does_not_retarget_a_launched_plan(tmp_path, monkeypatch):

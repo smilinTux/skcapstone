@@ -1,0 +1,1 @@
+- Run only the Vitest files named by a qualified profile and reseal failed initial qualifications when the deployed harness changes.

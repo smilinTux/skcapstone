@@ -78,6 +78,7 @@ def checks(recipe: dict) -> list[dict]:
                 "1",
                 "--reporter=junit",
                 "--outputFile=/output/vitest.xml",
+                *tests,
             ],
         },
         {"id": "typecheck", "argv": [str(NODE), base + "typescript/bin/tsc", "-b"]},

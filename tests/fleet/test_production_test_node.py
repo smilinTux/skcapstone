@@ -33,6 +33,7 @@ def test_fixed_node_commands_and_exact_membership():
     assert [c["id"] for c in checks] == ["vitest", "typecheck", "lint"]
     assert all(c["argv"][0] == str(node.NODE) for c in checks)
     assert "--no-cache" in checks[0]["argv"]
+    assert checks[0]["argv"][-2:] == list(value["recipe"]["vitest"])
     assert plan.junit_counts(ET.tostring(root), value)["total"] == 2
 
 

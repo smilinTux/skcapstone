@@ -135,6 +135,27 @@ def _execution_host(
     return production_builder.node_binding(paths, selected.name, policy)["host"]
 
 
+def _qualification_harness_sha256() -> str:
+    """Bind initial job generations to the exact qualification implementation."""
+    modules = (Path(__file__), Path(plan.__file__), Path(profile.__file__), Path(node.__file__))
+    manifest = [(path.name, plan.sha(path.read_bytes())) for path in modules]
+    return plan.sha(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode())
+
+
+def _initial_profile_matches(existing: dict | None, requested: dict | None) -> bool:
+    """Ignore only the operator label; preserve every qualified profile input."""
+    if (
+        not isinstance(existing, dict)
+        or not isinstance(requested, dict)
+        or not isinstance(existing.get("qualified_by"), str)
+        or not isinstance(requested.get("qualified_by"), str)
+    ):
+        return False
+    return {key: value for key, value in existing.items() if key != "qualified_by"} == {
+        key: value for key, value in requested.items() if key != "qualified_by"
+    }
+
+
 def retains_pending_claim(home: Path, card_id: str, owner: str, claim_revision: str) -> bool:
     """Preserve only the exact card claim bound to an unfinished refresh job."""
     root = Path(home) / "fleet/profile-requalifications"
@@ -978,13 +999,26 @@ def _begin(home, policy, skc, actor, card_id, core, workspace, owner, claim_revi
         "profile_sha256": predecessor,
         "source_sha256": source_sha256,
         "execution_host": execution_host,
+        "qualification_harness_sha256": _qualification_harness_sha256(),
     }
     if initial_profile:
         job.update(initial_profile=True, initial_profile_value=initial_profile)
     root = _private_root(home)
     job_id = plan.sha(json.dumps(job, sort_keys=True, separators=(",", ":")).encode())
     path = root / (job_id + ".job.json")
-    plan.write_once(path, job)
+    try:
+        plan.write_once(path, job)
+    except FileExistsError:
+        if json.loads(plan.read_private(path)) != job:
+            raise plan.TestEvidenceError("qualification job identity conflict")
+        failed = path.with_name(path.stem + ".failed.json")
+        done = path.with_name(path.stem + ".done.json")
+        if failed.exists():
+            reason = json.loads(plan.read_private(failed)).get("reason", "previous attempt failed")
+            return "failed:" + str(reason)[:160]
+        if done.exists():
+            return "qualified"
+        return "pending"
     return _advance(home, policy, skc, actor, path, job)
 
 
@@ -1021,17 +1055,36 @@ def _advance(home, policy, skc, actor, path, job):
             home, job["binding"], allow_completed=True, allow_remote_host=True
         )
         if initial_profile:
-            if (
-                current_plan.get("initial_profile_qualification") is not True
-                or current_plan.get("profile") != profile_value
+            if current_plan.get(
+                "initial_profile_qualification"
+            ) is not True or not _initial_profile_matches(
+                current_plan.get("profile"), profile_value
             ):
                 raise plan.TestEvidenceError("another test plan owns this source revision")
-            if (
+            run = plan.run_directory(home, plan_sha)
+            launched = (run / "launch.json").exists()
+            completed = plan._completed_test_attempt(home, plan_sha)
+            host_changed = (
                 isinstance(job.get("execution_host"), str)
                 and current_plan.get("host") != job["execution_host"]
-            ):
-                if (plan.run_directory(home, plan_sha) / "launch.json").exists():
-                    raise plan.TestEvidenceError("qualification plan host changed after launch")
+            )
+            checks_changed = current_plan.get("checks") != profile.recipe_checks(
+                profile_value["recipe"]
+            )
+            profile_changed = current_plan.get("profile") != profile_value
+            if host_changed and launched:
+                raise plan.TestEvidenceError("qualification plan host changed after launch")
+            if launched and not completed and (checks_changed or profile_changed):
+                raise plan.TestEvidenceError("qualification plan changed after launch")
+            if host_changed or checks_changed or profile_changed:
+                successor = {
+                    "profile": profile_value,
+                    "predecessor_sha256": plan_sha,
+                    "execution_host": job["execution_host"],
+                    "initial_profile_qualification": True,
+                }
+                if completed:
+                    successor["acceptance_requalification"] = True
                 plan.seal_plan(
                     home,
                     job["binding"],
@@ -1039,10 +1092,7 @@ def _advance(home, policy, skc, actor, path, job):
                     policy,
                     profile_value["qualified_by"],
                     profile_value["qualification_sha256"],
-                    profile=profile_value,
-                    predecessor_sha256=plan_sha,
-                    execution_host=job["execution_host"],
-                    initial_profile_qualification=True,
+                    **successor,
                 )
         elif (
             current_plan.get("profile_requalification") is not True
