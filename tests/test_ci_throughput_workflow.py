@@ -65,7 +65,11 @@ def test_workflow_preserves_required_checks_and_coverage() -> None:
     unit = data["jobs"]["unit"]
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
+    # Push / schedule / workflow_call keep the 2-version matrix job; the two
+    # pull_request required checks are separate jobs with the literal names.
     assert unit["name"] == "unit tests (py${{ matrix.python-version }})"
+    assert data["jobs"]["unit-py311"]["name"] == "unit tests (py3.11)"
+    assert data["jobs"]["unit-py312"]["name"] == "unit tests (py3.12)"
     assert '["3.11","3.12"]' in workflow
     # The push matrix was deliberately narrowed to match the PR matrix on
     # 2026-09-21. 3.10 cannot install at all (the `all` extra needs
@@ -77,6 +81,7 @@ def test_workflow_preserves_required_checks_and_coverage() -> None:
     assert '["3.10","3.11","3.12","3.13","3.14"]' not in workflow
     assert "github.event_name != 'pull_request'" in workflow
     assert "matrix.python-version == '3.12'" in workflow
+    assert "scripts/ci/run-python311-compat.sh" in workflow
     assert "run-python311-compat.sh" in workflow
     # The install/verify steps live in the shared composite action so the
     # sharded py3.12 jobs and the py3.11 / push jobs cannot drift.
@@ -85,7 +90,6 @@ def test_workflow_preserves_required_checks_and_coverage() -> None:
     assert "uses: ./.github/workflows/pytest.yml" in (
         ROOT / ".github" / "workflows" / "publish.yml"
     ).read_text(encoding="utf-8")
-    assert "cache-dependency-path: pyproject.toml" in workflow
     # push joined pull_request on 2026-09-21. merge_group stays excluded:
     # a merge-queue entry cancelled mid-run needs GitHub's own queue
     # handling. With push excluded, GitHub held one pending run per group
@@ -107,19 +111,34 @@ def test_workflow_preserves_required_checks_and_coverage() -> None:
 
 
 def test_py312_pull_request_suite_is_sharded_behind_the_required_check() -> None:
-    """`unit tests (py3.12)` stays the required name and aggregates 4 shards."""
+    """`unit tests (py3.12)` stays the required name and aggregates the shards."""
     data = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     shard = data["jobs"]["shard"]
-    unit = data["jobs"]["unit"]
+    agg = data["jobs"]["unit-py312"]
 
-    assert shard["strategy"]["matrix"]["shard"] == [1, 2, 3, 4]
-    assert shard["name"] != unit["name"]
-    assert "shard" in unit["needs"]
+    count = len(shard["strategy"]["matrix"]["shard"])
+    assert shard["strategy"]["matrix"]["shard"] == list(range(1, count + 1))
+    assert count >= 4
+    assert shard["name"] != agg["name"]
+    assert f"/{count} (py3.12)" in shard["name"]
+    assert "shard" in agg["needs"]
     assert not shard.get("continue-on-error")
     run = next(s["run"] for s in shard["steps"] if s.get("name") == "Run unit shard")
-    assert "--shard ${{ matrix.shard }}/4" in run
+    assert f"--shard ${{{{ matrix.shard }}}}/{count}" in run
     assert "not integration and not e2e" in run
     assert "|| true" not in run
-    final = unit["steps"][-1]
+    final = agg["steps"][-1]
     assert final["name"] == "Require every py3.12 shard to pass"
     assert "needs.shard.result" in yaml.dump(final)
+
+
+def test_py311_required_check_does_not_wait_for_the_shards() -> None:
+    """py3.11 runs in parallel with the shards: it may need only `classify`."""
+    data = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    job = data["jobs"]["unit-py311"]
+    needs = [job["needs"]] if isinstance(job["needs"], str) else job["needs"]
+    assert needs == ["classify"]
+    assert any("run-python311-compat.sh" in (s.get("run") or "") for s in job["steps"])
+    # Exactly one job per event carries each required name.
+    assert "pull_request" in job["if"]
+    assert "!= 'pull_request'" in data["jobs"]["unit"]["if"]

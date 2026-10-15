@@ -1,0 +1,1 @@
+Cut pull request CI wall time: the `unit tests (py3.11)` required check now runs in parallel with the py3.12 shards instead of after them, the py3.12 suite is split over 6 shards with refreshed timing weights and longest-file-first scheduling, and the test environment installs dependencies with uv. No test is dropped or skipped, and both required check names are unchanged.

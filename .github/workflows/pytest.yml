@@ -131,11 +131,11 @@ jobs:
 
   # Sharded py3.12 suite (pull_request / merge_group only). A GitHub-hosted
   # runner has 2 vCPUs, so xdist alone only gets ~2x; the suite is also split
-  # across 4 runners by scripts/ci/pytest_shard.py. The required check
-  # "unit tests (py3.12)" is the `unit` job below, which aggregates these
+  # across 6 runners by scripts/ci/pytest_shard.py. The required check
+  # "unit tests (py3.12)" is the `unit-py312` job below, which aggregates these
   # shards, so branch protection is unchanged.
   shard:
-    name: unit shard ${{ matrix.shard }}/4 (py3.12)
+    name: unit shard ${{ matrix.shard }}/6 (py3.12)
     needs: classify
     if: >-
       needs.classify.outputs.docs-only != 'true' &&
@@ -145,7 +145,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -154,8 +154,6 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
       - name: Provision test environment
         uses: ./.github/actions/test-env
       - name: Run unit shard
@@ -169,7 +167,7 @@ jobs:
           # files (pytest_shard.py partitions by file, balanced by test count),
           # then xdist inside the shard with --dist loadfile.
           timeout --kill-after=10s 25m python -m pytest tests/ \
-            -p pytest_shard --shard ${{ matrix.shard }}/4 \
+            -p pytest_shard --shard ${{ matrix.shard }}/6 \
             -n auto --dist loadfile \
             --strict-markers \
             -m "not integration and not e2e" \
@@ -197,30 +195,152 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # ---- Pull request / merge_group required checks -------------------------
+  # Two jobs carry the required names "unit tests (py3.11)" and
+  # "unit tests (py3.12)" on PRs. They are separate jobs (not one matrix) so
+  # that py3.11 needs only `classify` and runs in parallel with the shards,
+  # while py3.12 aggregates them. The push / schedule / workflow_call matrix job
+  # `unit` below is skipped on PRs, and a skipped matrix job keeps its literal
+  # unexpanded name, so exactly one job carries each required name per event.
+
+  unit-py311:
+    name: unit tests (py3.11)
+    needs: classify
+    if: >-
+      ${{ !cancelled() && needs.classify.result == 'success' &&
+      (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Record documentation-only decision
+        if: needs.classify.outputs.docs-only == 'true'
+        run: |
+          echo "Documentation-only classification verified by scripts/ci/classify-test-impact.sh."
+          echo "Python 3.11 unit execution intentionally omitted." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        if: needs.classify.outputs.docs-only != 'true'
+        with:
+          python-version: "3.11"
+      - name: Provision test environment
+        if: needs.classify.outputs.docs-only != 'true'
+        uses: ./.github/actions/test-env
+      - name: Build and run Python 3.11 compatibility lane
+        if: needs.classify.outputs.docs-only != 'true'
+        env:
+          BASE_SHA: ${{ needs.classify.outputs.base-sha }}
+          PYTEST_ADDOPTS: --durations=40 -o faulthandler_timeout=60
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set -o pipefail
+          timeout --kill-after=10s 40m scripts/ci/run-python311-compat.sh "$BASE_SHA" "$GITHUB_SHA" \
+            > pytest-ci.log 2>&1
+      - name: Preserve test diagnostics even when pytest times out
+        if: always() && needs.classify.outputs.docs-only != 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pytest-diagnostics-py3.11
+          path: |
+            pytest-ci.log
+            sandbox-ci.log
+          if-no-files-found: warn
+          retention-days: 7
+
+  unit-py312:
+    name: unit tests (py3.12)
+    needs: [classify, shard]
+    # `shard` is skipped for docs-only PRs, which would skip this job with it;
+    # !cancelled() keeps it running. This is the shard AGGREGATOR: it installs
+    # nothing but coverage, merges coverage and logs, and fails unless every
+    # shard passed.
+    if: >-
+      ${{ !cancelled() && needs.classify.result == 'success' &&
+      (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Record documentation-only decision
+        if: needs.classify.outputs.docs-only == 'true'
+        run: |
+          echo "Documentation-only classification verified by scripts/ci/classify-test-impact.sh."
+          echo "Python 3.12 unit execution intentionally omitted." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        if: needs.classify.outputs.docs-only != 'true'
+        with:
+          python-version: "3.12"
+      - name: Collect shard results, logs and coverage
+        if: always() && !cancelled() && needs.classify.outputs.docs-only != 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: unit-shard-*
+          path: shard-results
+          merge-multiple: true
+      - name: Merge shard coverage and logs
+        if: always() && !cancelled() && needs.classify.outputs.docs-only != 'true'
+        run: |
+          shopt -s nullglob
+          logs=(shard-results/pytest-ci-shard*.log)
+          : > pytest-ci.log
+          if [ "${#logs[@]}" -gt 0 ]; then
+            cat "${logs[@]}" >> pytest-ci.log
+          fi
+          data=(shard-results/coverage-shard*.dat)
+          if [ "${#data[@]}" -gt 0 ]; then
+            python -m pip install coverage
+            python -m coverage combine --keep "${data[@]}"
+            python -m coverage xml -o coverage.xml
+            python -m coverage report --skip-covered >> pytest-ci.log
+          fi
+      - name: Preserve test diagnostics even when pytest times out
+        if: always() && needs.classify.outputs.docs-only != 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pytest-diagnostics-py3.12
+          path: |
+            pytest-ci.log
+            sandbox-ci.log
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload coverage
+        # Coverage is optional; action bootstrap TLS failures occur before
+        # its fail_ci_if_error setting can handle an upload error.
+        continue-on-error: true
+        if: always() && !cancelled() && needs.classify.outputs.docs-only != 'true'
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
+      - name: Require every py3.12 shard to pass
+        # Last on purpose: logs, coverage and the diagnostics artifact are
+        # preserved first. A skipped shard is only acceptable for a
+        # documentation-only change, in which case this step never runs.
+        if: always() && !cancelled() && needs.classify.outputs.docs-only != 'true'
+        env:
+          SHARD_RESULT: ${{ needs.shard.result }}
+        run: |
+          echo "shard result: $SHARD_RESULT"
+          [ "$SHARD_RESULT" = success ]
+
+  # Push, schedule and reusable workflow_call (publish gate): each matrix
+  # version runs the whole suite in one job, with xdist only.
   unit:
     name: unit tests (py${{ matrix.python-version }})
-    needs: [classify, shard]
-    # `shard` is skipped for push, schedule, workflow_call and docs-only PRs,
-    # which would skip this job with it; !cancelled() keeps it running. On a
-    # PR / merge_group the py3.12 leg here is the shard AGGREGATOR (it installs
-    # nothing, merges coverage and logs, and fails unless every shard passed),
-    # while the py3.11 leg still runs its own compatibility lane.
-    if: ${{ !cancelled() && needs.classify.result == 'success' }}
+    needs: classify
+    if: >-
+      ${{ !cancelled() && needs.classify.result == 'success' &&
+      github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
     runs-on: ubuntu-latest
-    # No timeout meant GitHub's default of 360 minutes applied, so a hung suite
-    # would hold a required check (and this PR's merge) for six hours. Measured
-    # 2026-09-18: py3.11 completes in 153-185s and py3.12, which runs the full
-    # deterministic suite, in 268-292s. 30 minutes is roughly six times the
-    # slowest observed run, so it absorbs a cold cache or a slow runner while
-    # still failing a genuine hang in minutes rather than hours.
-    # 2026-10-09: the py3.12 suite grew to ~24 minutes (12,567 tests in
-    # 1437-1440s) and the 24m step kill failed green runs on #1041 and #1044.
-    # Step limit 40m and job limit 50m restore headroom; parallelising the
-    # suite is the real fix.
-    # 2026-10-13: the serial suite reached ~13,570 tests / 38-39 minutes. The
-    # full run now uses pytest-xdist (-n auto, --dist loadfile) on the
-    # 2 vCPUs of a runner (non-PR runs) and, on PRs, split over 4 shards. The
-    # serial 55m/65m stopgap (#1187) is replaced by 35m step / 45m job.
+    # 2026-10-13: the serial suite reached ~13,570 tests / 38-39 minutes; the
+    # full run uses pytest-xdist (-n auto, --dist loadfile) on the 2 vCPUs of a
+    # runner. 35m step / 45m job keep headroom over the slowest observed run
+    # while still failing a genuine hang in minutes rather than hours.
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -231,32 +351,13 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
-      - name: Record documentation-only decision
-        if: github.event_name == 'pull_request' && needs.classify.outputs.docs-only == 'true'
-        run: |
-          echo "Documentation-only classification verified by scripts/ci/classify-test-impact.sh."
-          echo "Python ${{ matrix.python-version }} unit execution intentionally omitted." >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        if: needs.classify.outputs.docs-only != 'true'
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: pyproject.toml
       - name: Provision test environment
-        if: >-
-          needs.classify.outputs.docs-only != 'true' &&
-          ((github.event_name != 'pull_request' && github.event_name != 'merge_group') ||
-           matrix.python-version == '3.11')
         uses: ./.github/actions/test-env
       - name: Run complete deterministic unit suite
-        # Push, schedule and reusable workflow_call: every matrix version runs
-        # the whole suite in this job (xdist only). On pull_request and
-        # merge_group the py3.12 suite runs in the `shard` jobs instead and
-        # this job aggregates them.
-        if: >-
-          needs.classify.outputs.docs-only != 'true' &&
-          github.event_name != 'pull_request' && github.event_name != 'merge_group'
-        # (py3.11 on a PR only runs its compatibility lane below)
+        if: needs.classify.outputs.docs-only != 'true'
         env:
           PYTHONUNBUFFERED: "1"
         run: |
@@ -273,48 +374,6 @@ jobs:
             --durations=40 -o faulthandler_timeout=60 \
             --cov=skcapstone --cov-report=xml --cov-report=term-missing \
             > pytest-ci.log 2>&1
-      - name: Build and run Python 3.11 compatibility lane
-        if: >-
-          needs.classify.outputs.docs-only != 'true' &&
-          (github.event_name == 'pull_request' || github.event_name == 'merge_group') &&
-          matrix.python-version == '3.11'
-        env:
-          BASE_SHA: ${{ needs.classify.outputs.base-sha }}
-          PYTEST_ADDOPTS: --durations=40 -o faulthandler_timeout=60
-          PYTHONUNBUFFERED: "1"
-        run: |
-          set -o pipefail
-          timeout --kill-after=10s 40m scripts/ci/run-python311-compat.sh "$BASE_SHA" "$GITHUB_SHA" \
-            > pytest-ci.log 2>&1
-      - name: Collect shard results, logs and coverage
-        if: >-
-          always() && !cancelled() && matrix.python-version == '3.12' &&
-          (github.event_name == 'pull_request' || github.event_name == 'merge_group') &&
-          needs.classify.outputs.docs-only != 'true'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          pattern: unit-shard-*
-          path: shard-results
-          merge-multiple: true
-      - name: Merge shard coverage and logs
-        if: >-
-          always() && !cancelled() && matrix.python-version == '3.12' &&
-          (github.event_name == 'pull_request' || github.event_name == 'merge_group') &&
-          needs.classify.outputs.docs-only != 'true'
-        run: |
-          shopt -s nullglob
-          logs=(shard-results/pytest-ci-shard*.log)
-          : > pytest-ci.log
-          if [ "${#logs[@]}" -gt 0 ]; then
-            cat "${logs[@]}" >> pytest-ci.log
-          fi
-          data=(shard-results/coverage-shard*.dat)
-          if [ "${#data[@]}" -gt 0 ]; then
-            python -m pip install coverage
-            python -m coverage combine --keep "${data[@]}"
-            python -m coverage xml -o coverage.xml
-            python -m coverage report --skip-covered >> pytest-ci.log
-          fi
       - name: Preserve test diagnostics even when pytest times out
         if: always() && needs.classify.outputs.docs-only != 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -336,16 +395,3 @@ jobs:
         with:
           files: coverage.xml
           fail_ci_if_error: false
-      - name: Require every py3.12 shard to pass
-        # Last on purpose: logs, coverage and the diagnostics artifact are
-        # preserved first. A skipped shard is only acceptable for a
-        # documentation-only change, in which case this leg never reaches here.
-        if: >-
-          always() && !cancelled() && matrix.python-version == '3.12' &&
-          (github.event_name == 'pull_request' || github.event_name == 'merge_group') &&
-          needs.classify.outputs.docs-only != 'true'
-        env:
-          SHARD_RESULT: ${{ needs.shard.result }}
-        run: |
-          echo "shard result: $SHARD_RESULT"
-          [ "$SHARD_RESULT" = success ]

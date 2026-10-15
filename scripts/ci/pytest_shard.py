@@ -74,4 +74,9 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     dropped = [item for item in items if owner[item.nodeid.split("::", 1)[0]] != index]
     if dropped:
         config.hook.pytest_deselected(items=dropped)
+    # Longest files first. With ``--dist loadfile`` xdist hands whole files to
+    # workers in collection order, so a 4-minute file scheduled last would add
+    # its full length on top of everything else. The sort is stable, so tests
+    # inside one file keep their order and the selected set is unchanged.
+    keep.sort(key=lambda item: -weights[item.nodeid.split("::", 1)[0]])
     items[:] = keep
