@@ -165,6 +165,43 @@ def _review_context_still_bound(home, context, state):
     return _source_applicability_error(store, row.id, home) is None
 
 
+def _source_test_recipe_revision_matches(home, item, expected_revision):
+    """Allow only a recipe-link-only source update after acceptance was sealed."""
+    from .source_custody import candidate_matches
+
+    store = CardStore(home)
+    row = store.fold(item["card"])
+    recipe = row.links.get("test_profile_recipe") if row is not None else None
+    events = [
+        event
+        for event in store._read_events(item["card"]) + store._legacy_events(item["card"])
+        if event.get("action") == "link" and event.get("link_key") == "test_profile_recipe"
+    ]
+    if (
+        row is None
+        or row.owner != item["owner"]
+        or row.meta.get("_claim_revision") != item["claim"]
+        or row.status.value not in {"ready", "doing", "review"}
+        or not isinstance(recipe, str)
+        or len(events) != 1
+        or events[0].get("writer") != "lumina-nor"
+        or events[0].get("link_value") != recipe
+        or not candidate_matches(store, row, item)
+    ):
+        return False
+    prior = row.model_copy(deep=True)
+    prior.links.pop("test_profile_recipe", None)
+
+    class PriorSourceStore(CardStore):
+        """Project only the captured source card before its recipe link."""
+
+        def fold(self, card_id):
+            return prior if card_id == item["card"] else super().fold(card_id)
+
+    projected = LiveCardStoreGateway(home).read_card(item["card"], _store=PriorSourceStore(home))
+    return projected.revision == expected_revision
+
+
 def acceptance_review_revision(home, directory, context):
     """Resolve the exact review revision authorized by a sealed acceptance context.
 
@@ -1091,7 +1128,15 @@ def reconcile(home, policy, *, process_check):
                         or state["owner"] != item["owner"]
                         or state["claim_revision"] != item["claim"]
                     ):
-                        raise ReviewEvidenceError("native pair changed before trusted tests")
+                        if (
+                            role != "source"
+                            or state["owner"] != item["owner"]
+                            or state["claim_revision"] != item["claim"]
+                            or not _source_test_recipe_revision_matches(
+                                home, item, expected_revision
+                            )
+                        ):
+                            raise ReviewEvidenceError("native pair changed before trusted tests")
                 artifacts(context)
                 seal_candidate(
                     home,

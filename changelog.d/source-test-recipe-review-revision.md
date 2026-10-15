@@ -1,0 +1,1 @@
+- Let acceptance refresh only a source snapshot whose sole change is an operator-authored test recipe link; review dispatch still treats the link as source revision input.
