@@ -487,7 +487,7 @@ def release_superseded_review_claim(args: argparse.Namespace) -> bool:
     # identity from the append-only event stream for this idempotent exit.
     if (
         card is not None
-        and getattr(getattr(card, "status", None), "value", getattr(card, "status", None)) == "done"
+        and getattr(getattr(card, "status", None), "value", None) == "done"
         and card.owner is None
         and not card.meta.get("_claim_revision")
         and any(
