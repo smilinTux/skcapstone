@@ -28,10 +28,14 @@ runs:
       shell: bash --noprofile --norc -p -e -o pipefail {0}
       run: |
         python scripts/ci/test_environment.py
-        python -m pip install --upgrade pip
+        python -m pip install --upgrade pip uv
         python scripts/ci/test_environment.py
         # Constraints = the versions production runs (deploy/fleet-constraints.txt).
-        python -m pip install -c deploy/fleet-constraints.txt -e ".[all,dev]"
+        # uv resolves and installs the same requirement set with parallel
+        # downloads; the ~3 GB torch/CUDA wheel set made pip the slowest step
+        # of every job. `pip check` below still validates the result.
+        uv pip install --python "$(command -v python)" \
+          -c deploy/fleet-constraints.txt -e ".[all,dev]"
         python -m skcapstone.fleet.dependency_parity
     - name: Verify resolved package dependencies
       shell: bash --noprofile --norc -p -e -o pipefail {0}
