@@ -498,6 +498,46 @@ def _successor_environment(value: dict) -> dict | None:
     return node.current_environment(value["node_environment"])
 
 
+def _finished_claim_verdict(home: Path, job: dict) -> str | None:
+    """Return a PASS outcome held by this exact producer claim, if present."""
+    from ..release_guard import finished_work_verdict
+
+    return finished_work_verdict(
+        home,
+        job["card"],
+        job["owner"],
+        job["claim_revision"],
+    )
+
+
+def _retained_finished_claim(home: Path, job: dict, latest) -> str | None:
+    """Keep a successful source claim held for its independent review and acceptance."""
+    verdict = _finished_claim_verdict(home, job)
+    if verdict is None:
+        return None
+    if (
+        latest is None
+        or latest.owner != job["owner"]
+        or latest.meta.get("_claim_revision") != job["claim_revision"]
+    ):
+        raise plan.TestEvidenceError("finished source claim changed after qualification")
+    return verdict
+
+
+def _qualify_profile_or_replay(home, core, policy, recipe, qualified_by, receipt_sha, **kwargs):
+    """Publish a profile once, or accept only an identical prior publication."""
+    try:
+        return profile.qualify_profile(
+            home, core, policy, recipe, qualified_by, receipt_sha, **kwargs
+        )
+    except FileExistsError:
+        existing, _ = profile.read_profile(home, core["id"])
+        expected = profile.profile_value(core, policy, recipe, qualified_by, receipt_sha, **kwargs)
+        if existing != expected:
+            raise plan.TestEvidenceError("qualified profile changed before recovery")
+        return home / "fleet/test-profiles" / (core["id"] + ".json")
+
+
 # A qualification that failed on this exact source will fail again: the SKLegal
 # full suite needs Postgres, systemd and real credentials, so pytest_all can
 # never be green in the sandbox. Re-offering it every cycle burned the four
@@ -1021,7 +1061,7 @@ def _advance(home, policy, skc, actor, path, job):
         return "pending"
     if initial_profile:
         tests.validate_test_receipt(home, job["binding"], workspace)
-        profile.qualify_profile(
+        _qualify_profile_or_replay(
             home,
             card.model_dump(mode="json"),
             policy,
@@ -1054,6 +1094,19 @@ def _advance(home, policy, skc, actor, path, job):
     latest = CardStore(home).fold(job["card"])
     if latest is None:
         raise plan.TestEvidenceError("profile qualified but source card disappeared")
+    finished_verdict = _retained_finished_claim(home, job, latest)
+    if finished_verdict is not None:
+        plan.write_once(
+            path.with_name(path.stem + ".done.json"),
+            {
+                "schema": "skfleet.profile-requalification-receipt/v1",
+                "card": job["card"],
+                "profile_sha256": profile.read_profile(home, job["card"])[1],
+                "test_receipt_sha256": receipt["receipt_sha256"],
+                "claim_retained_verdict": finished_verdict,
+            },
+        )
+        return "qualified-held-finished-work"
     if (
         latest.owner == job["owner"]
         and latest.meta.get("_claim_revision") == job["claim_revision"]
