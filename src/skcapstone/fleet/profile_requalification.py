@@ -7,8 +7,10 @@ import json
 import os
 import socket
 import subprocess
+import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from pathlib import Path
 
 from skcoord.card_store import CardStore
@@ -21,6 +23,38 @@ from . import production_tests as tests
 
 # Window in which a missing synced file is treated as Syncthing lag, not a failure.
 SYNC_GRACE_SECONDS = 1800
+
+_REMOTE_PREDECESSOR = ContextVar("remote_profile_predecessor", default=None)
+_PLAN_LOAD_PATCH_LOCK = threading.RLock()
+
+
+@contextmanager
+def _remote_predecessor_for_seal(home: Path, binding: dict):
+    """Permit the sealed-plan writer to re-read one validated remote predecessor."""
+    expected_home = Path(home).resolve()
+    expected_binding = json.dumps(binding, sort_keys=True, separators=(",", ":"))
+    with _PLAN_LOAD_PATCH_LOCK:
+        original = plan.load_plan
+
+        def load_plan(request_home, request_binding, *args, **kwargs):
+            active = _REMOTE_PREDECESSOR.get()
+            if (
+                active == (expected_home, expected_binding)
+                and Path(request_home).resolve() == expected_home
+                and json.dumps(request_binding, sort_keys=True, separators=(",", ":"))
+                == expected_binding
+                and kwargs.get("require_current", True) is False
+            ):
+                kwargs["allow_remote_host"] = True
+            return original(request_home, request_binding, *args, **kwargs)
+
+        token = _REMOTE_PREDECESSOR.set((expected_home, expected_binding))
+        plan.load_plan = load_plan
+        try:
+            yield
+        finally:
+            plan.load_plan = original
+            _REMOTE_PREDECESSOR.reset(token)
 
 
 def _private_root(home: Path) -> Path:
@@ -934,6 +968,26 @@ def _failed_records(root: Path):
                 continue
 
 
+def _remote_predecessor_retry_needed(root: Path, expected_job: dict):
+    """Allow one new job after the known local-only remote-plan refusal."""
+    if expected_job.get("remote_predecessor_recovery") is True:
+        return False
+    for path, prior in _failed_records(root):
+        if prior != expected_job:
+            continue
+        try:
+            failure = json.loads(plan.read_private(path.with_name(path.stem + ".failed.json")))
+        except (OSError, ValueError):
+            continue
+        if failure.get("reason") == "operator test plan is invalid or stale":
+            retry_job = dict(expected_job, remote_predecessor_recovery=True)
+            retry_id = plan.sha(
+                json.dumps(retry_job, sort_keys=True, separators=(",", ":")).encode()
+            )
+            return not root.joinpath(retry_id + ".job.json").exists()
+    return False
+
+
 def _release_failed_claims(home: Path, skc: str, actor: str, root: Path, limit: int = 4):
     """Return cards whose qualification job failed while still holding their claim.
 
@@ -1054,10 +1108,11 @@ def _begin(home, policy, skc, actor, card_id, core, workspace, owner, claim_revi
     }
     if initial_profile:
         try:
-            _, _, plan_predecessor = plan.load_plan(
+            predecessor_plan, _, plan_predecessor = plan.load_plan(
                 home, binding, allow_completed=True, allow_remote_host=True
             )
         except FileNotFoundError:
+            predecessor_plan = None
             plan_predecessor = None
         job.update(
             initial_profile=True,
@@ -1065,6 +1120,14 @@ def _begin(home, policy, skc, actor, card_id, core, workspace, owner, claim_revi
             plan_predecessor_sha256=plan_predecessor,
         )
     root = _private_root(home)
+    if (
+        initial_profile
+        and predecessor_plan is not None
+        and predecessor_plan.get("remote_initial_profile_qualification") is True
+        and plan_predecessor is not None
+        and _remote_predecessor_retry_needed(root, job)
+    ):
+        job["remote_predecessor_recovery"] = True
     job_id = plan.sha(json.dumps(job, sort_keys=True, separators=(",", ":")).encode())
     path = root / (job_id + ".job.json")
     try:
@@ -1135,19 +1198,25 @@ def _advance(home, policy, skc, actor, path, job):
                     )
                     raise plan.TestEvidenceError(reason)
                 kwargs = {"acceptance_requalification": True} if launched else {}
-                plan.seal_plan(
-                    home,
-                    job["binding"],
-                    workspace,
-                    policy,
-                    profile_value["qualified_by"],
-                    profile_value["qualification_sha256"],
-                    profile=profile_value,
-                    predecessor_sha256=plan_sha,
-                    execution_host=job["execution_host"],
-                    initial_profile_qualification=True,
-                    **kwargs,
+                context = (
+                    _remote_predecessor_for_seal(home, job["binding"])
+                    if current_plan.get("remote_initial_profile_qualification") is True
+                    else nullcontext()
                 )
+                with context:
+                    plan.seal_plan(
+                        home,
+                        job["binding"],
+                        workspace,
+                        policy,
+                        profile_value["qualified_by"],
+                        profile_value["qualification_sha256"],
+                        profile=profile_value,
+                        predecessor_sha256=plan_sha,
+                        execution_host=job["execution_host"],
+                        initial_profile_qualification=True,
+                        **kwargs,
+                    )
         elif (
             current_plan.get("profile_requalification") is not True
             or current_plan.get("profile_predecessor_sha256") != job["profile_sha256"]

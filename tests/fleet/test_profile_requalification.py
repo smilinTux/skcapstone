@@ -434,6 +434,8 @@ def test_stale_plan_appends_current_requalification_successor(tmp_path, monkeypa
         {"allow_completed": True, "allow_remote_host": True},
         {"require_current": False, "allow_remote_host": True},
     ]
+    plan.load_plan(tmp_path, {"source_card": "other"}, require_current=False)
+    assert load_calls[-1] == {"require_current": False}
     assert sealed == [
         {
             "profile": profile_value,
@@ -469,6 +471,7 @@ def test_initial_profile_retargets_unlaunched_remote_plan_to_authority(tmp_path,
     )
     current_plan = {
         "initial_profile_qualification": True,
+        "remote_initial_profile_qualification": True,
         "profile": value,
         "host": "chiap03",
     }
@@ -476,14 +479,21 @@ def test_initial_profile_retargets_unlaunched_remote_plan_to_authority(tmp_path,
         refresh, "CardStore", lambda _home: SimpleNamespace(fold=lambda _card_id: card)
     )
     monkeypatch.setattr(plan, "source_state", lambda *_args: None)
-    monkeypatch.setattr(
-        plan,
-        "load_plan",
-        lambda *_args, **_kwargs: (current_plan, tmp_path / "plan.json", "a" * 64),
-    )
+    load_calls = []
+
+    def load_plan(_home, _binding, **kwargs):
+        load_calls.append(kwargs)
+        return current_plan, tmp_path / "plan.json", "a" * 64
+
+    monkeypatch.setattr(plan, "load_plan", load_plan)
     monkeypatch.setattr(plan, "run_directory", lambda *_args: tmp_path / "run")
     sealed = []
-    monkeypatch.setattr(plan, "seal_plan", lambda *_args, **kwargs: sealed.append(kwargs))
+
+    def seal_plan(*_args, **kwargs):
+        sealed.append(kwargs)
+        plan.load_plan(tmp_path, binding, require_current=False)
+
+    monkeypatch.setattr(plan, "seal_plan", seal_plan)
     monkeypatch.setattr(tests, "run_or_read_tests", lambda *_args: None)
 
     assert (
@@ -500,6 +510,54 @@ def test_initial_profile_retargets_unlaunched_remote_plan_to_authority(tmp_path,
             "initial_profile_qualification": True,
         }
     ]
+    assert load_calls == [
+        {"allow_completed": True, "allow_remote_host": True},
+        {"require_current": False, "allow_remote_host": True},
+    ]
+
+
+def test_only_retries_exact_remote_predecessor_failure_once(tmp_path):
+    root = tmp_path / "fleet/profile-requalifications"
+    root.parent.mkdir(mode=0o700)
+    plan.private_dir(root, create=True)
+    binding = {"source_card": "1234abcd"}
+    job = {
+        "schema": "skfleet.profile-requalification/v1",
+        "card": "1234abcd",
+        "claim_revision": "claim-1",
+        "binding": binding,
+        "initial_profile": True,
+        "plan_predecessor_sha256": "a" * 64,
+    }
+    path = root / ("b" * 64 + ".job.json")
+    plan.write_once(path, job)
+    plan.write_once(
+        path.with_name(path.stem + ".failed.json"),
+        {
+            "schema": "skfleet.profile-requalification-failure/v1",
+            "card": "1234abcd",
+            "reason": "operator test plan is invalid or stale",
+        },
+    )
+
+    assert refresh._remote_predecessor_retry_needed(root, job)
+    assert not refresh._remote_predecessor_retry_needed(root, dict(job, claim_revision="other"))
+    assert not refresh._remote_predecessor_retry_needed(
+        root, dict(job, plan_predecessor_sha256="c" * 64)
+    )
+    retry = dict(job, remote_predecessor_recovery=True)
+    retry_id = plan.sha(json.dumps(retry, sort_keys=True, separators=(",", ":")).encode())
+    retry_path = root / (retry_id + ".job.json")
+    plan.write_once(retry_path, retry)
+    plan.write_once(
+        retry_path.with_name(retry_path.stem + ".failed.json"),
+        {
+            "schema": "skfleet.profile-requalification-failure/v1",
+            "card": "1234abcd",
+            "reason": "operator test plan is invalid or stale",
+        },
+    )
+    assert not refresh._remote_predecessor_retry_needed(root, job)
 
 
 @pytest.mark.parametrize("launched,completed", [(False, False), (True, True), (True, False)])

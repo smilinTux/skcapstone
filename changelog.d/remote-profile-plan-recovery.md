@@ -1,0 +1,1 @@
+- Profile qualification now reseals one exact remote initial-plan predecessor after validation, allowing qualified profiles to recover instead of repeating a local-host stale-plan refusal.
