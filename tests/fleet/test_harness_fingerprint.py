@@ -33,23 +33,36 @@ def test_unrelated_code_edit_at_same_version_does_not_restale(qualified_runtime)
     assert plan.runtime_fingerprint() == before
 
 
-def test_execution_version_bump_restales(qualified_runtime, monkeypatch):
-    v1 = plan.runtime_fingerprint()
-    monkeypatch.setattr(plan, "HARNESS_EXECUTION_VERSION", 2)
-    v2 = plan.runtime_fingerprint()
-    assert v2 != v1
-    monkeypatch.setattr(plan, "HARNESS_EXECUTION_VERSION", 3)
-    assert plan.runtime_fingerprint() not in {v1, v2}
-    monkeypatch.setattr(plan, "HARNESS_EXECUTION_VERSION", 2)
-    _touch_harness("# bytes never matter\n")
-    assert plan.runtime_fingerprint() == v2
+def test_python_execution_version_bump_restales_python(qualified_runtime, monkeypatch):
+    v1 = plan.runtime_fingerprint("python")
+    monkeypatch.setattr(plan, "PYTHON_HARNESS_EXECUTION_VERSION", 2)
+    assert plan.runtime_fingerprint("python") != v1
+
+
+def test_node_execution_version_only_restales_node_profiles(qualified_runtime, monkeypatch):
+    python_before = plan.runtime_fingerprint("python")
+    node_before = plan.runtime_fingerprint("node")
+    monkeypatch.setattr(plan, "NODE_HARNESS_EXECUTION_VERSION", 3)
+    assert plan.runtime_fingerprint("python") == python_before
+    assert plan.runtime_fingerprint("node") != node_before
+
+
+def test_python_family_matches_deployed_legacy_fingerprint(qualified_runtime):
+    """The family split preserves the exact deployed Python fingerprint string."""
+    assert plan.runtime_fingerprint("python") == plan.runtime_fingerprint()
 
 
 @pytest.mark.parametrize("bad", [0, -1, True, "1", None])
-def test_invalid_version_fails_closed(qualified_runtime, monkeypatch, bad):
-    monkeypatch.setattr(plan, "HARNESS_EXECUTION_VERSION", bad)
+@pytest.mark.parametrize("family", ["python", "node"])
+def test_invalid_version_fails_closed(qualified_runtime, monkeypatch, bad, family):
+    key = (
+        "PYTHON_HARNESS_EXECUTION_VERSION"
+        if family == "python"
+        else "NODE_HARNESS_EXECUTION_VERSION"
+    )
+    monkeypatch.setattr(plan, key, bad)
     with pytest.raises(plan.TestEvidenceError):
-        plan.runtime_fingerprint()
+        plan.runtime_fingerprint(family)
 
 
 def test_pin_table_must_match_harness_modules(qualified_runtime, monkeypatch):
@@ -112,7 +125,7 @@ def test_pre_deploy_profile_survives_post_deploy_byte_edits(qualified_runtime, m
 
 
 def test_ledger_matches_the_harness_tree():
-    version = plan.HARNESS_EXECUTION_VERSION
+    version = plan.HARNESS_LEDGER_VERSION
     ledger = attest.HARNESS_EXECUTION_LEDGER
     assert sorted(ledger) == list(range(1, version + 1)), "ledger needs a row per version"
     assert set(ledger[version]) == set(plan.HARNESS_MODULES)
@@ -123,10 +136,10 @@ def test_ledger_matches_the_harness_tree():
     }
     assert not drift, (
         f"harness execution tree changed for {sorted(drift)} without a ledger update. "
-        "If test execution semantics changed (what runs, how, toolchain, selection, "
-        "sandbox, evidence format), bump HARNESS_EXECUTION_VERSION in "
-        "production_test_plan.py and add a harness_attest.HARNESS_EXECUTION_LEDGER row "
-        "(profiles will requalify). If the change is behaviour-neutral, refresh this "
+        "If harness code changed, bump HARNESS_LEDGER_VERSION in "
+        "production_test_plan.py and add a harness_attest.HARNESS_EXECUTION_LEDGER row. "
+        "For execution semantics, also bump only the affected family version. "
+        "If the change is behaviour-neutral, refresh this "
         "version's row (current digests: "
         f"{json.dumps(drift, indent=1)})."
     )
@@ -170,8 +183,18 @@ def test_digest_catches_execution_changes(mutation):
 
 
 def test_digest_excludes_only_the_bookkeeping_constants():
-    a = BASE + "HARNESS_EXECUTION_VERSION = 1\n_LEGACY_HARNESS_SHA256 = {'a': 'b'}\n"
-    b = BASE + "HARNESS_EXECUTION_VERSION = 2\n_LEGACY_HARNESS_SHA256 = {}\n"
+    a = (
+        BASE
+        + "HARNESS_LEDGER_VERSION = 1\n"
+        + "PYTHON_HARNESS_EXECUTION_VERSION = 1\n"
+        + "_LEGACY_HARNESS_SHA256 = {'a': 'b'}\n"
+    )
+    b = (
+        BASE
+        + "HARNESS_LEDGER_VERSION = 2\n"
+        + "PYTHON_HARNESS_EXECUTION_VERSION = 2\n"
+        + "_LEGACY_HARNESS_SHA256 = {}\n"
+    )
     assert attest.ast_digest(a) == attest.ast_digest(b) == attest.ast_digest(BASE)
     assert attest.ast_digest(BASE + "OTHER = 1\n") != attest.ast_digest(BASE)
 
@@ -181,7 +204,7 @@ def test_guard_catches_an_unbumped_execution_change(tmp_path):
     source = (FLEET / "production_pytest_recipe.py").read_text()
     (tmp_path / "production_pytest_recipe.py").write_text(source + "\n# only a comment\n")
     name = "production_pytest_recipe.py"
-    committed = attest.HARNESS_EXECUTION_LEDGER[plan.HARNESS_EXECUTION_VERSION][name]
+    committed = attest.HARNESS_EXECUTION_LEDGER[plan.HARNESS_LEDGER_VERSION][name]
     assert attest.module_digests(tmp_path, (name,))[name] == committed
     (tmp_path / name).write_text(source + "\nEXTRA_PYTEST_FLAG = '-p no:cacheprovider'\n")
     assert attest.module_digests(tmp_path, (name,))[name] != committed

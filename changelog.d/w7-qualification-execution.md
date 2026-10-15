@@ -1,1 +1,2 @@
 - Run only the Vitest files named by a qualified profile and reseal failed initial qualifications when the deployed harness changes.
+- Version harness execution per family so a Node/Vitest behavior change requalifies Node profiles while preserving deployed Python profile fingerprints.

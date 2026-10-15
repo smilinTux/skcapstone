@@ -43,7 +43,7 @@ def test_harness_recipe_execution_tree_matches_ledger() -> None:
     """Byte edits are free now; an execution change needs a version bump (see
     ``harness_attest``), which is what tests/fleet/test_harness_fingerprint.py guards."""
     name = "production_pytest_recipe.py"
-    committed = attest.HARNESS_EXECUTION_LEDGER[plan.HARNESS_EXECUTION_VERSION][name]
+    committed = attest.HARNESS_EXECUTION_LEDGER[plan.HARNESS_LEDGER_VERSION][name]
     assert attest.ast_digest(Path(recipe.__file__).read_bytes()) == committed
 
 

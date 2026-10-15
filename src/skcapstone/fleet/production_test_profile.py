@@ -217,7 +217,7 @@ def profile_value(
         "qualification_sha256": qualification_sha256,
         "python_sha256": plan.sha((plan.PREFIX / "bin/python").read_bytes()),
         "toolchain_sha256": plan.toolchain_fingerprint(),
-        "runtime_sha256": plan.runtime_fingerprint(),
+        "runtime_sha256": plan.runtime_for_profile(recipe=recipe),
         "policy_sha256": plan.execution_policy_fingerprint(policy),
         "host": socket.gethostname().split(".")[0].lower(),
     }
@@ -297,7 +297,7 @@ def validate_profile(value: dict, expected: dict, policy: dict, *, environment=T
         node.validate_environment(value["node_environment"])
     if environment and (
         value["host"] != socket.gethostname().split(".")[0].lower()
-        or value["runtime_sha256"] != plan.runtime_fingerprint()
+        or value["runtime_sha256"] != plan.runtime_for_profile(value)
         or value["toolchain_sha256"] != plan.toolchain_fingerprint()
         or value["python_sha256"] != plan.sha((plan.PREFIX / "bin/python").read_bytes())
     ):
@@ -360,7 +360,7 @@ def fingerprint_only_stale(
     return (
         source_drift
         or runtime_drift
-        or value["runtime_sha256"] != plan.runtime_fingerprint()
+        or value["runtime_sha256"] != plan.runtime_for_profile(value)
         or value["policy_sha256"] != plan.execution_policy_fingerprint(policy)
     )
 
@@ -385,7 +385,7 @@ def legacy_full_qualification_required(value: dict, expected: dict, policy: dict
     return (
         legacy_v1
         or runtime_drift
-        or value["runtime_sha256"] != plan.runtime_fingerprint()
+        or value["runtime_sha256"] != plan.runtime_for_profile(value)
         or value["policy_sha256"] != plan.execution_policy_fingerprint(policy)
         or value.get("toolchain_sha256") != plan.toolchain_fingerprint()
     )
@@ -721,7 +721,7 @@ def refresh_accepted_profile(
         value["qualified_by"],
         receipt_sha256,
         predecessor_sha256=predecessor,
-        runtime_sha256=plan.runtime_fingerprint(),
+        runtime_sha256=plan.runtime_for_profile(value),
         source_sha256=source_sha256,
         source_claim=(
             {"owner": binding["source_owner"], "claim_revision": binding["source_claim_revision"]}

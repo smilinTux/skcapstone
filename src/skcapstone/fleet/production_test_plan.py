@@ -102,11 +102,13 @@ HARNESS_MODULES = (
 #: restales, on purpose. Comments, docs, plan naming and acceptance plumbing must
 #: not bump it. ``harness_attest`` and tests/fleet/test_harness_fingerprint.py fail
 #: when an execution-relevant parse tree changes without a ledger update.
-HARNESS_EXECUTION_VERSION = 1
-#: Version 1 is defined as the legacy byte fingerprint of the harness deployed on
-#: 2026-10-14 (identical on chiap08 and origin/main 490b0c67), so every profile
-#: sealed before this change stays valid with no translation at the comparison sites.
-#: Later versions do not use this table.
+HARNESS_LEDGER_VERSION = 2
+# Family versions are appended only to that family's historical runtime rows.
+# Python remains byte-for-byte at the deployed v1 fingerprint.
+PYTHON_HARNESS_EXECUTION_VERSION = 1
+NODE_HARNESS_EXECUTION_VERSION = 2
+#: Preserve the legacy byte pins for the common Python fingerprint. Family
+#: execution versions are independently appended after these rows.
 _LEGACY_HARNESS_SHA256 = {
     "qualified_runtime.py": ("cba771a55d22f7f104436cd60eaa8ccbd06b5604e3f163bd9728e7780fb467f5"),
     "production_pytest_recipe.py": (
@@ -149,22 +151,34 @@ def harness_pins() -> dict[str, str]:
     Every later version is pinned by the version integer alone.
     """
     if (
-        type(HARNESS_EXECUTION_VERSION) is not int  # noqa: E721 (bool is not a version)
-        or HARNESS_EXECUTION_VERSION < 1
+        type(HARNESS_LEDGER_VERSION) is not int  # noqa: E721 (bool is not a version)
+        or HARNESS_LEDGER_VERSION < 1
     ):
         raise TestEvidenceError("harness execution version is invalid")
-    if HARNESS_EXECUTION_VERSION != 1:
-        return {}
     if set(_LEGACY_HARNESS_SHA256) != set(HARNESS_MODULES):
         raise TestEvidenceError("harness legacy pins do not match harness modules")
     return dict(_LEGACY_HARNESS_SHA256)
 
 
-def runtime_fingerprint() -> str:
+def execution_family(profile: dict | None = None, recipe: dict | None = None) -> str:
+    """Select the versioned executor family from a sealed profile or recipe."""
+    recipe = recipe if recipe is not None else (profile or {}).get("recipe", {})
+    if not isinstance(recipe, dict):
+        raise TestEvidenceError("test execution family is invalid")
+    return "node" if {"vitest", "node_test"} & recipe.keys() else "python"
+
+
+def runtime_for_profile(profile: dict | None = None, recipe: dict | None = None) -> str:
+    """Keep the legacy no-argument path for Python while versioning Node alone."""
+    family = execution_family(profile, recipe)
+    return runtime_fingerprint("node") if family == "node" else runtime_fingerprint()
+
+
+def runtime_fingerprint(family: str = "python") -> str:
     """Pin the test toolchain and trusted executor, not package install provenance.
 
-    The executor is pinned by ``HARNESS_EXECUTION_VERSION``, not by its bytes, so
-    only execution-semantics changes restale profiles (see ``harness_attest``).
+    The executor is pinned by per-family versions, not by its bytes, so only
+    execution-semantics changes in that family restale profiles.
 
     Cache only exact inode/size/mtime/ctime observations, never a timed success.
     Candidate source is bound separately and its tests run from /work/src. A
@@ -177,6 +191,8 @@ def runtime_fingerprint() -> str:
         / "site-packages"
     )
     state = PREFIX / STATE_NAME
+    if family not in {"python", "node"}:
+        raise TestEvidenceError("test execution family is invalid")
     if not state.is_file():
         raise TestEvidenceError("qualified runtime manifest is missing")
     files = {PREFIX / "bin/ruff", state}
@@ -237,8 +253,13 @@ def runtime_fingerprint() -> str:
     pins = harness_pins()
     for path in harness:
         add(path, "harness/" + path.name, HARNESS_ROOT, pins.get(path.name, ""))
-    if not pins:
-        rows.append(("harness/execution_version", str(HARNESS_EXECUTION_VERSION)))
+    family_version = (
+        PYTHON_HARNESS_EXECUTION_VERSION if family == "python" else NODE_HARNESS_EXECUTION_VERSION
+    )
+    if type(family_version) is not int or family_version < 1:
+        raise TestEvidenceError("harness execution version is invalid")
+    if family_version > 1:
+        rows.append(("harness/" + family + "_execution_version", str(family_version)))
     return sha(json.dumps(rows, separators=(",", ":")).encode())
 
 
@@ -703,7 +724,7 @@ def _seal_plan(
         "qualified_by": qualified_by,
         "qualification_sha256": qualification_sha256,
         "python_sha256": sha((PREFIX / "bin/python").read_bytes()),
-        "runtime_sha256": runtime_fingerprint(),
+        "runtime_sha256": runtime_for_profile(profile),
         "host": socket.gethostname().split(".")[0].lower(),
         "policy_sha256": execution_policy_fingerprint(policy, execution_host),
     }
@@ -1151,10 +1172,9 @@ def _validate_plan(
 
 
 def _validate_current_plan(plan: dict) -> None:
-    if (
-        plan["python_sha256"] != sha((PREFIX / "bin/python").read_bytes())
-        or plan["runtime_sha256"] != runtime_fingerprint()
-    ):
+    if plan["python_sha256"] != sha((PREFIX / "bin/python").read_bytes()) or plan[
+        "runtime_sha256"
+    ] != runtime_for_profile(plan.get("profile")):
         raise TestEvidenceError("operator test plan is invalid or stale")
 
 

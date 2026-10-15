@@ -40,27 +40,30 @@ def test_runtime_fingerprint_ignores_install_provenance_and_subject_code(qualifi
     assert plan.runtime_fingerprint() == before
 
 
-def test_runtime_fingerprint_tracks_harness_version_and_startup_bytes(
+def test_runtime_fingerprint_tracks_node_execution_version_and_startup_bytes(
     qualified_runtime, monkeypatch
 ):
     before = plan.runtime_fingerprint()
     (plan.HARNESS_ROOT / "production_test_worker.py").write_text("changed trusted executor\n")
     assert plan.runtime_fingerprint() == before  # bytes are not the pin
-    monkeypatch.setattr(plan, "HARNESS_EXECUTION_VERSION", plan.HARNESS_EXECUTION_VERSION + 1)
-    changed = plan.runtime_fingerprint()
+    monkeypatch.setattr(
+        plan, "NODE_HARNESS_EXECUTION_VERSION", plan.NODE_HARNESS_EXECUTION_VERSION + 1
+    )
+    changed = plan.runtime_fingerprint("node")
+    assert plan.runtime_fingerprint("python") == before
     assert changed != before
     site = _site(qualified_runtime)
     startup = site / "__editable__.skcapstone-0.15.200.pth"
     startup.write_text("/work/source\n")
-    with_startup = plan.runtime_fingerprint()
+    with_startup = plan.runtime_fingerprint("node")
     assert with_startup != changed
     startup.rename(site / "__editable__.skcapstone-0.15.201.pth")
-    assert plan.runtime_fingerprint() == with_startup
+    assert plan.runtime_fingerprint("node") == with_startup
     (site / "__editable__.skcapstone-0.15.201.pth").write_text("/different/source\n")
-    assert plan.runtime_fingerprint() != with_startup
+    assert plan.runtime_fingerprint("node") != with_startup
     (site / "__editable__.skcapstone-0.15.200.pth").write_text("/work/source\n")
     with pytest.raises(plan.TestEvidenceError, match="ambiguous"):
-        plan.runtime_fingerprint()
+        plan.runtime_fingerprint("node")
 
 
 def test_runtime_fingerprint_tracks_test_tool_metadata(qualified_runtime):
@@ -281,7 +284,7 @@ def qualified(tmp_path, monkeypatch):
     (prefix / "bin").mkdir(parents=True)
     (prefix / "bin/python").write_bytes(b"qualified interpreter")
     monkeypatch.setattr(plan, "PREFIX", prefix)
-    monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "a" * 64)
+    monkeypatch.setattr(plan, "runtime_fingerprint", lambda *args: "a" * 64)
     monkeypatch.setattr(plan, "toolchain_fingerprint", lambda: "e" * 64)
     host = socket.gethostname().split(".")[0].lower()
     policy = {
@@ -352,7 +355,7 @@ def test_wrong_or_changed_contract_is_withheld(qualified, monkeypatch, change):
     elif change in ("criteria", "empty"):
         core["acceptance_criteria"] = ["Other requirement"] if change == "criteria" else []
     else:
-        monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "c" * 64)
+        monkeypatch.setattr(plan, "runtime_fingerprint", lambda *args: "c" * 64)
     with pytest.raises((plan.TestEvidenceError, FileNotFoundError)):
         profile.preflight(home, core, ["source-only"], policy)
 
@@ -383,7 +386,7 @@ def test_unrelated_policy_changes_do_not_stale_profile(qualified):
 def test_only_execution_fingerprint_drift_is_eligible_for_native_refresh(qualified, monkeypatch):
     home, core, policy, _, _ = qualified
     value, _ = profile.read_profile(home, core["id"])
-    monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "c" * 64)
+    monkeypatch.setattr(plan, "runtime_fingerprint", lambda *args: "c" * 64)
     assert profile.fingerprint_only_stale(value, profile.contract(core), policy)
     # A rebuilt qualify-env toolchain requalifies too (fresh sealed run).
     monkeypatch.setattr(plan, "toolchain_fingerprint", lambda: "f" * 64)
@@ -393,7 +396,7 @@ def test_only_execution_fingerprint_drift_is_eligible_for_native_refresh(qualifi
 def test_source_drift_is_not_eligible_for_automatic_requalification(qualified, monkeypatch):
     home, core, policy, _, _ = qualified
     value, _ = profile.read_profile(home, core["id"])
-    monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "c" * 64)
+    monkeypatch.setattr(plan, "runtime_fingerprint", lambda *args: "c" * 64)
     assert not profile.fingerprint_only_stale(
         value, profile.contract(core), policy, source_sha256="0" * 64
     )
@@ -871,8 +874,8 @@ def test_acceptance_requalifies_only_fingerprint_drift(qualified, monkeypatch):
     home, core, policy, _, _ = qualified
     value, _ = profile.read_profile(home, core["id"])
     expected = profile.contract(core)
-    monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "c" * 64)
-    monkeypatch.setattr(plan, "toolchain_fingerprint", lambda: "d" * 64)
+    monkeypatch.setattr(plan, "runtime_fingerprint", lambda *args: "c" * 64)
+    monkeypatch.setattr(plan, "toolchain_fingerprint", lambda *args: "d" * 64)
     assert profile.acceptance_requalifiable(value, dict(expected, source_sha256="0" * 64), policy)
     for key, changed in (
         ("card", "abcd1235"),
@@ -902,7 +905,7 @@ def _binding(core, head="1" * 40, tree="2" * 40):
 @pytest.mark.parametrize("held", [True, False])
 def test_accepted_trusted_tests_publish_the_candidate_profile(qualified, monkeypatch, held):
     home, core, policy, _, _ = qualified
-    monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "c" * 64)
+    monkeypatch.setattr(plan, "runtime_fingerprint", lambda *args: "c" * 64)
     binding = _binding(core)
     calls = []
 
@@ -1025,7 +1028,7 @@ def test_acceptance_reseals_legacy_collection_plan_for_requalification(
     old_plan, old_path, _ = plan.load_plan(s.home, binding)
     from skcapstone.fleet.production_pytest_recipe import legacy_collection_recipe_candidates
 
-    monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "d" * 64)
+    monkeypatch.setattr(plan, "runtime_fingerprint", lambda *args: "d" * 64)
     old_plan["checks"] = legacy_collection_recipe_candidates(old_plan["profile"]["recipe"])[0]
     old_raw = json.dumps(old_plan, sort_keys=True, separators=(",", ":")).encode()
     old_path.write_bytes(old_raw)
@@ -1076,7 +1079,7 @@ def test_acceptance_requalification_refuses_running_predecessor(setup, monkeypat
         s.home, binding, s.workspace, s.policy, "https://example.org/public.git"
     )
     old_plan, old_path, _ = plan.load_plan(s.home, binding)
-    monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "d" * 64)
+    monkeypatch.setattr(plan, "runtime_fingerprint", lambda *args: "d" * 64)
     old_plan["checks"] = legacy_collection_recipe_candidates(old_plan["profile"]["recipe"])[0]
     old_raw = json.dumps(old_plan, sort_keys=True, separators=(",", ":")).encode()
     old_path.write_bytes(old_raw)

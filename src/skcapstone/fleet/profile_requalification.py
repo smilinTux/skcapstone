@@ -258,7 +258,8 @@ def harvest_completed(
                     or sealed.get("authority_host", policy["authority_host"])
                     != policy["authority_host"]
                     or sealed.get("profile_predecessor_sha256") != predecessor
-                    or sealed.get("runtime_sha256") != plan.runtime_fingerprint()
+                    or sealed.get("runtime_sha256")
+                    != plan.runtime_for_profile(sealed.get("profile"))
                     or sealed.get("policy_sha256")
                     != plan.execution_policy_fingerprint(
                         policy, sealed.get("host", policy["authority_host"])
@@ -288,7 +289,7 @@ def harvest_completed(
                     current["qualified_by"],
                     receipt["receipt_sha256"],
                     predecessor_sha256=predecessor,
-                    runtime_sha256=plan.runtime_fingerprint(),
+                    runtime_sha256=plan.runtime_for_profile(current),
                     source_sha256=job.get("source_sha256"),
                     unclaimed=True,
                     node_environment=_successor_environment(current),
@@ -355,7 +356,9 @@ def harvest_completed(
                     # current plans still pass every native plan/receipt check.
                     old_runtime = sealed_candidate.get("runtime_sha256")
                     old_profile = sealed_candidate.get("profile_predecessor_sha256")
-                    if old_runtime is not None and old_runtime != plan.runtime_fingerprint():
+                    if old_runtime is not None and old_runtime != plan.runtime_for_profile(
+                        sealed_candidate.get("profile")
+                    ):
                         continue
                     if old_profile is not None:
                         _, current_profile = profile.read_profile(home, candidate_id)
@@ -385,7 +388,8 @@ def harvest_completed(
                     if predecessor != profile_predecessor:
                         continue
                     if (
-                        sealed.get("runtime_sha256") != plan.runtime_fingerprint()
+                        sealed.get("runtime_sha256")
+                        != plan.runtime_for_profile(sealed.get("profile"))
                         or sealed.get("authority_host", policy["authority_host"])
                         != policy["authority_host"]
                         or sealed.get("policy_sha256")
@@ -420,7 +424,7 @@ def harvest_completed(
                         current["qualified_by"],
                         receipt["receipt_sha256"],
                         predecessor_sha256=predecessor,
-                        runtime_sha256=plan.runtime_fingerprint(),
+                        runtime_sha256=plan.runtime_for_profile(current),
                         source_sha256=source_sha,
                         unclaimed=True,
                         node_environment=_successor_environment(current),
@@ -659,7 +663,7 @@ def _recent_failure(
                     allow_completed=True,
                     allow_remote_host=True,
                 )
-                if prior["runtime_sha256"] != plan.runtime_fingerprint():
+                if prior["runtime_sha256"] != plan.runtime_for_profile(prior.get("profile")):
                     continue
             except (OSError, ValueError, KeyError, TypeError):
                 pass
@@ -1186,7 +1190,7 @@ def _advance(home, policy, skc, actor, path, job):
             value["qualified_by"],
             receipt["receipt_sha256"],
             predecessor_sha256=predecessor,
-            runtime_sha256=plan.runtime_fingerprint(),
+            runtime_sha256=plan.runtime_for_profile(value),
             source_sha256=job["source_sha256"],
             source_claim={"owner": job["owner"], "claim_revision": job["claim_revision"]},
             node_environment=_successor_environment(value),
