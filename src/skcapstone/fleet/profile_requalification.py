@@ -51,6 +51,93 @@ def _records(root: Path):
             yield path, value
 
 
+def _write_failure(path: Path, card_id: str, reason: str) -> str:
+    """Write one immutable failure, or report the prior failure on replay."""
+    failure_path = path.with_name(path.stem + ".failed.json")
+    failure = {
+        "schema": "skfleet.profile-requalification-failure/v1",
+        "card": card_id,
+        "reason": str(reason)[:240],
+    }
+    try:
+        plan.write_once(failure_path, failure)
+    except FileExistsError:
+        existing = json.loads(plan.read_private(failure_path))
+        if existing.get("card") != card_id:
+            raise plan.TestEvidenceError("profile qualification failure record conflicts")
+        return str(existing.get("reason", "prior qualification failure"))[:160]
+    return failure["reason"][:160]
+
+
+def _all_vitest_targets(recipe: dict, workspace: Path) -> dict:
+    """Match the fixed full-suite Vitest command while preserving requested floors."""
+    targets = recipe.get("vitest") if isinstance(recipe, dict) else None
+    if not isinstance(targets, dict):
+        return recipe
+    web = workspace / "apps/web"
+    files = sorted(
+        path.relative_to(web).as_posix()
+        for path in web.rglob("*")
+        if path.is_file()
+        and (".test." in path.name or ".spec." in path.name)
+        and path.suffix in {".ts", ".tsx", ".js", ".jsx"}
+    )
+    if (
+        not files
+        or len(files) > 256
+        or any(
+            not path.startswith("src/")
+            or ".test.ts" not in path
+            or (web / path).is_symlink()
+            or not (web / path).resolve().is_relative_to(web.resolve())
+            for path in files
+        )
+    ):
+        raise plan.TestEvidenceError("Node source has no bounded Vitest suite")
+    expanded = {path: 1 for path in files}
+    for path, minimum in targets.items():
+        if path not in expanded:
+            raise plan.TestEvidenceError("requested Vitest target is outside the full suite")
+        expanded[path] = minimum
+    return {**recipe, "vitest": expanded}
+
+
+def _compatible_initial_profile(previous: dict, desired: dict) -> bool:
+    """Allow only an unchanged profile or a monotonic Vitest suite expansion."""
+    if not isinstance(previous, dict) or not isinstance(desired, dict):
+        return False
+    old = dict(previous)
+    new = dict(desired)
+    old.pop("qualified_by", None)
+    new.pop("qualified_by", None)
+    old_recipe_sha = old.pop("qualification_sha256", None)
+    new_recipe_sha = new.pop("qualification_sha256", None)
+    old_recipe = old.pop("recipe", None)
+    new_recipe = new.pop("recipe", None)
+    if old != new or not isinstance(old_recipe, dict) or not isinstance(new_recipe, dict):
+        return False
+    for recipe, digest in ((old_recipe, old_recipe_sha), (new_recipe, new_recipe_sha)):
+        expected = plan.sha(json.dumps(recipe, sort_keys=True, separators=(",", ":")).encode())
+        if digest != expected:
+            return False
+    if old_recipe == new_recipe:
+        return True
+    if set(old_recipe) != set(new_recipe) or "vitest" not in old_recipe:
+        return False
+    for key in old_recipe:
+        old_targets, new_targets = old_recipe[key], new_recipe[key]
+        if key == "vitest":
+            if (
+                not isinstance(old_targets, dict)
+                or not isinstance(new_targets, dict)
+                or any(new_targets.get(path, 0) < minimum for path, minimum in old_targets.items())
+            ):
+                return False
+        elif old_targets != new_targets:
+            return False
+    return True
+
+
 @contextmanager
 def _job_lock(root: Path, job_id: str):
     """Serialize one remote qualification without blocking other hosts."""
@@ -475,15 +562,8 @@ def requalify_or_advance(
                 try:
                     state = _advance(home, policy, skc, actor, path, job)
                 except (OSError, ValueError, subprocess.SubprocessError) as exc:
-                    plan.write_once(
-                        path.with_name(path.stem + ".failed.json"),
-                        {
-                            "schema": "skfleet.profile-requalification-failure/v1",
-                            "card": job.get("card"),
-                            "reason": str(exc)[:240],
-                        },
-                    )
-                    state = "failed:" + str(exc)[:160]
+                    reason = _write_failure(path, str(job.get("card")), str(exc))
+                    state = "failed:" + reason
                 states.append(str(job.get("card")) + "=" + state)
             if card_id is not None:
                 return states[0].split("=", 1)[1]
@@ -499,15 +579,7 @@ def requalify_or_advance(
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             for path, job in _records(root):
                 if job.get("card") == card_id and job.get("claim_revision") == claim_revision:
-                    plan.write_once(
-                        path.with_name(path.stem + ".failed.json"),
-                        {
-                            "schema": "skfleet.profile-requalification-failure/v1",
-                            "card": card_id,
-                            "reason": str(exc)[:240],
-                        },
-                    )
-                    return "failed:" + str(exc)[:160]
+                    return "failed:" + _write_failure(path, card_id, str(exc))
             return "blocked:" + str(exc)[:180]
 
 
@@ -946,6 +1018,7 @@ def _begin(home, policy, skc, actor, card_id, core, workspace, owner, claim_revi
         return "deferred:no-ready-remote-host"
     if initial_profile:
         recipe, node_environment = profile.initial_recipe(core, workspace)
+        recipe = _all_vitest_targets(recipe, workspace)
         recipe_sha256 = plan.sha(
             json.dumps(recipe, sort_keys=True, separators=(",", ":")).encode()
         )
@@ -980,11 +1053,29 @@ def _begin(home, policy, skc, actor, card_id, core, workspace, owner, claim_revi
         "execution_host": execution_host,
     }
     if initial_profile:
-        job.update(initial_profile=True, initial_profile_value=initial_profile)
+        try:
+            _, _, plan_predecessor = plan.load_plan(
+                home, binding, allow_completed=True, allow_remote_host=True
+            )
+        except FileNotFoundError:
+            plan_predecessor = None
+        job.update(
+            initial_profile=True,
+            initial_profile_value=initial_profile,
+            plan_predecessor_sha256=plan_predecessor,
+        )
     root = _private_root(home)
     job_id = plan.sha(json.dumps(job, sort_keys=True, separators=(",", ":")).encode())
     path = root / (job_id + ".job.json")
-    plan.write_once(path, job)
+    try:
+        plan.write_once(path, job)
+    except FileExistsError:
+        if json.loads(plan.read_private(path)) != job:
+            raise plan.TestEvidenceError("profile qualification job identity conflicts")
+        failed = path.with_name(path.stem + ".failed.json")
+        if failed.exists():
+            failure = json.loads(plan.read_private(failed))
+            return "failed:" + str(failure.get("reason", "prior qualification failure"))[:160]
     return _advance(home, policy, skc, actor, path, job)
 
 
@@ -1021,17 +1112,29 @@ def _advance(home, policy, skc, actor, path, job):
             home, job["binding"], allow_completed=True, allow_remote_host=True
         )
         if initial_profile:
-            if (
-                current_plan.get("initial_profile_qualification") is not True
-                or current_plan.get("profile") != profile_value
+            if current_plan.get("initial_profile_qualification") is not True:
+                raise plan.TestEvidenceError("another test plan owns this source revision")
+            previous_profile = current_plan.get("profile")
+            same_profile = previous_profile == profile_value
+            predecessor = job.get("plan_predecessor_sha256")
+            if not same_profile and (
+                plan_sha != predecessor
+                or not _compatible_initial_profile(previous_profile, profile_value)
             ):
                 raise plan.TestEvidenceError("another test plan owns this source revision")
-            if (
+            if not same_profile or (
                 isinstance(job.get("execution_host"), str)
                 and current_plan.get("host") != job["execution_host"]
             ):
-                if (plan.run_directory(home, plan_sha) / "launch.json").exists():
-                    raise plan.TestEvidenceError("qualification plan host changed after launch")
+                launched = (plan.run_directory(home, plan_sha) / "launch.json").exists()
+                if launched and (same_profile or not plan._completed_test_attempt(home, plan_sha)):
+                    reason = (
+                        "qualification plan host changed after launch"
+                        if same_profile
+                        else "qualification plan changed after launch"
+                    )
+                    raise plan.TestEvidenceError(reason)
+                kwargs = {"acceptance_requalification": True} if launched else {}
                 plan.seal_plan(
                     home,
                     job["binding"],
@@ -1043,6 +1146,7 @@ def _advance(home, policy, skc, actor, path, job):
                     predecessor_sha256=plan_sha,
                     execution_host=job["execution_host"],
                     initial_profile_qualification=True,
+                    **kwargs,
                 )
         elif (
             current_plan.get("profile_requalification") is not True
