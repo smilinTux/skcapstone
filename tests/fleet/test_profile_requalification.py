@@ -1272,3 +1272,63 @@ def test_failure_backoff_is_scoped_to_validated_harness_runtime(tmp_path, monkey
 
     monkeypatch.setattr(plan, "load_plan", load)
     assert refresh._recent_failure(root, "1234abcd", "s" * 64) is (state != "older")
+
+
+def test_finished_profile_claim_stays_held_for_review_and_acceptance(monkeypatch):
+    job = {"card": "1234abcd", "owner": "producer", "claim_revision": "claim-1"}
+    card = SimpleNamespace(owner="producer", meta={"_claim_revision": "claim-1"})
+    seen = []
+    monkeypatch.setattr(
+        "skcapstone.release_guard.finished_work_verdict",
+        lambda *args: seen.append(args) or "PASS_FOR_REVIEW",
+    )
+
+    assert refresh._retained_finished_claim(Path("/unused"), job, card) == "PASS_FOR_REVIEW"
+    assert seen == [(Path("/unused"), "1234abcd", "producer", "claim-1")]
+
+
+def test_finished_profile_claim_refuses_changed_claim(monkeypatch):
+    job = {"card": "1234abcd", "owner": "producer", "claim_revision": "claim-1"}
+    card = SimpleNamespace(owner="producer", meta={"_claim_revision": "new-claim"})
+    monkeypatch.setattr(
+        "skcapstone.release_guard.finished_work_verdict", lambda *_args: "PASS_FOR_REVIEW"
+    )
+
+    with pytest.raises(plan.TestEvidenceError, match="finished source claim changed"):
+        refresh._retained_finished_claim(Path("/unused"), job, card)
+
+
+def test_existing_initial_profile_is_replayed_only_when_exact(tmp_path, monkeypatch):
+    core = {"id": "1234abcd"}
+    expected = {"card": "1234abcd", "source_sha256": "s" * 64}
+    destination = tmp_path / "fleet/test-profiles/1234abcd.json"
+    monkeypatch.setattr(
+        profile,
+        "qualify_profile",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(FileExistsError()),
+    )
+    monkeypatch.setattr(profile, "read_profile", lambda *_args: (expected, "p" * 64))
+    monkeypatch.setattr(profile, "profile_value", lambda *_args, **_kwargs: expected)
+
+    assert (
+        refresh._qualify_profile_or_replay(tmp_path, core, {}, {}, "lumina-nor", "r" * 64)
+        == destination
+    )
+
+
+def test_existing_initial_profile_conflict_is_refused(tmp_path, monkeypatch):
+    core = {"id": "1234abcd"}
+    monkeypatch.setattr(
+        profile,
+        "qualify_profile",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(FileExistsError()),
+    )
+    monkeypatch.setattr(profile, "read_profile", lambda *_args: ({"card": "different"}, "p" * 64))
+    monkeypatch.setattr(
+        profile,
+        "profile_value",
+        lambda *_args, **_kwargs: {"card": "1234abcd"},
+    )
+
+    with pytest.raises(plan.TestEvidenceError, match="qualified profile changed"):
+        refresh._qualify_profile_or_replay(tmp_path, core, {}, {}, "lumina-nor", "r" * 64)
