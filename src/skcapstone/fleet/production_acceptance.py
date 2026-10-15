@@ -39,6 +39,47 @@ def digest(value):
     return _sha(json.dumps(value, sort_keys=True, separators=(",", ":")).encode())
 
 
+def _seal_current_acceptance_plan(home, binding, workspace, policy, repository):
+    """Reseal a completed acceptance plan when its runtime fingerprint is stale."""
+    from . import production_test_plan as plan
+    from . import production_test_profile as profile
+
+    try:
+        sealed, _, predecessor = plan.load_plan(
+            home, binding, allow_completed=True, allow_remote_host=True
+        )
+    except FileNotFoundError:
+        return
+    if sealed.get("acceptance_requalification") is not True:
+        return
+    if sealed.get("runtime_sha256") == plan.runtime_fingerprint() and sealed.get(
+        "python_sha256"
+    ) == plan.sha((plan.PREFIX / "bin/python").read_bytes()):
+        return
+    if not plan._completed_test_attempt(home, predecessor):
+        return
+
+    current, _ = profile.read_profile(home, binding["source_card"])
+    expected = {
+        "card": binding["source_card"],
+        "repository": repository,
+        "criteria_sha256": binding["criteria_sha256"],
+    }
+    if not profile.acceptance_requalifiable(current, expected, policy):
+        return
+    plan.seal_plan(
+        home,
+        binding,
+        workspace,
+        policy,
+        current["qualified_by"],
+        current["qualification_sha256"],
+        profile=current,
+        predecessor_sha256=predecessor,
+        acceptance_requalification=True,
+    )
+
+
 def _requalify_finished_acceptance(home, directory, context, policy):
     """Refresh a stale test plan without rewriting an interrupted finish intent."""
     from . import production_test_plan as plan
@@ -1196,6 +1237,13 @@ def reconcile(home, policy, *, process_check):
                         }
                     )
                     continue
+                _seal_current_acceptance_plan(
+                    home,
+                    context["test_binding"],
+                    Path(context["source_workspace"]),
+                    policy,
+                    context["source"]["repository"],
+                )
                 receipt = run_or_read_tests(
                     home, context["test_binding"], Path(context["source_workspace"]), policy
                 )
