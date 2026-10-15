@@ -1666,7 +1666,8 @@ def scenario_retry_budget_reachable_with_ledger(ctx: DrillContext) -> ScenarioRe
     )
     state_entry = json.loads(state.path.read_text())["actions"].get(fingerprint, {})
     return ScenarioResult(
-        name=f"15. retry_budget={budget} is genuinely reachable on --honor WITH a ledger attached",
+        name=f"15. retry_budget={budget} is genuinely reachable on --honor WITH a ledger "
+        "attached",
         passed=passed,
         evidence={
             "attempt_outcomes": attempt_outcomes,

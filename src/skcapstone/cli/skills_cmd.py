@@ -225,7 +225,7 @@ def register_skills_commands(main: click.Group) -> None:
         """
         client = get_registry_client(registry)
         if client is None:
-            console.print("[bold red]skskills not installed.[/] Run: pip install skskills")
+            console.print("[bold red]skskills not installed.[/] " "Run: pip install skskills")
             sys.exit(1)
 
         ver_label = f" @{version}" if version else ""

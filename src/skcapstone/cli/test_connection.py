@@ -234,7 +234,7 @@ def register_test_connection_commands(main: click.Group) -> None:
                     f"({len(latencies)}/{count} received)"
                 )
             else:
-                console.print(f"  [bold green]REACHABLE[/]  latency={latencies[0]:.1f} ms")
+                console.print(f"  [bold green]REACHABLE[/]  " f"latency={latencies[0]:.1f} ms")
             if last_transport:
                 console.print(f"  transport: [dim]{last_transport}[/]")
         else:

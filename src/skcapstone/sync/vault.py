@@ -224,7 +224,8 @@ class Vault:
             actual_hash = _sha256_file(vault_path)
             if actual_hash != manifest.archive_hash:
                 raise VaultIntegrityError(
-                    f"Archive hash mismatch: expected {manifest.archive_hash}, got {actual_hash}"
+                    f"Archive hash mismatch: expected {manifest.archive_hash}, "
+                    f"got {actual_hash}"
                 )
             logger.info("Archive integrity verified (SHA-256)")
 
@@ -387,7 +388,8 @@ class Vault:
             actual_hash = _sha256_file(file_path)
             if actual_hash != expected_hash:
                 raise VaultIntegrityError(
-                    f"Hash mismatch for {rel_path}: expected {expected_hash}, got {actual_hash}"
+                    f"Hash mismatch for {rel_path}: "
+                    f"expected {expected_hash}, got {actual_hash}"
                 )
 
     def _sign_manifest(self, manifest: VaultManifest, passphrase: Optional[str]) -> Optional[str]:

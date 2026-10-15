@@ -2893,7 +2893,7 @@ class DaemonService:
                 self.state.record_api_server("ok", port=bound_port)
             else:
                 # Bound, but not on the intended port - degraded. Loud, not silent.
-                detail = f"intended port {config.port} was in use; rebound on {bound_port}"
+                detail = f"intended port {config.port} was in use; " f"rebound on {bound_port}"
                 self.state.record_api_server("rebound", port=bound_port, detail=detail)
                 self.state.record_error(f"ALERT: API server {detail}")
                 logger.warning("ALERT: API server %s", detail)

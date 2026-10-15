@@ -130,7 +130,8 @@ def _build_renderable(home: Path, daemon_port: int = 7777) -> Group:
     }.get(consciousness, "dim")
     header = Panel(
         Text.from_markup(
-            f"[bold white]{agent_name}[/]  [{con_color}]\u25cf {consciousness}[/]  [dim]{ts}[/]"
+            f"[bold white]{agent_name}[/]  [{con_color}]\u25cf {consciousness}[/]  "
+            f"[dim]{ts}[/]"
         ),
         title="[bold cyan]skcapstone watch[/]",
         border_style="cyan",

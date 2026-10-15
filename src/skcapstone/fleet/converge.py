@@ -312,7 +312,7 @@ def converge_service(
                 name=name,
                 type="Actuation",
                 reason="CrashLooping",
-                message=f"unit={spec['unit']} attempts={track['attempts']}; healing stopped",
+                message=f"unit={spec['unit']} attempts={track['attempts']}; " "healing stopped",
                 now=now,
             ):
                 alerts.send_alert(

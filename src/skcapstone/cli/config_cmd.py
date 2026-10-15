@@ -187,7 +187,8 @@ def _rich_output(report: object, strict: bool) -> None:  # type: ignore[type-arg
             loc = f"  line {issue.line}" if issue.line else ""
             fld = f"  [{issue.field}]" if issue.field else ""
             console.print(
-                f"       [{color}]{issue.severity.upper()}[/][dim]{fld}{loc}[/]  {issue.message}"
+                f"       [{color}]{issue.severity.upper()}[/]"
+                f"[dim]{fld}{loc}[/]  {issue.message}"
             )
 
         console.print()

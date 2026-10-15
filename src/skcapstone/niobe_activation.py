@@ -155,7 +155,8 @@ class NiobeActivation:
             raise ActivationError("decision and rollback fields are required")
         if ROLLBACK_MUST_DISABLE.format(unit=self.live_unit) not in self.rollback_action:
             raise ActivationError(
-                f"activation rollback must disable {self.live_unit}, got {self.rollback_action!r}"
+                f"activation rollback must disable {self.live_unit}, "
+                f"got {self.rollback_action!r}"
             )
 
 

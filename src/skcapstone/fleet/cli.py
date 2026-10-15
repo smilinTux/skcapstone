@@ -1203,7 +1203,8 @@ def node_drift_cmd(
             # are about; every other finding is about this node.
             where = f" on {d.host}" if d.artifact.startswith("fleet:") else ""
             click.echo(
-                f"  {d.kind:20} {d.artifact:40} expected={d.expected!r} found={d.found!r}{where}"
+                f"  {d.kind:20} {d.artifact:40} expected={d.expected!r} "
+                f"found={d.found!r}{where}"
             )
         if ambiguous:
             click.echo(

@@ -520,7 +520,7 @@ def validate_model_profiles_yaml(path: Path) -> FileValidationResult:
                             field=f"{prefix}.{fname}",
                             line=_yaml_seq_item_line(text, "profiles", i, fname),
                             message=(
-                                f"Invalid value '{val}', expected one of: {sorted(valid_set)}"
+                                f"Invalid value '{val}', " f"expected one of: {sorted(valid_set)}"
                             ),
                         )
                     )

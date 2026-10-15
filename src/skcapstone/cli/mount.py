@@ -130,7 +130,7 @@ def register_mount_commands(main: click.Group) -> None:
             console.print("[green]Unmounted.[/]")
         else:
             console.print(
-                f"[bold red]Unmount failed.[/] [dim]Try manually: fusermount -u {mount_path}[/]"
+                "[bold red]Unmount failed.[/] " f"[dim]Try manually: fusermount -u {mount_path}[/]"
             )
             sys.exit(1)
 

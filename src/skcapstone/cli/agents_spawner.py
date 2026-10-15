@@ -275,9 +275,7 @@ def register_agents_spawner_commands(agents: click.Group) -> None:
             status_style = (
                 "green"
                 if status_val == "running"
-                else "yellow"
-                if status_val == "pending"
-                else "red"
+                else "yellow" if status_val == "pending" else "red"
             )
             table.add_row(
                 r.agent_name,

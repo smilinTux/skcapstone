@@ -127,7 +127,7 @@ class ProxmoxProvider(ProviderBackend):
 
         if resp.status_code >= 400:
             raise RuntimeError(
-                f"Proxmox API {method} {endpoint} failed: {resp.status_code} {resp.text}"
+                f"Proxmox API {method} {endpoint} failed: " f"{resp.status_code} {resp.text}"
             )
 
         return resp.json().get("data", {})
@@ -316,7 +316,7 @@ class ProxmoxProvider(ProviderBackend):
 
         # Write config inside the container
         escaped = config_json.replace("'", "'\\''")
-        write_cmd = f"mkdir -p /opt/agent && printf '%s' '{escaped}' > /opt/agent/config.json"
+        write_cmd = f"mkdir -p /opt/agent && " f"printf '%s' '{escaped}' > /opt/agent/config.json"
 
         ok = self._exec_in_container(vmid, write_cmd)
 

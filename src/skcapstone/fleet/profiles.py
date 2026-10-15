@@ -188,11 +188,12 @@ def normalize_profile_spec(spec: dict) -> dict:
     identity_class = spec.get("capauthIdentityClass")
     if identity_class is None:
         raise ProfileSpecError(
-            f"spec.capauthIdentityClass is required (one of {sorted(IDENTITY_CLASSES)})"
+            "spec.capauthIdentityClass is required (one of " f"{sorted(IDENTITY_CLASSES)})"
         )
     if identity_class not in IDENTITY_CLASSES:
         raise ProfileSpecError(
-            f"unknown capauthIdentityClass {identity_class!r} (known: {sorted(IDENTITY_CLASSES)})"
+            f"unknown capauthIdentityClass {identity_class!r} "
+            f"(known: {sorted(IDENTITY_CLASSES)})"
         )
 
     description = spec.get("description", "")

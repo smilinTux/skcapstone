@@ -400,7 +400,7 @@ def validate_seed_data(data: dict) -> dict:
         else:
             result["valid"] = False
             result["errors"].append(
-                "Missing required field: seed_id (checked seed_metadata.seed_id and top-level)"
+                "Missing required field: seed_id " "(checked seed_metadata.seed_id and top-level)"
             )
 
         # Required: version
@@ -522,7 +522,7 @@ def validate_seed_data(data: dict) -> dict:
             for i, entry in enumerate(lineage):
                 if not isinstance(entry, (str, dict)):
                     result["errors"].append(
-                        f"lineage[{i}] must be a string or object, got {type(entry).__name__}"
+                        f"lineage[{i}] must be a string or object, " f"got {type(entry).__name__}"
                     )
                     result["valid"] = False
 

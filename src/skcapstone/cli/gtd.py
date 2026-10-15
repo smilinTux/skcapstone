@@ -736,7 +736,8 @@ def register_gtd_commands(main: click.Group) -> None:
             for it in oldest:
                 created = it.get("created_at", "")[:10]
                 console.print(
-                    f"    [cyan]{it['id']}[/]  [{it['list']}]  {it['text']}  [dim]({created})[/]"
+                    f"    [cyan]{it['id']}[/]  [{it['list']}]  "
+                    f"{it['text']}  [dim]({created})[/]"
                 )
 
         # Longest waiting
@@ -747,7 +748,8 @@ def register_gtd_commands(main: click.Group) -> None:
                 created = it.get("created_at", "")[:10]
                 delegate = it.get("delegate_to", "?")
                 console.print(
-                    f"    [cyan]{it['id']}[/]  -> {delegate}  {it['text']}  [dim]({created})[/]"
+                    f"    [cyan]{it['id']}[/]  -> {delegate}  "
+                    f"{it['text']}  [dim]({created})[/]"
                 )
 
         # Stale projects

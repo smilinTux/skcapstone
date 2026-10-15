@@ -460,7 +460,8 @@ def run_install(
                     "backend_id": "timer-enablement",
                     "status": "would-write",
                     "detail": (
-                        f"systemctl --user disable --now {unit}; systemctl --user stop {service}"
+                        f"systemctl --user disable --now {unit}; "
+                        f"systemctl --user stop {service}"
                     ),
                 }
             )

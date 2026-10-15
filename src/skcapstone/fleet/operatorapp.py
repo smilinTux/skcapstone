@@ -113,7 +113,8 @@ def normalize_operatorapp_spec(spec: dict) -> dict:
         node = _opt_str(node, "node")
         if transport is not None and transport not in TRANSPORTS:
             raise OperatorappSpecError(
-                f"operatorapp 'transport' must be one of {sorted(TRANSPORTS)}, got {transport!r}"
+                f"operatorapp 'transport' must be one of {sorted(TRANSPORTS)}, "
+                f"got {transport!r}"
             )
 
     return {

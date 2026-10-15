@@ -150,7 +150,7 @@ def quarantine_foreign(boxdir: Path, sender: str, host: str) -> int:
                         p = json.loads(raw)
                         if str(p.get("from", "")).lower() != f or str(p.get("host", "")) != h:
                             raise ValueError(
-                                "destination writer identity does not match its filename"
+                                "destination writer identity does not match " "its filename"
                             )
                     _replace_atomically(dest, (dexisting + "".join(lines)).encode(), 0o600)
             _replace_atomically(path, "".join(keep).encode(), 0o600)

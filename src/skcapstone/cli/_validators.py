@@ -68,7 +68,8 @@ def validate_soul_name(name: str) -> str:
         )
     if not _SOUL_NAME_RE.match(name):
         raise click.BadParameter(
-            f"Soul name '{name}' is invalid. Use only letters, digits, hyphens, and underscores."
+            f"Soul name '{name}' is invalid. "
+            "Use only letters, digits, hyphens, and underscores."
         )
     return name
 

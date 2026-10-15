@@ -193,8 +193,7 @@ def source_proof(paths, request, status, target, *, apply=False, transport=None,
         # branch; something beyond the base (commits or edits) must exist.
         source = source_bundle._inspect(
             workspace,
-            source_bundle._INSPECT_SETUP
-            + """
+            source_bundle._INSPECT_SETUP + """
 head=git('rev-parse','HEAD^{commit}').decode().strip()
 git('merge-base','--is-ancestor',base,head)
 ref=git('rev-parse','--symbolic-full-name','HEAD').decode().strip()

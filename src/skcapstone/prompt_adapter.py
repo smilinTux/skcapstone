@@ -493,7 +493,7 @@ class PromptAdapter:
 
         if fmt == "xml":
             # Wrap in XML tags for Claude
-            return f"<instructions>\n{system_prompt}\n</instructions>"
+            return "<instructions>\n" f"{system_prompt}\n" "</instructions>"
         elif fmt == "plain":
             # Strip markdown formatting
             cleaned = system_prompt

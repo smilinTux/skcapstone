@@ -1033,9 +1033,7 @@ def verify_role_dispatch(
     reason = (
         f"{seat}_dispatch_partial"
         if succeeded and suppressed
-        else f"{seat}_dispatch_complete"
-        if succeeded
-        else f"{seat}_dispatch_failed"
+        else f"{seat}_dispatch_complete" if succeeded else f"{seat}_dispatch_failed"
     )
     return {
         "cards_examined": len(launches),

@@ -166,7 +166,8 @@ def _operator_facet(manifest: Mapping[str, Any]) -> dict:
     operator = manifest.get("operator")
     if not isinstance(operator, Mapping):
         raise ManifestAdapterError(
-            f"manifest is missing a well-formed 'operator' facet (got {type(operator).__name__})"
+            "manifest is missing a well-formed 'operator' facet "
+            f"(got {type(operator).__name__})"
         )
     return dict(operator)
 
@@ -291,7 +292,7 @@ def _install_step(index: int, raw: Any) -> InstallStep:
     for required in _STEP_REQUIRED_FIELDS[kind]:
         if required not in raw:
             raise ManifestAdapterError(
-                f"install.steps[{index}] (kind {kind!r}) missing required field {required!r}"
+                f"install.steps[{index}] (kind {kind!r}) missing required field " f"{required!r}"
             )
     params = {k: v for k, v in raw.items() if k != "kind"}
     return InstallStep(kind=kind, params=params)
@@ -379,7 +380,8 @@ def _validate_operator(operator: Any) -> list[ManifestError]:
             ManifestError(
                 "operator",
                 "operator",
-                f"operator facet is required and must be a mapping, got {type(operator).__name__}",
+                f"operator facet is required and must be a mapping, "
+                f"got {type(operator).__name__}",
             )
         ]
     cli = operator.get("cli")
@@ -473,7 +475,7 @@ def _validate_install(install: Any) -> list[ManifestError]:
                 ManifestError(
                     "install",
                     f"{prefix}.kind",
-                    f"unknown step kind {kind!r} (expected one of {sorted(STEP_KINDS)})",
+                    f"unknown step kind {kind!r} (expected one of " f"{sorted(STEP_KINDS)})",
                 )
             )
             continue

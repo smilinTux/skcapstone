@@ -328,7 +328,8 @@ def honor_pending_cmd() -> None:
     verifier = signing.capauth_verifier()
     if signer is None or verifier is None:
         raise click.ClickException(
-            "honor-pending requires a usable CapAuth signer and trusted verifier; failing closed"
+            "honor-pending requires a usable CapAuth signer and trusted verifier; "
+            "failing closed"
         )
     ledger = action_ledger.ActionLedger(
         paths.root / "atlas" / "action-ledger",

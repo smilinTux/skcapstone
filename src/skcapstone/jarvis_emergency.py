@@ -49,7 +49,8 @@ def _require_worker_card_scope(action: Action, target: str, *, home: Path | None
     if worker_task and worker_task.meta.get("operator_role") == "coord-custody":
         return
     raise ValueError(
-        f"production worker for card {worker_card} may only mutate custody of its dispatched card"
+        f"production worker for card {worker_card} may only mutate custody "
+        "of its dispatched card"
     )
 
 

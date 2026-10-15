@@ -69,7 +69,7 @@ def register_coord_mail_commands(coord: click.Group) -> None:
             # Rich style tag and silently disappears from the output.
             console.print(
                 f"\n[{m.get('priority')}] {_shown_sender(m)} -> {m.get('to')}"
-                f"  {str(m.get('ts', ''))[:19]}",
+                f"  {str(m.get('ts',''))[:19]}",
                 markup=False,
             )
             if m.get("re"):
@@ -91,8 +91,8 @@ def register_coord_mail_commands(coord: click.Group) -> None:
         """Recent traffic between any peers."""
         for m in tail(Path(home), count):
             console.print(
-                f"{str(m.get('ts', ''))[:19]}  {_shown_sender(m)} -> {m.get('to')}"
-                f"  [{m.get('priority')}] {str(m.get('re', ''))[:50]}",
+                f"{str(m.get('ts',''))[:19]}  {_shown_sender(m)} -> {m.get('to')}"
+                f"  [{m.get('priority')}] {str(m.get('re',''))[:50]}",
                 markup=False,
             )
 

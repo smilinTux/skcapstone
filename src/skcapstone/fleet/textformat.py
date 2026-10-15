@@ -28,4 +28,4 @@ def humanize_bytes(n: int) -> str:
         if i == len(_UNITS) - 1 or n < 1024 ** (i + 1):
             if i == 0:
                 return f"{n}B"
-            return f"{n / (1024**i):.1f}{unit}"
+            return f"{n / (1024 ** i):.1f}{unit}"

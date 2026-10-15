@@ -211,7 +211,7 @@ KINDS: dict[str, dict] = {
     "operatorapp": {
         "kind": "Operatorapp",
         "description": (
-            "A subapp's operator-facet registration and its human-ratified standard actions."
+            "A subapp's operator-facet registration and its " "human-ratified standard actions."
         ),
         "spec": {
             "name": "operatorapp name (the subapp)",
