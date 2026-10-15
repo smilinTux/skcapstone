@@ -10,7 +10,12 @@ consulted:
 3. The source links a test log (``simple_finish_test_log`` plus
    ``simple_finish_test_log_sha256``); the file hashes to that sha and shows a
    passing pytest or vitest summary.
-4. No live worker process holds either card. A claim held by a dead or
+4. The reviewed code is on the target branch (default ``origin/main``): the
+   merged commit is an ancestor of the target and either the reviewed head is
+   too, or the merged commit is a squash whose stable patch-id equals that of
+   the reviewed head against its merge-base. No implicit ``git fetch``.
+5. The test log shows no skipped tests unless the operator passes allow-skips.
+6. No live worker process holds either card. A claim held by a dead or
    finished worker is released here as an audited operator action.
 
 It deliberately does NOT require applicability receipts, profile qualification,
@@ -26,6 +31,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import subprocess
 import uuid
 from pathlib import Path
 
@@ -40,7 +46,9 @@ _PASS = re.compile(r"PASS(?![_A-Za-z0-9])")
 # "12 passed in 3.2s" or vitest "Tests  12 passed (12)".
 _PASSED = re.compile(r"\b\d+ passed\b")
 _BAD = re.compile(r"\b\d+ (failed|errors?)\b|\bFAILED\b", re.I)
+_SKIPPED = re.compile(r"\b[1-9]\d* skipped\b")
 _SUMMARY_TAIL = 8
+DEFAULT_TARGET_REF = "origin/main"
 
 
 class AcceptRefusedError(Exception):
@@ -65,7 +73,69 @@ def _events(store, card_id: str) -> list[dict]:
     )
 
 
-def _producer(store, source) -> str:
+def _git(repo: Path, *args: str, stdin: bytes | None = None) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repo), *args],
+            input=stdin,
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise AcceptRefusedError(f"git failed: {exc}") from None
+
+
+def _patch_id(repo: Path, base: str, head: str) -> str:
+    diff = _git(repo, "diff", base, head)
+    if diff.returncode != 0:
+        raise AcceptRefusedError(f"git diff {base[:12]} {head[:12]} failed")
+    out = _git(repo, "patch-id", "--stable", stdin=diff.stdout)
+    fields = out.stdout.split()
+    if out.returncode != 0 or not fields:
+        raise AcceptRefusedError("reviewed code has an empty diff; no patch-id to compare")
+    return fields[0].decode()
+
+
+def verify_merged(repo_path: Path, merged: str, reviewed: str, target: str) -> str:
+    """Raise unless ``merged`` is on ``target`` and carries the ``reviewed`` code.
+
+    Returns "ancestor" (reviewed head is on target) or "squash" (patch-id match).
+    """
+    repo = Path(repo_path).expanduser()
+    if not repo.is_dir():
+        raise AcceptRefusedError(f"repo path {repo} is not a directory")
+    for sha, what in ((merged, "merged commit"), (reviewed, "reviewed head")):
+        if _git(repo, "cat-file", "-e", f"{sha}^{{commit}}").returncode != 0:
+            raise AcceptRefusedError(f"{what} {sha[:12]} not found in {repo}")
+    if _git(repo, "rev-parse", "--verify", "--quiet", f"{target}^{{commit}}").returncode != 0:
+        raise AcceptRefusedError(f"target ref {target} not found in {repo}")
+    if _git(repo, "merge-base", "--is-ancestor", merged, target).returncode != 0:
+        raise AcceptRefusedError(
+            f"reviewed code not on {target}: {merged[:12]} is not an ancestor"
+        )
+    if _git(repo, "merge-base", "--is-ancestor", reviewed, target).returncode == 0:
+        return "ancestor"
+    base = _git(repo, "merge-base", reviewed, target)
+    if base.returncode != 0 or not base.stdout.strip():
+        raise AcceptRefusedError(f"reviewed code not on {target}: no merge-base with {target}")
+    if _git(repo, "rev-parse", "--verify", "--quiet", f"{merged}^").returncode != 0:
+        raise AcceptRefusedError(f"reviewed code not on {target}: {merged[:12]} has no parent")
+    if _patch_id(repo, base.stdout.decode().strip(), reviewed) != _patch_id(
+        repo, f"{merged}^", merged
+    ):
+        raise AcceptRefusedError(
+            f"reviewed code not on {target}: patch-id of {merged[:12]} differs from reviewed head"
+        )
+    return "squash"
+
+
+def _producer(store, source, override: str | None = None) -> str:
+    if override:
+        return override.strip()
+    value = source.links.get("producer_identity_override") or None
+    if value:
+        return str(value).strip()
     value = source.links.get("producer_identity") or source.meta.get("producer_identity")
     if value:
         return str(value).strip()
@@ -201,7 +271,17 @@ def _link(home: Path, card_id: str, key: str, value: str, actor: str) -> None:
     )
 
 
-def accept_source(home: Path, source_id: str, actor: str) -> str:
+def accept_source(
+    home: Path,
+    source_id: str,
+    actor: str,
+    *,
+    merged_commit: str | None = None,
+    repo_path: Path | str | None = None,
+    target_ref: str = DEFAULT_TARGET_REF,
+    producer: str | None = None,
+    allow_skips: bool = False,
+) -> str:
     """Accept ``source_id``; return a one-line result or raise AcceptRefusedError."""
     from skcoord.card_store import CardStore
 
@@ -219,10 +299,13 @@ def accept_source(home: Path, source_id: str, actor: str) -> str:
         return f"already accepted: {source_id}"
 
     review = _find_review(home, store, source)
+    producer_override_used = bool(producer and producer.strip())
 
-    producer = _producer(store, source)
+    producer = _producer(store, source, producer)
     reviewer = _verdict_writer(home, store, review)
-    if "producer-self-review" in reviewer_candidate_reasons(reviewer, producer=producer):
+    if _norm(reviewer) == _norm(producer) or "producer-self-review" in (
+        reviewer_candidate_reasons(reviewer, producer=producer)
+    ):
         raise AcceptRefusedError(f"reviewer {reviewer} is the producer {producer} (self-review)")
 
     judged = str(review.meta.get("link_head_revision") or review.links.get("link_head_revision"))
@@ -245,6 +328,21 @@ def accept_source(home: Path, source_id: str, actor: str) -> str:
     if not log_shows_success(data.decode("utf-8", errors="replace")):
         raise AcceptRefusedError("test log does not show a passing summary")
 
+    text = data.decode("utf-8", errors="replace")
+    if _SKIPPED.search(text) and not allow_skips:
+        raise AcceptRefusedError(
+            "test log has skipped tests (zero unapproved skips); pass --allow-skips to approve"
+        )
+
+    merged = (merged_commit or str(source.links.get("merged_commit") or "")).strip().lower()
+    if not _SHA40.fullmatch(merged):
+        raise AcceptRefusedError(
+            "source has no merged_commit (40-hex); link it or pass --merged-commit"
+        )
+    if repo_path is None:
+        raise AcceptRefusedError("--repo-path is required to verify the merged commit")
+    how = verify_merged(Path(repo_path), merged, tested, target_ref)
+
     _check_live_workers(store, (source, review))
     for card in (review, source):
         _release_if_held(home, store, card.id)
@@ -252,6 +350,12 @@ def accept_source(home: Path, source_id: str, actor: str) -> str:
     _link(home, source_id, "verdict", "PASS", actor)
     _link(home, source_id, "accepted_review", review.id, actor)
     _link(home, source_id, "accepted_test_log_sha256", log_sha, actor)
+    _link(home, source_id, "merged_commit", merged, actor)
+    _link(home, source_id, "accepted_merge_check", f"{how}:{target_ref}", actor)
+    if producer_override_used:
+        _link(home, source_id, "producer_identity_override", producer.strip(), actor)
+    if allow_skips and _SKIPPED.search(text):
+        _link(home, source_id, "accepted_allow_skips", "true", actor)
 
     board = Board(home)
     for card_id in (review.id, source_id):
@@ -261,4 +365,7 @@ def accept_source(home: Path, source_id: str, actor: str) -> str:
         done = store.fold(card_id)
         if done is None or done.status.value != "done":
             raise AcceptRefusedError(f"completion readback failed for {card_id}")
-    return f"accepted: {source_id} (review {review.id}, tests on {tested[:12]})"
+    return (
+        f"accepted: {source_id} (review {review.id}, tests on {tested[:12]}, "
+        f"merged {merged[:12]} via {how})"
+    )
