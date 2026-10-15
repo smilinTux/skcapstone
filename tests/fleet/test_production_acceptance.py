@@ -492,7 +492,7 @@ def test_controller_requires_trusted_tests_and_finishes_without_legacy_release(
 
 
 def test_stale_completed_acceptance_requalification_seals_current_runtime_successor(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, qualified_runtime
 ):
     from skcapstone.fleet import production_test_plan, production_test_profile
 
@@ -549,7 +549,9 @@ def test_stale_completed_acceptance_requalification_seals_current_runtime_succes
     assert calls[0][1]["acceptance_requalification"] is True
 
 
-def test_stale_inflight_acceptance_requalification_is_not_rotated(tmp_path, monkeypatch):
+def test_stale_inflight_acceptance_requalification_is_not_rotated(
+    tmp_path, monkeypatch, qualified_runtime
+):
     from skcapstone.fleet import production_test_plan
 
     binding = {"source_card": "2587020f"}
