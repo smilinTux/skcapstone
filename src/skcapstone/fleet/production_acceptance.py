@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import socket
 import stat
 import subprocess
@@ -200,6 +201,43 @@ def _source_test_recipe_revision_matches(home, item, expected_revision):
 
     projected = LiveCardStoreGateway(home).read_card(item["card"], _store=PriorSourceStore(home))
     return projected.revision == expected_revision
+
+
+def _queue_missing_test_profile(home, policy, context):
+    """Queue an exact held source for initial profile qualification when absent."""
+    from . import profile_requalification
+    from .production_test_profile import read_profile
+
+    source = context["source"]
+    try:
+        read_profile(home, source["card"])
+    except FileNotFoundError:
+        pass
+    else:
+        return None
+
+    card = CardStore(home).fold(source["card"])
+    if (
+        card is None
+        or card.status.value != "doing"
+        or card.owner != source["owner"]
+        or card.meta.get("_claim_revision") != source["claim"]
+    ):
+        raise ReviewEvidenceError("missing test profile source claim changed")
+    skc = shutil.which("skcapstone")
+    if not skc:
+        return "qualification-cli-unavailable"
+    return profile_requalification.requalify_or_advance(
+        home,
+        policy,
+        skc,
+        "niobe",
+        card_id=source["card"],
+        core=card.model_dump(mode="json"),
+        workspace=context["source_workspace"],
+        owner=source["owner"],
+        claim_revision=source["claim"],
+    )
 
 
 def acceptance_review_revision(home, directory, context):
@@ -1138,13 +1176,26 @@ def reconcile(home, policy, *, process_check):
                         ):
                             raise ReviewEvidenceError("native pair changed before trusted tests")
                 artifacts(context)
-                seal_candidate(
-                    home,
-                    context["test_binding"],
-                    Path(context["source_workspace"]),
-                    policy,
-                    context["source"]["repository"],
-                )
+                try:
+                    seal_candidate(
+                        home,
+                        context["test_binding"],
+                        Path(context["source_workspace"]),
+                        policy,
+                        context["source"]["repository"],
+                    )
+                except FileNotFoundError:
+                    qualification = _queue_missing_test_profile(home, policy, context)
+                    if qualification is None:
+                        raise
+                    results.append(
+                        {
+                            "card": card,
+                            "state": "pending:awaiting-profile-qualification",
+                            "reason": "profile qualification " + str(qualification)[:140],
+                        }
+                    )
+                    continue
                 receipt = run_or_read_tests(
                     home, context["test_binding"], Path(context["source_workspace"]), policy
                 )

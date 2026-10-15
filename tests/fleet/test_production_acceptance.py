@@ -568,6 +568,106 @@ def test_controller_requires_trusted_tests_and_finishes_without_legacy_release(
         assert store._read_events(review["card"]) == before
 
 
+def test_missing_profile_queues_qualification_and_reports_pending(stopped_pair, monkeypatch):
+    from skcapstone.fleet import production_test_profile, profile_requalification
+
+    home, policy, review, _, _, store = stopped_pair
+    source_id = store.fold(review["card"]).meta["link_source_card"]
+    source_card = store.fold(source_id)
+    context = {
+        "source": {
+            "card": source_id,
+            "owner": source_card.owner,
+            "claim": source_card.meta["_claim_revision"],
+        },
+        "source_workspace": "/tmp/exact-source-workspace",
+    }
+    monkeypatch.setattr(
+        production_test_profile,
+        "read_profile",
+        lambda *args: (_ for _ in ()).throw(FileNotFoundError("missing profile")),
+    )
+    calls = []
+    monkeypatch.setattr(
+        profile_requalification,
+        "requalify_or_advance",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or "pending",
+    )
+
+    qualification = acceptance._queue_missing_test_profile(home, policy, context)
+    assert qualification == "pending"
+    assert len(calls) == 1
+    args, kwargs = calls[0]
+    assert args[1] == policy
+    assert args[3] == "niobe"
+    assert kwargs["card_id"] == source_id
+    assert kwargs["owner"] == source_card.owner
+    assert kwargs["claim_revision"] == source_card.meta["_claim_revision"]
+    assert kwargs["workspace"] == context["source_workspace"]
+
+
+def test_reconcile_reports_missing_profile_as_qualification_pending(stopped_pair, monkeypatch):
+    from skcapstone.fleet import production_test_profile
+
+    home, policy, review, _, _, _ = stopped_pair
+    monkeypatch.setattr(acceptance.socket, "gethostname", lambda: "control")
+    monkeypatch.setattr(
+        production_test_profile,
+        "seal_candidate",
+        lambda *args: (_ for _ in ()).throw(FileNotFoundError("missing profile")),
+    )
+    monkeypatch.setattr(acceptance, "_queue_missing_test_profile", lambda *args: "pending")
+    monkeypatch.setitem(
+        sys.modules,
+        "skcapstone.fleet.production_tests",
+        SimpleNamespace(run_or_read_tests=lambda *args: pytest.fail("tests must await profile")),
+    )
+
+    result = acceptance.reconcile(
+        home, policy, process_check=lambda card: {"sessions": [], "units": []}
+    )
+
+    assert result == [
+        {
+            "card": review["card"],
+            "state": "pending:awaiting-profile-qualification",
+            "reason": "profile qualification pending",
+        }
+    ]
+
+
+def test_missing_profile_does_not_queue_after_source_claim_changes(stopped_pair, monkeypatch):
+    from skcapstone.fleet import production_test_profile, profile_requalification
+
+    home, policy, review, _, _, store = stopped_pair
+    source_id = store.fold(review["card"]).meta["link_source_card"]
+    source_card = store.fold(source_id)
+    context = {
+        "source": {
+            "card": source_id,
+            "owner": source_card.owner,
+            "claim": source_card.meta["_claim_revision"],
+        },
+        "source_workspace": "/tmp/exact-source-workspace",
+    }
+    monkeypatch.setattr(
+        production_test_profile,
+        "read_profile",
+        lambda *args: (_ for _ in ()).throw(FileNotFoundError("missing profile")),
+    )
+    store.append_event(source_id, "unassign", "operator")
+    queued = []
+    monkeypatch.setattr(
+        profile_requalification,
+        "requalify_or_advance",
+        lambda *args, **kwargs: queued.append(kwargs),
+    )
+
+    with pytest.raises(ValueError, match="missing test profile source claim changed"):
+        acceptance._queue_missing_test_profile(home, policy, context)
+    assert queued == []
+
+
 def test_existing_finish_intent_requalifies_stale_plan_without_rewriting_intent(
     tmp_path, monkeypatch
 ):
