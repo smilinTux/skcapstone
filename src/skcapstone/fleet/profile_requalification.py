@@ -138,6 +138,13 @@ def _compatible_initial_profile(previous: dict, desired: dict) -> bool:
     return True
 
 
+def _qualification_implementation_sha256() -> str:
+    """Bind retries to the exact code that prepares and validates qualification plans."""
+    modules = (Path(__file__), Path(plan.__file__), Path(profile.__file__), Path(node.__file__))
+    manifest = [(path.name, plan.sha(path.read_bytes())) for path in modules]
+    return plan.sha(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode())
+
+
 @contextmanager
 def _job_lock(root: Path, job_id: str):
     """Serialize one remote qualification without blocking other hosts."""
@@ -1051,6 +1058,7 @@ def _begin(home, policy, skc, actor, card_id, core, workspace, owner, claim_revi
         "profile_sha256": predecessor,
         "source_sha256": source_sha256,
         "execution_host": execution_host,
+        "qualification_implementation_sha256": _qualification_implementation_sha256(),
     }
     if initial_profile:
         try:

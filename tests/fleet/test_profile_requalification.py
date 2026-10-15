@@ -502,6 +502,91 @@ def test_initial_profile_retargets_unlaunched_remote_plan_to_authority(tmp_path,
     ]
 
 
+def test_failed_initial_job_retries_only_for_changed_qualification_code(tmp_path, monkeypatch):
+    root = tmp_path / "fleet"
+    root.mkdir(mode=0o700)
+    card = SimpleNamespace(
+        status=SimpleNamespace(value="doing"),
+        owner="pi-glm-chiap08-1234abcd",
+        meta={"_claim_revision": "claim-1"},
+    )
+    monkeypatch.setattr(
+        refresh, "CardStore", lambda _home: SimpleNamespace(fold=lambda _card_id: card)
+    )
+    monkeypatch.setattr(refresh, "card_revision", lambda _card: "source-revision")
+    monkeypatch.setattr(
+        refresh,
+        "_git",
+        lambda _workspace, *args: (
+            "head" if args[0] == "rev-parse" and args[-1] == "HEAD" else "tree"
+        ),
+    )
+    monkeypatch.setattr(plan, "source_state", lambda *_args: None)
+    monkeypatch.setattr(plan, "workspace_source_fingerprint", lambda *_args: "s" * 64)
+    monkeypatch.setattr(
+        profile,
+        "contract",
+        lambda _core: {
+            "criteria_sha256": "c" * 64,
+            "repository": "https://github.com/example/repo.git",
+        },
+    )
+    monkeypatch.setattr(
+        profile, "read_profile", lambda *_args: (_ for _ in ()).throw(FileNotFoundError())
+    )
+    monkeypatch.setattr(profile, "initial_recipe", lambda *_args: ({"pytest_all": True}, None))
+    monkeypatch.setattr(
+        profile,
+        "profile_value",
+        lambda *_args, **_kwargs: {
+            "card": "1234abcd",
+            "qualified_by": "niobe",
+            "recipe": {"pytest_all": True},
+            "qualification_sha256": "q" * 64,
+        },
+    )
+    monkeypatch.setattr(refresh, "_execution_host", lambda *_args: "chiap01")
+    monkeypatch.setattr(refresh, "_remote_source_reconstruction_failed", lambda *_args: False)
+    monkeypatch.setattr(
+        plan,
+        "load_plan",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(FileNotFoundError()),
+    )
+    monkeypatch.setattr(refresh, "_advance", lambda *_args: "pending")
+    code = ["a" * 64]
+    monkeypatch.setattr(
+        refresh, "_qualification_implementation_sha256", lambda: code[0], raising=False
+    )
+    args = (
+        tmp_path,
+        {"authority_host": "chiap08"},
+        "/test/skcapstone",
+        "niobe",
+        "1234abcd",
+        {"id": "1234abcd"},
+        tmp_path,
+        "pi-glm-chiap08-1234abcd",
+        "claim-1",
+    )
+
+    assert refresh._begin(*args) == "pending"
+    first = next((tmp_path / "fleet/profile-requalifications").glob("*.job.json"))
+    plan.write_once(
+        first.with_name(first.stem + ".failed.json"),
+        {"schema": "skfleet.profile-requalification-failure/v1", "reason": "stale plan"},
+    )
+    code[0] = "b" * 64
+    assert refresh._begin(*args) == "pending"
+    jobs = list((tmp_path / "fleet/profile-requalifications").glob("*.job.json"))
+    assert len(jobs) == 2
+    assert {
+        json.loads(path.read_text())["qualification_implementation_sha256"] for path in jobs
+    } == {
+        "a" * 64,
+        "b" * 64,
+    }
+
+
 @pytest.mark.parametrize("launched,completed", [(False, False), (True, True), (True, False)])
 def test_initial_profile_reseals_compatible_plan_only_after_terminal(
     tmp_path, monkeypatch, launched, completed
