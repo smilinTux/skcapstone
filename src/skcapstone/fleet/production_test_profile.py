@@ -80,7 +80,6 @@ def initial_recipe(core: dict, workspace: Path) -> tuple[dict, dict | None]:
         or "vitest" in text
         or ".tsx" in text
         or ".ts" in text
-        or ".mjs" in text
         or "frontend" in text
     )
     python_scope = ".py" in text or "pytest" in text or "python" in text

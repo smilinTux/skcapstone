@@ -1099,12 +1099,6 @@ def _validate_plan(
 
         validate_plan_node_environment(plan, profile)
     checks_match = plan["checks"] == expected_checks
-    if not checks_match and "profile" in plan:
-        from .production_pytest_recipe import equivalent_target_order
-
-        checks_match = equivalent_target_order(
-            plan["checks"], expected_checks, plan["profile"]["recipe"]
-        )
     if allow_legacy_recipe and not checks_match and "profile" in plan:
         from .production_pytest_recipe import legacy_collection_recipe_candidates
 
