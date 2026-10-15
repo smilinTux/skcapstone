@@ -1,0 +1,2 @@
+- Support an exact operator-attributed correction of a review receipt that names its evidence commit instead of the reviewed source.
+- Read accepted initial/successor plans by their immutable receipt-bound digest. Dispatcher validation tolerates only a permutation of the exact pytest targets when JSON key sorting changed their order.

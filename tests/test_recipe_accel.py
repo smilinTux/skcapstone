@@ -21,6 +21,7 @@ from skcapstone.fleet import recipe_accel as accel
 
 ORIGINAL_COVERED = recipe.covered
 ORIGINAL_CHECKS = recipe.recipe_checks
+ORIGINAL_PLAN_VALIDATOR = plan._validate_plan
 
 
 @pytest.fixture(autouse=True)
@@ -91,10 +92,62 @@ def test_install_is_idempotent_and_patches_every_binding() -> None:
     assert recipe.covered is accel.covered
     assert recipe.recipe_checks is not ORIGINAL_CHECKS
     assert profile.recipe_checks is recipe.recipe_checks
+    assert plan._validate_plan is not ORIGINAL_PLAN_VALIDATOR
     accel.uninstall()
     assert recipe.covered is ORIGINAL_COVERED
     assert recipe.recipe_checks is ORIGINAL_CHECKS
     assert profile.recipe_checks is ORIGINAL_CHECKS
+    assert plan._validate_plan is ORIGINAL_PLAN_VALIDATOR
+
+
+def test_plan_validator_accepts_only_exact_pytest_target_permutations() -> None:
+    recipe_value = {
+        "pytest": {"tests/test_a.py": 1, "tests/test_z.py": 1},
+        "compile": [],
+        "lint": [],
+        "changelog": False,
+    }
+    expected = recipe.recipe_checks(recipe_value)
+    sealed = {
+        "profile": {"recipe": recipe_value},
+        "checks": [
+            {
+                **expected[0],
+                "argv": [*expected[0]["argv"][:-2], "tests/test_z.py", "tests/test_a.py"],
+            }
+        ],
+    }
+    observed = []
+
+    def original(_home, _binding, value, **_kwargs):
+        observed.append(value)
+        if value["checks"] != expected:
+            raise plan.TestEvidenceError("checks changed")
+
+    validate = accel.target_order_validator(original)
+    validate(None, None, sealed, successor=False)
+    assert observed[-1]["checks"] == expected
+    assert sealed["checks"] != expected
+
+    changed = {
+        **sealed,
+        "checks": [
+            {**sealed["checks"][0], "argv": ["/other/python", *sealed["checks"][0]["argv"][1:]]}
+        ],
+    }
+    with pytest.raises(plan.TestEvidenceError, match="checks changed"):
+        validate(None, None, changed, successor=False)
+    duplicate = {
+        **sealed,
+        "checks": [
+            {
+                **sealed["checks"][0],
+                "argv": [*expected[0]["argv"][:-2], "tests/test_a.py", "tests/test_a.py"],
+            }
+        ],
+    }
+    with pytest.raises(plan.TestEvidenceError, match="checks changed"):
+        validate(None, None, duplicate, successor=False)
 
 
 def test_cached_checks_equal_original_for_valid_and_invalid_recipes() -> None:

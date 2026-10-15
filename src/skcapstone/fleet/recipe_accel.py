@@ -21,6 +21,11 @@ What it fixes. Validating a recipe is a pure function of the recipe, but:
   1,500 plans and spent 50 s here, 178-283 s under a profiler, before lane selection
   scored its first card).
 
+Sorted JSON can also reorder a recipe's pytest target map while the sealed argv
+retains its original order. The dispatcher normalizes only that target suffix
+before the existing validator, and only when the full target multiset and every
+command argument before it match. The immutable plan and receipt stay unchanged.
+
 ``install()`` swaps in a linear ``covered``, a per-process memo around
 ``recipe_checks`` and a short-lived memo around the two fingerprints (the dispatcher
 process lives about one cycle, so a toolchain swapped mid-cycle is seen next cycle,
@@ -134,6 +139,59 @@ def cached(original: Callable[[dict], list[dict]]) -> Callable[[dict], list[dict
     return recipe_checks
 
 
+def equivalent_target_order(actual: Any, expected: Any, recipe: dict) -> bool:
+    """Accept only pytest argv permutations of the exact sealed target set."""
+    targets = recipe.get("pytest")
+    if not isinstance(targets, dict) or not targets:
+        return False
+    if not isinstance(actual, list) or not isinstance(expected, list):
+        return False
+    if len(actual) != len(expected):
+        return False
+    count = len(targets)
+    for observed, wanted in zip(actual, expected):
+        if observed == wanted:
+            continue
+        if (
+            not isinstance(observed, dict)
+            or not isinstance(wanted, dict)
+            or set(observed) != {"id", "argv"}
+            or set(wanted) != {"id", "argv"}
+            or observed.get("id") != "pytest"
+            or wanted.get("id") != "pytest"
+            or not isinstance(observed.get("argv"), list)
+            or not isinstance(wanted.get("argv"), list)
+        ):
+            return False
+        left, right = observed["argv"], wanted["argv"]
+        if (
+            len(left) != len(right)
+            or any(not isinstance(arg, str) for arg in left)
+            or any(not isinstance(arg, str) for arg in right)
+            or left[:-count] != right[:-count]
+            or sorted(left[-count:]) != sorted(targets)
+            or sorted(right[-count:]) != sorted(targets)
+        ):
+            return False
+    return True
+
+
+def target_order_validator(original: Callable) -> Callable:
+    """Allow JSON key sorting to change only the order of sealed pytest targets."""
+
+    def validate(home, binding, value, **kwargs):
+        if isinstance(value, dict) and isinstance(value.get("profile"), dict):
+            expected = _recipe.recipe_checks(value["profile"].get("recipe"))
+            if value.get("checks") != expected and equivalent_target_order(
+                value.get("checks"), expected, value["profile"].get("recipe")
+            ):
+                value = {**value, "checks": expected}
+        return original(home, binding, value, **kwargs)
+
+    validate.__wrapped__ = original  # type: ignore[attr-defined]
+    return validate
+
+
 def memoized_fingerprint(
     original: Callable[[], str],
     *,
@@ -186,6 +244,7 @@ def install() -> bool:
     original_covered = _recipe.covered
     _ORIGINALS["recipe_checks"] = original_checks
     _ORIGINALS["covered"] = original_covered
+    _ORIGINALS["validate_plan"] = _plan._validate_plan
     wrapper = cached(original_checks)
     # Modules bind ``recipe_checks`` by name (``from .x import recipe_checks``), so
     # every namespace holding the original must be repointed, not just the source.
@@ -195,6 +254,7 @@ def install() -> bool:
         if getattr(module, "recipe_checks", None) is original_checks:
             module.recipe_checks = wrapper  # type: ignore[attr-defined]
     _recipe.covered = covered
+    _plan._validate_plan = target_order_validator(_ORIGINALS["validate_plan"])
     for name in _FINGERPRINT_NAMES:
         _ORIGINALS[name] = getattr(_plan, name)
         setattr(_plan, name, memoized_fingerprint(_ORIGINALS[name]))
@@ -211,6 +271,7 @@ def uninstall() -> None:
             if getattr(module, "recipe_checks", None) is wrapper:
                 module.recipe_checks = _ORIGINALS["recipe_checks"]  # type: ignore[attr-defined]
     _recipe.covered = _ORIGINALS["covered"]
+    _plan._validate_plan = _ORIGINALS["validate_plan"]
     for name in _FINGERPRINT_NAMES:
         setattr(_plan, name, _ORIGINALS[name])
     _ORIGINALS.clear()
