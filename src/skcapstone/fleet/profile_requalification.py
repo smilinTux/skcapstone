@@ -76,8 +76,35 @@ def _fleet_paths(home: Path):
     return paths_for_sovereign_home(home)
 
 
-def _execution_host(home: Path, policy: dict, card_id: str) -> str:
+def _remote_source_reconstruction_failed(
+    home: Path, authority_host: str, card_id: str, source_sha256: str
+) -> bool:
+    root = home / "fleet/profile-requalifications"
+    for failed in root.glob("*.job.failed.json"):
+        try:
+            job_path = failed.with_name(failed.name.replace(".failed", ""))
+            job = json.loads(plan.read_private(job_path))
+            reason = json.loads(plan.read_private(failed)).get("reason")
+        except (OSError, ValueError):
+            continue
+        if (
+            job.get("card") == card_id
+            and job.get("source_sha256") == source_sha256
+            and job.get("execution_host") != authority_host
+            and reason == "exact source reconstruction failed"
+        ):
+            return True
+    return False
+
+
+def _execution_host(
+    home: Path, policy: dict, card_id: str, source_sha256: str | None = None
+) -> str:
     """Choose the least-loaded ready remote test host, with authority fallback."""
+    if source_sha256 and _remote_source_reconstruction_failed(
+        home, policy["authority_host"], card_id, source_sha256
+    ):
+        return policy["authority_host"]
     from . import builder_dispatch, production_builder
 
     paths = _fleet_paths(home)
@@ -702,7 +729,11 @@ def offer_stale_candidate(
                 or profile.legacy_full_qualification_required(current, expected, policy)
             ):
                 return "ineligible:source-or-contract-changed"
-        if _execution_host(home, policy, card_id) == policy["authority_host"]:
+        if _execution_host(home, policy, card_id, source_sha) == policy[
+            "authority_host"
+        ] and not _remote_source_reconstruction_failed(
+            home, policy["authority_host"], card_id, source_sha
+        ):
             return "deferred:no-ready-remote-host"
     except (OSError, ValueError, KeyError, TypeError) as exc:
         return "ineligible:" + str(exc)[:120]
@@ -908,6 +939,11 @@ def _begin(home, policy, skc, actor, card_id, core, workspace, owner, claim_revi
     }
     plan.source_state(workspace, spec)
     source_sha256 = plan.workspace_source_fingerprint(expected["repository"], workspace)
+    execution_host = _execution_host(home, policy, card_id, source_sha256)
+    if execution_host == policy["authority_host"] and not _remote_source_reconstruction_failed(
+        home, policy["authority_host"], card_id, source_sha256
+    ):
+        return "deferred:no-ready-remote-host"
     if initial_profile:
         recipe, node_environment = profile.initial_recipe(core, workspace)
         recipe_sha256 = plan.sha(
@@ -941,7 +977,7 @@ def _begin(home, policy, skc, actor, card_id, core, workspace, owner, claim_revi
         "binding": binding,
         "profile_sha256": predecessor,
         "source_sha256": source_sha256,
-        "execution_host": _execution_host(home, policy, card_id),
+        "execution_host": execution_host,
     }
     if initial_profile:
         job.update(initial_profile=True, initial_profile_value=initial_profile)
@@ -981,7 +1017,7 @@ def _advance(home, policy, skc, actor, path, job):
     profile_value = job.get("initial_profile_value") if initial_profile else None
     plan.source_state(workspace, job["binding"])
     try:
-        current_plan, _, _ = plan.load_plan(
+        current_plan, _, plan_sha = plan.load_plan(
             home, job["binding"], allow_completed=True, allow_remote_host=True
         )
         if initial_profile:
@@ -990,6 +1026,24 @@ def _advance(home, policy, skc, actor, path, job):
                 or current_plan.get("profile") != profile_value
             ):
                 raise plan.TestEvidenceError("another test plan owns this source revision")
+            if (
+                isinstance(job.get("execution_host"), str)
+                and current_plan.get("host") != job["execution_host"]
+            ):
+                if (plan.run_directory(home, plan_sha) / "launch.json").exists():
+                    raise plan.TestEvidenceError("qualification plan host changed after launch")
+                plan.seal_plan(
+                    home,
+                    job["binding"],
+                    workspace,
+                    policy,
+                    profile_value["qualified_by"],
+                    profile_value["qualification_sha256"],
+                    profile=profile_value,
+                    predecessor_sha256=plan_sha,
+                    execution_host=job["execution_host"],
+                    initial_profile_qualification=True,
+                )
         elif (
             current_plan.get("profile_requalification") is not True
             or current_plan.get("profile_predecessor_sha256") != job["profile_sha256"]
