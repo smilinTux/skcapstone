@@ -10,7 +10,6 @@ from skcoord.card_store import CardStore, card_mutation_lock
 from ..blocked_verdict import is_outcome_key
 from ..seraph_review_cardstore import LiveCardStoreGateway, card_revision
 from ..seraph_review_contracts import _digest
-from . import production_test_plan
 from .production_review_evidence import ReviewEvidenceError
 from .production_review_steps import steps  # Re-export for historical recovery callers.
 from .source_bundle import MAX_EVIDENCE, _once, _read, _sha
@@ -159,15 +158,9 @@ def _historical_acceptance(home, context, historical, inspect):
             or json.loads(row.links.get("test_acceptance", "null")) != acceptance
         ):
             raise ReviewEvidenceError("historical acceptance lacks exact native completion")
-    plan_path = production_test_plan._plan_base(home, binding)
-    if not plan_path.exists():
-        # Read pre-v2 retained acceptances without changing their immutable path.
-        plan_path = (
-            Path(home)
-            / "fleet/test-plans"
-            / (binding["source_card"] + "-" + binding["source_head"] + ".json")
-        )
-    raw_plan = read_private(plan_path)
+    from .retained_test_plan import read_accepted_plan
+
+    raw_plan = read_accepted_plan(home, binding, acceptance.get("plan_sha256"))
     plan_sha = sha(raw_plan)
     if acceptance.get("plan_sha256") != plan_sha:
         raise ReviewEvidenceError("retained historical test plan changed")

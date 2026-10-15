@@ -76,8 +76,35 @@ def _fleet_paths(home: Path):
     return paths_for_sovereign_home(home)
 
 
-def _execution_host(home: Path, policy: dict, card_id: str) -> str:
+def _remote_source_reconstruction_failed(
+    home: Path, authority_host: str, card_id: str, source_sha256: str
+) -> bool:
+    root = home / "fleet/profile-requalifications"
+    for failed in root.glob("*.job.failed.json"):
+        try:
+            job_path = failed.with_name(failed.name.replace(".failed", ""))
+            job = json.loads(plan.read_private(job_path))
+            reason = json.loads(plan.read_private(failed)).get("reason")
+        except (OSError, ValueError):
+            continue
+        if (
+            job.get("card") == card_id
+            and job.get("source_sha256") == source_sha256
+            and job.get("execution_host") != authority_host
+            and reason == "exact source reconstruction failed"
+        ):
+            return True
+    return False
+
+
+def _execution_host(
+    home: Path, policy: dict, card_id: str, source_sha256: str | None = None
+) -> str:
     """Choose the least-loaded ready remote test host, with authority fallback."""
+    if source_sha256 and _remote_source_reconstruction_failed(
+        home, policy["authority_host"], card_id, source_sha256
+    ):
+        return policy["authority_host"]
     from . import builder_dispatch, production_builder
 
     paths = _fleet_paths(home)
@@ -498,6 +525,46 @@ def _successor_environment(value: dict) -> dict | None:
     return node.current_environment(value["node_environment"])
 
 
+def _finished_claim_verdict(home: Path, job: dict) -> str | None:
+    """Return a PASS outcome held by this exact producer claim, if present."""
+    from ..release_guard import finished_work_verdict
+
+    return finished_work_verdict(
+        home,
+        job["card"],
+        job["owner"],
+        job["claim_revision"],
+    )
+
+
+def _retained_finished_claim(home: Path, job: dict, latest) -> str | None:
+    """Keep a successful source claim held for its independent review and acceptance."""
+    verdict = _finished_claim_verdict(home, job)
+    if verdict is None:
+        return None
+    if (
+        latest is None
+        or latest.owner != job["owner"]
+        or latest.meta.get("_claim_revision") != job["claim_revision"]
+    ):
+        raise plan.TestEvidenceError("finished source claim changed after qualification")
+    return verdict
+
+
+def _qualify_profile_or_replay(home, core, policy, recipe, qualified_by, receipt_sha, **kwargs):
+    """Publish a profile once, or accept only an identical prior publication."""
+    try:
+        return profile.qualify_profile(
+            home, core, policy, recipe, qualified_by, receipt_sha, **kwargs
+        )
+    except FileExistsError:
+        existing, _ = profile.read_profile(home, core["id"])
+        expected = profile.profile_value(core, policy, recipe, qualified_by, receipt_sha, **kwargs)
+        if existing != expected:
+            raise plan.TestEvidenceError("qualified profile changed before recovery")
+        return home / "fleet/test-profiles" / (core["id"] + ".json")
+
+
 # A qualification that failed on this exact source will fail again: the SKLegal
 # full suite needs Postgres, systemd and real credentials, so pytest_all can
 # never be green in the sandbox. Re-offering it every cycle burned the four
@@ -662,7 +729,11 @@ def offer_stale_candidate(
                 or profile.legacy_full_qualification_required(current, expected, policy)
             ):
                 return "ineligible:source-or-contract-changed"
-        if _execution_host(home, policy, card_id) == policy["authority_host"]:
+        if _execution_host(home, policy, card_id, source_sha) == policy[
+            "authority_host"
+        ] and not _remote_source_reconstruction_failed(
+            home, policy["authority_host"], card_id, source_sha
+        ):
             return "deferred:no-ready-remote-host"
     except (OSError, ValueError, KeyError, TypeError) as exc:
         return "ineligible:" + str(exc)[:120]
@@ -868,6 +939,11 @@ def _begin(home, policy, skc, actor, card_id, core, workspace, owner, claim_revi
     }
     plan.source_state(workspace, spec)
     source_sha256 = plan.workspace_source_fingerprint(expected["repository"], workspace)
+    execution_host = _execution_host(home, policy, card_id, source_sha256)
+    if execution_host == policy["authority_host"] and not _remote_source_reconstruction_failed(
+        home, policy["authority_host"], card_id, source_sha256
+    ):
+        return "deferred:no-ready-remote-host"
     if initial_profile:
         recipe, node_environment = profile.initial_recipe(core, workspace)
         recipe_sha256 = plan.sha(
@@ -901,7 +977,7 @@ def _begin(home, policy, skc, actor, card_id, core, workspace, owner, claim_revi
         "binding": binding,
         "profile_sha256": predecessor,
         "source_sha256": source_sha256,
-        "execution_host": _execution_host(home, policy, card_id),
+        "execution_host": execution_host,
     }
     if initial_profile:
         job.update(initial_profile=True, initial_profile_value=initial_profile)
@@ -941,7 +1017,7 @@ def _advance(home, policy, skc, actor, path, job):
     profile_value = job.get("initial_profile_value") if initial_profile else None
     plan.source_state(workspace, job["binding"])
     try:
-        current_plan, _, _ = plan.load_plan(
+        current_plan, _, plan_sha = plan.load_plan(
             home, job["binding"], allow_completed=True, allow_remote_host=True
         )
         if initial_profile:
@@ -950,6 +1026,24 @@ def _advance(home, policy, skc, actor, path, job):
                 or current_plan.get("profile") != profile_value
             ):
                 raise plan.TestEvidenceError("another test plan owns this source revision")
+            if (
+                isinstance(job.get("execution_host"), str)
+                and current_plan.get("host") != job["execution_host"]
+            ):
+                if (plan.run_directory(home, plan_sha) / "launch.json").exists():
+                    raise plan.TestEvidenceError("qualification plan host changed after launch")
+                plan.seal_plan(
+                    home,
+                    job["binding"],
+                    workspace,
+                    policy,
+                    profile_value["qualified_by"],
+                    profile_value["qualification_sha256"],
+                    profile=profile_value,
+                    predecessor_sha256=plan_sha,
+                    execution_host=job["execution_host"],
+                    initial_profile_qualification=True,
+                )
         elif (
             current_plan.get("profile_requalification") is not True
             or current_plan.get("profile_predecessor_sha256") != job["profile_sha256"]
@@ -1021,7 +1115,7 @@ def _advance(home, policy, skc, actor, path, job):
         return "pending"
     if initial_profile:
         tests.validate_test_receipt(home, job["binding"], workspace)
-        profile.qualify_profile(
+        _qualify_profile_or_replay(
             home,
             card.model_dump(mode="json"),
             policy,
@@ -1054,6 +1148,19 @@ def _advance(home, policy, skc, actor, path, job):
     latest = CardStore(home).fold(job["card"])
     if latest is None:
         raise plan.TestEvidenceError("profile qualified but source card disappeared")
+    finished_verdict = _retained_finished_claim(home, job, latest)
+    if finished_verdict is not None:
+        plan.write_once(
+            path.with_name(path.stem + ".done.json"),
+            {
+                "schema": "skfleet.profile-requalification-receipt/v1",
+                "card": job["card"],
+                "profile_sha256": profile.read_profile(home, job["card"])[1],
+                "test_receipt_sha256": receipt["receipt_sha256"],
+                "claim_retained_verdict": finished_verdict,
+            },
+        )
+        return "qualified-held-finished-work"
     if (
         latest.owner == job["owner"]
         and latest.meta.get("_claim_revision") == job["claim_revision"]

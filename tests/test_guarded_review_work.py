@@ -172,7 +172,30 @@ def test_review_card_qualification_link_still_changes_review_revision(tmp_path):
         link_key="native_semantic_candidate_qualification",
         link_value="chiap03:native-receipt",
     )
-    assert LiveCardStoreGateway(tmp_path).read_card(review_id).revision != before
+    after_qualification = LiveCardStoreGateway(tmp_path).read_card(review_id).revision
+    assert after_qualification != before
+    store.append_event(
+        review_id,
+        "link",
+        "jarvis",
+        link_key="test_profile_recipe",
+        link_value='{"pytest":{"tests/test_api.py":1}}',
+    )
+    assert LiveCardStoreGateway(tmp_path).read_card(review_id).revision != after_qualification
+
+
+def test_source_test_profile_recipe_changes_product_revision(tmp_path):
+    """Review dispatch remains fenced when a test recipe changes before review."""
+    store, card, owner, _artifact, _args = prepared(tmp_path)
+    before = LiveCardStoreGateway(tmp_path).read_card(card).revision
+    store.append_event(
+        card,
+        "link",
+        "jarvis",
+        link_key="test_profile_recipe",
+        link_value='{"pytest":{"tests/test_api.py":1}}',
+    )
+    assert LiveCardStoreGateway(tmp_path).read_card(card).revision != before
 
 
 @pytest.mark.parametrize(

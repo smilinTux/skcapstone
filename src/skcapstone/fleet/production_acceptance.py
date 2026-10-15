@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import socket
 import stat
 import subprocess
@@ -204,6 +205,80 @@ def _review_context_still_bound(home, context, state):
     except ReviewEvidenceError:
         return False
     return _source_applicability_error(store, row.id, home) is None
+
+
+def _source_test_recipe_revision_matches(home, item, expected_revision):
+    """Allow only a recipe-link-only source update after acceptance was sealed."""
+    from .source_custody import candidate_matches
+
+    store = CardStore(home)
+    row = store.fold(item["card"])
+    recipe = row.links.get("test_profile_recipe") if row is not None else None
+    events = [
+        event
+        for event in store._read_events(item["card"]) + store._legacy_events(item["card"])
+        if event.get("action") == "link" and event.get("link_key") == "test_profile_recipe"
+    ]
+    if (
+        row is None
+        or row.owner != item["owner"]
+        or row.meta.get("_claim_revision") != item["claim"]
+        or row.status.value not in {"ready", "doing", "review"}
+        or not isinstance(recipe, str)
+        or not events
+        or any(event.get("writer") != "lumina-nor" for event in events)
+        or events[-1].get("link_value") != recipe
+        or not candidate_matches(store, row, item)
+    ):
+        return False
+    prior = row.model_copy(deep=True)
+    prior.links.pop("test_profile_recipe", None)
+
+    class PriorSourceStore(CardStore):
+        """Project only the captured source card before its recipe link."""
+
+        def fold(self, card_id):
+            return prior if card_id == item["card"] else super().fold(card_id)
+
+    projected = LiveCardStoreGateway(home).read_card(item["card"], _store=PriorSourceStore(home))
+    return projected.revision == expected_revision
+
+
+def _queue_missing_test_profile(home, policy, context):
+    """Queue an exact held source for initial profile qualification when absent."""
+    from . import profile_requalification
+    from .production_test_profile import read_profile
+
+    source = context["source"]
+    try:
+        read_profile(home, source["card"])
+    except FileNotFoundError:
+        pass
+    else:
+        return None
+
+    card = CardStore(home).fold(source["card"])
+    if (
+        card is None
+        or card.status.value != "doing"
+        or card.owner != source["owner"]
+        or card.meta.get("_claim_revision") != source["claim"]
+    ):
+        raise ReviewEvidenceError("missing test profile source claim changed")
+    skc = shutil.which("skcapstone")
+    if not skc:
+        return "qualification-cli-unavailable"
+    return profile_requalification.requalify_or_advance(
+        home,
+        policy,
+        skc,
+        "niobe",
+        card_id=source["card"],
+        core=card.model_dump(mode="json"),
+        workspace=context["source_workspace"],
+        owner=source["owner"],
+        claim_revision=source["claim"],
+    )
 
 
 def acceptance_review_revision(home, directory, context):
@@ -1132,15 +1207,36 @@ def reconcile(home, policy, *, process_check):
                         or state["owner"] != item["owner"]
                         or state["claim_revision"] != item["claim"]
                     ):
-                        raise ReviewEvidenceError("native pair changed before trusted tests")
+                        if (
+                            role != "source"
+                            or state["owner"] != item["owner"]
+                            or state["claim_revision"] != item["claim"]
+                            or not _source_test_recipe_revision_matches(
+                                home, item, expected_revision
+                            )
+                        ):
+                            raise ReviewEvidenceError("native pair changed before trusted tests")
                 artifacts(context)
-                seal_candidate(
-                    home,
-                    context["test_binding"],
-                    Path(context["source_workspace"]),
-                    policy,
-                    context["source"]["repository"],
-                )
+                try:
+                    seal_candidate(
+                        home,
+                        context["test_binding"],
+                        Path(context["source_workspace"]),
+                        policy,
+                        context["source"]["repository"],
+                    )
+                except FileNotFoundError:
+                    qualification = _queue_missing_test_profile(home, policy, context)
+                    if qualification is None:
+                        raise
+                    results.append(
+                        {
+                            "card": card,
+                            "state": "pending:awaiting-profile-qualification",
+                            "reason": "profile qualification " + str(qualification)[:140],
+                        }
+                    )
+                    continue
                 _seal_current_acceptance_plan(
                     home,
                     context["test_binding"],

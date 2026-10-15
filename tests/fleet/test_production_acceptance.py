@@ -259,6 +259,83 @@ def test_acceptance_refresh_refuses_changed_review_evidence(stopped_pair):
         )
 
 
+def test_acceptance_source_recipe_link_preserves_sealed_product_revision(stopped_pair):
+    home, policy, review, _, _, store = stopped_pair
+    context = acceptance.collect(
+        home,
+        policy,
+        review["card"],
+        review["claim"],
+        process_check=lambda card: {"sessions": [], "units": []},
+    )
+    source_item = context["source"]
+    store.append_event(
+        source_item["card"],
+        "link",
+        "lumina-nor",
+        link_key="test_profile_recipe",
+        link_value='{"pytest":{"tests/test_api.py":1}}',
+    )
+    store.append_event(
+        source_item["card"],
+        "link",
+        "lumina-nor",
+        link_key="test_profile_recipe",
+        link_value='{"pytest":{"tests/test_api.py":1},"lint":[]}',
+    )
+    from skcapstone.fleet.source_custody import candidate_matches
+
+    row = store.fold(source_item["card"])
+    assert candidate_matches(store, row, source_item)
+
+    assert acceptance._source_test_recipe_revision_matches(
+        home, source_item, source_item["live_revision"]
+    )
+
+
+@pytest.mark.parametrize("change", ["writer", "repository", "claim", "outcome"])
+def test_acceptance_recipe_revision_refuses_any_other_source_change(stopped_pair, change):
+    home, policy, review, _, _, store = stopped_pair
+    context = acceptance.collect(
+        home,
+        policy,
+        review["card"],
+        review["claim"],
+        process_check=lambda card: {"sessions": [], "units": []},
+    )
+    source_item = context["source"]
+    writer = "someone-else" if change == "writer" else "lumina-nor"
+    store.append_event(
+        source_item["card"],
+        "link",
+        writer,
+        link_key="test_profile_recipe",
+        link_value='{"pytest":{"tests/test_api.py":1}}',
+    )
+    if change == "repository":
+        store.append_event(
+            source_item["card"],
+            "link",
+            "operator",
+            link_key="repository",
+            link_value="https://other/repo",
+        )
+    elif change == "claim":
+        store.append_event(
+            source_item["card"],
+            "claim",
+            "other-owner",
+            owner="other-owner",
+            claim_revision="d" * 32,
+        )
+    elif change == "outcome":
+        store.append_event(source_item["card"], "verdict", source_item["owner"], verdict="FAIL")
+
+    assert not acceptance._source_test_recipe_revision_matches(
+        home, source_item, source_item["live_revision"]
+    )
+
+
 def test_collected_producer_terminal_can_enter_independent_review(stopped_pair):
     home, _, review, status_path, _, store = stopped_pair
     status = json.loads(status_path.read_text())
@@ -575,6 +652,106 @@ def test_stale_inflight_acceptance_requalification_is_not_rotated(
     )
 
     assert calls == []
+
+
+def test_missing_profile_queues_qualification_and_reports_pending(stopped_pair, monkeypatch):
+    from skcapstone.fleet import production_test_profile, profile_requalification
+
+    home, policy, review, _, _, store = stopped_pair
+    source_id = store.fold(review["card"]).meta["link_source_card"]
+    source_card = store.fold(source_id)
+    context = {
+        "source": {
+            "card": source_id,
+            "owner": source_card.owner,
+            "claim": source_card.meta["_claim_revision"],
+        },
+        "source_workspace": "/tmp/exact-source-workspace",
+    }
+    monkeypatch.setattr(
+        production_test_profile,
+        "read_profile",
+        lambda *args: (_ for _ in ()).throw(FileNotFoundError("missing profile")),
+    )
+    calls = []
+    monkeypatch.setattr(
+        profile_requalification,
+        "requalify_or_advance",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or "pending",
+    )
+
+    qualification = acceptance._queue_missing_test_profile(home, policy, context)
+    assert qualification == "pending"
+    assert len(calls) == 1
+    args, kwargs = calls[0]
+    assert args[1] == policy
+    assert args[3] == "niobe"
+    assert kwargs["card_id"] == source_id
+    assert kwargs["owner"] == source_card.owner
+    assert kwargs["claim_revision"] == source_card.meta["_claim_revision"]
+    assert kwargs["workspace"] == context["source_workspace"]
+
+
+def test_reconcile_reports_missing_profile_as_qualification_pending(stopped_pair, monkeypatch):
+    from skcapstone.fleet import production_test_profile
+
+    home, policy, review, _, _, _ = stopped_pair
+    monkeypatch.setattr(acceptance.socket, "gethostname", lambda: "control")
+    monkeypatch.setattr(
+        production_test_profile,
+        "seal_candidate",
+        lambda *args: (_ for _ in ()).throw(FileNotFoundError("missing profile")),
+    )
+    monkeypatch.setattr(acceptance, "_queue_missing_test_profile", lambda *args: "pending")
+    monkeypatch.setitem(
+        sys.modules,
+        "skcapstone.fleet.production_tests",
+        SimpleNamespace(run_or_read_tests=lambda *args: pytest.fail("tests must await profile")),
+    )
+
+    result = acceptance.reconcile(
+        home, policy, process_check=lambda card: {"sessions": [], "units": []}
+    )
+
+    assert result == [
+        {
+            "card": review["card"],
+            "state": "pending:awaiting-profile-qualification",
+            "reason": "profile qualification pending",
+        }
+    ]
+
+
+def test_missing_profile_does_not_queue_after_source_claim_changes(stopped_pair, monkeypatch):
+    from skcapstone.fleet import production_test_profile, profile_requalification
+
+    home, policy, review, _, _, store = stopped_pair
+    source_id = store.fold(review["card"]).meta["link_source_card"]
+    source_card = store.fold(source_id)
+    context = {
+        "source": {
+            "card": source_id,
+            "owner": source_card.owner,
+            "claim": source_card.meta["_claim_revision"],
+        },
+        "source_workspace": "/tmp/exact-source-workspace",
+    }
+    monkeypatch.setattr(
+        production_test_profile,
+        "read_profile",
+        lambda *args: (_ for _ in ()).throw(FileNotFoundError("missing profile")),
+    )
+    store.append_event(source_id, "unassign", "operator")
+    queued = []
+    monkeypatch.setattr(
+        profile_requalification,
+        "requalify_or_advance",
+        lambda *args, **kwargs: queued.append(kwargs),
+    )
+
+    with pytest.raises(ValueError, match="missing test profile source claim changed"):
+        acceptance._queue_missing_test_profile(home, policy, context)
+    assert queued == []
 
 
 def test_existing_finish_intent_requalifies_stale_plan_without_rewriting_intent(

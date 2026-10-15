@@ -399,3 +399,22 @@ def test_finished_marker_disappearing_never_enters_unlocked_finish(accepted, mon
     with pytest.raises(FileNotFoundError):
         replay(accepted)
     assert not (accepted.directory / "acceptance.lock").exists()
+
+
+@pytest.mark.parametrize("location", ["initial", "successor", "initial-successor"])
+def test_accepted_plan_is_located_by_digest_without_writes(accepted, location):
+    a = accepted
+    base = (
+        plan._initial_plan_base(a.s.home, a.s.binding)
+        if location.startswith("initial")
+        else plan._plan_base(a.s.home, a.s.binding)
+    )
+    target = (
+        base.with_name(base.stem + "." + "f" * 64 + ".json")
+        if location.endswith("successor")
+        else base
+    )
+    a.s.plan_path.rename(target)
+    before = {p: p.read_bytes() for p in a.s.home.rglob("*") if p.is_file()}
+    assert replay(a) == a.historical
+    assert {p: p.read_bytes() for p in a.s.home.rglob("*") if p.is_file()} == before

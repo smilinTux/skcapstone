@@ -1214,3 +1214,71 @@ def test_without_native_claim_history_two_receipts_are_still_refused(tmp_path, m
     )
     with pytest.raises(ValueError, match="required checks"):
         validate_review_completion("239b24bf", "[REVIEW] source-only", home)
+
+
+def test_operator_correction_does_not_replace_reviewer_receipt(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from skcapstone import applicability_correction as correction
+
+    head = "2" * 40
+    receipt = {
+        "type": "source-only-applicability",
+        "card_id": "239b24bf",
+        "source_head": "3" * 40,
+        "reviewer": "reviewer@example",
+        "evidence_digest": "a" * 64,
+        "governed_pr_ci": False,
+    }
+    decision = {
+        "schema": "skfleet.source-review-decision/v1",
+        "card": "239b24bf",
+        "parent_card": "12345678",
+        "reviewer_identity": "reviewer@example",
+        "source_head": head,
+        "source_tree": "4" * 40,
+        "verdict": "PASS",
+        "report_sha256": "a" * 64,
+    }
+    value = {
+        "schema": "skfleet.applicability-head-correction/v1",
+        "card": "239b24bf",
+        "claim_revision": "claim",
+        "receipt_sha256": correction.receipt_digest(receipt),
+        "source_head": head,
+        "review_head": "3" * 40,
+        "decision": decision,
+        "reason": "Verified exact review-only evidence commit",
+    }
+    home = _home(
+        tmp_path,
+        "239b24bf",
+        "[REVIEW] source-only",
+        [
+            ("verdict", "PASS", "2026-08-28T03:00:00", "reviewer@example"),
+            ("evidence", "review.md", "2026-08-28T03:01:00", "reviewer@example"),
+            ("patch_sha256", "a" * 64, "2026-08-28T03:02:00", "reviewer@example"),
+            (
+                "applicability_receipt",
+                json.dumps(receipt),
+                "2026-08-28T03:03:00",
+                "reviewer@example",
+            ),
+            (correction.KEY, json.dumps(value), "2026-08-28T03:04:00", "lumina-nor"),
+        ],
+        meta={"link_head_revision": head, "producer_identity": "producer@example"},
+        labels=["source-only"],
+    )
+    row = SimpleNamespace(
+        archived=False,
+        owner="reviewer@example",
+        meta={
+            "_claim_revision": "claim",
+            "link_source_card": "12345678",
+            "candidate_tree": "4" * 40,
+        },
+    )
+    monkeypatch.setattr(
+        correction, "CardStore", lambda home: SimpleNamespace(fold=lambda card: row)
+    )
+    validate_review_completion("239b24bf", "[REVIEW] source-only", home)

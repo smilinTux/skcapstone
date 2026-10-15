@@ -360,6 +360,12 @@ def _source_only_applicability(card_id: str, home: Path) -> bool:
         if len(current) > 1 and current[-1][0] == current[-2][0]:
             return False
         _, receipt_event, receipt = current[-1]
+    from .applicability_correction import corrected_receipt
+
+    try:
+        receipt = corrected_receipt(home, card_id, receipt, expected_head, events)
+    except (OSError, ValueError, TypeError, KeyError):
+        return False
     required = {"type", "card_id", "source_head", "reviewer", "evidence_digest", "governed_pr_ci"}
     if set(receipt) != required or receipt["type"] != "source-only-applicability":
         return False

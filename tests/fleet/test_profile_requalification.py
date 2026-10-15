@@ -349,6 +349,29 @@ def test_remote_qualification_uses_least_loaded_ready_node(tmp_path, monkeypatch
     )
 
 
+def test_exact_source_reconstruction_failure_falls_back_to_authority(tmp_path):
+    root = tmp_path / "fleet/profile-requalifications"
+    root.mkdir(parents=True, mode=0o700)
+    job_path = root / ("a" * 64 + ".job.json")
+    plan.write_once(
+        job_path,
+        {
+            "card": "1234abcd",
+            "source_sha256": "s" * 64,
+            "execution_host": "chiap03",
+        },
+    )
+    plan.write_once(
+        root / ("a" * 64 + ".job.failed.json"),
+        {"reason": "exact source reconstruction failed"},
+    )
+
+    assert (
+        refresh._execution_host(tmp_path, {"authority_host": "chiap08"}, "1234abcd", "s" * 64)
+        == "chiap08"
+    )
+
+
 def test_stale_plan_appends_current_requalification_successor(tmp_path, monkeypatch):
     binding = {
         "source_card": "1234abcd",
@@ -419,6 +442,111 @@ def test_stale_plan_appends_current_requalification_successor(tmp_path, monkeypa
             "execution_host": None,
         }
     ]
+
+
+def test_initial_profile_retargets_unlaunched_remote_plan_to_authority(tmp_path, monkeypatch):
+    binding = {"source_card": "1234abcd"}
+    value = {
+        "qualified_by": "lumina-nor",
+        "qualification_sha256": "e" * 64,
+        "recipe": {"pytest_all": True},
+    }
+    job = {
+        "card": "1234abcd",
+        "owner": "producer",
+        "claim_revision": "claim-1",
+        "workspace": str(tmp_path),
+        "binding": binding,
+        "execution_host": "chiap08",
+        "initial_profile": True,
+        "initial_profile_value": value,
+    }
+    card = SimpleNamespace(
+        status=SimpleNamespace(value="doing"),
+        owner="producer",
+        meta={"_claim_revision": "claim-1"},
+    )
+    current_plan = {
+        "initial_profile_qualification": True,
+        "profile": value,
+        "host": "chiap03",
+    }
+    monkeypatch.setattr(
+        refresh, "CardStore", lambda _home: SimpleNamespace(fold=lambda _card_id: card)
+    )
+    monkeypatch.setattr(plan, "source_state", lambda *_args: None)
+    monkeypatch.setattr(
+        plan,
+        "load_plan",
+        lambda *_args, **_kwargs: (current_plan, tmp_path / "plan.json", "a" * 64),
+    )
+    monkeypatch.setattr(plan, "run_directory", lambda *_args: tmp_path / "run")
+    sealed = []
+    monkeypatch.setattr(plan, "seal_plan", lambda *_args, **kwargs: sealed.append(kwargs))
+    monkeypatch.setattr(tests, "run_or_read_tests", lambda *_args: None)
+
+    assert (
+        refresh._advance(
+            tmp_path, {"authority_host": "chiap08"}, "/skcapstone", "jarvis", None, job
+        )
+        == "pending"
+    )
+    assert sealed == [
+        {
+            "profile": value,
+            "predecessor_sha256": "a" * 64,
+            "execution_host": "chiap08",
+            "initial_profile_qualification": True,
+        }
+    ]
+
+
+def test_initial_profile_does_not_retarget_a_launched_plan(tmp_path, monkeypatch):
+    binding = {"source_card": "1234abcd"}
+    value = {
+        "qualified_by": "lumina-nor",
+        "qualification_sha256": "e" * 64,
+        "recipe": {"pytest_all": True},
+    }
+    job = {
+        "card": "1234abcd",
+        "owner": "producer",
+        "claim_revision": "claim-1",
+        "workspace": str(tmp_path),
+        "binding": binding,
+        "execution_host": "chiap08",
+        "initial_profile": True,
+        "initial_profile_value": value,
+    }
+    card = SimpleNamespace(
+        status=SimpleNamespace(value="doing"),
+        owner="producer",
+        meta={"_claim_revision": "claim-1"},
+    )
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "launch.json").write_text("{}")
+    monkeypatch.setattr(
+        refresh, "CardStore", lambda _home: SimpleNamespace(fold=lambda _card_id: card)
+    )
+    monkeypatch.setattr(plan, "source_state", lambda *_args: None)
+    monkeypatch.setattr(
+        plan,
+        "load_plan",
+        lambda *_args, **_kwargs: (
+            {"initial_profile_qualification": True, "profile": value, "host": "chiap03"},
+            tmp_path / "plan.json",
+            "a" * 64,
+        ),
+    )
+    monkeypatch.setattr(plan, "run_directory", lambda *_args: run)
+
+    with pytest.raises(
+        plan.TestEvidenceError, match="qualification plan host changed after launch"
+    ):
+        refresh._advance(
+            tmp_path, {"authority_host": "chiap08"}, "/skcapstone", "jarvis", None, job
+        )
 
 
 def test_stale_plan_recovery_does_not_hide_other_plan_errors(tmp_path, monkeypatch):
@@ -1272,3 +1400,63 @@ def test_failure_backoff_is_scoped_to_validated_harness_runtime(tmp_path, monkey
 
     monkeypatch.setattr(plan, "load_plan", load)
     assert refresh._recent_failure(root, "1234abcd", "s" * 64) is (state != "older")
+
+
+def test_finished_profile_claim_stays_held_for_review_and_acceptance(monkeypatch):
+    job = {"card": "1234abcd", "owner": "producer", "claim_revision": "claim-1"}
+    card = SimpleNamespace(owner="producer", meta={"_claim_revision": "claim-1"})
+    seen = []
+    monkeypatch.setattr(
+        "skcapstone.release_guard.finished_work_verdict",
+        lambda *args: seen.append(args) or "PASS_FOR_REVIEW",
+    )
+
+    assert refresh._retained_finished_claim(Path("/unused"), job, card) == "PASS_FOR_REVIEW"
+    assert seen == [(Path("/unused"), "1234abcd", "producer", "claim-1")]
+
+
+def test_finished_profile_claim_refuses_changed_claim(monkeypatch):
+    job = {"card": "1234abcd", "owner": "producer", "claim_revision": "claim-1"}
+    card = SimpleNamespace(owner="producer", meta={"_claim_revision": "new-claim"})
+    monkeypatch.setattr(
+        "skcapstone.release_guard.finished_work_verdict", lambda *_args: "PASS_FOR_REVIEW"
+    )
+
+    with pytest.raises(plan.TestEvidenceError, match="finished source claim changed"):
+        refresh._retained_finished_claim(Path("/unused"), job, card)
+
+
+def test_existing_initial_profile_is_replayed_only_when_exact(tmp_path, monkeypatch):
+    core = {"id": "1234abcd"}
+    expected = {"card": "1234abcd", "source_sha256": "s" * 64}
+    destination = tmp_path / "fleet/test-profiles/1234abcd.json"
+    monkeypatch.setattr(
+        profile,
+        "qualify_profile",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(FileExistsError()),
+    )
+    monkeypatch.setattr(profile, "read_profile", lambda *_args: (expected, "p" * 64))
+    monkeypatch.setattr(profile, "profile_value", lambda *_args, **_kwargs: expected)
+
+    assert (
+        refresh._qualify_profile_or_replay(tmp_path, core, {}, {}, "lumina-nor", "r" * 64)
+        == destination
+    )
+
+
+def test_existing_initial_profile_conflict_is_refused(tmp_path, monkeypatch):
+    core = {"id": "1234abcd"}
+    monkeypatch.setattr(
+        profile,
+        "qualify_profile",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(FileExistsError()),
+    )
+    monkeypatch.setattr(profile, "read_profile", lambda *_args: ({"card": "different"}, "p" * 64))
+    monkeypatch.setattr(
+        profile,
+        "profile_value",
+        lambda *_args, **_kwargs: {"card": "1234abcd"},
+    )
+
+    with pytest.raises(plan.TestEvidenceError, match="qualified profile changed"):
+        refresh._qualify_profile_or_replay(tmp_path, core, {}, {}, "lumina-nor", "r" * 64)
