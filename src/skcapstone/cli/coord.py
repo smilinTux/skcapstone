@@ -72,6 +72,9 @@ def register_coord_commands(main: click.Group) -> None:
     from .coord_liveness import register_coord_liveness_command
 
     register_coord_liveness_command(coord)
+    from .coord_accept import register_coord_accept_command
+
+    register_coord_accept_command(coord)
     from .coord_historical_pr import register_historical_pr_command
 
     register_historical_pr_command(coord)
