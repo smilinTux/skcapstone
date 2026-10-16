@@ -15,6 +15,7 @@ from tests.fleet.test_source_bundle import source  # noqa: F401
 from tests.fleet.remote_review_fixtures import (
     execution,
     offer_and_consume,
+    terminal_review,
 )  # noqa: F401
 
 
