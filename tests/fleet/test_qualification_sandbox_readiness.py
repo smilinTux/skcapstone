@@ -69,6 +69,7 @@ def test_seat_host_checks_sandbox_even_with_inactive_authority_timer(tmp_path, m
     units.mkdir()
     (units / "sknoded.service").write_text("[Service]\nExecStart=/usr/bin/true\n")
     monkeypatch.setattr(readiness, "unit_in_scope", lambda _: (False, None, "seat.timer"))
+    monkeypatch.setattr(readiness, "qualification_sandbox_applies", lambda: True)
     monkeypatch.setattr(readiness, "qualification_sandbox_error", lambda _: "net_admin denied")
     verdict = tmp_path / "verdict.json"
     assert (
