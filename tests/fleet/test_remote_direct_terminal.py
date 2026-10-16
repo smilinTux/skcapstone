@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from skcapstone.fleet import production_acceptance as acceptance
+from skcapstone.fleet import evidence_io as acceptance
 from skcapstone.fleet import production_review_custody as custody
 from skcapstone.fleet.review_dispatch import _source
 from tests.fleet.test_released_direct_review import (  # noqa: F401

@@ -30,7 +30,7 @@ SOURCE = {
 def review_candidate(source, monkeypatch):  # noqa: F811
     """Real typed native claim and transferred Git bundle, stopped remote unit."""
     from skcapstone.fleet import production_builder, production_review_custody
-    from skcapstone.fleet.production_review_finish import once
+    from skcapstone.fleet.evidence_io import once
 
     source["store"].append_event(source["card"], "add_label", "operator", label="sk-s")
     source["store"].append_event(source["card"], "verdict", source["owner"], **source["outcome"])
@@ -549,8 +549,9 @@ def test_complete_binding_without_legacy_label_records_launch_and_retains_custod
 def test_direct_terminal_opens_review_without_remote_dispatch_request(
     review_candidate, monkeypatch
 ):
-    from skcapstone.fleet import production_acceptance, production_custody
-    from skcapstone.fleet.production_review_finish import once
+    from skcapstone.fleet import evidence_io as production_acceptance
+    from skcapstone.fleet import production_custody
+    from skcapstone.fleet.evidence_io import once
 
     value = review_candidate
     value["status_path"].unlink()

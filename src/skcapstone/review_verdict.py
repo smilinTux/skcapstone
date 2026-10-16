@@ -36,11 +36,9 @@ from __future__ import annotations
 import glob
 import json
 import re
-from datetime import datetime, timezone
 from pathlib import Path
 
 from .card import CardEvent
-from .review_admission import reviewer_candidate_reasons
 
 #: Governed review and rereview cards use either a terminal tag or a tag with an
 #: embedded identifier, for example [REVIEW] or [REREVIEW-119db735].
@@ -68,16 +66,7 @@ _REQUIRED_CI_LINK_KEYS = frozenset(
         "ci_check_python312",
     }
 )
-_RECEIPT_KEY = "applicability_receipt"
-_SHA256_RE = re.compile(r"[0-9a-f]{64}")
-_HEAD_RE = re.compile(r"[0-9a-f]{40}")
-_SOURCE_ONLY_EVIDENCE_KEYS = frozenset(
-    {"evidence_sha256", "patch_sha256", "review_evidence_sha256", "reviewer_evidence_sha256"}
-)
-_SOURCE_ONLY_EVIDENCE_PATH_KEYS = frozenset({"evidence", "review_evidence"})
 _PR_BINDING_KEY_RE = re.compile(r"(?:^|_)(?:open_)?pr(?:_|$)|pull_request", re.IGNORECASE)
-_EMBEDDED_SHA256_RE = re.compile(r"(?:#|\|)sha256=([0-9a-f]{64})$", re.IGNORECASE)
-_EMBEDDED_SHA256_MARKER_RE = re.compile(r"(?:#|\|)sha256=", re.IGNORECASE)
 
 
 def _is_terminal_verdict(value: str) -> bool:
@@ -188,53 +177,6 @@ def _card_events(card_id: str, home: Path):
             continue
 
 
-def _event_position(row: dict) -> tuple[str, str, int] | None:
-    """Return the exact CardStore order key after validating the timestamp."""
-    stamp = row.get("ts")
-    if not isinstance(stamp, str) or not stamp.strip():
-        return None
-    try:
-        datetime.fromisoformat(stamp.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return stamp, str(row.get("writer") or ""), int(row.get("seq") or 0)
-
-
-def _parsed_ts(value: object) -> datetime | None:
-    """Parse a CardStore timestamp as an aware UTC datetime, or None."""
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-
-
-def _current_generation(card_id: str, home: Path) -> tuple[datetime, str] | None:
-    """Return the start and claimant of the card's latest native claim."""
-    try:
-        from skcoord.card_store import CardStore
-
-        events = CardStore(Path(home))._read_events(card_id)
-    except Exception:  # noqa: BLE001 - no readable native history means no generation
-        return None
-    latest = None
-    for event in events:
-        if event.get("action") != "claim":
-            continue
-        at = _parsed_ts(event.get("ts"))
-        claimant = _normalized_identity(event.get("owner") or event.get("writer"))
-        if at is None or not claimant:
-            continue
-        if latest is None or at > latest[0]:
-            latest = (at, claimant)
-    return latest
-
-
-def _normalized_identity(value: object) -> str:
-    """Use the same principal normalization as governed review admission."""
-    return str(value or "").strip().casefold().replace("_", "-")
-
-
 def _has_pr_or_ci_binding(key: object) -> bool:
     """Return true for a governed pull request or hosted CI binding key."""
     lowered = str(key or "").strip().lower()
@@ -243,237 +185,6 @@ def _has_pr_or_ci_binding(key: object) -> bool:
         or lowered in _REQUIRED_CI_LINK_KEYS
         or _PR_BINDING_KEY_RE.search(lowered)
     )
-
-
-def _source_only_applicability(card_id: str, home: Path) -> bool:
-    """Return true only for one valid, exact-card source-only receipt."""
-    try:
-        core = json.loads(
-            (Path(home) / "cards" / card_id / "core.json").read_text(encoding="utf-8")
-        )
-    except (OSError, ValueError):
-        return False
-    labels = {
-        str(label).strip().lower()
-        for label in [
-            *(core.get("labels") or []),
-            *(core.get("initial_labels") or []),
-        ]
-    }
-    meta = core.get("meta") if isinstance(core.get("meta"), dict) else {}
-    labels.update(str(label).strip().lower() for label in (meta.get("labels") or []))
-
-    overlay_events = list(_card_events(card_id, home))
-    ordered_label_events = []
-    for row in overlay_events:
-        action = row.get("action")
-        label = str(row.get("label") or "").strip().lower()
-        if action not in {"add_label", "remove_label"} or label != "source-only":
-            continue
-        position = _event_position(row)
-        if position is None:
-            return False
-        ordered_label_events.append((position, row))
-    ordered_label_events.sort(key=lambda item: item[0])
-    label_positions: dict[tuple[str, str, int], str] = {}
-    for position, row in ordered_label_events:
-        previous_action = label_positions.setdefault(position, str(row["action"]))
-        if previous_action != row["action"]:
-            return False
-        label = str(row.get("label") or "").strip().lower()
-        if not label:
-            continue
-        if row["action"] == "add_label":
-            labels.add(label)
-        else:
-            labels.discard(label)
-    if "source-only" not in labels:
-        return False
-
-    core_links = core.get("links") if isinstance(core.get("links"), dict) else {}
-    expected_heads = {
-        str(value).strip().lower()
-        for value in (
-            core_links.get("link_head_revision"),
-            core_links.get("head_revision"),
-            meta.get("link_head_revision"),
-            meta.get("head_revision"),
-        )
-        if str(value or "").strip()
-    }
-    if len(expected_heads) != 1 or not _HEAD_RE.fullmatch(next(iter(expected_heads), "")):
-        return False
-    expected_head = next(iter(expected_heads))
-
-    producers = {
-        _normalized_identity(value)
-        for value in (core_links.get("producer_identity"), meta.get("producer_identity"))
-        if _normalized_identity(value)
-    }
-    if len(producers) != 1:
-        return False
-    producer = next(iter(producers))
-    for mapping in (core_links, meta):
-        if any(value is not None and _has_pr_or_ci_binding(key) for key, value in mapping.items()):
-            return False
-
-    events = [row for row in overlay_events if row.get("action") == "link"]
-    receipts: list[tuple[dict, dict]] = []
-    for row in events:
-        key = row.get("link_key")
-        if key == _RECEIPT_KEY:
-            try:
-                value = json.loads(row.get("link_value") or row.get("value") or "")
-            except (TypeError, ValueError):
-                return False
-            receipts.append((row, value))
-    if not receipts or any(not isinstance(value, dict) for _, value in receipts):
-        return False
-    # Every review generation's reviewer writes its own receipt, and a fresh
-    # generation on the same host reuses the same seat identity. Requiring
-    # exactly one receipt made every re-review permanently unacceptable (chi,
-    # 2026-10-10: "duplicate source-only applicability receipts"). The card's
-    # latest native claim starts the current generation: only receipts written
-    # at or after it count, every one of them must come from that claimant, and
-    # the latest decides and is validated in full below. Without native claim
-    # history the original exactly-one rule applies. Unparseable timestamps,
-    # a foreign writer in the current generation or a tie fail closed.
-    generation = _current_generation(card_id, home)
-    if generation is None:
-        if len(receipts) != 1:
-            return False
-        receipt_event, receipt = receipts[0]
-    else:
-        start, claimant = generation
-        current = []
-        for row, value in receipts:
-            at = _parsed_ts(row.get("ts"))
-            if at is None:
-                return False
-            if at >= start:
-                current.append((at, row, value))
-        if not current or any(
-            _normalized_identity(row.get("writer")) != claimant for _, row, _ in current
-        ):
-            return False
-        current.sort(key=lambda item: item[0])
-        if len(current) > 1 and current[-1][0] == current[-2][0]:
-            return False
-        _, receipt_event, receipt = current[-1]
-    from .applicability_correction import corrected_receipt
-
-    try:
-        receipt = corrected_receipt(home, card_id, receipt, expected_head, events)
-    except (OSError, ValueError, TypeError, KeyError):
-        return False
-    required = {"type", "card_id", "source_head", "reviewer", "evidence_digest", "governed_pr_ci"}
-    if set(receipt) != required or receipt["type"] != "source-only-applicability":
-        return False
-    if (
-        receipt["card_id"] != card_id
-        or not isinstance(receipt["reviewer"], str)
-        or not receipt["reviewer"].strip()
-    ):
-        return False
-    reviewer = receipt["reviewer"].strip()
-    reviewer_identity = _normalized_identity(reviewer)
-    if (
-        not reviewer_identity
-        or _normalized_identity(receipt_event.get("writer")) != reviewer_identity
-        or "producer-self-review" in reviewer_candidate_reasons(reviewer, producer=producer)
-    ):
-        return False
-    if not isinstance(receipt["source_head"], str) or not _HEAD_RE.fullmatch(
-        receipt["source_head"].lower()
-    ):
-        return False
-    if receipt["source_head"].lower() != expected_head:
-        return False
-    if not isinstance(receipt["evidence_digest"], str) or not _SHA256_RE.fullmatch(
-        receipt["evidence_digest"].lower()
-    ):
-        return False
-    if receipt["governed_pr_ci"] is not False:
-        return False
-    latest_evidence: tuple[tuple[str, str, int], str, str] | None = None
-    latest_evidence_path: tuple[tuple[str, str, int], str, str] | None = None
-    latest_outcome: tuple[tuple[str, str, int], str, str] | None = None
-    for row in events:
-        key = str(row.get("link_key") or "").lower()
-        if key == _RECEIPT_KEY:
-            continue
-        value = str(row.get("link_value") or row.get("value") or "")
-        if _has_pr_or_ci_binding(key):
-            return False
-        position = _event_position(row)
-        writer = _normalized_identity(row.get("writer"))
-        is_evidence = key in _SOURCE_ONLY_EVIDENCE_KEYS
-        is_evidence_path = key in _SOURCE_ONLY_EVIDENCE_PATH_KEYS
-        is_outcome = bool(_OUTCOME_KEY_RE.search(key))
-        if position is None and (is_evidence or is_evidence_path or is_outcome):
-            return False
-        if position is None:
-            continue
-        if is_evidence:
-            candidate = (position, value.lower(), writer)
-            if latest_evidence is not None and candidate[0] == latest_evidence[0]:
-                if candidate[1:] != latest_evidence[1:]:
-                    return False
-            if latest_evidence is None or candidate[0] >= latest_evidence[0]:
-                latest_evidence = candidate
-        if is_evidence_path:
-            candidate_path = (position, value.strip(), writer)
-            if latest_evidence_path is not None and candidate_path[0] == latest_evidence_path[0]:
-                if candidate_path[1:] != latest_evidence_path[1:]:
-                    return False
-            if latest_evidence_path is None or candidate_path[0] >= latest_evidence_path[0]:
-                latest_evidence_path = candidate_path
-            digest_markers = _EMBEDDED_SHA256_MARKER_RE.findall(value.strip())
-            embedded_digest = _EMBEDDED_SHA256_RE.search(value.strip())
-            if digest_markers and (len(digest_markers) != 1 or embedded_digest is None):
-                return False
-            if embedded_digest is not None:
-                candidate = (position, embedded_digest.group(1).lower(), writer)
-                if latest_evidence is not None and candidate[0] == latest_evidence[0]:
-                    if candidate[1:] != latest_evidence[1:]:
-                        return False
-                if latest_evidence is None or candidate[0] >= latest_evidence[0]:
-                    latest_evidence = candidate
-        if is_outcome:
-            candidate_outcome = (position, value, writer)
-            if latest_outcome is not None and candidate_outcome[0] == latest_outcome[0]:
-                if candidate_outcome[1:] != latest_outcome[1:]:
-                    return False
-            if latest_outcome is None or candidate_outcome[0] >= latest_outcome[0]:
-                latest_outcome = candidate_outcome
-    if (
-        latest_evidence is None
-        or latest_evidence[1] != receipt["evidence_digest"].lower()
-        or latest_evidence[2] != reviewer_identity
-    ):
-        return False
-    if (
-        latest_evidence_path is None
-        or not latest_evidence_path[1]
-        or latest_evidence_path[2] != reviewer_identity
-    ):
-        return False
-    linked_digest = _EMBEDDED_SHA256_RE.search(latest_evidence_path[1])
-    if linked_digest is not None:
-        if linked_digest.group(1).lower() != receipt["evidence_digest"].lower():
-            return False
-    if (
-        latest_outcome is None
-        or latest_outcome[1] != "PASS"
-        or latest_outcome[2] != reviewer_identity
-    ):
-        return False
-    receipt_position = _event_position(receipt_event)
-    if receipt_position is None or receipt_position <= max(
-        latest_evidence[0], latest_evidence_path[0], latest_outcome[0]
-    ):
-        return False
-    return True
 
 
 def _uses_repository_hosted_checks(card_id: str, home: Path) -> bool:
@@ -536,8 +247,6 @@ def validate_review_completion(card_id: str, title: str, home: Path) -> None:
         return
     verdict = recorded_verdict(card_id, home)
     if verdict == "PASS":
-        if _source_only_applicability(card_id, home):
-            return
         if _uses_repository_hosted_checks(card_id, home):
             return
         checks = unsuccessful_checks(card_id, home)

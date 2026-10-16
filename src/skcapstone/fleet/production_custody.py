@@ -264,10 +264,10 @@ def retains_source_custody(
                 continue
         if _remote_custody(fleet_paths, card_id, owner, claim, binding):
             return True
-        from .direct_source_recovery import inspect_direct_source
-
-        inspect_direct_source(home, card, store=store)
-        return True
+        # Direct-seat sources were proven by direct_source_recovery, retired
+        # with the acceptance machinery (cut P3a); only sknoded production and
+        # remote custody make a source reviewable now.
+        return False
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         return refuse("source-custody", card_id, reason_of(exc))
 

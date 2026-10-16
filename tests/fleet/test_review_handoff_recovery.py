@@ -588,9 +588,7 @@ def test_started_acceptance_blocks_release(world, monkeypatch):
     directory = world.home / "evidence/production-acceptance" / (CARD + "-" + CLAIM)
     directory.mkdir(parents=True)
     (directory / "finish-intent.json").write_text("{}")
-    monkeypatch.setattr(
-        "skcapstone.fleet.production_acceptance.review_directory", lambda *a: directory
-    )
+    monkeypatch.setattr("skcapstone.fleet.evidence_io.review_directory", lambda *a: directory)
     event = rhr.release_unrecoverable(
         world.paths, world.home, NODE, CARD, CLAIM, "workspace-missing", None, "niobe"
     )

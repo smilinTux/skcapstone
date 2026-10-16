@@ -7728,54 +7728,7 @@ def _legacy_selector_decision(cid, core_p):
 review_capacity = MAX_LAUNCH
 
 
-def _reconcile_source_reviews_step():
-    if not (PRODUCTION_POLICY and HOST == AUTHORITY_HOST):
-        return
-    from skcapstone.fleet.production_acceptance import reconcile as reconcile_source_reviews
-
-    _retired_exits = {"historical": 0, "not-applicable": 0}
-    for _acceptance in reconcile_source_reviews(
-            Path(CARDS).parent, PRODUCTION_POLICY, process_check=_card_process_snapshot):
-        # Already-finished pairs and non-source-only exits are inert; count
-        # them so live pending acceptances stay visible in the cycle log.
-        if _acceptance.get("historical"):
-            _retired_exits["historical"] += 1
-            continue
-        if _acceptance["state"] == "not-applicable":
-            _retired_exits["not-applicable"] += 1
-            continue
-        log(d, "SOURCE_REVIEW_ACCEPTANCE|%s|%s|%s|%s" % (
-            HOST, _acceptance["card"], _acceptance["state"], _acceptance.get("reason", "")))
-    log(d, "SOURCE_REVIEW_ACCEPTANCE_RETIRED|%s|historical=%d|not_applicable=%d" % (
-        HOST, _retired_exits["historical"], _retired_exits["not-applicable"]))
-
-
-def _recover_direct_source_publications():
-    if not PRODUCTION_POLICY or HOST != PRODUCTION_POLICY["authority_host"]:
-        return
-    from skcapstone.fleet.direct_source_recovery import recover_pending_direct_sources
-
-    for recovered in recover_pending_direct_sources(
-            Path(HOME) / ".skcapstone", PRODUCTION_POLICY,
-            process_check=_card_process_snapshot, cycle=CYCLE):
-        message = "DIRECT_SOURCE_PUBLICATION|%s|%s|state=%s|%s" % (
-            HOST, recovered["card"], recovered["state"], recovered.get("reason", ""))
-        if recovered["state"] == "refused":
-            _log_once_per_hour(d, "DIRECT_SOURCE_PUBLICATION_REFUSED", recovered["card"], message)
-        else:
-            log(d, message)
-
-
-if not DRY:
-    # Keep acceptance out of the rotating review-sweep cursor so it runs on
-    # every cycle even when later cleanup steps use the sweep budget.
-    CYCLE.run_steps("source_review_acceptance",(
-        ("reconcile_source_reviews",_reconcile_source_reviews_step),
-    ))
-    _phase_timing("source_review_acceptance")
-
 CYCLE.run_steps("review_sweeps",(() if DRY else (
-    ("recover_direct_source_publications",_recover_direct_source_publications),
     ("close_reviewed_parents",close_reviewed_parents),
     ("release_finished_review_claims",release_finished_review_claims),
 ))+(("open_provisional_reviews",lambda: open_provisional_reviews(review_capacity, dry_run=DRY)),))

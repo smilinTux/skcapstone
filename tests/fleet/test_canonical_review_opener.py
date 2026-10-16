@@ -1,7 +1,6 @@
 """Production opener uses the qualified native review API and real source custody."""
 
 import ast
-import hashlib
 import json
 import re
 import subprocess
@@ -110,135 +109,7 @@ def test_canonical_creation_survives_void_legacy_and_materializes_exact_source(
     assert git(workspace, "rev-parse", "HEAD^{tree}") == value["tree"]
     assert git(workspace, "status", "--porcelain") == ""
     assert workspace.stat().st_mode & 0o077 == 0
-    _review_and_collect(value, review, workspace, monkeypatch)
     assert value["store"]._read_events(value["card"]) == before
-
-
-def _review_and_collect(value, review, workspace, monkeypatch):
-    """Complete a synthetic independent proposal and run the real acceptance join."""
-    from skcapstone.fleet import production_acceptance as acceptance
-    from skcapstone.fleet.production_brief import production_source_review_brief
-    from skcapstone.fleet.production_review_custody import exit_path
-    from skcapstone.fleet.production_review_finish import native_command, native_state, once
-    from skcapstone.seraph_review_cardstore import LiveCardStoreGateway
-
-    store, home = value["store"], value["home"]
-    owner = "pi-seraph-control-" + review.id
-    store.append_event(review.id, "claim", owner, owner=owner)
-    review = store.fold(review.id)
-    claim = review.meta["_claim_revision"]
-    brief = production_source_review_brief(
-        card_id=review.id,
-        owner=owner,
-        claim_revision=claim,
-        workspace=str(workspace),
-        source_head=value["head"],
-        core=review.model_dump(),
-        labels=review.labels,
-    )
-    assert value["head"] in brief and value["tree"] in brief
-    assert "applicability_receipt" not in brief and "REVIEW-DECISION.json" in brief
-    directory = workspace / "docs/evidence/agents" / review.id
-    directory.mkdir(parents=True, mode=0o700)
-    report = directory / "COMPLETION-EVIDENCE.md"
-    report.write_text("Synthetic reviewer: exact source checkout verified.\n")
-    report.chmod(0o600)
-    digest = hashlib.sha256(report.read_bytes()).hexdigest()
-    decision = {
-        "schema": "skfleet.source-review-decision/v1",
-        "card": review.id,
-        "parent_card": value["card"],
-        "source_head": value["head"],
-        "source_tree": value["tree"],
-        "reviewer_identity": owner,
-        "verdict": "PASS",
-        "report_sha256": digest,
-    }
-    decision_path = directory / "REVIEW-DECISION.json"
-    decision_path.write_text(json.dumps(decision))
-    decision_path.chmod(0o600)
-    git(workspace, "config", "user.name", "Synthetic Reviewer")
-    git(workspace, "config", "user.email", "review@example.invalid")
-    git(workspace, "add", ".")
-    git(workspace, "commit", "-qm", "synthetic independent review")
-    receipt = dict(
-        type="source-only-applicability",
-        card_id=review.id,
-        source_head=value["head"],
-        reviewer=owner,
-        evidence_digest=digest,
-        governed_pr_ci=False,
-    )
-    for key, content in (
-        ("evidence", str(report)),
-        ("review_evidence_sha256", digest),
-        ("verdict", "PASS"),
-        ("applicability_receipt", json.dumps(receipt)),
-    ):
-        native_command(
-            home,
-            [
-                "link",
-                review.id,
-                key,
-                content,
-                "--agent",
-                owner,
-                "--expected-source-revision",
-                native_state(home, review.id)["revision"],
-                "--expected-claim-revision",
-                claim,
-                "--transition-id",
-                hashlib.sha256(key.encode()).hexdigest(),
-                "--json",
-            ],
-        )
-    once(
-        exit_path(home, review.id, claim),
-        dict(
-            schema="skfleet.production-review-exit/v1",
-            card=review.id,
-            owner=owner,
-            claim_revision=claim,
-            host="control",
-            lane="deepseek",
-            model="qualified-review",
-            unit="skfleet-worker-deepseek-" + review.id + ".service",
-            invocation="f" * 32,
-            source_head=value["head"],
-            exit_code=0,
-            workspace=str(workspace),
-        ),
-    )
-    store.append_event(
-        review.id,
-        "review_assignment_launch",
-        owner,
-        claim_revision=claim,
-        launched=True,
-        route_identity={
-            "capacity_domains": ["deepseek"],
-            "model_or_bucket": "qualified-review",
-            "policy_sha256": acceptance.digest(value["policy"]),
-        },
-    )
-    # External route qualification and real unit liveness have separate focused
-    # tests. This synthetic integration exercises every source/lineage join.
-    monkeypatch.setattr(acceptance, "LiveCardStoreGateway", LiveCardStoreGateway)
-    monkeypatch.setattr(acceptance, "production_receipt_allowed", lambda *a: True)
-    monkeypatch.setattr(acceptance, "unit_terminal", lambda *a, **k: {})
-    context = acceptance.collect(
-        home,
-        value["policy"],
-        review.id,
-        claim,
-        process_check=lambda cid: {"sessions": [], "units": []},
-    )
-    assert context["source"]["head"] == value["head"]
-    assert context["review"]["card"] == review.id
-    assert context["review"]["review_head"] == git(workspace, "rev-parse", "HEAD")
-    assert git(Path(context["source_workspace"]), "rev-parse", "HEAD") == value["head"]
-    assert store.fold(review.id).owner == owner
 
 
 @pytest.mark.parametrize("source", ["https"], indirect=True)

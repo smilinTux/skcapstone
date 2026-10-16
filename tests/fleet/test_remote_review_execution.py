@@ -1,14 +1,13 @@
 """Native temp CardStore, real source Git, destination fixture service boundary."""
 
 import json
-import time
 from pathlib import Path
 
 import pytest
 
 from skcapstone.fleet import builder_dispatch as builder, review_dispatch as review
-from skcapstone.fleet import production_admission as admission, production_builder as production
-from skcapstone.fleet import production_resources, store
+from skcapstone.fleet import production_builder as production
+from skcapstone.fleet import store
 from tests.fleet.test_remote_review_policy import remote_policy  # noqa: F401
 from tests.fleet.test_source_bundle import source  # noqa: F401
 
@@ -16,7 +15,6 @@ from tests.fleet.test_source_bundle import source  # noqa: F401
 from tests.fleet.remote_review_fixtures import (
     execution,
     offer_and_consume,
-    terminal_review,
 )  # noqa: F401
 
 
@@ -219,92 +217,6 @@ def test_remote_receipt_refuses_changed_native_binding(execution, change):
 
 
 @pytest.mark.host_systemd
-def test_authority_imports_real_remote_review_without_original_workspace(terminal_review):
-    from skcapstone.fleet.production_acceptance import collect
-
-    e = terminal_review
-    e["host"][0] = "chiap08"
-    e["workspace"].rename(e["workspace"].with_name("destination-is-not-mounted"))
-    context = collect(
-        e["home"],
-        e["policy"],
-        e["card"],
-        e["status"]["claim_revision"],
-        process_check=lambda card: dict(sessions=[], units=[]),
-    )
-    assert context["review"]["review_head"] != e["request"]["source"]["head"]
-    assert context["source"]["head"] == e["request"]["source"]["head"]
-    assert e["source"]["store"].fold(e["source"]["card"]).owner == e["source"]["owner"]
-
-
-@pytest.mark.host_systemd
-def test_acceptance_uses_sealed_review_policy_after_source_and_reviewer_release(
-    terminal_review,
-):
-    from skcapstone.fleet.production_acceptance import collect, digest
-
-    e = terminal_review
-    cards = e["source"]["store"]
-    source = cards.fold(e["source"]["card"])
-    review_card = cards.fold(e["card"])
-    cards.append_event(
-        source.id,
-        "release_claim",
-        "niobe",
-        released_owner=source.owner,
-        expected_claim_revision=source.meta["_claim_revision"],
-        reason="release after review sealed source",
-    )
-    cards.append_event(
-        review_card.id,
-        "release_claim",
-        "niobe",
-        released_owner=review_card.owner,
-        expected_claim_revision=review_card.meta["_claim_revision"],
-        reason="release after terminal review PASS",
-    )
-    from skcapstone.fleet.production_receipts import validate_review_execution
-
-    event = next(
-        row
-        for row in cards._read_events(e["card"])
-        if row.get("action") == "review_assignment_launch"
-    )
-    validate_review_execution(
-        e["home"],
-        e["request"]["policy"],
-        dict(
-            host=e["terminal"]["host"],
-            owner=e["request"]["reviewer"],
-            revision=e["status"]["claim_revision"],
-            model=e["terminal"]["model"],
-            lane=e["terminal"]["lane"],
-        ),
-        cards.fold(e["card"]),
-        event,
-    )
-
-    context = collect(
-        e["home"],
-        e["policy"],
-        e["card"],
-        e["status"]["claim_revision"],
-        process_check=lambda card: dict(sessions=[], units=[]),
-    )
-    e["policy"]["node_quotas"]["chiap03"]["cpu_quota_percent"] += 100
-    e["policy"]["gateway_url"] = "http://gateway.changed"
-    from skcapstone.fleet.production_acceptance import _sealed_context_policy
-
-    assert digest(_sealed_context_policy(e["home"], context, e["policy"])) == digest(
-        e["request"]["policy"]
-    )
-
-    assert context["policy_sha256"] == digest(e["request"]["policy"])
-    assert context["source"]["claim"] == e["request"]["source"]["claim"]
-    assert context["review"]["claim"] == e["status"]["claim_revision"]
-
-
-@pytest.mark.host_systemd
 def test_remote_exit_import_uses_sealed_claims_and_policy_after_release(
     terminal_review, monkeypatch
 ):
@@ -343,39 +255,6 @@ def test_remote_exit_import_uses_sealed_claims_and_policy_after_release(
     assert json.loads(path.read_text()) == e["terminal"]
 
 
-@pytest.mark.parametrize("change", ["missing-packet", "bundle-hash", "owner", "claim", "live"])
-@pytest.mark.host_systemd
-def test_remote_completion_rejects_bad_transport_or_custody(terminal_review, monkeypatch, change):
-    from skcapstone.fleet import production_acceptance as acceptance
-
-    e = terminal_review
-    path = builder.status_path(e["paths"], "node-chiap03", e["card"])
-    status = json.loads(path.read_text())
-    if change == "missing-packet":
-        del status["review_packet"]
-    elif change == "bundle-hash":
-        status["review_packet"]["sha256"] = "0" * 64
-    elif change in {"owner", "claim"}:
-        status["owner" if change == "owner" else "claim_revision"] = "forged"
-    else:
-
-        def still_live(*a, **kw):
-            raise ValueError("wrapper still active")
-
-        monkeypatch.setattr(acceptance, "unit_terminal", still_live)
-    path.write_text(json.dumps(status))
-    e["host"][0] = "chiap08"
-    with pytest.raises((ValueError, KeyError, OSError)):
-        acceptance.collect(
-            e["home"],
-            e["policy"],
-            e["card"],
-            e["status"]["claim_revision"],
-            process_check=lambda card: dict(sessions=[], units=[]),
-        )
-    assert e["source"]["store"].fold(e["source"]["card"]).status.value != "done"
-
-
 @pytest.mark.host_systemd
 def test_seraph_offer_is_pending_never_a_successful_launch(execution):
     import subprocess
@@ -398,35 +277,6 @@ def test_seraph_offer_is_pending_never_a_successful_launch(execution):
     assert result["reason"] == "seraph_remote_review_pending"
     assert result["recommendations"] == 0
     assert result["pending_offers"] == 1
-
-
-@pytest.mark.parametrize(
-    "terminal_review", ["FAIL", "BLOCKED", "STRUCTURED_BLOCKED"], indirect=True
-)
-@pytest.mark.host_systemd
-def test_negative_remote_review_completes_only_review(terminal_review):
-    from skcapstone.fleet import production_acceptance as acceptance
-
-    e = terminal_review
-    e["host"][0] = "chiap08"
-    review_card = e["source"]["store"].fold(e["card"])
-    e["source"]["store"].append_event(
-        e["card"],
-        "release_claim",
-        "niobe",
-        released_owner=review_card.owner,
-        expected_claim_revision=review_card.meta["_claim_revision"],
-        reason="release after sealed negative review terminal",
-    )
-    result = acceptance.finish_remote_disposition(
-        e["home"], e["policy"], e["card"], e["status"]["claim_revision"]
-    )
-    assert result["state"] in {"review-fail", "review-blocked"}
-    assert e["source"]["store"].fold(e["card"]).status.value == "done"
-    producer = e["source"]["store"].fold(e["source"]["card"])
-    assert producer.owner == e["source"]["owner"]
-    assert producer.meta["_claim_revision"] == e["source"]["claim"]
-    assert producer.status.value != "done"
 
 
 @pytest.mark.parametrize("change", ["quota", "capability", "host-alias", "cordon"])
@@ -459,24 +309,6 @@ def test_changed_destination_or_route_refuses_before_claim(execution, monkeypatc
     builder.consume_one(e["paths"], e["home"], "node-chiap03", launcher=e["launcher"])
     assert not e["launches"]
     assert e["source"]["store"].fold(e["card"]).owner is None
-
-
-@pytest.mark.parametrize("terminal_review", ["LARGE"], indirect=True)
-@pytest.mark.host_systemd
-def test_large_bounded_review_evidence_does_not_overflow_native_status(terminal_review):
-    from skcapstone.fleet.production_acceptance import collect
-
-    e = terminal_review
-    e["host"][0] = "chiap08"
-    e["workspace"].rename(e["workspace"].with_name("remote-only"))
-    context = collect(
-        e["home"],
-        e["policy"],
-        e["card"],
-        e["status"]["claim_revision"],
-        process_check=lambda card: dict(sessions=[], units=[]),
-    )
-    assert context["review"]["proposal"]["verdict"] == "PASS"
 
 
 @pytest.mark.host_systemd
