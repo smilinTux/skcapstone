@@ -260,7 +260,10 @@ def _occupancy(root: Path, home: Path, *, strict_terminal=False) -> list[dict]:
         if (
             unit not in units
             and not (directory / "observed.json").exists()
-            and _recover_unobserved_builder(directory, intent)
+            and (
+                _recover_unobserved_builder(directory, intent)
+                or _recover_unobserved_worker(directory, intent)
+            )
         ):
             continue
         if strict_terminal and unit not in units and not (directory / "start.json").exists():
@@ -455,15 +458,38 @@ def _recover_unobserved_builder(directory: Path, intent: dict) -> bool:
         or type(attempt) is not int
         or attempt < 1
         or intent["unit"] != f"skfleet-builder-{card}-{request}-{attempt}.service"
-        or not (directory / "start.json").exists()
-        or read_json(directory / "start.json")
-        != {
-            "schema": "skfleet.resource-start/v1",
-            "reservation_id": _reservation_id(intent),
-            "binding": binding,
-            "argv_sha256": intent["argv_sha256"],
-        }
     ):
+        return False
+    return _recover_unobserved_started_unit(directory, intent)
+
+
+def _recover_unobserved_worker(directory: Path, intent: dict) -> bool:
+    """Recover a collected worker start from its exact invocation journal."""
+    unit = intent.get("unit")
+    binding = intent.get("binding", {})
+    if not isinstance(unit, str) or not isinstance(binding, dict):
+        return False
+    match = re.fullmatch(r"skfleet-worker-[a-z][a-z0-9-]*-([0-9a-f]{8})\.service", unit)
+    if (
+        match is None
+        or binding.get("card_id") != match.group(1)
+        or not isinstance(binding.get("owner"), str)
+        or not binding["owner"]
+        or not re.fullmatch(r"[0-9a-f]{32}", str(binding.get("claim_revision", "")))
+    ):
+        return False
+    return _recover_unobserved_started_unit(directory, intent)
+
+
+def _recover_unobserved_started_unit(directory: Path, intent: dict) -> bool:
+    """Record a terminal reservation only from one exact systemd invocation."""
+    binding = intent["binding"]
+    if not (directory / "start.json").exists() or read_json(directory / "start.json") != {
+        "schema": "skfleet.resource-start/v1",
+        "reservation_id": _reservation_id(intent),
+        "binding": binding,
+        "argv_sha256": intent["argv_sha256"],
+    }:
         return False
     state = unit_state(intent["unit"], terminal=True)
     if state.get("LoadState") != "not-found":
@@ -487,27 +513,36 @@ def _recover_unobserved_builder(directory: Path, intent: dict) -> bool:
         if result.returncode or len(result.stdout) > 65536:
             return False
         lines = result.stdout.splitlines()
-        events = [json.loads(line) for line in lines]
+        journal = [(line, json.loads(line)) for line in lines]
+        events = [event for _, event in journal]
         if any(not isinstance(event, dict) for event in events):
             return False
         events = [event for event in events if event.get("USER_UNIT") == intent["unit"]]
         starts = [event for event in events if event.get("MESSAGE_ID") == started]
+        terminals = [event for event in events if event.get("MESSAGE_ID") in _JOURNAL_TERMINAL_IDS]
         invocations = {event.get("USER_INVOCATION_ID") for event in events}
-        if len(starts) != 1 or len(invocations) != 1:
+        if len(starts) != 1 or len(terminals) != 1 or len(invocations) != 1:
             return False
         invocation = starts[0].get("USER_INVOCATION_ID")
         if not re.fullmatch(r"[0-9a-f]{32}", str(invocation)):
             return False
         start_time = int(starts[0]["__REALTIME_TIMESTAMP"])
-        if start_time <= 0 or not any(
-            event.get("MESSAGE_ID") in _JOURNAL_TERMINAL_IDS
-            and int(event["__REALTIME_TIMESTAMP"]) > start_time
-            for event in events
+        terminal_time = int(terminals[0]["__REALTIME_TIMESTAMP"])
+        if (
+            start_time <= 0
+            or terminals[0].get("USER_INVOCATION_ID") != invocation
+            or terminal_time <= start_time
         ):
             return False
         terminal_lines = [
-            line for line in lines if int(json.loads(line)["__REALTIME_TIMESTAMP"]) > start_time
+            line
+            for line, event in journal
+            if event.get("USER_INVOCATION_ID") == invocation
+            and event.get("MESSAGE_ID") in _JOURNAL_TERMINAL_IDS
+            and int(event["__REALTIME_TIMESTAMP"]) > start_time
         ]
+        if len(terminal_lines) != 1:
+            return False
     except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, KeyError):
         return False
     observed = dict(
