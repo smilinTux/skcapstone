@@ -12,7 +12,7 @@ must carry their exact identity, host, session, and workspace. Missing lineage
 is incomplete evidence, not an orphan that can become healthy by inference.
 The dry-run reconciler reads the explicit reviewer authority at
 `~/.skcapstone/identity/reviewer-candidates.json`; that source must contain
-the independent Seraph seat and its lowercase SHA-256 public-key fingerprint.
+the independent reviewer seat and its lowercase SHA-256 public-key fingerprint.
 Jarvis is never a lifecycle reviewer candidate.
 
 On success, the producer writes the canonical
@@ -59,8 +59,8 @@ observation set. Exclusions use `repository#number` keys for private or collidin
 PR numbers. Card PASS evidence and a published feed do not constitute an actual
 forge approval or authorize a merge.
 
-Independent approval publication and its remaining runtime prerequisites are
-documented in [Seraph private-forge review](seraph-private-forge-review.md).
+The Seraph private-forge approval publisher was removed in the SKFLEET cut;
+there is no automated independent approval publication any more.
 
 Install the reviewed package revision into `~/.skenv` first so the scripts and
 imported modules agree. Then install and activate the producer independently:

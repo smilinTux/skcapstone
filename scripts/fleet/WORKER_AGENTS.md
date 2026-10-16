@@ -117,3 +117,10 @@ tests with exact commands and counts, acceptance criteria evidence, known
 limitations, rollback or migration notes when data changes, and the linked
 card update (`coord link ... evidence`, verdict, then move to review).
 Helper completion never completes a parent card.
+
+Completion of a source card is two facts: an independent review PASS on the
+exact commit with tests green on that same commit, and the reviewed code
+merged on the target branch. The operator then closes it with
+`skcapstone coord accept`. Do not run `coord complete` on a source card that
+owes a review, and do not wait on test-plan, qualification, applicability or
+finish-journal artifacts: they no longer exist.

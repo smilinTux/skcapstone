@@ -109,7 +109,9 @@ separately from this custody-verification port.`
    literal `none` when the card needed no repository change.
 3. Never delete your own workspace as part of finishing.
    `record_workspace_lifecycle_decision` records whether it is now cleanup
-   eligible; it does not act on that record.
+   eligible; it does not act on that record. A workspace is never the
+   completion record: a source card is closed by `coord accept` after an
+   independent PASS, green tests on the exact commit, and a merge on main.
 4. A distinct, future cleanup executor may act only on a fresh
    `CLEANUP_ELIGIBLE` decision and an exact resolved path.
 5. Reapers may release a provably dead claim, but must not delete its

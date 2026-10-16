@@ -191,6 +191,15 @@ operator or the orchestrator. If you think a deploy is needed, say so on
 skmail with the PR number, do not install it yourself.
 
 
+## Completion after merge
+
+A source card is complete when an independent review PASS names the exact
+commit, the tests are green on that same commit, and the code is merged on
+`origin/main`. The operator then runs `skcapstone coord accept <source_card>
+--agent <operator> --repo-path <clone>`. Deploy is a separate operator step
+(`skcapstone fleet rollout`, or the chi auto-rollout timer); it is not part of
+card completion.
+
 ## Sealed source-suite qualification dependencies
 
 Governed staged deploy and rollback install `.[fleet-qualify]` as a regular package, not an editable checkout. Native test workers mount the interpreter prefix read-only; dashboard tests import `skcapstone.agent_run` and `skcapstone.fleet` from that prefix. A checkout outside the sealed mounts cannot satisfy these imports. This environment failure must not be recorded as a product known-failure baseline.

@@ -106,7 +106,7 @@ duplicate mutations.
 
 - Producer implementation: `src/skcapstone/link_observation_producer.py`
 - Feed contract: `src/skcapstone/link_observation_feed.py`
-- Activation and card contract: `docs/fleet/seat-lifecycle-activation-matrix.md`
+- Activation and card contract: the removed seat activation matrix (see git history)
 - Live coverage recorded on card `b88b324c`
 - Machine-readable live report: `/tmp/sk-lineage-latest.json`
 - Durable evidence: `/home/skuser01/.skcapstone/evidence/work/link-lineage-live-20260906/RESULT.md`

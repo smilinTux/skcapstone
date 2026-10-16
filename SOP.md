@@ -331,6 +331,13 @@ pytest --cov=skcapstone                                                     # wi
 
 skcapstone ships as **both** a service (the daemon) and a Python package.
 
+**Card completion contract.** A source card is done when an independent review
+PASS names the exact commit, the tests are green on that same commit, and the
+reviewed code is merged on `origin/main`. An operator closes it with
+`skcapstone coord accept <source_card> --agent <operator> --repo-path <clone>`
+(`src/skcapstone/simple_accept.py`). Builds run in lanes, reviews in reviewer
+panes. Nothing else gates completion.
+
 **Package release (PyPI).** ⚠️ **Do not edit a version number anywhere.** There is no
 `version` field to bump in `pyproject.toml` (it is `dynamic = ["version"]`) and this
 repo has **no `package.json`** to mirror it into. The **tag is** the version.
