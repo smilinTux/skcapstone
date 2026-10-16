@@ -12,14 +12,13 @@ not the seat label alone, because the label can be absent on older cards.
   through 6 below are for you.
 - Title starts with `[REVIEW` (for example `[REVIEW][S] Review provisional
   outcome for <parent_id>`): you are the **reviewer**. Jump to
-  "Reviewer (seat-seraph, `[REVIEW]` cards)" below. Steps 1 through 6 do not
-  apply to you; a review card is completed by a verdict link, not by doing
-  the work Step 4 describes.
-- Anything else (a card whose writer identity in the event trail is `link`,
-  `mero`, `niobe`, or `atlas` rather than a worker you claimed): see
-  "Other lifecycle seats" below. These run as automated fleet-rotation
-  processes on the estate's elected authority host, not as a card a worker
-  agent claims and works through Steps 1-6.
+  "Reviewer (`[REVIEW]` cards)" below. Steps 1 through 6 do not apply to
+  you; a review card is completed by a verdict link, not by doing the work
+  Step 4 describes.
+- Anything else (a card whose writer identity in the event trail is `link`
+  or `mero` rather than a worker you claimed): see "Other lifecycle seats"
+  below. These are not cards a worker agent claims and works through
+  Steps 1-6.
 
 Before either role, read "Reading the board without blowing your context"
 near the end of this file. It is the difference between a targeted read and
@@ -184,6 +183,24 @@ will be resolving a conflict. See `changelog.d/README.md`.
 
 ## Step 5: Complete
 
+A source card (code that lands in a repo) is complete when exactly three
+things are true: an independent reviewer recorded PASS on the exact commit,
+the tests are green on that same commit, and the reviewed code is merged on
+the target branch (default `origin/main`). An operator (`lumina-nor` or
+`jarvis`) closes it with `coord accept`, which checks those facts and closes
+the source card and its review together:
+
+```bash
+skcapstone coord accept <source_card> --agent lumina-nor --repo-path <local clone>
+```
+
+Builds run in lanes; reviews run in reviewer panes. There is no dispatcher
+that opens, retires or regenerates reviews for you, and no test-plan
+generation, profile qualification, applicability receipt or finish journal to
+satisfy. See `src/skcapstone/simple_accept.py` for the full fact list.
+
+A card with no review (a chore, a doc card) is still closed directly:
+
 ```bash
 skcapstone coord complete <task_id> --agent <your_name>
 ```
@@ -211,29 +228,24 @@ The `~/.skcapstone/` directory is synchronized via Syncthing across all
 devices in the mesh. No SSH, no APIs, no cloud services — just encrypted
 peer-to-peer file sync. Create a task here, it appears everywhere.
 
-## Reviewer (seat-seraph, `[REVIEW]` cards)
+## Reviewer (`[REVIEW]` cards)
 
-This section did not exist before 2026-09-20. A reviewer worker on card
-`b34ca6f9` spent its entire run guessing CLI syntax that does not exist
-(`fleet get workers`, `coord kanban <id>`, `coord --help`, `coord status |
-head -60`), produced an empty final message, and never recorded a verdict.
-That card had accumulated 17 claims and 18 releases by the time this was
-written, all from repeated relaunches hitting the same wall. Everything
-below is derived from reading real review cards that actually closed, not
-from guessing at the shape the code should have.
+Reviews run in reviewer panes, not through an automated dispatcher. If a
+card's title starts with `[REVIEW`, a reviewer opened it against a specific
+producer's outcome and you are the independent reviewer. Everything below is
+derived from reading real review cards that actually closed, not from
+guessing at the shape the code should have.
 
 ### How to tell you are the reviewer
 
 Your card title starts with `[REVIEW` (for example `[REVIEW][S] Review
-provisional outcome for 1960b107`), and it carries the label `seat-seraph`.
-You did not choose this work; the fleet dispatcher opened this card for you
-against a specific producer's outcome.
+provisional outcome for 1960b107`). Your identity must differ from the
+producer's.
 
 ### Find your parent and candidate
 
 Your card's **description**, not its title, is the source of truth. It is
-written in one fixed template by the card opener
-(`skfleet-rotate.py:open_provisional_reviews`). A real example, verbatim
+written in one fixed template by the card opener (`coord review-work`). A real example, verbatim
 from card `b34ca6f9`:
 
 ```
@@ -376,18 +388,6 @@ category is one of `dependency`, `card`, `human`, `capability`
    **The single-card read is now `coord show <id>`** (3,854 bytes, versus
    11,925,646 for `kanban --json`). Older notes saying "there is no CLI
    single-card read" are stale.
-6. `seat-seraph` is the reviewer seat you will actually see. `link` and
-   `mero` remain logically qualified reviewer seats in the code
-   (`LOGICAL_REVIEWER_SEATS = {"link", "mero", "seraph"}` in
-   `review_admission.py`), and 119 and 5 older review cards respectively
-   carry those labels and closed successfully, but every one of them
-   closed before the 2026-09-13 verdict-strictness tightening. Of the 56
-   review cards that closed after that date, all 56 carried `seat-seraph`
-   and none carried `seat-link` or `seat-mero`. If you land on a
-   `seat-link` or `seat-mero` card, the same recipe above should apply
-   (the completion gate does not branch on which qualified seat you are),
-   but that combination is not verified end-to-end under today's rules.
-
 7. **A terminal PASS is not finished when the verdict is recorded.**
    `coord complete` refuses a PASS review card whose CI evidence is missing,
    and the refusal is the last step, so the work looks done right up until it
@@ -406,66 +406,25 @@ category is one of `dependency`, `card`, `human`, `capability`
    that state in the same 2026-09-21 measurement. If the review is genuinely
    finished, record a terminal `PASS`, `FAIL` or `BLOCKED` last.
 
-### One contradiction in the code that is left unresolved on purpose
-
-`skfleet-rotate.py`'s automatic claim-release reaper
-(`release_finished_review_claims`, which fires only when your session dies
-mid-review without calling `coord complete`) decides whether your claim is
-safe to release using `_durable_review_outcome`. That function will accept
-a same-writer `evidence_sha256` link written AFTER your verdict as proof
-your outcome is durable. But the SEPARATE function that decides whether a
-PARENT's review generation is still current, `_generation_invalidated`
-(used by `_review_names_generation`, which gates `close_reviewed_parents`),
-treats that exact same later `evidence_sha256` link as INVALIDATING. These
-two functions read the same event and disagree about what it means. No
-review card in the live store demonstrates this exact sequence closing
-cleanly either way, so this is not resolved here; it is flagged so nobody
-spends a cycle trusting either behavior. The safe path, and the one every
-closed card in this section's examples actually took, is to always call
-`coord complete` yourself before your session ends rather than relying on
-the automatic reaper to clean up after you.
-
 ## Other lifecycle seats
 
-`LIFECYCLE_SEATS` in `src/skcapstone/lifecycle_seats.py` names five seats:
-`link`, `mero`, `seraph`, `niobe`, `atlas`. `seraph` is covered above,
-because that is the seat a fleet worker actually claims and completes a
-card as. The other four run as automated processes inside the
-fleet-rotation cycle on the estate's elected authority host
-(`skfleet-rotate.py`, gated on `HOST == AUTHORITY_HOST`); they show up in
-event trails as writer identities (`link`, `mero`, `niobe`, `atlas`), not
-as cards a worker agent claims and works through Steps 1-6. Their profile
-data comes from `src/skcapstone/data/lifecycle-seat-profiles.json`
-(`load_lifecycle_seat_profiles`):
+`LIFECYCLE_SEATS` in `src/skcapstone/lifecycle_seats.py` still names `link`,
+`mero`, `seraph`, `niobe` and `atlas` as writer identities, but the
+`niobe`, `atlas` and `seraph` runtime (dispatcher, seat-cycle, review
+publisher, live fanout) was removed in the SKFLEET cut and its units are
+gone. Only `link` and `mero` remain as operated seats, and neither is
+something a worker agent claims.
 
 - **link** (`role: integrator`): owns `pr_triage`, `reviewer_assignment`,
   `merge_eligibility`, `eligible_merge`; denied `fleet_dispatch`,
-  `deployment`, `release`, `application_actuation`. Observed writing
-  `review_assignment_recommendation` events ahead of a review card's
-  claim. How it is operated beyond the automated cycle is not established
-  from the code read for this task.
+  `deployment`, `release`, `application_actuation`.
 - **mero** (`role: overseer`): owns `read_only_observation`,
   `drift_measurement`, `typed_recommendation`; denied `card_claim`,
   `fleet_dispatch`, `merge`, `deployment`, `application_actuation`. Purely
-  observational in practice: one review card carried 82
-  `mero_observation` events and mero never claimed anything. Not
-  something a worker agent operates directly.
-- **niobe** (`role: fleet_dispatcher`): owns `card_claim`, `card_release`,
-  `worker_launch`, `worker_stop`, `reassignment`, `rotation`; denied
-  `review_verdict`, `merge`, `deployment`, `release`,
-  `application_actuation`. This is effectively the dispatcher identity
-  behind `skfleet-rotate.py` itself. Not something a worker agent operates
-  directly.
-- **atlas** (`role: operations_plane`): owns `operational_observation`,
-  `authorized_action_execution`, `postcondition_verification`,
-  `approved_artifact_release`, `approved_artifact_install`,
-  `behavioral_verification`, `rollback`; denied
-  `coordination_board_ownership`, `card_claim`, `reviewer_assignment`,
-  `merge`, `policy_change`, `unratified_action`, `source_authoring`,
-  `self_approval`, `independent_review_of_own_release`, `fleet_dispatch`.
-  Observed only writing `worker_liveness` links in review event trails.
-  Its own operational flow beyond that is not established from the code
-  read for this task.
+  observational.
+
+Old event trails still show `niobe`, `atlas` and `seraph` as writer
+identities. Treat them as history.
 
 ## ITIL changes: an agent can never approve one
 
@@ -548,9 +507,9 @@ verdict link, or whether your write actually landed is a `coord show`, never a
 `coord status` and never a `kanban --json`.
 
 `skcapstone coord gates <card_id>` is also small and directly answers "why
-can I not claim or dispatch this": it returns the seat, your capacity
+can I not claim or dispatch this": it returns your capacity
 slot, and the exact refusal reasons as JSON, for example
-`{"eligible": false, "reasons": ["ownership"], "seat": "seraph"}`.
+`{"eligible": false, "reasons": ["ownership"]}`.
 
 **Commands that do NOT do what they look like they do, verified today:**
 

@@ -67,6 +67,15 @@ skcapstone coord board               # Regenerate BOARD.md
 skcapstone coord briefing --format json      # Machine-readable protocol
 ```
 
+Completion contract for a source card (two facts, no pipeline): an independent
+review PASS on the exact commit with tests green on that same commit, and the
+reviewed code merged on the target branch. An operator closes it with
+`skcapstone coord accept <source_card> --agent <operator> --repo-path <clone>`.
+Builds run in lanes; reviews run in reviewer panes. Profile qualification,
+test-plan generations, acceptance reseal, review generations and retirement,
+applicability receipts, finish journals and the niobe/atlas/seraph seats were
+removed in the SKFLEET cut (see `changelog.d/skfleet-cut.md`).
+
 Every verdict, evidence, status, claim, label, dependency, and lifecycle write
 must use `skcapstone coord`. Never create, append, rewrite, rename, or delete
 CardStore JSONL. Use CLI reads for normal verification. Raw file inspection is
