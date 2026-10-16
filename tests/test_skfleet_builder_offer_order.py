@@ -1,20 +1,13 @@
 from pathlib import Path
 
 
-def test_qualified_builder_candidates_are_offered_first():
-    """The deadline must not expire on unqualified cards while a qualified one waits."""
+def test_builder_candidates_are_ordered_by_offer_memory_without_a_profile_store():
+    """Every card is equally offerable: ordering is offer memory only, never a profile file."""
     script = Path(__file__).parents[1] / "scripts/fleet/skfleet-rotate.py"
     source = script.read_text(encoding="utf-8")
     loop = source.index("for _candidate in tuple(_builder_candidates)[:MAX_CANDIDATE_SCAN]:")
-    ordering = source.rindex("_qualified_profiles = ", 0, loop)
+    ordering = source.rindex("_builder_candidates = _offer_memory.order(", 0, loop)
     window = source[ordering:loop]
 
-    assert '".skcapstone/fleet/test-profiles"' in window
-    assert "_builder_candidates = _offer_memory.order(" in window
-
-
-def test_qualified_first_ordering_is_stable():
-    profiles = {"b"}
-    pool = [(0, 0, "a"), (0, 0, "b"), (0, 0, "c"), (0, 0, "d")]
-    ordered = sorted(pool, key=lambda c: c[2] not in profiles)
-    assert [c[2] for c in ordered] == ["b", "a", "c", "d"]
+    assert "test-profiles" not in source
+    assert "lambda _cid: True" in window
