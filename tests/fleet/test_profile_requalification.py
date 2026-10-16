@@ -447,7 +447,7 @@ def test_stale_plan_appends_current_requalification_successor(tmp_path, monkeypa
     ]
 
 
-def test_initial_profile_retargets_unlaunched_remote_plan_to_authority(tmp_path, monkeypatch):
+def test_initial_profile_recovers_remote_preflight_failure_with_successor(tmp_path, monkeypatch):
     binding = {"source_card": "1234abcd"}
     value = {
         "qualified_by": "lumina-nor",
@@ -486,7 +486,11 @@ def test_initial_profile_retargets_unlaunched_remote_plan_to_authority(tmp_path,
         return current_plan, tmp_path / "plan.json", "a" * 64
 
     monkeypatch.setattr(plan, "load_plan", load_plan)
-    monkeypatch.setattr(plan, "run_directory", lambda *_args: tmp_path / "run")
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "launch.json").write_text("{}")
+    monkeypatch.setattr(plan, "run_directory", lambda *_args: run)
+    monkeypatch.setattr(refresh, "_remote_initial_preflight_failure", lambda *_args: True)
     sealed = []
 
     def seal_plan(*_args, **kwargs):
@@ -508,12 +512,124 @@ def test_initial_profile_retargets_unlaunched_remote_plan_to_authority(tmp_path,
             "predecessor_sha256": "a" * 64,
             "execution_host": "chiap08",
             "initial_profile_qualification": True,
+            "acceptance_requalification": True,
         }
     ]
-    assert load_calls == [
-        {"allow_completed": True, "allow_remote_host": True},
-        {"require_current": False, "allow_remote_host": True},
+
+
+def test_remote_initial_preflight_failure_is_recoverable_only_before_test_output(
+    tmp_path, monkeypatch
+):
+    home = tmp_path
+    binding = {
+        "source_card": "1234abcd",
+        "source_head": "head",
+        "source_revision": "revision",
+    }
+    plan_path = home / "fleet/test-plans/plan.json"
+    plan_path.parent.mkdir(parents=True)
+    plan_path.parent.chmod(0o700)
+    plan_path.write_text("{}")
+    plan_path.chmod(0o600)
+    initial_path = plan_path.with_name("plan.initial.json")
+    initial_path.write_text(
+        json.dumps(
+            {
+                "remote_initial_profile_qualification": True,
+                "authority_host": "chiap08",
+                "host": "chiap02",
+            }
+        )
+    )
+    initial_path.chmod(0o600)
+    run = home / "fleet/test-runs" / ("a" * 64)
+    run.parent.mkdir(parents=True, exist_ok=True)
+    run.parent.chmod(0o700)
+    run.mkdir(parents=True)
+    run.chmod(0o700)
+    (run / ".run.lock").touch()
+    (run / "launch.json").write_text(
+        json.dumps(
+            {
+                "binding": binding,
+                "request_id": "a" * 64,
+                "workspace": str(home),
+                "unit": "skfleet-builder-1234abcd-test.service",
+                "service_argv": ["systemd-run", "--", "worker"],
+            }
+        )
+    )
+    (run / "launch.json").chmod(0o600)
+    (run / "terminal.json").write_text(
+        json.dumps(
+            {
+                "unit": "skfleet-builder-1234abcd-test.service",
+                "ActiveState": "failed",
+                "SubState": "failed",
+                "ExecMainStatus": "1",
+                "InvocationID": "b" * 32,
+            }
+        )
+    )
+    (run / "terminal.json").chmod(0o600)
+    monkeypatch.setattr(refresh.plan, "_initial_plan_base", lambda *_args: initial_path)
+    monkeypatch.setattr(refresh.plan, "run_directory", lambda *_args: run)
+    monkeypatch.setattr(refresh.plan, "source_state", lambda *_args: None)
+    monkeypatch.setattr(
+        refresh.plan,
+        "load_plan",
+        lambda *_args, **kwargs: (
+            (
+                {"initial_profile_qualification": True, "host": "chiap08"},
+                plan_path,
+                "a" * 64,
+            )
+            if kwargs.get("allow_remote_host")
+            else (_ for _ in ()).throw(
+                plan.TestEvidenceError("operator test plan is invalid or stale")
+            )
+        ),
+    )
+    monkeypatch.setattr(tests, "service_argv", lambda *_args: ["systemd-run", "--", "worker"])
+
+    assert refresh._remote_initial_preflight_failure(home, binding, "a" * 64)
+    (run / "unexpected.log").write_text("test output means this was not a preflight-only failure")
+    assert not refresh._remote_initial_preflight_failure(home, binding, "a" * 64)
+
+
+def test_remote_initial_worker_uses_scoped_wrapper(tmp_path, monkeypatch):
+    home = tmp_path
+    binding = {
+        "source_card": "1234abcd",
+        "source_head": "head",
+        "source_revision": "revision",
+    }
+    initial_path = home / "fleet/test-plans/plan.initial.json"
+    initial_path.parent.mkdir(parents=True)
+    initial_path.parent.chmod(0o700)
+    initial_path.write_text(json.dumps({"remote_initial_profile_qualification": True}))
+    initial_path.chmod(0o600)
+    plan_path = initial_path.with_name("plan.initial.next.json")
+    run = home / "fleet/test-runs" / ("a" * 64)
+    original = [
+        "systemd-run",
+        "--",
+        str(tests.PREFIX / "bin/python"),
+        "-I",
+        "-m",
+        "skcapstone.fleet.production_test_worker",
+        str(plan_path),
+        str(run),
     ]
+    monkeypatch.setattr(refresh.plan, "_initial_plan_base", lambda *_args: initial_path)
+    monkeypatch.setattr(tests, "service_argv", lambda *_args: list(original))
+
+    with refresh._remote_initial_worker(home, binding):
+        assert refresh._REMOTE_INITIAL_WORKER.get() is not None
+        assert tests.service_argv is not None
+        actual = tests.service_argv({"binding": binding}, plan_path, run, home)
+    assert actual[:-5] == original[:-5]
+    assert actual[4:7] == ["-m", "skcapstone.fleet.remote_initial_test_worker", str(plan_path)]
 
 
 def test_only_retries_exact_remote_predecessor_failure_once(tmp_path):

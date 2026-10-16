@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import socket
 import subprocess
 import threading
@@ -26,6 +27,139 @@ SYNC_GRACE_SECONDS = 1800
 
 _REMOTE_PREDECESSOR = ContextVar("remote_profile_predecessor", default=None)
 _PLAN_LOAD_PATCH_LOCK = threading.RLock()
+_REMOTE_INITIAL_WORKER = ContextVar("remote_initial_worker", default=None)
+_WORKER_ARGV_PATCH_LOCK = threading.RLock()
+
+
+@contextmanager
+def _remote_initial_worker(home: Path, binding: dict):
+    """Use the scoped worker shim when this plan descends from a remote initial plan."""
+    expected_home = Path(home).resolve()
+    expected_binding = json.dumps(binding, sort_keys=True, separators=(",", ":"))
+    try:
+        base = plan._initial_plan_base(expected_home, binding)
+        initial = json.loads(plan.read_private(base))
+    except (FileNotFoundError, OSError, ValueError, KeyError, TypeError):
+        yield
+        return
+    if initial.get("remote_initial_profile_qualification") is not True:
+        yield
+        return
+    with _WORKER_ARGV_PATCH_LOCK:
+        original = tests.service_argv
+
+        def service_argv(request, plan_path, directory, workspace):
+            argv = original(request, plan_path, directory, workspace)
+            active = _REMOTE_INITIAL_WORKER.get()
+            if (
+                active != (expected_home, expected_binding)
+                or Path(plan_path).parent.parent.parent.resolve() != expected_home
+                or json.dumps(request.get("binding"), sort_keys=True, separators=(",", ":"))
+                != expected_binding
+            ):
+                return argv
+            position = argv.index("--") + 1
+            command = argv[position:]
+            expected = [
+                str(tests.PREFIX / "bin/python"),
+                "-I",
+                "-m",
+                "skcapstone.fleet.production_test_worker",
+                str(plan_path),
+                str(directory),
+            ]
+            if command != expected:
+                raise plan.TestEvidenceError("remote initial worker command changed")
+            argv[position:] = [
+                str(tests.PREFIX / "bin/python"),
+                "-I",
+                "-m",
+                "skcapstone.fleet.remote_initial_test_worker",
+                str(plan_path),
+                str(directory),
+            ]
+            return argv
+
+        token = _REMOTE_INITIAL_WORKER.set((expected_home, expected_binding))
+        tests.service_argv = service_argv
+        try:
+            yield
+        finally:
+            tests.service_argv = original
+            _REMOTE_INITIAL_WORKER.reset(token)
+
+
+def _remote_initial_preflight_failure(home: Path, binding: dict, plan_sha: str) -> bool:
+    """Prove a launched plan failed before tests only because its chain has a remote parent."""
+    try:
+        current, path, current_sha = plan.load_plan(
+            home, binding, require_current=False, allow_remote_host=True
+        )
+        initial = json.loads(plan.read_private(plan._initial_plan_base(home, binding)))
+        if (
+            current_sha != plan_sha
+            or current.get("initial_profile_qualification") is not True
+            or initial.get("remote_initial_profile_qualification") is not True
+            or initial.get("authority_host") != socket.gethostname().split(".")[0].lower()
+            or initial.get("host") == current.get("host")
+            or current.get("host") != socket.gethostname().split(".")[0].lower()
+        ):
+            return False
+        try:
+            plan.load_plan(home, binding, require_current=False)
+        except plan.TestEvidenceError as exc:
+            if str(exc) != "operator test plan is invalid or stale":
+                return False
+        else:
+            return False
+        directory = plan.run_directory(home, plan_sha)
+        launch = tests.read_json(directory / "launch.json")
+        terminal = tests.read_json(directory / "terminal.json")
+        workspace = Path(launch["workspace"]).resolve(strict=True)
+        plan.source_state(workspace, binding)
+        if (
+            (directory / "receipt.json").exists()
+            or launch.get("binding") != binding
+            or launch.get("request_id") != plan_sha
+            or terminal.get("unit") != launch.get("unit")
+            or terminal.get("ActiveState") != "failed"
+            or terminal.get("SubState") != "failed"
+            or terminal.get("ExecMainStatus") != "1"
+            or not re.fullmatch(r"[0-9a-f]{32}", str(terminal.get("InvocationID", "")))
+        ):
+            return False
+        expected = tests.service_argv(launch, path, directory, Path(launch["workspace"]))
+        if launch.get("service_argv") != expected:
+            return False
+        return not any(
+            child.is_file() and child.name not in {"launch.json", "terminal.json", ".run.lock"}
+            for child in directory.rglob("*")
+        )
+    except (OSError, ValueError, KeyError, TypeError, plan.TestEvidenceError):
+        return False
+
+
+@contextmanager
+def _permit_remote_initial_retry(home: Path, binding: dict, failed_sha: str):
+    """Temporarily recognize only the proven preflight failure for successor sealing."""
+    expected_home = Path(home).resolve()
+    with _PLAN_LOAD_PATCH_LOCK:
+        original = plan._completed_test_attempt
+
+        def completed(request_home, request_sha):
+            if (
+                Path(request_home).resolve() == expected_home
+                and request_sha == failed_sha
+                and _remote_initial_preflight_failure(expected_home, binding, failed_sha)
+            ):
+                return True
+            return original(request_home, request_sha)
+
+        plan._completed_test_attempt = completed
+        try:
+            yield
+        finally:
+            plan._completed_test_attempt = original
 
 
 @contextmanager
@@ -1193,38 +1327,60 @@ def _advance(home, policy, skc, actor, path, job):
                 or not _compatible_initial_profile(previous_profile, profile_value)
             ):
                 raise plan.TestEvidenceError("another test plan owns this source revision")
-            if not same_profile or (
-                isinstance(job.get("execution_host"), str)
-                and current_plan.get("host") != job["execution_host"]
+            if (
+                not same_profile
+                or (
+                    isinstance(job.get("execution_host"), str)
+                    and current_plan.get("host") != job["execution_host"]
+                )
+                or (
+                    initial_profile
+                    and _remote_initial_preflight_failure(home, job["binding"], plan_sha)
+                )
             ):
                 launched = (plan.run_directory(home, plan_sha) / "launch.json").exists()
+                recover_remote_preflight = False
                 if launched and (same_profile or not plan._completed_test_attempt(home, plan_sha)):
-                    reason = (
-                        "qualification plan host changed after launch"
-                        if same_profile
-                        else "qualification plan changed after launch"
+                    recover_remote_preflight = (
+                        same_profile
+                        and initial_profile
+                        and _remote_initial_preflight_failure(home, job["binding"], plan_sha)
                     )
-                    raise plan.TestEvidenceError(reason)
+                    if not recover_remote_preflight:
+                        reason = (
+                            "qualification plan host changed after launch"
+                            if same_profile
+                            else "qualification plan changed after launch"
+                        )
+                        raise plan.TestEvidenceError(reason)
                 kwargs = {"acceptance_requalification": True} if launched else {}
+                if recover_remote_preflight:
+                    kwargs["acceptance_requalification"] = True
                 context = (
                     _remote_predecessor_for_seal(home, job["binding"])
-                    if current_plan.get("remote_initial_profile_qualification") is True
+                    if initial_profile
                     else nullcontext()
                 )
                 with context:
-                    plan.seal_plan(
-                        home,
-                        job["binding"],
-                        workspace,
-                        policy,
-                        profile_value["qualified_by"],
-                        profile_value["qualification_sha256"],
-                        profile=profile_value,
-                        predecessor_sha256=plan_sha,
-                        execution_host=job["execution_host"],
-                        initial_profile_qualification=True,
-                        **kwargs,
+                    recovery_context = (
+                        _permit_remote_initial_retry(home, job["binding"], plan_sha)
+                        if recover_remote_preflight
+                        else nullcontext()
                     )
+                    with recovery_context:
+                        plan.seal_plan(
+                            home,
+                            job["binding"],
+                            workspace,
+                            policy,
+                            profile_value["qualified_by"],
+                            profile_value["qualification_sha256"],
+                            profile=profile_value,
+                            predecessor_sha256=plan_sha,
+                            execution_host=job["execution_host"],
+                            initial_profile_qualification=True,
+                            **kwargs,
+                        )
         elif (
             current_plan.get("profile_requalification") is not True
             or current_plan.get("profile_predecessor_sha256") != job["profile_sha256"]
@@ -1291,11 +1447,13 @@ def _advance(home, policy, skc, actor, path, job):
         )
     # The authority process also reads the remote worker's sealed receipt.
     # run_or_read_tests returns pending until that host writes terminal evidence.
-    receipt = tests.run_or_read_tests(home, job["binding"], workspace, policy)
+    with _remote_initial_worker(home, job["binding"]):
+        receipt = tests.run_or_read_tests(home, job["binding"], workspace, policy)
     if receipt is None:
         return "pending"
     if initial_profile:
-        tests.validate_test_receipt(home, job["binding"], workspace)
+        with _remote_initial_worker(home, job["binding"]):
+            tests.validate_test_receipt(home, job["binding"], workspace)
         _qualify_profile_or_replay(
             home,
             card.model_dump(mode="json"),
