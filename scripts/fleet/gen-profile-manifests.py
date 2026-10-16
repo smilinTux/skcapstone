@@ -70,9 +70,10 @@ CONTROL_REQUIRED = [
     "skoperator.timer",
 ]
 
-#: Independently scheduled seat timers. The control role forbids them because
-#: the single seat-cycle timer serializes Atlas, Seraph, and Niobe.
-SERIALIZED_SEAT_MUST_NOT = [
+#: Competing schedulers. The control role forbids the legacy generic rotation
+#: timer and standalone seat timers because the seat cycle owns activation.
+SEAT_CYCLE_MUST_NOT = [
+    "skfleet-rotate.timer",
     "skfleet-atlas.timer",
     "skfleet-niobe-live.timer",
     "skfleet-niobe.timer",
@@ -250,7 +251,7 @@ def build_control() -> dict:
             "units": _units_block(
                 sorted(set(allowed) | set(SEAT_ALLOWED_EXTRA)),
                 CONTROL_ROLE_REQUIRED,
-                MODEL_SERVING + SERIALIZED_SEAT_MUST_NOT,
+                MODEL_SERVING + SEAT_CYCLE_MUST_NOT,
             ),
             "unitsIgnore": sorted(DESKTOP_IGNORE),
             "packages": _units_block(load_packages("node-noroc2027"), ["skcapstone"], []),

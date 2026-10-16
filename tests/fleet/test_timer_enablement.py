@@ -357,6 +357,53 @@ def test_control_profile_converges_all_serialized_seat_timers_inactive(tmp_path)
     }
 
 
+@pytest.mark.parametrize("timer_file", ["enabled", "disabled"])
+def test_legacy_rotate_converges_without_stopping_workers_before_seat_cycle(tmp_path, timer_file):
+    """Both live legacy states fence only the paired service before activation."""
+
+    config_home = tmp_path / "config"
+    systemd = TransitionSystemd(
+        timer_file=timer_file,
+        timer_active="active",
+        service_active="active",
+        config_home=config_home,
+    )
+    policy = {
+        "units": {
+            "required": ["skfleet-seat-cycle.timer"],
+            "mustNot": ["skfleet-rotate.timer"],
+        }
+    }
+
+    outcome = timer_enablement.converge_scheduler_transition(
+        policy,
+        runner=systemd,
+        config_home=config_home,
+        evidence_path=tmp_path / "evidence.jsonl",
+        actor="jarvis",
+        source_revision="7e6ac104",
+        enable=True,
+        start=True,
+    )
+
+    assert outcome["acquired"] is True
+    legacy = outcome["forbidden"][0]
+    assert legacy["enabled"] is False
+    assert legacy["active"] is False
+    assert legacy["service_inactive"] is True
+    assert legacy["safe"] is True
+    assert outcome["required"][0]["converged"] is True
+    assert systemd.service_active == "inactive"
+    stop_calls = [call for call in systemd.calls if call[2] == "stop"]
+    assert stop_calls == [["systemctl", "--user", "stop", "skfleet-rotate.service"]]
+    rotate_stop = systemd.calls.index(stop_calls[0])
+    seat_cycle_enable = systemd.calls.index(
+        ["systemctl", "--user", "enable", "skfleet-seat-cycle.timer"]
+    )
+    assert rotate_stop < seat_cycle_enable
+    assert not any("worker" in argument for call in systemd.calls for argument in call)
+
+
 @pytest.mark.parametrize("service_state", ["active", "activating", "deactivating"])
 def test_forbidden_service_is_stopped_even_when_timer_already_disabled(tmp_path, service_state):
     systemd = TransitionSystemd(service_active=service_state)
