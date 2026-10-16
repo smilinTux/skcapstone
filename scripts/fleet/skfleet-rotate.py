@@ -40,6 +40,7 @@ from skcapstone.fleet.worker_watchdog import (
 )
 from skcapstone.fleet.worker_liveness_runtime import collect_observations, run_production_cycle
 from skcapstone.coord_eligibility import leaf_eligibility_counts
+from skcapstone.routing_guard import classify_card_routing, exact_glm_bucket
 from skcapstone.fleet_lane_health import (
     acquire_lane_snapshot,
     cycle_id as new_cycle_id,
@@ -2112,6 +2113,12 @@ _SIZE_MODELS={key:(os.environ.get("SKFLEET_MODEL_"+key)
                    or os.environ.get("SKFLEET_CODEX_MODEL_"+key)
                    or value).strip() or value
               for key,value in _SIZE_MODEL_DEFAULTS.items()}
+# Exact GLM selectors (sk-glm-s/m/l) pin the card to the GLM lane at that
+# size with no fallback: incident inc-e5ab3dea dispatched a GLM-only card to
+# Qwen because no label could state provider AND size in one token. These
+# labels are one-for-one size sources, exactly like the provider-neutral
+# buckets, and simultaneously pin the lane via _LANE_ONLY_LABELS.
+_EXACT_GLM_SIZE={"sk-glm-s":"S","sk-glm-m":"M","sk-glm-l":"L"}
 def _size_class_for(core, labels=()):
     """Return one title size, else the one canonical size label.
 
@@ -2137,8 +2144,17 @@ def _size_class_for(core, labels=()):
     matches=_GLM_SIZE_RE.findall(str((core or {}).get("title") or ""))
     if len(matches)==1:
         return matches[0]
-    label_sizes={size for size,route in _LOGICAL_ROUTES.items() if route in {
-        str(label).strip().lower() for label in labels}}
+    normalized_labels={str(label).strip().lower() for label in labels}
+    label_sizes={size for size,route in _LOGICAL_ROUTES.items() if route in normalized_labels}
+    if len(label_sizes)==1:
+        return next(iter(label_sizes))
+    # An exact GLM selector is a size source too: sk-glm-m IS "size M, GLM
+    # lane, never any other provider". Counting it together with a neutral
+    # bucket stays ambiguous and fails closed, same as two neutral buckets.
+    exact_sizes={
+        size for selector, size in _EXACT_GLM_SIZE.items() if selector in normalized_labels
+    }
+    label_sizes=label_sizes|exact_sizes
     return next(iter(label_sizes)) if len(label_sizes)==1 else None
 def _logical_route_for(core, labels=()):
     """Return the one job-sized gateway bucket without selecting a backend."""
@@ -2176,7 +2192,7 @@ def _production_route_health(core, labels, health):
         if _production_card_routes(core,labels,lane["name"])
         else (False,"no-qualified-route-for-card")) for lane in LANES}
 
-def _production_card_routes(core, labels, lane=None):
+def _production_card_routes(core, labels, lane=None, model_pin=None):
     """Resolve current card requirements only against this fresh gateway snapshot."""
     snapshot=_review_route_snapshot or {}
     observed=snapshot.get("observed_at")
@@ -2187,7 +2203,8 @@ def _production_card_routes(core, labels, lane=None):
         return []
     return resolve_production_routes(
         _producer_routes_for(core,labels),policy=PRODUCTION_POLICY,
-        required_size=_size_class_for(core,labels),labels=labels,lane=lane)
+        required_size=_size_class_for(core,labels),labels=labels,lane=lane,
+        model_pin=model_pin)
 if glm_held:
     log(d,"GLM_HOLD|%s|new GLM dispatch disabled by %s"%(HOST,GLM_HOLD_PATH))
 for _L in LANES:
@@ -3374,6 +3391,9 @@ def _claimability_reason(core, state):
         return "sensitive-category"
     if any(not _dep_satisfied(dep) for dep in state["dependencies"]):
         return "dependency"
+    routing = classify_card_routing(labels)
+    if not routing.valid:
+        return "routing:" + routing.diagnostic
     pin = host_pin(folded_core, labels)
     if pin and pin != HOST:
         return "host-pin:%s" % pin
@@ -7797,6 +7817,7 @@ pinned_elsewhere=0
 skipped_claimed=0
 owned_ready=0
 claimability_errors=[]
+routing_violations=[]
 sensitive_withheld=0
 historical_review_terminal=0
 historical_review_claimed=0
@@ -7865,6 +7886,8 @@ for cd in _pool_fold_cards:
             skipped_terminal += 1
         elif legacy_reason == "malformed":
             claimability_errors.append("%s:%s" % (cid, legacy.get("detail", "malformed")))
+        elif legacy_reason.startswith("routing:"):
+            routing_violations.append("%s:%s" % (cid, legacy_reason.removeprefix("routing:")))
         elif legacy_reason == "legacy-owned":
             skipped_claimed += 1
             log(d, "LEGACY_OWNER_HOLD|%s|%s|owner=%s|reconcile=legacy-projection" % (
@@ -7992,11 +8015,16 @@ for x in pool: lc[x[0]]+=1
 top=pool[0][5] if pool else 0
 if claimability_errors:
     log(d,"CLAIMABILITY_EXCLUDED|%s|%s"%(HOST,",".join(claimability_errors)))
+if routing_violations:
+    shown, omitted = _bounded_ids(row.split(":", 1)[0] for row in routing_violations)
+    log(d,"ROUTING_VIOLATIONS|%s|count=%d ids=%s omitted=%d" %
+        (HOST,len(routing_violations),shown,omitted))
 log(d,"POOL|%s|ready=%d sklegal=%d eng=%d biz=%d dep_blocked=%d "
       "unclaimable=%d claimed=%d itil_closed=%d blocked_backoff=%d "
       "claim_ceiling=%d "
       "awaiting_review=%d pinned_elsewhere=%d foreign=%d not_claimable=%d "
       "historical_review_terminal=%d historical_review_claimed=%d "
+      "routing_violations=%d "
       "category_withheld=%d owned_ready=%d "
       "structural_leaf=%d human_gated=%d "
       "safety_filtered=%d top_unblocks=%d"
@@ -8004,7 +8032,7 @@ log(d,"POOL|%s|ready=%d sklegal=%d eng=%d biz=%d dep_blocked=%d "
         skipped_claimed,skipped_terminal,skipped_blocked,
         skipped_claim_ceiling,skipped_review,
         pinned_elsewhere,foreign_skipped,not_claimable_skipped,
-        historical_review_terminal,historical_review_claimed,
+        historical_review_terminal,historical_review_claimed,len(routing_violations),
         sensitive_withheld,owned_ready,
         structural_leaf,human_gated,
         skipped_unclaimable+sensitive_withheld+not_claimable_skipped+foreign_skipped,top))
@@ -8993,6 +9021,9 @@ _LANE_ONLY_LABELS={
     "codex-only":"codex",
     "qwen-only":"qwen",
     "glm-only":"glm",
+    "sk-glm-s":"glm",
+    "sk-glm-m":"glm",
+    "sk-glm-l":"glm",
     "deepseek-only":"deepseek",
     "kimi-only":"kimi",
     "escalation-only":"escalate",
@@ -9189,6 +9220,21 @@ def qwen_suitable(core, labels=None):
 
 
 def _lane_model(lane, core, labels=None):
+    # An exact GLM selector is the no-fallback lane pin from incident
+    # inc-e5ab3dea: sk-glm-m means "GLM, size M, and nothing else", so it is
+    # resolved before every family default and before every fallback family,
+    # in production and non-production alike. Returning the selector itself
+    # is not a model id here; production resolves it as a model_pin against
+    # the fresh gateway snapshot below, and non-production dispatch treats it
+    # as the requested bucket, which the GLM lane's catalog serves exactly.
+    _exact=exact_glm_bucket(labels or ())
+    if _exact is not None:
+        if globals().get("PRODUCTION_POLICY"):
+            route=choose_review_route(
+                _production_card_routes(core,labels or [],lane["name"],model_pin=_exact),
+                globals().get("_review_route_reservations",{}))
+            return route["model_or_bucket"] if route is not None else None
+        return _exact
     if globals().get("PRODUCTION_POLICY"):
         route=choose_review_route(
             _production_card_routes(core,labels or [],lane["name"]),

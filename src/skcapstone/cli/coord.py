@@ -469,12 +469,17 @@ def register_coord_commands(main: click.Group) -> None:
                     "incomplete governed review card; missing: " + ", ".join(missing)
                 )
 
+        from ..routing_guard import classify_card_routing
         from ..source_binding import source_binding_meta
 
         try:
             binding_meta = source_binding_meta(list(tag), repository, base_ref, base_revision)
         except ValueError as exc:
             raise click.ClickException(str(exc)) from None
+
+        routing = classify_card_routing(tag, normalize_missing=True)
+        if not routing.valid:
+            raise click.ClickException("routing labels rejected: " + routing.diagnostic)
 
         meta = {}
         if governed_review:
@@ -499,7 +504,7 @@ def register_coord_commands(main: click.Group) -> None:
             title=title,
             description=desc,
             priority=TaskPriority(priority),
-            tags=list(tag),
+            tags=list(routing.labels),
             created_by=by,
             acceptance_criteria=list(criteria),
             dependencies=list(dep),
@@ -1649,6 +1654,16 @@ def register_coord_commands(main: click.Group) -> None:
 
         authorize_coord_mutation(agent or "", Action.LABEL_CARD, task_id, None, None)
         home_path = Path(home).expanduser()
+        from ..routing_guard import validate_label_transition
+
+        try:
+            changed, _routing = validate_label_transition(home_path, task_id, label, remove=remove)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from None
+        if not changed:
+            state = "absent" if remove else "present"
+            console.print(f"\n  [green]Label '{label}' already {state} on {task_id}.[/]\n")
+            return
         action = "remove_label" if remove else "add_label"
         CardEventLog(home_path).append(
             CardEvent(card_id=task_id, action=action, label=label, writer=agent or "")

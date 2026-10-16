@@ -117,6 +117,9 @@ def _load_lane_model():
         "_glm_model_for": lambda core: "glm-4.7",
         "_size_model_for": lambda core: "sk-codex-mid",
         "_kimi_model_for": lambda core: "kimi-for-coding",
+        "exact_glm_bucket": __import__(
+            "skcapstone.routing_guard", fromlist=["exact_glm_bucket"]
+        ).exact_glm_bucket,
     }
     exec(_function_source("_lane_model"), ns)
     return ns["_lane_model"]
@@ -146,6 +149,9 @@ def _load_real_size_model_chain(monkeypatch, env: dict[str, str]):
                 nodes.append(node)
     module = ast.Module(body=nodes, type_ignores=[])
     ns: dict = {"os": os, "re": __import__("re")}
+    ns["exact_glm_bucket"] = __import__(
+        "skcapstone.routing_guard", fromlist=["exact_glm_bucket"]
+    ).exact_glm_bucket
     exec(compile(module, str(SRC), "exec"), ns)
     return ns["_lane_model"]
 

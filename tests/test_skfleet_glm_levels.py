@@ -48,7 +48,40 @@ def _rotate_namespace(nodes: set[str]) -> dict[str, object]:
 
 def _load_glm_helpers() -> dict[str, object]:
     return _rotate_namespace(
-        {"_GLM_LEVEL_DEFAULTS", "_GLM_LEVELS", "_GLM_SIZE_RE", "_glm_model_for"}
+        {
+            "_GLM_LEVEL_DEFAULTS",
+            "_GLM_LEVELS",
+            "_GLM_SIZE_RE",
+            "_glm_model_for",
+            "_lane_model",
+        }
+    )
+
+
+@pytest.mark.parametrize("label", ["sk-glm-s", "sk-glm-m", "sk-glm-l"])
+def test_exact_glm_label_is_the_requested_model(label: str) -> None:
+    """An exact GLM selector overrides every title-derived GLM level.
+
+    Incident inc-e5ab3dea: the card said GLM-only at an exact size and the
+    shared pool substituted the title's derived level instead. The selector
+    IS the requested model; a mismatched size marker must not override it.
+    """
+    namespace = _load_glm_helpers()
+    namespace["exact_glm_bucket"] = __import__(
+        "skcapstone.routing_guard", fromlist=["exact_glm_bucket"]
+    ).exact_glm_bucket
+
+    assert (
+        namespace["_lane_model"](
+            {"name": "glm", "model": "fallback"}, {"title": "[XL] Work"}, [label]
+        )
+        == label
+    )
+    # Without the exact selector, the same card resolves its GLM level from
+    # the title marker as before: sk-glm-l for [XL].
+    assert (
+        namespace["_lane_model"]({"name": "glm", "model": "fallback"}, {"title": "[XL] t"})
+        == "sk-glm-l"
     )
 
 

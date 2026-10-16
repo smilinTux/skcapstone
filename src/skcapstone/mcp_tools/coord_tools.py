@@ -392,6 +392,7 @@ async def _handle_coord_create(args: dict) -> list[TextContent]:
     if not title:
         return _error_response("title is required")
 
+    from ..routing_guard import classify_card_routing
     from ..source_binding import source_binding_meta
 
     board = Board(_home())
@@ -402,11 +403,14 @@ async def _handle_coord_create(args: dict) -> list[TextContent]:
         )
     except ValueError as exc:
         return _error_response(str(exc))
+    routing = classify_card_routing(tags, normalize_missing=True)
+    if not routing.valid:
+        return _error_response("routing labels rejected: " + routing.diagnostic)
     task = Task(
         title=title,
         description=args.get("description", ""),
         priority=TaskPriority(args.get("priority", "medium")),
-        tags=tags,
+        tags=list(routing.labels),
         created_by=args.get("created_by", "mcp"),
         meta=binding_meta,
     )

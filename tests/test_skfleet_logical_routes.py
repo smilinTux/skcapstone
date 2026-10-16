@@ -14,7 +14,7 @@ ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
 
 def _helpers() -> dict[str, object]:
     tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
-    wanted = {"_GLM_SIZE_RE", "_LOGICAL_ROUTES"}
+    wanted = {"_GLM_SIZE_RE", "_LOGICAL_ROUTES", "_EXACT_GLM_SIZE"}
     body = [
         node
         for node in tree.body

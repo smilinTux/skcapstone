@@ -174,6 +174,9 @@ def test_rotator_codex_size_aliases_have_exact_health_admission(
         ),
         namespace,
     )
+    namespace["exact_glm_bucket"] = __import__(
+        "skcapstone.routing_guard", fromlist=["exact_glm_bucket"]
+    ).exact_glm_bucket
     lanes = namespace["_health_lanes"]
     codex_models = [lane["model"] for lane in lanes if lane["name"] == "codex"]
     assert len(codex_models) == len(set(codex_models))

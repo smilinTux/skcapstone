@@ -73,6 +73,9 @@ def _core(card_id: str, labels: list[str]) -> dict[str, object]:
         (["codex-only"], False, (("codex",), "required-lane:codex")),
         (["qwen-only"], False, (("qwen",), "required-lane:qwen")),
         (["glm-only"], False, (("glm",), "required-lane:glm")),
+        (["sk-glm-s"], False, (("glm",), "required-lane:glm")),
+        (["sk-glm-m"], False, (("glm",), "required-lane:glm")),
+        (["sk-glm-l"], False, (("glm",), "required-lane:glm")),
         (["escalation-only"], False, (("escalate",), "required-lane:escalate")),
         ([], True, (("escalate",), "required-lane:escalate")),
         # A codex pin plus an escalation is NOT a conflict. The escalate lane
@@ -129,6 +132,39 @@ def test_no_compatible_slot_does_not_consume_another_lane() -> None:
     assert selected is None
     assert reason == "no-free-lane:codex"
     assert remaining == {"codex": 0, "glm": 3, "escalate": 2}
+
+
+@pytest.mark.parametrize("label", ["sk-glm-s", "sk-glm-m", "sk-glm-l"])
+def test_exact_glm_card_never_falls_back(label: str) -> None:
+    """An exact GLM selector holds when the GLM lane is full.
+
+    Incident inc-e5ab3dea: a GLM-only card was dispatched through the shared
+    pool and answered by Qwen. The exact selector must never be served by any
+    other lane, even with every other lane free and healthy.
+    """
+    namespace = _load_lane_helpers()
+    for lane_order in (["qwen", "glm", "codex"], ["codex", "escalate", "glm"]):
+        selected, reason = namespace["select_compatible_lane"](
+            [label],
+            False,
+            lane_order,
+            {"qwen": 2, "glm": 0, "codex": 2, "escalate": 2},
+        )
+        assert selected is None, lane_order
+        assert reason == "no-free-lane:glm"
+
+
+def test_exact_glm_selector_conflicts_with_every_other_lane_pin() -> None:
+    """sk-glm-m plus any other lane-only label is a conflict, not a merge."""
+    namespace = _load_lane_helpers()
+    selected, reason = namespace["select_compatible_lane"](
+        ["sk-glm-m", "codex-only"],
+        False,
+        ["qwen", "glm", "codex"],
+        {"qwen": 2, "glm": 2, "codex": 2},
+    )
+    assert selected is None
+    assert reason == "conflicting-lane-only:codex,glm"
 
 
 def test_niobe_review_uses_every_healthy_compatible_domain_without_overwrite() -> None:

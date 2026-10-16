@@ -34,7 +34,15 @@ def _load(names, constants):
         "re": re,
     }
     exec(compile(ast.Module(nodes, type_ignores=[]), str(ROTATE), "exec"), ns)
+    if "_claimability_reason" in nodes_names(nodes):
+        ns["classify_card_routing"] = __import__(
+            "skcapstone.routing_guard", fromlist=["classify_card_routing"]
+        ).classify_card_routing
     return ns
+
+
+def nodes_names(nodes):
+    return {node.name for node in nodes if isinstance(node, ast.FunctionDef)}
 
 
 def test_await_gates_event_sets_the_folded_flag():
@@ -130,6 +138,9 @@ GATE_CONSTANTS = {
 def _load_gate():
     ns = _load(HELPERS, GATE_CONSTANTS)
     ns.setdefault("KNOWN_HOSTS", ())
+    ns["classify_card_routing"] = __import__(
+        "skcapstone.routing_guard", fromlist=["classify_card_routing"]
+    ).classify_card_routing
     return ns
 
 

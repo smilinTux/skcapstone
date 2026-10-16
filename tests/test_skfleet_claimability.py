@@ -80,6 +80,9 @@ def _load_claimability() -> dict[str, object]:
         },
         "governed_review_seat": governed_review_seat,
         "qualified_reviewer_seats": qualified_reviewer_seats,
+        "classify_card_routing": __import__(
+            "skcapstone.routing_guard", fromlist=["classify_card_routing"]
+        ).classify_card_routing,
     }
     module = ast.Module(body=[nodes[name] for name in names], type_ignores=[])
     exec(compile(module, str(ROTATE), "exec"), namespace)
@@ -837,6 +840,43 @@ def test_sensitive_category_requires_explicit_dispatch_approval() -> None:
     approved = {**core, "initial_labels": ["dispatch-approved"]}
     state = namespace["_fold_claimability"](approved, [])
     assert namespace["_claimability_reason"](approved, state) == "claimable"
+
+
+@pytest.mark.parametrize(
+    ("labels", "expected"),
+    [
+        (
+            ["sklegal"],
+            "routing:missing-logical-bucket:add-one-of-sk-s,sk-m,sk-l,sk-xl,"
+            "sk-glm-s,sk-glm-m,sk-glm-l",
+        ),
+        (["sklegal", "sk-s", "sk-xl"], "routing:multiple-logical-buckets:sk-s,sk-xl"),
+        (["sklegal", "sk-m", "kimi-only"], "routing:provider-family-label:kimi-only"),
+        (["sklegal", "qwen-first"], "claimable"),
+        (["sklegal", "sk-m", "review", "seat-link"], "review"),
+    ],
+)
+def test_dispatch_uses_canonical_routing_guard(labels: list[str], expected: str) -> None:
+    """The dispatcher's claim gate shares the creation-time routing guard.
+
+    Exact ``sk-glm-s``/``sk-glm-m``/"sk-glm-l" carry one bucket, are claimable,
+    and an ambiguous or provider-family label fails closed with an exact
+    reason the pool scan reports.
+    """
+    namespace = _load_claimability()
+    core = _core("routing1", labels=labels)
+    state = namespace["_fold_claimability"](core, [])
+
+    assert namespace["_claimability_reason"](core, state) == expected
+
+
+@pytest.mark.parametrize("label", ["sk-glm-s", "sk-glm-m", "sk-glm-l"])
+def test_exact_glm_selector_is_claimable_and_never_a_routing_violation(label: str) -> None:
+    namespace = _load_claimability()
+    core = _core("routing2", labels=["sklegal", label])
+    state = namespace["_fold_claimability"](core, [])
+
+    assert namespace["_claimability_reason"](core, state) == "claimable"
 
 
 def test_parked_cards_are_not_claimable_even_without_a_sensitive_category() -> None:

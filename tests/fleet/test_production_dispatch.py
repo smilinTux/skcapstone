@@ -60,6 +60,9 @@ def helpers(*names, policy_value=None):
         "HOST": "controller",
         "worker_resource_properties": worker_resource_properties,
         "_LANE_ONLY_LABELS": {"deepseek-only": "deepseek", "codex-only": "codex"},
+        "exact_glm_bucket": __import__(
+            "skcapstone.routing_guard", fromlist=["exact_glm_bucket"]
+        ).exact_glm_bucket,
     }
     nodes = [
         node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names
@@ -566,6 +569,86 @@ def test_explicit_exact_pin_preserves_bucket_and_does_not_create_a_route():
     p = policy()
     p["lanes"]["glm"]["enabled"] = False
     assert resolve_production_routes([row], policy=p, required_size="M", labels=[]) == []
+
+
+@pytest.mark.parametrize("selector", ["sk-glm-s", "sk-glm-m", "sk-glm-l"])
+def test_exact_glm_selector_resolves_only_the_matching_glm_route(selector: str):
+    """An exact GLM selector never accepts another family's route.
+
+    Rows from every other family (Qwen, Codex, Kimi, generic public) stay
+    unreachable even when they are free, healthy, and size-matched, and the
+    exact bucket is the only one served.
+    """
+    rows = [
+        gateway_route("qwen-m-free", "chiap08-qwen38", "M", policy_tier="local"),
+        gateway_route("codex-m-free", "codex", "M"),
+        gateway_route("kimi-m-free", "moonshot", "M"),
+        gateway_route("glm-s-free", "zai", "S"),
+        gateway_route("glm-l-free", "zai", "L"),
+        gateway_route(selector, "zai", selector[-1].upper()),
+    ]
+    p = policy()
+    p["lanes"]["kimi"] = {"enabled": True, "provider": "skgateway"}
+    result = resolve_production_routes(
+        rows, policy=p, required_size=selector[-1].upper(), labels=[selector], model_pin=selector
+    )
+    assert [row["model_or_bucket"] for row in result] == [selector]
+    assert result[0]["family"] == "zai" and result[0]["lane"] == "glm"
+
+
+def test_exact_glm_selector_holds_when_no_glm_route_qualifies():
+    """No GLM route: the pin holds instead of falling back to any family."""
+    rows = [
+        gateway_route("qwen-m-free", "chiap08-qwen38", "M", policy_tier="local"),
+        gateway_route("codex-m-free", "codex", "M"),
+        gateway_route("deepseek-m-free", "deepseek", "M"),
+    ]
+    assert (
+        resolve_production_routes(
+            rows,
+            policy=policy(),
+            required_size="M",
+            labels=["sk-glm-m"],
+            model_pin="sk-glm-m",
+        )
+        == []
+    )
+    # An empty model pin is malformed and never dispatches.
+    assert (
+        resolve_production_routes(
+            rows, policy=policy(), required_size="M", labels=["sk-glm-m"], model_pin=""
+        )
+        == []
+    )
+
+
+def test_lane_model_resolves_the_exact_glm_pin_through_fresh_gateway_routes():
+    """The dispatch chain resolves an exact GLM selector as a model pin.
+
+    This is the exact path of incident inc-e5ab3dea: the selector must reach
+    `_production_card_routes` as a pin and the served bucket must be the
+    selector, resolved against the fresh gateway snapshot, never a family
+    default and never another family's route.
+    """
+    ns = helpers("_lane_model", policy_value=policy())
+    row = gateway_route("sk-glm-m", "zai", "M")
+    calls = []
+
+    def _pin_routes(core, labels, lane, model_pin=None):
+        calls.append(model_pin)
+        assert model_pin == "sk-glm-m"
+        return [row]
+
+    ns["_production_card_routes"] = _pin_routes
+    ns["choose_review_route"] = lambda rows, reservations: rows[0] if rows else None
+    ns["_review_route_reservations"] = {}
+    core = {"title": "[M] Exact GLM work"}
+    lane = {"name": "glm", "model": "family-default"}
+    assert ns["_lane_model"](lane, core, ["sk-glm-m"]) == "sk-glm-m"
+    assert calls == ["sk-glm-m"]
+
+    ns["_production_card_routes"] = lambda *args, **kwargs: []
+    assert ns["_lane_model"](lane, core, ["sk-glm-m"]) is None
 
 
 def test_builder_offer_phase_stops_at_its_own_cap():
