@@ -56,6 +56,27 @@ def test_coord_create_claim_for_me_fails_before_write_without_identity(tmp_path,
     assert CardStore(tmp_path).fold("a1b2c3e2") is None
 
 
+def test_coord_create_rejects_noncanonical_stable_id_before_write(tmp_path, monkeypatch):
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    result = CliRunner().invoke(
+        main,
+        [
+            "coord",
+            "create",
+            "--home",
+            str(tmp_path),
+            "--id",
+            "a8100002-2",
+            "--title",
+            "Legacy ID must not be recreated",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "exactly 8 lowercase hexadecimal characters" in result.output
+    assert CardStore(tmp_path).fold("a8100002-2") is None
+
+
 def test_coord_create_help_documents_atomic_example():
     result = CliRunner().invoke(main, ["coord", "create", "--help"])
 
