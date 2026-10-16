@@ -197,37 +197,21 @@ def run_once(paths: FleetPaths, node: str) -> dict:
         join = build_join_request(paths, node, report["status"]["capacity"], now_iso)
         join_written = store.write_node_file(paths, writer, "join.json", join, if_changed=False)
     dispatch = None
-    result_qualifications = []
     if (spec := store.read_spec(paths, "node", node)) and (
         spec.get("spec", {}).get("role") == "builder-standby"
     ):
         try:
-            from . import production_builder
-            from .profile_requalification import consume_remote
+            from .production_tests import reap_orphaned_test_units
 
-            policy = production_builder.policy()
-            if policy is not None:
-                # consume_remote matches the bare HOSTNAME (chiap02), and the
-                # node name here is node-chiap02, so passing it refused every
-                # job as host-mismatch and nothing logged it (2026-10-09: four
-                # jobs sat pending on chiap01-04). Use the admitted host label,
-                # the identity production_builder.node_binding binds work to.
-                host = (spec.get("labels") or {}).get("host") or socket.gethostname()
-                host = host.split(".")[0].lower()
-                from .production_tests import reap_orphaned_test_units
-
-                # Free memory held by finished units whose claim moved on before
-                # admission is asked for the next launch.
-                reaped = reap_orphaned_test_units(paths.root.parent, host)
-                if reaped:
-                    logger.warning("orphaned test units on %s: %s", node, reaped)
-                result_qualifications = consume_remote(paths.root.parent, policy, host)
-                refused = [state for state in result_qualifications if state.startswith("refused")]
-                if refused:
-                    logger.warning("remote profile qualification refused on %s: %s", node, refused)
+            host = (spec.get("labels") or {}).get("host") or socket.gethostname()
+            host = host.split(".")[0].lower()
+            # Free memory held by finished units whose claim moved on before
+            # admission is asked for the next launch.
+            reaped = reap_orphaned_test_units(paths.root.parent, host)
+            if reaped:
+                logger.warning("orphaned test units on %s: %s", node, reaped)
         except (OSError, ValueError) as exc:
-            logger.warning("remote profile qualification refused on %s: %s", node, exc)
-            result_qualifications = ["refused"]
+            logger.warning("orphaned test unit reap failed on %s: %s", node, exc)
         from .builder_dispatch import consume_one
 
         dispatch = consume_one(paths, paths.root.parent, node)
@@ -238,8 +222,6 @@ def run_once(paths: FleetPaths, node: str) -> dict:
     }
     if dispatch is not None:
         result["dispatch"] = dispatch
-    if result_qualifications:
-        result["profile_requalification"] = result_qualifications
     return result
 
 

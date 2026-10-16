@@ -79,21 +79,37 @@ def required_env(source: str, *, production: bool = False) -> set[str]:
     return names
 
 
+#: Printed by the native probe when niobe_live_entrypoint no longer exists (the
+#: paused dispatcher seats are being removed). The probe then validates the
+#: policy without the niobe wrapper instead of failing the rollout gate.
+NIOBE_PROBE_ABSENT = "SKIP-NIOBE-PROBE-ABSENT"
+
+
 def production_environment_error(
-    environment: dict[str, str], python_bin: str, dispatcher: Path
+    environment: dict[str, str],
+    python_bin: str,
+    dispatcher: Path,
+    notes: list[str] | None = None,
 ) -> str | None:
-    """Validate policy with the actual native interpreter; never execute dispatch."""
+    """Validate policy with the actual native interpreter; never execute dispatch.
+
+    ``notes`` collects non-failure observations (a SKIPped optional probe).
+    """
     code = (
         "import json,socket,sys; from pathlib import Path; "
         "from skcapstone.fleet.production_dispatch import production_policy_from_environment; "
-        "from skcapstone.niobe_live_entrypoint import _production_environment; "
         "payload=json.load(sys.stdin); environment=payload['environment']; "
         "host=socket.gethostname().split('.')[0].lower()\n"
         "if environment.get('SKFLEET_AUTHORITY_HOST') != host: "
         "raise ValueError('effective authority mismatch')\n"
         "if not environment.get('SKFLEET_PRODUCTION_POLICY'): "
         "raise ValueError('explicit policy required')\n"
-        "validated=_production_environment(Path(payload['dispatcher']),host=host,environment=environment)\n"
+        "try:\n"
+        "    from skcapstone.niobe_live_entrypoint import _production_environment\n"
+        "except ImportError:\n"
+        "    validated=environment; print('SKIP-NIOBE-PROBE-ABSENT')\n"
+        "else:\n"
+        "    validated=_production_environment(Path(payload['dispatcher']),host=host,environment=environment)\n"
         "policy=production_policy_from_environment(validated,host)\n"
         "if not policy: raise ValueError('explicit production policy required')\n"
     )
@@ -107,7 +123,33 @@ def production_environment_error(
         )
     except (OSError, subprocess.SubprocessError):
         return "native production policy validation unavailable"
-    return None if result.returncode == 0 else "invalid production policy or effective authority"
+    if result.returncode != 0:
+        return "invalid production policy or effective authority"
+    if NIOBE_PROBE_ABSENT in (result.stdout or "") and notes is not None:
+        notes.append(NIOBE_PROBE_ABSENT)
+    return None
+
+
+def qualification_sandbox_applies() -> bool:
+    """Whether this host's node role runs qualified work (builder-standby or control).
+
+    Keyed on the admitted node role, not on any paused dispatcher unit. A node
+    with no admitted spec or role does not run qualified work (False). A spec
+    that exists but cannot be read answers True: an unreadable role must not
+    silently drop the sandbox gate.
+    """
+    try:
+        import socket
+
+        from skcapstone.fleet import store
+        from skcapstone.fleet.paths import default_paths
+
+        node = "node-" + socket.gethostname().split(".")[0].lower()
+        spec = store.read_spec(default_paths(), "node", node)
+        role = ((spec or {}).get("spec") or {}).get("role")
+    except Exception:
+        return True
+    return role in ("builder-standby", "control")
 
 
 def qualification_python() -> str:
@@ -359,6 +401,10 @@ def _systemctl_show_value(unit: str, prop: str) -> tuple[str, str | None]:
     return proc.stdout, None
 
 
+#: Substring of the unit_in_scope error that means systemd answered "not installed".
+NOT_INSTALLED_MARK = "(LoadState=not-found)"
+
+
 def unit_in_scope(unit: str) -> tuple[bool | None, str | None, str]:
     """Whether ``unit``'s role actually applies to this host.
 
@@ -520,8 +566,10 @@ def _run(
 
     mandatory = required_env(dispatcher_source)
 
-    sandbox_checked = env_from_systemd == "skfleet-seat-cycle.service"
-    if sandbox_checked:
+    sandbox_checked = qualification_sandbox_applies()
+    if not sandbox_checked:
+        lines.append("SKIP qualification sandbox: node role does not run qualified work")
+    else:
         sandbox_error = qualification_sandbox_error(python_bin)
         if sandbox_error:
             ok = False
@@ -563,6 +611,15 @@ def _run(
     if env_from_systemd:
         in_scope, scope_error, checked_scope_unit = unit_in_scope(env_from_systemd)
 
+    # LoadState=not-found is systemd's authoritative answer that the unit is not
+    # installed (a paused or removed role, e.g. skfleet-seat-cycle after the
+    # dispatcher cut). That is "does not apply here", not "could not check", so
+    # the gate SKIPs. unit_in_scope itself keeps reporting it as undetermined
+    # because rollout_drift relies on that to flag manifest units that are
+    # missing from a host. An empty or failed query stays a FAIL.
+    if scope_error is not None and NOT_INSTALLED_MARK in scope_error:
+        in_scope, scope_error = False, None
+
     env_error: str | None = None
     if scope_error is not None:
         ok = False
@@ -578,7 +635,7 @@ def _run(
             )
     elif env_from_systemd and not in_scope:
         lines.append(
-            "SKIP required env: %s is not active on this host (checked %s); "
+            "SKIP required env: %s is not active or not installed on this host (checked %s); "
             "this role does not apply here, its environment was not asserted"
             % (env_from_systemd, checked_scope_unit)
         )
@@ -588,7 +645,7 @@ def _run(
             )
         for name in sorted(mandatory):
             lines.append(
-                "SKIP required env: %s not checked (%s is not active on this host)"
+                "SKIP required env: %s not checked (%s is not active or not installed on this host)"
                 % (name, env_from_systemd)
             )
     else:
@@ -622,9 +679,15 @@ def _run(
                 "SKFLEET_PRODUCTION_POLICY" in env_snapshot
                 or env_from_systemd == "skfleet-seat-cycle.service"
             ):
+                probe_notes: list[str] = []
                 policy_error = production_environment_error(
-                    env_snapshot, python_bin, rotate_script
+                    env_snapshot, python_bin, rotate_script, probe_notes
                 )
+                if NIOBE_PROBE_ABSENT in probe_notes:
+                    lines.append(
+                        "SKIP niobe live production probe: skcapstone.niobe_live_entrypoint "
+                        "is absent; policy validated without it"
+                    )
                 if policy_error:
                     ok = False
                     lines.append("FAIL production policy: " + policy_error)

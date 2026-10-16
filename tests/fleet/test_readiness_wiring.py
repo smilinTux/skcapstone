@@ -29,14 +29,24 @@ module), so the import-check half of the gate stays genuinely exercised.
 from __future__ import annotations
 
 import json
+import os
+import socket
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "fleet"))
 
+import pytest  # noqa: E402
+
 import skfleet_readiness  # noqa: E402
 from skfleet_readiness import _run, unit_in_scope, write_verdict  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _empty_fleet_store(tmp_path_factory, monkeypatch):
+    """Role lookup must not read the developer's live fleet store."""
+    monkeypatch.setenv("SKFLEET_ROOT", str(tmp_path_factory.mktemp("fleet-root")))
 
 
 def _fake_systemctl(responses):
@@ -154,7 +164,8 @@ def test_unit_in_scope_true_when_timer_is_boot_enabled_but_not_yet_active(monkey
     assert in_scope is True
 
 
-def test_unit_in_scope_undetermined_when_unit_unknown(monkeypatch):
+def test_unit_in_scope_keeps_not_installed_undetermined_for_rollout_drift(monkeypatch):
+    """rollout_drift flags manifest units missing from a host via this None."""
     monkeypatch.setattr(
         skfleet_readiness.subprocess,
         "run",
@@ -162,7 +173,147 @@ def test_unit_in_scope_undetermined_when_unit_unknown(monkeypatch):
     )
     in_scope, error, _ = unit_in_scope("skfleet-rotate.service")
     assert in_scope is None
-    assert error is not None
+    assert skfleet_readiness.NOT_INSTALLED_MARK in error
+
+
+def test_unit_in_scope_undetermined_when_load_state_empty(monkeypatch):
+    monkeypatch.setattr(
+        skfleet_readiness.subprocess,
+        "run",
+        _fake_systemctl({("skfleet-rotate.timer", "LoadState"): ""}),
+    )
+    in_scope, error, _ = unit_in_scope("skfleet-rotate.service")
+    assert in_scope is None
+    assert error is not None and skfleet_readiness.NOT_INSTALLED_MARK not in error
+
+
+def test_run_fails_when_load_state_is_empty(tmp_path, monkeypatch, capsys):
+    """An empty LoadState is an unanswered query, never a SKIP."""
+    monkeypatch.setattr(
+        skfleet_readiness.subprocess,
+        "run",
+        _fake_systemctl({("skfleet-nonexistent.timer", "LoadState"): ""}),
+    )
+    exit_code = _run(
+        _dispatcher(tmp_path),
+        _units_dir_with_real_module(tmp_path),
+        sys.executable,
+        env_from_unit=None,
+        env_from_systemd="skfleet-nonexistent.service",
+    )
+    assert exit_code == 1
+    assert "FAIL required env: could not determine whether" in capsys.readouterr().out
+
+
+def test_run_skips_env_from_nonexistent_systemd_unit(tmp_path, monkeypatch, capsys):
+    """Rollout gate with the seat-cycle unit absent: SKIP, never FAIL."""
+    monkeypatch.setattr(
+        skfleet_readiness.subprocess,
+        "run",
+        _fake_systemctl({("skfleet-nonexistent.timer", "LoadState"): "not-found"}),
+    )
+    exit_code = _run(
+        _dispatcher(tmp_path),
+        _units_dir_with_real_module(tmp_path),
+        sys.executable,
+        env_from_unit=None,
+        env_from_systemd="skfleet-nonexistent.service",
+    )
+    out = capsys.readouterr().out
+    assert exit_code == 0, out
+    assert "SKIP required env" in out and "FAIL" not in out
+
+
+def test_sandbox_check_keyed_on_node_role_not_seat_cycle_unit(tmp_path, monkeypatch, capsys):
+    """builder-standby and control run the sandbox gate; other roles SKIP it."""
+    monkeypatch.setattr(
+        skfleet_readiness.subprocess,
+        "run",
+        _fake_systemctl({("skfleet-nonexistent.timer", "LoadState"): "not-found"}),
+    )
+    monkeypatch.setattr(skfleet_readiness, "qualification_sandbox_error", lambda _p: "denied")
+    args = (
+        _dispatcher(tmp_path),
+        _units_dir_with_real_module(tmp_path),
+        sys.executable,
+        None,
+        "skfleet-nonexistent.service",
+    )
+    monkeypatch.setattr(skfleet_readiness, "qualification_sandbox_applies", lambda: True)
+    assert _run(*args) == 1
+    assert "FAIL qualification sandbox: denied" in capsys.readouterr().out
+    monkeypatch.setattr(skfleet_readiness, "qualification_sandbox_applies", lambda: False)
+    assert _run(*args) == 0
+    assert "SKIP qualification sandbox" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "spec,expected",
+    [
+        (None, False),
+        ({"spec": {"role": "control"}}, True),
+        ({"spec": {"role": "builder-standby"}}, True),
+        ({"spec": {"role": "observer"}}, False),
+        ({"spec": {}}, False),
+    ],
+)
+def test_qualification_sandbox_applies_by_role(monkeypatch, spec, expected):
+    from skcapstone.fleet import store
+
+    monkeypatch.setattr(store, "read_spec", lambda *_a: spec)
+    assert skfleet_readiness.qualification_sandbox_applies() is expected
+
+
+def test_qualification_sandbox_applies_when_spec_unreadable(monkeypatch):
+    from skcapstone.fleet import store
+
+    def boom(*_a):
+        raise ValueError("corrupt spec")
+
+    monkeypatch.setattr(store, "read_spec", boom)
+    assert skfleet_readiness.qualification_sandbox_applies() is True
+
+
+def test_missing_niobe_probe_is_a_skip_not_a_failure(tmp_path, monkeypatch):
+    """With niobe_live_entrypoint unimportable the real native probe still passes."""
+    blocker = tmp_path / "blocker"
+    blocker.mkdir()
+    (blocker / "sitecustomize.py").write_text(
+        "import sys\nsys.modules['skcapstone.niobe_live_entrypoint'] = None\n"
+    )
+    src = str(Path(__file__).resolve().parents[2] / "src")
+    monkeypatch.setenv("PYTHONPATH", str(blocker) + os.pathsep + src)
+    host = socket.gethostname().split(".")[0].lower()
+    env = {"SKFLEET_AUTHORITY_HOST": host, "SKFLEET_PRODUCTION_POLICY": "/nonexistent.json"}
+    real_run = subprocess.run
+    seen = []
+
+    def spy(cmd, **kw):
+        result = real_run(cmd, **kw)
+        seen.append(result)
+        return result
+
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", spy)
+    skfleet_readiness.production_environment_error(env, sys.executable, tmp_path / "d.py")
+    # Validation of the nonexistent policy may still fail, but only after the
+    # guarded import took the absent branch rather than raising ImportError.
+    assert skfleet_readiness.NIOBE_PROBE_ABSENT in seen[0].stdout
+    assert "ImportError" not in seen[0].stderr
+
+
+def test_probe_source_guards_the_niobe_import(monkeypatch):
+    """The native probe catches ImportError of niobe_live_entrypoint itself."""
+    captured = {}
+
+    def run(cmd, **kw):
+        captured["code"] = cmd[2]
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", run)
+    skfleet_readiness.production_environment_error({}, sys.executable, Path("d.py"))
+    code = captured["code"]
+    assert "except ImportError" in code
+    assert code.index("try:") < code.index("niobe_live_entrypoint")
 
 
 # ---------------------------------------------------------------------------

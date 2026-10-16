@@ -137,7 +137,7 @@ def _review_and_collect(value, review, workspace, monkeypatch):
         labels=review.labels,
     )
     assert value["head"] in brief and value["tree"] in brief
-    assert "source-only-applicability" in brief and "REVIEW-DECISION.json" in brief
+    assert "applicability_receipt" not in brief and "REVIEW-DECISION.json" in brief
     directory = workspace / "docs/evidence/agents" / review.id
     directory.mkdir(parents=True, mode=0o700)
     report = directory / "COMPLETION-EVIDENCE.md"

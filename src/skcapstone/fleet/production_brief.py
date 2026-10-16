@@ -212,11 +212,6 @@ for key,wanted in json.loads(sys.argv[3]).items():
     if values!={wanted}: raise ValueError('review source changed')
 """
 
-_REVIEW_RECEIPT = """import json,sys
-card,head,reviewer,digest=sys.argv[1:]
-print(json.dumps(dict(type='source-only-applicability',card_id=card,source_head=head,reviewer=reviewer,evidence_digest=digest,governed_pr_ci=False),sort_keys=True))
-"""
-
 _REVIEW_REVISION = """from pathlib import Path
 import sys
 from skcapstone.seraph_review_cardstore import LiveCardStoreGateway
@@ -290,10 +285,6 @@ guarded_link() {{
 guarded_link evidence "$candidate"
 guarded_link review_evidence_sha256 "$digest"
 guarded_link verdict "$verdict"
-if test "$verdict" = PASS; then
-    receipt=$(python3 -c {shlex.quote(_REVIEW_RECEIPT)} {card_id} "$source_head" {actor} "$digest")
-    guarded_link applicability_receipt "$receipt"
-fi
 """
 
 
@@ -364,7 +355,7 @@ def production_source_review_brief(
     core: dict,
     labels: Sequence[str],
 ) -> str:
-    """Render only the existing native source-only applicability handoff."""
+    """Render only the existing native source-only review handoff."""
     expected, bindings = source_review_binding(
         card_id=card_id,
         owner=owner,
@@ -414,7 +405,7 @@ with os.fdopen(fd,'w') as f: json.dump(d,f,indent=2)
 Use only card {card_id}, owner {owner}, claim {claim_revision}, workspace {workspace}.
 Read the exact card TDD and workspace AGENTS.md. Use skcapstone coord for all
 board writes. Never mutate CardStore files. This card is a local source-only
-review, not hosted PR/CI approval: use the existing applicability contract below.
+review, not hosted PR/CI approval: follow the guarded handoff below.
 Do not add PR, hosted_checks or ci_check_* links. Never invent SUCCESS, tests or
 approval. Run required tests and report exact commands/results, including failures.
 Do not send unsolicited mail. Do not complete the card or release its claim.

@@ -83,7 +83,7 @@ else:
     assert args[:2]==['coord','link']
     from skcapstone.review_verdict import _REQUIRED_CI_LINK_KEYS
     assert args[3] in {'evidence','review_evidence','review_evidence_sha256',
-        'evidence_sha256','reviewer_evidence_sha256','verdict','applicability_receipt',
+        'evidence_sha256','reviewer_evidence_sha256','verdict',
         'hosted_checks'} | _REQUIRED_CI_LINK_KEYS
     if os.environ.get('TEST_MISSING_GUARDS'): raise SystemExit('No such option: --json')
     corepath=home/'cards'/args[2]/'core.json'; core=json.loads(corepath.read_text())
@@ -207,7 +207,7 @@ def prepare(review):
     return brief
 
 
-def test_actual_postclaim_review_brief_uses_existing_native_applicability(review):
+def test_actual_postclaim_review_brief_publishes_no_applicability_receipt(review):
     brief = prepare(review)
     assert "After the second compaction" not in brief
     assert "After native compaction, continue this same review" in brief
@@ -217,7 +217,12 @@ def test_actual_postclaim_review_brief_uses_existing_native_applicability(review
     assert "skmail" not in brief
     result = run_script(review, script(brief, 1))
     assert result.returncode == 0, result.stderr
-    validate_review_completion(CARD, review["core"]["title"], review["native"])
+    logs = list((review["native"] / "coordination/card_events").glob("*.jsonl"))
+    assert logs and not any("applicability_receipt" in p.read_text() for p in logs)
+    # Completion without the receipt falls to the checks paths: this fixture has
+    # no hosted checks, so `coord complete` is refused and `coord accept` closes it.
+    with pytest.raises(ValueError, match="not successful"):
+        validate_review_completion(CARD, review["core"]["title"], review["native"])
     decision = json.loads(
         (review["work"] / f"docs/evidence/agents/{CARD}/REVIEW-DECISION.json").read_text()
     )
@@ -315,7 +320,7 @@ def test_handoff_refuses_malformed_evidence_or_changed_card_before_board_writes(
 @pytest.mark.parametrize(
     "verdict", ["FAIL", "BLOCKED blocked_on=card referent=ac:1 exact requirement unmet"]
 )
-def test_nonpass_outcome_does_not_publish_pass_applicability(review, verdict):
+def test_nonpass_outcome_publishes_no_applicability_receipt(review, verdict):
     review["env"]["REVIEW_VERDICT"] = verdict
     brief = prepare(review)
     result = run_script(review, script(brief, 1))

@@ -236,49 +236,6 @@ def test_replay_preserves_new_request(candidate):
     assert c.rp.exists()
 
 
-def test_coord_command_preserves_operator_identity_and_check_default(tmp_path, monkeypatch):
-    import click
-    from click.testing import CliRunner
-
-    from skcapstone import jarvis_emergency
-    from skcapstone.cli.coord_review_work import register_coord_review_work
-
-    coord = click.Group()
-    register_coord_review_work(coord)
-    path = tmp_path / "expected.json"
-    _write(path, {})
-    calls, authorities = [], []
-
-    def fake_retire(*args, **kwargs):
-        calls.append(kwargs)
-        return "eligible"
-
-    monkeypatch.setattr(recovery, "retire", fake_retire)
-    monkeypatch.setattr(
-        jarvis_emergency, "authorize_coord_mutation", lambda *args: authorities.append(args)
-    )
-    argv = [
-        "review-generation-retire",
-        CARD,
-        "--owner",
-        OWNER,
-        "--claim",
-        CLAIM,
-        "--expected",
-        str(path),
-        "--agent",
-        "lumina-nor",
-        "--reason",
-        "exact proof",
-    ]
-    assert CliRunner().invoke(coord, argv).exit_code == 0
-    assert not calls[-1]["apply"] and not authorities
-    result = CliRunner().invoke(coord, argv + ["--apply"])
-    assert result.exit_code == 0, result.output
-    assert calls[-1]["apply"] and calls[-1]["actor"] == "lumina-nor"
-    assert authorities[-1][0] == "lumina-nor"
-
-
 def test_imported_review_is_preserved_without_granting_acceptance(candidate):
     c = candidate
     artifact = c.context.parent / "imported-review" / "REVIEW-DECISION.json"

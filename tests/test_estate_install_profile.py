@@ -19,9 +19,7 @@ from skcapstone.lifecycle_seats import LIFECYCLE_SEATS
 #: kept asserting skfleet-tank.service was allowed after spec 3.6 folded tank
 #: into atlas and deleted its units. Third instance of that drift in this fold.
 SEATS = tuple(sorted(LIFECYCLE_SEATS))
-SEAT_TIMERS = tuple(f"skfleet-{seat}.timer" for seat in ("link", "mero")) + (
-    "skfleet-seat-cycle.timer",
-)
+SEAT_TIMERS = tuple(f"skfleet-{seat}.timer" for seat in ("link", "mero"))
 #: Independently scheduled seat timers the control role forbids because the
 #: single seat-cycle timer serializes Atlas, Seraph, and Niobe. Kept in step
 #: with SERIALIZED_SEAT_MUST_NOT in
@@ -92,7 +90,7 @@ def test_zero_drift_refresh_selects_only_units_this_distribution_ships() -> None
     assert "skgateway.service" in required
     assert "skgateway.service" not in selected
     assert "skfleet-atlas.service" not in selected
-    assert "skfleet-seat-cycle.timer" in selected
+    assert "skfleet-seat-cycle.timer" not in selected
     assert all(
         (Path(__file__).parents[1] / "src/skcapstone/data/systemd" / unit).is_file()
         for unit in selected
