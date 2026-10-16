@@ -78,9 +78,6 @@ def register_coord_commands(main: click.Group) -> None:
     from .coord_historical_pr import register_historical_pr_command
 
     register_historical_pr_command(coord)
-    from .coord_acceptance_reseal import register_acceptance_reseal
-
-    register_acceptance_reseal(coord)
     from .coord_mail_cmd import register_coord_mail_commands
     from .coord_review_work import register_coord_review_work
     from .coord_workspace_recovery import register_coord_workspace_recovery

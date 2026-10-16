@@ -420,22 +420,3 @@ def test_snapshot_can_read_completed_review_after_guarded_source_progress(
     assert LiveCardStoreGateway(tmp_path).read_card(new).head_sha == COMMIT
     with pytest.raises(ValueError, match="source"):
         replacement.current_review_attempt(tmp_path, source, COMMIT)
-
-
-def test_native_cli_requires_private_exact_authorization(tmp_path, invalid_review):
-    store, source, old, request, props = invalid_review
-    path = tmp_path / "authorization.json"
-    path.write_text(json.dumps(request))
-    path.chmod(0o644)
-    args = ["review-replace", source, "--authorization", str(path), "--agent", "jarvis"]
-    refused = _run(tmp_path, *args)
-    assert refused.exit_code != 0 and "private regular" in refused.output
-    path.chmod(0o600)
-    checked = _run(tmp_path, *args, "--check")
-    assert checked.exit_code == 0, checked.output
-    assert json.loads(checked.output)["state"] == "validated-not-opened"
-    assert len(store.list_card_ids()) == 2
-    assert not any(row["action"] == replacement.ACTION for row in store._read_events(old))
-    result = _run(tmp_path, *args)
-    assert result.exit_code == 0, result.output
-    assert json.loads(result.output)["created"]

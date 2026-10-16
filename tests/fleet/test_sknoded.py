@@ -248,8 +248,8 @@ def test_missing_inventory_degrades_to_an_empty_block(paths, monkeypatch) -> Non
     assert published == {"units": {}, "packages": {}, "truncated": {}}
 
 
-def test_remote_qualification_uses_the_admitted_host_not_the_node_name(paths, monkeypatch):
-    """consume_remote matches the bare hostname; node-chiap02 refused every job."""
+def test_builder_standby_reaps_with_admitted_host_and_never_requalifies(paths, monkeypatch):
+    """Orphan reap uses the admitted host label; no profile requalification runs."""
     operator = store.Writer(role="operator", node="op", identity="op")
     store.write_spec(
         paths,
@@ -261,13 +261,10 @@ def test_remote_qualification_uses_the_admitted_host_not_the_node_name(paths, mo
     )
     seen = []
     monkeypatch.setattr(
-        "skcapstone.fleet.production_builder.policy", lambda: {"authority_host": "chiap08"}
-    )
-    monkeypatch.setattr(
-        "skcapstone.fleet.profile_requalification.consume_remote",
-        lambda home, policy, host: seen.append(host) or ["running:1234abcd"],
+        "skcapstone.fleet.production_tests.reap_orphaned_test_units",
+        lambda home, host: seen.append(host) or [],
     )
     monkeypatch.setattr("skcapstone.fleet.builder_dispatch.consume_one", lambda *_a: None)
     result = sknoded.run_once(paths, "node-chiap02")
     assert seen == ["chiap02"]
-    assert result["profile_requalification"] == ["running:1234abcd"]
+    assert "profile_requalification" not in result
