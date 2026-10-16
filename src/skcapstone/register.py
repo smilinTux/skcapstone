@@ -289,6 +289,42 @@ def _discover_plugin_servers(workspace: Path) -> list[dict]:
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
 
+def _apply_profile_defaults(dry_run: bool) -> dict:
+    """Host profile defaults every SK node gets on register/upgrade.
+
+    * telemetry_optout: third-party tool telemetry off (see telemetry_optout).
+    * agent_skill_links: every skskills install that ships a SKILL.md is
+      linked into Claude Code, Codex, pi, Hermes, and OpenCode.
+
+    SKCAPSTONE_PROFILE_DEFAULTS=0 skips both (the test suite sets it).
+    """
+    import os
+
+    if os.environ.get("SKCAPSTONE_PROFILE_DEFAULTS", "1") == "0":
+        skip = {"action": "skip", "reason": "SKCAPSTONE_PROFILE_DEFAULTS=0"}
+        return {"telemetry_optout": dict(skip), "agent_skill_links": dict(skip)}
+    if dry_run:
+        dry = {"action": "dry-run"}
+        return {"telemetry_optout": dict(dry), "agent_skill_links": dict(dry)}
+
+    from . import telemetry_optout
+
+    paths = telemetry_optout.ensure_telemetry_optout()
+    out: dict = {"telemetry_optout": {"action": "updated" if paths else "exists", "paths": paths}}
+
+    try:
+        from skskills import agent_links
+        from skskills.registry import SkillRegistry
+    except ImportError:
+        out["agent_skill_links"] = {"action": "skip", "reason": "skskills without agent_links"}
+    else:
+        if agent_links.enabled():
+            out["agent_skill_links"] = agent_links.sync(SkillRegistry())
+        else:
+            out["agent_skill_links"] = {"action": "skip", "reason": "SKSKILLS_AGENT_LINKS=0"}
+    return out
+
+
 def register_all(
     workspace: Optional[Path] = None,
     environments: Optional[list[str]] = None,
@@ -348,6 +384,8 @@ def register_all(
                 "action": "updated" if actions else "exists",
                 "actions": actions,
             }
+
+    results.update(_apply_profile_defaults(dry_run))
 
     for pkg in packages:
         name = pkg["name"]

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **`skcapstone register` (and `upgrade`) now applies two host profile
+  defaults.** (1) Third-party tool telemetry is off: `telemetry_optout.py`
+  writes `HYPERFRAMES_NO_TELEMETRY=1` to host-local
+  `environment.d/80-sk-telemetry-optout.conf` and sets `telemetryEnabled: false`
+  in `~/.hyperframes/config.json` (other keys kept; an unparseable file is left
+  alone), and the onboarding `~/.bashrc` profile block exports the same
+  variable. HyperFrames needs both: its CLI reads the persisted switch, its
+  media-use scripts only the environment. (2) Every skskills install that ships
+  a `SKILL.md` is linked into Claude Code, Codex, pi, Hermes, and OpenCode via
+  `skskills.agent_links.sync`, skipped cleanly on a skskills without that
+  module. `SKCAPSTONE_PROFILE_DEFAULTS=0` skips both; `tests/conftest.py` sets
+  it, plus `SKSKILLS_AGENT_LINKS=0`, so no test writes the operator's profile.
+
 - **A worker brief could lose its mandatory filesystem-search policy with no
   test noticing.** `tests/test_skfleet_worker_search_policy.py` asserted only
   the OUTPUT of `_worker_search_instructions()` (the fail-closed policy added
