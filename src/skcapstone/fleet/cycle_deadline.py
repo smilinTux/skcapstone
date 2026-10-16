@@ -33,7 +33,7 @@ import time
 from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
-#: Wrapper timeout the dispatcher runs under (niobe_live_entrypoint).
+#: Wrapper timeout the dispatcher ran under (the retired niobe-live wrapper).
 DEFAULT_HARD_TIMEOUT_S = 270.0
 #: Time kept free after the budget for the final receipt and log writes.
 DEFAULT_FINAL_RESERVE_S = 20.0
