@@ -119,7 +119,9 @@ def test_production_readiness_reports_the_actual_interpreter_missing_plugin(
         return {name: not missing or name != module for name in modules}
 
     monkeypatch.setattr(readiness, "check_module_imports", imports)
-    assert readiness._run(source, units, "/fixture/python", None) == int(missing)
+    assert readiness._run(source, units, "/fixture/python", None, env_from_process=True) == int(
+        missing
+    )
     assert ("FAIL qualified-runtime dependency: " + module in capsys.readouterr().out) == missing
     sealed = readiness.qualification_python()
     assert sealed.endswith(".local/share/skcapstone/qualify-env/bin/python")

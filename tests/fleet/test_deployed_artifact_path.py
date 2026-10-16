@@ -157,13 +157,3 @@ def test_the_interpreter_guess_check_can_actually_fail():
 
     only_prose = '"""Never write Path(sys.executable).parent here."""\n'
     assert not _INTERPRETER_DIR_GUESS.search(_code_only(only_prose))
-
-
-def test_seat_cycle_entrypoint_resolves_the_deployed_dispatcher(monkeypatch, tmp_path):
-    """The two call sites in seat_cycle_entrypoint really do land in
-    ~/.local/bin now, not merely in a file that passes lint."""
-    from skcapstone import seat_cycle_entrypoint
-
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    resolved = seat_cycle_entrypoint.deployed_artifact_path("skfleet-rotate.py")
-    assert resolved == tmp_path / ".local" / "bin" / "skfleet-rotate.py"

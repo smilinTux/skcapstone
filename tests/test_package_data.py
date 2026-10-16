@@ -12,10 +12,9 @@ from pathlib import Path
 from setuptools import build_meta
 
 ROOT = Path(__file__).resolve().parents[1]
-TEMPLATE = "skfleet-niobe-live.env.example"
+TEMPLATE = "skfleet-link.service"
 PACKAGE_PATH = f"skcapstone/data/systemd/{TEMPLATE}"
 EGG_INFO = ROOT / "src" / "skcapstone.egg-info"
-SERVICE = "skfleet-niobe-live.service"
 
 # Keep the packaging build out of the live checkout. In-tree build_sdist writes
 # src/skcapstone.egg-info; pytest sets pythonpath=["src"], so Version: 0.0.0
@@ -49,8 +48,8 @@ def _egg_info_fingerprint() -> tuple[bool, str | None]:
     return True, None
 
 
-def test_niobe_environment_template_ships_in_wheel_and_sdist(tmp_path: Path) -> None:
-    """Built distributions preserve the exact host-neutral template bytes.
+def test_packaged_unit_and_skmail_ship_in_wheel_and_sdist(tmp_path: Path) -> None:
+    """Built distributions preserve the exact packaged unit bytes.
 
     Builds in an isolated staging tree so the live checkout is never rewritten.
     This test must not repair or delete live-tree egg-info left by other steps.
@@ -118,24 +117,3 @@ def test_niobe_environment_template_ships_in_wheel_and_sdist(tmp_path: Path) -> 
             assert archive.extractfile(item).read() == (ROOT / "src" / path).read_bytes()
 
     assert _egg_info_fingerprint() == before
-
-
-def test_niobe_service_loads_documented_environment_file() -> None:
-    """Source and packaged services load the documented operator file."""
-    expected = "EnvironmentFile=-%h/.config/skcapstone/skfleet-niobe-live.env"
-    source = (ROOT / "systemd" / SERVICE).read_bytes()
-    packaged = (ROOT / "src" / "skcapstone" / "data" / "systemd" / SERVICE).read_bytes()
-
-    assert source == packaged
-    assert expected.encode() in source
-
-
-def test_niobe_template_uses_dispatcher_lane_model_names() -> None:
-    """Advertised Qwen, GLM, and Kimi model keys match dispatcher consumers."""
-    source = (ROOT / "systemd" / TEMPLATE).read_bytes()
-    packaged = (ROOT / "src" / "skcapstone" / "data" / "systemd" / TEMPLATE).read_bytes()
-
-    assert source == packaged
-    for lane in ("QWEN", "GLM", "KIMI"):
-        assert f"SKFLEET_{lane}_MODEL=".encode() in source
-        assert f"SKFLEET_{lane}_LANE_MODEL=".encode() not in source

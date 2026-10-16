@@ -41,8 +41,8 @@ from skcapstone.fleet import rollout_drift  # noqa: E402
 from skcapstone.fleet.deployment_manifest import PER_HOST_ARTIFACTS  # noqa: E402
 from skcapstone.fleet.rollout_drift import Drift, detect_drift  # noqa: E402
 
-ATLAS_SERVICE = "skfleet-atlas.service"
-ATLAS_TIMER = "skfleet-atlas.timer"
+LINK_SERVICE = "skfleet-link.service"
+LINK_TIMER = "skfleet-link.timer"
 CORE_SERVICE = "skcapstone.service"  # ships with no paired timer
 DISPATCHER_NAME = "skfleet-rotate.py"
 
@@ -137,7 +137,7 @@ def _manifest(git_sha: str = "deadbeef") -> dict:
         "git_sha": git_sha,
         "package_version": "irrelevant-for-drift",
         "required_env": [],
-        "units": [CORE_SERVICE, ATLAS_SERVICE],
+        "units": [CORE_SERVICE, LINK_SERVICE],
     }
 
 
@@ -169,7 +169,7 @@ def _install_all_script_files(home: Path) -> None:
 def _matching_host(home: Path, git_sha: str = "deadbeef") -> None:
     """Build a home tree that agrees with `_manifest(git_sha)` in every way."""
     _install_unit(home, CORE_SERVICE)
-    _install_unit(home, ATLAS_SERVICE)
+    _install_unit(home, LINK_SERVICE)
     _install_dispatcher(home)
     _install_dist_info(home, git_sha)
     _install_all_script_files(home)
@@ -192,7 +192,7 @@ def test_production_observer_accepts_one_canonical_copy_and_exact_shims(home):
     _production_layout(home)
     drifts = detect_drift(_manifest(), home, REPO_ROOT)
     assert not [d for d in drifts if d.artifact.startswith(("dispatcher:", "compatibility:"))]
-    assert not [d for d in drifts if d.artifact == "unit:skfleet-atlas.service"]
+    assert not [d for d in drifts if d.artifact == "unit:skfleet-link.service"]
 
 
 def test_production_canonical_script_is_checked_when_legacy_timer_disabled(home, monkeypatch):
@@ -242,12 +242,12 @@ def test_production_observer_detects_wrong_canonical_or_compatibility_file(home,
     assert any(d.artifact == wanted for d in drifts)
 
 
-def _in_scope_atlas_responses() -> dict:
-    """skfleet-atlas.timer active and enabled: fully converged, in scope."""
+def _in_scope_link_responses() -> dict:
+    """skfleet-link.timer active and enabled: fully converged, in scope."""
     return {
-        (ATLAS_TIMER, "LoadState"): "loaded",
-        (ATLAS_TIMER, "ActiveState"): "active",
-        (ATLAS_TIMER, "UnitFileState"): "enabled",
+        (LINK_TIMER, "LoadState"): "loaded",
+        (LINK_TIMER, "ActiveState"): "active",
+        (LINK_TIMER, "UnitFileState"): "enabled",
     }
 
 
@@ -261,7 +261,7 @@ def _in_scope_rotate_responses() -> dict:
 
 def _all_responses() -> dict:
     responses = {}
-    responses.update(_in_scope_atlas_responses())
+    responses.update(_in_scope_link_responses())
     responses.update(_in_scope_rotate_responses())
     return responses
 
@@ -290,12 +290,12 @@ def test_changed_unit_file_is_reported(home: Path, monkeypatch):
     monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
     monkeypatch.setenv("SKFLEET_NODE", "node-test")
     _matching_host(home)
-    installed = home / ".config" / "systemd" / "user" / ATLAS_SERVICE
+    installed = home / ".config" / "systemd" / "user" / LINK_SERVICE
     installed.write_text(installed.read_text() + "\n# hand-edited on the host\n")
 
     drifts = detect_drift(_manifest(), home, REPO_ROOT)
 
-    changed = [d for d in drifts if d.kind == "changed" and ATLAS_SERVICE in d.artifact]
+    changed = [d for d in drifts if d.kind == "changed" and LINK_SERVICE in d.artifact]
     assert len(changed) == 1
     drift = changed[0]
     assert isinstance(drift, Drift)
@@ -334,14 +334,14 @@ def test_missing_unit_is_reported_distinctly_from_changed(home: Path, monkeypatc
     _matching_host(home)
     # skcapstone.service is never installed at all on this host.
     (home / ".config" / "systemd" / "user" / CORE_SERVICE).unlink()
-    # skfleet-atlas.service IS installed but its content has drifted.
-    installed = home / ".config" / "systemd" / "user" / ATLAS_SERVICE
+    # skfleet-link.service IS installed but its content has drifted.
+    installed = home / ".config" / "systemd" / "user" / LINK_SERVICE
     installed.write_text(installed.read_text() + "\n# hand-edited\n")
 
     drifts = detect_drift(_manifest(), home, REPO_ROOT)
 
     missing = [d for d in drifts if CORE_SERVICE in d.artifact]
-    changed = [d for d in drifts if ATLAS_SERVICE in d.artifact and d.kind == "changed"]
+    changed = [d for d in drifts if LINK_SERVICE in d.artifact and d.kind == "changed"]
     assert len(missing) == 1
     assert missing[0].kind == "missing"
     assert missing[0].found is None
@@ -361,7 +361,7 @@ def test_dispatcher_absent_on_a_seat_only_host_is_not_drift(home: Path, monkeypa
     real shape), so unit_in_scope must say out-of-scope and the dispatcher's
     absence must not be reported.
     """
-    responses = _in_scope_atlas_responses()
+    responses = _in_scope_link_responses()
     responses.update(
         {
             ("skfleet-rotate.timer", "LoadState"): "loaded",
@@ -372,7 +372,7 @@ def test_dispatcher_absent_on_a_seat_only_host_is_not_drift(home: Path, monkeypa
     monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(responses))
     monkeypatch.setenv("SKFLEET_NODE", "node-test")
     _install_unit(home, CORE_SERVICE)
-    _install_unit(home, ATLAS_SERVICE)
+    _install_unit(home, LINK_SERVICE)
     _install_dist_info(home, "deadbeef")
     # deliberately no dispatcher script installed
 
@@ -393,9 +393,9 @@ def test_active_but_not_enabled_unit_is_reported(home: Path, monkeypatch):
     catches it because the unit FILE is correct.
     """
     responses = {
-        (ATLAS_TIMER, "LoadState"): "loaded",
-        (ATLAS_TIMER, "ActiveState"): "active",
-        (ATLAS_TIMER, "UnitFileState"): "disabled",
+        (LINK_TIMER, "LoadState"): "loaded",
+        (LINK_TIMER, "ActiveState"): "active",
+        (LINK_TIMER, "UnitFileState"): "disabled",
     }
     responses.update(_in_scope_rotate_responses())
     monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(responses))
@@ -407,7 +407,7 @@ def test_active_but_not_enabled_unit_is_reported(home: Path, monkeypatch):
     mismatches = [d for d in drifts if d.kind == "enablement_mismatch"]
     assert len(mismatches) == 1
     drift = mismatches[0]
-    assert ATLAS_TIMER in drift.artifact
+    assert LINK_TIMER in drift.artifact
     assert drift.expected == "enabled"
     assert drift.found == "disabled"
     assert drift.host == "node-test"
@@ -440,9 +440,9 @@ def test_failed_unit_with_correct_enablement_is_reported(home: Path, monkeypatch
     says.
     """
     responses = {
-        (ATLAS_SERVICE, "ActiveState"): "failed",
+        (LINK_SERVICE, "ActiveState"): "failed",
     }
-    responses.update(_in_scope_atlas_responses())  # the paired timer stays healthy
+    responses.update(_in_scope_link_responses())  # the paired timer stays healthy
     responses.update(_in_scope_rotate_responses())
     monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(responses))
     monkeypatch.setenv("SKFLEET_NODE", "node-test")
@@ -453,7 +453,7 @@ def test_failed_unit_with_correct_enablement_is_reported(home: Path, monkeypatch
     failed = [d for d in drifts if d.kind == "failed"]
     assert len(failed) == 1
     drift = failed[0]
-    assert drift.artifact == f"unit_failed:{ATLAS_SERVICE}"
+    assert drift.artifact == f"unit_failed:{LINK_SERVICE}"
     assert drift.expected == "not failed"
     assert drift.found == "failed"
     assert drift.host == "node-test"
@@ -554,7 +554,7 @@ def test_git_sha_missing_when_no_dist_info_is_reported_as_missing_not_changed(
     monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
     monkeypatch.setenv("SKFLEET_NODE", "node-test")
     _install_unit(home, CORE_SERVICE)
-    _install_unit(home, ATLAS_SERVICE)
+    _install_unit(home, LINK_SERVICE)
     _install_dispatcher(home)
     # no .skenv dist-info installed at all
 
@@ -580,7 +580,7 @@ def test_git_sha_missing_when_no_dist_info_is_reported_as_missing_not_changed(
 def test_hand_installed_dispatcher_timer_active_but_not_enabled_is_reported(
     home: Path, monkeypatch
 ):
-    responses = _in_scope_atlas_responses()
+    responses = _in_scope_link_responses()
     responses.update(
         {
             ("skfleet-rotate.timer", "LoadState"): "loaded",
@@ -626,7 +626,7 @@ def test_hand_installed_dispatcher_out_of_scope_enablement_is_not_checked(home: 
     installed" (test_dispatcher_absent_on_a_seat_only_host_is_not_drift,
     above, covers that half).
     """
-    responses = _in_scope_atlas_responses()
+    responses = _in_scope_link_responses()
     responses.update(
         {
             ("skfleet-rotate.timer", "LoadState"): "loaded",
@@ -637,7 +637,7 @@ def test_hand_installed_dispatcher_out_of_scope_enablement_is_not_checked(home: 
     monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(responses))
     monkeypatch.setenv("SKFLEET_NODE", "node-test")
     _install_unit(home, CORE_SERVICE)
-    _install_unit(home, ATLAS_SERVICE)
+    _install_unit(home, LINK_SERVICE)
     _install_dist_info(home, "deadbeef")
     # The pip-installed script-files copy of skfleet-rotate.py (unlike the
     # hand-installed ~/.local/bin dispatcher this test is actually about)
@@ -851,14 +851,29 @@ def test_unreadable_checkout_is_missing_not_silently_clean(home: Path, monkeypat
     assert rollout_drift._checkout_git_sha(tmp_path / "nope") is None
 
 
-def test_production_templates_retain_preflight_and_fenced_wedge_actuation():
-    templates = REPO_ROOT / "systemd/production"
-    cycle = (templates / "skfleet-seat-cycle.service").read_text()
-    niobe = (templates / "skfleet-niobe-live.service").read_text()
-    assert "ExecStartPre=-%h/.skenv/bin/skcapstone preflight" in cycle
-    assert "Environment=SKFLEET_WEDGE_MODE=enforce" in niobe
-    for name in ("skfleet-atlas.service", "skfleet-seraph.service", "skfleet-rotate.service"):
-        assert "SKFLEET_WEDGE_MODE" not in (templates / name).read_text()
+def test_retired_dispatcher_units_are_not_shipped_so_never_drift_or_reinstall(home: Path):
+    """A rollout copies the shipped trees, so a retired unit must not be in them."""
+    from skcapstone.fleet.deployment_manifest import build_manifest
+
+    retired = set(rollout_drift.RETIRED_UNITS) | {"skfleet-rotate.service", "skfleet-rotate.timer"}
+    assert "skfleet-seat-cycle.service" in retired and "skfleet-niobe-live.timer" in retired
+    for tree in (
+        REPO_ROOT / "systemd",
+        REPO_ROOT / "systemd/production",
+        REPO_ROOT / "src/skcapstone/data/systemd",
+    ):
+        assert not {p.name for p in tree.iterdir()} & retired
+    assert not set(build_manifest(REPO_ROOT, home)["units"]) & retired
+
+
+def test_manifest_naming_a_retired_unit_is_not_missing_drift(home: Path, monkeypatch):
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+    manifest = _manifest()
+    manifest["units"] = [*manifest["units"], "skfleet-seat-cycle.service"]
+    drifts = detect_drift(manifest, home, REPO_ROOT)
+    assert not [d for d in drifts if "seat-cycle" in d.artifact]
 
 
 def test_the_three_surfaces_are_named_distinctly(home: Path, monkeypatch):

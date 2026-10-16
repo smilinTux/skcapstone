@@ -135,7 +135,7 @@ def test_core_backend_starts_each_non_timer_unit_when_start_set():
     assert ["systemctl", "--user", "start", "skgateway.service"] in runner.calls
 
 
-def test_core_backend_expands_only_seat_cycle_to_copy_all_serialized_services(
+def test_core_backend_copies_the_timer_service_pair_then_reloads_then_enables(
     monkeypatch, tmp_path
 ):
     monkeypatch.setenv("SKCAPSTONE_REPOS", "/opt/custom-repos")
@@ -143,44 +143,35 @@ def test_core_backend_expands_only_seat_cycle_to_copy_all_serialized_services(
     runner = _FakeRunner()
     backend = default_backends(runner=runner)["core"]
 
-    status, detail = backend(["skfleet-seat-cycle.timer"], dry_run=False, enable=True, start=True)
+    status, detail = backend(["skfleet-link.timer"], dry_run=False, enable=True, start=True)
 
     assert (status, detail) == ("ok", "")
-    packaged = str(install_backends._packaged_core_unit("skfleet-seat-cycle.service"))
     service_install = [
         "install",
         "-D",
         "-m",
         "0644",
-        packaged,
-        str(tmp_path / "config/systemd/user/skfleet-seat-cycle.service"),
+        str(install_backends._packaged_core_unit("skfleet-link.service")),
+        str(tmp_path / "config/systemd/user/skfleet-link.service"),
     ]
     timer_install = [
         "install",
         "-D",
         "-m",
         "0644",
-        str(install_backends._packaged_core_unit("skfleet-seat-cycle.timer")),
-        str(tmp_path / "config/systemd/user/skfleet-seat-cycle.timer"),
+        str(install_backends._packaged_core_unit("skfleet-link.timer")),
+        str(tmp_path / "config/systemd/user/skfleet-link.timer"),
     ]
     reload = ["systemctl", "--user", "daemon-reload"]
-    enable = ["systemctl", "--user", "enable", "skfleet-seat-cycle.timer"]
+    enable = ["systemctl", "--user", "enable", "skfleet-link.timer"]
     assert runner.calls.index(service_install) < runner.calls.index(timer_install)
     assert runner.calls.index(timer_install) < runner.calls.index(reload)
     assert runner.calls.index(reload) < runner.calls.index(enable)
-    installed_sources = {
-        call[4] for call in runner.calls if call[:4] == ["install", "-D", "-m", "0644"]
+    installed = {call[4] for call in runner.calls if call[:4] == ["install", "-D", "-m", "0644"]}
+    assert installed == {
+        str(install_backends._packaged_core_unit("skfleet-link.service")),
+        str(install_backends._packaged_core_unit("skfleet-link.timer")),
     }
-    assert installed_sources >= {
-        str(install_backends._packaged_core_unit(f"skfleet-{seat}.service"))
-        for seat in ("atlas", "seraph", "niobe", "niobe-live")
-    }
-    assert not any(
-        call[:3] == ["systemctl", "--user", verb]
-        and call[-1] in {"skfleet-atlas.service", "skfleet-atlas.timer"}
-        for call in runner.calls
-        for verb in ("enable", "start")
-    )
 
 
 def test_core_copy_uses_packaged_bytes_on_wheel_only_host(monkeypatch, tmp_path):
@@ -193,11 +184,11 @@ def test_core_copy_uses_packaged_bytes_on_wheel_only_host(monkeypatch, tmp_path)
         return _FakeRunner()(command, **kwargs)
 
     status, detail = default_backends(runner=runner)["core"](
-        ["skfleet-seat-cycle.timer"], dry_run=False, enable=False, start=False
+        ["skfleet-link.timer"], dry_run=False, enable=False, start=False
     )
     assert (status, detail) == ("ok", "")
-    installed = tmp_path / "config/systemd/user/skfleet-seat-cycle.timer"
-    packaged_timer = install_backends._packaged_core_unit("skfleet-seat-cycle.timer")
+    installed = tmp_path / "config/systemd/user/skfleet-link.timer"
+    packaged_timer = install_backends._packaged_core_unit("skfleet-link.timer")
     assert installed.read_bytes() == packaged_timer.read_bytes()
 
 
@@ -207,7 +198,7 @@ def test_packaged_core_unit_copy_does_not_run_broad_install_script(monkeypatch, 
     runner = _FakeRunner()
 
     status, detail = default_backends(runner=runner)["core"](
-        ["skfleet-seat-cycle.timer"], dry_run=False, enable=False, start=False
+        ["skfleet-link.timer"], dry_run=False, enable=False, start=False
     )
 
     assert (status, detail) == ("ok", "")

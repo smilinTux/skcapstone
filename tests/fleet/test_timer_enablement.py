@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import multiprocessing
 from datetime import datetime, timezone
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -528,112 +527,6 @@ def test_forward_cutover_rejects_queued_forbidden_work(tmp_path, systemd):
     assert rows[0]["safe"] is False
 
 
-def test_rollback_rejects_queued_governed_service_work(tmp_path):
-    rows = timer_enablement.converge_governed_services_inactive(
-        runner=TransitionSystemd(service_job="99"),
-        evidence_path=tmp_path / "evidence.jsonl",
-        actor="jarvis",
-        source_revision="repair",
-    )
-
-    assert all(row["safe"] is False for row in rows)
-
-
-def test_rollback_stops_orchestrator_before_enabling_legacy_timers(tmp_path):
-    """Reverse migration uses the same fail-closed forbidden-first fence."""
-
-    legacy = sorted(timer_enablement.approved_legacy_timers(tmp_path))
-    policy = timer_enablement.legacy_timer_rollback_profile(legacy, home=tmp_path)
-    assert policy["units"]["mustNot"] == ["skfleet-seat-cycle.timer"]
-    systemd = TransitionSystemd(
-        timer_file="enabled",
-        timer_active="active",
-        service_active="active",
-        config_home=tmp_path,
-    )
-    result = timer_enablement.rollback_to_legacy_timers(
-        legacy,
-        home=tmp_path,
-        runner=systemd,
-        config_home=tmp_path,
-        evidence_path=tmp_path / "evidence.jsonl",
-        actor="jarvis",
-    )
-    assert result["ok"] is True
-    verbs = [call[2] for call in systemd.calls]
-    assert verbs.index("disable") < verbs.index("stop") < verbs.index("enable")
-    stopped = [call[-1] for call in systemd.calls if call[2] == "stop"]
-    assert set(timer_enablement.GOVERNED_SEAT_SERVICES) <= set(stopped)
-    assert max(stopped.index(unit) for unit in timer_enablement.GOVERNED_SEAT_SERVICES) < next(
-        index for index, call in enumerate(systemd.calls) if call[2] == "enable"
-    )
-
-
-def test_rollback_entrypoint_never_enables_legacy_when_reverse_fence_unknown(tmp_path):
-    systemd = TransitionSystemd(show_failure=True)
-    result = timer_enablement.rollback_to_legacy_timers(
-        sorted(timer_enablement.approved_legacy_timers(tmp_path)),
-        home=tmp_path,
-        runner=systemd,
-        config_home=tmp_path,
-        evidence_path=tmp_path / "evidence.jsonl",
-        actor="jarvis",
-    )
-    assert result["ok"] is False
-    assert not any(call[2] == "enable" for call in systemd.calls)
-
-
-@pytest.mark.parametrize(
-    "timers",
-    [
-        ["skfleet-tank.timer"],
-        ["skfleet-seat-cycle.timer"],
-        [
-            "skfleet-tank.timer",
-            "skfleet-seraph.timer",
-            "skfleet-niobe.timer",
-            "skfleet-niobe-live.timer",
-        ],
-        [
-            "skfleet-tank.timer",
-            "skfleet-seraph.timer",
-            "skfleet-niobe.timer",
-            "skfleet-niobe.timer",
-        ],
-    ],
-)
-def test_rollback_rejects_partial_conflicting_or_unapproved_timer_sets(tmp_path, timers):
-    with pytest.raises(ValueError, match="requires exactly"):
-        timer_enablement.legacy_timer_rollback_profile(timers, home=tmp_path)
-
-
-def test_rollback_timer_set_selects_live_niobe_from_valid_activation(tmp_path, monkeypatch):
-    activation = tmp_path / "coordination/niobe-activation.json"
-    activation.parent.mkdir(parents=True)
-    activation.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(
-        "skcapstone.fleet.seat_cycle_orchestrator.parse_activation",
-        lambda *_args, **_kwargs: object(),
-    )
-    selected = timer_enablement.approved_legacy_timers(tmp_path)
-    assert selected == {
-        "skfleet-atlas.timer",
-        "skfleet-seraph.timer",
-        "skfleet-niobe-live.timer",
-    }
-    assert "skfleet-niobe.timer" not in selected
-
-
-def test_rollback_timer_set_selects_shadow_for_missing_or_invalid_activation(tmp_path):
-    selected = timer_enablement.approved_legacy_timers(tmp_path)
-    assert selected == {
-        "skfleet-atlas.timer",
-        "skfleet-seraph.timer",
-        "skfleet-niobe.timer",
-    }
-    assert "skfleet-niobe-live.timer" not in selected
-
-
 def test_failed_mutation_is_recorded(tmp_path):
     config, fragment = layout(tmp_path)
     systemd = Systemd(fragment, fail=True)
@@ -761,7 +654,7 @@ def test_apply_refreshes_required_core_unit_bytes_even_without_inventory_drift(
     tmp_path, monkeypatch
 ):
     paths = type("Paths", (), {"root": tmp_path / "fleet"})()
-    policy = {"units": {"required": ["skfleet-seat-cycle.timer"], "mustNot": []}}
+    policy = {"units": {"required": ["skfleet-link.timer"], "mustNot": []}}
     monkeypatch.setattr(installer.store, "is_frozen", lambda paths: False)
     monkeypatch.setattr(installer.converge, "actuation_enabled", lambda paths, node: True)
     monkeypatch.setattr(installer, "load_drift", lambda *args, **kwargs: DriftReport())
@@ -787,9 +680,7 @@ def test_apply_refreshes_required_core_unit_bytes_even_without_inventory_drift(
     )
 
     assert result["ok"] is True
-    assert calls == [
-        (["skfleet-seat-cycle.timer"], {"dry_run": False, "enable": False, "start": False})
-    ]
+    assert calls == [(["skfleet-link.timer"], {"dry_run": False, "enable": False, "start": False})]
 
 
 def test_full_control_apply_never_enables_or_installs_paused_dispatcher_units(
@@ -852,7 +743,7 @@ def test_apply_preserves_activation_for_services_but_not_timers(tmp_path, monkey
     paths = type("Paths", (), {"root": tmp_path / "fleet"})()
     policy = {
         "units": {
-            "required": ["skcapstone.service", "skfleet-seat-cycle.timer"],
+            "required": ["skcapstone.service", "skfleet-link.timer"],
             "mustNot": [],
         }
     }
@@ -880,7 +771,7 @@ def test_apply_preserves_activation_for_services_but_not_timers(tmp_path, monkey
     )
     assert calls == [
         (["skcapstone.service"], {"dry_run": False, "enable": True, "start": True}),
-        (["skfleet-seat-cycle.timer"], {"dry_run": False, "enable": False, "start": False}),
+        (["skfleet-link.timer"], {"dry_run": False, "enable": False, "start": False}),
     ]
 
 
@@ -952,40 +843,6 @@ def test_scheduler_dry_run_reports_complete_cutover_without_systemd_calls(tmp_pa
     assert "enable skfleet-seat-cycle.timer" in details
     assert "start skfleet-seat-cycle.timer" in details
     assert calls == []
-
-
-@pytest.mark.parametrize(("enable", "start"), [(True, False), (False, True)])
-def test_scheduler_cutover_rejects_partial_activation_without_mutation(
-    tmp_path, monkeypatch, enable, start
-):
-    paths = type("Paths", (), {"root": tmp_path / "fleet"})()
-    policy = {
-        "units": {
-            "required": ["skfleet-seat-cycle.timer"],
-            "mustNot": ["skfleet-tank.timer"],
-        }
-    }
-    monkeypatch.setattr(installer.store, "is_frozen", lambda paths: False)
-    monkeypatch.setattr(installer.converge, "actuation_enabled", lambda paths, node: True)
-    monkeypatch.setattr(installer, "_profile_spec", lambda *args: policy)
-    monkeypatch.setattr(installer, "load_drift", lambda *args, **kwargs: DriftReport())
-    mutations = []
-
-    with pytest.raises(ValueError, match="requires --enable and --start together"):
-        installer.run_install(
-            paths,
-            "control",
-            node="node",
-            mode="apply",
-            dry_run=False,
-            enable=enable,
-            start=start,
-            only=None,
-            backends={"core": lambda *args, **kwargs: mutations.append((args, kwargs))},
-            timer_runner=lambda *args, **kwargs: mutations.append((args, kwargs)),
-        )
-
-    assert mutations == []
 
 
 def test_check_rejects_mutation_flags_and_apply_rejects_unknown_only(tmp_path, monkeypatch):
@@ -1083,138 +940,3 @@ def test_installer_accepts_timer_that_immediately_launches_oneshot(tmp_path, mon
 
     assert result["ok"] is True
     assert [call[2] for call in systemd.calls].count("start") == 1
-
-
-def test_installer_never_enables_required_timer_when_forbidden_fence_is_unknown(
-    tmp_path, monkeypatch
-):
-    systemd = TransitionSystemd(show_failure=True)
-    paths = type("Paths", (), {"root": tmp_path / "fleet"})()
-    policy = {
-        "units": {
-            "required": ["skfleet-seat-cycle.timer"],
-            "mustNot": ["skfleet-tank.timer"],
-        }
-    }
-    monkeypatch.setattr(installer.store, "is_frozen", lambda paths: False)
-    monkeypatch.setattr(installer.converge, "actuation_enabled", lambda paths, node: True)
-    monkeypatch.setattr(installer, "load_drift", lambda *args, **kwargs: DriftReport())
-    monkeypatch.setattr(installer, "_profile_spec", lambda *args: policy)
-
-    result = installer.run_install(
-        paths,
-        "control",
-        node="node",
-        mode="apply",
-        dry_run=False,
-        enable=True,
-        start=True,
-        only=None,
-        backends={},
-        timer_runner=systemd,
-    )
-
-    assert result["ok"] is False
-    assert not any(call[2] == "enable" for call in systemd.calls)
-
-
-def test_forward_and_rollback_share_one_scheduler_migration_transaction(tmp_path):
-    ctx = multiprocessing.get_context("fork")
-    manager = ctx.Manager()
-    state = manager.dict()
-    legacy = sorted(timer_enablement.approved_legacy_timers(tmp_path))
-    orchestrator = "skfleet-seat-cycle.timer"
-    for unit in [*legacy, orchestrator]:
-        state[f"{unit}:enabled"] = unit != orchestrator
-        state[f"{unit}:active"] = unit != orchestrator
-    entered = ctx.Event()
-    release = ctx.Event()
-    forward_result = ctx.Queue()
-    rollback_result = ctx.Queue()
-    rollback_calls = ctx.Value("i", 0)
-    config = tmp_path / "config"
-    evidence = tmp_path / "evidence.jsonl"
-
-    def runner(command, **_kwargs):
-        verb = command[2]
-        unit = command[3] if verb == "show" else command[-1]
-        if verb == "show":
-            if unit.endswith(".service"):
-                output = (
-                    "LoadState=loaded\nUnitFileState=static\n"
-                    "ActiveState=inactive\nSubState=dead\nJob=\nFragmentPath=/unit\n"
-                )
-            else:
-                enabled = bool(state.get(f"{unit}:enabled", False))
-                active = bool(state.get(f"{unit}:active", False))
-                output = (
-                    "LoadState=loaded\n"
-                    f"UnitFileState={'enabled' if enabled else 'disabled'}\n"
-                    f"ActiveState={'active' if active else 'inactive'}\n"
-                    f"SubState={'waiting' if active else 'dead'}\nJob=\nFragmentPath=/unit\n"
-                )
-            return CompletedProcess(command, 0, output, "")
-        if verb == "disable":
-            if unit == legacy[0]:
-                entered.set()
-                assert release.wait(10)
-            state[f"{unit}:enabled"] = False
-            state[f"{unit}:active"] = False
-        elif verb == "enable":
-            state[f"{unit}:enabled"] = True
-            link = config / "systemd/user/timers.target.wants" / unit
-            link.parent.mkdir(parents=True, exist_ok=True)
-            if not link.exists():
-                link.symlink_to("/unit")
-        elif verb == "start":
-            state[f"{unit}:active"] = True
-        return CompletedProcess(command, 0, "", "")
-
-    def forward():
-        forward_result.put(
-            timer_enablement.converge_scheduler_transition(
-                {"units": {"required": [orchestrator], "mustNot": legacy}},
-                runner=runner,
-                config_home=config,
-                evidence_path=evidence,
-                actor="forward",
-                source_revision="forward",
-                enable=True,
-                start=True,
-            )
-        )
-
-    def rollback():
-        def forbidden_runner(*args, **kwargs):
-            with rollback_calls.get_lock():
-                rollback_calls.value += 1
-            return runner(*args, **kwargs)
-
-        rollback_result.put(
-            timer_enablement.rollback_to_legacy_timers(
-                legacy,
-                home=tmp_path,
-                runner=forbidden_runner,
-                config_home=config,
-                evidence_path=evidence,
-                actor="rollback",
-            )
-        )
-
-    forward_process = ctx.Process(target=forward)
-    forward_process.start()
-    assert entered.wait(10)
-    rollback_process = ctx.Process(target=rollback)
-    rollback_process.start()
-    rollback_process.join(10)
-    assert rollback_process.exitcode == 0
-    rollback_outcome = rollback_result.get(timeout=2)
-    assert rollback_outcome["lock_acquired"] is False
-    assert rollback_calls.value == 0
-    release.set()
-    forward_process.join(10)
-    assert forward_process.exitcode == 0
-    assert forward_result.get(timeout=2)["acquired"] is True
-    assert state[f"{orchestrator}:enabled"] is True
-    assert all(state[f"{unit}:enabled"] is False for unit in legacy)
-    manager.shutdown()

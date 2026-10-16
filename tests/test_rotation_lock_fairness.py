@@ -3,14 +3,11 @@
 from __future__ import annotations
 
 import fcntl
-import inspect
 import threading
 import time
 from pathlib import Path
 
-from skcapstone.fleet.rotation_lock import SERAPH_LOCK_WAIT_SECONDS, acquire_rotation_lock
-from skcapstone.niobe_live_entrypoint import _DISPATCH_TIMEOUT_SECONDS
-from skcapstone.seat_cycle_entrypoint import _SERAPH_DISPATCH_TIMEOUT_SECONDS
+from skcapstone.fleet.rotation_lock import acquire_rotation_lock
 
 
 def test_waiting_niobe_gets_next_dispatch_without_concurrent_mutation(tmp_path: Path) -> None:
@@ -161,41 +158,3 @@ def test_tank_and_atlas_remain_nonblocking(tmp_path: Path) -> None:
             assert time.monotonic() - started < 0.05
     finally:
         holder.close()
-
-
-def test_dispatcher_routes_niobe_and_seraph_through_safe_bounded_waits() -> None:
-    """Production wiring keeps one shared lock and derives its governed seat."""
-
-    root = Path(__file__).parents[1]
-    source = (root / "scripts/fleet/skfleet-rotate.py").read_text(encoding="utf-8")
-    services = [
-        (root / "systemd/skfleet-niobe-live.service").read_text(),
-        (root / "src/skcapstone/data/systemd/skfleet-niobe-live.service").read_text(),
-    ]
-    timers = [
-        (root / "systemd/skfleet-niobe-live.timer").read_text(),
-        (root / "src/skcapstone/data/systemd/skfleet-niobe-live.timer").read_text(),
-    ]
-    seraph = (root / "src/skcapstone/data/systemd/skfleet-seraph.service").read_text()
-    assert 'Path(HOME)/".skcapstone/fleet/rotate.lock"' in source
-    assert 'seat=ONLY_SEAT or "niobe"' in source
-    lock_wait = inspect.signature(acquire_rotation_lock).parameters["wait_seconds"].default
-    dispatcher_deadline = _DISPATCH_TIMEOUT_SECONDS
-    service_deadline = 300
-    assert lock_wait < dispatcher_deadline < service_deadline
-    assert all(f"TimeoutStartSec={service_deadline}" in service for service in services)
-    assert all("Persistent=false" in timer for timer in timers)
-    assert all("Unit=skfleet-niobe-live.service" in timer for timer in timers)
-    cleanup_margin = 30
-    # Seraph carries its OWN deadline: its budget was raised to 540s (with the
-    # timer cadence to 600s) on 2026-09-20 because measured cycles ran 150-188s
-    # against the old 190s dispatcher timeout and seraph_dispatch_timeout was
-    # the dominant cycle outcome. niobe-live is unchanged at 300s, so these two
-    # literals are deliberately separate rather than one shared constant.
-    seraph_service_deadline = 540
-    assert f"TimeoutStartSec={seraph_service_deadline}" in seraph
-    assert (
-        SERAPH_LOCK_WAIT_SECONDS + _SERAPH_DISPATCH_TIMEOUT_SECONDS + cleanup_margin
-        < seraph_service_deadline
-    )
-    assert "SKFLEET_SERAPH_BATCH_SIZE=2" in seraph

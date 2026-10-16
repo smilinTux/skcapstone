@@ -94,6 +94,25 @@ ALLOWED_UNSHIPPED_UNITS = frozenset(
     }
 )
 
+#: Dispatcher seat and publisher units retired in the skfleet cut (P4a hosts,
+#: P4b repo). Their unit files are no longer shipped, so a rollout cannot
+#: reinstall them; this set is the record that they are retired rather than
+#: missing. A manifest or profile that still names one is never drift, and the
+#: control profile's ``mustNot`` list keeps forbidding the timers.
+RETIRED_UNITS = frozenset(
+    f"skfleet-{role}.{kind}"
+    for role in (
+        "seat-cycle",
+        "atlas",
+        "seraph",
+        "niobe",
+        "niobe-live",
+        "seraph-review-publisher",
+        "estate-glm",
+    )
+    for kind in ("service", "timer")
+) | {"skfleet-rotate-alert.service"}
+
 _DIST_INFO_GIT_SHA_RE = re.compile(r"\+g([0-9a-f]+)", re.IGNORECASE)
 _DIST_INFO_RELEASE_RE = re.compile(r"^skcapstone-(\d+\.\d+\.\d+)\.dist-info$", re.IGNORECASE)
 
@@ -527,6 +546,8 @@ def detect_drift(manifest: dict[str, Any], home: Path | str, repo_root: Path | s
 
     # 1. Each shipped unit file: content digest, scoped by role.
     for unit_name in manifest.get("units", []):
+        if unit_name in RETIRED_UNITS:
+            continue  # retired in the skfleet cut: absent is the correct state
         in_scope, _scope_error, _checked_unit = scope_of(unit_name)
         if in_scope is False:
             continue  # legitimate local state: this role does not apply here

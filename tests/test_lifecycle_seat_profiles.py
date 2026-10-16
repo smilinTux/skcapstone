@@ -80,7 +80,7 @@ def test_source_placement_matches_the_five_profiles() -> None:
 
 def test_packaged_and_source_units_are_byte_identical() -> None:
     root = Path(__file__).parents[1]
-    for seat in ("atlas",):
+    for seat in ("link", "mero"):
         for suffix in ("service", "timer"):
             name = f"skfleet-{seat}.{suffix}"
             assert (root / "systemd" / name).read_bytes() == (
@@ -107,7 +107,7 @@ def test_control_plane_and_every_timer_have_exact_five_seat_five_minute_contract
     assert set(control["seats"]) == LIFECYCLE_SEATS
     assert control["active_host"] == "some-elected-host"
     assert all(hosts == ["some-elected-host"] for hosts in control["seats"].values())
-    for seat in LIFECYCLE_SEATS:
+    for seat in ("link", "mero"):
         timer = (root / "systemd" / f"skfleet-{seat}.timer").read_text()
         assert "every five minutes" in timer.lower()
         assert "15min" not in timer

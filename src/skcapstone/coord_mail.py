@@ -32,7 +32,6 @@ import json
 import os
 import socket
 from datetime import datetime, timezone
-from importlib.resources import files
 from pathlib import Path
 
 from .estate import (
@@ -41,7 +40,6 @@ from .estate import (
     estate_id,
     local_host,
     node_name,
-    xdg_config_home,
 )
 from .lifecycle_seats import LIFECYCLE_SEATS
 
@@ -49,14 +47,6 @@ VALID_PRIORITIES = ("urgent", "normal", "fyi")
 
 #: Subdirectories every coordination plane needs. ``bootstrap`` creates these.
 COORD_SUBDIRS = ("skmail.d", "card_events", "locks", "tasks", "agents", "reviews")
-
-#: The bounded per-cycle unit ``bootstrap`` installs for the Niobe seat.
-#: Four of the five lifecycle seats ship one. Niobe shipped only ``-live``,
-#: which launches real agent runs, so an estate had no way to stage Niobe
-#: without turning dispatch on. ``seat_cycle_entrypoint --seat niobe`` runs
-#: the same bounded presence beat the other seats run, which is the safe
-#: staging step.
-NIOBE_CYCLE_UNITS = ("skfleet-niobe.service", "skfleet-niobe.timer")
 
 #: Host-local file that persists this machine's fleet node name. It lives
 #: under XDG config, NEVER in the synced coordination tree: every node has a
@@ -327,45 +317,6 @@ def _ensure_observation_feed(home: Path, host: str, estate: str) -> str | None:
     return str(path.relative_to(home))
 
 
-def _default_unit_dir() -> Path:
-    """The systemd user unit directory, resolved through XDG.
-
-    Returns:
-        ``$XDG_CONFIG_HOME/systemd/user``, which is host-local by
-        definition. Resolved here rather than imported from
-        ``skcapstone.systemd`` because that module pins ``~/.config``
-        directly and would ignore an operator's ``$XDG_CONFIG_HOME``.
-    """
-    return xdg_config_home() / "systemd" / "user"
-
-
-def _ensure_niobe_cycle_units(unit_dir: Path) -> list[str]:
-    """Install the bounded Niobe cycle units into the host-local unit dir.
-
-    Args:
-        unit_dir: The systemd user unit directory, which is host-local XDG
-            config and never part of the synced estate tree.
-
-    Returns:
-        Absolute paths of the units created, empty when both already exist
-        or when the packaged copies are not readable (an installed wheel
-        always carries them; a stripped install honestly carries none).
-    """
-    created: list[str] = []
-    for unit in NIOBE_CYCLE_UNITS:
-        target = unit_dir / unit
-        if target.exists():
-            continue
-        try:
-            body = files("skcapstone").joinpath(f"data/systemd/{unit}").read_text(encoding="utf-8")
-        except (OSError, ModuleNotFoundError):
-            continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(body, encoding="utf-8")
-        created.append(str(target))
-    return created
-
-
 def _ensure_node_env(env_dir: Path, node: str) -> str | None:
     """Persist ``SKFLEET_NODE`` where every shell on THIS host can see it.
 
@@ -425,8 +376,6 @@ def bootstrap(
       refuses to run,
     * ``coordination/link-observations.json``, without which the Link seat
       reports ``observation_feed_missing`` forever,
-    * the bounded ``skfleet-niobe`` cycle units, the safe staging step Niobe
-      never had,
     * ``SKFLEET_NODE`` in the host-local ``environment.d``, without which
       every interactive ``skcapstone fleet`` call fails with "no such node
       object".
@@ -442,8 +391,8 @@ def bootstrap(
             ``None``; no host name is ever hardcoded.
         estate: Override the estate identifier. Resolved from
             ``cluster.json`` or the local host when ``None``.
-        unit_dir: Override the systemd user unit directory (host-local XDG
-            config). Mainly for tests.
+        unit_dir: Unused. Kept so existing callers keep working: bootstrap no
+            longer installs any unit.
         env_dir: Override the ``environment.d`` directory (host-local XDG
             config). Mainly for tests.
 
@@ -493,7 +442,6 @@ def bootstrap(
             created.append(made)
 
     # Host-local truth, written under XDG and never into the synced tree.
-    created.extend(_ensure_niobe_cycle_units(unit_dir or _default_unit_dir()))
     made = _ensure_node_env(env_dir or environment_d_dir(), node)
     if made:
         created.append(made)

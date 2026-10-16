@@ -82,17 +82,6 @@ def test_seat_manifest_audit_seats_do_not_diverge_from_lifecycle_seats() -> None
     assert set(seat_manifest_audit.SEATS) == LIFECYCLE_SEATS
 
 
-def test_skrsi_estate_adapters_seats_do_not_diverge_from_lifecycle_seats() -> None:
-    """skrsi_estate_adapters.LIFECYCLE_SEATS adds product routing scopes on top
-    of the canonical roster; it must never drop or rename a real seat while
-    doing so.
-    """
-    from skcapstone import skrsi_estate_adapters
-
-    product_scopes = frozenset({"skcapstone", "skdashboard", "skworld"})
-    assert skrsi_estate_adapters.LIFECYCLE_SEATS == LIFECYCLE_SEATS | product_scopes
-
-
 def test_skrsi_handoff_owners_are_current_lifecycle_seats() -> None:
     """Every FIRST_WAVE_HANDOFFS recovery owner must be a seat that still
     exists; a handoff owned by a folded seat is a contract nobody occupies.

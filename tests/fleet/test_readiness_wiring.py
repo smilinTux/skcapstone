@@ -29,8 +29,6 @@ module), so the import-check half of the gate stays genuinely exercised.
 from __future__ import annotations
 
 import json
-import os
-import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -38,7 +36,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "fleet"))
 
 import pytest  # noqa: E402
-
 import skfleet_readiness  # noqa: E402
 from skfleet_readiness import _run, unit_in_scope, write_verdict  # noqa: E402
 
@@ -274,35 +271,8 @@ def test_qualification_sandbox_applies_when_spec_unreadable(monkeypatch):
     assert skfleet_readiness.qualification_sandbox_applies() is True
 
 
-def test_missing_niobe_probe_is_a_skip_not_a_failure(tmp_path, monkeypatch):
-    """With niobe_live_entrypoint unimportable the real native probe still passes."""
-    blocker = tmp_path / "blocker"
-    blocker.mkdir()
-    (blocker / "sitecustomize.py").write_text(
-        "import sys\nsys.modules['skcapstone.niobe_live_entrypoint'] = None\n"
-    )
-    src = str(Path(__file__).resolve().parents[2] / "src")
-    monkeypatch.setenv("PYTHONPATH", str(blocker) + os.pathsep + src)
-    host = socket.gethostname().split(".")[0].lower()
-    env = {"SKFLEET_AUTHORITY_HOST": host, "SKFLEET_PRODUCTION_POLICY": "/nonexistent.json"}
-    real_run = subprocess.run
-    seen = []
-
-    def spy(cmd, **kw):
-        result = real_run(cmd, **kw)
-        seen.append(result)
-        return result
-
-    monkeypatch.setattr(skfleet_readiness.subprocess, "run", spy)
-    skfleet_readiness.production_environment_error(env, sys.executable, tmp_path / "d.py")
-    # Validation of the nonexistent policy may still fail, but only after the
-    # guarded import took the absent branch rather than raising ImportError.
-    assert skfleet_readiness.NIOBE_PROBE_ABSENT in seen[0].stdout
-    assert "ImportError" not in seen[0].stderr
-
-
-def test_probe_source_guards_the_niobe_import(monkeypatch):
-    """The native probe catches ImportError of niobe_live_entrypoint itself."""
+def test_native_probe_names_no_retired_seat_module(monkeypatch):
+    """The probe validates policy without importing any paused seat wrapper."""
     captured = {}
 
     def run(cmd, **kw):
@@ -312,8 +282,41 @@ def test_probe_source_guards_the_niobe_import(monkeypatch):
     monkeypatch.setattr(skfleet_readiness.subprocess, "run", run)
     skfleet_readiness.production_environment_error({}, sys.executable, Path("d.py"))
     code = captured["code"]
-    assert "except ImportError" in code
-    assert code.index("try:") < code.index("niobe_live_entrypoint")
+    assert "niobe" not in code and "seat_cycle" not in code and "ImportError" not in code
+    assert "LEGACY_CEILING_VARIABLES" in code and "SKFLEET_PRODUCTION_POLICY_V1" in code
+
+
+def test_run_without_env_source_is_ready_without_the_retired_seat_cycle_unit(
+    tmp_path, monkeypatch, capsys
+):
+    """P4b: the readiness unit no longer names skfleet-seat-cycle.service.
+
+    The dispatcher still declares mandatory env (SKFLEET_GATEWAY_URL here) but
+    no live unit carries it, so with no env source named the gate must SKIP the
+    assertion, not fall back to the bare process environment and FAIL.
+    """
+    monkeypatch.delenv("SKFLEET_GATEWAY_URL", raising=False)
+    monkeypatch.setattr(skfleet_readiness, "qualification_sandbox_applies", lambda: False)
+    exit_code = _run(
+        _dispatcher(tmp_path),
+        _units_dir_with_real_module(tmp_path),
+        sys.executable,
+        env_from_unit=None,
+    )
+    out = capsys.readouterr().out
+    assert exit_code == 0, out
+    assert "SKIP required env: no dispatcher role unit named" in out
+    assert "FAIL" not in out
+
+
+def test_run_env_from_process_still_asserts_the_mandatory_env(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("SKFLEET_GATEWAY_URL", raising=False)
+    monkeypatch.setattr(skfleet_readiness, "qualification_sandbox_applies", lambda: False)
+    args = (_dispatcher(tmp_path), _units_dir_with_real_module(tmp_path), sys.executable, None)
+    assert _run(*args, env_from_process=True) == 1
+    assert "FAIL required env: SKFLEET_GATEWAY_URL is missing" in capsys.readouterr().out
+    monkeypatch.setenv("SKFLEET_GATEWAY_URL", "http://gateway.invalid")
+    assert _run(*args, env_from_process=True) == 0
 
 
 # ---------------------------------------------------------------------------

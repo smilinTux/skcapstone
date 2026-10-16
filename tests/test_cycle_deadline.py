@@ -216,11 +216,6 @@ def test_rotator_wires_every_phase_to_the_single_cycle_deadline() -> None:
         "_cycle.mark(phase)",
     ):
         assert needle in source, needle
-    # Every closed phase is also a known entrypoint phase, in rotator order.
-    from skcapstone.niobe_live_entrypoint import PHASE_ORDER
-
-    positions = [source.index('_phase_timing("%s")' % name) for name in PHASE_ORDER]
-    assert positions == sorted(positions)
 
 
 def test_tiny_timeout_still_leaves_a_positive_budget_and_never_blocks(tmp_path: Path) -> None:

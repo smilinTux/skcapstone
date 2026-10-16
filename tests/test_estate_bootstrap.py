@@ -179,13 +179,10 @@ def test_observation_seed_goes_stale_rather_than_lying(dirs: dict[str, Path]) ->
 # --------------------------------------------------------------------------
 
 
-def test_bootstrap_installs_the_bounded_niobe_units(dirs: dict[str, Path]) -> None:
-    """Happy path: Niobe finally gets the bounded cycle unit the others have."""
+def test_bootstrap_installs_no_dispatcher_seat_units(dirs: dict[str, Path]) -> None:
+    """The Niobe cycle units were retired; bootstrap installs no unit at all."""
     _bootstrap(dirs)
-    body = (dirs["units"] / "skfleet-niobe.service").read_text()
-    assert "seat_cycle_entrypoint --seat niobe" in body
-    assert "seat_shadow_entrypoint" not in body
-    assert (dirs["units"] / "skfleet-niobe.timer").is_file()
+    assert not list(dirs["units"].glob("skfleet-*"))
 
 
 def test_bootstrap_persists_the_node_name_host_locally(dirs: dict[str, Path]) -> None:
@@ -341,9 +338,9 @@ def test_doctor_seat_units_pass_fail_and_unknown(tmp_path: Path) -> None:
     unit_dir.mkdir()
     none_installed = _check_estate_seat_units(unit_dir, home)
     assert not none_installed.passed and not none_installed.unknown
-    assert "5 of 5 seat timers absent" in none_installed.detail
+    assert "2 of 2 seat timers absent" in none_installed.detail
 
-    for seat in ("atlas", "link", "mero", "niobe", "seraph"):
+    for seat in ("link", "mero"):
         (unit_dir / f"skfleet-{seat}.timer").write_text("[Timer]\n")
     assert _check_estate_seat_units(unit_dir, home).passed
 
@@ -369,7 +366,7 @@ def test_doctor_catches_a_unit_naming_a_module_nobody_ships(tmp_path: Path) -> N
     unit_dir = tmp_path / "units"
     unit_dir.mkdir()
     (unit_dir / "skfleet-good.service").write_text(
-        "[Service]\nExecStart=/bin/python3 -m skcapstone.seat_cycle_entrypoint --seat niobe\n"
+        "[Service]\nExecStart=/bin/python3 -m skcapstone.seat_cycle_entrypoint --seat link\n"
     )
     assert _check_estate_unit_entrypoints(unit_dir).passed
 

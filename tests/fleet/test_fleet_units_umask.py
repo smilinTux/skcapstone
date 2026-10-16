@@ -44,7 +44,7 @@ def _service_section(text: str) -> str:
 
 def test_discovery_finds_the_known_units():
     names = {p.name for p in _fleet_units()}
-    known = {"skfleet-seat-cycle.service", "sknoded.service", "skfleet-auto-rollout.service"}
+    known = {"skfleet-link.service", "sknoded.service", "skfleet-auto-rollout.service"}
     assert known <= names
 
 

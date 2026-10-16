@@ -45,8 +45,10 @@ def test_control_profile_requires_serialized_seat_orchestrator() -> None:
     assert set(SEAT_TIMERS) <= set(spec["units"]["required"])
     assert set(SEAT_TIMERS) <= set(spec["units"]["allowed"])
     assert "skfleet-atlas.service" not in spec["units"]["required"]
-    for seat in SEATS:
+    for seat in ("link", "mero"):
         assert f"skfleet-{seat}.service" in spec["units"]["allowed"]
+    for seat in set(SEATS) - {"link", "mero"}:
+        assert f"skfleet-{seat}.service" not in spec["units"]["allowed"]
 
 
 def test_control_profile_forbids_competing_serialized_seat_timers() -> None:
@@ -73,7 +75,7 @@ def test_an_estate_with_no_seat_units_no_longer_reports_ok() -> None:
 
 def test_seat_units_resolve_to_the_backend_that_installs_them() -> None:
     """Every required skfleet unit used to resolve to UNSUPPORTED."""
-    for name in SEAT_TIMERS + ("skfleet-link-producer.timer", "skfleet-niobe.service"):
+    for name in SEAT_TIMERS + ("skfleet-link-producer.timer", "skfleet-link.service"):
         assert install_backends.resolve(name, "unit") == "core"
 
 

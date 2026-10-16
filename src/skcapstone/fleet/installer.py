@@ -395,15 +395,11 @@ def run_install(
     profile = _profile_spec(paths, role)
     _validate_only(profile, only)
     selected = set(only) if only is not None else None
-    scheduler_unit = "skfleet-seat-cycle.timer"
     selected_required_timers = [
         unit
         for unit in timer_enablement.required_timers(profile)
         if selected is None or unit in selected
     ]
-    scheduler_selected = scheduler_unit in selected_required_timers
-    if scheduler_selected and enable != start:
-        raise ValueError("scheduler migration requires --enable and --start together")
     drift = load_drift(paths, role)
     install_plan = plan(drift, only=only)
     core_units = sorted(
@@ -493,9 +489,7 @@ def run_install(
         timer_profile = {
             "units": {
                 "required": selected_required_timers,
-                "mustNot": (
-                    timer_enablement.forbidden_timers(profile) if scheduler_selected else []
-                ),
+                "mustNot": [],
             }
         }
         config_home = Path(os.environ.get("XDG_CONFIG_HOME", "~/.config")).expanduser()

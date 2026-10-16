@@ -71,8 +71,8 @@ def test_no_dispatch_site_hardcodes_the_jarvis_writer() -> None:
     assert '"--agent", "jarvis"' not in source
     assert '"--agent","jarvis"' not in source
     resolved = source.count('"--agent", DISPATCH_AGENT') + source.count('"--agent",DISPATCH_AGENT')
-    # 7th: the deferred-admission READY restore (#1146).
-    assert resolved == 7, f"expected 7 DISPATCH_AGENT release sites, found {resolved}"
+    # 6: the niobe fan-out claim-receipt release was removed with niobe_fanout (P4b).
+    assert resolved == 6, f"expected 6 DISPATCH_AGENT release sites, found {resolved}"
     assert "run_production_cycle(agent=_dispatch_writer())" in source
 
 

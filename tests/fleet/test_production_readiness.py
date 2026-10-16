@@ -160,27 +160,13 @@ def test_unavailable_native_validation_fails_closed(production, monkeypatch):
     )
 
 
-def test_canonical_scheduler_cannot_fall_back_to_legacy_env(tmp_path, monkeypatch, capsys):
-    source = tmp_path / "dispatcher.py"
-    source.write_text("import json\n")
-    units = tmp_path / "units"
-    units.mkdir()
-    (units / "seat.service").write_text("ExecStart=/usr/bin/python3 -m json\n")
-    monkeypatch.setattr(
-        readiness, "unit_in_scope", lambda unit: (True, None, "skfleet-seat-cycle.timer")
-    )
-    monkeypatch.setattr(readiness, "systemd_effective_environment", lambda unit: ({}, None))
-    assert readiness._run(source, units, sys.executable, None, "skfleet-seat-cycle.service") == 1
-    assert "FAIL production policy" in capsys.readouterr().out
-
-
-def test_canonical_readiness_template_uses_scheduler_scope():
+def test_canonical_readiness_template_names_no_retired_scheduler_unit():
     text = (
         Path(__file__).resolve().parents[2] / "systemd/production/skfleet-readiness.service"
     ).read_text()
     assert "--rotate-script %h/.skenv/bin/skfleet-rotate.py" in text
-    assert "--env-from-systemd skfleet-seat-cycle.service" in text
-    assert "niobe-live" not in text
+    assert "--env-from-systemd" not in text
+    assert "seat-cycle" not in text and "niobe" not in text
 
 
 @pytest.mark.parametrize(
@@ -212,18 +198,11 @@ def test_same_wrapper_refuses_unqualified_dispatcher(production, marker):
 
 
 def test_explicit_environment_is_private_and_retry_guard_is_retained(production, monkeypatch):
-    from skcapstone.niobe_live_entrypoint import _production_environment
-
     policy, environment = production
     explicit = {**environment, "SKFLEET_MAX_CLAIMS": "7", "PRIVATE_FIXTURE": "not-a-real-secret"}
     original = dict(explicit)
     dispatcher = policy.with_name("qualified-dispatcher.py")
     monkeypatch.setenv("SKFLEET_TARGET", "stale-parent-must-not-leak")
-    validated = _production_environment(
-        dispatcher, host=environment["SKFLEET_AUTHORITY_HOST"], environment=explicit
-    )
-    assert validated["SKFLEET_MAX_CLAIMS"] == "7"
-    assert explicit == original
     actual = readiness.subprocess.run
 
     def inspect(command, **kwargs):
@@ -233,3 +212,4 @@ def test_explicit_environment_is_private_and_retry_guard_is_retained(production,
 
     monkeypatch.setattr(readiness.subprocess, "run", inspect)
     assert readiness.production_environment_error(explicit, sys.executable, dispatcher) is None
+    assert explicit == original

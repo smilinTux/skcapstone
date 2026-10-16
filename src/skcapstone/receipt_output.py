@@ -1,7 +1,6 @@
 """Bound and de-noise dispatcher subprocess output before it enters a receipt.
 
-Fleet seat dispatchers (see :mod:`skcapstone.niobe_live_entrypoint` and
-:mod:`skcapstone.seat_cycle_entrypoint`) run as subprocesses whose raw
+Fleet seat dispatchers (see :mod:`skcapstone.seat_cycle_entrypoint`) run as subprocesses whose raw
 stdout and stderr are embedded verbatim into a JSON health receipt once
 per cycle. A single noisy line, repeated by something unrelated to the
 dispatch itself (for example a CardStore fold warning re-emitted once per

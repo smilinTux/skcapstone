@@ -24,7 +24,7 @@ from ..seat_runtime import (
 from . import builder_dispatch as dispatch
 from . import production_builder as production
 from . import store
-from .evidence_io import native_command, read_json
+from .evidence_io import native_command
 from .production_policy import require_destination, validate_execution_policy
 from .production_review import producer_family, provider_family, review_family_allowed
 from .refusal_log import note, reason_of, refuse
@@ -307,16 +307,14 @@ def _source(home, card, *, historical=False):
 
 
 def _activation(home, policy, card):
-    """Retain the authority's actual activation and product/action scope remotely."""
-    from ..niobe_activation import parse_activation
+    """Fail closed: the Niobe activation record that scoped remote review is retired.
 
-    value = read_json(Path(home) / "coordination/niobe-activation.json")
-    activation = parse_activation(value, home=home, host=policy["authority_host"])
-    repository = _binding(card.model_dump(mode="json"), "repository") or ""
-    product = repository.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git").lower()
-    if product not in {p.lower() for p in activation.product_scope}:
-        raise ValueError("review product outside active scope")
-    return production.digest(value)
+    The paused Niobe seat and its activation file were removed in the dispatcher
+    cut, so no review offer can be authorised from them any more. Raising here
+    keeps ``offer`` and the claim recheck refusing instead of trusting a
+    missing gate.
+    """
+    raise ValueError("remote review activation is retired")
 
 
 def _current(home, request, *, claimed=False):
