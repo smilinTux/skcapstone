@@ -9189,7 +9189,6 @@ def _observe_assigned_reviews():
         observation_deadline=min(
             observation_deadline,time.monotonic()+max(_cycle.hard_remaining()-_cycle.final_reserve_s,0))
     live_sessions = set(sh("tmux", "ls", "-F", "#{session_name}").split())
-    live_units = active_worker_units()
     outcomes = _load_outcomes()
     review_ids = sorted(
         cid
