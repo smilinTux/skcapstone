@@ -314,8 +314,9 @@ def test_packaged_timer_is_distinct_from_disabled_rotation_and_central_dispatch(
         assert "RandomizedDelaySec=0" in timer
 
     rollout = (root / "docs" / "fleet" / "liveness-publisher-rollout.md").read_text()
-    assert "skfleet-rotate.timer remains disabled" in rollout
-    assert "skfleet-niobe-live.timer remains the sole centralized dispatcher" in rollout
+    flat = " ".join(rollout.split())
+    assert "The dispatcher is dormant" in flat
+    assert "do not enable any scheduler" in flat
     assert "Do not execute these commands on this\nsource-repair card" in rollout
 
 
