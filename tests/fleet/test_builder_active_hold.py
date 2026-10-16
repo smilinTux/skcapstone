@@ -382,13 +382,19 @@ def test_the_rotation_never_withholds_a_non_candidate() -> None:
     assert [row[2] for row in kept] == ["seat-card"]
 
 
-def test_profile_blocked_candidate_is_queued_remotely_before_local_selection() -> None:
-    """Stale profiles use remote test capacity, not the authority worker slot."""
+def test_rotation_has_no_test_profile_gate_or_requalification_offer() -> None:
+    """A builder candidate is offered without any profile qualification step."""
     source = ROTATE.read_text(encoding="utf-8")
-    assert 'str(_exc) == "required-test-profile-unqualified"' in source
-    assert "offer_stale_candidate(" in source
-    assert "_profile_requalification_limit = 16" in source
-    assert "BUILDER_PROFILE_REQUALIFICATION_FALLBACK" not in source
+    for gone in (
+        '== "required-test-profile-unqualified"',
+        "offer_stale_candidate",
+        "requalify_or_advance",
+        "harvest_completed",
+        "production_test_profile",
+        "profile_requalification",
+        '"TEST_PROFILE_BLOCKED|',
+    ):
+        assert gone not in source
 
 
 def test_the_rotation_measured_tick_releases_the_parked_majority() -> None:
@@ -444,17 +450,6 @@ def test_the_selection_diagnostic_reports_both_sides_of_the_split(tmp_path) -> N
     )
     assert "builder_withheld=1" in detail
     assert "builder_returned=1" in detail
-
-
-def test_lane_rejects_unqualified_profiles_before_the_fresh_fold() -> None:
-    """An unqualified card must not pay the ~2.3s fresh claimability re-check.
-
-    chiap08 2026-10-09 21:02Z: 64 such cards took lane_launch to 150s.
-    """
-    source = ROTATE.read_text(encoding="utf-8")
-    cheap = source.index('_profile_gate.preflight(Path(HOME)/".skcapstone", dict(core, id=cid)')
-    fresh = source.index("fresh_claimability=authoritative_claimability(cid,core=_fresh_core")
-    assert cheap < fresh
 
 
 def test_lane_stops_at_the_node_occupancy_cap() -> None:

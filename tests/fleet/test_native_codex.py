@@ -163,23 +163,20 @@ def native(module, tmp_path, monkeypatch):
     monkeypatch.setenv("SKFLEET_ADMISSION_ID", marker)
     monkeypatch.setenv("INVOCATION_ID", "b" * 32)
     monkeypatch.setattr(admission, "unit_state", lambda *_a, **_k: state)
-    checks = []
-    monkeypatch.setattr(module.profile, "preflight", lambda *args: checks.append(args))
-    return tmp_path, policy, unit, binding, state, store, directory, checks
+    return tmp_path, policy, unit, binding, state, store, directory
 
 
-def test_native_admission_and_current_profile_are_required(module, native):
-    home, policy, unit, binding, state, store, directory, checks = native
-    module.require_native_unit(home, policy, unit, binding)
-    assert len(checks) == 1
-    assert checks[0][1]["id"] == binding["card_id"]
+def test_native_admission_is_required_and_no_test_profile_is(module, native):
+    home, policy, unit, binding, state, store, directory = native
+    core = module.require_native_unit(home, policy, unit, binding)
+    assert core["id"] == binding["card_id"]
 
 
 @pytest.mark.parametrize(
-    "change", ["memory", "invocation", "claim", "start", "private", "profile", "identity"]
+    "change", ["memory", "invocation", "claim", "start", "private", "identity"]
 )
 def test_changed_native_custody_or_authorization_refuses(module, native, monkeypatch, change):
-    home, policy, unit, binding, state, store, directory, checks = native
+    home, policy, unit, binding, state, store, directory = native
     if change == "memory":
         state["MemoryMax"] = "9999"
     elif change == "invocation":
@@ -200,12 +197,6 @@ def test_changed_native_custody_or_authorization_refuses(module, native, monkeyp
         store.append_event("deadbeef", "add_label", "fixture", label="private")
     elif change == "identity":
         (home / "agents" / binding["owner"]).rmdir()
-    else:
-
-        def stale(*args):
-            raise ValueError("qualified test execution environment changed")
-
-        monkeypatch.setattr(module.profile, "preflight", stale)
     with pytest.raises(ValueError):
         module.require_native_unit(home, policy, unit, binding)
 

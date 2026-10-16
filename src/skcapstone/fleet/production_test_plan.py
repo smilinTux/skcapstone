@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -11,7 +10,6 @@ import socket
 import stat
 import subprocess
 import sys
-from contextlib import contextmanager
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -22,9 +20,6 @@ from .qualified_runtime import STATE_NAME, TOOL_PACKAGES, qualify_prefix
 #: Sealed test execution runs only from the clean pinned qualification prefix
 #: built by ``qualify_env``; production ~/.skenv is never the test runtime.
 PREFIX = qualify_prefix(Path.home())
-#: The pre-qualify-env runtime. Read only to recognize profiles whose
-#: toolchain was qualified there, so they can be requalified once natively.
-LEGACY_PREFIX = Path.home() / ".skenv"
 # A full skcapstone suite (12.7k cases, ~475 bytes of JUnit attributes each)
 # writes a ~6 MB report. At 4 MiB the worker's RLIMIT_FSIZE killed pytest while
 # it wrote the report, so no full-suite qualification could ever finish.
@@ -46,6 +41,11 @@ TEST_FILES = tuple(
         "test_provisional_verdict_producer",
     )
 )
+#: One schema, one record per candidate. Earlier predecessor-chain, requalification
+#: and remote-qualification generations are not read or written any more.
+PLAN_SCHEMA = "skfleet.native-test-plan/v7"
+#: Schema of a declared Python recipe record (Node variants carry their own).
+PYTHON_RECIPE_SCHEMA = "skfleet.qualified-test-profile/v3"
 BINDING_KEYS = frozenset(
     {
         "source_card",
@@ -81,92 +81,14 @@ def harness_root(prefix: Path, fallback: Path) -> Path:
 
 
 HARNESS_ROOT = harness_root(PREFIX, Path(__file__).resolve().parent)
-HARNESS_MODULES = (
-    "qualified_runtime.py",
-    "production_pytest_recipe.py",
-    "production_pytest_selection.py",
-    "production_test_plan.py",
-    "production_test_profile.py",
-    "production_test_worker.py",
-    "production_test_node.py",
-    "production_node_test_recipe.py",
-    "production_test_composite.py",
-    "production_tests.py",
-    "production_admission.py",
-    "production_builder.py",
-    "production_policy.py",
-)
-#: The harness contributes this integer to ``runtime_fingerprint``, not its bytes.
-#: Bump it ONLY when test execution semantics change (what runs, how, interpreter
-#: or toolchain, selection, sandbox, evidence format): every qualified profile then
-#: restales, on purpose. Comments, docs, plan naming and acceptance plumbing must
-#: not bump it. ``harness_attest`` and tests/fleet/test_harness_fingerprint.py fail
-#: when an execution-relevant parse tree changes without a ledger update.
-HARNESS_EXECUTION_VERSION = 1
-#: Version 1 is defined as the legacy byte fingerprint of the harness deployed on
-#: 2026-10-14 (identical on chiap08 and origin/main 490b0c67), so every profile
-#: sealed before this change stays valid with no translation at the comparison sites.
-#: Later versions do not use this table.
-_LEGACY_HARNESS_SHA256 = {
-    "qualified_runtime.py": ("cba771a55d22f7f104436cd60eaa8ccbd06b5604e3f163bd9728e7780fb467f5"),
-    "production_pytest_recipe.py": (
-        "11a6c85a7936613ab08add1f03fa49f46c418de58a5262fcbde21a7d7f444691"
-    ),
-    "production_pytest_selection.py": (
-        "591008dc5c9d4dd4d149202cb4c56ad58e906873f735ddced8e0942d42d0d261"
-    ),
-    "production_test_plan.py": (
-        "1cb79fa4afab216e72096bdddcbed773ebff0ce2cbadf080f8885dfbb4858700"
-    ),
-    "production_test_profile.py": (
-        "8cf054c86091a4c296ebfc6cbf74b531e39f78747610a9987cb2c65ca44ea5a0"
-    ),
-    "production_test_worker.py": (
-        "8bb10f2dd3624bb56d3cb900fbee0cf543275b497720cef54e293b901c616a5a"
-    ),
-    "production_test_node.py": (
-        "64bfb99e73f39510fe62f1f66b02f95093a760c08f026b47f128d4b56b343137"
-    ),
-    "production_node_test_recipe.py": (
-        "acc9636e07ac5e4fcfeba10a503708d2ebf2e696d2c2295a4437cf148ece2f40"
-    ),
-    "production_test_composite.py": (
-        "e268d82fb48edd0d88a6b7bae7f869bfc47ce313098a4cf997eaadd3e89db09d"
-    ),
-    "production_tests.py": ("7eac0197803908c9ccf5ca6a5889fdaf1da19f8d6302f2a837bff14203cc9a00"),
-    "production_admission.py": (
-        "99b7548a140aef61c8544ba990833394de8c823804077d403e3621b49b792590"
-    ),
-    "production_builder.py": ("73ecbc1429dc75727e1d21b2376c61a9cdedb18c4ca06a497fdb509484125ad7"),
-    "production_policy.py": ("c93a08f355f7db5dcc778c4a545d3b77a2766e167c5455a111ee0a9adb4e38e8"),
-}
-
-
-def harness_pins() -> dict[str, str]:
-    """Per-module pins for the current execution version (version 1 only).
-
-    Version 1 reproduces the legacy byte rows so the existing board stays valid.
-    Every later version is pinned by the version integer alone.
-    """
-    if (
-        type(HARNESS_EXECUTION_VERSION) is not int  # noqa: E721 (bool is not a version)
-        or HARNESS_EXECUTION_VERSION < 1
-    ):
-        raise TestEvidenceError("harness execution version is invalid")
-    if HARNESS_EXECUTION_VERSION != 1:
-        return {}
-    if set(_LEGACY_HARNESS_SHA256) != set(HARNESS_MODULES):
-        raise TestEvidenceError("harness legacy pins do not match harness modules")
-    return dict(_LEGACY_HARNESS_SHA256)
 
 
 def runtime_fingerprint() -> str:
-    """Pin the test toolchain and trusted executor, not package install provenance.
+    """Fingerprint the qualified test runtime, recorded as provenance in each run record.
 
-    The executor is pinned by ``HARNESS_EXECUTION_VERSION``, not by its bytes, so
-    only execution-semantics changes restale profiles (see ``harness_attest``).
-
-    Cache only exact inode/size/mtime/ctime observations, never a timed success.
+    No dispatch or acceptance gate compares this value: a plan records it so a result can be
+    traced to the runtime that produced it. Cache only exact inode/size/mtime/ctime
+    observations, never a timed success.
     Candidate source is bound separately and its tests run from /work/src. A
     new SKCapstone wheel RECORD or unrelated module cannot change this contract.
     """
@@ -193,12 +115,11 @@ def runtime_fingerprint() -> str:
         path for path in (site / "sitecustomize.py", site / "usercustomize.py") if path.exists()
     )
     startup = sorted(site.glob("*.pth"))
-    harness = [HARNESS_ROOT / name for name in HARNESS_MODULES]
-    if len(files) + len(startup) + len(harness) > 10000:
+    if len(files) + len(startup) > 10000:
         raise TestEvidenceError("qualified runtime fingerprint exceeds file bound")
     rows, total = [], 0
 
-    def add(path: Path, label: str, root: Path, pinned: str | None = None) -> None:
+    def add(path: Path, label: str, root: Path) -> None:
         nonlocal total
         info = path.lstat()
         if not stat.S_ISREG(info.st_mode) or not path.resolve().is_relative_to(root.resolve()):
@@ -206,10 +127,6 @@ def runtime_fingerprint() -> str:
         total += info.st_size
         if total > 64 * 1024 * 1024:
             raise TestEvidenceError("qualified runtime fingerprint exceeds byte bound")
-        if pinned is not None:
-            if pinned:
-                rows.append((label, pinned))
-            return
         key = (str(path), info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
         digest = _RUNTIME_CACHE.get(key)
         if digest is None:
@@ -232,27 +149,16 @@ def runtime_fingerprint() -> str:
         # Editable .pth filenames contain a wheel version that does not alter
         # startup behavior. Keep the package name and ordering, and hash bytes.
         add(path, "startup/" + name, PREFIX)
-    # The harness files must still exist as regular files under HARNESS_ROOT (fail
-    # closed), but their bytes are not the pin: the execution version is.
-    pins = harness_pins()
-    for path in harness:
-        add(path, "harness/" + path.name, HARNESS_ROOT, pins.get(path.name, ""))
-    if not pins:
-        rows.append(("harness/execution_version", str(HARNESS_EXECUTION_VERSION)))
     return sha(json.dumps(rows, separators=(",", ":")).encode())
 
 
 def toolchain_fingerprint() -> str:
-    """Pin test tools and Python startup files separately from executor code.
+    """Fingerprint test tools and Python startup files, recorded as provenance.
 
     The qualification prefix must carry its build manifest, which binds the
     exact locked distribution set.
     """
-    return _toolchain_fingerprint(PREFIX, legacy=False)
-
-
-def _toolchain_fingerprint(prefix: Path, *, legacy: bool) -> str:
-    """Hash one prefix's toolchain; ``legacy`` keeps the historical row set."""
+    prefix = PREFIX
     site = (
         prefix
         / "lib"
@@ -260,10 +166,9 @@ def _toolchain_fingerprint(prefix: Path, *, legacy: bool) -> str:
         / "site-packages"
     )
     files = {prefix / "bin/ruff", prefix / "bin/python"}
-    if not legacy:
-        if not (prefix / STATE_NAME).is_file():
-            raise TestEvidenceError("qualified runtime manifest is missing")
-        files.add(prefix / STATE_NAME)
+    if not (prefix / STATE_NAME).is_file():
+        raise TestEvidenceError("qualified runtime manifest is missing")
+    files.add(prefix / STATE_NAME)
     for package in TOOL_PACKAGES:
         directory = site / package
         if not directory.is_dir():
@@ -311,66 +216,6 @@ def _toolchain_fingerprint(prefix: Path, *, legacy: bool) -> str:
             label = "startup/" + name
         rows.append((label, digest))
     return sha(json.dumps(rows, separators=(",", ":")).encode())
-
-
-def legacy_toolchain_fingerprint() -> str | None:
-    """Fingerprint the pre-qualify-env ~/.skenv toolchain, or None when absent."""
-    try:
-        return _toolchain_fingerprint(LEGACY_PREFIX, legacy=True)
-    except (OSError, ValueError):
-        return None
-
-
-def source_fingerprint(repository: str, head: str, tree: str) -> str:
-    """Bind a profile to the exact repository tree whose recipe was qualified."""
-    if (
-        not isinstance(repository, str)
-        or not repository.startswith("https://")
-        or "@" in repository
-    ):
-        raise TestEvidenceError("test repository binding is invalid")
-    if not re.fullmatch(r"[0-9a-f]{40,64}", str(head)) or not re.fullmatch(
-        r"[0-9a-f]{40,64}", str(tree)
-    ):
-        raise TestEvidenceError("qualified source state is invalid")
-    return sha(
-        json.dumps(
-            {"repository": repository, "head": head, "tree": tree},
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-    )
-
-
-def workspace_source_fingerprint(repository: str, workspace: Path) -> str:
-    """Hash a clean checkout without trusting a caller-supplied revision."""
-    try:
-        head = subprocess.run(
-            ["git", "-C", str(workspace), "rev-parse", "--verify", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        ).stdout.strip()
-        tree = subprocess.run(
-            ["git", "-C", str(workspace), "rev-parse", "--verify", "HEAD^{tree}"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        ).stdout.strip()
-        dirty = subprocess.run(
-            ["git", "-C", str(workspace), "status", "--porcelain", "--untracked-files=all"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        ).stdout
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise TestEvidenceError("qualified source state is unavailable") from exc
-    if dirty:
-        raise TestEvidenceError("qualified source is dirty")
-    return source_fingerprint(repository, head, tree)
 
 
 class TestEvidenceError(ValueError):
@@ -473,40 +318,6 @@ def check_binding(binding: dict) -> None:
         raise TestEvidenceError("invalid exact source binding")
 
 
-def effective_profile(plan: dict) -> dict | None:
-    """The sealed profile as executed: a requalification may re-bind the Node runtime.
-
-    Only _validate_plan admits node_environment_refresh, and only as the exact
-    runtime-only refresh of the sealed profile's own environment.
-    """
-    profile = plan.get("profile")
-    refresh = plan.get("node_environment_refresh")
-    if profile is None or refresh is None:
-        return profile
-    return dict(profile, node_environment=refresh)
-
-
-def validate_plan_node_environment(plan: dict, profile: dict) -> None:
-    """Validate the Node runtime a sealed plan executes; recompute any refresh."""
-    from . import production_test_node as node
-    from .production_test_composite import is_composite
-
-    refresh = plan.get("node_environment_refresh")
-    if not (node.is_node(profile) or is_composite(profile)):
-        if refresh is not None:
-            raise TestEvidenceError("operator test plan is invalid or stale")
-        return
-    if refresh is None:
-        node.validate_environment(profile["node_environment"])
-        return
-    # Recompute, never trust: only today's exact runtime-only refresh, and only
-    # on a profile requalification, whose run is the fresh evidence.
-    if plan.get("profile_requalification") is not True or refresh != node.refreshed_runtime(
-        profile["node_environment"]
-    ):
-        raise TestEvidenceError("candidate test profile changed")
-
-
 def approved_checks() -> list[dict]:
     """The initial qualified trial profile has no model-controlled command text."""
     python = str(PREFIX / "bin/python")
@@ -533,6 +344,16 @@ def approved_checks() -> list[dict]:
     ]
 
 
+def _plan_base(home: Path, binding: dict) -> Path:
+    """Name the single run record of one exact candidate commit and claim revision."""
+    revision = sha(binding["source_revision"].encode())[:16]
+    return (
+        home
+        / "fleet/test-plans"
+        / (binding["source_card"] + "-" + binding["source_head"] + "-" + revision + ".json")
+    )
+
+
 def seal_plan(
     home: Path,
     binding: dict,
@@ -542,378 +363,93 @@ def seal_plan(
     qualification_sha256: str,
     *,
     profile: dict | None = None,
-    predecessor_sha256: str | None = None,
-    requalification: bool = False,
-    profile_predecessor_sha256: str | None = None,
     execution_host: str | None = None,
-    initial_profile_qualification: bool = False,
-    acceptance_requalification: bool = False,
 ) -> Path:
-    """Seal an explicitly qualified legacy or reusable profile for one candidate."""
-    if predecessor_sha256 is not None:
-        if not re.fullmatch(r"[0-9a-f]{64}", predecessor_sha256):
-            raise TestEvidenceError("test plan predecessor invalid")
-        with _plan_run_lock(home, predecessor_sha256):
-            return _seal_plan(
-                home,
-                binding,
-                workspace,
-                policy,
-                qualified_by,
-                qualification_sha256,
-                profile,
-                predecessor_sha256,
-                requalification,
-                profile_predecessor_sha256,
-                execution_host,
-                initial_profile_qualification,
-                acceptance_requalification,
-            )
-    return _seal_plan(
-        home,
-        binding,
-        workspace,
-        policy,
-        qualified_by,
-        qualification_sha256,
-        profile,
-        predecessor_sha256,
-        requalification,
-        profile_predecessor_sha256,
-        execution_host,
-        initial_profile_qualification,
-        acceptance_requalification,
-    )
+    """Seal the declared tests of one exact candidate as one immutable run record.
 
-
-@contextmanager
-def _plan_run_lock(home: Path, fingerprint: str):
-    """Fence successor publication against an old generation's test launch."""
-    root = home / "fleet/test-runs"
-    private_dir(root, create=True)
-    directory = run_directory(home, fingerprint)
-    private_dir(directory, create=True)
-    fd = os.open(directory / ".run.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, "r+") as stream:
-        fcntl.flock(stream, fcntl.LOCK_EX)
-        yield
-
-
-def _plan_base(home: Path, binding: dict) -> Path:
-    """Keep each exact claim revision's native test-plan chain separate."""
-    revision = sha(binding["source_revision"].encode())[:16]
-    return (
-        home
-        / "fleet/test-plans"
-        / (binding["source_card"] + "-" + binding["source_head"] + "-" + revision + ".json")
-    )
-
-
-def _initial_plan_base(home: Path, binding: dict) -> Path:
-    """Keep initial profile qualification separate from older unstarted plans."""
-    base = _plan_base(home, binding)
-    return base.with_name(base.stem + ".initial.json")
-
-
-def _legacy_plan_base(home: Path, binding: dict) -> Path:
-    return (
-        home
-        / "fleet/test-plans"
-        / (binding["source_card"] + "-" + binding["source_head"] + ".json")
-    )
-
-
-def _seal_plan(
-    home: Path,
-    binding: dict,
-    workspace: Path,
-    policy: dict,
-    qualified_by: str,
-    qualification_sha256: str,
-    profile: dict | None,
-    predecessor_sha256: str | None,
-    requalification: bool,
-    profile_predecessor_sha256: str | None,
-    execution_host: str | None,
-    initial_profile_qualification: bool,
-    acceptance_requalification: bool = False,
-) -> Path:
+    ``profile`` is the card's declared recipe record (``test_recipe.declared_recipe``),
+    not a stored or qualified profile: nothing is read from or published to a profile
+    store, and the runtime fingerprints are recorded as provenance only. Without one,
+    the fixed trial checks run. An existing record is never replaced.
+    """
     check_binding(binding)
     execution_host = execution_host or policy["authority_host"]
     if execution_host not in policy.get("node_quotas", {}):
         raise TestEvidenceError("test execution host is not in production policy")
+    if not qualified_by or not re.fullmatch(r"[0-9a-f]{64}", qualification_sha256):
+        raise TestEvidenceError("operator qualification is incomplete")
     source_state(workspace, binding)
     directory = home / "fleet/test-plans"
     private_dir(directory, create=True)
-    base = (
-        _initial_plan_base(home, binding)
-        if initial_profile_qualification
-        else _plan_base(home, binding)
-    )
-    path = base
-    if predecessor_sha256 is not None:
-        previous, previous_path, current = load_plan(home, binding, require_current=False)
-        if current != predecessor_sha256:
-            raise TestEvidenceError("test plan predecessor changed")
-        if (run_directory(home, current) / "launch.json").exists() and not (
-            acceptance_requalification and _completed_test_attempt(home, current)
-        ):
-            raise TestEvidenceError("prior test plan already launched")
-        # load_plan walks <base>.<sha>.json from the chain base, so every
-        # generation is named from the base, never from the previous file.
-        # Naming it from previous_path made generation 2 unreachable and the
-        # chain "disconnected" (chi, six acceptances, 2026-10-13).
-        chain_stem = re.sub(r"(\.[0-9a-f]{64})+\Z", "", previous_path.stem)
-        path = previous_path.with_name(chain_stem + "." + current + ".json")
-    if initial_profile_qualification and (profile is None or requalification):
-        raise TestEvidenceError("initial profile qualification needs one unpublished profile")
-    if initial_profile_qualification:
-        from .production_test_profile import recipe_checks
-
-    remote_requalification = requalification and execution_host != policy["authority_host"]
-    remote_initial = initial_profile_qualification and execution_host != policy["authority_host"]
     value = {
-        "schema": (
-            "skfleet.native-test-plan/v6"
-            if remote_initial
-            else (
-                "skfleet.native-test-plan/v5"
-                if remote_requalification
-                else (
-                    "skfleet.native-test-plan/v4"
-                    if predecessor_sha256 is not None and requalification
-                    else (
-                        "skfleet.native-test-plan/v3"
-                        if requalification
-                        else (
-                            "skfleet.native-test-plan/v2"
-                            if predecessor_sha256 is not None
-                            else "skfleet.native-test-plan/v1"
-                        )
-                    )
-                )
-            )
-        ),
+        "schema": PLAN_SCHEMA,
         "binding": binding,
-        "checks": (
-            recipe_checks(profile["recipe"])
-            if initial_profile_qualification and profile is not None
-            else approved_checks()
-        ),
+        "checks": approved_checks(),
         "qualified_by": qualified_by,
         "qualification_sha256": qualification_sha256,
         "python_sha256": sha((PREFIX / "bin/python").read_bytes()),
+        "toolchain_sha256": toolchain_fingerprint(),
         "runtime_sha256": runtime_fingerprint(),
-        "host": socket.gethostname().split(".")[0].lower(),
         "policy_sha256": execution_policy_fingerprint(policy, execution_host),
+        "host": execution_host,
     }
-    if remote_requalification:
-        value["authority_host"] = policy["authority_host"]
-        value["remote_requalification"] = True
-    if initial_profile_qualification:
-        value["initial_profile_qualification"] = True
-        if acceptance_requalification and predecessor_sha256 is not None:
-            value["acceptance_requalification"] = True
-    if remote_initial:
-        value["authority_host"] = policy["authority_host"]
-        value["remote_initial_profile_qualification"] = True
-    value["host"] = execution_host
-    if predecessor_sha256 is not None:
-        value["predecessor_sha256"] = predecessor_sha256
     if profile is not None:
-        from .production_test_profile import (
-            fingerprint_only_stale,
-            legacy_full_qualification_required,
-            read_profile,
-            recipe_checks,
-            validate_profile,
-        )
-
-        expected_profile = {
-            "card": binding["source_card"],
-            "criteria_sha256": binding["criteria_sha256"],
-        }
-        if requalification:
-            current, current_sha = read_profile(home, binding["source_card"], pinned=profile)
-            stale = fingerprint_only_stale(
-                current,
-                {**expected_profile, "repository": current["repository"]},
-                policy,
-                source_sha256=(
-                    source_fingerprint(
-                        current["repository"], binding["source_head"], binding["source_tree"]
-                    )
-                    if "source_sha256" in current
-                    else None
-                ),
-                home=home,
-            ) or legacy_full_qualification_required(
-                current, {**expected_profile, "repository": current["repository"]}, policy
-            )
-            if (
-                profile_predecessor_sha256 != current_sha
-                or qualified_by != current["qualified_by"]
-                or qualification_sha256 != current["qualification_sha256"]
-                or not stale
-            ):
-                raise TestEvidenceError("profile is not eligible for native requalification")
-            value["profile_requalification"] = True
-            value["profile_predecessor_sha256"] = current_sha
-            requested_source = source_fingerprint(
-                current["repository"], binding["source_head"], binding["source_tree"]
-            )
-            if current.get("source_sha256") not in (None, requested_source):
-                from .production_test_profile import source_return_profile
-
-                history = source_return_profile(home, current, requested_source)
-                if history is None:
-                    raise TestEvidenceError("historical source profile is unproven")
-                value["source_profile_sha256"] = history[1]
-            # fingerprint_only_stale grants a profile still bound to the
-            # pre-qualify-env ~/.skenv toolchain one migration requal. Seal the
-            # legacy fingerprint it accepted so the executor, whose own legacy
-            # ~/.skenv differs, can admit exactly that value and no other.
-            if current.get("toolchain_sha256") not in (None, toolchain_fingerprint()):
-                value["legacy_toolchain_sha256"] = current["toolchain_sha256"]
-            if "node_environment" in current:
-                from . import production_test_node as node
-
-                refreshed = node.current_environment(current["node_environment"])
-                if refreshed != current["node_environment"]:
-                    value["node_environment_refresh"] = refreshed
-        else:
-            expected = dict(expected_profile)
-            if "source_sha256" in profile:
-                expected["source_sha256"] = source_fingerprint(
-                    profile["repository"],
-                    binding["source_head"],
-                    binding["source_tree"],
-                )
-            try:
-                validate_profile(profile, expected, policy)
-            except TestEvidenceError:
-                # Only acceptance asks for this, after acceptance_requalifiable():
-                # its trusted run at this candidate is the requalification.
-                from .production_test_profile import acceptance_requalifiable
-
-                if not (
-                    acceptance_requalification
-                    and acceptance_requalifiable(
-                        profile,
-                        {**expected_profile, "repository": profile.get("repository")},
-                        policy,
-                    )
-                ):
-                    raise
-                value["acceptance_requalification"] = True
-        value["profile"] = profile
-        value["checks"] = recipe_checks(profile["recipe"])
-
+        from .production_pytest_recipe import recipe_checks
         from .production_test_composite import validate_source
 
-        validate_source(effective_profile(value), workspace)
-    if (
-        not qualified_by
-        or not re.fullmatch(r"[0-9a-f]{64}", qualification_sha256)
-        or value["host"] != execution_host
-        or (
-            execution_host != policy["authority_host"]
-            and not (remote_requalification or remote_initial)
-        )
-    ):
-        raise TestEvidenceError("operator qualification is incomplete")
-    if predecessor_sha256 is not None and all(
-        previous[key] == value[key]
-        for key in ("qualification_sha256", "python_sha256", "runtime_sha256", "policy_sha256")
-    ):
-        raise TestEvidenceError("test plan successor lacks fresh qualification")
+        _validate_declared(profile, binding)
+        value["profile"] = profile
+        value["checks"] = recipe_checks(profile["recipe"])
+        validate_source(profile, workspace)
+    path = _plan_base(home, binding)
     write_once(path, value)
     return path
 
 
 def load_plan(
-    home: Path,
-    binding: dict,
-    *,
-    require_current: bool = True,
-    allow_completed: bool = False,
-    allow_remote_host: bool = False,
+    home: Path, binding: dict, *, allow_remote_host: bool = False
 ) -> tuple[dict, Path, str]:
-    """Read an append-only plan chain and bind its latest approved environment."""
+    """Read the one run record of this exact candidate and validate it against the binding."""
     check_binding(binding)
-    base = _plan_base(home, binding)
-    initial = _initial_plan_base(home, binding)
-    if initial.exists():
-        base = initial
-    elif not base.exists():
-        legacy = _legacy_plan_base(home, binding)
-        if legacy.exists():
-            try:
-                prior = read_json(legacy)
-            except (OSError, ValueError):
-                prior = None
-            if isinstance(prior, dict) and prior.get("binding") == binding:
-                base = legacy
-    path = base
+    path = _plan_base(home, binding)
     raw = read_private(path)
-    seen = set()
-    for generation in range(128):
-        fingerprint = sha(raw)
-        if fingerprint in seen:
-            raise TestEvidenceError("test plan chain repeats")
-        seen.add(fingerprint)
-        plan = json.loads(raw, object_pairs_hook=_unique_object)
-        next_path = base.with_name(base.stem + "." + fingerprint + ".json")
-        try:
-            next_raw = read_private(next_path)
-        except FileNotFoundError:
-            next_raw = None
-        _validate_plan(
-            home,
-            binding,
-            plan,
-            successor=generation > 0,
-            allow_remote_host=allow_remote_host,
-            allow_legacy_recipe=not require_current or next_raw is not None,
-        )
-        if next_raw is None:
-            extras = list(base.parent.glob(base.stem + ".*.json"))
-            if len(extras) != generation:
-                raise TestEvidenceError("test plan chain is disconnected") from None
-            if require_current:
-                try:
-                    _validate_current_plan(plan)
-                except TestEvidenceError:
-                    run = run_directory(home, fingerprint)
-                    if not allow_completed or not all(
-                        (run / name).exists()
-                        for name in ("launch.json", "receipt.json", "terminal.json")
-                    ):
-                        raise
-            return plan, path, fingerprint
-        next_plan = json.loads(next_raw, object_pairs_hook=_unique_object)
-        if not isinstance(next_plan, dict) or next_plan.get("predecessor_sha256") != fingerprint:
-            raise TestEvidenceError("test plan predecessor changed")
-        if (run_directory(home, fingerprint) / "launch.json").exists() and not (
-            next_plan.get("acceptance_requalification") is True
-            and _completed_test_attempt(home, fingerprint)
-        ):
-            raise TestEvidenceError("prior test plan already launched")
-        path, raw = next_path, next_raw
-    raise TestEvidenceError("test plan chain exceeds generation bound")
+    plan = json.loads(raw, object_pairs_hook=_unique_object)
+    _validate_plan(plan, binding, allow_remote_host=allow_remote_host)
+    return plan, path, sha(raw)
 
 
-def _validate_plan(
-    home: Path,
-    binding: dict,
-    plan: dict,
-    *,
-    successor: bool,
-    allow_remote_host: bool = False,
-    allow_legacy_recipe: bool = False,
-) -> None:
-    if not isinstance(plan, dict):
-        raise TestEvidenceError("operator test plan is invalid or stale")
+def _validate_declared(profile: dict, binding: dict) -> None:
+    """Check a declared recipe record is exactly this card's contract and a known variant."""
+    from . import production_test_composite as composite
+    from . import production_test_node as node
+    from .production_pytest_recipe import recipe_checks
+
+    variant = isinstance(profile, dict) and (
+        node.is_node(profile) or composite.is_composite(profile)
+    )
+    if (
+        not isinstance(profile, dict)
+        or set(profile)
+        != {"schema", "card", "repository", "criteria_sha256", "recipe"}
+        | ({"node_environment"} if variant else set())
+        or profile["schema"] not in {PYTHON_RECIPE_SCHEMA, node.SCHEMA, composite.SCHEMA}
+        or profile["card"] != binding["source_card"]
+        or profile["criteria_sha256"] != binding["criteria_sha256"]
+        or not isinstance(profile["repository"], str)
+        or not isinstance(profile["recipe"], dict)
+    ):
+        raise TestEvidenceError("declared test recipe does not match the card")
+    recipe_checks(profile["recipe"])
+    if bool({"vitest", "node_test"} & profile["recipe"].keys()) != variant:
+        raise TestEvidenceError("test recipe and recipe variant disagree")
+    if ("vitest" in profile["recipe"] and len(profile["recipe"]) > 1) != composite.is_composite(
+        profile
+    ):
+        raise TestEvidenceError("test phases and recipe variant disagree")
+
+
+def _validate_plan(plan: dict, binding: dict, *, allow_remote_host: bool = False) -> None:
+    """Fail closed unless the record is exactly the declared checks of this binding."""
     required = {
         "schema",
         "binding",
@@ -921,239 +457,43 @@ def _validate_plan(
         "qualified_by",
         "qualification_sha256",
         "python_sha256",
+        "toolchain_sha256",
         "runtime_sha256",
-        "host",
         "policy_sha256",
+        "host",
     }
-    if successor:
-        required.add("predecessor_sha256")
-    requalification = plan.get("profile_requalification") is True
-    remote_requalification = plan.get("remote_requalification") is True
-    initial_qualification = plan.get("initial_profile_qualification") is True
-    remote_initial = plan.get("remote_initial_profile_qualification") is True
-    if remote_requalification:
-        authority = plan.get("authority_host")
-        if (
-            not requalification
-            or not isinstance(authority, str)
-            or not authority
-            or authority == plan.get("host")
-            or plan.get("schema") != "skfleet.native-test-plan/v5"
-        ):
-            raise TestEvidenceError("remote test plan authority is invalid")
-    elif not remote_initial and ("authority_host" in plan or "remote_requalification" in plan):
-        raise TestEvidenceError("operator test plan is invalid or stale")
-    if initial_qualification:
-        required.add("initial_profile_qualification")
-    if remote_initial:
-        authority = plan.get("authority_host")
-        if (
-            not initial_qualification
-            or not isinstance(authority, str)
-            or not authority
-            or authority == plan.get("host")
-            or plan.get("schema") != "skfleet.native-test-plan/v6"
-        ):
-            raise TestEvidenceError("remote initial qualification authority is invalid")
-        required.update({"authority_host", "remote_initial_profile_qualification"})
-    if "node_environment_refresh" in plan:
-        if not requalification:
-            raise TestEvidenceError("operator test plan is invalid or stale")
-        required.add("node_environment_refresh")
-    if "source_profile_sha256" in plan:
-        if not requalification or not re.fullmatch(
-            r"[0-9a-f]{64}", str(plan["source_profile_sha256"])
-        ):
-            raise TestEvidenceError("historical source profile is invalid")
-        required.add("source_profile_sha256")
-    if requalification:
-        required.update({"profile_requalification", "profile_predecessor_sha256"})
-        if "legacy_toolchain_sha256" in plan:
-            if not re.fullmatch(r"[0-9a-f]{64}", str(plan["legacy_toolchain_sha256"])):
-                raise TestEvidenceError("operator test plan is invalid or stale")
-            required.add("legacy_toolchain_sha256")
-    if remote_requalification:
-        required.update({"authority_host", "remote_requalification"})
-    elif not requalification and "profile_predecessor_sha256" in plan:
+    if not isinstance(plan, dict):
         raise TestEvidenceError("operator test plan is invalid or stale")
     expected_checks = approved_checks()
     if "profile" in plan:
-        from .production_test_profile import read_profile, recipe_checks
+        from . import production_test_composite as composite
+        from . import production_test_node as node
+        from .production_pytest_recipe import recipe_checks
 
         required.add("profile")
-        if plan.get("acceptance_requalification") is True:
-            if requalification or (initial_qualification and (not successor or remote_initial)):
-                raise TestEvidenceError("operator test plan is invalid or stale")
-            required.add("acceptance_requalification")
-        profile = plan["profile"]
-        if initial_qualification:
-            from .production_test_profile import _validate_shape
-
-            expected_profile = {
-                "card": binding["source_card"],
-                "criteria_sha256": binding["criteria_sha256"],
-            }
-            _validate_shape(profile)
-            if (
-                any(profile.get(key) != value for key, value in expected_profile.items())
-                or profile.get("host") != plan.get("authority_host", plan.get("host"))
-                or profile.get("python_sha256") != plan.get("python_sha256")
-                or profile.get("runtime_sha256") != plan.get("runtime_sha256")
-                or profile.get("source_sha256")
-                != source_fingerprint(
-                    profile.get("repository", ""),
-                    binding["source_head"],
-                    binding["source_tree"],
-                )
-            ):
-                raise TestEvidenceError("initial candidate test profile source changed")
-            if (
-                profile.get("qualified_by") != plan.get("qualified_by")
-                or profile.get("qualification_sha256") != plan.get("qualification_sha256")
-                or profile.get("python_sha256") != plan.get("python_sha256")
-                or profile.get("runtime_sha256") != plan.get("runtime_sha256")
-            ):
-                raise TestEvidenceError("initial candidate test profile authority changed")
-        else:
-            profile, profile_sha = read_profile(
-                home, binding["source_card"], pinned=plan["profile"]
-            )
-        if requalification:
-            source_return = False
-            if "source_profile_sha256" in plan:
-                from .production_test_profile import source_return_profile
-
-                requested_source = source_fingerprint(
-                    profile["repository"], binding["source_head"], binding["source_tree"]
-                )
-                history = source_return_profile(home, profile, requested_source)
-                if (
-                    history is None
-                    or history[1] != plan["source_profile_sha256"]
-                    or profile.get("source_sha256") == requested_source
-                ):
-                    raise TestEvidenceError("historical source profile differs")
-                source_return = True
-            if (
-                profile != plan["profile"]
-                or profile_sha != plan["profile_predecessor_sha256"]
-                or profile.get("card") != binding["source_card"]
-                or profile.get("criteria_sha256") != binding["criteria_sha256"]
-                or profile.get("host") != plan.get("authority_host", plan.get("host"))
-                or profile.get("python_sha256") != plan.get("python_sha256")
-                or (
-                    "toolchain_sha256" in profile
-                    and profile.get("toolchain_sha256")
-                    not in {toolchain_fingerprint(), plan.get("legacy_toolchain_sha256")}
-                )
-                or (
-                    not source_return
-                    and "source_sha256" in profile
-                    and profile["source_sha256"]
-                    != source_fingerprint(
-                        profile.get("repository", ""),
-                        binding["source_head"],
-                        binding["source_tree"],
-                    )
-                )
-                or (
-                    not source_return
-                    and profile.get("runtime_sha256") == plan.get("runtime_sha256")
-                    and profile.get("policy_sha256") == plan.get("policy_sha256")
-                    and not str(profile.get("schema", "")).endswith("/v1")
-                    and "legacy_toolchain_sha256" not in plan
-                )
-            ):
-                raise TestEvidenceError("candidate test profile changed")
-        elif not initial_qualification and (
-            profile != plan["profile"]
-            or profile.get("card") != binding["source_card"]
-            or profile.get("criteria_sha256") != binding["criteria_sha256"]
-            or any(
-                profile.get(k) != plan.get(k)
-                for k in ("qualified_by", "qualification_sha256", "host")
-            )
-            # An acceptance requalification seals a profile whose fingerprints
-            # differ by design; its trusted run at this candidate refreshes them.
-            or (
-                plan.get("acceptance_requalification") is not True
-                and (
-                    any(
-                        profile.get(k) != plan.get(k)
-                        for k in ("python_sha256", "runtime_sha256", "policy_sha256")
-                    )
-                    or (
-                        "source_sha256" in profile
-                        and profile["source_sha256"]
-                        != source_fingerprint(
-                            profile.get("repository", ""),
-                            binding["source_head"],
-                            binding["source_tree"],
-                        )
-                    )
-                )
-            )
-        ):
-            raise TestEvidenceError("candidate test profile changed")
-        expected_checks = recipe_checks(profile["recipe"])
-
-        validate_plan_node_environment(plan, profile)
-    checks_match = plan["checks"] == expected_checks
-    if allow_legacy_recipe and not checks_match and "profile" in plan:
-        from .production_pytest_recipe import legacy_collection_recipe_candidates
-
-        checks_match = any(
-            plan["checks"] == candidate
-            for candidate in legacy_collection_recipe_candidates(plan["profile"]["recipe"])
-        )
+        _validate_declared(plan["profile"], binding)
+        expected_checks = recipe_checks(plan["profile"]["recipe"])
+        if node.is_node(plan["profile"]) or composite.is_composite(plan["profile"]):
+            node.validate_environment(plan["profile"]["node_environment"])
     if (
         set(plan) != required
-        or plan["schema"]
-        != (
-            "skfleet.native-test-plan/v6"
-            if remote_initial
-            else (
-                "skfleet.native-test-plan/v5"
-                if remote_requalification
-                else (
-                    "skfleet.native-test-plan/v4"
-                    if successor and requalification
-                    else (
-                        "skfleet.native-test-plan/v3"
-                        if requalification
-                        else (
-                            "skfleet.native-test-plan/v2"
-                            if successor
-                            else "skfleet.native-test-plan/v1"
-                        )
-                    )
-                )
-            )
-        )
+        or plan["schema"] != PLAN_SCHEMA
         or plan["binding"] != binding
-        or not checks_match
+        or plan["checks"] != expected_checks
         or not isinstance(plan["qualified_by"], str)
         or not plan["qualified_by"]
         or any(
             not re.fullmatch(r"[0-9a-f]{64}", str(plan[k]))
-            for k in ("qualification_sha256", "python_sha256", "runtime_sha256", "policy_sha256")
+            for k in (
+                "qualification_sha256",
+                "python_sha256",
+                "toolchain_sha256",
+                "runtime_sha256",
+                "policy_sha256",
+            )
         )
-        or not isinstance(plan.get("host"), str)
+        or not isinstance(plan["host"], str)
         or (plan["host"] != socket.gethostname().split(".")[0].lower() and not allow_remote_host)
-        or (
-            allow_remote_host
-            and plan["host"] != socket.gethostname().split(".")[0].lower()
-            and not (remote_requalification or remote_initial)
-        )
-        or ((remote_requalification or remote_initial) and plan["host"] == plan["authority_host"])
-    ):
-        raise TestEvidenceError("operator test plan is invalid or stale")
-
-
-def _validate_current_plan(plan: dict) -> None:
-    if (
-        plan["python_sha256"] != sha((PREFIX / "bin/python").read_bytes())
-        or plan["runtime_sha256"] != runtime_fingerprint()
     ):
         raise TestEvidenceError("operator test plan is invalid or stale")
 
@@ -1239,27 +579,6 @@ def source_state(workspace: Path, binding: dict) -> dict:
 def run_directory(home: Path, plan_sha: str) -> Path:
     """Return the single immutable attempt directory for the exact plan bytes."""
     return home / "fleet/test-runs" / plan_sha
-
-
-def _completed_test_attempt(home: Path, plan_sha: str) -> bool:
-    """Recognize a terminal native run before appending an acceptance successor."""
-    directory = run_directory(home, plan_sha)
-    try:
-        launch = read_json(directory / "launch.json")
-        terminal = read_json(directory / "terminal.json")
-    except (OSError, ValueError, TestEvidenceError):
-        return False
-    state = (terminal.get("ActiveState"), terminal.get("SubState"))
-    return (
-        launch.get("request_id") == plan_sha
-        and isinstance(launch.get("unit"), str)
-        and terminal.get("unit") == launch["unit"]
-        and re.fullmatch(r"[0-9a-f]{32}", str(terminal.get("InvocationID", ""))) is not None
-        and terminal.get("LoadState") == "loaded"
-        and state in {("active", "exited"), ("failed", "failed")}
-        and re.fullmatch(r"[1-9][0-9]*", str(terminal.get("ExecMainPID", ""))) is not None
-        and re.fullmatch(r"-?[0-9]+", str(terminal.get("ExecMainStatus", ""))) is not None
-    )
 
 
 def junit_counts(

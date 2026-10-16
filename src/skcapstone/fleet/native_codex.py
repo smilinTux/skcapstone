@@ -14,7 +14,7 @@ import subprocess
 from pathlib import Path
 
 from . import production_admission as admission
-from . import production_test_profile as profile
+from . import test_recipe
 from .production_policy import require_destination
 
 GUARD = """import os,pathlib,sys
@@ -184,7 +184,7 @@ def sandbox_command(
 
 
 def require_native_unit(home: Path, policy: dict, unit: str, binding: dict) -> dict:
-    """Prove this exact process owns a consumed native admission and test profile."""
+    """Prove this exact process owns a consumed native admission."""
     marker = os.environ.get(admission.MARKER, "")
     invocation = os.environ.get("INVOCATION_ID", "")
     if not re.fullmatch(r"[0-9a-f]{64}", marker) or not re.fullmatch(r"[0-9a-f]{32}", invocation):
@@ -231,13 +231,12 @@ def require_native_unit(home: Path, policy: dict, unit: str, binding: dict) -> d
         }:
             raise ValueError("Codex operator route is restricted to authorized public source work")
         _path(Path(home) / "agents" / binding["owner"], directory=True, private=True)
-        profile.preflight(home, core, labels, policy)
         return core
 
 
 def require_source(workspace: Path, core: dict) -> None:
     """Retain the exact registered repository and source ancestor, including partial work."""
-    expected = profile.contract(core)
+    expected = test_recipe.contract(core)
     bases = {
         section.get("base_revision")
         for section in (core["meta"], core["links"])
