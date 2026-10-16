@@ -37,6 +37,7 @@ from skcoord.card_store import CardStore
 
 from . import builder_dispatch as dispatch
 from . import production_builder, source_bundle
+from .evidence_io import native_outcome_current
 from .production_review_custody import unit_terminal
 from .production_review_evidence import ReviewEvidenceError
 
@@ -79,34 +80,6 @@ def _ack_file(paths, node: str, card: str, claim: str, attempt: int) -> Path:
 
 def _raw(path: Path) -> bytes:
     return source_bundle._read(path, source_bundle.MAX_EVIDENCE)
-
-
-def native_outcome_current(store, row) -> dict | None:
-    """Return the holder's native outcome for the CURRENT claim generation, if any.
-
-    Same binding as evidence_io._current_outcome, but answering instead
-    of raising: no outcome, a foreign writer, a mismatched claim fence or an
-    outcome older than the current claim all mean "no native verdict".
-    """
-    from ..seraph_review_cardstore import _latest_outcome
-
-    claim = row.meta.get("_claim_revision")
-    claims = [
-        event
-        for event in store._read_events(row.id)
-        if event.get("action") == "claim"
-        and (event.get("claim_revision") or event.get("event_id")) == claim
-    ]
-    outcome = _latest_outcome(store, row.id)
-    if (
-        len(claims) != 1
-        or not outcome
-        or outcome.get("writer") != row.owner
-        or outcome.get("expected_claim_revision") not in (None, claim)
-        or str(outcome.get("ts", "")) < str(claims[0].get("ts", ""))
-    ):
-        return None
-    return outcome
 
 
 def _launch(store, card: str, owner: str, claim: str, request_id: str) -> dict | None:

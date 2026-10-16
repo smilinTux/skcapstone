@@ -387,3 +387,31 @@ def _sealed_review_policy(home, launch, card, event, current_policy):
     if not isinstance(recorded, str) or recorded != digest(current_policy):
         raise ReviewEvidenceError("sealed review policy provenance unavailable")
     return current_policy
+
+
+def native_outcome_current(store, row) -> dict | None:
+    """Return the holder's native outcome for the CURRENT claim generation, if any.
+
+    Same binding as evidence_io._current_outcome, but answering instead
+    of raising: no outcome, a foreign writer, a mismatched claim fence or an
+    outcome older than the current claim all mean "no native verdict".
+    """
+    from ..seraph_review_cardstore import _latest_outcome
+
+    claim = row.meta.get("_claim_revision")
+    claims = [
+        event
+        for event in store._read_events(row.id)
+        if event.get("action") == "claim"
+        and (event.get("claim_revision") or event.get("event_id")) == claim
+    ]
+    outcome = _latest_outcome(store, row.id)
+    if (
+        len(claims) != 1
+        or not outcome
+        or outcome.get("writer") != row.owner
+        or outcome.get("expected_claim_revision") not in (None, claim)
+        or str(outcome.get("ts", "")) < str(claims[0].get("ts", ""))
+    ):
+        return None
+    return outcome
