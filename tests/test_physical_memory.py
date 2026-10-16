@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from skcapstone.fleet import capacity, physical_memory, workspace_runtime
+from skcapstone.fleet import capacity, physical_memory
 
 MEM = (
     "MemTotal: 16000000 kB\nMemAvailable: 12000000 kB\n"
@@ -74,23 +74,6 @@ def test_timeout_propagates_and_native_linux_never_probes():
     assert (
         physical_memory.constrain_meminfo(MEM, kernel_release="6.8-generic", runner=timeout) == MEM
     )
-
-
-def test_workspace_live_reader_uses_clamp(monkeypatch):
-    """The actual admission reader invokes the shared host guard."""
-    monkeypatch.setattr(physical_memory, "constrain_meminfo", lambda text: "clamped")
-    assert workspace_runtime.read_meminfo() == "clamped"
-
-
-def test_workspace_probe_failure_becomes_admission_failure(monkeypatch):
-    """Interop failure is a native workspace error, never a fallback."""
-
-    def fail(text):
-        raise ValueError("host unavailable")
-
-    monkeypatch.setattr(physical_memory, "constrain_meminfo", fail)
-    with pytest.raises(workspace_runtime.WorkspaceRuntimeError):
-        workspace_runtime.read_meminfo()
 
 
 def test_advertisement_is_zero_without_required_evidence(monkeypatch):

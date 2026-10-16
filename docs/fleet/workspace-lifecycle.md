@@ -94,9 +94,6 @@ oversight: agents must never delete their own workspace (see the worker
 prompt in `scripts/fleet/skfleet-rotate.py`'s `_worker_done_instructions`,
 item 8), and no separate authorized cleanup pass exists yet in this
 codebase to make that call on a worker's behalf.
-`src/skcapstone/fleet/workspace_runtime.py`'s `retire_workspace` (a
-different, older concern: workspace materialization and admission, not
-custody) has the same gap today, with zero production callers of its own.
 Building that pass is out of this task's scope.
 `# intentionally-unwired: workspace deletion execution. Reason: no
 authorized cleanup pass exists yet; building one is future work, tracked
