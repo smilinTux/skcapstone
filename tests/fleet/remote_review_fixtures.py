@@ -16,10 +16,24 @@ from tests.fleet.test_source_bundle import source, publish  # noqa: F401
 from tests.fleet.test_production_receipts import snapshot
 
 
+def current_review_attempt(home, source_card, head):
+    """Canonical review card id: one attempt per commit, generation and evidence."""
+    from skcoord.card_store import CardStore
+
+    from skcapstone.review_work_identity import card_generation, review_card_id
+    from skcapstone.seraph_review_cardstore import _latest_outcome
+
+    store = CardStore(home)
+    outcome = _latest_outcome(store, source_card)
+    assert outcome["candidate_commit"] == head
+    return review_card_id(
+        source_card, head, card_generation(store.fold(source_card)), outcome["candidate_sha256"]
+    )
+
+
 @pytest.fixture
 def execution(source, remote_policy, monkeypatch):
     from skcapstone.fleet.node_controller import NodeView
-    from skcapstone.review_replacement import current_review_attempt
     from skcapstone.seraph_review_cardstore import LiveCardStoreGateway
     from skcapstone.fleet.evidence_io import once
 

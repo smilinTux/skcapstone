@@ -174,16 +174,6 @@ def _revision_drift_is_supplemental(home, review, source, pinned_revision, curre
     )
 
 
-def _offer_policy_current(request, policy) -> bool:
-    """Offer policy still valid: execution-relevant fields and own lane unchanged."""
-    from . import production_policy
-
-    bound = request.get("production") or {}
-    return production_policy.offer_policy_compatible(
-        request.get("policy"), policy, bound.get("family"), bound.get("host")
-    )
-
-
 def validate_contract(request, policy, *, host, historical=False):
     """Reject ambiguous role, placement, generation or independence bindings."""
     validate_execution_policy(policy)
@@ -209,7 +199,6 @@ def validate_contract(request, policy, *, host, historical=False):
         or bound["authority"] != policy["authority_host"]
         or admitted["authority_host"] != policy["authority_host"]
         or bound["policy_sha256"] != production.digest(admitted)
-        or (not historical and not _offer_policy_current(request, policy))
         or bound["resources"] != require_destination(admitted, host)
         or not rollout["enabled"]
         or host not in rollout["destinations"]
@@ -262,19 +251,7 @@ def _source(home, card, *, historical=False):
     ):
         raise ValueError("original source custody unavailable")
     manifest, _ = selected
-    released = source.owner is None
-    if released:
-        from .released_source import current_attempt, prove, revision_matches
-
-        release = prove(home, source, manifest)
-        # Historical acceptance is bound to the sealed source bundle and its
-        # exact producer outcome above. Later live-card links must not revoke
-        # a review that already ran against those immutable bytes.
-        if not historical and not revision_matches(
-            home, source, release, _binding(core, "source_revision")
-        ):
-            raise ValueError("review source generation changed")
-    if historical or released:
+    if historical:
         owner, claim = manifest.get("owner"), manifest.get("claim_revision")
         if not isinstance(owner, str) or not isinstance(claim, str):
             raise ValueError("sealed producer generation unavailable")
@@ -296,7 +273,6 @@ def _source(home, card, *, historical=False):
         or _binding(core, "producer_identity") != owner
         or (
             not historical
-            and not released
             and not _revision_drift_is_supplemental(
                 home, card, source, _binding(core, "source_revision"), revision
             )
@@ -305,14 +281,15 @@ def _source(home, card, *, historical=False):
     ):
         raise ValueError("review source generation changed")
     if not historical:
-        from ..review_replacement import current_review_attempt
+        from ..review_work_identity import card_generation, review_card_id
 
-        selected_attempt = (
-            current_attempt(home, source, release, manifest)
-            if released
-            else current_review_attempt(home, parent, head)
-        )
-        if selected_attempt != card.id:
+        # One review attempt per candidate commit: the identity is keyed by the
+        # exact head, producer generation and evidence, so a new commit gets a
+        # new review and an older attempt can never be the current one.
+        if (
+            review_card_id(parent, head, card_generation(source), outcome["candidate_sha256"])
+            != card.id
+        ):
             raise ValueError("review is not the current attempt")
     terminal = _producer_terminal(Path(home), source, manifest)
     producer_family(owner, terminal["family"])
@@ -494,13 +471,7 @@ def offer_review(paths, home, card_id, *, writer):
         # reassignment. An operator must resolve uncertain custody explicitly.
         existing = list((paths.root / "dispatch").glob("*/" + card_id + ".json"))
         events = CardStore(home)._read_events(card_id)
-        from .review_retire import retired_offers
-
-        retired = retired_offers(Path(home), card_id, events)
-        offered = any(
-            e.get("action") == "remote_review_offer" and e.get("request_id") not in retired
-            for e in events
-        )
+        offered = any(e.get("action") == "remote_review_offer" for e in events)
         if existing or offered or card_id in dispatch.held_card_ids(paths):
             return _defer(card_id, "offer or custody already exists")
         rollout = policy["remote_review"]
@@ -619,9 +590,7 @@ def validate_request(paths, home, node, request, *, claimed=False):
         # Capacity may defer an exact native offer past its lease without ever
         # launching it. Continue only that same generation under current
         # source/policy/activation checks; unknown custody still stays held.
-        if not _offer_policy_current(request, policy) or not _expired_unlaunched(
-            paths, home, node, request
-        ):
+        if not _expired_unlaunched(paths, home, node, request):
             raise
         validate_contract(request, policy, host=host, historical=True)
     if request["node"] != node or not _capable(paths, node):

@@ -681,7 +681,6 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option(
         "--expected-review-revision", help="Guarded source completion: exact review snapshot."
     )
-    @click.option("--released-source-binding", help="Acceptance-only captured source JSON.")
     @click.option("--casey-authorization", type=click.Path(path_type=Path))
     @click.option("--casey-change-id")
     def coord_complete(
@@ -694,7 +693,6 @@ def register_coord_commands(main: click.Group) -> None:
         expected_claim_revision,
         review_card,
         expected_review_revision,
-        released_source_binding,
     ):
         """Mark a task as completed."""
         validate_task_id(task_id)
@@ -742,8 +740,6 @@ def register_coord_commands(main: click.Group) -> None:
                 all(guards) or unclaimed_reviewed
             ):
                 raise ValueError("guarded review completion requires a source revision guard")
-            if released_source_binding is not None and not (all(guards) and all(review_guards)):
-                raise ValueError("released acceptance requires source, claim and review guards")
             if unclaimed_review_terminal:
                 from ..card_store import CardStore
                 from ..review_verdict import is_review_card
@@ -759,12 +755,6 @@ def register_coord_commands(main: click.Group) -> None:
                         home_path, task_id, expected_source_revision
                     )
                 )
-                if released_source_binding is not None:
-                    from ..guarded_released_source import released_revision_guard
-
-                    guard = released_revision_guard(
-                        home_path, agent, task_id, *guards, released_source_binding
-                    )
                 with ExitStack() as stack:
                     related = (
                         reviewed_source_guard(home_path, task_id, *review_guards, stack)
@@ -1968,7 +1958,6 @@ def register_coord_commands(main: click.Group) -> None:
     @click.argument("value")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", default=None, help="Writer name (defaults to host).")
-    @click.option("--released-source-binding", help="Acceptance-only captured source JSON.")
     @click.option("--expected-source-revision", help="Optional exact native card snapshot digest.")
     @click.option("--expected-claim-revision", help="Optional exact owned claim generation.")
     @click.option(
@@ -1993,7 +1982,6 @@ def register_coord_commands(main: click.Group) -> None:
         transition_id,
         as_json,
         value_from_stdin,
-        released_source_binding,
     ):
         """Attach a link (pr/commit/doc/...) to a card."""
         from ..jarvis_emergency import authorize_coord_mutation
@@ -2041,8 +2029,6 @@ def register_coord_commands(main: click.Group) -> None:
             guards = (expected_source_revision, expected_claim_revision, transition_id)
             if any(item is not None for item in guards) and not all(guards):
                 raise ValueError("guarded link requires both revisions and transition id")
-            if released_source_binding is not None and not all(guards):
-                raise ValueError("released acceptance requires all link guards")
             if as_json and not all(guards):
                 raise ValueError("guarded link JSON readback requires revision guards")
             from skcoord.card_store import CardStore as _LinkCardStore
@@ -2062,7 +2048,6 @@ def register_coord_commands(main: click.Group) -> None:
                     expected_source_revision=expected_source_revision,
                     expected_claim_revision=expected_claim_revision,
                     transition_id=transition_id,
-                    released_source_binding=released_source_binding,
                 )
             else:
                 CardEventLog(home_path).append(

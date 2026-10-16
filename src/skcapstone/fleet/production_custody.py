@@ -44,15 +44,6 @@ def reviewable_source_candidate(
             return refuse(site, card_id, "no production policy")
         if card is None:
             return refuse(site, card_id, "card not found")
-        released_revision = None
-        if card.owner is None:
-            from .released_source import direct_review_view
-
-            released_revision = (
-                LiveCardStoreGateway(home).read_card(card_id, _store=store).revision
-            )
-            store, _, _ = direct_review_view(home, card)
-            card = store.fold(card_id)
         if card.owner != producer:
             return refuse(site, card_id, "card owner differs from verdict producer")
         if card.meta.get("claim_conflicts"):
@@ -145,7 +136,7 @@ def reviewable_source_candidate(
             return True
         # Re-read with a new store so the check notices events appended while
         # the shared inspection snapshot was in use.
-        if gateway.read_card(card_id).revision != (released_revision or snapshot.revision):
+        if gateway.read_card(card_id).revision != snapshot.revision:
             return refuse(site, card_id, "card revision changed during inspection")
         return True
     except (

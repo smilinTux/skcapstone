@@ -259,13 +259,13 @@ def test_exact_expired_review_can_resume_only_before_launch(
         dispatch.validate_request(paths, tmp_path, request_record["node"], request_record)
 
 
-def test_historical_policy_widening_only_for_receipt_validation(
+def test_policy_widening_is_not_a_reason_to_refuse_an_offer(
     dispatch, request_record, remote_policy
 ):
+    """Digest equality with the current policy is no longer an acceptance condition."""
     newer = copy.deepcopy(remote_policy)
     newer["remote_review"]["destinations"].append("chiap04")
-    with pytest.raises(ValueError):
-        dispatch.validate_contract(request_record, newer, host="chiap03")
+    dispatch.validate_contract(request_record, newer, host="chiap03")
     dispatch.validate_contract(request_record, newer, host="chiap03", historical=True)
     newer["worker_destinations"].remove("chiap03")
     with pytest.raises(ValueError):

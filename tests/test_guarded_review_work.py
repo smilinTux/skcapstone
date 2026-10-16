@@ -274,6 +274,38 @@ def test_replaced_typed_generation_does_not_reuse_old_review(tmp_path):
     assert {cid: store._read_events(cid) for cid in store.list_card_ids()} == before
 
 
+def test_new_candidate_commit_gets_new_review_and_retired_attempt_never_blocks(tmp_path):
+    """Review attempts are keyed by commit; a retired one cannot block the next."""
+    store, card, owner, artifact, args = prepared(tmp_path)
+    first = _run(tmp_path, *args)
+    assert first.exit_code == 0, first.output
+    old_id = json.loads(first.output)["review_card_id"]
+    store.append_event(old_id, "archive", "operator")
+    new_commit = "f" * 40
+    assert new_commit != COMMIT
+    store.append_event(
+        card,
+        "verdict",
+        owner,
+        verdict="PASS_FOR_REREVIEW",
+        **candidate_evidence(artifact, new_commit, TREE, REF),
+    )
+    args[args.index("--expected-source-revision") + 1] = (
+        LiveCardStoreGateway(tmp_path).read_card(card).revision
+    )
+    second = _run(tmp_path, *args)
+    assert second.exit_code == 0, second.output
+    result = json.loads(second.output)
+    assert result["created"] is True and result["launchable"] is True
+    assert result["review_card_id"] != old_id
+    review = store.fold(result["review_card_id"])
+    assert review.meta["link_head_revision"] == new_commit
+    assert review.owner is None and review.status.value == "review"
+    assert store.fold(old_id).archived
+    gateway = LiveCardStoreGateway(tmp_path)
+    assert gateway.read_card(result["review_card_id"]).unresolved_review is False
+
+
 def test_concurrent_open_is_one_review(tmp_path):
     from skcapstone.guarded_review_work import open_guarded_review
 

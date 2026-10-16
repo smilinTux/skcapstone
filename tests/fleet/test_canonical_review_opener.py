@@ -67,7 +67,7 @@ def test_canonical_creation_survives_void_legacy_and_materializes_exact_source(
     canonical_opener, tmp_path, monkeypatch
 ):
     from skcapstone.fleet.source_bundle import import_review_source
-    from skcapstone.review_replacement import current_review_attempt
+    from tests.fleet.remote_review_fixtures import current_review_attempt
 
     board, value = canonical_opener
     before = value["store"]._read_events(value["card"])
@@ -127,7 +127,7 @@ def test_selection_fails_closed(canonical_opener, monkeypatch, fault):
     elif fault == "held":
         value["store"].append_event(value["card"], "add_label", "operator", label="hold")
     else:
-        monkeypatch.setitem(sys.modules, "skcapstone.review_replacement", None)
+        monkeypatch.setitem(sys.modules, "skcapstone.link_review_work", None)
     assert board.open(1) == 0
     assert board.calls == []
 
@@ -173,7 +173,7 @@ def test_native_write_or_readback_drift_blocks_admission(canonical_opener, fault
 
 @pytest.mark.parametrize("source", ["https"], indirect=True)
 def test_dry_run_uses_canonical_identity_without_writes(canonical_opener):
-    from skcapstone.review_replacement import current_review_attempt
+    from tests.fleet.remote_review_fixtures import current_review_attempt
 
     board, value = canonical_opener
     before = value["store"].list_card_ids()

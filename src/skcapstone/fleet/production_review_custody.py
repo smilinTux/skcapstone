@@ -45,7 +45,7 @@ def retain_review_exit(home, args, card, *, terminal_proven):
         # native outcome for this exact claim proves it; otherwise fail loudly.
         from skcoord.card_store import CardStore
 
-        from .review_handoff_recovery import native_outcome_current
+        from .evidence_io import native_outcome_current
 
         live = CardStore(home).fold(args.card)
         handoff_ok = live is not None and native_outcome_current(CardStore(home), live) is not None

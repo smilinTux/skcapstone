@@ -22,6 +22,6 @@ def test_unsealed_released_producer_cannot_open_review(tmp_path):
     before = store._read_events(card)
     result = _run(tmp_path, *args)
     assert result.exit_code != 0
-    assert "released custody unavailable" in result.output
+    assert "guarded review source or claim changed" in result.output
     assert store._read_events(card) == before
     assert store.list_card_ids() == [card]
