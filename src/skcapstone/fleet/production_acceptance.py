@@ -7,7 +7,6 @@ import os
 import re
 import shutil
 import socket
-import stat
 import subprocess
 from pathlib import Path
 
@@ -20,23 +19,28 @@ from .production_receipts import production_receipt_allowed
 from .production_review import producer_family, review_family_allowed
 from .production_review_custody import read_exit, unit_terminal
 from .production_review_evidence import ReviewEvidenceError, inspect_proposal
-from .production_review_finish import artifacts, finish_pair, native_state, once, read_json
+from .evidence_io import (
+    _current_outcome,
+    _direct_seat_terminal,  # noqa: F401 (re-export for historical callers)
+    _producer_terminal,
+    _sealed_review_policy,
+    artifacts,
+    deferred_direct_terminal,  # noqa: F401
+    digest,
+    native_state,
+    once,
+    read_json,
+    review_directory,
+)
+from .production_review_finish import finish_pair
 from .source_bundle import (
-    MAX_EVIDENCE,
     _binding,
     _once,
-    _read,
     _review_manifest,
     _root,
-    _sha,
     import_review_source,
 )
 from .source_custody import sealed_source_outcome as _sealed_source_outcome
-
-
-def digest(value):
-    """Use one canonical digest for immutable controller context."""
-    return _sha(json.dumps(value, sort_keys=True, separators=(",", ":")).encode())
 
 
 def _seal_current_acceptance_plan(home, binding, workspace, policy, repository):
@@ -142,13 +146,6 @@ def _requalify_finished_acceptance(home, directory, context, policy):
     else:
         once(path, recovery)
     return True
-
-
-def review_directory(home, card, claim):
-    """Restrict acceptance state to an exact native review claim."""
-    if not re.fullmatch(r"[0-9a-f]{8}", card) or not re.fullmatch(r"[0-9a-f]{32}", claim):
-        raise ReviewEvidenceError("acceptance identity invalid")
-    return Path(home) / "evidence/production-acceptance" / (card + "-" + claim)
 
 
 def _review_evidence_matches(row, expected):
@@ -342,217 +339,6 @@ def acceptance_review_revision(home, directory, context):
     return state["revision"]
 
 
-def _producer_terminal(home, source, manifest):
-    """Read native sknoded terminal custody for this exact producer generation."""
-    producer_owner = manifest.get("owner")
-    producer_claim = manifest.get("claim_revision")
-    if not isinstance(producer_owner, str) or not isinstance(producer_claim, str):
-        raise ReviewEvidenceError("sealed producer generation is incomplete")
-    matches = []
-    for path in (home / "fleet/status").glob("*/dispatch/" + source.id + ".json"):
-        status = read_json(path)
-        if status.get("owner") != producer_owner or status.get("claim_revision") != producer_claim:
-            continue
-        if status.get("state") == "blocked" and status.get("claim_released") is True:
-            from .released_source import terminal
-
-            matches.append(terminal(home, source, manifest, status, path))
-            continue
-        artifact = status.get("source_artifact") or {}
-        if (
-            status.get("schema") != "skfleet.builder-dispatch-status/v1"
-            or status.get("node") != path.parent.parent.name
-            or status.get("card_id") != source.id
-            or status.get("state") != "awaiting-review"
-            or not (
-                type(status.get("exit_code")) is int
-                and status["exit_code"] == 0
-                or status.get("exit_code") is None
-                and status.get("terminal_proof") == "qualified-terminal"
-            )
-            or status.get("claim_released") is not False
-            or (status.get("writer") or {}).get("role") != "sknoded"
-            or (status.get("writer") or {}).get("node") != status["node"]
-            or any(artifact.get(key) != value for key, value in manifest.items())
-        ):
-            raise ReviewEvidenceError("native producer terminal custody differs")
-        request = read_json(home / "fleet/dispatch" / status["node"] / (source.id + ".json"))
-        if (
-            request.get("request_id") != status.get("request_id")
-            or request.get("card_id") != source.id
-            or request.get("production") != status.get("production")
-        ):
-            raise ReviewEvidenceError("producer terminal request changed")
-        from .production_builder import unit_name
-
-        if status.get("unit") != unit_name(request, status.get("attempt")):
-            raise ReviewEvidenceError("producer terminal unit differs")
-        matches.append(
-            {
-                "unit": status["unit"],
-                "invocation": status.get("invocation"),
-                "host": status["production"]["host"],
-                "request_id": status["request_id"],
-                "family": status["production"]["family"],
-                "node": status["node"],
-            }
-        )
-    if not matches:
-        if source.owner is None:
-            from .released_source import direct_review_view
-
-            view, _, _ = direct_review_view(home, source, manifest)
-            source = view.fold(source.id)
-        return _direct_seat_terminal(home, source, manifest, producer_owner, producer_claim)
-    if len(matches) != 1:
-        raise ReviewEvidenceError("one native producer terminal receipt required")
-    return matches[0]
-
-
-def deferred_direct_terminal(receipt):
-    """Recognize a native successful exit awaiting fresh process-death proof.
-
-    This is not terminal proof. Publication recovery must independently check
-    the exact managed unit and absence of card processes before using it.
-    """
-    disposition = receipt.get("source_disposition")
-    return (
-        receipt.get("schema") == "skfleet.direct-seat/v1"
-        and receipt.get("completion_state") == "running"
-        and type(receipt.get("exit_code")) is int
-        and receipt["exit_code"] == 0
-        and isinstance(disposition, dict)
-        and disposition.get("state") == "awaiting-evidence"
-        and disposition.get("process_terminal") is False
-        and disposition.get("claim_released") is False
-        and disposition.get("reason") == "exact-process-and-cgroup-death-unproven"
-    )
-
-
-def _direct_seat_terminal(
-    home, source, manifest, producer_owner, producer_claim, *, publication_pending=False
-):
-    """Validate a completed direct worker's exact native source receipt."""
-    path = Path(home) / "fleet/direct-seats" / (producer_owner + ".json")
-    try:
-        info = path.lstat()
-        if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) & 0o077:
-            raise ReviewEvidenceError("direct producer terminal receipt is not private")
-        raw = path.read_bytes()
-        if len(raw) > 262144:
-            raise ReviewEvidenceError("direct producer terminal receipt is oversized")
-        receipt = json.loads(raw)
-        disposition = receipt.get("source_disposition") or {}
-        artifact = disposition.get("source_artifact") or {}
-        schema = receipt.get("schema")
-        explicit_receipt = schema == "skfleet.direct-seat/v1"
-        expected_state = "awaiting-evidence" if publication_pending else "awaiting-review"
-        deferred = publication_pending and deferred_direct_terminal(receipt)
-        parts = source.owner.split("-")
-        owner_host = parts[-2] if len(parts) >= 4 else ""
-        host = str(receipt.get("host") or owner_host)
-        domains = receipt.get("capacity_domains")
-        if (
-            schema not in (None, "skfleet.direct-seat/v1")
-            or receipt.get("card") != source.id
-            or receipt.get("owner") != producer_owner
-            or receipt.get("claim_revision") != producer_claim
-            or (receipt.get("completion_state") != expected_state and not deferred)
-            or type(receipt.get("pid")) is not int
-            or receipt["pid"] <= 0
-            or host != owner_host
-            or disposition.get("state") != expected_state
-            or disposition.get("claim_released") is not False
-            or (disposition.get("process_terminal") is not True and not deferred)
-            or not isinstance(artifact, dict)
-            or (publication_pending and (not explicit_receipt or artifact or manifest))
-            or (publication_pending and type(receipt.get("exit_code")) is not int)
-            or any(artifact.get(key) != value for key, value in manifest.items())
-            or receipt.get("route_schema") != "skfleet.runtime-route/v1"
-            or not receipt.get("logical_route")
-            or not receipt.get("provider")
-            or not isinstance(domains, list)
-            or not domains
-            or any(not isinstance(domain, str) or not domain for domain in domains)
-            or not receipt.get("model_or_bucket")
-            or ("exit_code" in receipt and receipt["exit_code"] != 0)
-            or (
-                explicit_receipt
-                and (receipt.get("exit_code") != 0 or not receipt.get("invocation"))
-            )
-        ):
-            raise ReviewEvidenceError("direct producer terminal custody differs")
-        invocation = str(receipt.get("invocation") or "")
-        if invocation and not re.fullmatch(r"[0-9a-f]{32}", invocation):
-            raise ReviewEvidenceError("direct producer invocation invalid")
-        lane = str(receipt.get("lane") or (parts[1] if len(parts) >= 4 else ""))
-        unit = str(receipt.get("unit") or f"skfleet-worker-{lane}-{source.id}.service")
-        if (
-            unit != f"skfleet-worker-{lane}-{source.id}.service"
-            or explicit_receipt
-            and (receipt.get("host") != host or receipt.get("lane") != lane)
-        ):
-            raise ReviewEvidenceError("direct producer unit differs")
-        artifact_path = artifact.get("manifest")
-        artifact_sha256 = artifact.get("manifest_sha256")
-        if bool(artifact_path) != bool(artifact_sha256):
-            raise ReviewEvidenceError("direct producer manifest reference differs")
-        if artifact_path:
-            expected_path = _root(home, source.id) / (manifest["head"] + ".json")
-            if artifact_path != str(expected_path):
-                raise ReviewEvidenceError("direct producer manifest path differs")
-            raw_manifest = _read(expected_path, MAX_EVIDENCE)
-            if hashlib.sha256(raw_manifest).hexdigest() != artifact_sha256:
-                raise ReviewEvidenceError("direct producer manifest digest differs")
-        if host != socket.gethostname().split(".")[0].lower():
-            # A synced receipt is portable; terminal proof still belongs to
-            # the producer's host, never the consuming review node.
-            if not explicit_receipt or type(receipt.get("exit_code")) is not int:
-                raise ReviewEvidenceError(
-                    "remote direct producer requires modern terminal receipt"
-                )
-            from .production_review_custody import unit_terminal
-
-            unit_terminal(unit, invocation, host=host)
-        return {
-            "receipt_kind": "direct-seat",
-            "receipt_path": str(path),
-            "receipt_sha256": hashlib.sha256(raw).hexdigest(),
-            "card": source.id,
-            "owner": producer_owner,
-            "claim_revision": producer_claim,
-            "pid": receipt["pid"],
-            "unit": unit,
-            "invocation": invocation or None,
-            "host": host,
-            "family": domains[0],
-        }
-    except (OSError, ValueError, TypeError, KeyError) as exc:
-        if isinstance(exc, ReviewEvidenceError):
-            raise
-        raise ReviewEvidenceError("direct producer terminal receipt unavailable") from exc
-
-
-def _current_outcome(store, row):
-    """Bind the native outcome to the original current claim, including time."""
-    claim = row.meta.get("_claim_revision")
-    claims = [
-        event
-        for event in store._read_events(row.id)
-        if event.get("action") == "claim"
-        and (event.get("claim_revision") or event.get("event_id")) == claim
-    ]
-    outcome = _latest_outcome(store, row.id)
-    if (
-        len(claims) != 1
-        or outcome.get("writer") != row.owner
-        or outcome.get("expected_claim_revision") not in (None, claim)
-        or str(outcome.get("ts", "")) < str(claims[0].get("ts", ""))
-    ):
-        raise ReviewEvidenceError("native outcome predates current claim")
-    return outcome
-
-
 def _recorded_remote_review(home, review, claim):
     """Read the exact immutable remote request captured by the review launch."""
     launches = [
@@ -575,48 +361,6 @@ def _recorded_remote_review(home, review, claim):
     if digest(request) != execution.get("request_sha256"):
         raise ReviewEvidenceError("sealed remote review request changed")
     return event, request
-
-
-def _sealed_review_policy(home, launch, card, event, current_policy):
-    """Resolve the policy snapshot authenticated by this exact review launch."""
-    if event.get("schema") == "skfleet.review-assignment-launch/v3":
-        from .builder_dispatch import request_path
-        from .paths import FleetPaths
-        from .review_dispatch import _recorded, validate_contract
-
-        execution = event.get("execution") or {}
-        node = execution.get("node")
-        if not isinstance(node, str):
-            raise ReviewEvidenceError("sealed review request identity invalid")
-        request = read_json(request_path(FleetPaths(Path(home) / "fleet"), node, card.id))
-        sealed = request.get("policy")
-        policy_sha256 = (request.get("production") or {}).get("policy_sha256")
-        if (
-            request.get("card_id") != card.id
-            or request.get("reviewer") != launch.get("owner")
-            or request.get("request_id") != execution.get("request_id")
-            or digest(request) != execution.get("request_sha256")
-            or not isinstance(sealed, dict)
-            or digest(sealed) != policy_sha256
-            or policy_sha256 != execution.get("policy_sha256")
-        ):
-            raise ReviewEvidenceError("sealed review policy digest differs from launch")
-        _recorded(home, request)
-        validate_contract(request, sealed, host=launch["host"], historical=True)
-        return sealed
-
-    route = event.get("route_identity") or {}
-    sealed = route.get("policy_snapshot")
-    if isinstance(sealed, dict) and route.get("policy_sha256") == digest(sealed):
-        return sealed
-    recorded = route.get("policy_sha256")
-    if recorded is None:
-        # Legacy local launches have no policy digest; bind acceptance to the
-        # live policy and its digest in the persisted acceptance context.
-        return current_policy
-    if not isinstance(recorded, str) or recorded != digest(current_policy):
-        raise ReviewEvidenceError("sealed review policy provenance unavailable")
-    return current_policy
 
 
 def _sealed_review_outcome(store, row, owner, claim, *, expected_verdicts=("PASS",)):

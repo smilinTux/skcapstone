@@ -25,6 +25,8 @@ def test_native_state_reuses_only_current_locked_store(tmp_path, monkeypatch, le
 
     import skcoord.card_store as cards
 
+    from skcapstone.fleet import evidence_io as native
+
     home, card = tmp_path / "home", "c1460001"
     home.mkdir()
     store = cards.CardStore(home)
@@ -37,8 +39,8 @@ def test_native_state_reuses_only_current_locked_store(tmp_path, monkeypatch, le
         else "load_legacy_mutations"
     )
     load = getattr(cards, loader)
-    lock = finish.card_mutation_lock
-    read = finish.LiveCardStoreGateway.read_card
+    lock = native.card_mutation_lock
+    read = native.LiveCardStoreGateway.read_card
 
     def load_current(path):
         loads.append(path)
@@ -58,9 +60,9 @@ def test_native_state_reuses_only_current_locked_store(tmp_path, monkeypatch, le
         return read(self, card_id, _store=_store)
 
     monkeypatch.setattr(cards, loader, load_current)
-    monkeypatch.setattr(finish, "card_mutation_lock", tracked_lock)
-    monkeypatch.setattr(finish.LiveCardStoreGateway, "read_card", checked_read)
-    first = finish.native_state(home, card)
+    monkeypatch.setattr(native, "card_mutation_lock", tracked_lock)
+    monkeypatch.setattr(native.LiveCardStoreGateway, "read_card", checked_read)
+    first = native.native_state(home, card)
     assert len(loads) == 1
     if legacy:
         overlay[card] = [
@@ -76,7 +78,7 @@ def test_native_state_reuses_only_current_locked_store(tmp_path, monkeypatch, le
     else:
         store.append_event(card, "link", "producer", link_key="verdict", link_value="PASS")
     loads.clear()
-    second = finish.native_state(home, card)
+    second = native.native_state(home, card)
     assert len(loads) == 1
     assert second["revision"] != first["revision"]
     assert second["completion_revision"] != first["completion_revision"]
@@ -84,12 +86,12 @@ def test_native_state_reuses_only_current_locked_store(tmp_path, monkeypatch, le
     assert second["claim_revision"] == first["claim_revision"]
     # Replay the old call boundary: the gateway constructs a second fresh store.
     monkeypatch.setattr(
-        finish.LiveCardStoreGateway,
+        native.LiveCardStoreGateway,
         "read_card",
         lambda self, card_id, **kwargs: read(self, card_id),
     )
     loads.clear()
-    assert finish.native_state(home, card) == second
+    assert native.native_state(home, card) == second
     assert len(loads) == 2
 
 

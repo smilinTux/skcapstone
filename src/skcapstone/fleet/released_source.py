@@ -115,7 +115,7 @@ def terminal(home, source, manifest, status, path):
     from .builder_dispatch import AUTHORITY_RELEASED
     from .production_builder import unit_name
     from .production_review_custody import unit_terminal
-    from .production_review_finish import read_json
+    from .evidence_io import read_json
 
     prove(home, source, manifest)
     request = read_json(Path(home) / "fleet/dispatch" / path.parent.parent.name / path.name)
@@ -165,7 +165,7 @@ def direct_review_view(home, source, manifest=None):
     """Read one proven released direct generation without restoring its claim."""
     from ..seraph_review_cardstore import _latest_outcome
     from .paths import FleetPaths
-    from .production_acceptance import _direct_seat_terminal
+    from .evidence_io import _direct_seat_terminal
     from .production_custody import retains_source_custody, source_binding
     from .production_review_custody import unit_terminal
     from .source_transport import _packet

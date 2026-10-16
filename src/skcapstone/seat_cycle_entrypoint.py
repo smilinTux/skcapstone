@@ -459,7 +459,7 @@ def verify_seraph_dispatch(
         try:
             from .fleet import builder_dispatch, review_dispatch
             from .fleet.paths import FleetPaths
-            from .fleet.production_review_finish import read_json
+            from .fleet.evidence_io import read_json
 
             paths = FleetPaths(home / "fleet")
             seen = set()

@@ -143,7 +143,7 @@ def test_hold_reason_exposes_only_fixed_source_bundle_detail():
 
 
 def test_historical_review_uses_sealed_source_after_governed_release(tmp_path, monkeypatch):
-    from skcapstone.fleet import production_acceptance, released_source, review_dispatch
+    from skcapstone.fleet import evidence_io, released_source, review_dispatch, source_custody
 
     home = tmp_path / ".skcapstone"
     home.mkdir()
@@ -183,8 +183,8 @@ def test_historical_review_uses_sealed_source_after_governed_release(tmp_path, m
     monkeypatch.setattr(released_source, "prove", lambda *_: {"event_id": "release01"})
     monkeypatch.setattr(released_source, "revision_matches", lambda *_: False)
     monkeypatch.setattr(
-        production_acceptance,
-        "_sealed_source_outcome",
+        source_custody,
+        "sealed_source_outcome",
         lambda *_: {
             "action": "verdict",
             "verdict": "PASS_FOR_REVIEW",
@@ -193,7 +193,7 @@ def test_historical_review_uses_sealed_source_after_governed_release(tmp_path, m
             "candidate_tree": tree,
         },
     )
-    monkeypatch.setattr(production_acceptance, "_producer_terminal", lambda *_: {"family": "glm"})
+    monkeypatch.setattr(evidence_io, "_producer_terminal", lambda *_: {"family": "glm"})
 
     result = review_dispatch._source(home, review, historical=True)
 

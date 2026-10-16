@@ -84,7 +84,7 @@ def _raw(path: Path) -> bytes:
 def native_outcome_current(store, row) -> dict | None:
     """Return the holder's native outcome for the CURRENT claim generation, if any.
 
-    Same binding as production_acceptance._current_outcome, but answering instead
+    Same binding as evidence_io._current_outcome, but answering instead
     of raising: no outcome, a foreign writer, a mismatched claim fence or an
     outcome older than the current claim all mean "no native verdict".
     """
@@ -355,7 +355,7 @@ def release_unrecoverable(
     from ..coordination import Board
     from ..release_guard import finished_work_verdict
     from . import review_retire
-    from .production_acceptance import review_directory
+    from .evidence_io import review_directory
 
     home = Path(home)
     try:

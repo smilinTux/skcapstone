@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .production_cursor import candidate, require_model, runtime
 from .production_cursor_sandbox import sandbox_command, write_config
-from .production_review_finish import native_command, native_state
+from .evidence_io import native_command, native_state
 from .source_bundle import MAX_EVIDENCE, _once, _read, _sha
 
 RESULT = ".git/skfleet-cursor-result.json"

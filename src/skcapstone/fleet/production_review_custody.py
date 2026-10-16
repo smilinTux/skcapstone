@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 from .production_review_evidence import ReviewEvidenceError
-from .production_review_finish import once, read_json
+from .evidence_io import once, read_json
 
 
 def exit_path(home, card, claim):
@@ -187,7 +187,7 @@ def import_remote_exits(home, policy):
     """Retain only exact destination terminal evidence validated by authority."""
     from skcoord.card_store import CardStore
 
-    from .production_acceptance import _sealed_review_policy
+    from .evidence_io import _sealed_review_policy
     from .production_receipts import production_receipt_allowed
 
     for path in (Path(home) / "fleet/status").glob("*/dispatch/*.json"):

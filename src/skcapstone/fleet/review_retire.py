@@ -1925,7 +1925,7 @@ def supersede_released_reviews(paths, home: Path, *, actor: str = "niobe") -> li
     natively, and only then are the node pointers removed, so retired_offers()
     treats the exit as historical and offer_review() can offer a fresh review.
     """
-    from .production_acceptance import review_directory
+    from .evidence_io import review_directory
 
     home = Path(home)
     results = []

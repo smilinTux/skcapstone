@@ -1,118 +1,15 @@
 """Crash-safe acceptance via guarded CLI, revalidating review and trusted test evidence."""
 
 import json
-import subprocess
-import sys
 from pathlib import Path
 
-from skcoord.card_store import CardStore, card_mutation_lock
+from skcoord.card_store import CardStore
 
-from ..blocked_verdict import is_outcome_key
-from ..seraph_review_cardstore import LiveCardStoreGateway, card_revision
 from ..seraph_review_contracts import _digest
+from .evidence_io import artifacts, native_command, native_state, once, read_json
 from .production_review_evidence import ReviewEvidenceError
 from .production_review_steps import steps  # Re-export for historical recovery callers.
-from .source_bundle import MAX_EVIDENCE, _once, _read, _sha
-
-
-def read_json(path):
-    """Read only bounded, private, owned, regular evidence."""
-    return json.loads(_read(Path(path), MAX_EVIDENCE))
-
-
-def once(path, value):
-    """Retain complete immutable structured evidence."""
-    _once(Path(path), json.dumps(value, sort_keys=True, separators=(",", ":")).encode())
-
-
-def native_state(home, card):
-    """Read exact current custody and predict native completion for lost replies."""
-    with card_mutation_lock(home, card):
-        store = CardStore(home)
-        row = store.fold(card)
-        if row is None:
-            raise ReviewEvidenceError("native card disappeared")
-        snapshot = LiveCardStoreGateway(home).read_card(card, _store=store)
-        after = row.model_copy(deep=True)
-        after.status = type(row.status)("done")
-        after.owner = None
-        after.meta.pop("_claim_revision", None)
-        bindings = {
-            key: getattr(snapshot, key)
-            for key in (
-                "repository",
-                "number",
-                "head_sha",
-                "producer_identity",
-                "reviewer_identity",
-                "unresolved_review",
-                "candidate_evidence_sha256",
-            )
-        }
-        native = store._read_events(card)
-        events = native + store._legacy_events(card)
-        events.sort(
-            key=lambda e: (
-                e.get("ts", ""),
-                e.get("writer", ""),
-                e.get("seq", 0),
-                bool(e.get("expected_claim_revision")),
-            )
-        )
-        outcomes = [
-            e
-            for e in events
-            if e.get("action") == "verdict"
-            or (e.get("action") == "link" and is_outcome_key(e.get("link_key") or e.get("key")))
-        ]
-        predicted = _digest(
-            {
-                "card": card_revision(after),
-                "bindings": bindings,
-                "outcome": outcomes[-1] if outcomes else {},
-            }
-        )
-        completions = [e for e in native if e.get("action") == "complete"]
-        return {
-            "revision": snapshot.revision,
-            "completion_revision": predicted,
-            "complete_count": len(completions),
-            "last_complete": completions[-1] if completions else None,
-            "owner": row.owner,
-            "claim_revision": row.meta.get("_claim_revision"),
-            "status": row.status.value,
-        }
-
-
-def native_command(home, args):
-    """Use this interpreter's native CLI with no unguarded fallback."""
-    result = subprocess.run(
-        [sys.executable, "-m", "skcapstone", "coord", *args, "--home", str(home)],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    if result.returncode:
-        detail = (result.stderr or result.stdout or "").strip().splitlines()
-        suffix = ": " + detail[-1][:180] if detail else ""
-        raise ReviewEvidenceError("guarded native acceptance refused" + suffix)
-    return json.loads(result.stdout) if "--json" in args else None
-
-
-def artifacts(context):
-    """Rehash exact collected source evidence and independent decision bytes."""
-    for role in ("source", "review"):
-        item = context[role]
-        if _sha(_read(Path(item["evidence_path"]), MAX_EVIDENCE)) != item["evidence_sha256"]:
-            raise ReviewEvidenceError("retained report changed")
-    review = context["review"]
-    raw = _read(Path(review["decision_path"]), MAX_EVIDENCE)
-    if (
-        _sha(raw) != review["decision_sha256"]
-        or json.loads(raw) != review["proposal"]
-        or review["proposal"]["verdict"] != "PASS"
-    ):
-        raise ReviewEvidenceError("independent review is not exact PASS")
+from .source_bundle import _sha  # noqa: F401 (kept for historical callers)
 
 
 def _historical_acceptance(home, context, historical, inspect):
