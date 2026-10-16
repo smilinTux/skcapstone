@@ -172,3 +172,22 @@ def initial_recipe(core: dict, workspace: Path) -> tuple[dict, dict | None]:
     ):
         return {"pytest_all": True}, None
     raise plan.TestEvidenceError("card scope has no supported initial test recipe")
+
+
+def declared_recipe(core: dict, workspace: Path) -> dict:
+    """The recipe record a card's declared tests run from, derived at its exact source.
+
+    Nothing is qualified, stored or compared against an earlier run: the record
+    binds the card contract to the recipe chosen for ``workspace`` and is sealed
+    into the plan of the one candidate commit that will run it.
+    """
+    from . import production_test_node as node
+
+    recipe, environment = initial_recipe(core, workspace)
+    value = {"schema": plan.PYTHON_RECIPE_SCHEMA, **contract(core), "recipe": recipe}
+    if environment is not None:
+        value["schema"] = (
+            composite.SCHEMA if set(recipe) - {"vitest", "node_test"} else node.SCHEMA
+        )
+        value["node_environment"] = environment
+    return value

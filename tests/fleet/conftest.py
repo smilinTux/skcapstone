@@ -39,21 +39,12 @@ def qualified_runtime(tmp_path, monkeypatch):
         (directory / "__init__.py").write_text("# Synthetic qualified dependency.\n")
     harness = tmp_path / "harness"
     harness.mkdir()
-    for name in plan.HARNESS_MODULES:
-        (harness / name).write_text("# Synthetic trusted executor.\n")
+    (harness / "production_pytest_selection.py").write_text("# Synthetic trusted executor.\n")
     monkeypatch.setattr(plan, "HARNESS_ROOT", harness)
     for module in (plan, native, worker):
         monkeypatch.setattr(module, "PREFIX", prefix)
     monkeypatch.setattr(plan, "_RUNTIME_CACHE", {})
     return prefix
-
-
-@pytest.fixture(autouse=True)
-def _hermetic_legacy_toolchain(tmp_path, monkeypatch):
-    """Never fingerprint the operator's real ~/.skenv as the legacy toolchain."""
-    from skcapstone.fleet import production_test_plan as plan
-
-    monkeypatch.setattr(plan, "LEGACY_PREFIX", tmp_path / "no-legacy-skenv")
 
 
 @pytest.fixture(autouse=True)

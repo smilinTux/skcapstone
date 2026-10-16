@@ -15,11 +15,12 @@ from skcoord.card_store import CardCore, CardStore
 
 from skcapstone.fleet import production_admission as admission
 from skcapstone.fleet import production_resources as resources
-from skcapstone.fleet import production_test_plan as plan
-from skcapstone.fleet import production_test_profile as profile
+from skcapstone.fleet import production_test_plan as test_plan
 from skcapstone.fleet import production_test_worker as worker
 from skcapstone.fleet import production_tests as native
+from skcapstone.fleet import test_recipe
 from skcapstone.fleet.production_builder import digest as policy_digest
+from skcapstone.fleet.production_pytest_recipe import recipe_checks
 
 
 def private_bytes(path, raw):
@@ -305,175 +306,6 @@ def test_plan_must_be_private_immutable_and_fixed(setup):
         native.load_plan(setup.home, setup.binding)
 
 
-def test_stale_executor_plan_runs_under_same_recipe_for_requalification(setup, monkeypatch):
-    from skcoord.card_store import CardStore
-
-    card = CardStore(setup.home).fold(setup.binding["source_card"])
-    core = card.model_dump(mode="json")
-    recipe = {"pytest": {"tests/test_parser.py": 1}, "compile": [], "lint": [], "changelog": False}
-    original = profile.qualify_profile(
-        setup.home,
-        core,
-        setup.policy,
-        recipe,
-        "operator",
-        "b" * 64,
-        source_sha256=plan.source_fingerprint(
-            core["meta"]["repository"],
-            setup.binding["source_head"],
-            setup.binding["source_tree"],
-        ),
-    )
-    value, predecessor = profile.read_profile(setup.home, core["id"])
-    _, _, plan_predecessor = plan.load_plan(setup.home, setup.binding)
-    monkeypatch.setattr(plan, "runtime_fingerprint", lambda: "d" * 64)
-    assert profile.fingerprint_only_stale(value, profile.contract(core), setup.policy)
-    path = plan.seal_plan(
-        setup.home,
-        setup.binding,
-        setup.workspace,
-        setup.policy,
-        value["qualified_by"],
-        value["qualification_sha256"],
-        profile=value,
-        predecessor_sha256=plan_predecessor,
-        requalification=True,
-        profile_predecessor_sha256=predecessor,
-    )
-    sealed, _, _ = plan.load_plan(setup.home, setup.binding)
-    assert sealed["profile_requalification"] is True
-    assert sealed["profile_predecessor_sha256"] == predecessor
-    assert sealed["profile"] == value
-    assert sealed["checks"] == profile.recipe_checks(recipe)
-    assert original.exists()
-    assert path.exists()
-
-
-def test_legacy_toolchain_requalification_plan_loads_on_the_new_prefix(setup, monkeypatch):
-    """The one-time ~/.skenv migration requal must pass the executor's own check.
-
-    Production 2026-10-09: 52f7c2a5 was sealed for migration 32 times and every
-    executor refused it as "candidate test profile changed", because the check
-    demanded the profile toolchain equal the live prefix toolchain.
-    """
-    from skcoord.card_store import CardStore
-
-    card = CardStore(setup.home).fold(setup.binding["source_card"])
-    core = card.model_dump(mode="json")
-    recipe = {"pytest": {"tests/test_parser.py": 1}, "compile": [], "lint": [], "changelog": False}
-    profile.qualify_profile(
-        setup.home,
-        core,
-        setup.policy,
-        recipe,
-        "operator",
-        "b" * 64,
-        source_sha256=plan.source_fingerprint(
-            core["meta"]["repository"],
-            setup.binding["source_head"],
-            setup.binding["source_tree"],
-        ),
-    )
-    value, predecessor = profile.read_profile(setup.home, core["id"])
-    _, _, plan_predecessor = plan.load_plan(setup.home, setup.binding)
-    legacy = value["toolchain_sha256"]
-    monkeypatch.setattr(plan, "toolchain_fingerprint", lambda: "f" * 64)
-    monkeypatch.setattr(plan, "legacy_toolchain_fingerprint", lambda: legacy)
-    assert profile.fingerprint_only_stale(value, profile.contract(core), setup.policy)
-    plan.seal_plan(
-        setup.home,
-        setup.binding,
-        setup.workspace,
-        setup.policy,
-        value["qualified_by"],
-        value["qualification_sha256"],
-        profile=value,
-        predecessor_sha256=plan_predecessor,
-        requalification=True,
-        profile_predecessor_sha256=predecessor,
-    )
-    # The executor's own legacy ~/.skenv differs; only the sealed value counts.
-    monkeypatch.setattr(plan, "legacy_toolchain_fingerprint", lambda: "e" * 64)
-    sealed, _, _ = plan.load_plan(setup.home, setup.binding)
-    assert sealed["legacy_toolchain_sha256"] == legacy
-    assert sealed["profile_requalification"] is True
-
-
-def test_remote_initial_profile_plan_is_sealed_without_publishing_profile(setup, monkeypatch):
-    from skcoord.card_store import CardStore
-
-    setup.plan_path.unlink()
-    card = CardStore(setup.home).fold(setup.binding["source_card"])
-    core = card.model_dump(mode="json")
-    recipe = {"pytest": {"tests/test_parser.py": 1}, "compile": [], "lint": [], "changelog": False}
-    source_sha = plan.workspace_source_fingerprint(core["meta"]["repository"], setup.workspace)
-    provisional = profile.profile_value(
-        core,
-        setup.policy,
-        recipe,
-        "niobe",
-        "b" * 64,
-        source_sha256=source_sha,
-    )
-    setup.policy["node_quotas"]["chiap01"] = setup.policy["node_quotas"][
-        setup.policy["authority_host"]
-    ]
-    path = plan.seal_plan(
-        setup.home,
-        setup.binding,
-        setup.workspace,
-        setup.policy,
-        "niobe",
-        "b" * 64,
-        profile=provisional,
-        execution_host="chiap01",
-        initial_profile_qualification=True,
-    )
-    monkeypatch.setattr(plan.socket, "gethostname", lambda: "chiap01")
-
-    sealed, _, _ = plan.load_plan(setup.home, setup.binding, allow_remote_host=True)
-
-    assert sealed["schema"] == "skfleet.native-test-plan/v6"
-    assert sealed["remote_initial_profile_qualification"] is True
-    assert sealed["profile"] == provisional
-    assert not (setup.home / "fleet/test-profiles" / (core["id"] + ".json")).exists()
-    assert path.exists()
-
-
-def test_initial_profile_plan_preserves_an_existing_unstarted_plan(setup):
-    card = CardStore(setup.home).fold(setup.binding["source_card"])
-    core = card.model_dump(mode="json")
-    recipe = {"pytest": {"tests/test_parser.py": 1}, "compile": [], "lint": [], "changelog": False}
-    source_sha = plan.workspace_source_fingerprint(core["meta"]["repository"], setup.workspace)
-    provisional = profile.profile_value(
-        core,
-        setup.policy,
-        recipe,
-        "niobe",
-        "b" * 64,
-        source_sha256=source_sha,
-    )
-    existing = setup.plan_path.read_bytes()
-
-    initial_path = plan.seal_plan(
-        setup.home,
-        setup.binding,
-        setup.workspace,
-        setup.policy,
-        "niobe",
-        "b" * 64,
-        profile=provisional,
-        initial_profile_qualification=True,
-    )
-
-    sealed, loaded_path, _ = plan.load_plan(setup.home, setup.binding)
-
-    assert setup.plan_path.read_bytes() == existing
-    assert loaded_path == initial_path
-    assert sealed["initial_profile_qualification"] is True
-    assert sealed["profile"] == provisional
-
-
 def test_missing_plan_never_launches(tmp_path):
     binding = {
         "source_card": "89508f83",
@@ -487,9 +319,7 @@ def test_missing_plan_never_launches(tmp_path):
     assert native.run_or_read_tests(tmp_path, binding, tmp_path, {}) is None
 
 
-def test_authority_waits_for_remote_requalification_receipt(tmp_path, monkeypatch):
-    from skcapstone.fleet import production_test_plan as test_plan
-
+def test_authority_waits_for_remote_plan_receipt(tmp_path, monkeypatch):
     binding = {
         "source_card": "89508f83",
         "source_owner": "producer",
@@ -505,65 +335,11 @@ def test_authority_waits_for_remote_requalification_receipt(tmp_path, monkeypatc
         "authority_host": authority,
         "node_quotas": {execution: {"memory_max_bytes": 1}},
     }
-    sealed = {
-        "host": execution,
-        "remote_requalification": True,
-        "authority_host": authority,
-        "policy_sha256": "d" * 64,
-    }
+    sealed = {"host": execution, "policy_sha256": "d" * 64}
     directory = tmp_path / "remote-run"
     monkeypatch.setattr(
         native, "load_plan", lambda *_a, **_k: (sealed, tmp_path / "plan", "e" * 64)
     )
-    monkeypatch.setattr(test_plan, "execution_policy_fingerprint", lambda *_a: "d" * 64)
-    monkeypatch.setattr(native, "source_state", lambda *_a: {})
-    monkeypatch.setattr(native, "run_directory", lambda *_a: directory)
-    monkeypatch.setattr(native.socket, "gethostname", lambda: authority)
-    assert native.run_or_read_tests(tmp_path, binding, tmp_path, policy) is None
-
-    directory.mkdir()
-    for name in ("launch.json", "terminal.json", "receipt.json"):
-        (directory / name).write_text("{}")
-    receipt = {"receipt_sha256": "f" * 64}
-    monkeypatch.setattr(native, "validate_test_receipt", lambda *_a: receipt)
-    monkeypatch.setattr(
-        native,
-        "reserve_launch",
-        lambda *_a, **_k: pytest.fail("authority must never launch a remote plan locally"),
-    )
-    assert native.run_or_read_tests(tmp_path, binding, tmp_path, policy) == receipt
-
-
-def test_authority_waits_for_remote_initial_qualification_receipt(tmp_path, monkeypatch):
-    from skcapstone.fleet import production_test_plan as test_plan
-
-    binding = {
-        "source_card": "89508f83",
-        "source_owner": "producer",
-        "source_claim_revision": "claim",
-        "source_head": "a" * 40,
-        "source_tree": "b" * 40,
-        "source_revision": "revision",
-        "criteria_sha256": "c" * 64,
-    }
-    authority = "chiap08"
-    execution = "chiap01"
-    policy = {
-        "authority_host": authority,
-        "node_quotas": {execution: {"memory_max_bytes": 1}},
-    }
-    sealed = {
-        "host": execution,
-        "remote_initial_profile_qualification": True,
-        "initial_profile_qualification": True,
-        "authority_host": authority,
-        "policy_sha256": "d" * 64,
-    }
-    directory = tmp_path / "remote-run"
-    monkeypatch.setattr(
-        native, "load_plan", lambda *_a, **_k: (sealed, tmp_path / "plan", "e" * 64)
-    )
-    monkeypatch.setattr(test_plan, "execution_policy_fingerprint", lambda *_a: "d" * 64)
     monkeypatch.setattr(native, "source_state", lambda *_a: {})
     monkeypatch.setattr(native, "run_directory", lambda *_a: directory)
     monkeypatch.setattr(native.socket, "gethostname", lambda: authority)
@@ -593,7 +369,7 @@ def test_receipt_rehashes_raw_output_and_terminal_custody(setup, monkeypatch):
 
 def test_directory_receipt_rehashes_exact_collection_evidence(setup, monkeypatch):
     """The independent receipt reader rejects changed collection bytes."""
-    from skcapstone.fleet.production_test_profile import recipe_checks
+    from skcapstone.fleet.production_pytest_recipe import recipe_checks
 
     approved = {"pytest": {"tests": 226}, "compile": [], "lint": [], "changelog": False}
     setup.plan["profile"] = {"recipe": approved}
@@ -933,9 +709,6 @@ def test_failed_remote_tests_discharge_their_reservation(setup, monkeypatch):
 
     plan = dict(setup.plan, host=_socket.gethostname().split(".")[0].lower())
     monkeypatch.setattr(native, "load_plan", lambda *a, **k: (plan, setup.plan_path, setup.digest))
-    monkeypatch.setattr(
-        native.test_plan, "execution_policy_fingerprint", lambda *a, **k: plan["policy_sha256"]
-    )
     monkeypatch.setattr(native, "source_state", lambda *a, **k: None)
     monkeypatch.setattr(native, "service_argv", lambda *a, **k: ["argv"])
     monkeypatch.setattr(native, "stop_retained", lambda *a, **k: None)
@@ -1087,30 +860,6 @@ def test_foreign_launch_is_ignored(setup, monkeypatch):
     assert calls == []
 
 
-@pytest.mark.parametrize("missing", [None, "launch.json", "receipt.json", "terminal.json"])
-def test_completed_plan_runtime_drift_requires_all_native_artifacts(setup, monkeypatch, missing):
-    from skcapstone.fleet import production_test_plan as test_plan
-
-    sealed, _, fingerprint = native.load_plan(setup.home, setup.binding)
-    directory = test_plan.run_directory(setup.home, fingerprint)
-    test_plan.private_dir(directory.parent, create=True)
-    test_plan.private_dir(directory, create=True)
-    for name in ("launch.json", "receipt.json", "terminal.json"):
-        if name != missing:
-            test_plan.write_once(directory / name, {})
-    monkeypatch.setattr(test_plan, "runtime_fingerprint", lambda: "0" * 64)
-    with pytest.raises(native.TestEvidenceError, match="invalid or stale"):
-        native.load_plan(setup.home, setup.binding)
-    if missing:
-        with pytest.raises(native.TestEvidenceError, match="invalid or stale"):
-            native.load_plan(setup.home, setup.binding, allow_completed=True)
-    else:
-        assert native.load_plan(setup.home, setup.binding, allow_completed=True)[0] == sealed
-        # Loading the sealed plan is not acceptance of the empty fake evidence.
-        with pytest.raises(native.TestEvidenceError):
-            native.validate_test_receipt(setup.home, setup.binding, setup.workspace)
-
-
 def test_admission_refusal_is_recorded_not_silent(monkeypatch, caplog):
     from skcapstone.fleet import production_tests as pt
 
@@ -1156,36 +905,80 @@ def test_failed_native_run_is_not_reported_as_custody_change(setup, monkeypatch)
         native.validate_test_receipt(setup.home, setup.binding, setup.workspace)
 
 
-def test_operator_recipe_successor_retains_failed_plan_history(setup, monkeypatch):
-    with monkeypatch.context() as fixture_patch:
-        receipt_fixture(setup, fixture_patch)
-    core = CardStore(setup.home).fold(setup.binding["source_card"]).model_dump(mode="json")
+def _declared_core(setup):
+    """The card as the board holds it, declaring its own tests in a card link."""
     recipe = {"pytest": {"tests/test_parser.py": 1}, "compile": [], "lint": [], "changelog": False}
-    provisional = profile.profile_value(
-        core,
-        setup.policy,
-        recipe,
-        "lumina-nor",
-        "b" * 64,
-        source_sha256=plan.source_fingerprint(
-            core["meta"]["repository"], setup.binding["source_head"], setup.binding["source_tree"]
-        ),
-    )
-    before = setup.plan_path.read_bytes()
-    sealed_path = plan.seal_plan(
+    return {
+        "id": setup.binding["source_card"],
+        "meta": {"repository": "https://example.invalid/repo"},
+        "links": {"test_profile_recipe": json.dumps(recipe)},
+        "acceptance_criteria": ["Run the source parser checks."],
+    }, recipe
+
+
+def test_declared_tests_run_directly_on_the_exact_commit_with_no_profile(setup, monkeypatch):
+    """A card's declared recipe seals and launches on its exact commit, never via a profile."""
+    core, recipe = _declared_core(setup)
+    binding = {**setup.binding, "source_revision": "declared"}
+    declared = test_recipe.declared_recipe(core, setup.workspace)
+    assert declared["recipe"] == recipe
+
+    path = native.seal_plan(
         setup.home,
-        setup.binding,
+        binding,
         setup.workspace,
         setup.policy,
-        "lumina-nor",
-        "b" * 64,
-        profile=provisional,
-        predecessor_sha256=setup.digest,
-        initial_profile_qualification=True,
-        acceptance_requalification=True,
+        "operator",
+        "a" * 64,
+        profile=declared,
     )
-    value, loaded_path, _ = plan.load_plan(setup.home, setup.binding)
-    assert sealed_path == loaded_path
-    assert value["profile"]["recipe"] == recipe
-    assert value["predecessor_sha256"] == setup.digest
-    assert setup.plan_path.read_bytes() == before
+    sealed, loaded, digest = native.load_plan(setup.home, binding)
+    assert loaded == path
+    assert sealed["binding"] == binding
+    assert sealed["binding"]["source_head"] == setup.binding["source_head"]
+    assert sealed["profile"] == declared
+    assert sealed["checks"] == recipe_checks(recipe)
+    assert sealed["schema"] == test_plan.PLAN_SCHEMA
+
+    direct = SimpleNamespace(**{**vars(setup), "binding": binding})
+    launch_fixture(direct, monkeypatch)
+    launch = native.read_json(native.run_directory(setup.home, digest) / "launch.json")
+    assert launch["request_id"] == digest
+    assert launch["binding"] == binding
+    assert not (setup.home / "fleet/test-profiles").exists()
+
+
+def test_declared_run_with_failed_or_skipped_tests_is_refused(setup):
+    """Counts come from raw JUnit: a failed, skipped or missing declared test never passes."""
+    core, _ = _declared_core(setup)
+    declared = test_recipe.declared_recipe(core, setup.workspace)
+
+    def report(*tags):
+        root = ElementTree.Element("testsuites")
+        suite = ElementTree.SubElement(
+            root, "testsuite", tests="1", failures="0", errors="0", skipped="0"
+        )
+        case = ElementTree.SubElement(
+            suite, "testcase", classname="tests.test_parser", name="test_one"
+        )
+        for tag in tags:
+            ElementTree.SubElement(case, tag)
+        return ElementTree.tostring(root)
+
+    assert native.junit_counts(report(), declared)["total"] == 1
+    for tag in ("failure", "error", "skipped"):
+        with pytest.raises(native.TestEvidenceError, match="failed, errored or skipped"):
+            native.junit_counts(report(tag), declared)
+    declared["recipe"]["pytest"]["tests/test_other.py"] = 1
+    with pytest.raises(native.TestEvidenceError, match="coverage"):
+        native.junit_counts(report(), declared)
+
+
+def test_declared_run_with_a_failing_check_exit_is_refused(setup, monkeypatch):
+    receipt, terminal = receipt_fixture(setup, monkeypatch)
+    receipt["checks"][0]["exit_code"] = 1
+    private_bytes(setup.directory / "receipt.json", json.dumps(receipt).encode())
+    terminal["receipt_sha256"] = native.sha(native.read_private(setup.directory / "receipt.json"))
+    private_bytes(setup.directory / "terminal.json", json.dumps(terminal).encode())
+    with pytest.raises(native.TestEvidenceError, match="command or raw output mismatch"):
+        native.validate_test_receipt(setup.home, setup.binding, setup.workspace)
