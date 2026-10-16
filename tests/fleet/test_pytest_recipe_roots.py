@@ -11,7 +11,8 @@ from pathlib import Path
 import pytest
 
 from skcapstone.fleet import production_test_plan as plan
-from skcapstone.fleet import production_test_profile as profile
+from skcapstone.fleet import test_recipe
+from skcapstone.fleet.production_pytest_recipe import recipe_checks
 from tests.fleet.test_production_tests import setup  # noqa: F401
 
 
@@ -32,7 +33,7 @@ def test_nested_directory_and_versioned_test_targets_preserve_fixed_commands():
         "tests",
         "tests/contracts/v1.0.0/test_contract.py",
     ):
-        checks = profile.recipe_checks(recipe({target: 1}))
+        checks = recipe_checks(recipe({target: 1}))
         assert target in checks[0]["argv"]
         assert checks[0]["argv"][:4] == [str(plan.PREFIX / "bin/python"), "-m", "pytest", "-q"]
 
@@ -40,11 +41,11 @@ def test_nested_directory_and_versioned_test_targets_preserve_fixed_commands():
 def test_operator_file_cap_is_bounded_and_legacy_default_unchanged():
     files = {f"tests/test_{n}.py": 1 for n in range(80)}
     with pytest.raises(plan.TestEvidenceError):
-        profile.recipe_checks(recipe(files))
-    assert profile.recipe_checks(recipe(files, file_cap=128))
+        recipe_checks(recipe(files))
+    assert recipe_checks(recipe(files, file_cap=128))
     for bad in (True, 0, 4097, "128"):
         with pytest.raises(plan.TestEvidenceError):
-            profile.recipe_checks(recipe(files, file_cap=bad))
+            recipe_checks(recipe(files, file_cap=bad))
 
 
 @pytest.mark.parametrize(
@@ -63,7 +64,7 @@ def test_operator_file_cap_is_bounded_and_legacy_default_unchanged():
 )
 def test_unsafe_nested_targets_remain_rejected(target):
     with pytest.raises(plan.TestEvidenceError):
-        profile.recipe_checks(recipe({target: 1}))
+        recipe_checks(recipe({target: 1}))
 
 
 def test_recipe_targets_must_exist_inside_real_sealed_source(tmp_path):
@@ -82,7 +83,7 @@ def test_recipe_targets_must_exist_inside_real_sealed_source(tmp_path):
 
 def test_deselection_is_recorded_as_exact_ids_and_never_prefix_options():
     node = "v1/tests/test_backup.py::test_known_failure"
-    checks = profile.recipe_checks(recipe(deselect=[node]))
+    checks = recipe_checks(recipe(deselect=[node]))
     assert "--skfleet-baseline-node=" + node in checks[0]["argv"]
     assert not any(arg.startswith("--deselect") for arg in checks[0]["argv"])
     for bad in (
@@ -93,7 +94,7 @@ def test_deselection_is_recorded_as_exact_ids_and_never_prefix_options():
         ["../test.py::test_bad"],
     ):
         with pytest.raises(plan.TestEvidenceError):
-            profile.recipe_checks(recipe(deselect=bad))
+            recipe_checks(recipe(deselect=bad))
 
 
 def run_fixture(
@@ -125,7 +126,7 @@ def run_fixture(
     from skcapstone.fleet.production_pytest_recipe import validate_source
 
     validate_source(approved, tmp_path)
-    check = profile.recipe_checks(approved)[0]["argv"]
+    check = recipe_checks(approved)[0]["argv"]
     argv = [sys.executable, *check[1:]]
     argv[argv.index("--junitxml=/output/pytest.xml")] = "--junitxml=" + str(
         tmp_path / "pytest.xml"
@@ -207,7 +208,7 @@ def test_parameter_id_still_has_a_bounded_size():
     """An exact baseline cannot supply an unbounded argument or receipt ID."""
     node = "v1/tests/test_backup.py::test_parameter_value[" + "x" * 16384 + "]"
     with pytest.raises(plan.TestEvidenceError, match="invalid baseline node ID"):
-        profile.recipe_checks(recipe(deselect=[node]))
+        recipe_checks(recipe(deselect=[node]))
 
 
 def test_real_pytest_exact_baseline_and_directory_coverage(tmp_path):
@@ -253,20 +254,18 @@ def test_collection_hook_mount_is_readonly_and_fingerprinted(tmp_path):
     command = sandbox_command(
         tmp_path,
         tmp_path / "output",
-        profile.recipe_checks(approved)[0]["argv"],
+        recipe_checks(approved)[0]["argv"],
         {"recipe": approved},
     )
     mount = command.index("/qualified/production_pytest_selection.py")
     assert command[mount - 2] == "--ro-bind"
     assert command[mount - 1] == str(plan.HARNESS_ROOT / "production_pytest_selection.py")
-    assert "production_pytest_selection.py" in plan.HARNESS_MODULES
-    assert "production_pytest_recipe.py" in plan.HARNESS_MODULES
     assert "--unshare-all" in command and "--clearenv" in command
     assert command[command.index("PYTHONPATH") + 1].endswith(":/qualified")
 
 
-def test_candidate_sealing_rejects_missing_qualified_source_target(setup):
-    """A valid qualified profile does not excuse missing candidate source."""
+def test_candidate_sealing_rejects_missing_declared_source_target(setup):
+    """A declared recipe does not excuse a target missing from the candidate source."""
     core = {
         "id": "89508f84",
         "meta": {"repository": "https://example.org/public.git"},
@@ -275,21 +274,13 @@ def test_candidate_sealing_rejects_missing_qualified_source_target(setup):
     binding = dict(
         setup.binding,
         source_card=core["id"],
-        criteria_sha256=profile.contract(core)["criteria_sha256"],
+        criteria_sha256=test_recipe.contract(core)["criteria_sha256"],
     )
-    approved = recipe({"v1/tests/test_missing.py": 1})
-    path = profile.qualify_profile(
-        setup.home,
-        core,
-        setup.policy,
-        approved,
-        "operator",
-        "b" * 64,
-        source_sha256=plan.source_fingerprint(
-            core["meta"]["repository"], binding["source_head"], binding["source_tree"]
-        ),
-    )
-    qualified_profile, _ = profile.read_profile(setup.home, core["id"])
+    declared = {
+        "schema": plan.PYTHON_RECIPE_SCHEMA,
+        **test_recipe.contract(core),
+        "recipe": recipe({"v1/tests/test_missing.py": 1}),
+    }
     with pytest.raises(plan.TestEvidenceError, match="source"):
         plan.seal_plan(
             setup.home,
@@ -298,9 +289,6 @@ def test_candidate_sealing_rejects_missing_qualified_source_target(setup):
             setup.policy,
             "operator",
             "b" * 64,
-            profile=qualified_profile,
+            profile=declared,
         )
-    assert path.exists()
-    assert not (
-        setup.home / "fleet/test-plans" / f"{core['id']}-{binding['source_head']}.json"
-    ).exists()
+    assert not list((setup.home / "fleet/test-plans").glob(core["id"] + "-*"))

@@ -214,21 +214,10 @@ def test_fingerprints_bind_the_qualify_manifest(qualified_runtime):
         plan.toolchain_fingerprint()
 
 
-def test_legacy_toolchain_keeps_historical_rows(qualified_runtime, monkeypatch):
-    """The legacy prefix is hashed without a manifest row, as before the switch."""
-    monkeypatch.setattr(plan, "LEGACY_PREFIX", qualified_runtime)
-    (qualified_runtime / STATE_NAME).unlink()
-    assert plan.legacy_toolchain_fingerprint() is not None
-    monkeypatch.setattr(plan, "LEGACY_PREFIX", qualified_runtime / "absent")
-    assert plan.legacy_toolchain_fingerprint() is None
-
-
 def test_sealed_execution_uses_the_clean_prefix_not_skenv():
     assert qualify_prefix(Path("/h")) == Path("/h/.local/share/skcapstone/qualify-env")
     assert ".skenv" not in str(qualify_prefix(Path("/h")))
     assert plan.PREFIX == qualify_prefix(Path.home())
-    # LEGACY_PREFIX is redirected by the hermetic autouse fixture here.
-    assert plan.LEGACY_PREFIX != plan.PREFIX
 
 
 @pytest.mark.parametrize("steps", ["_DEPLOY_STEPS", "_ROLLBACK_STEPS"])

@@ -1,7 +1,7 @@
 """Cycle read reuse must give byte-identical answers to the per-card reads it replaced.
 
 The Niobe cycle on chiap08 hit its 270s limit because each card re-read shared
-state: one CardStore per worker beat or failed requalification record (each
+state: one CardStore per worker beat (each
 replaying the whole legacy card_events overlay), one Node artifact hash per
 sealed plan, and one directory listing per card. These tests pin that every
 reuse returns exactly what the uncached read returns, and that a reuse is
@@ -25,7 +25,6 @@ import pytest
 from skcapstone.card_store import CardCore, CardStore
 from skcapstone.fleet import production_test_node as node
 from skcapstone.fleet import production_test_plan as plan
-from skcapstone.fleet import profile_requalification as refresh
 from skcapstone.fleet import worker_liveness_runtime as runtime
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -336,58 +335,6 @@ def test_collect_observations_folds_every_beat_from_one_store(tmp_path, monkeypa
     assert _CountingStore.instances == 1
 
 
-def _failed_job(root: Path, suffix: str, card_id: str, owner: str, revision: str) -> None:
-    path = root / (suffix * 64 + ".job.json")
-    plan.write_once(path, {"card": card_id, "owner": owner, "claim_revision": revision})
-    plan.write_once(
-        path.with_name(path.stem + ".failed.json"),
-        {"card": card_id, "reason": "operator test recipe is invalid"},
-    )
-
-
-def test_release_failed_claims_reuses_store_until_a_release_runs(tmp_path, monkeypatch):
-    root = tmp_path / "fleet/profile-requalifications"
-    root.parent.mkdir(mode=0o700)
-    plan.private_dir(root, create=True)
-    jobs = [
-        ("a", "11111111", "rev-a"),
-        ("b", "22222222", "rev-b"),
-        ("c", "33333333", "rev-c"),
-        ("d", "44444444", "rev-d"),
-    ]
-    cards = {}
-    for suffix, cid, revision in jobs:
-        owner = "niobe-requal-" + cid
-        _failed_job(root, suffix, cid, owner, revision)
-        # Only 33333333 still holds its requalification claim.
-        held = cid == "33333333"
-        cards[cid] = SimpleNamespace(
-            status=SimpleNamespace(value="doing" if held else "backlog"),
-            owner=owner if held else None,
-            meta={"_claim_revision": revision} if held else {},
-        )
-    _CountingStore.instances = 0
-    monkeypatch.setattr(refresh, "CardStore", lambda home: _CountingStore(home, cards))
-    calls = []
-
-    def coord(argv, **_kwargs):
-        calls.append(argv[1:4])
-        card = cards[argv[3]]
-        if argv[2] == "release-claim":
-            card.status.value, card.owner = "backlog", None
-        elif argv[2] == "move":
-            card.status.value = argv[4]
-        return SimpleNamespace(returncode=0)
-
-    monkeypatch.setattr("subprocess.run", coord)
-    states = refresh._release_failed_claims(tmp_path, "/x/skcapstone", "niobe", root)
-    assert states == ["33333333=released"]
-    assert calls == [["coord", "release-claim", "33333333"], ["coord", "move", "33333333"]]
-    # one shared store for the reads up to the release, one fresh read after
-    # it, then a fresh shared store for the record after the release
-    assert _CountingStore.instances == 3
-
-
 def test_artifact_digest_memo_returns_identical_digest_once_per_scope(tmp_path, monkeypatch):
     artifact = tmp_path / "artifact"
     (artifact / "node_modules").mkdir(parents=True)
@@ -441,54 +388,3 @@ def test_node_binary_digest_identical_inside_and_outside_scope(tmp_path, monkeyp
         assert node._node_digest() == outside
         assert node._node_digest() == outside
     assert len(reads) == 1
-
-
-def test_harvest_uses_one_store_and_one_digest_scope(tmp_path, monkeypatch):
-    """Harvest validation still runs per plan; only the shared reads are reused."""
-    root = tmp_path / "fleet/profile-requalifications"
-    plans = tmp_path / "fleet/test-plans"
-    root.parent.mkdir(mode=0o700)
-    plan.private_dir(root, create=True)
-    plan.private_dir(plans, create=True)
-    for cid in ("11111111", "22222222", "33333333"):
-        plan.write_once(
-            plans / f"{cid}-p.json",
-            {
-                "binding": {"source_card": cid, "source_owner": "producer"},
-                "profile_requalification": True,
-            },
-        )
-    run = tmp_path / "run"
-    run.mkdir()
-    (run / "receipt.json").write_text("{}")
-    scopes = []
-
-    def load_plan(*_args, **_kwargs):
-        scopes.append(node._DIGEST_MEMO is not None)
-        return (
-            {
-                "profile_requalification": True,
-                "profile_predecessor_sha256": "other",
-                "runtime_sha256": "r",
-                "policy_sha256": "p",
-            },
-            plans / "x.json",
-            "e" * 64,
-        )
-
-    monkeypatch.setattr(refresh.socket, "gethostname", lambda: "chiap08")
-    monkeypatch.setattr(refresh.plan, "load_plan", load_plan)
-    monkeypatch.setattr(refresh.plan, "run_directory", lambda *_a: run)
-    monkeypatch.setattr(
-        refresh.profile, "read_profile", lambda *_a, **_k: ({"repository": "r"}, "c" * 64)
-    )
-    cards = {
-        cid: SimpleNamespace(status=SimpleNamespace(value="ready"), owner=None)
-        for cid in ("11111111", "22222222", "33333333")
-    }
-    _CountingStore.instances = 0
-    monkeypatch.setattr(refresh, "CardStore", lambda home: _CountingStore(home, cards))
-    assert refresh.harvest_completed(tmp_path, {"authority_host": "chiap08"}) == "idle"
-    assert scopes == [True, True, True]
-    assert _CountingStore.instances == 1
-    assert node._DIGEST_MEMO is None

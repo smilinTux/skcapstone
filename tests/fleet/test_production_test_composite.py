@@ -9,7 +9,6 @@ import pytest
 from skcapstone.fleet import production_test_composite as composite
 from skcapstone.fleet import production_test_node as node
 from skcapstone.fleet import production_test_plan as plan
-from skcapstone.fleet import production_test_profile as profiles
 from skcapstone.fleet import production_test_worker as worker
 from skcapstone.fleet import production_tests as native
 from skcapstone.fleet.production_pytest_recipe import recipe_checks
@@ -102,42 +101,28 @@ def test_incomplete_or_arbitrary_phase_recipe_refuses(extra):
         recipe_checks(value)
 
 
-def test_profile_variant_cannot_omit_or_disguise_a_language():
+def test_recipe_variant_cannot_omit_or_disguise_a_language():
     value, _ = specimen()
-    value.update(
-        {
-            key: "a" * 64
-            for key in [
-                "criteria_sha256",
-                "qualification_sha256",
-                "python_sha256",
-                "toolchain_sha256",
-                "runtime_sha256",
-                "policy_sha256",
-                "source_sha256",
-            ]
-        }
-    )
     value.update(
         card="1234abcd",
         repository="https://example.invalid/repo",
-        qualified_by="operator",
-        host="test",
+        criteria_sha256="a" * 64,
     )
-    profiles._validate_shape(value)
+    binding = {"source_card": "1234abcd", "criteria_sha256": "a" * 64}
+    plan._validate_declared(value, binding)
     for mutation in ("node-schema", "python-schema", "missing-python", "missing-node"):
         changed = copy.deepcopy(value)
         if mutation == "node-schema":
             changed["schema"] = node.SCHEMA
         elif mutation == "python-schema":
-            changed["schema"] = profiles.SCHEMA
+            changed["schema"] = plan.PYTHON_RECIPE_SCHEMA
             del changed["node_environment"]
         elif mutation == "missing-python":
             changed["recipe"] = {"vitest": value["recipe"]["vitest"]}
         else:
             del changed["recipe"]["vitest"]
         with pytest.raises(plan.TestEvidenceError):
-            profiles._validate_shape(changed)
+            plan._validate_declared(changed, binding)
 
 
 def source_fixture(tmp_path, monkeypatch):

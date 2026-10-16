@@ -182,7 +182,7 @@ def ineligibility(core: dict, labels: list[str] | tuple[str, ...]) -> str | None
       credential-free https source at a pinned revision and holds no host-local
       state, so only ``source-only`` cards (or, in production, glm-only plus
       dispatch-approved) are accepted. ``source-only`` also states the
-      no-external-action constraint, and the downstream test-profile, custody,
+      no-external-action constraint, and the downstream test, custody,
       retry and exit chains key on that label.
     * ``seat-pinned``: ``seat-*`` work belongs to a standing seat identity and
       its placement-manifest host, never to a builder-node identity.
@@ -303,18 +303,6 @@ def _request_matches_current_card(
         or labels != expected_labels
     ):
         raise BuilderDispatchError("offered card changed after dispatch request")
-    if request.get("production") is not None and not retained_claim:
-        from .production_test_profile import contract, validate_profile
-
-        try:
-            validate_profile(
-                request.get("test_profile"),
-                contract(dict(core, acceptance_criteria=card.acceptance_criteria)),
-                production_builder.policy(),
-                environment=False,
-            )
-        except (ValueError, TypeError) as exc:
-            raise BuilderDispatchError("offered test qualification changed") from exc
 
 
 def _ensure_request_matches_current_card(
@@ -649,14 +637,6 @@ def _offer(paths, core, labels, *, writer, now=None):
         raise BuilderDispatchError("card must select exactly one logical route")
     ready = _ready_builders(paths)
     production = production_builder.policy()
-    test_profile = None
-    if production is not None:
-        from .production_test_profile import preflight
-
-        try:
-            test_profile = preflight(paths.root.parent, core, labels, production)
-        except (OSError, ValueError) as exc:
-            raise BuilderDispatchError("required-test-profile-unqualified") from exc
     selected_node = None
     for view in ready:
         existing = _load(request_path(paths, view.name, card_id))
@@ -776,7 +756,6 @@ def _offer(paths, core, labels, *, writer, now=None):
         request["operator_role"] = "coord-custody"
     if binding is not None:
         request["production"] = binding
-        request["test_profile"] = test_profile
     path = request_path(paths, selected_node, card_id)
     existing = _load(path)
     if existing and existing.get("request_id") == request["request_id"]:

@@ -58,7 +58,6 @@ from skcapstone.fleet.production_dispatch import (
     authoritative_owner_state,
 )
 from skcapstone.fleet import pool_fold_cache
-from skcapstone.fleet import recipe_accel
 from skcapstone.fleet.production_review import independent_review_routes
 from skcapstone.fleet.cycle_deadline import CycleDeadline
 from skcapstone.fleet.lane_health import (
@@ -74,10 +73,6 @@ from skcapstone.fleet.production_brief import production_worker_brief, productio
 from skcapstone.fleet.production_hosted_review_brief import production_hosted_review_brief
 
 SKFLEET_PRODUCTION_POLICY_V1 = True
-# Linear recipe coverage and a per-process recipe_checks memo. Installed here, not
-# edited into production_pytest_recipe.py: that harness module's bytes pin every
-# card profile (runtime_fingerprint), so editing it would requalify the whole board.
-recipe_accel.install()
 from skcapstone.fleet.review_capacity import (
     acquire_review_route_snapshot,
     choose_review_route,
@@ -6289,24 +6284,6 @@ def reap_dead_claims():
                     fleet_paths=default_fleet_paths()):
                 log(d,"REAP_PRESERVED_REVIEW_CUSTODY|%s|%s|%s"%(HOST,cid,fresh_owner))
                 continue
-            from skcapstone.fleet.profile_requalification import retains_pending_claim
-            try:
-                if retains_pending_claim(
-                    Path(HOME) / ".skcapstone", cid, fresh_owner, fresh_revision
-                ):
-                    log(
-                        d,
-                        "REAP_PRESERVED_PROFILE_REQUALIFICATION|%s|%s|%s"
-                        % (HOST, cid, fresh_owner),
-                    )
-                    continue
-            except (OSError, ValueError, TypeError) as exc:
-                log(
-                    d,
-                    "REAP_PROFILE_REQUALIFICATION_STATE_UNAVAILABLE|%s|%s|%s"
-                    % (HOST, cid, str(exc)[:120]),
-                )
-                continue
         # Launch provenance is useful attribution, not a liveness gate. The old
         # code handed every unproven dead worker to a "stale-claim path" that did
         # not exist. Quorum plus absence from every report is the proof required
@@ -8482,90 +8459,6 @@ log(
     ),
 )
 
-def _profile_workspace(core, labels):
-    """Rebuild the exact source a requalification offer will bind (network fetch)."""
-    repository, base_ref, revision = builder_dispatch._source(core)
-    destination = (
-        Path(HOME) / ".skcapstone/fleet/workspaces" /
-        ("niobe-profile-requal-%s-%s" % (core["id"], revision[:12]))
-    )
-    return builder_dispatch.materialize_source(
-        {
-            "repository": repository,
-            "base_ref": base_ref,
-            "base_revision": revision,
-        },
-        destination,
-    )
-
-
-def _start_requal_prefetch(candidates, limit):
-    """Start the source fetches the offer loop will need, in loop order.
-
-    Called before continuation, review recovery and remote review offers (the
-    quarter of the cycle those take), so the network half overlaps them instead of
-    queueing in front of the first requalification offer.
-
-    Read-only prediction: a card needs one when its profile preflight fails (what
-    makes ``offer`` raise required-test-profile-unqualified) and it is still an
-    unowned offerable card. Returns None when disabled or nothing is predicted.
-    """
-    if os.environ.get("SKFLEET_REQUAL_PREFETCH", "1") == "0":
-        return None
-    from skcapstone.fleet import production_test_profile as _profiles
-    from skcapstone.fleet.profile_requalification import (
-        OFFERABLE_COLUMNS,
-        requalification_core,
-    )
-    from skcapstone.fleet.source_prefetch import SourcePrefetch, predict_requalifications
-
-    _home = Path(HOME) / ".skcapstone"
-    _store = CardStore(_home)
-    # The order the offer loop will use: qualified first, then least recently tried.
-    candidates = _offer_memory.order(
-        list(candidates),
-        _offer_memory.load(_home / "fleet/builder-offer-memory.json"),
-        lambda _cid: (_home / "fleet/test-profiles" / (str(_cid) + ".json")).is_file(),
-    )
-
-    def _needs(core, labels):
-        # Mirrors the gate at the top of offer_stale_candidate: only a stale profile
-        # or a missing one proceeds to the source rebuild; any other error is
-        # reported "ineligible" before a workspace is touched.
-        try:
-            _profiles.preflight(_home, core, labels, PRODUCTION_POLICY)
-        except _profiles.ProfileRequalificationRequired:
-            return True
-        except (OSError, ValueError) as exc:
-            return str(exc) == "required-test-profile-unqualified"
-        return False
-
-    def _folded(core):
-        card = _store.fold(core["id"])
-        if card is None or card.status.value not in OFFERABLE_COLUMNS or card.owner:
-            return None
-        return requalification_core(core, card)
-
-    predicted = predict_requalifications(
-        candidates, needs_requalification=_needs, folded_core=_folded, limit=limit)
-    if not predicted:
-        return None
-    prefetch = SourcePrefetch(
-        _profile_workspace,
-        workers=int(os.environ.get("SKFLEET_REQUAL_PREFETCH_WORKERS", "6") or "6"))
-    for _core, _labels in predicted:
-        prefetch.submit(_core, _labels)
-    log(d, "REQUAL_SOURCE_PREFETCH|%s|started=%d|workers=%d" % (
-        HOST, len(predicted), prefetch._workers))
-    return prefetch
-
-
-_requal_prefetch = None
-if not DRY and PRODUCTION_POLICY and _is_niobe_builder_host(HOST):
-    try:
-        _requal_prefetch = _start_requal_prefetch(_builder_candidates, 16)
-    except Exception as _prefetch_exc:  # noqa: BLE001 - prefetch is only an optimisation
-        log(d, "REQUAL_SOURCE_PREFETCH_FAILED|%s|%s" % (HOST, str(_prefetch_exc)[:160]))
 # Fail-safe build continuation, authority-only: a builder that committed or staged
 # real work and stopped before its typed handoff held the card in
 # awaiting-evidence forever (fef9698e, 2026-10-10). Grant one preserved
@@ -8583,20 +8476,6 @@ if not DRY and PRODUCTION_POLICY and _is_niobe_builder_host(HOST):
                 _continued.get("reason", "")))
     except Exception as _exc:  # noqa: BLE001 - continuation must never stop a cycle
         log(d, "BUILDER_CONTINUATION_FAILED|%s|%s" % (HOST, str(_exc)[:160]))
-# Baseline recipes, authority-only: a full-suite qualification that ran and
-# failed at the card's pinned base (host-dependent tests) can never pass, so
-# every skcapstone card failed forever (2026-10-11). Attach the exact baseline
-# (deselect what already failed or skipped at base) as the card's recipe.
-if not DRY and PRODUCTION_POLICY and _is_niobe_builder_host(HOST):
-    try:
-        from skcapstone.fleet.baseline_recipe import curate_failed_qualifications
-
-        for _curated in curate_failed_qualifications(Path(HOME) / ".skcapstone"):
-            log(d, "BASELINE_RECIPE|%s|%s|state=%s|%s" % (
-                HOST, _curated["card"], _curated["state"],
-                _curated.get("deselected", _curated.get("reason", ""))))
-    except Exception as _exc:  # noqa: BLE001 - curation must never stop a cycle
-        log(d, "BASELINE_RECIPE_FAILED|%s|%s" % (HOST, str(_exc)[:160]))
 # Demoted claims, authority-only: skcoord keeps an agent's bumped current task
 # claimed while demoting it to ready, and the pool treats it as claimed forever
 # (84 ready cards on chi, 2026-10-11). Release idle ones through the audited CLI.
@@ -8679,18 +8558,14 @@ log(
     ),
 )
 
-# Offer cards that already hold a test profile before cards that still
-# need one. Each unqualified card costs a requalification offer and a
-# source materialization, so the cycle deadline used to expire on them
-# while a qualified card waited behind: 6b2f91a4 qualified at 12:0xZ on
-# 2026-10-09 and was never offered (CYCLE_DEADLINE_REACHED processed=22,
-# deferred=107). sorted() is stable, so pool priority holds within each group.
-_qualified_profiles = Path(HOME) / ".skcapstone/fleet/test-profiles"
+# Never-tried cards first, then least recently tried. sorted() is stable, so pool
+# priority holds within each group. Every card is equally offerable now that no
+# card needs a test profile before it can be offered.
 _OFFER_MEMORY_PATH = Path(HOME) / ".skcapstone/fleet/builder-offer-memory.json"
 _builder_candidates = _offer_memory.order(
     _builder_candidates,
     _offer_memory.load(_OFFER_MEMORY_PATH),
-    lambda _cid: (_qualified_profiles / (str(_cid) + ".json")).is_file(),
+    lambda _cid: True,
 )
 
 
@@ -8711,8 +8586,8 @@ def _record_offer_state(card_id, state):
 # cycle ~110s, while the 20s cap held qualification to 1-2 offers per cycle
 # (2026-10-09 20:51Z). 80s kept the cycle near 170s; on 2026-10-14 it was the
 # 84.5s that, with lane selection at 57s, left lane_launch 9.6s and launched 0 of
-# 98 ready cards. The source fetches now overlap (source_prefetch) and the phase
-# also stops at its PHASE_FRACTIONS share of the cycle, so the cap is a ceiling.
+# 98 ready cards. The phase also stops at its PHASE_FRACTIONS share of the cycle, so
+# the cap is a ceiling.
 _BUILDER_OFFER_SECONDS = float(os.environ.get("SKFLEET_BUILDER_OFFER_SECONDS", "45"))
 
 
@@ -8721,8 +8596,6 @@ _BUILDER_OFFER_SECONDS = float(os.environ.get("SKFLEET_BUILDER_OFFER_SECONDS", "
 # authority and this scheduler never impersonates a remote worker.
 _builder_attempted_ids = set()  # offered (or tried) this cycle; cap fall-through skips them
 if not DRY and _is_niobe_builder_host(HOST):
-    _profile_requalifications_offered = 0
-    _profile_requalification_limit = 16
     _builder_phase_started = time.monotonic()
     _builder_offered = 0  # resume order comes from the persisted offer memory
     for _candidate in tuple(_builder_candidates)[:MAX_CANDIDATE_SCAN]:
@@ -8752,31 +8625,6 @@ if not DRY and _is_niobe_builder_host(HOST):
                 # card does not change until an operator amends it again, so back
                 # off instead of re-proving it every cycle.
                 _record_offer_state(_candidate[2], "ineligible:" + str(_exc))
-            if str(_exc) == "required-test-profile-unqualified":
-                if _profile_requalifications_offered >= _profile_requalification_limit:
-                    log(d, "PROFILE_REQUALIFICATION_DEFERRED|%s|%s|reason=cycle-offer-limit" %
-                        (HOST, _candidate[2]))
-                    continue
-                try:
-                    from skcapstone.fleet.profile_requalification import offer_stale_candidate
-
-                    _requal_state = offer_stale_candidate(
-                        Path(HOME) / ".skcapstone",
-                        PRODUCTION_POLICY,
-                        SKC,
-                        DISPATCH_AGENT,
-                        dict(_candidate[3], id=_candidate[2]),
-                        _candidate[4],
-                        _requal_prefetch.prepare if _requal_prefetch else _profile_workspace,
-                    )
-                    log(d, "PROFILE_REQUALIFICATION_OFFER|%s|%s|state=%s" %
-                        (HOST, _candidate[2], _requal_state))
-                    _record_offer_state(_candidate[2], _requal_state)
-                    if _requal_state.startswith("pending:"):
-                        _profile_requalifications_offered += 1
-                except (OSError, ValueError, subprocess.SubprocessError) as _requal_exc:
-                    log(d, "PROFILE_REQUALIFICATION_OFFER_BLOCKED|%s|%s|%s" %
-                        (HOST, _candidate[2], str(_requal_exc)[:160]))
             continue
         if _remote_request is not None:
             log(
@@ -9048,29 +8896,6 @@ for _kimi_model in (() if PRODUCTION_POLICY else ("kimi-for-coding", "k3")):
     if all(lane["name"]!="kimi" or lane["model"]!=_kimi_model for lane in _health_lanes):
         _health_lanes.append({"name":"kimi","model":_kimi_model})
 _cycle_id=new_cycle_id(HOST,STAMP)
-if PRODUCTION_POLICY:
-    try:
-        from skcapstone.fleet.profile_requalification import (
-            harvest_completed,
-            requalify_or_advance,
-        )
-
-        # Harvest and advance are independent: a harvest failure must not stop
-        # the advance that finalizes finished local runs (2026-10-11).
-        try:
-            _harvest_state = harvest_completed(
-                Path(HOME) / ".skcapstone", PRODUCTION_POLICY, deadline=CYCLE)
-            if _harvest_state != "idle":
-                log(d, "PROFILE_REQUALIFICATION_HARVEST|%s|state=%s" % (HOST, _harvest_state))
-        except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            log(d, "PROFILE_REQUALIFICATION_HARVEST_BLOCKED|%s|%s" % (HOST, str(exc)[:180]))
-        _requal_state = requalify_or_advance(
-            Path(HOME) / ".skcapstone", PRODUCTION_POLICY, SKC, DISPATCH_AGENT
-        )
-        if _requal_state not in {"idle", "not-authority"}:
-            log(d, "PROFILE_REQUALIFICATION|%s|state=%s" % (HOST, _requal_state))
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        log(d, "PROFILE_REQUALIFICATION_BLOCKED|%s|%s" % (HOST, str(exc)[:180]))
 if PRODUCTION_POLICY:
     _health_lanes=[{**lane,"model":route["model_or_bucket"]}
         for lane in LANES for route in routes_for_lane(
@@ -9513,7 +9338,6 @@ _cycle_deadline = (
 _route_preflight_cache = {}
 _lane_unhealthy = {}
 for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
-    _profile_requalify = False
     if launched>=MAX_LAUNCH:
         break
     if time.monotonic() >= _cycle_deadline:
@@ -9844,23 +9668,6 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
                 _review_route_reservations[_domain]=(
                     _review_route_reservations.get(_domain,0)+1)
         continue
-    # Cheap test-profile gate on the pool core before the fresh fold below.
-    # The fresh claimability + admission re-check costs ~2.3s a card, and every
-    # unqualified source card paid it only to hit TEST_PROFILE_BLOCKED: 64 cards
-    # took lane_launch to 150s and the cycle to 260s of its 270s limit when
-    # their shared 1h cooldown expired together (chiap08 2026-10-09 21:02Z).
-    # The authoritative preflight on the fresh core still runs further down.
-    if PRODUCTION_POLICY and _governed_review_metadata(core, _labels) is None:
-        from skcapstone.fleet import production_test_profile as _profile_gate
-        try:
-            _profile_gate.preflight(Path(HOME)/".skcapstone", dict(core, id=cid), _labels,
-                           PRODUCTION_POLICY)
-        except _profile_gate.ProfileRequalificationRequired:
-            pass
-        except (OSError,ValueError) as exc:
-            log(d,"TEST_PROFILE_BLOCKED|%s|%s|%s"%(HOST,cid,exc))
-            _record_workspace_cooldown(cid)
-            continue
     _review_recommendation = None
     _review_handoff = None
     bf=os.path.join(logdir,"brief-%s.txt"%cid); open(bf,"w").write(brief)
@@ -10029,25 +9836,6 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             "SKIPPED_LANE_HEALTH|%s|%s|%s|lane=%s|model=%s|reason=%s"%
             (HOST,sess,cid,_LANE["name"],model,health_reason))
         continue
-    # Reject unsupported tests before spending tokens on route qualification.
-    try:
-        if PRODUCTION_POLICY and _governed_review_metadata(
-                fresh_claimability["core"], fresh_claimability["labels"]) is None:
-            from skcapstone.fleet.production_test_profile import preflight as test_preflight
-            test_preflight(Path(HOME)/".skcapstone", dict(fresh_claimability["core"], id=cid),
-                           fresh_claimability["labels"], PRODUCTION_POLICY)
-    except (OSError,ValueError) as exc:
-        from skcapstone.fleet.production_test_profile import ProfileRequalificationRequired
-        if isinstance(exc, ProfileRequalificationRequired):
-            _profile_requalify = True
-            log(d,"TEST_PROFILE_REQUALIFICATION_REQUIRED|%s|%s|%s"%(HOST,cid,exc))
-        else:
-            log(d,"TEST_PROFILE_BLOCKED|%s|%s|%s"%(HOST,cid,exc))
-            _record_workspace_cooldown(cid)
-            continue
-    if _profile_requalify and HOST != PRODUCTION_POLICY.get("authority_host"):
-        log(d,"TEST_PROFILE_REQUALIFICATION_DEFERRED|%s|%s|reason=authority-host-only"%(HOST,cid))
-        continue
     # Link's recommendation appends evidence. Compare the bounded admission
     # after lane health so no event mutates the card before the final preclaim.
     try:
@@ -10152,54 +9940,6 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         except (FanoutBoundaryError, OSError, ValueError) as exc:
             log(d,"FANOUT_MATERIALIZE_RECEIPT_FAILED|%s|%s|%s"%(HOST,cid,exc))
             continue
-    if PRODUCTION_POLICY and _governed_review_metadata(
-            fresh_claimability["core"], fresh_claimability["labels"]) is None:
-        try:
-            _test_current=authoritative_claimability(cid, fresh=True)
-            _test_source_sha = None
-            if "_source_spec" in globals() and _source_spec is not None:
-                from skcapstone.fleet.production_test_plan import workspace_source_fingerprint
-
-                _test_source_sha = workspace_source_fingerprint(
-                    _source_spec[0], Path(workspace)
-                )
-            test_preflight(
-                Path(HOME) / ".skcapstone",
-                dict(_test_current["core"], id=cid),
-                _test_current["labels"],
-                PRODUCTION_POLICY,
-                source_sha256=_test_source_sha,
-            )
-        except (OSError,ValueError) as exc:
-            from skcapstone.fleet.production_test_profile import ProfileRequalificationRequired
-            if isinstance(exc, ProfileRequalificationRequired):
-                _profile_requalify = True
-                log(d,"TEST_PROFILE_REQUALIFICATION_REQUIRED|%s|%s|%s"%(HOST,cid,exc))
-            else:
-                log(d,"PRECLAIM_DEFERRED|%s|%s|reason=test-profile-%s"%(HOST,cid,exc))
-                continue
-    if _profile_requalify:
-        try:
-            from skcapstone.fleet.profile_requalification import harvest_completed
-
-            _harvest_state = harvest_completed(Path(HOME) / ".skcapstone", PRODUCTION_POLICY, cid)
-            if _harvest_state != "idle":
-                log(d, "PROFILE_REQUALIFICATION_HARVEST|%s|%s|state=%s" %
-                    (HOST, cid, _harvest_state))
-            if _harvest_state == "qualified:" + cid:
-                test_preflight(
-                    Path(HOME) / ".skcapstone",
-                    dict(fresh_claimability["core"], id=cid),
-                    fresh_claimability["labels"], PRODUCTION_POLICY,
-                )
-                _profile_requalify = False
-            elif _harvest_state.startswith(("held:", "blocked:")):
-                log(d, "PROFILE_REQUALIFICATION_CLAIM_HELD|%s|%s|reason=%s" %
-                    (HOST, cid, _harvest_state.split(":", 1)[1]))
-                continue
-        except (OSError, ValueError) as exc:
-            log(d, "PROFILE_REQUALIFICATION_HARVEST_BLOCKED|%s|%s|%s" %
-                (HOST, cid, str(exc)[:180]))
     claim=subprocess.run([SKC,"coord","claim",cid,"--agent",name],capture_output=True,text=True)
     claimed_owner,_claimed_at,claimed_revision=_current_claim_identity_fresh(cid)
     claim_outcome=_classify_claim_outcome(
@@ -10211,31 +9951,6 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         claim_refused += 1
         detail=_claim_failure_detail(claim.stdout, claim.stderr)[:140]
         log(d,"CLAIM_REFUSED|%s|%s|%s|owner=%s|%s"%(HOST,sess,cid,claimed_owner,detail))
-        continue
-    if _profile_requalify:
-        try:
-            from skcapstone.fleet.profile_requalification import requalify_or_advance
-
-            _requal_state = requalify_or_advance(
-                Path(HOME) / ".skcapstone",
-                PRODUCTION_POLICY,
-                SKC,
-                DISPATCH_AGENT,
-                card_id=cid,
-                core=dict(fresh_claimability["core"], id=cid),
-                workspace=workspace,
-                owner=name,
-                claim_revision=claimed_revision,
-            )
-            log(d,"PROFILE_REQUALIFICATION|%s|%s|state=%s"%(HOST,cid,_requal_state))
-            if _requal_state not in {"pending", "qualified"}:
-                log(d,"PROFILE_REQUALIFICATION_CLAIM_RETAINED|%s|%s|state=%s|claim=%s"%
-                    (HOST,cid,_requal_state,claimed_revision))
-        except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            log(d,"PROFILE_REQUALIFICATION_BLOCKED|%s|%s|%s"%(HOST,cid,str(exc)[:180]))
-            _requal_state = "blocked:" + str(exc)[:180]
-        log(d,"BUILDER_CLAIM_NOT_LAUNCHED|%s|%s|reason=profile-requalification|state=%s|claim=%s"%
-            (HOST,cid,_requal_state,claimed_revision))
         continue
     if PRODUCTION_POLICY and _review_seat is None and _source_spec is not None:
         brief=production_worker_brief(

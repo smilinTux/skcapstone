@@ -12,7 +12,6 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 from . import production_builder
-from . import production_test_plan as test_plan
 from .production_admission import (
     AdmissionError,
     finalize_failed_launch,
@@ -122,18 +121,15 @@ def without_tests_pythonpath(argv: list[str]) -> list[str]:
 
 def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
     """Rehash real output, argv, JUnit, source and independently observed unit exit."""
-    plan, plan_path, plan_sha = load_plan(
-        home, binding, allow_completed=True, allow_remote_host=True
-    )
+    plan, plan_path, plan_sha = load_plan(home, binding, allow_remote_host=True)
     directory = run_directory(home, plan_sha)
     launch = read_json(directory / "launch.json")
     receipt = read_json(directory / "receipt.json")
     terminal = read_json(directory / "terminal.json")
     expected = source_state(workspace, binding)
     from . import production_test_composite as composite
-    from .production_test_plan import effective_profile
 
-    profile = effective_profile(plan)
+    profile = plan.get("profile")
     if profile:
         composite.validate_source(profile, workspace)
     unit = production_builder.unit_name(launch, 1)
@@ -164,7 +160,6 @@ def _validate_test_receipt(home: Path, binding: dict, workspace: Path) -> dict:
         or launch.get("workspace") != str(workspace.resolve())
         or launch.get("unit") != unit
         or launch.get("attempt") != 1
-        or test_plan.execution_policy_fingerprint(policy, plan["host"]) != plan["policy_sha256"]
         or launch.get("production")
         != {"resources": policy.get("node_quotas", {}).get(plan["host"])}
         or launch.get("service_argv") != expected_argv
@@ -442,19 +437,9 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
     The caller owns exact current claim/revision checks before this launch.
     """
     try:
-        plan, plan_path, plan_sha = load_plan(
-            home, binding, allow_completed=True, allow_remote_host=True
-        )
+        plan, plan_path, plan_sha = load_plan(home, binding, allow_remote_host=True)
     except FileNotFoundError:
         return None
-    if plan["policy_sha256"] != test_plan.execution_policy_fingerprint(policy, plan["host"]):
-        raise TestEvidenceError("test quota policy changed after qualification")
-    remote_plan = (
-        plan.get("remote_requalification") is True
-        or plan.get("remote_initial_profile_qualification") is True
-    )
-    if remote_plan and plan.get("authority_host") != policy.get("authority_host"):
-        raise TestEvidenceError("remote test plan authority differs from production policy")
     _ADMISSION_REFUSALS.pop(binding["source_card"], None)
     workspace = workspace.resolve()
     source_state(workspace, binding)
@@ -462,7 +447,7 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
     directory = run_directory(home, plan_sha)
     current_host = socket.gethostname().split(".")[0].lower()
     if plan["host"] != current_host:
-        if not remote_plan or plan.get("authority_host") != current_host:
+        if policy.get("authority_host") != current_host:
             raise TestEvidenceError("remote test plan is not authority-readable")
         # The builder writes launch, terminal and receipt separately and Syncthing
         # delivers them independently; validating on receipt alone raised
@@ -478,8 +463,8 @@ def run_or_read_tests(home: Path, binding: dict, workspace: Path, policy: dict) 
     lock_fd = os.open(directory / ".run.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     with os.fdopen(lock_fd, "r+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        if load_plan(home, binding, allow_completed=True, allow_remote_host=True)[2] != plan_sha:
-            raise TestEvidenceError("test plan generation changed before launch")
+        if load_plan(home, binding, allow_remote_host=True)[2] != plan_sha:
+            raise TestEvidenceError("test plan changed before launch")
         private_dir(directory, create=True)
         if (directory / "launch.json").exists():
             launch = read_json(directory / "launch.json")

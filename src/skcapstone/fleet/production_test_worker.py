@@ -282,7 +282,7 @@ def execute(plan_path: Path, directory: Path) -> int:
     timeout = launch["production"]["resources"]["runtime_max_seconds"]
     try:
         receipt["source_before"] = source_state(workspace, binding)
-        profile = test_plan.effective_profile(plan)
+        profile = plan.get("profile")
         if profile:
             composite.validate_source(profile, workspace)
         for check in plan["checks"]:

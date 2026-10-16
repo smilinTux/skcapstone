@@ -168,35 +168,11 @@ def production_setup(paths, operator, monkeypatch, tmp_path, qualified_runtime):
         allocatable={"cores": 12, "ram_gb": 16},
     )
     monkeypatch.setattr(builder, "node_views", lambda _paths: [view])
-    # These dispatch tests predate required profiles. Qualify the synthetic
-    # contract through the real API; profile refusal has its own test matrix.
     from skcapstone.fleet import production_admission as admission
-    from skcapstone.fleet import production_test_profile as profiles
 
     # Host capacity is independently covered by test_production_admission.
     monkeypatch.setattr(admission, "local_worker_admission", lambda *args: (True, "fixture"))
 
-    preflight = profiles.preflight
-
-    def qualified_preflight(home, core, labels, policy):
-        path = home / "fleet/test-profiles" / (core["id"] + ".json")
-        if not path.exists():
-            profiles.qualify_profile(
-                home,
-                core,
-                policy,
-                {
-                    "pytest": {"tests/test_fixture.py": 1},
-                    "compile": [],
-                    "lint": [],
-                    "changelog": False,
-                },
-                "synthetic-test-operator",
-                "b" * 64,
-            )
-        return preflight(home, core, labels, policy)
-
-    monkeypatch.setattr(profiles, "preflight", qualified_preflight)
     builder._PROCESSES.clear()
     yield SimpleNamespace(
         policy=value,
