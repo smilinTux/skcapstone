@@ -132,22 +132,6 @@ def test_mero_blocked_and_stale_states_fail_closed() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_rotation_uses_the_deployed_runtime_interpreter() -> None:
-    """The drop-in uses the venv interpreter and the DEPLOYED launcher.
-
-    The interpreter stays wheel-owned (%h/.skenv/bin/python3); only the
-    script path follows deployment. Those are separate questions and #591
-    was right about the first one.
-    """
-
-    dropin = ROOT / "scripts/fleet/systemd/skfleet-rotate.service.d/seat-runtime-python.conf"
-    assert dropin.read_bytes() == (
-        b"[Service]\n"
-        b"ExecStart=\n"
-        b"ExecStart=%h/.skenv/bin/python3 %h/.local/bin/skfleet-rotate.py --go\n"
-    )
-
-
 def test_rotation_launcher_is_installed_by_the_wheel() -> None:
     """Every runtime file is still a script-files entry.
 
@@ -172,16 +156,12 @@ def test_rotation_launcher_is_installed_by_the_wheel() -> None:
 def test_every_dispatcher_consumer_names_the_copy_the_fleet_runs() -> None:
     """One path, everywhere. Two dispatchers is the whole failure mode.
 
-    The rotate service, the readiness gate and the niobe-live unit must all
-    name the same file. When they disagree, the gate grades a copy nothing
-    runs and niobe launches a second dispatcher that no rollout step keeps
-    current -- which is how a fleet ends up running two different builds
-    while every check reports green.
+    The readiness gate grades the dispatcher copy the deployment ships. The
+    rotate service and niobe-live unit that once launched it were retired, so
+    the readiness unit is the one remaining consumer to keep honest.
     """
 
     for unit in (
-        ROOT / "systemd/skfleet-niobe-live.service",
-        ROOT / "src/skcapstone/data/systemd/skfleet-niobe-live.service",
         ROOT / "systemd/skfleet-readiness.service",
         ROOT / "src/skcapstone/data/systemd/skfleet-readiness.service",
     ):

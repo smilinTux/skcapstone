@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from skcapstone.fleet.rollout_drift import ALLOWED_UNSHIPPED_UNITS
+from skcapstone.fleet.rollout_drift import ALLOWED_UNSHIPPED_UNITS, RETIRED_UNITS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SYSTEMD_DATA_DIR = REPO_ROOT / "src" / "skcapstone" / "data" / "systemd"
@@ -121,13 +121,19 @@ def test_every_referenced_skfleet_unit_is_shipped() -> None:
     dangling = [
         (source, lineno, unit)
         for source, lineno, unit in _referenced_units()
-        if unit not in shipped and unit not in ALLOWED_UNSHIPPED_UNITS
+        if unit not in shipped
+        and unit not in ALLOWED_UNSHIPPED_UNITS
+        and unit not in RETIRED_UNITS
     ]
     assert (
         not dangling
     ), "referenced but not shipped in src/skcapstone/data/systemd/:\n" + "\n".join(
         f"  {source}:{lineno}: {unit}" for source, lineno, unit in sorted(dangling)
     )
+
+
+def test_retired_units_are_never_shipped_again() -> None:
+    assert not _shipped_units() & RETIRED_UNITS
 
 
 @pytest.mark.parametrize("unit", sorted(ALLOWED_UNSHIPPED_UNITS))

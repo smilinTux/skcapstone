@@ -5,18 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from skcapstone.fleet import builder_dispatch as builder, review_dispatch as review
+from skcapstone.fleet import builder_dispatch as builder
 from skcapstone.fleet import production_builder as production
+from skcapstone.fleet import review_dispatch as review
 from skcapstone.fleet import store
+from tests.fleet.remote_review_fixtures import (
+    offer_and_consume,
+)  # noqa: F401
 from tests.fleet.test_remote_review_policy import remote_policy  # noqa: F401
 from tests.fleet.test_source_bundle import source  # noqa: F401
-
-
-from tests.fleet.remote_review_fixtures import (
-    execution,
-    offer_and_consume,
-    terminal_review,
-)  # noqa: F401
 
 
 @pytest.mark.host_systemd
@@ -254,30 +251,6 @@ def test_remote_exit_import_uses_sealed_claims_and_policy_after_release(
 
     assert path.is_file()
     assert json.loads(path.read_text()) == e["terminal"]
-
-
-@pytest.mark.host_systemd
-def test_seraph_offer_is_pending_never_a_successful_launch(execution):
-    import subprocess
-    from skcapstone.seat_cycle_entrypoint import verify_seraph_dispatch
-
-    e = execution
-    request = review.offer_review(e["paths"], e["home"], e["card"], writer=e["writer"])
-    assert request
-    output = (
-        "REVIEW_OFFERED|chiap08|"
-        + e["card"]
-        + "|node=node-chiap03|request="
-        + request["request_id"]
-    )
-    result = verify_seraph_dispatch(
-        e["home"],
-        subprocess.CompletedProcess([], 0, stdout=output, stderr=""),
-        production_policy=e["policy"],
-    )
-    assert result["reason"] == "seraph_remote_review_pending"
-    assert result["recommendations"] == 0
-    assert result["pending_offers"] == 1
 
 
 @pytest.mark.parametrize("change", ["quota", "capability", "host-alias", "cordon"])

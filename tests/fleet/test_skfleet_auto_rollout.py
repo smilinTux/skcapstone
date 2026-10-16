@@ -197,7 +197,10 @@ def test_busy_dispatch_cycle_defers_the_rollout(fleet):
     bins = fleet["deploy"].parent / "bin"
     _write_exe(bins / "systemctl", f'echo "systemctl $*" >> {fleet["calls"]}\necho active\n')
     env = dict(
-        fleet["env"], SYSTEMCTL_BIN=str(bins / "systemctl"), SKFLEET_AUTO_ROLLOUT_QUIET_WAIT="0"
+        fleet["env"],
+        SYSTEMCTL_BIN=str(bins / "systemctl"),
+        SKFLEET_AUTO_ROLLOUT_QUIET_WAIT="0",
+        SKFLEET_AUTO_ROLLOUT_QUIET_UNITS="skfleet-quiet-fixture.service",
     )
     result = _run(env)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -205,6 +208,22 @@ def test_busy_dispatch_cycle_defers_the_rollout(fleet):
     assert [c for c in _calls(fleet["calls"]) if c.startswith("rollout")] == []
     # the deploy checkout was not fast-forwarded either
     assert _git(fleet["deploy"], "rev-parse", "HEAD") != _git(fleet["origin"], "rev-parse", "HEAD")
+
+
+def test_retired_dispatcher_units_are_not_waited_on_by_default(fleet):
+    """P4b: QUIET_UNITS no longer names the retired seat-cycle or niobe-live units."""
+    _advance_origin(fleet["origin"])
+    bins = fleet["deploy"].parent / "bin"
+    _write_exe(bins / "systemctl", f'echo "systemctl $*" >> {fleet["calls"]}\necho active\n')
+    env = dict(fleet["env"], SYSTEMCTL_BIN=str(bins / "systemctl"))
+    env.pop("SKFLEET_AUTO_ROLLOUT_QUIET_UNITS", None)
+    result = _run(env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "deferring main" not in result.stdout
+    assert not any("is-active" in c for c in _calls(fleet["calls"]))
+    assert [
+        c.split("--node ")[1].split()[0] for c in _calls(fleet["calls"]) if c.startswith("rollout")
+    ] == ["h1", "h2", "h3"]
 
 
 def test_idle_dispatch_cycle_lets_the_rollout_proceed(fleet):
