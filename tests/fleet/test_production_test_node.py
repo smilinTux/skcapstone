@@ -9,7 +9,7 @@ import pytest
 
 from skcapstone.fleet import production_test_node as node
 from skcapstone.fleet import production_test_plan as plan
-from skcapstone.fleet import production_test_profile as profile
+from skcapstone.fleet.production_pytest_recipe import recipe_checks
 
 
 def specimen():
@@ -29,7 +29,7 @@ def specimen():
 
 def test_fixed_node_commands_and_exact_membership():
     value, root = specimen()
-    checks = profile.recipe_checks(value["recipe"])
+    checks = recipe_checks(value["recipe"])
     assert [c["id"] for c in checks] == ["vitest", "typecheck", "lint"]
     assert all(c["argv"][0] == str(node.NODE) for c in checks)
     assert "--no-cache" in checks[0]["argv"]
@@ -247,114 +247,3 @@ def test_only_typecheck_gets_its_private_build_info_mount(tmp_path, monkeypatch)
         argv = worker.sandbox_command(workspace, tmp_path / "output", check["argv"], value)
         assert ("/work/apps/web/tsconfig.tsbuildinfo" in argv) == (check["id"] == "typecheck")
         assert argv[argv.index("--remount-ro") + 1] == "/work"
-
-
-def _qualified_artifact(tmp_path, monkeypatch):
-    root = tmp_path / "artifacts"
-    root.mkdir(mode=0o700)
-    artifact = root / "staging"
-    (artifact / "node_modules").mkdir(parents=True)
-    (artifact / "apps/web/node_modules").mkdir(parents=True)
-    module = artifact / "node_modules/a.js"
-    module.write_text("public synthetic module")
-    module.chmod(0o444)
-    for p in sorted(artifact.rglob("*"), reverse=True):
-        if p.is_dir():
-            p.chmod(0o555)
-    artifact.chmod(0o555)
-    digest = node.artifact_digest(artifact)
-    artifact.rename(root / digest)
-    monkeypatch.setattr(node, "ARTIFACT_ROOT", root)
-    executable = tmp_path / "node"
-    executable.write_bytes(b"old runtime")
-    monkeypatch.setattr(node, "NODE", executable)
-    environment = {
-        "node_sha256": plan.sha(b"old runtime"),
-        "artifact_sha256": digest,
-        "platform": [platform.system(), platform.machine()],
-        "source_sha256": dict.fromkeys(node.SOURCE_FILES, "a" * 64),
-    }
-    return environment, executable, root / digest
-
-
-def test_runtime_only_drift_refreshes_and_every_other_drift_still_refuses(tmp_path, monkeypatch):
-    """A Node reinstall re-binds the binary; artifact, platform and sources stay exact."""
-    environment, executable, artifact = _qualified_artifact(tmp_path, monkeypatch)
-    assert node.refreshed_runtime(environment) is None
-    assert node.current_environment(environment) is environment
-
-    executable.write_bytes(b"new runtime")
-    refreshed = node.refreshed_runtime(environment)
-    assert refreshed == dict(environment, node_sha256=plan.sha(b"new runtime"))
-    assert node.current_environment(environment) == refreshed
-    node.validate_environment(refreshed)
-
-    other_platform = dict(environment, platform=["Plan9", "mips"])
-    assert node.refreshed_runtime(other_platform) is None
-    with pytest.raises(plan.TestEvidenceError, match="environment"):
-        node.current_environment(other_platform)
-
-    fewer_sources = dict(environment, source_sha256={"package.json": "a" * 64})
-    assert node.refreshed_runtime(fewer_sources) is None
-
-    module = artifact / "node_modules/a.js"
-    module.parent.chmod(0o755)
-    module.chmod(0o644)
-    module.write_text("drift")
-    module.chmod(0o444)
-    module.parent.chmod(0o555)
-    assert node.refreshed_runtime(environment) is None
-    with pytest.raises(plan.TestEvidenceError):
-        node.current_environment(environment)
-
-
-def test_requalification_plan_executes_the_refreshed_environment():
-    profile_value = {"recipe": {"vitest": {"src/a.test.ts": 1}}, "node_environment": {"n": 1}}
-    assert plan.effective_profile({"profile": profile_value}) is profile_value
-    assert plan.effective_profile({}) is None
-    sealed = {"profile": profile_value, "node_environment_refresh": {"n": 2}}
-    assert plan.effective_profile(sealed) == dict(profile_value, node_environment={"n": 2})
-    assert profile_value["node_environment"] == {"n": 1}
-
-
-def test_runtime_drift_makes_a_node_profile_requalifiable(tmp_path, monkeypatch):
-    """Classification: drift is a reason to requalify, never an ineligible error."""
-    environment, executable, _artifact = _qualified_artifact(tmp_path, monkeypatch)
-    executable.write_bytes(b"new runtime")
-    from skcapstone.fleet import profile_requalification as requal
-
-    value = {"recipe": {"vitest": {"src/a.test.ts": 1}}, "node_environment": environment}
-    assert requal._successor_environment(value)["node_sha256"] == plan.sha(b"new runtime")
-    assert requal._successor_environment({"recipe": {"pytest_all": True}}) is None
-
-
-def test_plan_refresh_is_recomputed_never_trusted(tmp_path, monkeypatch):
-    environment, executable, _artifact = _qualified_artifact(tmp_path, monkeypatch)
-    profile_value = {
-        "schema": node.SCHEMA,
-        "recipe": {"vitest": {"src/a.test.ts": 1}},
-        "node_environment": environment,
-    }
-    requal = {"profile_requalification": True}
-    plan.validate_plan_node_environment(requal, profile_value)
-    with pytest.raises(plan.TestEvidenceError):
-        # No drift: a refresh that equals nothing recomputable is refused.
-        plan.validate_plan_node_environment(
-            dict(requal, node_environment_refresh=environment), profile_value
-        )
-    executable.write_bytes(b"new runtime")
-    with pytest.raises(plan.TestEvidenceError, match="environment"):
-        plan.validate_plan_node_environment(requal, profile_value)
-    good = node.refreshed_runtime(environment)
-    plan.validate_plan_node_environment(dict(requal, node_environment_refresh=good), profile_value)
-    forged = dict(good, artifact_sha256="f" * 64)
-    with pytest.raises(plan.TestEvidenceError, match="changed"):
-        plan.validate_plan_node_environment(
-            dict(requal, node_environment_refresh=forged), profile_value
-        )
-    with pytest.raises(plan.TestEvidenceError, match="changed"):
-        plan.validate_plan_node_environment({"node_environment_refresh": good}, profile_value)
-    with pytest.raises(plan.TestEvidenceError, match="invalid"):
-        plan.validate_plan_node_environment(
-            dict(requal, node_environment_refresh=good), {"recipe": {"pytest_all": True}}
-        )

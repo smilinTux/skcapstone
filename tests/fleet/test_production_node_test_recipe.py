@@ -6,14 +6,14 @@ import subprocess
 
 import pytest
 
-from skcapstone.fleet import baseline_node_recipe as baseline
 from skcapstone.fleet import production_node_test_recipe as recipe
 from skcapstone.fleet import production_test_composite as composite
 from skcapstone.fleet import production_test_node as node
 from skcapstone.fleet import production_test_plan as plan
-from skcapstone.fleet import production_test_profile as profiles
 from skcapstone.fleet import production_test_worker as worker
 from skcapstone.fleet import production_tests as native
+from skcapstone.fleet import test_recipe
+from skcapstone.fleet.production_pytest_recipe import recipe_checks
 
 from .test_production_tests import private_bytes, receipt_fixture
 from .test_production_tests import setup as setup  # noqa: F401
@@ -43,7 +43,7 @@ def source(tmp_path, monkeypatch):
         "source_sha256": {p: plan.sha((workspace / p).read_bytes()) for p in recipe.SOURCE_FILES},
     }
     monkeypatch.setattr(node, "qualified_environment", lambda _: environment)
-    value, environment = profiles.initial_recipe({"description": "Node gateway"}, workspace)
+    value, environment = test_recipe.initial_recipe({"description": "Node gateway"}, workspace)
     return workspace, {"schema": node.SCHEMA, "recipe": value, "node_environment": environment}
 
 
@@ -62,7 +62,7 @@ def test_detection_environment_and_sandbox(source, tmp_path):
         "tests/metrics-delivery.test.mjs",
     ]
     composite.validate_source(profile, workspace)
-    checks = profiles.recipe_checks(profile["recipe"])
+    checks = recipe_checks(profile["recipe"])
     assert [c["id"] for c in checks] == ["node-000", "node-001"]
     assert checks[0]["argv"] == [
         str(node.NODE),
@@ -85,7 +85,7 @@ def test_detection_environment_and_sandbox(source, tmp_path):
 def test_operator_baseline_recipe_keeps_explicit_targets(source):
     workspace, profile = source
     configured = {"node_test": {"tests/a.test.mjs": 1}}
-    result, _ = profiles.initial_recipe(
+    result, _ = test_recipe.initial_recipe(
         {"links": {"test_profile_recipe": json.dumps(configured)}}, workspace
     )
     assert result == configured
@@ -96,7 +96,7 @@ def test_operator_baseline_recipe_keeps_explicit_targets(source):
 )
 def test_target_injection_refuses(bad):
     with pytest.raises(plan.TestEvidenceError):
-        profiles.recipe_checks({"node_test": {bad: 1}})
+        recipe_checks({"node_test": {bad: 1}})
 
 
 @pytest.mark.parametrize(
@@ -138,36 +138,6 @@ def test_real_node_nested_junit(tmp_path):
         check=True,
     )
     assert recipe.junit_count(result.stdout, 2) == 2
-
-
-@pytest.mark.parametrize("failure", ["ERR_ASSERTION", "ERR_MODULE_NOT_FOUND", "timeout"])
-def test_baseline_excludes_only_proven_assertion_file(source, tmp_path, failure):
-    workspace, profile = source
-    directory = tmp_path / "run"
-    directory.mkdir(mode=0o700)
-    checks = [
-        {**check, "exit_code": index, "output_sha256": plan.sha(b"log")}
-        for index, check in enumerate(recipe.checks(profile["recipe"]))
-    ]
-    private_bytes(directory / "node-001.log", b"log")
-    private_bytes(
-        directory / "node-001.xml",
-        (
-            '<testsuites><testcase name="bad" classname="test"><failure>'
-            + failure
-            + "</failure></testcase></testsuites>"
-        ).encode(),
-    )
-    raw = baseline.failed_report(directory, checks, profile["recipe"])
-    if failure == "ERR_ASSERTION":
-        result = json.loads(baseline.baseline_recipe(raw, workspace, profile["recipe"]))
-        assert result == {"node_test": {"tests/a.test.mjs": 1}}
-    else:
-        with pytest.raises(plan.TestEvidenceError, match="proven assertion"):
-            baseline.baseline_recipe(raw, workspace, profile["recipe"])
-    checks[-1]["argv"][-1] = "tests/a.test.mjs"
-    with pytest.raises(plan.TestEvidenceError, match="prefix"):
-        baseline.failed_report(directory, checks, profile["recipe"])
 
 
 @pytest.mark.parametrize("tamper", [None, "report", "missing", "check", "argv"])
@@ -279,33 +249,19 @@ def test_worker_keeps_each_native_report_and_stops_on_failure(source, tmp_path, 
         assert receipt["counts"]["total"] == 2
 
 
-def test_native_profile_round_trip(source):
+def test_native_recipe_record_round_trip(source):
     _, profile = source
-    profile.update(
-        {
-            key: "a" * 64
-            for key in (
-                "qualification_sha256",
-                "python_sha256",
-                "toolchain_sha256",
-                "runtime_sha256",
-                "criteria_sha256",
-                "policy_sha256",
-                "source_sha256",
-            )
-        }
-    )
     profile.update(
         card="1234abcd",
         repository="https://example.invalid/repo",
-        qualified_by="operator",
-        host="test",
+        criteria_sha256="a" * 64,
     )
-    profiles._validate_shape(profile)
-    profile["schema"] = profiles.SCHEMA
+    binding = {"source_card": "1234abcd", "criteria_sha256": "a" * 64}
+    plan._validate_declared(profile, binding)
+    profile["schema"] = plan.PYTHON_RECIPE_SCHEMA
     del profile["node_environment"]
     with pytest.raises(plan.TestEvidenceError, match="variant"):
-        profiles._validate_shape(profile)
+        plan._validate_declared(profile, binding)
 
 
 @pytest.mark.parametrize("redirect", ["file", "parent", "web"])
@@ -329,36 +285,6 @@ def test_native_environment_refuses_foreign_dependency_artifact(source):
     (artifact / "package-lock.json").write_text('{"foreign":true}')
     with pytest.raises(plan.TestEvidenceError, match="dependency manifests"):
         composite.validate_source(profile, workspace)
-
-
-def test_curator_reads_native_failure_and_waits_for_missing_artifacts(
-    source, tmp_path, monkeypatch
-):
-    from skcapstone.fleet import baseline_recipe as curator
-
-    workspace, profile = source
-    directory = tmp_path / "fleet/test-runs" / ("a" * 64)
-    directory.mkdir(parents=True, mode=0o700)
-    monkeypatch.setattr(plan, "load_plan", lambda *a, **kw: ({"profile": profile}, None, "a" * 64))
-    check = {
-        **recipe.checks(profile["recipe"])[0],
-        "exit_code": 1,
-        "output_sha256": plan.sha(b"log"),
-    }
-    plan.write_once(directory / "receipt.json", {"checks": [check]})
-    job = {"binding": {}, "workspace": str(workspace)}
-    with pytest.raises(curator.BaselinePendingError, match="awaiting"):
-        curator._failed_run(tmp_path, job)
-    private_bytes(directory / "node-000.log", b"log")
-    private_bytes(
-        directory / "node-000.xml",
-        b'<testsuites><testcase name="bad" classname="test">'
-        b"<failure>ERR_ASSERTION</failure></testcase></testsuites>",
-    )
-    raw, sealed_workspace, ran = curator._failed_run(tmp_path, job)
-    assert sealed_workspace == workspace and ran == profile["recipe"]
-    result = json.loads(baseline.baseline_recipe(raw, workspace, ran))
-    assert result == {"node_test": {"tests/metrics-delivery.test.mjs": 1}}
 
 
 def test_qualification_selects_exact_native_dependency_manifests(tmp_path, monkeypatch):
