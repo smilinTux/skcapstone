@@ -40,7 +40,9 @@ ordinary producer work and does not make a card a governed review. Author a
 governed review with all four admission facts:
 `review`, `seat-seraph`, a non-empty `producer_identity`, and a lowercase
 64-hex `candidate_evidence_sha256`. The CLI fails before writing a card and
-lists every missing field:
+lists every missing field. `seat-seraph` is only a reviewer-eligibility label
+now; the seraph runtime (publisher, cycle, forge review) was removed in the
+SKFLEET cut and reviews run in reviewer panes:
 
 ```text
 skcapstone coord create --title '[REVIEW] verify candidate' \
@@ -60,6 +62,12 @@ terminal success: `ci_check_docs`, `ci_check_gitleaks`, `ci_check_lint`,
 Missing or partial link sets do not count as green CI. Exact `FAIL` and a
 structured `BLOCKED` remain terminal without waiting for CI so an independent
 reviewer can reject an unsafe candidate immediately.
+
+Closing a source card needs two facts and nothing else: an independent review
+`PASS` on the exact commit with tests green on that commit, and the reviewed
+code merged on the target branch. The operator closes it with
+`skcapstone coord accept <source_card>`. Test-plan generations, profile
+qualification, applicability receipts and finish journals no longer exist.
 
 Human approval is separate from machine state. A complete dependency, a label,
 an elapsed deadline, or a successful CLI write never manufactures human

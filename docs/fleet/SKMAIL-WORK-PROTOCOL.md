@@ -28,15 +28,14 @@ control path for claim, release, dispatch, or other state changes.
 
 ## Recurring lifecycle seats
 
-Link, Mero, Seraph, Niobe, and ATLAS send one startup hello to `all` per host
-boot and poll `skmail read <seat>` on every bounded cycle. That read includes
-direct and `all` traffic. Seats specifically inspect help, handoff,
-dependency, and reviewer-conflict messages and may reply with evidence.
+Link and Mero send one startup hello to `all` per host boot and poll
+`skmail read <seat>` on every bounded cycle. That read includes direct and
+`all` traffic. Seats specifically inspect help, handoff, dependency, and
+reviewer-conflict messages and may reply with evidence.
 
-(Tank is folded into ATLAS as of 2026-09-17 and no longer runs its own
-cycle or sends its own hello. `seat_boundaries.Seat.TANK` still exists as an
-authority-model actor so Tank's historical mail and board actions keep
-resolving.)
+(Seraph, Niobe and ATLAS seat cycles were removed in the SKFLEET cut, and Tank
+was folded into ATLAS before that. Their historical mail and board actions
+still resolve through `seat_boundaries`.)
 
 ```text
 skmail send <seat> all normal "SEAT-HELLO-<seat>" "seat=<seat> host=<host> lifecycle_presence=started mailbox_poll=enabled"

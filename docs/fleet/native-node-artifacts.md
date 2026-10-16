@@ -49,7 +49,7 @@ Install each artifact on every execution host, preserve modes and recompute
 `artifact_digest` there. Use `validate_environment` and
 `qualified_environment` against the exact source, then smoke-test native
 bindings inside `production_test_worker.sandbox_command`. Full card tests
-remain the responsibility of normal requalification. Node runtime, CPU and
+remain the responsibility of the card's normal test run. Node runtime, CPU and
 OS must match; matching source manifests alone do not prove native ABI support.
 
 `tests/_setup.mjs` is fingerprinted from each workspace. Runtime lookup matches

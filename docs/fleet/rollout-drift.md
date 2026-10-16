@@ -61,7 +61,7 @@ Example, generated read-only against this repo:
     "SKFLEET_GLM_TARGET",
     "SKFLEET_TARGET"
   ],
-  "units": ["skcapstone.service", "skfleet-atlas.service", "sknoded.service", "..."]
+  "units": ["skcapstone.service", "sknoded.service", "..."]
 }
 ```
 
@@ -197,8 +197,6 @@ $ skcapstone fleet node drift
 node-noroc2027	20 drift(s) against manifest git_sha=b421c0d1
   changed              unit:skcapstone.service                  expected='a1ed1a6e...' found='2338a7d8...'
   changed              unit:skcapstone@.service                 expected='454b4b6a...' found='a531456d...'
-  changed              unit:skfleet-niobe-live.service          expected='a8c50927...' found='6f4d6efe...'
-  changed              unit:skfleet-niobe.service               expected='a426756e...' found='6010966c...'
   changed              unit:sknoded.service                     expected='29da5446...' found='33a3f8ed...'
   changed              git_sha                                  expected='b421c0d1' found='723e6a98'
   14 unit(s)/dispatcher script reported missing, not listed: this estate has
@@ -225,10 +223,8 @@ node-chiap01: no drift (matches b421c0d1)
 ## 4. Staged rollout and rollback (nimble-factory Plan B3, phase 2)
 
 **This is a human-invoked mechanism, not an autonomous actuator.** Nothing
-schedules it, nothing calls it from a drift finding, and nothing about it
-changes ATLAS's authority (see below). It exists so that the four-step
-manual procedure `docs/fleet/activation-runbook.md`'s rollout ordering
-constraints already document (package, then script, then converge, then
+schedules it and nothing calls it from a drift finding. It exists so that
+the four-step manual procedure (package, then script, then converge, then
 verify with `node drift`) can be run against several hosts, one at a time,
 by a mechanism that actually stops at the first failure instead of a human
 having to remember to check before moving to the next host. That is not
@@ -365,24 +361,13 @@ a caller that wants to act on it programmatically. A dry run never halts
   `fleet rollback` execute only when a human runs them with `--apply`.
   Nothing here schedules itself, retries itself, or reacts to a finding on
   its own.
-- **ATLAS still has no `DEPLOY` authority.** `Seat.ATLAS`'s bound actions
-  remain `{OBSERVE, ACTUATE_APPLICATION, CREATE_CARD}`; `Action.DEPLOY`
-  remains with the retired `Seat.TANK`, which nothing dispatches to.
-  ATLAS's ported release-and-install duty is still recorded as inoperable;
-  see
-  [seat-charters.md](seat-charters.md#atlas-release-and-install-duty-inoperable-pending-b3)
-  for the full accounting, including what granting `DEPLOY` would now
-  concretely take. `fleet rollout`/`fleet rollback` are human-invoked CLI
-  commands, not a seat capability; running them changes nothing about who
-  or what may invoke them.
+- **Rollout is a human-invoked command.** `fleet rollout`/`fleet rollback` are
+  operator CLI commands, not a seat capability. On chi, main deploys through
+  the auto-rollout timer, not through any dispatcher seat (the dispatcher is
+  dormant and its seat units were removed in the SKFLEET cut).
 
 ## Related
 
-- [`docs/fleet/activation-runbook.md`](activation-runbook.md): the manual
-  rollout ordering constraints `fleet rollout`'s four deploy steps
-  automate, and the constraints it does not remove the need to know.
-- [`docs/fleet/seat-charters.md`](seat-charters.md): ATLAS's authority
-  boundary, why it cannot deploy today, and what changing that would take.
 - [`docs/fleet/model-lane-routing.md`](model-lane-routing.md): why the
   dispatcher script is a separate hand-installed artifact from the package,
   which is why the drift check treats it as its own artifact.

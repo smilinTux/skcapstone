@@ -1,10 +1,9 @@
 # Host-local liveness: real namespace and exclusive authoritative writer
 
 The publisher observes legacy tmux sessions and native systemd worker units
-without selecting, claiming, releasing or launching work. Niobe remains the
-sole dispatcher. skfleet-rotate.timer remains disabled on retired per-host
-rotation installations; do not enable duplicate schedulers.
-skfleet-niobe-live.timer remains the sole centralized dispatcher. The consumer requires literal boolean complete=true and
+without selecting, claiming, releasing or launching work. The dispatcher is
+dormant: the rotate and niobe-live timers were removed in the SKFLEET cut, so
+do not enable any scheduler. The consumer requires literal boolean complete=true and
 fresh, host-matching evidence from every configured host before absence-based
 reaping. Missing, delayed or ambiguous evidence fails closed.
 
