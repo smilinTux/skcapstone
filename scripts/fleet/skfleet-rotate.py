@@ -5135,7 +5135,6 @@ def awaiting_review(cid):
         ts
         and _PASS_RE.match(str(val or ""))
         and not _explicit_ready_requeue_after(cid, _ts_epoch(ts))
-        and not _superseded_after(cid, ts)
     )
 
 
@@ -5161,44 +5160,6 @@ def _explicit_ready_requeue_after(cid, threshold):
         for event in event_rows(cid)
     )
 
-def _verified_retired(cid, rows):
-    """Return the review requests whose retirement or supersession is proven."""
-    try:
-        from skcapstone.fleet.review_retire import retired_offers
-
-        return retired_offers(Path(HOME) / ".skcapstone", cid, rows)
-    except Exception:  # noqa: BLE001 - unproven means not superseded
-        return set()
-
-
-def _superseded_after(cid, threshold):
-    """True when a VERIFIED review supersession is newer than ``threshold``.
-
-    A finished review whose sealed reviewer claim was released can never be
-    accepted, so #1095 supersedes it. Its old PASS must then stop parking the
-    card as awaiting_review or terminal_review, or the fresh review is never
-    offered (11 cards on chi, 2026-10-10). Only a supersession whose request
-    retired_offers() proves counts; a bare event never reopens a card.
-    """
-    try:
-        boundary = (
-            float(threshold)
-            if isinstance(threshold, (int, float))
-            else _ts_epoch(threshold)
-        )
-    except (TypeError, ValueError):
-        return False
-    rows = event_rows(cid)
-    later = [
-        event for event in rows
-        if event.get("action") == "remote_review_supersede"
-        and _ts_epoch(event.get("ts")) > boundary
-    ]
-    if not later:
-        return False
-    retired = _verified_retired(cid, rows)
-    return any(event.get("request_id") in retired for event in later)
-
 def terminal_review_verdict(cid, core=None):
     """True when an independent review card already recorded PASS or FAIL."""
     labels = folded_labels(cid, core or {})
@@ -5208,7 +5169,6 @@ def terminal_review_verdict(cid, core=None):
     return bool(
         ts
         and re.match(r"^\s*(?:PASS\s*(?::|$)|FAIL(?:\s*(?::|$)|_))", str(value or ""), re.I)
-        and not _superseded_after(cid, ts)
     )
 
 
@@ -7023,8 +6983,7 @@ def _production_review_plan(parent, outcome_ts, candidate, store=None):
         from skcapstone.fleet.refusal_log import note
         from skcoord.card_store import CardStore
         from skcapstone.fleet.production_custody import reviewable_source_candidate, source_binding
-        from skcapstone.link_review_work import card_generation
-        from skcapstone.review_replacement import replacement_binding
+        from skcapstone.link_review_work import card_generation, review_card_id
         from skcapstone.seraph_review_cardstore import LiveCardStoreGateway
 
         home = Path(CARDS).parent
@@ -7043,34 +7002,21 @@ def _production_review_plan(parent, outcome_ts, candidate, store=None):
             return None  # reviewable_source_candidate recorded and logged why
         source = store.fold(parent)
         producer, path, digest, commit, tree, ref = candidate
-        released = source.owner is None
-        bound_snapshot = snapshot
-        if released:
-            from skcapstone.fleet.released_source import direct_review_view, review_lineage
-
-            view, manifest, _ = direct_review_view(home, source)
-            source = view.fold(parent)
-            bound_snapshot = gateway.read_card(parent, _store=view)
-            lineage = review_lineage(home, source, manifest)
-        else:
-            lineage = replacement_binding(home, parent, commit)
-        review_id = lineage.pop("review_card_id")
+        review_id = review_card_id(parent, commit, card_generation(source), digest)
         plan = {
             "review_id": review_id,
             "claim_revision": source.meta["_claim_revision"],
             "source": source_binding(source),
             "meta": {
-                "source_revision": bound_snapshot.revision,
+                "source_revision": snapshot.revision,
                 "link_source_card": parent, "link_head_revision": commit,
                 "link_card_generation": card_generation(source),
                 "link_evidence_sha256": digest, "link_review_class": "review",
                 "producer_identity": producer, "candidate_path": path,
                 "candidate_evidence_sha256": digest,
-                "candidate_tree": tree, "candidate_ref": ref, **lineage,
+                "candidate_tree": tree, "candidate_ref": ref,
             },
         }
-        if released:
-            plan["current_source_revision"] = snapshot.revision
         # Compare against an independent current read before accepting the
         # shared per-plan snapshot.
         if gateway.read_card(parent).revision == snapshot.revision:
@@ -7103,7 +7049,7 @@ def _open_production_review(parent, outcome_ts, candidate, plan):
             return refuse(site, parent, "an open or claimed review already exists")
         result = subprocess.run(
             [SKC, "coord", "review-work", parent, "--producer", candidate[0],
-             "--expected-source-revision", plan.get("current_source_revision", plan["meta"]["source_revision"]),
+             "--expected-source-revision", plan["meta"]["source_revision"],
              "--expected-claim-revision", plan["claim_revision"], "--agent", "link",
              "--home", str(Path(CARDS).parent)],
             capture_output=True, text=True, timeout=60,
@@ -8637,79 +8583,6 @@ if not DRY and PRODUCTION_POLICY and _is_niobe_builder_host(HOST):
                 _continued.get("reason", "")))
     except Exception as _exc:  # noqa: BLE001 - continuation must never stop a cycle
         log(d, "BUILDER_CONTINUATION_FAILED|%s|%s" % (HOST, str(_exc)[:160]))
-# Fail-safe review recovery, authority-only:
-# - a remote reviewer that exited non-zero with no review packet held its claim
-#   forever (ffd28b33, killed by a gateway restart 2026-10-10); release that exact
-#   claim and retire the generation through the governed retire();
-# - a finished review whose sealed reviewer claim the old reaper released could
-#   never be accepted ("native pair changed before trusted tests"); supersede it.
-# Both re-offer the review instead of waiting on a human.
-if (
-    not DRY
-    and PRODUCTION_POLICY
-    and PRODUCTION_POLICY.get("remote_review", {}).get("enabled")
-    and _is_niobe_builder_host(HOST)
-):
-    try:
-        from skcapstone.fleet.review_retire import (
-            recover_failed_generations,
-            retire_policy_drifted,
-            supersede_released_reviews,
-        )
-
-        for _recovered in recover_failed_generations(
-            default_fleet_paths(), Path(HOME) / ".skcapstone"
-        ):
-            log(d, "REVIEW_GENERATION_RECOVERY|%s|%s|node=%s|state=%s|%s" % (
-                HOST, _recovered["card"], _recovered["node"], _recovered["state"],
-                _recovered.get("reason", "")))
-        # An unconsumed offer sealed under an older production policy is held by
-        # the node forever (POLICY_DRIFT_HELD); retire it so it is re-offered.
-        # Any execution evidence refuses and keeps it held.
-        for _drifted in retire_policy_drifted(
-            default_fleet_paths(), Path(HOME) / ".skcapstone"
-        ):
-            if _drifted["state"] == "retired-prestart":
-                log(d, "REVIEW_POLICY_DRIFT_RETIRED|%s|%s|request=%s|old=%s|new=%s" % (
-                    HOST, _drifted["card"], _drifted["request_id"],
-                    _drifted["old_digest"], _drifted["new_digest"]))
-            else:
-                log(d, "REVIEW_POLICY_DRIFT_HELD|%s|%s|%s" % (
-                    HOST, _drifted["card"], _drifted.get("reason", "")))
-        # A finished review whose sealed reviewer claim was released can never
-        # be accepted; supersede it so a fresh review generation is offered.
-        for _superseded in supersede_released_reviews(
-            default_fleet_paths(), Path(HOME) / ".skcapstone"
-        ):
-            log(d, "REVIEW_GENERATION_SUPERSEDED|%s|%s|claim=%s|state=%s|%s" % (
-                HOST, _superseded["card"], _superseded["claim"], _superseded["state"],
-                _superseded.get("reason", "")))
-    except Exception as _exc:  # noqa: BLE001 - recovery must never stop a cycle
-        log(d, "REVIEW_GENERATION_RECOVERY_FAILED|%s|%s" % (HOST, str(_exc)[:160]))
-    # A finished review whose guarded handoff failed (no native verdict for its
-    # claim) is recovered by re-running the reviewer's own handoff on its host;
-    # if its workspace or packet is gone, the dead claim is released instead.
-    try:
-        from skcapstone.fleet.review_handoff_recovery import recover_review_handoffs
-
-        for _handoff in recover_review_handoffs(
-            default_fleet_paths(), Path(HOME) / ".skcapstone"
-        ):
-            if _handoff["state"] in ("recovered", "already-handed-off"):
-                log(d, "REVIEW_HANDOFF_RECOVERED|%s|%s|node=%s|%s" % (
-                    HOST, _handoff["card"], _handoff["node"], _handoff["state"]))
-            elif _handoff["state"] == "refused":
-                _log_once_per_hour(
-                    d, "REVIEW_HANDOFF_RECOVERY_REFUSED", _handoff["card"],
-                    "REVIEW_HANDOFF_RECOVERY_REFUSED|%s|%s|node=%s|%s" % (
-                        HOST, _handoff["card"], _handoff["node"], _handoff["reason"]))
-            else:
-                log(d, "REVIEW_HANDOFF_RECOVERY|%s|%s|node=%s|state=%s|%s" % (
-                    HOST, _handoff["card"], _handoff["node"], _handoff["state"],
-                    _handoff.get("reason", "")))
-    except Exception as _exc:  # noqa: BLE001 - recovery must never stop a cycle
-        log(d, "REVIEW_HANDOFF_RECOVERY_REFUSED|%s|-|recovery-failed: %s" % (
-            HOST, str(_exc)[:160]))
 # Baseline recipes, authority-only: a full-suite qualification that ran and
 # failed at the card's pinned base (host-dependent tests) can never pass, so
 # every skcapstone card failed forever (2026-10-11). Attach the exact baseline

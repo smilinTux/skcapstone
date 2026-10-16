@@ -147,11 +147,6 @@ def _producer_terminal(home, source, manifest):
         status = read_json(path)
         if status.get("owner") != producer_owner or status.get("claim_revision") != producer_claim:
             continue
-        if status.get("state") == "blocked" and status.get("claim_released") is True:
-            from .released_source import terminal
-
-            matches.append(terminal(home, source, manifest, status, path))
-            continue
         artifact = status.get("source_artifact") or {}
         if (
             status.get("schema") != "skfleet.builder-dispatch-status/v1"
@@ -192,11 +187,6 @@ def _producer_terminal(home, source, manifest):
             }
         )
     if not matches:
-        if source.owner is None:
-            from .released_source import direct_review_view
-
-            view, _, _ = direct_review_view(home, source, manifest)
-            source = view.fold(source.id)
         return _direct_seat_terminal(home, source, manifest, producer_owner, producer_claim)
     if len(matches) != 1:
         raise ReviewEvidenceError("one native producer terminal receipt required")

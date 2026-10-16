@@ -19,7 +19,6 @@ from .review_admission import (
 
 def _awaiting_acceptance(home: Path, store: CardStore, card) -> bool:
     """Read pending PASS without launching the rotator or clearing any hold."""
-    from .fleet.review_retire import retired_offers
     from .seraph_review_cardstore import _latest_outcome
 
     if "review" not in card.labels or card.archived or card.status.value == "done":
@@ -45,11 +44,6 @@ def _awaiting_acceptance(home: Path, store: CardStore, card) -> bool:
         for e in later
     ):
         return False
-    supersessions = [e for e in later if e.get("action") == "remote_review_supersede"]
-    if supersessions:
-        retired = retired_offers(home, card.id, rows)
-        if any(e.get("request_id") in retired for e in supersessions):
-            return False
     return True
 
 

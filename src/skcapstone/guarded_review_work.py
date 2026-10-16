@@ -10,11 +10,12 @@ from pathlib import Path
 
 from skcoord.card_store import CardStore, card_mutation_lock
 
-from .fleet.source_custody import BeforeRelease, CustodyState, inspect_custody
+from .fleet.source_custody import CustodyState, inspect_custody
 from .link_review_work import (
     ReviewWorkResult,
     card_generation,
     reconcile_review_work,
+    review_card_id,
 )
 from .seraph_review_cardstore import LiveCardStoreGateway, _binding, _latest_outcome
 from .seraph_review_contracts import ReviewPublicationError
@@ -75,22 +76,6 @@ def open_guarded_review(
         source = store.fold(card_id)
         snapshot = LiveCardStoreGateway(home).read_card(card_id)
         current_revision = snapshot.revision
-        released_manifest = None
-        if source is not None and source.owner is None:
-            from .fleet.released_source import direct_review_view
-
-            try:
-                store, released_manifest, release = direct_review_view(home, source)
-            except (OSError, ValueError, KeyError, TypeError) as exc:
-                raise ValueError("guarded review released custody unavailable") from exc
-            source = store.fold(card_id)
-            snapshot = LiveCardStoreGateway(home).read_card(card_id, _store=store)
-            captured = BeforeRelease(store.store, release, at_release=True)
-            if (
-                LiveCardStoreGateway(home).read_card(card_id, _store=captured).revision
-                != snapshot.revision
-            ):
-                raise ValueError("guarded review released source changed after release")
         custody = inspect_custody(home, card_id, producer, expected_claim_revision, _card=source)
         if (
             custody.state != CustodyState.HELD
@@ -109,23 +94,12 @@ def open_guarded_review(
         _candidate(home, card_id, outcome)
         generation = card_generation(source)
         digest = outcome["candidate_sha256"]
-        from .review_replacement import replacement_binding
-
-        def lineage_binding():
-            if released_manifest is not None:
-                from .fleet.released_source import review_lineage
-
-                return review_lineage(home, source, released_manifest)
-            return replacement_binding(home, card_id, outcome["candidate_commit"])
-
-        lineage = lineage_binding()
-        review_id = lineage.pop("review_card_id")
+        review_id = review_card_id(card_id, outcome["candidate_commit"], generation, digest)
         binding = {
             "source_revision": snapshot.revision,
             "producer_identity": producer,
             "candidate_evidence_sha256": digest,
             **{key: outcome[key] for key in ("candidate_path", "candidate_tree", "candidate_ref")},
-            **lineage,
         }
         existing = store.fold(review_id)
         if existing is not None and any(
@@ -155,8 +129,6 @@ def open_guarded_review(
         if LiveCardStoreGateway(home).read_card(card_id).revision != expected_source_revision:
             raise ValueError("guarded review source changed during reconciliation")
         _candidate(home, card_id, outcome)
-        if lineage_binding().get("review_card_id") != review_id:
-            raise ValueError("guarded review replacement changed during reconciliation")
         if not result.launchable:
             raise ValueError("guarded review refused: " + result.reason)
         return result
