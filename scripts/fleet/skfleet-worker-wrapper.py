@@ -874,8 +874,7 @@ def record_workspace_lifecycle_decision(args: argparse.Namespace, outcome: str) 
     for a later, separate, authorized cleanup pass to act on, not an action
     taken here.
     # intentionally-unwired: workspace deletion. No such later pass exists
-    # in this codebase yet (workspace_runtime.retire_workspace has no
-    # production caller either); building one is out of this task's scope.
+    # in this codebase yet; building one is out of this task's scope.
     """
     try:
         home = Path.home() / ".skcapstone"

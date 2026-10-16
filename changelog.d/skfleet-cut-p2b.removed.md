@@ -1,0 +1,1 @@
+- SKFleet cut P2b: delete 4 dead modules with zero importers (fleet/builder_checkpoint, fleet/builder_execution, fleet/workspace_runtime, fleet_worker_liveness) and their 5 test files, plus the two workspace_runtime tests in tests/test_physical_memory.py. fleet/workspace_lifecycle, builder_retire, builder_retry and builder_continue are kept.
