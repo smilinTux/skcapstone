@@ -9,9 +9,11 @@ from skcapstone.fleet import builder_dispatch as builder
 from skcapstone.fleet import production_builder as production
 from skcapstone.fleet import review_dispatch as review
 from skcapstone.fleet import store
-from tests.fleet.remote_review_fixtures import (
+from tests.fleet.remote_review_fixtures import (  # noqa: F401
+    execution,
     offer_and_consume,
-)  # noqa: F401
+    terminal_review,
+)
 from tests.fleet.test_remote_review_policy import remote_policy  # noqa: F401
 from tests.fleet.test_source_bundle import source  # noqa: F401
 
