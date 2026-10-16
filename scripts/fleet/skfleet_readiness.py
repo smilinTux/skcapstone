@@ -9,8 +9,8 @@ ExecStart names, actually importable under the target Python.
 Two things went wrong in production that this exists to catch:
   1. A node came up FAILING because main required SKFLEET_GATEWAY_URL and no
      systemd unit supplied it.
-  2. skfleet-niobe-shadow.service names a module, skcapstone.seat_shadow_entrypoint,
-     that does not exist on main. Nothing caught a unit pointing at a missing
+  2. A unit named a module (skcapstone.seat_shadow_entrypoint) that did not exist
+     on main. Nothing caught a unit pointing at a missing
      module.
 
 Python 3.12, standard library only.
@@ -79,38 +79,33 @@ def required_env(source: str, *, production: bool = False) -> set[str]:
     return names
 
 
-#: Printed by the native probe when niobe_live_entrypoint no longer exists (the
-#: paused dispatcher seats are being removed). The probe then validates the
-#: policy without the niobe wrapper instead of failing the rollout gate.
-NIOBE_PROBE_ABSENT = "SKIP-NIOBE-PROBE-ABSENT"
-
-
 def production_environment_error(
     environment: dict[str, str],
     python_bin: str,
     dispatcher: Path,
-    notes: list[str] | None = None,
 ) -> str | None:
-    """Validate policy with the actual native interpreter; never execute dispatch.
-
-    ``notes`` collects non-failure observations (a SKIPped optional probe).
-    """
+    """Validate policy with the actual native interpreter; never execute dispatch."""
     code = (
-        "import json,socket,sys; from pathlib import Path; "
+        "import ast,json,socket,sys; from pathlib import Path; "
         "from skcapstone.fleet.production_dispatch import production_policy_from_environment; "
+        "from skcapstone.fleet.production_policy import LEGACY_CEILING_VARIABLES; "
         "payload=json.load(sys.stdin); environment=payload['environment']; "
         "host=socket.gethostname().split('.')[0].lower()\n"
         "if environment.get('SKFLEET_AUTHORITY_HOST') != host: "
         "raise ValueError('effective authority mismatch')\n"
         "if not environment.get('SKFLEET_PRODUCTION_POLICY'): "
         "raise ValueError('explicit policy required')\n"
-        "try:\n"
-        "    from skcapstone.niobe_live_entrypoint import _production_environment\n"
-        "except ImportError:\n"
-        "    validated=environment; print('SKIP-NIOBE-PROBE-ABSENT')\n"
-        "else:\n"
-        "    validated=_production_environment(Path(payload['dispatcher']),host=host,environment=environment)\n"
-        "policy=production_policy_from_environment(validated,host)\n"
+        "if LEGACY_CEILING_VARIABLES.intersection(environment): "
+        "raise ValueError('production policy refuses legacy local ceilings')\n"
+        "tree=ast.parse(Path(payload['dispatcher']).read_text(encoding='utf-8'))\n"
+        "markers=[n for n in tree.body if isinstance(n, ast.Assign) "
+        "and any(isinstance(t, ast.Name) and t.id == 'SKFLEET_PRODUCTION_POLICY_V1' "
+        "for t in n.targets)]\n"
+        "if (len(markers) != 1 or len(markers[0].targets) != 1 "
+        "or not isinstance(markers[0].value, ast.Constant) "
+        "or markers[0].value.value is not True): "
+        "raise ValueError('dispatcher lacks production policy capability')\n"
+        "policy=production_policy_from_environment(environment,host)\n"
         "if not policy: raise ValueError('explicit production policy required')\n"
     )
     try:
@@ -125,8 +120,6 @@ def production_environment_error(
         return "native production policy validation unavailable"
     if result.returncode != 0:
         return "invalid production policy or effective authority"
-    if NIOBE_PROBE_ABSENT in (result.stdout or "") and notes is not None:
-        notes.append(NIOBE_PROBE_ABSENT)
     return None
 
 
@@ -551,6 +544,7 @@ def _run(
     env_from_unit: str | None,
     env_from_systemd: str | None = None,
     verdict_path: Path | None = None,
+    env_from_process: bool = False,
 ):
     lines: list[str] = []
     ok = True
@@ -612,8 +606,7 @@ def _run(
         in_scope, scope_error, checked_scope_unit = unit_in_scope(env_from_systemd)
 
     # LoadState=not-found is systemd's authoritative answer that the unit is not
-    # installed (a paused or removed role, e.g. skfleet-seat-cycle after the
-    # dispatcher cut). That is "does not apply here", not "could not check", so
+    # installed (a paused or removed role). That is "does not apply here", not "could not check", so
     # the gate SKIPs. unit_in_scope itself keeps reporting it as undetermined
     # because rollout_drift relies on that to flag manifest units that are
     # missing from a host. An empty or failed query stays a FAIL.
@@ -633,6 +626,16 @@ def _run(
                 "FAIL required env: %s could not be verified (scope of %s unavailable)"
                 % (name, env_from_systemd)
             )
+    elif not (env_from_systemd or env_from_unit or env_from_process):
+        # No environment source was named. The dispatcher (skfleet-rotate.py)
+        # is dormant and no live unit carries its environment, so there is
+        # nothing to assert; imports of the script and of every unit are still
+        # checked below. A host or test that wants the process environment
+        # asserted names it explicitly with --env-from-process.
+        lines.append(
+            "SKIP required env: no dispatcher role unit named (dormant dispatcher); "
+            "its environment was not asserted"
+        )
     elif env_from_systemd and not in_scope:
         lines.append(
             "SKIP required env: %s is not active or not installed on this host (checked %s); "
@@ -677,17 +680,10 @@ def _run(
         else:
             if env_snapshot is not None and (
                 "SKFLEET_PRODUCTION_POLICY" in env_snapshot
-                or env_from_systemd == "skfleet-seat-cycle.service"
             ):
-                probe_notes: list[str] = []
                 policy_error = production_environment_error(
-                    env_snapshot, python_bin, rotate_script, probe_notes
+                    env_snapshot, python_bin, rotate_script
                 )
-                if NIOBE_PROBE_ABSENT in probe_notes:
-                    lines.append(
-                        "SKIP niobe live production probe: skcapstone.niobe_live_entrypoint "
-                        "is absent; policy validated without it"
-                    )
                 if policy_error:
                     ok = False
                     lines.append("FAIL production policy: " + policy_error)
@@ -877,6 +873,15 @@ def main(argv=None) -> int:
         ),
     )
     parser.add_argument(
+        "--env-from-process",
+        action="store_true",
+        help=(
+            "Assert the dispatcher's mandatory env against this process's own environment. "
+            "With none of the three env sources given, the env check is skipped because the "
+            "dispatcher is dormant and no live unit carries its environment."
+        ),
+    )
+    parser.add_argument(
         "--verdict-path",
         default=None,
         help=(
@@ -893,6 +898,7 @@ def main(argv=None) -> int:
         args.env_from_unit,
         args.env_from_systemd,
         Path(args.verdict_path) if args.verdict_path else None,
+        args.env_from_process,
     )
 
 

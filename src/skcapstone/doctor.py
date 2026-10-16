@@ -175,11 +175,10 @@ def run_diagnostics(home: Path, deep: bool = False) -> DiagnosticReport:
 # exists to catch it on its own terms.
 # ---------------------------------------------------------------------------
 
-#: The five bounded lifecycle seat timers. A seat without its timer never
-#: runs, which is the state that reported ok=True with no workflow layer.
-SEAT_CYCLE_TIMERS = tuple(
-    f"skfleet-{seat}.timer" for seat in ("atlas", "link", "mero", "niobe", "seraph")
-)
+#: The bounded lifecycle seat timers that still ship. A seat without its timer
+#: never runs, which is the state that reported ok=True with no workflow layer.
+#: The paused Atlas, Seraph and Niobe seats were retired and have no timer.
+SEAT_CYCLE_TIMERS = tuple(f"skfleet-{seat}.timer" for seat in ("link", "mero"))
 
 #: Files in the SYNCED estate tree that are cheap to read and plausible
 #: places for a host-local variable to be pasted. Deliberately a short,

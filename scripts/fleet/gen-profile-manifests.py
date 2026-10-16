@@ -80,7 +80,8 @@ SERIALIZED_SEAT_MUST_NOT = [
 ]
 #: Dispatcher timers that are paused fleet-wide (skfleet cut P1). Their unit
 #: files stay installed until P4b; the profile only forbids them so that a
-#: converge run can never re-enable them.
+#: converge run can never re-enable them. The unit files are gone from the repo
+#: (skfleet cut P4b), so this is a standing guard against a host regaining one.
 PAUSED_DISPATCHER_MUST_NOT = [
     "skfleet-estate-glm.timer",
     "skfleet-rotate.timer",
@@ -91,14 +92,11 @@ SEAT_CYCLE_TIMERS = [f"skfleet-{seat}.timer" for seat in ("link", "mero")] + [
     "skfleet-link-producer.timer",
 ]
 
-#: Seat services the control role permits but does not mandate. Niobe live is
-#: selected per generation from activation; its independent timer is forbidden.
+#: Seat services the control role permits but does not mandate.
 SEAT_ALLOWED_EXTRA = [
-    f"skfleet-{seat}.service" for seat in ("atlas", "link", "mero", "niobe", "seraph")
+    f"skfleet-{seat}.service" for seat in ("link", "mero")
 ] + [
     "skfleet-link-producer.service",
-    "skfleet-seat-cycle.service",
-    "skfleet-niobe-live.service",
 ]
 
 #: Required BY THE ROLE, as opposed to CONTROL_REQUIRED which is additionally

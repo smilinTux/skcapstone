@@ -2,25 +2,15 @@
 
 from __future__ import annotations
 
-import argparse
 import fcntl
 import hashlib
 import json
 import os
-import subprocess
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
-from skcapstone.estate import sovereign_home
-
 Runner = Callable[..., object]
-GOVERNED_SEAT_SERVICES = (
-    "skfleet-atlas.service",
-    "skfleet-seraph.service",
-    "skfleet-niobe.service",
-    "skfleet-niobe-live.service",
-)
 
 
 def _acquire_scheduler_migration_lock(config_home: Path) -> int | None:
@@ -61,29 +51,6 @@ def forbidden_timers(profile: dict) -> list[str]:
 
     forbidden = (profile.get("units") or {}).get("mustNot") or []
     return sorted({unit for unit in forbidden if unit.endswith(".timer")})
-
-
-def approved_legacy_timers(home: Path) -> frozenset[str]:
-    """Return Atlas, Seraph, and exactly one activation-selected Niobe timer."""
-
-    from .seat_cycle_orchestrator import select_niobe_timer
-
-    return frozenset({"skfleet-atlas.timer", "skfleet-seraph.timer", select_niobe_timer(home)})
-
-
-def legacy_timer_rollback_profile(legacy_timers: list[str], *, home: Path) -> dict:
-    """Build the reverse-migration fence for restoring legacy seat timers."""
-
-    requested = set(legacy_timers)
-    approved = approved_legacy_timers(home)
-    if requested != approved or len(legacy_timers) != len(requested):
-        raise ValueError("legacy rollback requires exactly: " + ", ".join(sorted(approved)))
-    return {
-        "units": {
-            "required": sorted(requested),
-            "mustNot": ["skfleet-seat-cycle.timer"],
-        }
-    }
 
 
 def _state(unit: str, runner: Runner) -> dict[str, str]:
@@ -362,53 +329,6 @@ def converge_forbidden_timers(
     return results
 
 
-def converge_governed_services_inactive(
-    *,
-    runner: Runner,
-    evidence_path: Path,
-    actor: str,
-    source_revision: str,
-) -> list[dict]:
-    """Stop and prove every governed seat service inactive before rollback."""
-
-    results = []
-    for unit in GOVERNED_SEAT_SERVICES:
-        try:
-            stopped = runner(
-                ["systemctl", "--user", "stop", unit],
-                capture_output=True,
-                text=True,
-                timeout=310,
-            )
-            stop_ok = getattr(stopped, "returncode", 1) == 0
-            detail = str(getattr(stopped, "stderr", "") or "")[-500:]
-        except Exception as exc:
-            stop_ok = False
-            detail = str(exc)[-500:]
-        state = _state(unit, runner)
-        safe = (
-            state.get("_known") == "true"
-            and state.get("ActiveState") == "inactive"
-            and state.get("LoadState") in {"loaded", "not-found"}
-            and state.get("Job") in {"", "0", "n/a"}
-        )
-        _append(
-            evidence_path,
-            {
-                "actor": actor,
-                "requested_state": "inactive",
-                "result": "ok" if safe else "failed",
-                "result_detail": detail,
-                "source_revision": source_revision,
-                "stop_result": "ok" if stop_ok else "failed",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "unit": unit,
-            },
-        )
-        results.append({"unit": unit, "safe": safe, "stop_ok": stop_ok})
-    return results
-
-
 def converge_scheduler_transition(
     profile: dict,
     *,
@@ -449,103 +369,3 @@ def converge_scheduler_transition(
         return {"acquired": True, "forbidden": forbidden, "required": required}
     finally:
         _release_scheduler_migration_lock(lock_fd)
-
-
-def rollback_to_legacy_timers(
-    legacy_timers: list[str],
-    *,
-    home: Path,
-    runner: Runner,
-    config_home: Path,
-    evidence_path: Path,
-    actor: str,
-) -> dict:
-    """Stop the orchestrator fence before restoring legacy seat timers."""
-
-    profile = legacy_timer_rollback_profile(legacy_timers, home=home)
-    lock_fd = _acquire_scheduler_migration_lock(config_home)
-    if lock_fd is None:
-        return {
-            "ok": False,
-            "lock_acquired": False,
-            "forbidden": [],
-            "services": [],
-            "required": [],
-        }
-    try:
-        forbidden = converge_forbidden_timers(
-            profile,
-            runner=runner,
-            config_home=config_home,
-            evidence_path=evidence_path,
-            actor=actor,
-        )
-        if not all(row["safe"] for row in forbidden):
-            return {
-                "ok": False,
-                "lock_acquired": True,
-                "forbidden": forbidden,
-                "services": [],
-                "required": [],
-            }
-        services = converge_governed_services_inactive(
-            runner=runner,
-            evidence_path=evidence_path,
-            actor=actor,
-            source_revision=policy_revision(profile),
-        )
-        if not all(row["safe"] for row in services):
-            return {
-                "ok": False,
-                "lock_acquired": True,
-                "forbidden": forbidden,
-                "services": services,
-                "required": [],
-            }
-        required = converge_required_timers(
-            profile,
-            runner=runner,
-            config_home=config_home,
-            evidence_path=evidence_path,
-            actor=actor,
-        )
-        return {
-            "ok": len(required) == len(required_timers(profile))
-            and all(row["converged"] for row in required),
-            "lock_acquired": True,
-            "forbidden": forbidden,
-            "services": services,
-            "required": required,
-        }
-    finally:
-        _release_scheduler_migration_lock(lock_fd)
-
-
-def main() -> int:
-    """Run the guarded operational rollback to legacy timers."""
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("rollback-legacy",))
-    parser.add_argument("--legacy-timer", action="append", required=True)
-    parser.add_argument("--home", type=Path, default=sovereign_home())
-    parser.add_argument("--config-home", type=Path, default=Path("~/.config").expanduser())
-    parser.add_argument("--evidence", type=Path, required=True)
-    parser.add_argument("--actor", required=True)
-    args = parser.parse_args()
-    try:
-        result = rollback_to_legacy_timers(
-            args.legacy_timer,
-            home=args.home,
-            runner=subprocess.run,
-            config_home=args.config_home,
-            evidence_path=args.evidence,
-            actor=args.actor,
-        )
-    except ValueError as exc:
-        parser.error(str(exc))
-    print(json.dumps(result, sort_keys=True))
-    return 0 if result["ok"] else 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

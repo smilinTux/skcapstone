@@ -189,10 +189,6 @@ def default_backends(runner: Callable = subprocess.run) -> dict[str, Callable]:
         unit_names.update(
             name.removesuffix(".timer") + ".service" for name in names if name.endswith(".timer")
         )
-        if "skfleet-seat-cycle.timer" in names:
-            unit_names.update(
-                f"skfleet-{seat}.service" for seat in ("atlas", "seraph", "niobe", "niobe-live")
-            )
         return sorted(unit_names)
 
     def _core_copy_commands(names: list[str]) -> list[list[str]]:

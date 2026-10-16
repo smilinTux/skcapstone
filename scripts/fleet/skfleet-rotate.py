@@ -106,12 +106,6 @@ from skcapstone.estate import (
     estate_rotation_hosts,
 )
 from skcapstone.seat_boundaries import BoundaryError
-from skcapstone.niobe_fanout import (
-    FanoutBoundaryError,
-    append_fanout_receipt,
-    pending_fanout_request,
-    reconcile_fanout_receipt,
-)
 from skcapstone.seat_runtime import (
     MeroObservation,
     append_review_launch_receipt,
@@ -9217,19 +9211,6 @@ def _observe_assigned_reviews():
         rows = _claim_rows.get(cid)
         if rows is None:
             rows = event_rows(cid)
-        if any(event.get("action") == "niobe_fanout_request" for event in rows):
-            try:
-                reconciled = reconcile_fanout_receipt(
-                    Path(HOME) / ".skcapstone",
-                    cid,
-                    live_sessions=live_sessions,
-                    live_units=live_units,
-                )
-                if reconciled is not None:
-                    log(d, "FANOUT_RECONCILED|%s|%s|state=%s" %
-                        (HOST, cid, reconciled["state"]))
-            except (FanoutBoundaryError, OSError, ValueError) as exc:
-                log(d, "FANOUT_RECONCILE_FAILED|%s|%s|%s" % (HOST, cid, exc))
         receipts = [
             event for event in rows
             if event.get("action") == "review_assignment_launch"
@@ -9851,24 +9832,6 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             continue
         log(d, "REVIEW_ASSIGNMENT_BLOCKED|%s|%s|%s" % (HOST, cid, exc))
         continue
-    try:
-        _fanout_request=pending_fanout_request(Path(HOME) / ".skcapstone",cid)
-    except FanoutBoundaryError as exc:
-        log(d,"FANOUT_BLOCKED|%s|%s|%s"%(HOST,cid,exc))
-        continue
-    _fanout_env=("", "", "")
-    if _fanout_request is not None:
-        _fanout_env=(
-            _fanout_request.request_id,
-            _fanout_request.requester,
-            _fanout_request.route,
-        )
-        with open(bf,"a",encoding="utf-8") as _brief_handle:
-            _brief_handle.write(
-                "\nNIOBE ROLE-BOUNDED FAN-OUT:\n"
-                "- request_id=%s\n- requester=%s\n- allowed_route=%s\n"
-                "- Your authority is limited to this route and the card criteria.\n"
-                % _fanout_env)
     _preflight_key = _route_preflight_cache_key(model, _review_route_snapshot)
     _route_preflight,_pf_reason,_pf_cached=preflight_through_ledger(
         _route_preflight_cache,_preflight_key,
@@ -9932,14 +9895,6 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         except (OSError,ValueError) as exc:
             log(d,"PRECLAIM_DEFERRED|%s|%s|reason=route-proof-%s"%(HOST,cid,type(exc).__name__))
             continue
-    if _fanout_request is not None:
-        try:
-            append_fanout_receipt(
-                Path(HOME) / ".skcapstone",_fanout_request,state="materialized",
-                process={"host":HOST,"workspace":workspace})
-        except (FanoutBoundaryError, OSError, ValueError) as exc:
-            log(d,"FANOUT_MATERIALIZE_RECEIPT_FAILED|%s|%s|%s"%(HOST,cid,exc))
-            continue
     claim=subprocess.run([SKC,"coord","claim",cid,"--agent",name],capture_output=True,text=True)
     claimed_owner,_claimed_at,claimed_revision=_current_claim_identity_fresh(cid)
     claim_outcome=_classify_claim_outcome(
@@ -9961,8 +9916,6 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
             acceptance_criteria=fresh_claimability["core"].get("acceptance_criteria") or [],
             mail_instructions=_worker_mail_instructions(
                 _worker_mail_routing(os.environ,core.get("originator"))))
-        if _fanout_request is not None:
-            brief += "\nNIOBE FAN-OUT request=%s requester=%s allowed_route=%s\n"%_fanout_env
         with open(bf,"w",encoding="utf-8") as _brief_handle:
             _brief_handle.write(brief)
     elif PRODUCTION_POLICY and _review_seat is not None and _source_spec is not None:
@@ -10032,20 +9985,6 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
              "--abandon-reason","superseded"],
             capture_output=True,text=True)
         continue
-    if _fanout_request is not None:
-        try:
-            append_fanout_receipt(
-                Path(HOME) / ".skcapstone",_fanout_request,state="claimed",
-                claim_owner=name,claim_revision=claimed_revision,
-                process={"host":HOST,"session":sess,"workspace":workspace})
-        except (FanoutBoundaryError, OSError, ValueError) as exc:
-            subprocess.run(
-                [SKC,"coord","release-claim",cid,"--owner",name,
-                 "--expected-claim-revision",claimed_revision,"--agent",DISPATCH_AGENT,
-                 "--abandon-reason","error"],
-                capture_output=True,text=True)
-            log(d,"FANOUT_CLAIM_RECEIPT_FAILED|%s|%s|%s"%(HOST,cid,exc))
-            continue
     # The wrapper owns exact-generation release and snapshot retirement under
     # one CardStore fence. The child must never release independently.
     _bi = _beat_interval()
@@ -10084,8 +10023,6 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         'trap "stop_beat" EXIT; '
         "env SKAGENT=%s SKCAPSTONE_AGENT=%s SKFLEET_LANE=%s SKFLEET_WORKSPACE=%s "
         "SKFLEET_CARD_ID=%s SKFLEET_CLAIM_REVISION=%s SKFLEET_SESSION_ID=%s "
-        "SKFLEET_FANOUT_REQUEST_ID=%s SKFLEET_FANOUT_REQUESTER=%s "
-        "SKFLEET_FANOUT_ROUTE=%s "
         "%s --approve --extension %s --name %s "
         "--provider skgateway --model %s --thinking off --no-context-files --no-skills --tools %s "
         '-p "$(cat %s)"; '
@@ -10094,8 +10031,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
            _bf_path, _bf_path, _bf_path,
            _bi,
            name, name, _LANE["name"], shlex.quote(workspace), cid, shlex.quote(claimed_revision),
-           shlex.quote(sess), *(shlex.quote(value) for value in
-                                globals().get("_fanout_env", ("", "", ""))),
+           shlex.quote(sess),
            shlex.quote(PI),
            shlex.quote(globals().get("PI_CARDSTORE_GUARD", "pi-cardstore-guard.mjs")),
            name, model,
@@ -10215,24 +10151,6 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
         log(d,"LAUNCH_FAILED_DETAIL|%s|%s|rc=%s|%s"%
             (HOST,cid,r.returncode,_why[:400] or "no output on either stream"))
     launch_receipts+=1
-    if _fanout_request is not None:
-        try:
-            append_fanout_receipt(
-                Path(HOME) / ".skcapstone",_fanout_request,
-                state="launched" if ok else "launch_failed",
-                claim_owner=name,claim_revision=claimed_revision,
-                process={
-                    "request_id":_fanout_request.request_id,
-                    "card_id":cid,
-                    "owner":name,
-                    "claim_revision":claimed_revision,
-                    "host":HOST,
-                    "session_id":sess,
-                    "unit":unit,
-                    "alive":ok,
-                })
-        except (FanoutBoundaryError, OSError, ValueError) as exc:
-            log(d,"FANOUT_LAUNCH_RECEIPT_FAILED|%s|%s|%s"%(HOST,cid,exc))
     if PRODUCTION_POLICY and _review_recommendation is None:
         try:
             append_production_launch_receipt(

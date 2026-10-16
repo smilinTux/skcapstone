@@ -29,8 +29,10 @@ LOCK="${SKFLEET_AUTO_ROLLOUT_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/skfleet-auto-rollout
 ATTEMPTS="${SKFLEET_AUTO_ROLLOUT_ATTEMPTS:-3}"
 READY_WAIT="${SKFLEET_AUTO_ROLLOUT_READY_WAIT:-150}"
 SYSTEMCTL="${SYSTEMCTL_BIN:-systemctl}"
-# Dispatcher units on this host that a deploy must not land in the middle of.
-QUIET_UNITS="${SKFLEET_AUTO_ROLLOUT_QUIET_UNITS:-skfleet-seat-cycle.service skfleet-niobe-live.service}"
+# Units on this host that a deploy must not land in the middle of. Empty by
+# default: the paused dispatcher seats were retired, and the Link and Mero
+# cycles are short bounded oneshots a deploy may safely follow.
+QUIET_UNITS="${SKFLEET_AUTO_ROLLOUT_QUIET_UNITS:-}"
 QUIET_WAIT="${SKFLEET_AUTO_ROLLOUT_QUIET_WAIT:-600}"
 # Last main rolled to every host; absent until the first full rollout.
 ROLLED_STATE="${SKFLEET_AUTO_ROLLOUT_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/skfleet-auto-rollout/rolled-main}"
@@ -89,9 +91,9 @@ if ! git -C "$REPO" merge-base --is-ancestor "$head" "$target"; then
   notify "auto-rollout refused: diverged checkout" "deploy checkout $head is not an ancestor of origin/main $target on $(hostname)"
   exit 1
 fi
-# Do NOT stop skfleet-seat-cycle.timer to hold the cycle off during the run:
-# the chiap08 drift gate requires that timer active and halts on
-# enablement_mismatch (2026-10-09 07:00Z, dbfcc588). The idle gap below is
+# Do NOT stop a scheduler timer to hold a cycle off during the run: the chiap08
+# drift gate requires required timers active and halts on enablement_mismatch
+# (2026-10-09 07:00Z, dbfcc588). The idle gap below is
 # enough because chiap08, the only host whose deploy touches the local cycle,
 # is rolled first and deploys in under 10s, inside the 15s re-arm gap.
 waited=0
