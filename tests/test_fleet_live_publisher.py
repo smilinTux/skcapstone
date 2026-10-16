@@ -301,7 +301,6 @@ def test_service_preserves_the_explicit_namespace_safe_socket_contract() -> None
         assert "SKFLEET_AUDIT_TMUX_SERVERS=1" in service
         assert "-m skcapstone.fleet_live_publisher" in service
         assert "skfleet-rotate" not in service
-        assert "niobe_live_entrypoint" not in service
 
 
 def test_packaged_timer_is_distinct_from_disabled_rotation_and_central_dispatch() -> None:

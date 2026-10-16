@@ -34,7 +34,6 @@ def test_empty_selection_observes_only_immutable_review_snapshot_over_7000_cards
         (cards / f"card-{index:04d}").mkdir()
 
     observed: list[str] = []
-    reconciled: list[str] = []
     review_id = "deadbeef"
     namespace = {
         "_POOL_V2_ADMISSIONS": {
@@ -46,13 +45,11 @@ def test_empty_selection_observes_only_immutable_review_snapshot_over_7000_cards
         "active_worker_units": lambda: set(),
         "_load_outcomes": lambda: {},
         "event_rows": lambda cid: observed.append(cid) or [],
-        "reconcile_fanout_receipt": lambda _home, cid, **_kwargs: reconciled.append(cid),
         "Path": Path,
         "HOME": str(tmp_path),
         "HOST": "chiap08",
         "d": str(tmp_path / "evidence"),
         "log": lambda *_args: None,
-        "FanoutBoundaryError": ValueError,
         "BoundaryError": ValueError,
         "OSError": OSError,
         "ValueError": ValueError,
@@ -61,7 +58,6 @@ def test_empty_selection_observes_only_immutable_review_snapshot_over_7000_cards
     _observer(namespace)()
 
     assert observed == [review_id]
-    assert reconciled == []
 
 
 def test_empty_selection_has_exactly_one_typed_terminal_receipt() -> None:
@@ -78,13 +74,11 @@ def test_4612_card_observer_reuses_pool_fold_within_child_budget(tmp_path: Path)
     review_cards = 1_565
     review_ids = [f"{index:08x}" for index in range(review_cards)]
     assigned_id = review_ids[-1]
-    fanout_id = review_ids[-2]
     admissions = {
         card_id: {"labels": ["review", "seat-seraph"] if index < review_cards else ["source-only"]}
         for index, card_id in enumerate(f"{index:08x}" for index in range(total_cards))
     }
     cached_rows = {card_id: [] for card_id in review_ids}
-    cached_rows[fanout_id] = [{"action": "niobe_fanout_request"}]
     cached_rows[assigned_id] = [
         {"action": "review_assignment_launch", "claim_revision": "revision-1"},
         {
@@ -103,7 +97,6 @@ def test_4612_card_observer_reuses_pool_fold_within_child_budget(tmp_path: Path)
             raise subprocess.TimeoutExpired("niobe-child", 270)
         return cached_rows[card_id]
 
-    reconciled: list[str] = []
     observed: list[dict[str, object]] = []
 
     class Observation:
@@ -122,7 +115,6 @@ def test_4612_card_observer_reuses_pool_fold_within_child_budget(tmp_path: Path)
         "active_worker_units": lambda: set(),
         "_load_outcomes": lambda: {},
         "event_rows": repeated_event_probe,
-        "reconcile_fanout_receipt": lambda _home, cid, **_kwargs: reconciled.append(cid),
         "lifecycle_state": lambda _cid: "open",
         "_current_claim_identity_fresh": lambda _cid: (None, None, None),
         "MeroObservation": Observation,
@@ -134,7 +126,6 @@ def test_4612_card_observer_reuses_pool_fold_within_child_budget(tmp_path: Path)
         "HOST": "chiap08",
         "d": str(tmp_path / "evidence"),
         "log": lambda *_args: None,
-        "FanoutBoundaryError": ValueError,
         "BoundaryError": ValueError,
         "OSError": OSError,
         "ValueError": ValueError,
@@ -143,5 +134,4 @@ def test_4612_card_observer_reuses_pool_fold_within_child_budget(tmp_path: Path)
     _observer(namespace)()
 
     assert simulated_probe_seconds == 0
-    assert reconciled == [fanout_id]
     assert [item["card_id"] for item in observed] == [assigned_id]
