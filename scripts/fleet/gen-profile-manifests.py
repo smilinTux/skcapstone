@@ -78,9 +78,17 @@ SERIALIZED_SEAT_MUST_NOT = [
     "skfleet-niobe.timer",
     "skfleet-seraph.timer",
 ]
+#: Dispatcher timers that are paused fleet-wide (skfleet cut P1). Their unit
+#: files stay installed until P4b; the profile only forbids them so that a
+#: converge run can never re-enable them.
+PAUSED_DISPATCHER_MUST_NOT = [
+    "skfleet-estate-glm.timer",
+    "skfleet-rotate.timer",
+    "skfleet-seat-cycle.timer",
+    "skfleet-seraph-review-publisher.timer",
+]
 SEAT_CYCLE_TIMERS = [f"skfleet-{seat}.timer" for seat in ("link", "mero")] + [
     "skfleet-link-producer.timer",
-    "skfleet-seat-cycle.timer",
 ]
 
 #: Seat services the control role permits but does not mandate. Niobe live is
@@ -239,10 +247,10 @@ def build_control() -> dict:
                 "The single control seat (.158, node-noroc2027). Holds the full "
                 "sovereign tree and runs the control-plane loops. Changes almost "
                 "nothing, which is the point. Link and Mero retain bounded "
-                "timers; one required seat-cycle timer serializes Atlas, "
-                "Seraph, and activation-selected Niobe so generations cannot "
-                "overlap. Individual Atlas, Seraph, Niobe, and Niobe-live "
-                "timers are forbidden alongside that orchestrator. "
+                "timers. The seat-cycle, rotate, estate-glm and "
+                "seraph-review-publisher dispatcher timers are paused and "
+                "forbidden, as are the individual Atlas, Seraph, Niobe, and "
+                "Niobe-live timers. "
                 + _IGNORE_RULE
                 + " "
                 + _ADR_LINK
@@ -250,7 +258,7 @@ def build_control() -> dict:
             "units": _units_block(
                 sorted(set(allowed) | set(SEAT_ALLOWED_EXTRA)),
                 CONTROL_ROLE_REQUIRED,
-                MODEL_SERVING + SERIALIZED_SEAT_MUST_NOT,
+                MODEL_SERVING + SERIALIZED_SEAT_MUST_NOT + PAUSED_DISPATCHER_MUST_NOT,
             ),
             "unitsIgnore": sorted(DESKTOP_IGNORE),
             "packages": _units_block(load_packages("node-noroc2027"), ["skcapstone"], []),

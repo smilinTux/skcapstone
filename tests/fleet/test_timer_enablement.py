@@ -333,8 +333,14 @@ def test_control_profile_converges_all_serialized_seat_timers_inactive(tmp_path)
         "skfleet-niobe.timer",
         "skfleet-niobe-live.timer",
     }
-    assert "skfleet-seat-cycle.timer" in timer_enablement.required_timers(profile)
-    assert serialized <= set(timer_enablement.forbidden_timers(profile))
+    paused = {
+        "skfleet-seat-cycle.timer",
+        "skfleet-rotate.timer",
+        "skfleet-estate-glm.timer",
+        "skfleet-seraph-review-publisher.timer",
+    }
+    assert "skfleet-seat-cycle.timer" not in timer_enablement.required_timers(profile)
+    assert (serialized | paused) <= set(timer_enablement.forbidden_timers(profile))
 
     systemd = TransitionSystemd(
         timer_file="enabled",
@@ -786,10 +792,10 @@ def test_apply_refreshes_required_core_unit_bytes_even_without_inventory_drift(
     ]
 
 
-def test_full_control_apply_copies_atlas_before_serialized_scheduler_without_activation(
+def test_full_control_apply_never_enables_or_installs_paused_dispatcher_units(
     tmp_path, monkeypatch
 ):
-    """Full activation copies Atlas but leaves its execution to seat-cycle."""
+    """The shipped control profile no longer requires seat-cycle or its seats."""
 
     paths = type("Paths", (), {"root": tmp_path / "fleet"})()
     policy = json.loads(CONTROL_PROFILE.read_text(encoding="utf-8"))["spec"]
@@ -824,25 +830,22 @@ def test_full_control_apply_copies_atlas_before_serialized_scheduler_without_act
     )
 
     assert result["ok"] is True
-    atlas_source = str(install_backends._packaged_core_unit("skfleet-atlas.service"))
-    atlas_copy = next(
-        i
-        for i, (_phase, command) in enumerate(events)
-        if command[:4] == ["install", "-D", "-m", "0644"] and command[4] == atlas_source
-    )
-    atlas_stop = events.index(
-        ("scheduler", ["systemctl", "--user", "stop", "skfleet-atlas.service"])
-    )
-    seat_cycle_enable = events.index(
-        ("scheduler", ["systemctl", "--user", "enable", "skfleet-seat-cycle.timer"])
-    )
-    assert atlas_copy < atlas_stop < seat_cycle_enable
+    paused = {
+        "skfleet-atlas.service",
+        "skfleet-atlas.timer",
+        "skfleet-seat-cycle.timer",
+        "skfleet-seat-cycle.service",
+        "skfleet-rotate.timer",
+        "skfleet-estate-glm.timer",
+        "skfleet-seraph-review-publisher.timer",
+    }
     assert not any(
-        command[:3] == ["systemctl", "--user", verb]
-        and command[-1] in {"skfleet-atlas.service", "skfleet-atlas.timer"}
+        command[:3] == ["systemctl", "--user", verb] and command[-1] in paused
         for _phase, command in events
         for verb in ("enable", "start")
     )
+    atlas_source = str(install_backends._packaged_core_unit("skfleet-atlas.service"))
+    assert not any(command[4:5] == [atlas_source] for _phase, command in events)
 
 
 def test_apply_preserves_activation_for_services_but_not_timers(tmp_path, monkeypatch):

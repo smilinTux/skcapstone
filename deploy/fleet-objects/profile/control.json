@@ -6,7 +6,7 @@
   "name": "control",
   "spec": {
     "capauthIdentityClass": "operator",
-    "description": "The single control seat (.158, node-noroc2027). Holds the full sovereign tree and runs the control-plane loops. Changes almost nothing, which is the point. Link and Mero retain bounded timers; one required seat-cycle timer serializes Atlas, Seraph, and activation-selected Niobe so generations cannot overlap. Individual Atlas, Seraph, Niobe, and Niobe-live timers are forbidden alongside that orchestrator. SK-managed units are those prefixed sk/capauth/cloud9, plus the fleet-adjacent syncthing and tailscaled units. Everything else on the box is desktop, distro or third-party and is listed in unitsIgnore, so it never reads as drift. Role model and the two orthogonal axes: docs/fleet/adr-node-role-model.md.",
+    "description": "The single control seat (.158, node-noroc2027). Holds the full sovereign tree and runs the control-plane loops. Changes almost nothing, which is the point. Link and Mero retain bounded timers. The seat-cycle, rotate, estate-glm and seraph-review-publisher dispatcher timers are paused and forbidden, as are the individual Atlas, Seraph, Niobe, and Niobe-live timers. SK-managed units are those prefixed sk/capauth/cloud9, plus the fleet-adjacent syncthing and tailscaled units. Everything else on the box is desktop, distro or third-party and is listed in unitsIgnore, so it never reads as drift. Role model and the two orthogonal axes: docs/fleet/adr-node-role-model.md.",
     "packages": {
       "allowed": [
         "capauth",
@@ -78,7 +78,6 @@
         "skfleet-niobe-live.service",
         "skfleet-niobe.service",
         "skfleet-seat-cycle.service",
-        "skfleet-seat-cycle.timer",
         "skfleet-seraph.service",
         "skgateway.service",
         "skingest-maintain.timer",
@@ -97,8 +96,12 @@
         "qwen3-arc.service",
         "skai-beellama.service",
         "skfleet-atlas.timer",
+        "skfleet-estate-glm.timer",
         "skfleet-niobe-live.timer",
         "skfleet-niobe.timer",
+        "skfleet-rotate.timer",
+        "skfleet-seat-cycle.timer",
+        "skfleet-seraph-review-publisher.timer",
         "skfleet-seraph.timer",
         "whisper-stt.service"
       ],
@@ -108,7 +111,6 @@
         "skfleet-link-producer.timer",
         "skfleet-link.timer",
         "skfleet-mero.timer",
-        "skfleet-seat-cycle.timer",
         "skgateway.service",
         "sknoded.service",
         "skoperator.timer"
