@@ -29,10 +29,9 @@ def reviewable_source_candidate(
     """Admit only an exact stopped production handoff, without releasing custody."""
     from ..seraph_review_cardstore import LiveCardStoreGateway
     from .builder_dispatch import _request_matches_current_card
-    from .evidence_io import _current_outcome, _producer_terminal
+    from .evidence_io import _current_outcome, _producer_terminal, read_json
     from .production_builder import digest
     from .production_review_custody import unit_terminal
-    from .evidence_io import read_json
     from .source_bundle import _root, _sha
     from .source_transport import _packet
 
@@ -264,7 +263,7 @@ def retains_source_custody(
                 continue
         if _remote_custody(fleet_paths, card_id, owner, claim, binding):
             return True
-        # Direct-seat sources were proven by direct_source_recovery, retired
+        # Direct-seat sources were proven by the retired direct-source recovery, removed
         # with the acceptance machinery (cut P3a); only sknoded production and
         # remote custody make a source reviewable now.
         return False

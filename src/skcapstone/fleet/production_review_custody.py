@@ -6,8 +6,8 @@ import socket
 import subprocess
 from pathlib import Path
 
-from .production_review_evidence import ReviewEvidenceError
 from .evidence_io import once, read_json
+from .production_review_evidence import ReviewEvidenceError
 
 
 def exit_path(home, card, claim):

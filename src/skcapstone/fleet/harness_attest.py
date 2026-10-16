@@ -125,7 +125,7 @@ HARNESS_EXECUTION_LEDGER: dict[int, dict[str, str]] = {
             "90b7fafcdd58a098389d10eee4e9f9eab3a9a72782b527dbe3651737a186e9d2"
         ),
         "production_builder.py": (
-            "a7ab24eeeebe81710bdc0358c946cfd49ea7d101c6f4ea805f59012bb3b460af"
+            "29a230637bc432819a263598ec816896aaf86e8284f9de8d9f9d367384038f39"
         ),
         "production_policy.py": (
             "e1fc577cd7f961d9f6280e685f097f9b13b6335ddf3ae3aa0adc1aaf1062c8a4"

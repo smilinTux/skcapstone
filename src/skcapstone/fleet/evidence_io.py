@@ -1,7 +1,7 @@
 """Evidence and custody helpers shared by review, production and recovery code.
 
-Zero-behavior extraction of the helpers that production_review_finish and
-production_acceptance used to export. Kept small on purpose: bounded evidence
+Zero-behavior extraction of the helpers that the retired finish and
+acceptance modules used to export. Kept small on purpose: bounded evidence
 reads, native card-state prediction, and the exact producer and reviewer
 terminal custody checks that surviving callers still need.
 """
