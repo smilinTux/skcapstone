@@ -243,6 +243,7 @@ class LiveCardStoreGateway:
                 if (
                     not (is_review_card(sibling.title) or "review" in sibling.labels)
                     or sibling.id == card_id
+                    or sibling.archived  # a retired or voided attempt never blocks
                     or not parents.intersection(
                         label.removeprefix("parent-")
                         for label in sibling.labels

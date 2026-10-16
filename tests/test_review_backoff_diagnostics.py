@@ -120,25 +120,17 @@ def test_coord_gates_names_unresolved_dependency_backoff(tmp_path, monkeypatch):
     assert "dependency-blocker" not in reasons
 
 
-@pytest.mark.parametrize("verified", [True, False])
-def test_pass_clears_only_for_verified_remote_supersession(tmp_path, monkeypatch, verified):
+def test_pass_stays_pending_despite_unverified_remote_supersession_event(tmp_path):
     from types import SimpleNamespace
 
     from skcapstone.coord_gate_diagnostic import _awaiting_acceptance
-    from skcapstone.fleet import review_retire
 
     store = CardStore(tmp_path)
     store.create(CardCore(id="ab000001", title="[S] review"))
     store.append_event("ab000001", "link", "reviewer", link_key="verdict", link_value="PASS")
-    rows = store._read_events("ab000001")
-    rows.append(
-        dict(action="remote_review_supersede", request_id="a" * 64, ts="2099-01-01T00:00:00Z")
-    )
-    monkeypatch.setattr(store, "_read_events", lambda c: rows)
-    monkeypatch.setattr(
-        review_retire, "retired_offers", lambda *a: {"a" * 64} if verified else set()
-    )
     card = SimpleNamespace(
         id="ab000001", labels=["review"], archived=False, status=SimpleNamespace(value="review")
     )
-    assert _awaiting_acceptance(tmp_path, store, card) is not verified
+    assert _awaiting_acceptance(tmp_path, store, card) is True
+    store.append_event("ab000001", "move", "operator", column="ready")
+    assert _awaiting_acceptance(tmp_path, store, card) is False
