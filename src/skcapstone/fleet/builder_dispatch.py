@@ -327,7 +327,8 @@ def _request_matches_current_card(
     ):
         raise BuilderDispatchError("offered card changed after dispatch request")
     if request.get("production") is not None and not retained_claim:
-        from .production_test_profile import contract, validate_profile
+        from .production_test_profile import validate_profile
+        from .test_recipe import contract
 
         try:
             validate_profile(

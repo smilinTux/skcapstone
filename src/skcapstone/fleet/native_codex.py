@@ -15,6 +15,7 @@ from pathlib import Path
 
 from . import production_admission as admission
 from . import production_test_profile as profile
+from . import test_recipe
 from .production_policy import require_destination
 
 GUARD = """import os,pathlib,sys
@@ -237,7 +238,7 @@ def require_native_unit(home: Path, policy: dict, unit: str, binding: dict) -> d
 
 def require_source(workspace: Path, core: dict) -> None:
     """Retain the exact registered repository and source ancestor, including partial work."""
-    expected = profile.contract(core)
+    expected = test_recipe.contract(core)
     bases = {
         section.get("base_revision")
         for section in (core["meta"], core["links"])
