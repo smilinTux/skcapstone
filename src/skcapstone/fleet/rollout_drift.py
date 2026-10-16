@@ -83,7 +83,16 @@ DISPATCHER_UNIT_NAME = "skfleet-rotate.service"
 #: manifest["units"] -- if the enablement check below only ever walked
 #: shipped units, it could never have caught the one incident it was built
 #: for.
-ALLOWED_UNSHIPPED_UNITS = frozenset({"skfleet-rotate.service", "skfleet-rotate.timer"})
+ALLOWED_UNSHIPPED_UNITS = frozenset(
+    {
+        "skfleet-rotate.service",
+        "skfleet-rotate.timer",
+        # Hand-installed and paused. Named here only because the control profile
+        # forbids it (mustNot); the paired service is deliberately not listed, so
+        # the enablement and failed-unit loops below never look at it.
+        "skfleet-estate-glm.timer",
+    }
+)
 
 _DIST_INFO_GIT_SHA_RE = re.compile(r"\+g([0-9a-f]+)", re.IGNORECASE)
 _DIST_INFO_RELEASE_RE = re.compile(r"^skcapstone-(\d+\.\d+\.\d+)\.dist-info$", re.IGNORECASE)

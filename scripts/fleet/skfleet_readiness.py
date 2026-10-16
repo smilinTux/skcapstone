@@ -401,6 +401,10 @@ def _systemctl_show_value(unit: str, prop: str) -> tuple[str, str | None]:
     return proc.stdout, None
 
 
+#: Substring of the unit_in_scope error that means systemd answered "not installed".
+NOT_INSTALLED_MARK = "(LoadState=not-found)"
+
+
 def unit_in_scope(unit: str) -> tuple[bool | None, str | None, str]:
     """Whether ``unit``'s role actually applies to this host.
 
@@ -437,15 +441,11 @@ def unit_in_scope(unit: str) -> tuple[bool | None, str | None, str]:
     load_state, err = _systemctl_show_value(checked_unit, "LoadState")
     if err is not None:
         return None, err, checked_unit
-    if load_state.strip() == "not-found":
-        # systemd answered, and its answer is that the unit is not installed
-        # (a paused or removed role). That is an authoritative "does not apply
-        # here", unlike a failed or empty query, which stays undetermined.
-        return False, None, checked_unit
-    if load_state.strip() == "":
+    if load_state.strip() in ("", "not-found"):
         return (
             None,
-            "systemd does not know unit %s (LoadState=unknown)" % checked_unit,
+            "systemd does not know unit %s (LoadState=%s)"
+            % (checked_unit, load_state.strip() or "unknown"),
             checked_unit,
         )
 
@@ -610,6 +610,15 @@ def _run(
     checked_scope_unit: str | None = None
     if env_from_systemd:
         in_scope, scope_error, checked_scope_unit = unit_in_scope(env_from_systemd)
+
+    # LoadState=not-found is systemd's authoritative answer that the unit is not
+    # installed (a paused or removed role, e.g. skfleet-seat-cycle after the
+    # dispatcher cut). That is "does not apply here", not "could not check", so
+    # the gate SKIPs. unit_in_scope itself keeps reporting it as undetermined
+    # because rollout_drift relies on that to flag manifest units that are
+    # missing from a host. An empty or failed query stays a FAIL.
+    if scope_error is not None and NOT_INSTALLED_MARK in scope_error:
+        in_scope, scope_error = False, None
 
     env_error: str | None = None
     if scope_error is not None:

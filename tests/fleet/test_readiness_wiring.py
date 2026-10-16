@@ -164,14 +164,16 @@ def test_unit_in_scope_true_when_timer_is_boot_enabled_but_not_yet_active(monkey
     assert in_scope is True
 
 
-def test_unit_in_scope_skips_when_unit_not_installed(monkeypatch):
-    """LoadState=not-found is systemd's authoritative answer: not here, SKIP."""
+def test_unit_in_scope_keeps_not_installed_undetermined_for_rollout_drift(monkeypatch):
+    """rollout_drift flags manifest units missing from a host via this None."""
     monkeypatch.setattr(
         skfleet_readiness.subprocess,
         "run",
         _fake_systemctl({("skfleet-rotate.timer", "LoadState"): "not-found"}),
     )
-    assert unit_in_scope("skfleet-rotate.service") == (False, None, "skfleet-rotate.timer")
+    in_scope, error, _ = unit_in_scope("skfleet-rotate.service")
+    assert in_scope is None
+    assert skfleet_readiness.NOT_INSTALLED_MARK in error
 
 
 def test_unit_in_scope_undetermined_when_load_state_empty(monkeypatch):
@@ -182,7 +184,25 @@ def test_unit_in_scope_undetermined_when_load_state_empty(monkeypatch):
     )
     in_scope, error, _ = unit_in_scope("skfleet-rotate.service")
     assert in_scope is None
-    assert error is not None
+    assert error is not None and skfleet_readiness.NOT_INSTALLED_MARK not in error
+
+
+def test_run_fails_when_load_state_is_empty(tmp_path, monkeypatch, capsys):
+    """An empty LoadState is an unanswered query, never a SKIP."""
+    monkeypatch.setattr(
+        skfleet_readiness.subprocess,
+        "run",
+        _fake_systemctl({("skfleet-nonexistent.timer", "LoadState"): ""}),
+    )
+    exit_code = _run(
+        _dispatcher(tmp_path),
+        _units_dir_with_real_module(tmp_path),
+        sys.executable,
+        env_from_unit=None,
+        env_from_systemd="skfleet-nonexistent.service",
+    )
+    assert exit_code == 1
+    assert "FAIL required env: could not determine whether" in capsys.readouterr().out
 
 
 def test_run_skips_env_from_nonexistent_systemd_unit(tmp_path, monkeypatch, capsys):
