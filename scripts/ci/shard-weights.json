@@ -139,7 +139,6 @@
 "tests/fleet/test_qualified_runtime_dependencies.py": 0.3,
 "tests/fleet/test_qualify_env.py": 0.5,
 "tests/fleet/test_readiness_wiring.py": 0.4,
-"tests/fleet/test_released_source_custody.py": 9.3,
 "tests/fleet/test_remote_review_dispatch.py": 2.3,
 "tests/fleet/test_remote_review_execution.py": 69.3,
 "tests/fleet/test_remote_review_policy.py": 0.5,
