@@ -1,7 +1,6 @@
 """Closing the producer also locks the exact current completed review."""
 
 import hashlib
-import json
 
 import pytest
 
@@ -27,21 +26,7 @@ def accepted_review(home):
 
     link(review, reviewer, "verdict", "PASS")
     link(review, reviewer, "review_evidence", f"{report}|sha256={digest}")
-    link(
-        review,
-        reviewer,
-        "applicability_receipt",
-        json.dumps(
-            {
-                "type": "source-only-applicability",
-                "card_id": review,
-                "source_head": source_head,
-                "reviewer": reviewer,
-                "evidence_digest": digest,
-                "governed_pr_ci": False,
-            }
-        ),
-    )
+    link(review, reviewer, "hosted_checks", f"3/3 SUCCESS at exact head {source_head}")
     completed = _run(home, "complete", review, "--agent", reviewer)
     assert completed.exit_code == 0, completed.output
     link(source, producer, "head", source_head)

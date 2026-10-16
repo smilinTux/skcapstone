@@ -24,9 +24,9 @@ from ..seat_runtime import (
 from . import builder_dispatch as dispatch
 from . import production_builder as production
 from . import store
+from .evidence_io import native_command, read_json
 from .production_policy import require_destination, validate_execution_policy
 from .production_review import producer_family, provider_family, review_family_allowed
-from .production_review_finish import native_command, read_json
 from .refusal_log import note, reason_of, refuse
 from .source_bundle import SourceBundleError, _binding, _review_manifest
 
@@ -242,11 +242,8 @@ def validate_contract(request, policy, *, host, historical=False):
 def _source(home, card, *, historical=False):
     """Resolve producer facts from native source custody, not review prose."""
     from ..seraph_review_cardstore import LiveCardStoreGateway
-    from .production_acceptance import (
-        _current_outcome,
-        _producer_terminal,
-        _sealed_source_outcome,
-    )
+    from .evidence_io import _current_outcome, _producer_terminal
+    from .source_custody import sealed_source_outcome as _sealed_source_outcome
 
     core = card.model_dump(mode="json")
     parent, head = _binding(core, "link_source_card"), _binding(core, "link_head_revision")

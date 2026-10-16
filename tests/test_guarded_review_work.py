@@ -350,41 +350,7 @@ def test_retry_after_create_acknowledgement_loss_finishes_same_review(tmp_path, 
     assert len(store.list_card_ids()) == 2
 
 
-def test_source_only_receipt_recognizes_new_review_metadata(tmp_path):
-    from skcapstone.review_verdict import _source_only_applicability
-
-    store, card, owner, artifact, args = prepared(tmp_path)
-    result = _run(tmp_path, *args)
-    assert result.exit_code == 0, result.output
-    review_id = json.loads(result.output)["review_card_id"]
-    reviewer = "pi-seraph-fiber-" + review_id
-    store.append_event(review_id, "claim", reviewer, owner=reviewer, claim_revision="f" * 32)
-    evidence = tmp_path / "review.md"
-    evidence.write_text("Independent source-only verification, not hosted CI.")
-    digest = hashlib.sha256(evidence.read_bytes()).hexdigest()
-
-    def link(key, value):
-        result = _run(tmp_path, "link", review_id, key, value, "--agent", reviewer)
-        assert result.exit_code == 0, result.output
-
-    link("verdict", "PASS")
-    link("review_evidence", f"{evidence}|sha256={digest}")
-    assert not _source_only_applicability(review_id, tmp_path)
-    receipt = {
-        "type": "source-only-applicability",
-        "card_id": review_id,
-        "source_head": COMMIT,
-        "reviewer": reviewer,
-        "evidence_digest": digest,
-        "governed_pr_ci": False,
-    }
-    link("applicability_receipt", json.dumps(receipt, sort_keys=True))
-    assert _source_only_applicability(review_id, tmp_path)
-    link("review_evidence", f"{evidence}|sha256={digest}")
-    assert not _source_only_applicability(review_id, tmp_path)
-
-
-def test_native_cli_review_completion_needs_receipt_and_leaves_source_owned(tmp_path):
+def test_native_cli_review_completion_needs_checks_and_leaves_source_owned(tmp_path):
     store, card, owner, artifact, args = prepared(tmp_path)
     opened = _run(tmp_path, *args)
     assert opened.exit_code == 0, opened.output
@@ -401,24 +367,16 @@ def test_native_cli_review_completion_needs_receipt_and_leaves_source_owned(tmp_
     missing = _run(tmp_path, "complete", review_id, "--agent", reviewer)
     assert missing.exit_code != 0
     assert store.fold(review_id).status.value != "done"
-    receipt = {
-        "type": "source-only-applicability",
-        "card_id": review_id,
-        "source_head": COMMIT,
-        "reviewer": reviewer,
-        "evidence_digest": digest,
-        "governed_pr_ci": False,
-    }
-    linked = _run(
-        tmp_path,
-        "link",
-        review_id,
-        "applicability_receipt",
-        json.dumps(receipt, sort_keys=True),
-        "--agent",
-        reviewer,
-    )
-    assert linked.exit_code == 0, linked.output
+    for check in (
+        "ci_check_docs",
+        "ci_check_gitleaks",
+        "ci_check_lint",
+        "ci_check_shim_imports",
+        "ci_check_python311",
+        "ci_check_python312",
+    ):
+        linked = _run(tmp_path, "link", review_id, check, "SUCCESS", "--agent", reviewer)
+        assert linked.exit_code == 0, linked.output
     completed = _run(tmp_path, "complete", review_id, "--agent", reviewer)
     assert completed.exit_code == 0, completed.output
     assert store.fold(review_id).status.value == "done"

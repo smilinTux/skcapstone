@@ -21,7 +21,7 @@ def execution(source, remote_policy, monkeypatch):
     from skcapstone.fleet.node_controller import NodeView
     from skcapstone.review_replacement import current_review_attempt
     from skcapstone.seraph_review_cardstore import LiveCardStoreGateway
-    from skcapstone.fleet.production_review_finish import once
+    from skcapstone.fleet.evidence_io import once
 
     home = source["home"]
     paths = FleetPaths(home / "fleet")
@@ -186,7 +186,7 @@ def terminal_review(execution, monkeypatch, request):
     if verdict == "STRUCTURED_BLOCKED":
         verdict = "BLOCKED blocked_on=capability referent=review-input missing prerequisite"
     import hashlib
-    from skcapstone.fleet.production_review_finish import native_command, native_state, once
+    from skcapstone.fleet.evidence_io import native_command, native_state, once
     from skcapstone.fleet.production_review_custody import exit_path
     from tests.fleet.test_source_bundle import git
 
@@ -276,10 +276,8 @@ def terminal_review(execution, monkeypatch, request):
     )
     once(exit_path(e["home"], e["card"], claim), terminal)
     from skcapstone.fleet import production_review_custody as custody
-    from skcapstone.fleet import production_acceptance as acceptance
 
     monkeypatch.setattr(custody, "unit_terminal", lambda *a, **kw: dict(ActiveState="inactive"))
-    monkeypatch.setattr(acceptance, "unit_terminal", lambda *a, **kw: dict(ActiveState="inactive"))
     status = review.reconcile_review(e["paths"], e["home"], request, status)
     assert status["state"] == (
         "awaiting-review-acceptance"

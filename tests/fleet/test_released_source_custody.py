@@ -4,7 +4,6 @@ import json
 
 import pytest
 
-from skcapstone.fleet import production_acceptance as acceptance
 from skcapstone.fleet import production_review_custody as custody
 from skcapstone.fleet import review_dispatch
 from tests.fleet import remote_review_fixtures, test_remote_review_policy, test_source_bundle
@@ -58,20 +57,6 @@ def test_exact_released_modern_source_is_reviewable_without_reclaim(released):
     assert result == e["bound_before"]
     assert s["store"].fold(s["card"]).owner is None
     assert e["queries"] == [(e["producer_status"]["unit"], "b" * 32, "chiap02")]
-
-
-def test_acceptance_reuses_same_released_terminal_proof(released):
-    e = released
-    s = e["source"]
-    manifest = json.loads(
-        (
-            e["home"] / "evidence/work" / s["card"] / "source-bundles" / (s["head"] + ".json")
-        ).read_text()
-    )
-    terminal = acceptance._producer_terminal(e["home"], s["store"].fold(s["card"]), manifest)
-    assert terminal["family"] == "glm"
-    assert terminal["invocation"] == "b" * 32
-    assert e["queries"]
 
 
 @pytest.mark.parametrize(
@@ -173,22 +158,6 @@ def test_released_source_failures_never_become_legacy_or_current_custody(
     e["producer_path"].write_text(json.dumps(e["producer_status"]))
     with pytest.raises(ValueError):
         review_dispatch._source(e["home"], st.fold(e["card"]))
-
-
-def test_fresh_remote_review_of_released_source_reaches_acceptance(released, monkeypatch, request):
-    e = remote_review_fixtures.terminal_review.__wrapped__(released, monkeypatch, request)
-    s = e["source"]
-    context = acceptance.collect(
-        e["home"],
-        e["request"]["policy"],
-        e["card"],
-        e["status"]["claim_revision"],
-        process_check=lambda card: {"sessions": [], "units": []},
-    )
-    assert context["source"]["owner"] == s["owner"]
-    assert context["source"]["claim"] == s["claim"]
-    assert context["source"]["head"] == s["head"]
-    assert s["store"].fold(s["card"]).owner is None
 
 
 def test_qualified_terminal_without_exit_code_remains_supported(released):

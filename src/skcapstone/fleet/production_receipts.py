@@ -183,9 +183,9 @@ def validate_review_execution(home, policy, launch, card, event, *, recorded=Tru
 
     from . import builder_dispatch as dispatch
     from . import production_builder as production
+    from .evidence_io import read_json
     from .paths import FleetPaths
     from .production_admission import MARKER, _digest, _intent, _reservation_id
-    from .production_review_finish import read_json
     from .review_dispatch import _recorded, _source, validate_contract
     from .source_bundle import _once
 

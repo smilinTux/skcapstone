@@ -458,8 +458,8 @@ def verify_seraph_dispatch(
     if offers and not launches and completed.returncode == 0 and production_policy:
         try:
             from .fleet import builder_dispatch, review_dispatch
+            from .fleet.evidence_io import read_json
             from .fleet.paths import FleetPaths
-            from .fleet.production_review_finish import read_json
 
             paths = FleetPaths(home / "fleet")
             seen = set()

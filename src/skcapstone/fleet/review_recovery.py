@@ -25,7 +25,7 @@ def failed_review_exit(value, request, status):
 
 def acceptance_absent(home, card, claim):
     """Do not discard an acceptance transaction or its successful review custody."""
-    from .production_acceptance import review_directory
+    from .evidence_io import review_directory
 
     directory = review_directory(home, card, claim)
     if os.path.lexists(directory):

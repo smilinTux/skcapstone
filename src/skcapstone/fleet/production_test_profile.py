@@ -675,65 +675,6 @@ def acceptance_requalifiable(value: dict, expected: dict, policy: dict) -> bool:
     return True
 
 
-def refresh_accepted_profile(
-    home: Path, binding: dict, policy: dict, repository: str, receipt_sha256: str
-) -> bool:
-    """Publish the successor profile proven by acceptance's passing trusted tests.
-
-    Returns False when the current profile is already valid for this
-    candidate. The successor is bound to the source custody claim when the
-    source is still held, or published unclaimed when it was released, and
-    supersede_profile() re-validates it against the live environment.
-    """
-    expected = {
-        "card": binding["source_card"],
-        "repository": repository,
-        "criteria_sha256": binding["criteria_sha256"],
-    }
-    try:
-        value, predecessor = read_profile(home, expected["card"])
-    except FileNotFoundError:
-        return False  # a legacy plan without a reusable profile has nothing to refresh
-    from .acceptance_recipe import executed_profile
-
-    executed = executed_profile(home, binding, value, receipt_sha256)
-    recipe_changed = executed["recipe"] != value["recipe"]
-    source_sha256 = plan.source_fingerprint(
-        repository, binding["source_head"], binding["source_tree"]
-    )
-    try:
-        validate_profile(value, dict(expected, source_sha256=source_sha256), policy)
-        if not recipe_changed:
-            return False
-    except plan.TestEvidenceError:
-        if not acceptance_requalifiable(value, expected, policy):
-            raise
-    value = executed
-    card = CardStore(home).fold(expected["card"])
-    if card is None:
-        raise plan.TestEvidenceError("profile source claim changed")
-    claimed = card.owner is not None
-    supersede_profile(
-        home,
-        card.model_dump(mode="json"),
-        policy,
-        value["recipe"],
-        value["qualified_by"],
-        receipt_sha256,
-        predecessor_sha256=predecessor,
-        runtime_sha256=plan.runtime_fingerprint(),
-        source_sha256=source_sha256,
-        source_claim=(
-            {"owner": binding["source_owner"], "claim_revision": binding["source_claim_revision"]}
-            if claimed
-            else None
-        ),
-        unclaimed=not claimed,
-        node_environment=value.get("node_environment"),
-    )
-    return True
-
-
 def seal_candidate(
     home: Path, binding: dict, workspace: Path, policy: dict, repository: str
 ) -> None:

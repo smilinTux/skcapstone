@@ -344,10 +344,10 @@ def launch_review(paths, home, request, card, handoff, workspace, *, launcher=No
 
     from ..seat_runtime import append_review_launch_receipt
     from . import builder_dispatch, review_dispatch
+    from .evidence_io import read_json
     from .production_admission import MARKER, _digest, reserve_launch, start_reserved, unit_state
     from .production_brief import production_source_review_brief
     from .production_receipts import persist_production_snapshot
-    from .production_review_finish import read_json
     from .worker_git import identity, preflight
 
     owner, claim = request["reviewer"], card.meta["_claim_revision"]

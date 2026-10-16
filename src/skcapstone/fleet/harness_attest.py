@@ -104,7 +104,7 @@ HARNESS_EXECUTION_LEDGER: dict[int, dict[str, str]] = {
             "5b8d84bfb84b6209bcce7a74b9fcfa6c69b16bc0db6540bc49d9be4e44555186"
         ),
         "production_test_profile.py": (
-            "72c49974efcd6cb7d80657f7ea3cf661393d1756d06a92e11c123ea1abc8c800"
+            "b5681652f78a217ab0619f80fcd1933d23a684e83d513e4f4d0b326632a03089"
         ),
         "production_test_worker.py": (
             "67e7eb09c8fde500ef32eba43a8828b46b87881be056daa9804a79138a3eb57b"
@@ -125,7 +125,7 @@ HARNESS_EXECUTION_LEDGER: dict[int, dict[str, str]] = {
             "90b7fafcdd58a098389d10eee4e9f9eab3a9a72782b527dbe3651737a186e9d2"
         ),
         "production_builder.py": (
-            "e66beec59def3c47daee1a1b212447c81a5e2124ca97b3f5427a724ddcef7da4"
+            "29a230637bc432819a263598ec816896aaf86e8284f9de8d9f9d367384038f39"
         ),
         "production_policy.py": (
             "e1fc577cd7f961d9f6280e685f097f9b13b6335ddf3ae3aa0adc1aaf1062c8a4"

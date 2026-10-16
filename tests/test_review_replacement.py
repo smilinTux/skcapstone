@@ -145,37 +145,6 @@ def test_default_id_bytes_remain_identical():
     assert review_card_id(*fields) == hashlib.sha256("\0".join(fields).encode()).hexdigest()[:8]
 
 
-def test_native_applicability_refuses_retained_ci_even_after_later_receipt(tmp_path):
-    from skcapstone.review_verdict import _source_only_applicability
-
-    store, source, producer, evidence, args = prepared(tmp_path)
-    opened = _run(tmp_path, *args)
-    old = json.loads(opened.output)["review_card_id"]
-    reviewer = "pi-seraph-native-" + old
-    store.append_event(old, "claim", reviewer, owner=reviewer, claim_revision="f" * 32)
-    report = artifact(tmp_path, "valid-report.md", "Synthetic actual review report")
-    receipt = dict(
-        type="source-only-applicability",
-        card_id=old,
-        source_head=COMMIT,
-        reviewer=reviewer,
-        evidence_digest=report["sha256"],
-        governed_pr_ci=False,
-    )
-
-    def link(key, value):
-        result = _run(tmp_path, "link", old, key, value, "--agent", reviewer)
-        assert result.exit_code == 0, result.output
-
-    link("verdict", "PASS")
-    link("review_evidence", report["path"] + "|sha256=" + report["sha256"])
-    link("applicability_receipt", json.dumps(receipt))
-    assert _source_only_applicability(old, tmp_path)
-    link("ci_check_docs", "SUCCESS unsupported")
-    link("applicability_receipt", json.dumps(receipt))
-    assert not _source_only_applicability(old, tmp_path)
-
-
 def test_one_replacement_preserves_source_claim_and_bad_history(tmp_path, invalid_review):
     store, source, old, request, props = invalid_review
     source_before = store._read_events(source)
