@@ -193,7 +193,6 @@ _SKCAPSTONE_PATH_EXEMPT = {
     "builder_retire.py": "uses explicit CardStore home independently of FleetPaths",
     "builder_retry.py": "reads native CardStore; retry dispatch state uses FleetPaths",
     "cli.py": "passes coordination home to board operations; fleet paths remain explicit",
-    "herdr_handoff_cli.py": "documents the separately overridable coordination root",
     "production_brief.py": "names canonical card evidence and CardStore, not fleet state",
     "production_exit.py": "reads CardStore custody under the sovereign home",
     "production_hosted_review_brief.py": "binds card evidence and CardStore home",
