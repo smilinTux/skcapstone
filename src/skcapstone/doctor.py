@@ -143,6 +143,8 @@ def run_diagnostics(home: Path, deep: bool = False) -> DiagnosticReport:
     report.checks.extend(_check_identity(home))
     report.checks.extend(_check_identity_consistency(home))
     report.checks.extend(_check_memory(home))
+    report.checks.extend(_check_memory_drift(home))
+    report.checks.extend(_check_memory_sync_timer(home))
     report.checks.extend(_check_transport())
     report.checks.extend(_check_sync(home))
     report.checks.extend(_check_sync_conflicts(home))
@@ -1961,6 +1963,226 @@ def _check_memory(home: Path) -> list[Check]:
         )
     )
 
+    return checks
+
+
+def _resolve_agents_dir(home: Path) -> Path:
+    """Resolve the ``~/.skcapstone/agents/`` directory for either a
+    shared-root or a single agent-home ``home`` input (mirrors
+    :func:`_resolve_memory_dir`).
+
+    Args:
+        home: Either the shared ``~/.skcapstone`` root, or a single
+            agent's home directory (``~/.skcapstone/agents/<agent>``).
+
+    Returns:
+        Path: The ``agents`` directory containing every agent home on
+        this node.
+    """
+    if home.parent.name == "agents":
+        return home.parent
+    return home / "agents"
+
+
+def _every_agent_with_memory_home(home: Path) -> list[str]:
+    """Every agent name with a ``memory/`` directory on this node.
+
+    Card: skmemory sqlite-only-orphans, 2026-10-16. A drift/timer check
+    scoped to only the currently-active agent would have missed the exact
+    gap that went undetected for six months: the laptop's lumina home had
+    a memory dir and 23,525 drifted rows, but nobody ever ran a check
+    against it specifically. These checks are fleet-wide per node instead.
+
+    Args:
+        home: Either the shared ``~/.skcapstone`` root or a single
+            agent's home directory.
+
+    Returns:
+        list[str]: Agent names, sorted, excluding any without a
+        ``memory/`` subdirectory.
+    """
+    agents_dir = _resolve_agents_dir(home)
+    if not agents_dir.exists():
+        return []
+    names = []
+    for entry in sorted(agents_dir.iterdir()):
+        if entry.is_dir() and (entry / "memory").is_dir():
+            names.append(entry.name)
+    return names
+
+
+def _skmemory_health_json(agent: str) -> Optional[dict]:
+    """Run ``skmemory health`` for ``agent`` as a subprocess.
+
+    skmemory resolves its active agent's paths from environment variables
+    at MODULE IMPORT time (cached for the life of the process), so an
+    in-process loop over multiple agents cannot work here -- the same
+    reasoning ``scripts/skmemory-sync-audit.sh`` already applies. Each
+    agent gets its own subprocess with ``SKAGENT`` set.
+
+    Args:
+        agent: The agent name to check (``SKAGENT`` value).
+
+    Returns:
+        Optional[dict]: The parsed JSON health payload, or ``None`` if the
+        ``skmemory`` CLI is missing, the call failed, or its output could
+        not be parsed as JSON.
+    """
+    skmemory_bin = shutil.which("skmemory")
+    if not skmemory_bin:
+        return None
+    try:
+        env = dict(os.environ, SKAGENT=agent)
+        result = subprocess.run(
+            [skmemory_bin, "health"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+        return json.loads(result.stdout or "{}")
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        return None
+
+
+def _check_memory_drift(home: Path) -> list[Check]:
+    """Per-agent, per-node memory drift: sqlite_only/flat_only/pg_only.
+
+    Card: skmemory sqlite-only-orphans, 2026-10-16. The drift NUMBER
+    already existed in skmemory's ``health()`` payload (and PR #32 even
+    added an explicit top-level ``status`` computed from it), but nothing
+    in the estate's own gating looked at it fleet-wide -- the only
+    consumer was a weekly audit script that, for six months, found zero
+    active timers to even run against (see the postmortem). This check
+    closes that gap for ``skcapstone doctor``: it fails loudly, per agent,
+    whenever drift or a rescued-preview stub marker is present.
+
+    Args:
+        home: Either the shared ``~/.skcapstone`` root or a single
+            agent's home directory.
+
+    Returns:
+        list[Check]: One check per agent with a memory home on this node.
+    """
+    checks: list[Check] = []
+    for agent in _every_agent_with_memory_home(home):
+        health = _skmemory_health_json(agent)
+        if health is None:
+            checks.append(
+                Check(
+                    name=f"memory:drift:{agent}",
+                    description=f"Memory drift ({agent})",
+                    passed=True,
+                    unknown=True,
+                    detail="could not run `skmemory health` for this agent",
+                    category="memory",
+                )
+            )
+            continue
+
+        primary = health.get("primary", {}) if isinstance(health, dict) else {}
+        sync = primary.get("sync", {}) if isinstance(primary, dict) else {}
+        status = health.get("status") or ("ok" if primary.get("ok") else "degraded")
+        sqlite_only = sync.get("sqlite_only", 0) or 0
+        flat_only = sync.get("flat_only", 0) or 0
+        vector = health.get("vector", {}) if isinstance(health, dict) else {}
+        pg_only = vector.get("pg_only", 0) if isinstance(vector, dict) else 0
+        pg_only = pg_only or 0
+
+        clean = (
+            status not in ("degraded", "red")
+            and sqlite_only == 0
+            and flat_only == 0
+            and pg_only == 0
+        )
+        checks.append(
+            Check(
+                name=f"memory:drift:{agent}",
+                description=f"Memory drift ({agent})",
+                passed=clean,
+                detail=(
+                    f"status={status} sqlite_only={sqlite_only} "
+                    f"flat_only={flat_only} pg_only={pg_only}"
+                ),
+                fix=("" if clean else f"SKAGENT={agent} skmemory sync"),
+                category="memory",
+            )
+        )
+    return checks
+
+
+def _check_memory_sync_timer(home: Path) -> list[Check]:
+    """Every agent with a memory home on this node must have an ENABLED
+    ``skmemory-sync@<agent>.timer``.
+
+    Card: skmemory sqlite-only-orphans, 2026-10-16. skmemory has shipped
+    this timer (and an installer for it) since v0.9.8 (2026-04-25); nothing
+    in this repo's own ``scripts/install.sh`` ever called that installer,
+    so an agent home could exist with zero sync coverage for six months
+    with no check anywhere catching it. ``scripts/install.sh`` now installs
+    and enables this timer for every agent home it provisions; this check
+    is the gate that catches a skipped install or a timer that later got
+    disabled.
+
+    Args:
+        home: Either the shared ``~/.skcapstone`` root or a single
+            agent's home directory.
+
+    Returns:
+        list[Check]: One check per agent with a memory home on this node,
+        in the ``systemd`` category. Empty on non-Linux or when no
+        ``systemctl --user`` session is available (same degrade-gracefully
+        rule as :func:`_check_systemd_runtime`).
+    """
+    checks: list[Check] = []
+    if platform.system() != "Linux":
+        return checks
+    from . import systemd as sysd
+
+    if not sysd.systemd_available():
+        return checks
+
+    for agent in _every_agent_with_memory_home(home):
+        unit = f"skmemory-sync@{agent}.timer"
+        try:
+            result = subprocess.run(
+                ["systemctl", "--user", "is-enabled", unit],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            state = (result.stdout or "").strip() or "disabled"
+        except (OSError, subprocess.TimeoutExpired):
+            state = "unknown"
+
+        if state == "unknown":
+            checks.append(
+                Check(
+                    name=f"memory:sync_timer:{agent}",
+                    description=f"skmemory-sync timer ({agent})",
+                    passed=True,
+                    unknown=True,
+                    detail="could not query systemctl --user is-enabled",
+                    category="systemd",
+                )
+            )
+            continue
+
+        enabled = state == "enabled"
+        checks.append(
+            Check(
+                name=f"memory:sync_timer:{agent}",
+                description=f"skmemory-sync timer ({agent})",
+                passed=enabled,
+                detail=f"state={state}",
+                fix=(
+                    ""
+                    if enabled
+                    else f"systemctl --user enable --now {unit}  (or re-run scripts/install.sh)"
+                ),
+                category="systemd",
+            )
+        )
     return checks
 
 

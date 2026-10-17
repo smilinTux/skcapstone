@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **`skcapstone doctor` could not see a laptop sitting on 23,525 undetected
+  memory orphans for six months.** Card: skmemory sqlite-only-orphans,
+  2026-10-16. skmemory's `health()` has carried a drift signal
+  (`sqlite_only`/`flat_only`/`pg_only` counts) since v0.9.8, and the
+  `skmemory-sync@<agent>.timer` that keeps that signal moving has shipped
+  in-repo, with an installer, since the same release; neither was wired
+  into anything this repo's own `doctor` gates on, and nothing in
+  `scripts/install.sh` ever called that installer. Two new fleet-wide
+  checks in `doctor.py`: `memory:drift:<agent>` (runs `skmemory health` per
+  agent with a memory home on this node, fails on any drift or
+  degraded/red status) and `memory:sync_timer:<agent>` (fails when that
+  agent has no enabled `skmemory-sync@<agent>.timer`). Both degrade
+  gracefully (reported `unknown`, not failed) when the `skmemory` CLI or
+  `systemctl --user` is unavailable. See
+  `skmemory` repo's `docs/postmortems/2026-10-16-sqlite-only-orphans.md`.
+
 - **A worker brief could lose its mandatory filesystem-search policy with no
   test noticing.** `tests/test_skfleet_worker_search_policy.py` asserted only
   the OUTPUT of `_worker_search_instructions()` (the fail-closed policy added
