@@ -18,6 +18,15 @@
   `systemctl --user` is unavailable. See
   `skmemory` repo's `docs/postmortems/2026-10-16-sqlite-only-orphans.md`.
 
+- **`scripts/install.sh` now installs AND enables the
+  `skmemory-sync@<agent>.timer`** for whichever agent it is setting up, the
+  install step the `memory:sync_timer` doctor check above expects to have
+  already run. Copies the template units from the skmemory sibling repo's
+  `systemd/` dir and runs
+  `systemctl --user enable --now skmemory-sync@<agent>.timer` alongside the
+  existing core-service enable step. Card: skmemory sqlite-only-orphans,
+  2026-10-16.
+
 - **A worker brief could lose its mandatory filesystem-search policy with no
   test noticing.** `tests/test_skfleet_worker_search_policy.py` asserted only
   the OUTPUT of `_worker_search_instructions()` (the fail-closed policy added

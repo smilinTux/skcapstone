@@ -329,6 +329,26 @@ elif [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
             fi
         done
 
+        # skmemory-sync@.{service,timer} (sibling repo, templated units).
+        # Card: skmemory sqlite-only-orphans, 2026-10-16 -- this template has
+        # shipped in skmemory since v0.9.8 with no installer calling it from
+        # here, so an agent home could exist with zero sync coverage for six
+        # months with nothing catching it (skcapstone doctor's memory:sync_timer
+        # check is the gate; this is the install step that check expects to
+        # have already run). Template units are copied as-is (no =lumina
+        # substitution; the instance name comes from the systemctl call below).
+        _SKMEMORY_SYSTEMD_DIR="$(dirname "$REPO_ROOT")/skmemory/systemd"
+        _skmemory_sync_installed=0
+        for _unit in skmemory-sync@.service skmemory-sync@.timer; do
+            _src="$_SKMEMORY_SYSTEMD_DIR/$_unit"
+            if [[ -f "$_src" ]]; then
+                cp "$_src" "$_UNIT_DIR/$_unit"
+                echo "  [OK] $_unit"
+                (( _installed++ ))
+                _skmemory_sync_installed=1
+            fi
+        done
+
         # Syncthing desktop-tuning drop-in (machine-wide, agent-agnostic):
         # keeps the mesh's continuous sync deprioritised so it never starves
         # the active desktop session. Applies to whatever agent was just set up.
@@ -352,6 +372,11 @@ elif [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
             systemctl --user enable --now skcapstone.service 2>/dev/null && echo "  [STARTED] skcapstone" || true
             systemctl --user enable skcapstone-context.timer 2>/dev/null && echo "  [ENABLED] skcapstone-context.timer" || true
             systemctl --user enable skcomms-heartbeat.timer 2>/dev/null && echo "  [ENABLED] skcomms-heartbeat.timer" || true
+            if [[ "$_skmemory_sync_installed" == "1" ]]; then
+                systemctl --user enable --now "skmemory-sync@${_AGENT_NAME}.timer" 2>/dev/null \
+                    && echo "  [ENABLED] skmemory-sync@${_AGENT_NAME}.timer" \
+                    || echo "  [WARN] could not enable skmemory-sync@${_AGENT_NAME}.timer -- run: systemctl --user enable --now skmemory-sync@${_AGENT_NAME}.timer"
+            fi
         else
             echo "  Skipped. Enable later: systemctl --user enable --now skcapstone.service"
         fi
