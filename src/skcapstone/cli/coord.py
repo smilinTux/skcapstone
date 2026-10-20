@@ -17,6 +17,45 @@ from ._common import AGENT_HOME, console
 from ._validators import validate_agent_name, validate_task_id
 
 
+def _emit_status_json(
+    views, label, home_path, tag, parent, status_filter, include_done, limit, cursor
+) -> None:
+    """Print the bounded machine-readable status document (see coord_status_page)."""
+    from ..coord_eligibility import leaf_eligibility_counts
+    from ..coord_status_page import build_page, status_scope
+
+    eligibility = leaf_eligibility_counts(home_path, {v.task.id for v in views})
+    count = lambda name: sum(1 for v in views if v.status.value == name)  # noqa: E731
+    summary = {
+        "total": len(views),
+        "open": count("open"),
+        "claimed": count("claimed"),
+        "in_progress": count("in_progress"),
+        "done": count("done"),
+        "leaf_eligible": eligibility.leaves,
+        "review_needs_identity": eligibility.review,
+        "malformed": eligibility.malformed,
+    }
+    rows = [
+        {
+            "id": v.task.id,
+            "title": v.task.title,
+            "priority": v.task.priority.value,
+            "status": label(v),
+            "claimed_by": v.claimed_by,
+            "tags": v.task.tags,
+        }
+        for v in views
+        if include_done or status_filter == "done" or v.status.value != "done"
+    ]
+    scope = status_scope((*tag,), parent, status_filter)
+    try:
+        page = build_page(rows, limit=limit, cursor=cursor, scope=scope)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps({"format": "json", "summary": summary, **page}, indent=2))
+
+
 def register_coord_commands(main: click.Group) -> None:
     """Register the coord command group."""
 
@@ -125,8 +164,33 @@ def register_coord_commands(main: click.Group) -> None:
         default=False,
         help="List idle/stale agent projections (hidden by default).",
     )
-    def coord_status(home, tag, parent, status_filter, include_done, include_idle_agents):
-        """Show the coordination board overview."""
+    @click.option(
+        "--format",
+        "fmt",
+        default="text",
+        type=click.Choice(["text", "json"]),
+        help="text = Rich board (default); json = one machine-readable document on stdout.",
+    )
+    @click.option(
+        "--limit",
+        default=None,
+        type=int,
+        help="With --format json, return at most this many cards (id order).",
+    )
+    @click.option(
+        "--cursor",
+        default=None,
+        help="With --format json and --limit, continue from a previous next_cursor.",
+    )
+    def coord_status(
+        home, tag, parent, status_filter, include_done, include_idle_agents, fmt, limit, cursor
+    ):
+        """Show the coordination board overview.
+
+        With --format json stdout is exactly one JSON document (summary, a
+        bounded page of cards, has_more and next_cursor); nothing else is
+        written to stdout.
+        """
         from ..coordination import Board
 
         home_path = Path(home).expanduser()
@@ -154,6 +218,22 @@ def register_coord_commands(main: click.Group) -> None:
             views = [v for v in views if wanted & {t.lower() for t in v.task.tags}]
         if status_filter:
             views = [v for v in views if _status_label(v) == status_filter]
+
+        if fmt == "json":
+            _emit_status_json(
+                views,
+                _status_label,
+                home_path,
+                tag,
+                parent,
+                status_filter,
+                include_done,
+                limit,
+                cursor,
+            )
+            return
+        if limit is not None or cursor is not None:
+            raise click.UsageError("--limit and --cursor require --format json")
 
         if not views and (tag or status_filter):
             console.print("\n  [dim]No tasks match the given filters.[/]\n")
@@ -451,6 +531,39 @@ def register_coord_commands(main: click.Group) -> None:
     ):
         """Create a new task on the board."""
         from ..coordination import Board, Task, TaskPriority
+        from ..explicit_id_reservation import (
+            assert_available,
+            create_claimed_explicit_task,
+            create_explicit_task,
+            reserve_rejection,
+        )
+
+        request = {
+            "id": task_id,
+            "title": title,
+            "description": desc,
+            "priority": priority,
+            "tags": list(tag),
+            "created_by": by,
+            "acceptance_criteria": list(criteria),
+            "dependencies": list(dep),
+            "producer_identity": producer_identity,
+            "candidate_evidence_sha256": candidate_evidence_sha256,
+            "source_card": source_card,
+            "head_revision": head_revision,
+            "repository": repository,
+            "base_ref": base_ref,
+            "base_revision": base_revision,
+            "claim_for_me": claim_for_me,
+        }
+        home_path = Path(home).expanduser()
+        if task_id:
+            validate_task_id(task_id)
+            try:
+                assert_available(home_path, task_id)
+            except ValueError as exc:
+                raise click.ClickException(str(exc)) from None
+        validate_agent_name(by)
 
         labels = {str(value).strip().lower() for value in tag}
         governed_review = "review" in labels or any(
@@ -471,15 +584,18 @@ def register_coord_commands(main: click.Group) -> None:
             if not re.fullmatch(r"[0-9a-fA-F]{40}", str(head_revision or "")):
                 missing.append("head_revision")
             if missing:
-                raise click.ClickException(
-                    "incomplete governed review card; missing: " + ", ".join(missing)
-                )
+                message = "incomplete governed review card; missing: " + ", ".join(missing)
+                if task_id:
+                    reserve_rejection(home_path, task_id, request, by, message)
+                raise click.ClickException(message)
 
         from ..source_binding import source_binding_meta
 
         try:
             binding_meta = source_binding_meta(list(tag), repository, base_ref, base_revision)
         except ValueError as exc:
+            if task_id:
+                reserve_rejection(home_path, task_id, request, by, str(exc))
             raise click.ClickException(str(exc)) from None
 
         meta = {}
@@ -492,13 +608,9 @@ def register_coord_commands(main: click.Group) -> None:
             }
         meta.update(binding_meta)
 
-        validate_agent_name(by)
-        if task_id:
-            validate_task_id(task_id)
         for d in dep:
             validate_task_id(d)
 
-        home_path = Path(home).expanduser()
         board = Board(home_path)
         task = Task(
             **({"id": task_id} if task_id else {}),
@@ -527,13 +639,24 @@ def register_coord_commands(main: click.Group) -> None:
             if governed_review and owner.strip().lower() != "seraph":
                 raise click.ClickException("governed review cards may be claimed only by Seraph")
             try:
-                path, revision = board.create_claimed_task(task, owner)
+                path, revision = (
+                    create_claimed_explicit_task(board, task, owner, request, by)
+                    if task_id
+                    else board.create_claimed_task(task, owner)
+                )
             except (RuntimeError, ValueError) as exc:
                 raise click.ClickException(str(exc)) from None
             console.print(f"\n  [green]Created and claimed:[/] [{task.id}] {task.title}")
             console.print(f"  [dim]owner={owner} status=doing claim_revision={revision}[/]")
         else:
-            path = board.create_task(task)
+            try:
+                path = (
+                    create_explicit_task(board, task, request, by)
+                    if task_id
+                    else board.create_task(task)
+                )
+            except ValueError as exc:
+                raise click.ClickException(str(exc)) from None
             console.print(f"\n  [green]Created:[/] [{task.id}] {task.title}")
         console.print(f"  [dim]{path}[/]\n")
 

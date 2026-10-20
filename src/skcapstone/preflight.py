@@ -529,6 +529,64 @@ class PreflightChecker:
             critical=True,
         )
 
+    def check_dependency_floors(self) -> CheckResult:
+        """Verify installed dependencies satisfy skcapstone's own declared floors.
+
+        ``check_packages`` above answers "can this import", which is necessary
+        but not sufficient: a dependency can import perfectly and still be too
+        old to carry the symbol the code now on disk reaches for. That is the
+        2026-09-19 fleet outage exactly. An auto-pull fast-forwarded five hosts
+        onto a commit importing ``skcoord.coordination.TaskUnclaimable``, which
+        ships in skcoord 0.1.78+, while every host had 0.1.77. ``skcoord``
+        imported fine; the rotation died five minutes later, on every host at
+        once, and took about an hour to diagnose.
+
+        **Reported as a non-critical failure**, which is deliberate. It is
+        emitted as ``fail`` so it is red in the CLI table and reaches
+        ``logger.error`` in the daemon rather than being lost among warnings.
+        It is ``critical=False`` so it does not abort startup, because
+        ``pyproject.toml`` deliberately sets floors one past the newest
+        published tag of the dependency (see the skcoord comment there): "below
+        the declared floor" is a state the maintainers intentionally create in
+        the window between a floor bump landing in git and the dependency
+        actually shipping. Gating startup on it would convert that intended
+        window into an outage, which is the failure this check exists to
+        prevent, merely rebranded as a refusal.
+
+        Returns:
+            CheckResult in the ``dependency_floors`` check, ``critical=False``.
+        """
+        try:
+            from . import dependency_floors
+
+            violations = dependency_floors.check_floors()
+        except Exception as exc:
+            # A checker that cannot answer must not become the thing that breaks
+            # startup. Say so, quietly, and let the daemon proceed.
+            return CheckResult(
+                "dependency_floors",
+                "warn",
+                f"could not verify declared dependency floors: {exc}",
+                critical=False,
+            )
+
+        if not violations:
+            return CheckResult(
+                "dependency_floors",
+                "ok",
+                "all declared dependency floors satisfied",
+                critical=False,
+            )
+
+        detail = "; ".join(str(v) for v in violations)
+        fixes = " && ".join(dict.fromkeys(v.fix for v in violations))
+        return CheckResult(
+            "dependency_floors",
+            "fail",
+            f"{len(violations)} dependency below declared floor: {detail} - fix: {fixes}",
+            critical=False,
+        )
+
     def check_ollama(self) -> CheckResult:
         """Verify Ollama is running and has at least one model."""
         import json as _json
@@ -755,6 +813,7 @@ class PreflightChecker:
         methods = [
             self.check_python,
             self.check_packages,
+            self.check_dependency_floors,
             self.check_ollama,
             self.check_identity,
             self.check_home_dirs,
