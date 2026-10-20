@@ -658,7 +658,29 @@ def register_coord_commands(main: click.Group) -> None:
             except ValueError as exc:
                 raise click.ClickException(str(exc)) from None
             console.print(f"\n  [green]Created:[/] [{task.id}] {task.title}")
-        console.print(f"  [dim]{path}[/]\n")
+        console.print(f"  [dim]{path}[/]")
+
+        # Tell the author NOW if the card is born undispatchable. A card whose
+        # gate is baked into its title can never be released to the fleet, and
+        # the only way that was ever discovered was by someone noticing the
+        # card had sat unclaimed. See docs/fleet/card-authoring-dispatch-gates.md
+        from ..coord_dispatch_gates import blocking, evaluate, permanent
+
+        gates = evaluate(task.title, task.tags)
+        stuck = permanent(gates)
+        held = [g for g in blocking(gates) if g not in stuck]
+        if stuck:
+            console.print("\n  [red]NOT DISPATCHABLE, AND CANNOT BE FIXED:[/]")
+            for g in stuck:
+                console.print(f"    [red]{g.name}[/]: {g.detail}")
+            console.print("  [red]Void this card and recreate it without the title marker.[/]")
+        if held:
+            console.print("\n  [yellow]Held from the fleet until cleared:[/]")
+            for g in held:
+                console.print(f"    [yellow]{g.name}[/]: {g.detail}")
+        if stuck or held:
+            console.print(f"  [dim]full report: skcapstone coord gates {task.id}[/]")
+        console.print()
 
     @coord.command("claim")
     @click.argument("task_id")
