@@ -575,7 +575,11 @@ See [`docs/MCP_TOPOLOGY.md`](./docs/MCP_TOPOLOGY.md).
 **Fleet dispatcher gateway environment (`scripts/fleet/skfleet-rotate.py`).** The
 rotate dispatcher that farms coord cards out to worker lanes uses the deployed
 production policy with gateway-controlled capacity; legacy mode uses per-host
-environment targets. The canonical design docs are
+environment targets. **Every fleet and gateway setting is registered in
+[`docs/fleet/SETTINGS-REGISTRY.md`](./docs/fleet/SETTINGS-REGISTRY.md)**, one
+authoritative declaration per fact, repo defaults CI-asserted against the code and
+estate values recorded as dated measurements. Read it before adding a setting
+anywhere. The canonical design docs are
 [`docs/fleet/lane-admission-health.md`](./docs/fleet/lane-admission-health.md) and
 [`docs/fleet/model-lane-routing.md`](./docs/fleet/model-lane-routing.md); the facts
 that have actually caused outages:
@@ -763,7 +767,7 @@ skcapstone coord parity --check         # re-verify (exit non-zero on any residu
   a property of capauth / sk_pgp, not this repo.
 
 <!-- docs-evidence
-verified: 2026-09-18
+verified: 2026-10-20
 checks:
   - name: all eight console scripts match the inventory in section 3
     run: python3 -c 'import tomllib; assert tomllib.load(open("pyproject.toml","rb"))["project"]["scripts"] == {"skcapstone":"skcapstone.cli:main","skcapstone-mcp":"skcapstone.mcp_server:main","crush":"skcapstone.crush_shim:main","skfleet":"skcapstone.fleet.cli:main","skoperator":"skcapstone.operator_seat.cli:main","skfleet-claim-expiry":"skcapstone.fleet.claim_expiry_cli:main","skmail":"skcapstone.fleet.skmail:main","skmail_writer":"skcapstone.fleet.skmail.skmail_writer:main"}'
@@ -807,4 +811,32 @@ checks:
     run: test "$(grep -rhoE "uses:[[:space:]]*[^./[:space:]][^[:space:]]*/\.github/workflows/[^[:space:]]+" .github/workflows/ | wc -l)" = "$(grep -rhoE "uses:[[:space:]]*[^./[:space:]][^[:space:]]*/\.github/workflows/[^[:space:]]*@[0-9a-f]{40}" .github/workflows/ | wc -l)"
   - name: the workflow-ref guard runs from a context that survives a broken cross-repo ref
     run: grep -qF 'python scripts/ci/workflow_refs.py --resolve' .github/workflows/ci.yml && test -f tests/test_workflow_ref_pins.py && ! grep -qE 'uses:[[:space:]]+[^./[:space:]][^[:space:]]*/\.github/workflows/' .github/workflows/pytest.yml .github/workflows/ci.yml
+  - name: settings registry exists and is the one place fleet/gateway settings are declared
+    run: R=docs/fleet/SETTINGS-REGISTRY.md; test -f $R && grep -qxF '## Where a new setting goes' $R && grep -qxF '## 1. Repo facts, CI-asserted, never hand-drifted' $R && grep -qxF '## 2. Estate facts, measured, not in this repo, not CI-reachable' $R && grep -qxF '## 3. Derived artifacts, never hand-edit' $R && grep -qF 'A number in prose with no assertion behind it is a defect.' $R
+  - name: builder ceiling - the code constant and the settings registry state the same number
+    run: C=$(grep -oP '^BUILDER_CAPACITY = \K[0-9]+' src/skcapstone/fleet/builder_dispatch.py); D=$(grep -F 'BUILDER_CAPACITY' docs/fleet/SETTINGS-REGISTRY.md | grep -oP '\*\*\K[0-9]+(?=\*\*)'); test -n "$C" && test "$C" = "$D"
+  - name: codex lane model - the dispatcher default and the settings registry agree
+    run: C=$(grep -oP 'SKFLEET_CODEX_LANE_MODEL","\K[a-z0-9.-]+' scripts/fleet/skfleet-rotate.py); D=$(grep -F 'SKFLEET_CODEX_LANE_MODEL' docs/fleet/SETTINGS-REGISTRY.md | grep -oP '\*\*\K[a-z0-9.-]+(?=\*\*)'); test -n "$C" && test "$C" = "$D"
+  - name: qwen and kimi lane target defaults - dispatcher and settings registry agree
+    run: Q=$(grep -oP 'SKFLEET_QWEN_TARGET", default="\K[0-9]+' scripts/fleet/skfleet-rotate.py); K=$(grep -oP 'SKFLEET_KIMI_TARGET", default="\K[0-9]+' scripts/fleet/skfleet-rotate.py); QD=$(grep -F 'SKFLEET_QWEN_TARGET' docs/fleet/SETTINGS-REGISTRY.md | grep -oP '\*\*\K[0-9]+(?=\*\*)'); KD=$(grep -F 'SKFLEET_KIMI_TARGET' docs/fleet/SETTINGS-REGISTRY.md | grep -oP '\*\*\K[0-9]+(?=\*\*)'); test -n "$Q" && test "$Q" = "$QD" && test -n "$K" && test "$K" = "$KD"
+  - name: both daemon ports - the two constants and the settings registry agree
+    run: P=$(grep -oP 'SKCAPSTONE_PORT", "\K[0-9]+' src/skcapstone/__init__.py); S=$(grep -oP '^DEFAULT_PORT = \K[0-9]+' src/skcapstone/daemon.py); PD=$(grep -F 'src/skcapstone/__init__.py' docs/fleet/SETTINGS-REGISTRY.md | grep -oP '\*\*\K[0-9]+(?=\*\*)'); SD=$(grep -F 'src/skcapstone/daemon.py' docs/fleet/SETTINGS-REGISTRY.md | grep -oP '\*\*\K[0-9]+(?=\*\*)'); test -n "$P" && test -n "$S" && test "$P" = "$PD" && test "$S" = "$SD"
+  - name: the two gateways are never conflated - chi is never given the nor port
+    run: ! ./scripts/docs/prose_grep.sh 'chiap01:18780|chiap01[^0-9]{1,12}18780' docs/ SOP.md README.md
+  - name: chi gateway pool ceilings are declared in the settings registry and nowhere else
+    run: test $(grep -rlE 'codex[^|]*\|[[:space:]]*32[[:space:]]*\|' docs/ SOP.md README.md | wc -l) -eq 1 && grep -qE 'codex[^|]*\|[[:space:]]*32[[:space:]]*\|' docs/fleet/SETTINGS-REGISTRY.md
+  - name: no doc still claims the superseded codex pool ceiling of 4 or 16
+    run: ! ./scripts/docs/prose_grep.sh 'codex[^.]{0,60}(pool|ceiling|slots?|max concurrent)[^.]{0,30}(4|16)([^0-9]|$)|(pool|ceiling|slots?)[^.]{0,30}codex[^.]{0,30}(4|16)([^0-9]|$)' docs/ SOP.md README.md
+  - name: every estate-fact section in the settings registry carries a re-measure command
+    run: test $(grep -cE '^Re-measure: ' docs/fleet/SETTINGS-REGISTRY.md) -ge 3
+  - name: the three no-default fleet env vars still have no default in the dispatcher
+    run: grep -qE '^ *TARGET=_required_lane_target\("SKFLEET_TARGET"\)$' scripts/fleet/skfleet-rotate.py && grep -qE '^ *GLM_TARGET=_required_lane_target\("SKFLEET_GLM_TARGET"\)$' scripts/fleet/skfleet-rotate.py && grep -qF '"SKFLEET_GATEWAY_URL is required"' scripts/fleet/skfleet-rotate.py
+  - name: no document contradicts ITSELF on a registered fact (the table-versus-prose bug)
+    run: python3 scripts/docs/check_self_consistency.py
+  - name: the codex lane model is never written as the bare sk-codex that disagreed with its own file
+    run: ! ./scripts/docs/prose_grep.sh '`sk-codex`' docs/ SOP.md README.md
+  - name: kimi gateway ceilings are declared in the settings registry and nowhere else
+    run: ! ./scripts/docs/prose_grep.sh 'kimi[^.]{0,40}max: *(28|14)([^0-9]|$)|max: *(28|14)[^.]{0,40}kimi' docs/ SOP.md README.md
+  - name: every repo pin of the codex lane model is the same string
+    run: test $(grep -rhoE '"sk-codex-[a-z]+"' src/ scripts/ | sort -u | wc -l) -eq 1
 -->
