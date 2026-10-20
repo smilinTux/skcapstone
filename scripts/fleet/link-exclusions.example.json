@@ -1,0 +1,16 @@
+{
+  "schema": "skfleet.link-lineage-exclusion/v1",
+  "records": [
+    {
+      "repository": "org/repo",
+      "pr": 123,
+      "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "base_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "owner": "link",
+      "reason": "PR is superseded by the replacement change",
+      "classification": "superseded",
+      "source_evidence_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "expires_at": "2099-01-01T00:00:00+00:00"
+    }
+  ]
+}

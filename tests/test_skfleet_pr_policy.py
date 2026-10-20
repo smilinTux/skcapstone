@@ -409,10 +409,10 @@ def test_branch_and_commit_sha_round_trip_through_coord_link(tmp_path) -> None:
 
     register_coord_commands(main)
 
-    CardStore(tmp_path).create(CardCore(id="ev00001", title="fix a typo in the README"))
+    CardStore(tmp_path).create(CardCore(id="0e000001", title="fix a typo in the README"))
 
     sha = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
-    branch = "fix/ev00001-typo"
+    branch = "fix/0e000001-typo"
     runner = CliRunner()
     for key, value in (("branch", branch), ("commit_sha", sha)):
         result = runner.invoke(
@@ -420,7 +420,7 @@ def test_branch_and_commit_sha_round_trip_through_coord_link(tmp_path) -> None:
             [
                 "coord",
                 "link",
-                "ev00001",
+                "0e000001",
                 key,
                 value,
                 "--home",
@@ -431,7 +431,7 @@ def test_branch_and_commit_sha_round_trip_through_coord_link(tmp_path) -> None:
         )
         assert result.exit_code == 0, result.output
 
-    card = CardStore(tmp_path).fold("ev00001")
+    card = CardStore(tmp_path).fold("0e000001")
     assert card.links["branch"] == branch
     assert card.links["commit_sha"] == sha
 
@@ -451,7 +451,7 @@ def test_branch_and_commit_sha_no_repo_change_sentinel_round_trips(tmp_path) -> 
 
     register_coord_commands(main)
 
-    CardStore(tmp_path).create(CardCore(id="ev00002", title="update docs only"))
+    CardStore(tmp_path).create(CardCore(id="0e000002", title="update docs only"))
 
     runner = CliRunner()
     result = runner.invoke(
@@ -459,7 +459,7 @@ def test_branch_and_commit_sha_no_repo_change_sentinel_round_trips(tmp_path) -> 
         [
             "coord",
             "link",
-            "ev00002",
+            "0e000002",
             "commit_sha",
             "none",
             "--home",
@@ -470,7 +470,7 @@ def test_branch_and_commit_sha_no_repo_change_sentinel_round_trips(tmp_path) -> 
     )
     assert result.exit_code == 0, result.output
 
-    card = CardStore(tmp_path).fold("ev00002")
+    card = CardStore(tmp_path).fold("0e000002")
     assert card.links["commit_sha"] == "none"
 
     from skcapstone.coord_completion import commit_sha_is_valid

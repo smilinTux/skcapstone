@@ -658,7 +658,29 @@ def register_coord_commands(main: click.Group) -> None:
             except ValueError as exc:
                 raise click.ClickException(str(exc)) from None
             console.print(f"\n  [green]Created:[/] [{task.id}] {task.title}")
-        console.print(f"  [dim]{path}[/]\n")
+        console.print(f"  [dim]{path}[/]")
+
+        # Tell the author NOW if the card is born undispatchable. A card whose
+        # gate is baked into its title can never be released to the fleet, and
+        # the only way that was ever discovered was by someone noticing the
+        # card had sat unclaimed. See docs/fleet/card-authoring-dispatch-gates.md
+        from ..coord_dispatch_gates import blocking, evaluate, permanent
+
+        gates = evaluate(task.title, task.tags)
+        stuck = permanent(gates)
+        held = [g for g in blocking(gates) if g not in stuck]
+        if stuck:
+            console.print("\n  [red]NOT DISPATCHABLE, AND CANNOT BE FIXED:[/]")
+            for g in stuck:
+                console.print(f"    [red]{g.name}[/]: {g.detail}")
+            console.print("  [red]Void this card and recreate it without the title marker.[/]")
+        if held:
+            console.print("\n  [yellow]Held from the fleet until cleared:[/]")
+            for g in held:
+                console.print(f"    [yellow]{g.name}[/]: {g.detail}")
+        if stuck or held:
+            console.print(f"  [dim]full report: skcapstone coord gates {task.id}[/]")
+        console.print()
 
     @coord.command("claim")
     @click.argument("task_id")
@@ -1468,10 +1490,10 @@ def register_coord_commands(main: click.Group) -> None:
         )
         if par["open_alert"]:
             console.print(
-                f"  [bold red]PARITY ALERT: store-served open-count diverges "
-                f"from legacy by {par['open_drift']} "
-                f"(> {par['open_drift_threshold']}). Run 'coord migrate' then "
-                f"'coord reconcile --apply' to converge.[/]"
+                f"  [bold red]PARITY ALERT: comparable open-count diverges "
+                f"by {par['open_drift']} (> {par['open_drift_threshold']}). "
+                f"No automatic remediation is safe. Inspect the named fields "
+                f"and choose the authoritative direction explicitly.[/]"
             )
         for m in par["mismatches"][:show]:
             console.print(f"    [yellow]{m['id']}[/]: {m['diff']}")
@@ -1762,16 +1784,21 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--agent", default=None, help="Writer name (defaults to host).")
     def coord_label(task_id, label, home, remove, agent):
         """Add (or remove) a label on a card."""
-        from ..card import CardEvent, CardEventLog
+        from ..card import CardEvent
+        from ..coord_card_mutations import append_coord_annotation
         from ..jarvis_emergency import authorize_coord_mutation
         from ..seat_boundaries import Action
 
         authorize_coord_mutation(agent or "", Action.LABEL_CARD, task_id, None, None)
         home_path = Path(home).expanduser()
         action = "remove_label" if remove else "add_label"
-        CardEventLog(home_path).append(
-            CardEvent(card_id=task_id, action=action, label=label, writer=agent or "")
-        )
+        try:
+            append_coord_annotation(
+                home_path,
+                CardEvent(card_id=task_id, action=action, label=label, writer=agent or ""),
+            )
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from None
         verb = "Removed" if remove else "Added"
         console.print(f"\n  [green]{verb} label '{label}' on {task_id}.[/]\n")
 
@@ -2130,7 +2157,7 @@ def register_coord_commands(main: click.Group) -> None:
 
         authorize_coord_mutation(agent or "", Action.LINK_CARD, task_id, None, None)
         from ..blocked_verdict import validate_blocked_verdict
-        from ..card import CardEvent, CardEventLog
+        from ..card import CardEvent
 
         # A BLOCKED verdict takes a card out of circulation. It must therefore
         # say what would put it back. Measured on the live board 2026-08-27: of
@@ -2165,7 +2192,10 @@ def register_coord_commands(main: click.Group) -> None:
                 raise ValueError("guarded link JSON readback requires revision guards")
             from skcoord.card_store import CardStore as _LinkCardStore
 
+            from ..coord_card_mutations import require_card_id
             from ..pr_binding import check_link_write
+
+            require_card_id(task_id)
 
             check_link_write(_LinkCardStore(home_path).fold(task_id), key, value)
             if all(guards):
@@ -2182,14 +2212,17 @@ def register_coord_commands(main: click.Group) -> None:
                     transition_id=transition_id,
                 )
             else:
-                CardEventLog(home_path).append(
+                from ..coord_card_mutations import append_coord_annotation
+
+                append_coord_annotation(
+                    home_path,
                     CardEvent(
                         card_id=task_id,
                         action="link",
                         link_key=key,
                         link_value=value,
                         writer=agent or "",
-                    )
+                    ),
                 )
         except ValueError as exc:
             raise click.ClickException(str(exc)) from None

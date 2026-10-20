@@ -327,7 +327,9 @@ What does **not** exist, so do not design for it:
 A worker that discovers a missing prerequisite mid-card records it rather
 than inventing an edge shape: a `verdict` link whose value starts with
 `BLOCKED` must name `blocked_on=<dependency|human|capability|card>` and a
-referent (`coord link` refuses a bare `BLOCKED`, `blocked_verdict.py`). The
+referent, plus `attempted=`, `resume=` and `work_location=` handover fields unless it is
+`dependency` or `reason=obsolete-<why>` (`coord link` refuses a bare `BLOCKED`,
+`blocked_verdict.py`). The
 backoff and wake rules for each `blocked_on` kind are specified in
 [card-authoring-dispatch-gates.md](card-authoring-dispatch-gates.md).
 

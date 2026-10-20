@@ -129,6 +129,20 @@ mandatory.
 Creation governance reads birth facts. Later title and label events do not
 rerun the creation governor.
 
+## Creation-time dispatch warning
+
+`coord create` evaluates the new card's title and labels against the same gate
+vocabulary the selector uses (`src/skcapstone/coord_dispatch_gates.py`, a copy of
+the selector constants; the selector wins if they differ) and prints a warning
+after the card is written:
+
+- `NOT DISPATCHABLE, AND CANNOT BE FIXED`: a gate baked into the immutable title
+  (a `[HUMAN]` marker). Void the card and recreate it with a `human-gate` label.
+- `Held from the fleet until cleared`: removable label gates. Use
+  `coord gates <id>` for the folded, authoritative report.
+
+The warning is advisory and never blocks creation.
+
 ## Card-authoring gates used by dispatch
 
 `authoritative_claimability()` folds the card and returns one reason. Relevant

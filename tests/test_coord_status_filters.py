@@ -299,6 +299,29 @@ def test_unreadable_card_is_reported_without_blocking_healthy_leaves(tmp_path, c
     assert "CardStore card broken01 is unreadable" in caplog.text
 
 
+def test_status_uses_same_folded_dependencies_as_claim_gate(tmp_path):
+    """Status must show a folded dependency that makes claim fail closed."""
+    store = CardStore(tmp_path)
+    store.create(CardCore(id="gate0001", title="Incomplete gate"))
+    store.create(CardCore(id="target01", title="Folded dependency target"))
+    store.append_event(
+        "target01",
+        "add_dependency",
+        "governance",
+        dependency="gate0001",
+        reason="test gate",
+    )
+
+    result = CliRunner().invoke(_main(), ["coord", "status", "--home", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    assert "target01" in result.output
+    target_line = next(line for line in result.output.splitlines() if "target01" in line)
+    assert "BLOCKED" in target_line
+    with pytest.raises(ValueError, match="incomplete dependencies: gate0001"):
+        Board(tmp_path).claim_task("worker", "target01")
+
+
 def test_leaf_eligibility_ignores_voided_dependency_and_voided_leaf(tmp_path):
     """Raw void events deny admission; a done-but-voided dependency does not unblock."""
     store = CardStore(tmp_path)

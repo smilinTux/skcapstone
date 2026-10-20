@@ -1,0 +1,1 @@
+- Card `SKGW-CMDB-00`: governed SKGateway ingress topology in CMDB discovery (`skcapstone.cmdb_discovery`, `cmdb_ingress_declaration`); observed non-service systemd identities are hashed so distinct units never collide.

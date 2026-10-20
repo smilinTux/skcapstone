@@ -4,6 +4,8 @@ the repetition guard (keyword overlap + dedup gate), and the OpenAI-compatible
 
 import json
 
+import pytest
+
 from skcapstone.dreaming import (
     DreamingConfig,
     DreamingEngine,
@@ -222,7 +224,9 @@ class TestProviderOutageIsNotADream:
 class TestAnchorSeedsNeverStallDreaming:
     def _engine(self, tmp_path, monkeypatch, agent_env):
         monkeypatch.setenv("SKCAPSTONE_AGENT", agent_env)
-        return DreamingEngine(home=tmp_path, config=DreamingConfig())
+        # Construction now refuses an unresolvable agent; tests that need the
+        # blank-agent state set engine._agent_name after construction.
+        return DreamingEngine(home=tmp_path, config=DreamingConfig(), agent_name="lumina")
 
     def test_blank_agent_env_does_not_forward_empty_agent_id(self, tmp_path, monkeypatch):
         """An unresolved agent name must become None, never ""."""
@@ -262,3 +266,61 @@ class TestAnchorSeedsNeverStallDreaming:
 
         engine = self._engine(tmp_path, monkeypatch, "lumina")
         assert engine._build_anchor_seeds_context(tmp_path) == ""
+
+
+# Agent-name resolution guard
+# --------------------------------------------------------------------------- #
+class TestAgentNameGuard:
+    """An unresolvable agent name must fail fast, not silently use ``agents/``.
+
+    Regression: when SKCAPSTONE_AGENT was empty and no agent could be detected,
+    ``_agent_name`` fell back to ``""``. Every path then collapsed one level -
+    ``home/agents//memory/dream-log.json`` became ``home/agents/memory/...`` -
+    so ``cooldown_remaining()`` and ``_dreams_today()`` read a phantom file that
+    never existed, reported "no cooldown, no dreams today", and let the engine
+    run the full LLM cycle on *every* 15-minute scheduler tick. Each of those
+    ticks then died deep inside skmemory with the opaque
+    "No valid registered memory profile is available", because ``agent=""`` is
+    not a registered profile. 1864 consecutive failures were logged this way.
+    """
+
+    def test_empty_agent_name_raises(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SKCAPSTONE_AGENT", "")
+        monkeypatch.setattr("skcapstone.active_agent_name", lambda: None)
+        try:
+            DreamingEngine(home=tmp_path)
+        except ValueError as exc:
+            assert "agent" in str(exc).lower()
+        else:
+            raise AssertionError("expected ValueError for unresolvable agent name")
+
+    def test_explicit_agent_name_is_used(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SKCAPSTONE_AGENT", "lumina")
+        engine = DreamingEngine(home=tmp_path)
+        assert engine._agent_name == "lumina"
+        # The agent segment must be present - never collapsed away.
+        assert engine._log_path == tmp_path / "agents" / "lumina" / "memory" / "dream-log.json"
+
+    def test_falls_back_to_detected_agent(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SKCAPSTONE_AGENT", raising=False)
+        monkeypatch.setattr("skcapstone.active_agent_name", lambda: "jarvis")
+        engine = DreamingEngine(home=tmp_path)
+        assert engine._agent_name == "jarvis"
+
+    def test_whitespace_only_names_are_unresolved(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SKCAPSTONE_AGENT", "   ")
+        monkeypatch.setattr("skcapstone.active_agent_name", lambda: None)
+        with pytest.raises(ValueError, match="owning agent"):
+            DreamingEngine(home=tmp_path, agent_name="  ")
+
+    def test_explicit_agent_name_wins_over_env(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SKCAPSTONE_AGENT", "lumina")
+        engine = DreamingEngine(home=tmp_path, agent_name="jarvis")
+        assert engine._agent_name == "jarvis"
+
+    def test_no_phantom_agents_memory_path_when_unresolved(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SKCAPSTONE_AGENT", "")
+        monkeypatch.setattr("skcapstone.active_agent_name", lambda: None)
+        with pytest.raises(ValueError):
+            DreamingEngine(home=tmp_path)
+        assert not (tmp_path / "agents").exists()

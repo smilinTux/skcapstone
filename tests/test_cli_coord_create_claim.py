@@ -392,3 +392,45 @@ def test_auto_generated_cli_id_does_not_create_attempt_artifact(tmp_path, monkey
     assert result.exit_code == 0, result.output
     assert len(CardStore(tmp_path).list_card_ids()) == 1
     assert not list((tmp_path / "coordination" / "recovery").glob("card-creation-attempts*.jsonl"))
+
+
+def _create(tmp_path, monkeypatch, *extra):
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    monkeypatch.setattr("skcapstone.active_agent_name", lambda: "maker")
+    return CliRunner().invoke(
+        main, ["coord", "create", "--home", str(tmp_path), *extra], catch_exceptions=False
+    )
+
+
+def test_create_warns_when_card_born_undispatchable_by_title(tmp_path, monkeypatch):
+    result = _create(tmp_path, monkeypatch, "--title", "[HUMAN] Approve the thing")
+
+    assert result.exit_code == 0, result.output
+    assert "NOT DISPATCHABLE, AND CANNOT BE FIXED" in result.output
+    assert "human-gate" in result.output
+    # the warning never blocks creation
+    assert len(CardStore(tmp_path).list_card_ids()) == 1
+
+
+def test_create_warns_held_for_removable_label_gate(tmp_path, monkeypatch):
+    result = _create(tmp_path, monkeypatch, "--title", "Plain work", "--tag", "do-not-claim")
+
+    assert result.exit_code == 0, result.output
+    assert "Held from the fleet until cleared" in result.output
+    assert "CANNOT BE FIXED" not in result.output
+
+
+def test_create_clean_card_prints_no_dispatch_warning(tmp_path, monkeypatch):
+    result = _create(tmp_path, monkeypatch, "--title", "Plain work")
+
+    assert result.exit_code == 0, result.output
+    assert "NOT DISPATCHABLE" not in result.output
+    assert "Held from the fleet" not in result.output
+
+
+def test_create_claim_for_me_also_warns(tmp_path, monkeypatch):
+    result = _create(tmp_path, monkeypatch, "--title", "[HUMAN] Claimed anyway", "--claim-for-me")
+
+    assert result.exit_code == 0, result.output
+    assert "Created and claimed" in result.output
+    assert "NOT DISPATCHABLE, AND CANNOT BE FIXED" in result.output

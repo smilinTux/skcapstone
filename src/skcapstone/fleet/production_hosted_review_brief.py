@@ -129,7 +129,11 @@ Independently verify candidate bytes/hash, diff and required tests. Record actua
 commands, findings, failures, limitations and inspected versus executed checks.
 Terminal decision: PASS only with no blocking findings and observed required
 exact-head CI; otherwise BLOCKED blocked_on=<dependency|card|human|capability>
-referent=<exact requirement> <actual reason>. Never invent SUCCESS or approval.
+referent=<exact requirement> <actual reason>. The verdict text must also carry
+attempted=<what you tried>, resume=<what the next agent does first> and
+work_location=<branch, commit, bundle, PR or none>.
+An obsolete or superseded review uses reason=obsolete-<why> and needs no
+handover fields. Never invent SUCCESS or approval.
 Only this repository's hosted CI fields apply:
 {json.dumps(checks, sort_keys=True)}
 For PASS set REVIEW_CHECKS_JSON to those observed values (replace N with the

@@ -1,0 +1,1 @@
+- Card `61852c77`: heartbeat `read_heartbeat` now validates the agent name before building a filesystem path, and `validate_agent_name` rejects padded names instead of silently rewriting them (path traversal on the read side).

@@ -59,6 +59,11 @@ def validate_agent_name(name: str) -> str:
     if not name or not name.strip():
         raise ValueError("agent_name must be a non-empty string")
     cleaned = name.strip()
+    if cleaned != name:
+        raise ValueError(
+            "agent_name must not contain leading or trailing whitespace; "
+            "names are rejected, not silently rewritten"
+        )
     if not AGENT_NAME_RE.fullmatch(cleaned.lower()):
         raise ValueError(
             "agent_name %r contains characters outside [a-z0-9-]; "
@@ -299,7 +304,13 @@ class HeartbeatBeacon:
 
         Returns:
             Heartbeat or None if not found.
+
+        Raises:
+            ValueError: If the name is not a valid agent name (path safety).
         """
+        # Validate before building the path; peer names may come from card
+        # data or another untrusted heartbeat source.
+        agent_name = validate_agent_name(agent_name)
         path = self._heartbeat_dir / f"{agent_name}.json"
         if not path.exists():
             return None

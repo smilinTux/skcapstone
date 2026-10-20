@@ -40,6 +40,9 @@ GATEWAY = "http://chiap01:18790"
 METRICS_HOST = "chiap01"
 METRICS_DB = "~/skgateway-codex/data/metrics.db"
 CARDS = os.path.expanduser("~/.skcapstone/cards")
+SYNC_OUTBOX = os.path.expanduser("~/.skcapstone/sync/outbox")
+OUTBOX_DEPTH_THRESHOLD = 50
+OUTBOX_AGE_THRESHOLD_SECONDS = 60 * 60
 REFRESH_SECONDS = 600
 
 
@@ -267,13 +270,51 @@ def collect_board():
             "states": dict(states)}
 
 
+def collect_outbox_depth(path=SYNC_OUTBOX, now=None):
+    """Measure whether the seed outbox has stayed above the depth threshold.
+
+    The age of the 51st newest file is the longest duration for which the
+    current outbox can be shown to have contained more than 50 files. Using
+    only the oldest file would alert on a single stale seed in a new burst.
+    """
+    now = time.time() if now is None else now
+    try:
+        mtimes = sorted(
+            (entry.stat().st_mtime for entry in os.scandir(path) if entry.is_file()),
+            reverse=True,
+        )
+    except OSError as exc:
+        return {"available": False, "error": str(exc)}
+    threshold_mtime = (
+        mtimes[OUTBOX_DEPTH_THRESHOLD]
+        if len(mtimes) > OUTBOX_DEPTH_THRESHOLD
+        else None
+    )
+    return {
+        "available": True,
+        "count": len(mtimes),
+        "above_threshold_age_seconds": (
+            max(0, now - threshold_mtime) if threshold_mtime is not None else 0
+        ),
+    }
+
+
 # --------------------------------------------------------------------------- #
 # assessment
 # --------------------------------------------------------------------------- #
 
-def assess(gw, lanes, hosts, board):
+def assess(gw, lanes, hosts, board, outbox=None):
     """Turn the numbers into things a person should act on."""
     alerts = []
+    outbox = outbox or {"available": False}
+    if (outbox.get("available")
+            and outbox.get("count", 0) > OUTBOX_DEPTH_THRESHOLD
+            and outbox.get("above_threshold_age_seconds", 0)
+            > OUTBOX_AGE_THRESHOLD_SECONDS):
+        age_hours = outbox["above_threshold_age_seconds"] / 3600
+        alerts.append(("warn", f"Sync outbox depth is {outbox['count']}",
+                       f"Above {OUTBOX_DEPTH_THRESHOLD} for at least {age_hours:.1f} hours. "
+                       "Check seed housekeeping, GPG recipients, and Syncthing peers."))
     if not gw.get("available"):
         alerts.append(("critical", "Gateway /queue did not answer",
                        "No model traffic can be served. Check skgateway-codex on chiap01."))
@@ -525,12 +566,14 @@ def main():
         f_gw = ex.submit(collect_gateway_queue)
         f_lanes = ex.submit(collect_gateway_lanes)
         f_board = ex.submit(collect_board)
+        f_outbox = ex.submit(collect_outbox_depth)
         f_hosts = [ex.submit(collect_host, h) for h in HOSTS]
         gw = f_gw.result()
         lanes = f_lanes.result()
         board = f_board.result()
+        outbox = f_outbox.result()
         hosts = [f.result() for f in f_hosts]
-    alerts = assess(gw, lanes, hosts, board)
+    alerts = assess(gw, lanes, hosts, board, outbox)
     page = render(gw, lanes, hosts, board, alerts, generated)
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(target) or ".", suffix=".tmp")
     with os.fdopen(fd, "w", encoding="utf-8") as fh:

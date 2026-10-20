@@ -1,0 +1,1 @@
+- Apply the existing Windows physical-memory guard to production worker admission. Deny admission when the host measurement fails and preserve pending resource reservations.

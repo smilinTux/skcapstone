@@ -1,0 +1,57 @@
+{
+  "schema": "skcapstone.cmdb.skgateway-ingress/v1",
+  "profiles": [
+    {
+      "profile_id": "chiap01.shared.skgateway.v1",
+      "host": "chiap01",
+      "protocol": "tcp",
+      "port": 28880,
+      "binds": [
+        {
+          "address": "127.0.0.1",
+          "boundary": "loopback"
+        },
+        {
+          "address": "10.0.0.47",
+          "boundary": "lan"
+        },
+        {
+          "address": "10.0.0.223",
+          "boundary": "lan"
+        },
+        {
+          "address": "100.80.180.78",
+          "boundary": "tailscale"
+        }
+      ],
+      "units": [
+        {
+          "unit": "skgateway-shared.service",
+          "role": "gateway",
+          "targets": []
+        },
+        {
+          "unit": "skgateway-shared.socket",
+          "role": "socket",
+          "targets": [
+            "skgateway-shared.service"
+          ]
+        },
+        {
+          "unit": "skgateway-ingress-proxy.service",
+          "role": "proxy",
+          "targets": [
+            "skgateway-shared.service"
+          ]
+        },
+        {
+          "unit": "skgateway-ingress-firewall.service",
+          "role": "firewall",
+          "targets": [
+            "skgateway-ingress-proxy.service"
+          ]
+        }
+      ]
+    }
+  ]
+}

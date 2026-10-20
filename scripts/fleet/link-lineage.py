@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +23,11 @@ PR_RE = re.compile(r"\bPR\s*#?\s*(\d+)\b", re.I)
 CARD_RE = re.compile(r"\b([0-9a-f]{8})\b", re.I)
 _REVIEWER_SCHEMA = "skfleet.reviewer-identity/v1"
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+_SHA1 = re.compile(r"[0-9a-f]{40}")
+_EXCLUSION_SCHEMA = "skfleet.link-lineage-exclusion/v1"
+_EXCLUSION_CLASSIFICATIONS = frozenset({"unmanaged", "review-artifact", "superseded"})
 _TERMINAL_REVIEW = frozenset({"PASS", "FAIL", "BLOCKED"})
+_TERMINAL_REVIEW_PREFIX = re.compile(r"^(PASS|FAIL|BLOCKED)(?:$|[\s|:])")
 _MAX_REVIEW_WORK = 50
 
 
@@ -118,6 +123,12 @@ def _pr_number(text: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def _terminal_review_verdict(value: object) -> str | None:
+    """Return the typed terminal token while retaining explanatory text."""
+    match = _TERMINAL_REVIEW_PREFIX.match(str(value or "").strip().upper())
+    return match.group(1) if match else None
+
+
 def _review_is_bound_to_pr(
     card: dict[str, Any], repository: str, number: int, head_revision: object
 ) -> bool:
@@ -203,14 +214,119 @@ def _mapping_hash(
     return hashlib.sha256(_json(value).encode()).hexdigest()
 
 
+def _exclusion_time(value: object, now: datetime) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("exclusion expiry is required")
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("exclusion expiry is malformed") from exc
+    if parsed.tzinfo is None:
+        raise ValueError("exclusion expiry must include a timezone")
+    parsed = parsed.astimezone(timezone.utc)
+    if parsed <= now:
+        raise ValueError("exclusion expiry is not in the future")
+    return parsed
+
+
+def _validate_exclusions(
+    value: object, open_prs: list[dict[str, Any]], now: datetime | None = None
+) -> dict[str, dict[str, Any]]:
+    """Validate exact, expiring exclusion records before reconciliation."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or value.get("schema") != _EXCLUSION_SCHEMA:
+        raise ValueError("exclusions must use the structured exclusion schema")
+    records = value.get("records")
+    if not isinstance(records, list):
+        raise ValueError("exclusion records must be a list")
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        raise ValueError("exclusion validation time must include a timezone")
+    open_by_key: dict[str, dict[str, Any]] = {}
+    for pr in open_prs:
+        repository = str(pr.get("repository") or "").strip()
+        number = pr.get("number")
+        if not repository or isinstance(number, bool) or not isinstance(number, int):
+            raise ValueError("open PR identity is malformed")
+        key = f"{repository}#{number}"
+        if key in open_by_key:
+            raise ValueError("duplicate open PR")
+        open_by_key[key] = pr
+    required = {
+        "repository",
+        "pr",
+        "head_sha",
+        "base_sha",
+        "owner",
+        "reason",
+        "classification",
+        "source_evidence_sha256",
+        "expires_at",
+    }
+    validated: dict[str, dict[str, Any]] = {}
+    for record in records:
+        if not isinstance(record, dict) or set(record) != required:
+            raise ValueError("exclusion record is malformed")
+        repository = record["repository"]
+        number = record["pr"]
+        if not isinstance(repository, str) or not repository.strip():
+            raise ValueError("exclusion repository is malformed")
+        if isinstance(number, bool) or not isinstance(number, int) or number <= 0:
+            raise ValueError("exclusion PR is malformed")
+        key = f"{repository.strip()}#{number}"
+        if key in validated:
+            raise ValueError("duplicate exclusion PR")
+        pr = open_by_key.get(key)
+        if pr is None:
+            if any(candidate.get("number") == number for candidate in open_prs):
+                raise ValueError("exclusion repository does not match the observed PR")
+            raise ValueError("exclusion PR is unknown")
+        head_sha = record["head_sha"]
+        base_sha = record["base_sha"]
+        if not isinstance(head_sha, str) or not _SHA1.fullmatch(head_sha):
+            raise ValueError("exclusion head SHA is malformed")
+        if not isinstance(base_sha, str) or not _SHA1.fullmatch(base_sha):
+            raise ValueError("exclusion base SHA is malformed")
+        if head_sha != str(pr.get("headRefOid") or ""):
+            raise ValueError("exclusion head SHA does not match the observed PR")
+        if base_sha != str(pr.get("baseRefOid") or ""):
+            raise ValueError("exclusion base SHA does not match the observed PR")
+        owner = record["owner"]
+        reason = record["reason"]
+        if not isinstance(owner, str) or not owner.strip():
+            raise ValueError("exclusion owner is malformed")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("exclusion reason is malformed")
+        classification = record["classification"]
+        if not isinstance(classification, str) or classification not in _EXCLUSION_CLASSIFICATIONS:
+            raise ValueError("exclusion classification is unknown")
+        evidence = record["source_evidence_sha256"]
+        if not isinstance(evidence, str) or not _SHA256.fullmatch(evidence):
+            raise ValueError("exclusion source evidence hash is malformed")
+        _exclusion_time(record["expires_at"], current)
+        validated[key] = {
+            "repository": repository.strip(),
+            "pr": number,
+            "head_sha": head_sha,
+            "base_sha": base_sha,
+            "owner": owner.strip(),
+            "reason": reason.strip(),
+            "classification": classification,
+            "source_evidence_sha256": evidence,
+            "expires_at": str(record["expires_at"]).strip(),
+        }
+    return validated
+
+
 def reconcile(
     open_prs: list[dict[str, Any]],
     cards: list[dict[str, Any]],
     home: Path,
-    exclusions: dict[str, str] | None = None,
+    exclusions: dict[str, Any] | None = None,
     reviewer_candidates: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    exclusions = exclusions or {}
+    exclusions = _validate_exclusions(exclusions, open_prs)
     candidates_from_authority = _reviewer_candidates(home, reviewer_candidates)
     cards_by_id = {str(card.get("id")): card for card in cards if str(card.get("id") or "")}
     by_pr: dict[int, list[dict[str, Any]]] = {}
@@ -235,15 +351,17 @@ def reconcile(
         key = f"{repository}#{number}"
         unique_number = sum(int(item["number"]) == number for item in open_prs) == 1
         exclusion = exclusions.get(key)
-        if exclusion is None and unique_number and repository != SKGIT_REPOSITORY:
-            exclusion = exclusions.get(str(number))
         if exclusion is not None:
             diagnostics.append(
                 {
                     "repository": repository,
                     "pr": number,
                     "classification": "excluded",
-                    "reason": exclusion,
+                    "exclusion_classification": exclusion["classification"],
+                    "reason": exclusion["reason"],
+                    "owner": exclusion["owner"],
+                    "source_evidence_sha256": exclusion["source_evidence_sha256"],
+                    "expires_at": exclusion["expires_at"],
                 }
             )
             continue
@@ -286,7 +404,7 @@ def reconcile(
         def review_terminal(card: dict[str, Any]) -> bool:
             status = str(card.get("status") or "").lower().split(".")[-1]
             links = card.get("links") if isinstance(card.get("links"), dict) else {}
-            verdict = str(links.get("verdict") or links.get("outcome") or "").strip().upper()
+            verdict = _terminal_review_verdict(links.get("verdict") or links.get("outcome") or "")
             return status == "done" and verdict in _TERMINAL_REVIEW
 
         sources = [c for c in candidates if not is_review(c)]
@@ -310,10 +428,8 @@ def reconcile(
             source_generation = _revision(home, source["id"], source)
             review_revision = _revision(home, review["id"], review)
             review_links = review.get("links") if isinstance(review.get("links"), dict) else {}
-            review_verdict = (
-                str(review_links.get("verdict") or review_links.get("outcome") or "")
-                .strip()
-                .upper()
+            review_verdict = _terminal_review_verdict(
+                review_links.get("verdict") or review_links.get("outcome") or ""
             )
             if source_generation and review_revision:
                 records[f"{repository}#{number}"] = {
@@ -452,7 +568,7 @@ def main() -> int:
     cards = [
         c.model_dump(mode="json") for c in CardStore(args.home).list_cards(include_archived=True)
     ]
-    exclusions = json.loads(args.exclude.read_text()) if args.exclude else {}
+    exclusions = json.loads(args.exclude.read_text()) if args.exclude else None
     repositories = args.repo or ["smilinTux/skcapstone"]
     pull_requests = [row for repo in repositories for row in fetch_prs(repo)]
     report = reconcile(pull_requests, cards, args.home, exclusions)

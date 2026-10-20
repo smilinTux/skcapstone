@@ -286,11 +286,22 @@ def link_operation(
 ) -> dict[str, int | str]:
     """Consume mediated observations and append advisory handoffs only."""
 
+    # Replay fence: a feed whose evidence hash was already consumed by the
+    # previous cycle is refused (observation_feed_replayed), so an unchanged
+    # feed cannot append the same handoffs twice. The marker is only written
+    # after a feed has been accepted, and dry runs never reach this function.
+    marker = home / "coordination" / "seat-cycles" / "link.last-feed-sha256"
     try:
-        feed = load_observation_feed(feed_path)
+        prior = marker.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        prior = None
+    try:
+        feed = load_observation_feed(feed_path, prior_evidence_sha256=prior)
     except ObservationFeedError as exc:
         lineage = lineage_path or home / "coordination" / "link-lineage.json"
         return _emit_review_work(home, lineage, str(exc))
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(feed.evidence_sha256 + "\n", encoding="utf-8")
 
     handoffs: list[dict[str, object]] = []
     suppressed = 0

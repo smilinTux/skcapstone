@@ -8,7 +8,7 @@ from skcapstone.dreaming import DreamingEngine, DreamResult
 
 
 def test_dream_output_goes_to_someday_not_inbox(tmp_path: Path):
-    eng = DreamingEngine(home=tmp_path)
+    eng = DreamingEngine(home=tmp_path, agent_name="lumina")
     result = DreamResult(
         dreamed_at=datetime(2026, 6, 8, tzinfo=timezone.utc),
         insights=["i1", "i2"],
@@ -26,6 +26,6 @@ def test_dream_output_goes_to_someday_not_inbox(tmp_path: Path):
 
 
 def test_no_items_writes_nothing(tmp_path: Path):
-    eng = DreamingEngine(home=tmp_path)
+    eng = DreamingEngine(home=tmp_path, agent_name="lumina")
     eng._capture_to_gtd_someday(DreamResult(dreamed_at=datetime(2026, 6, 8, tzinfo=timezone.utc)))
     assert not (tmp_path / "coordination" / "gtd" / "someday-maybe.json").exists()

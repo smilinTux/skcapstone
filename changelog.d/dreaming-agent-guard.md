@@ -1,0 +1,1 @@
+- Card `fail-fast-dreaming-agent`: `DreamingEngine` raises ValueError at construction when no owning agent can be resolved (new optional `agent_name` argument first, then SKCAPSTONE_AGENT, then detected agent) instead of collapsing paths to `agents/memory` and running the LLM cycle every tick.

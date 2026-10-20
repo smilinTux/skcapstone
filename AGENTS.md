@@ -3,6 +3,14 @@
 This file provides instructions for ANY AI agent working on SKCapstone,
 regardless of tool, IDE, or platform.
 
+## Orchestrating the fleet? Run FROM the estate you are controlling
+
+A controller must run inside the estate it controls. `nor` and `chi` have
+disjoint Syncthing shares and CardStores, so a chi rollout run from `noroc2027`
+reads every chi readiness verdict as missing, and halts on node one as if it
+failed a real check. Rule and known-good entrypoints:
+[docs/fleet/runbook-chiap08-controller.md](docs/fleet/runbook-chiap08-controller.md).
+
 ## Which section is for you
 
 Your card's title tells you which role you are claimed as. Read that first,
