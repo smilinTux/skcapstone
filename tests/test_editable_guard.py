@@ -174,4 +174,3 @@ def test_wrapper_does_not_block_read_only_editable_flag(tmp_path):
         [str(pip), "list", "-e"], env=env, capture_output=True, text=True, timeout=10
     )
     assert r.returncode == 0 and "REALPIP list -e" in r.stdout
-
