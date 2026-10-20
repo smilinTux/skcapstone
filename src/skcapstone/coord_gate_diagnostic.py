@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .card_store import CardStore
+from .coord_amendments import is_voided
 from .review_admission import (
     dependency_blocker_unresolved,
     governed_review_gate_reasons,
@@ -55,8 +56,12 @@ def diagnose(home: Path, card_id: str) -> dict[str, object]:
         return {"card_id": card_id, "eligible": False, "reasons": ["unknown-card"]}
 
     cards = {row.id: row for row in store.list_cards()}
+    home_path = Path(home).expanduser()
+    # Read the raw event stream: a dependency voided by event is not a satisfied one.
     dependency_blocked = any(
-        dependency not in cards or cards[dependency].status.value != "done"
+        dependency not in cards
+        or cards[dependency].status.value != "done"
+        or is_voided(home_path, dependency)
         for dependency in card.dependencies
     )
     core = {
@@ -86,6 +91,8 @@ def diagnose(home: Path, card_id: str) -> dict[str, object]:
     )
     if "do-not-claim" in labels:
         reasons.append("do-not-claim")
+    if dependency_blocked and "dependency" not in reasons:
+        reasons.append("dependency")
     if card.status.value == "done" or card.archived or card.meta.get("voided"):
         reasons.append("terminal")
     return {

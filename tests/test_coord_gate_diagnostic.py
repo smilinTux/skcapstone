@@ -11,6 +11,7 @@ from skcoord.card_store import CardCore
 
 from skcapstone.card_store import CardStore
 from skcapstone.cli import main
+from skcapstone.coord_gate_diagnostic import diagnose
 from skcapstone.fleet.review_capacity import seal_review_capacity_truth
 from skcapstone.review_admission import (
     assert_governed_review_claim,
@@ -294,6 +295,36 @@ def test_atomic_claim_fails_closed_when_gateway_capacity_is_exhausted(tmp_path) 
 
     with pytest.raises(ValueError, match="capacity"):
         assert_governed_review_claim(tmp_path, "aabb0009", "pi-seraph-worker")
+
+
+def test_raw_void_event_denies_admission_even_when_folded_meta_is_empty(tmp_path) -> None:
+    store = CardStore(tmp_path)
+    store.create(
+        CardCore(id="8daa0872", title="Voided admission regression", created_by="producer")
+    )
+    store.append_event("8daa0872", "void", "producer", reason="terminal")
+
+    report = diagnose(tmp_path, "8daa0872")
+    assert report["eligible"] is False
+    assert "terminal" in report["reasons"]
+
+
+def test_unvoided_card_is_not_flagged_voided(tmp_path) -> None:
+    store = CardStore(tmp_path)
+    store.create(CardCore(id="8daa0873", title="Healthy", created_by="producer"))
+    assert "terminal" not in diagnose(tmp_path, "8daa0873")["reasons"]
+
+
+def test_voided_dependency_blocks_dependent_diagnostic(tmp_path) -> None:
+    store = CardStore(tmp_path)
+    store.create(CardCore(id="8daa0874", title="Dep", created_by="producer"))
+    store.create(
+        CardCore(id="8daa0875", title="Child", created_by="producer", dependencies=["8daa0874"])
+    )
+    store.append_event("8daa0874", "complete", "producer")
+    assert "dependency" not in diagnose(tmp_path, "8daa0875")["reasons"]
+    store.append_event("8daa0874", "void", "producer", reason="terminal")
+    assert "dependency" in diagnose(tmp_path, "8daa0875")["reasons"]
 
 
 def test_coord_gates_reports_live_review_contract_reasons(tmp_path, monkeypatch) -> None:
