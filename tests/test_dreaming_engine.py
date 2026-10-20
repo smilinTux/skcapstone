@@ -2,6 +2,7 @@
 the repetition guard (keyword overlap + dedup gate), and the OpenAI-compatible
 `_call_ollama` path. These are pure/mocked - no network, no daemon."""
 
+import pytest
 import json
 
 from skcapstone.dreaming import (
@@ -304,3 +305,21 @@ class TestAgentNameGuard:
         monkeypatch.setattr("skcapstone.active_agent_name", lambda: "jarvis")
         engine = DreamingEngine(home=tmp_path)
         assert engine._agent_name == "jarvis"
+
+    def test_whitespace_only_names_are_unresolved(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SKCAPSTONE_AGENT", "   ")
+        monkeypatch.setattr("skcapstone.active_agent_name", lambda: None)
+        with pytest.raises(ValueError, match="owning agent"):
+            DreamingEngine(home=tmp_path, agent_name="  ")
+
+    def test_explicit_agent_name_wins_over_env(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SKCAPSTONE_AGENT", "lumina")
+        engine = DreamingEngine(home=tmp_path, agent_name="jarvis")
+        assert engine._agent_name == "jarvis"
+
+    def test_no_phantom_agents_memory_path_when_unresolved(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SKCAPSTONE_AGENT", "")
+        monkeypatch.setattr("skcapstone.active_agent_name", lambda: None)
+        with pytest.raises(ValueError):
+            DreamingEngine(home=tmp_path)
+        assert not (tmp_path / "agents").exists()
