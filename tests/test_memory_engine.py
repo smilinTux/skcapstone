@@ -120,6 +120,54 @@ class TestStore:
         assert _load_entry(path) is None
         assert not [record for record in caplog.records if record.levelno >= 30]
 
+    def test_load_skips_a_record_carrying_BOTH_id_and_memory_id(
+        self, agent_home: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A repaired file carries both keys, and it is still SKMemory's record.
+
+        The guard used to require `memory_id` to be absent, so a dual-key file
+        slipped through into `MemoryEntry`, which has no `title` field. The
+        round-trip silently dropped `id` and `title`, and the next compress
+        pass wrote the loss to disk. That turned every repair into a file the
+        sweep broke again within the hour.
+        """
+        path = agent_home / "memory" / "mid-term" / "dual-key.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "id": "dual-key",
+                    "memory_id": "dual-key",
+                    "title": "Repaired record",
+                    "content": "owned by SKMemory",
+                    "layer": "mid-term",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        assert _load_entry(path) is None
+        assert not [record for record in caplog.records if record.levelno >= 30]
+
+    def test_a_genuinely_legacy_record_still_loads(self, agent_home: Path) -> None:
+        """Widening the guard must not orphan real legacy entries."""
+        path = agent_home / "memory" / "short-term" / "legacy-only.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "memory_id": "legacy-only",
+                    "content": "written by the legacy engine",
+                    "layer": "short-term",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        entry = _load_entry(path)
+        assert entry is not None
+        assert entry.memory_id == "legacy-only"
+
     def test_save_rejects_blank_memory_id_before_writing(self, agent_home: Path):
         """The legacy writer cannot recreate the unsafe `.json` filename."""
         entry = MemoryEntry(memory_id="", content="must not persist")

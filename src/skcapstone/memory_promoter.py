@@ -163,6 +163,11 @@ class SweepResult:
 # ---------------------------------------------------------------------------
 
 
+#: Appended to compressed content. Must be accounted for when deciding
+#: whether a memory is ALREADY compressed, or the sweep never converges.
+_TRUNCATION_SUFFIX = "..."
+
+
 class PromotionEngine:
     """Intelligent memory promotion engine.
 
@@ -432,7 +437,21 @@ class PromotionEngine:
                 if len(entry.content) <= max_chars:
                     continue
 
-                entry.content = entry.content[:max_chars] + "..."
+                truncated = entry.content[:max_chars] + _TRUNCATION_SUFFIX
+                # Already compressed to exactly this form - skip.
+                #
+                # Truncating to max_chars and appending the suffix yields
+                # max_chars + len(suffix) characters, which is always GREATER
+                # than max_chars, so the length check above can never retire an
+                # already-compressed memory. Without this the sweep rewrote the
+                # same byte-identical content on every tick, forever, and each
+                # rewrite was a chance to lose fields the legacy model does not
+                # carry. Observed on a 503-char memory re-truncated hourly for
+                # 38 days.
+                if entry.content == truncated:
+                    continue
+
+                entry.content = truncated
                 _save_entry(self._home, entry)
                 compressed += 1
                 logger.info(
