@@ -540,4 +540,3 @@ class TestCompressionConverges:
             age_hours=24 * 30,
         )
         assert engine.compress_memories() == 1
-
