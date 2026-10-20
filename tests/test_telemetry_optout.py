@@ -59,19 +59,46 @@ def _register(tmp_path: Path) -> dict:
         return register_all(workspace=tmp_path, environments=[], dry_run=False)
 
 
+def _fake_agent_links(monkeypatch, sync):
+    """Install a stand-in skskills.agent_links so the test never skips on old skskills."""
+    import sys
+    import types
+
+    import skskills
+
+    fake = types.ModuleType("skskills.agent_links")
+    fake.enabled = lambda: True
+    fake.sync = sync
+    monkeypatch.setitem(sys.modules, "skskills.agent_links", fake)
+    monkeypatch.setattr(skskills, "agent_links", fake, raising=False)
+
+
 def test_register_all_applies_profile_defaults(tmp_path: Path, monkeypatch) -> None:
-    pytest.importorskip("skskills.agent_links")
     monkeypatch.setenv("SKCAPSTONE_PROFILE_DEFAULTS", "1")
     monkeypatch.setenv("SKSKILLS_AGENT_LINKS", "1")
     calls = {}
     monkeypatch.setattr(
         telemetry_optout, "ensure_telemetry_optout", lambda: calls.setdefault("optout", ["x"])
     )
-    with patch("skskills.agent_links.sync", return_value={"linked": 3}) as sync:
-        results = _register(tmp_path)
+    seen = []
+    _fake_agent_links(monkeypatch, lambda registry: seen.append(registry) or {"linked": 3})
+    results = _register(tmp_path)
     assert results["telemetry_optout"] == {"action": "updated", "paths": ["x"]}
     assert results["agent_skill_links"] == {"linked": 3}
-    sync.assert_called_once()
+    assert len(seen) == 1
+
+
+def test_register_all_skips_links_when_skskills_lacks_agent_links(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import sys
+
+    monkeypatch.setenv("SKCAPSTONE_PROFILE_DEFAULTS", "1")
+    monkeypatch.setattr(telemetry_optout, "ensure_telemetry_optout", lambda: [])
+    monkeypatch.setitem(sys.modules, "skskills.agent_links", None)  # forces ImportError
+    results = _register(tmp_path)
+    assert results["telemetry_optout"]["action"] == "exists"
+    assert results["agent_skill_links"]["action"] == "skip"
 
 
 def test_register_all_skips_profile_defaults_when_off(tmp_path: Path) -> None:
