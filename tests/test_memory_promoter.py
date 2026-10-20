@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -472,3 +474,70 @@ class TestModels:
         assert r.scanned == 0
         assert r.promoted == []
         assert r.dry_run is False
+
+
+# ---------------------------------------------------------------------------
+# Compression idempotency
+# ---------------------------------------------------------------------------
+
+
+class TestCompressionConverges:
+    """A sweep that changes nothing must WRITE nothing."""
+
+    def test_long_content_is_compressed_once_then_left_alone(
+        self, engine: PromotionEngine, home: Path
+    ) -> None:
+        """The second pass is a no-op, and that is the whole point.
+
+        Truncating to 500 chars and appending "..." yields 503, which is always
+        greater than 500, so the already-short-enough length check could never
+        retire the memory. The sweep rewrote byte-identical content on every
+        tick, forever, and every rewrite went through a model with no `title`
+        field, so each one was a chance to lose data.
+        """
+        _write_memory(
+            home,
+            "long-one",
+            content="x" * 2000,
+            layer=MemoryLayer.MID_TERM,
+            age_hours=24 * 30,
+        )
+        path = home / "memory" / "mid-term" / "long-one.json"
+
+        assert engine.compress_memories() == 1
+        after_first = path.read_text(encoding="utf-8")
+        assert len(json.loads(after_first)["content"]) == 503
+
+        assert engine.compress_memories() == 0, "second pass recompressed"
+        assert path.read_text(encoding="utf-8") == after_first
+
+    def test_an_already_truncated_memory_is_never_rewritten(
+        self, engine: PromotionEngine, home: Path
+    ) -> None:
+        """503 chars ending in the suffix is the fixed point, not a candidate."""
+        _write_memory(
+            home,
+            "already",
+            content="y" * 500 + "...",
+            layer=MemoryLayer.MID_TERM,
+            age_hours=24 * 38,
+        )
+        path = home / "memory" / "mid-term" / "already.json"
+        before = path.read_text(encoding="utf-8")
+
+        assert engine.compress_memories() == 0
+        assert path.read_text(encoding="utf-8") == before
+
+    def test_content_longer_than_the_fixed_point_still_compresses(
+        self, engine: PromotionEngine, home: Path
+    ) -> None:
+        """The skip must not swallow genuinely over-long content."""
+        _write_memory(
+            home,
+            "over",
+            content="z" * 504,
+            layer=MemoryLayer.MID_TERM,
+            age_hours=24 * 30,
+        )
+        assert engine.compress_memories() == 1
+

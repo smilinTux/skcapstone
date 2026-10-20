@@ -112,7 +112,15 @@ def _load_entry(path: Path) -> Optional[MemoryEntry]:
         # constructing a legacy entry with the old model's blank default; the
         # latter used to feed thousands of valid unified records into the
         # legacy promoter as the unsafe ``.json`` candidate.
-        if isinstance(data, dict) and "id" in data and "memory_id" not in data:
+        #
+        # The presence of ``id`` is the whole test. This used to also require
+        # ``memory_id`` to be ABSENT, which let a record carrying BOTH keys
+        # through, and `MemoryEntry` has no ``title`` field, so round-tripping
+        # such a record silently dropped both ``id`` and ``title``. A repaired
+        # file carries both keys by construction, so the narrower guard turned
+        # every repair into a file that the next compress pass stripped again.
+        # Observed 2026-10-20 on a memory rewritten title-less every hour.
+        if isinstance(data, dict) and "id" in data:
             logger.debug("Skipping unified SKMemory record in legacy loader: %s", path)
             return None
         entry = MemoryEntry(**data)
