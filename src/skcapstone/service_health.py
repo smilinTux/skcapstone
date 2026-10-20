@@ -622,13 +622,15 @@ def check_all_services() -> list[dict[str, Any]]:
             continue
         health_url = entry.get("health_url")
         pid_file = entry.get("pid_file")
-        vantage_point = entry.get("vantage_point") or entry.get("registered_on")
+        # Legacy entries declare no vantage: keep probing them from here as
+        # before. Only an entry that declares another vantage is skipped.
+        vantage_point = entry.get("vantage_point") or entry.get("registered_on") or _ANY_VANTAGE
         endpoint = (
             str(health_url).rstrip("/")
             if health_url
             else (f"pid://{Path(pid_file).expanduser()}" if pid_file else None)
         )
-        if endpoint is None or not vantage_point:
+        if endpoint is None:
             results.append(
                 {
                     "name": name,
@@ -639,7 +641,7 @@ def check_all_services() -> list[dict[str, Any]]:
                     "status": "unknown",
                     "latency_ms": None,
                     "version": None,
-                    "error": "registered without endpoint or vantage_point",
+                    "error": "registered without health_url or pid_file",
                 }
             )
         elif health_url and str(health_url).lower() != "disabled":

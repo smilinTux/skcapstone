@@ -36,7 +36,7 @@ def test_registry_entry_without_targets_is_unknown(home: Path):
     sdk.register_service("bare")  # no health_url, no pid_file
     row = next(r for r in service_health.check_all_services() if r["name"] == "bare")
     assert row["status"] == "unknown"
-    assert "endpoint or vantage_point" in (row["error"] or "")
+    assert "health_url or pid_file" in (row["error"] or "")
 
 
 def test_service_is_not_probed_from_wrong_vantage(home: Path, monkeypatch) -> None:
@@ -104,3 +104,30 @@ def test_default_local_qdrant_is_probed_only_from_this_host(home: Path, monkeypa
     assert row["status"] == "unknown"
     assert row["endpoint"] == "http://localhost:6333/healthz"
     assert row["vantage_point"] == "chiap99"
+
+
+def test_legacy_entry_without_vantage_is_still_probed(home: Path, monkeypatch) -> None:
+    """Entries written before vantage_point existed must be probed as before."""
+    import json
+
+    reg = home / "registry"
+    reg.mkdir(parents=True, exist_ok=True)
+    (reg / "legacy.json").write_text(
+        json.dumps({"name": "legacy-svc", "health_url": "https://legacy.example/health"})
+    )
+    (reg / "legacy-pid.json").write_text(
+        json.dumps({"name": "legacy-pid", "pid_file": str(home / "none.pid")})
+    )
+    calls: list[str] = []
+
+    def fake_http(name: str, url: str, *a, **k):
+        calls.append(name)
+        return {"name": name, "url": url, "status": "up", "latency_ms": 1, "version": None}
+
+    monkeypatch.setattr(service_health, "_http_check", fake_http)
+    rows = {r["name"]: r for r in service_health.check_all_services()}
+
+    assert "legacy-svc" in calls
+    assert rows["legacy-svc"]["status"] == "up"
+    assert rows["legacy-pid"]["status"] != "unknown"
+    assert "assigned to vantage" not in (rows["legacy-pid"].get("error") or "")
