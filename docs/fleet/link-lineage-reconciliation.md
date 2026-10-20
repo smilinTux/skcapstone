@@ -47,6 +47,20 @@ manifest must provide:
 - an evidence hash binding the mapping to the observed PR head and base; and
 - an explicit reason when the record is excluded from merge consideration.
 
+## Exclusion records
+
+`link-lineage.py --exclude FILE` accepts only the structured
+`skfleet.link-lineage-exclusion/v1` document (see
+`scripts/fleet/link-exclusions.example.json`). Each record names the repository
+and PR, the exact observed head and base SHA, an owner, a reason, one
+classification (`unmanaged`, `review-artifact`, `superseded`), the SHA-256 of
+the evidence, and a future `expires_at`. Any malformed field, duplicate record,
+unknown PR, head or base that no longer matches the observed PR, or an expired
+record fails the whole run closed instead of silently excluding the PR. The
+older `{"<pr>": "reason"}` map is rejected. An exclusion therefore lapses by
+itself when the PR changes or the expiry passes, and a record for a PR that has
+since closed must be removed from the file.
+
 The review-card revision is computed from the review card's current identity,
 status, owner, labels, dependencies, and verdict. A changed review
 assignment, card state, or verdict therefore invalidates the old mapping and
