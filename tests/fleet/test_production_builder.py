@@ -887,3 +887,151 @@ def test_cursor_offer_uses_only_chiap08_and_preserves_claim_binding(
         )
         is None
     )
+
+
+def _preclaim_status(paths, first, **extra):
+    base = {"attempt": 2, "claim_released": False, "error": "exact source reconstruction failed"}
+    return builder._write_status(
+        paths,
+        first["node"],
+        first,
+        extra.pop("state", "failed"),
+        **{**base, **extra},
+    )
+
+
+_REAL_NOW = builder._now
+
+
+def _aged(monkeypatch, hours):
+    """Set the dispatch clock to real time plus `hours` (absolute, not cumulative)."""
+    monkeypatch.setattr(
+        builder, "_now", lambda: _REAL_NOW() + __import__("datetime").timedelta(hours=hours)
+    )
+
+
+@pytest.mark.parametrize(
+    "state,error",
+    [
+        ("failed", "exact source reconstruction failed"),
+        ("failed", "existing workspace does not match exact source binding"),
+        ("blocked", "offered card changed after dispatch request"),
+    ],
+)
+def test_stale_unworked_dispatch_terminal_is_forgiven(
+    paths, production_setup, monkeypatch, state, error
+):
+    labels = ["sk-m", "source-only"]
+    first = builder.offer(paths, _card(), labels, writer=production_setup.writer)
+    _preclaim_status(paths, first, state=state, error=error)
+    # Fresh terminal: still parked (cool-off), so a failing source is not hot-looped.
+    assert builder.offer(paths, _card(), labels, writer=production_setup.writer) is None
+    _aged(monkeypatch, 24 * 11)
+    second = builder.offer(paths, _card(), labels, writer=production_setup.writer)
+    assert second is not None and second["request_id"] != first["request_id"]
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"owner": "pi-glm-builder-x"},
+        {"claim_revision": "a" * 32},
+        {"exit_code": 1},
+        {"outcome_event": "typed-event"},
+        {"unit": "skfleet-builder-x.service"},
+        {"invocation": "b" * 32},
+        {"pid": 4242},
+        {"claim_released": True},
+        {"error": "worker verdict: BLOCKED blocked_on=human"},
+        {"state": "awaiting-review"},
+        {"state": "completed"},
+    ],
+)
+def test_real_worker_verdicts_stay_charged_however_old(
+    paths, production_setup, monkeypatch, extra
+):
+    labels = ["sk-m", "source-only"]
+    first = builder.offer(paths, _card(), labels, writer=production_setup.writer)
+    _preclaim_status(paths, first, **extra)
+    _aged(monkeypatch, 24 * 30)
+    assert builder.offer(paths, _card(), labels, writer=production_setup.writer) is None
+
+
+def test_other_generations_terminal_does_not_forgive(paths, production_setup, monkeypatch):
+    first = builder.offer(paths, _card(), ["sk-m", "source-only"], writer=production_setup.writer)
+    status = _preclaim_status(paths, first)
+    _aged(monkeypatch, 24 * 11)
+    assert builder._unclaimed_expired_offer({**first, "request_id": "f" * 64}, status) is False
+    bad = {k: v for k, v in status.items() if k != "heartbeat_at"}
+    assert builder._unclaimed_expired_offer(first, bad) is False
+
+
+def test_repeated_unworked_generations_are_capped_with_backoff(
+    paths, production_setup, monkeypatch
+):
+    labels = ["sk-m", "source-only"]
+    request = builder.offer(paths, _card(), labels, writer=production_setup.writer)
+    assert "preclaim_generation" not in request
+    for generation in range(1, builder.MAX_PRECLAIM_GENERATIONS + 1):
+        _preclaim_status(paths, request)
+        # One hour short of the doubling cool-off: still parked.
+        cooloff = builder.PRECLAIM_RETRY_COOLOFF_SECONDS * 2 ** (generation - 1) / 3600
+        _aged(monkeypatch, cooloff - 1)
+        assert builder.offer(paths, _card(), labels, writer=production_setup.writer) is None
+        _aged(monkeypatch, cooloff + 1)
+        request = builder.offer(paths, _card(), labels, writer=production_setup.writer)
+        assert request is not None and request["preclaim_generation"] == generation
+        _aged(monkeypatch, 0)
+    # Forgiveness is spent: even a very old terminal stays parked with a reason.
+    status = _preclaim_status(paths, request)
+    _aged(monkeypatch, 24 * 365)
+    assert builder.offer(paths, _card(), labels, writer=production_setup.writer) is None
+    assert builder._unclaimed_expired_offer(request, status) is False
+    assert builder.preclaim_exhausted(request, status) is True
+
+
+def test_unworked_failed_below_max_attempts_is_not_forgiven(paths, production_setup, monkeypatch):
+    first = builder.offer(paths, _card(), ["sk-m", "source-only"], writer=production_setup.writer)
+    status = _preclaim_status(paths, first, attempt=builder.MAX_ATTEMPTS - 1)
+    _aged(monkeypatch, 24 * 30)
+    assert builder._unclaimed_expired_offer(first, status) is False
+
+
+def test_status_keeps_an_earlier_owner_across_a_later_unclaimed_failure(
+    paths, production_setup, monkeypatch
+):
+    first = builder.offer(paths, _card(), ["sk-m", "source-only"], writer=production_setup.writer)
+    builder._write_status(
+        paths,
+        first["node"],
+        first,
+        "running",
+        owner="pi-worker",
+        claim_revision="a" * 32,
+        attempt=1,
+    )
+    later = builder._write_status(
+        paths,
+        first["node"],
+        first,
+        "failed",
+        attempt=2,
+        error="exact source reconstruction failed",
+    )
+    assert later["prior_owner"] == "pi-worker"
+    again = builder._write_status(
+        paths,
+        first["node"],
+        first,
+        "failed",
+        attempt=2,
+        error="exact source reconstruction failed",
+    )
+    assert again["prior_owner"] == "pi-worker"
+    _aged(monkeypatch, 24 * 30)
+    assert builder._unclaimed_expired_offer(first, again) is False
+
+
+def test_garbage_generation_counter_counts_as_exhausted():
+    request = {"request_id": "r", "preclaim_generation": "x"}
+    assert builder._generation_count(request) == builder.MAX_PRECLAIM_GENERATIONS

@@ -638,6 +638,7 @@ def _offer(paths, core, labels, *, writer, now=None):
     ready = _ready_builders(paths)
     production = production_builder.policy()
     selected_node = None
+    forgiving_unworked = False
     for view in ready:
         existing = _load(request_path(paths, view.name, card_id))
         if not existing:
@@ -653,6 +654,7 @@ def _offer(paths, core, labels, *, writer, now=None):
                 _validated_status(status_path(paths, view.name, card_id), paths, view.name) or {}
             )
             if _unclaimed_expired_offer(existing, prior):
+                forgiving_unworked = _unworked_dispatch_terminal(existing, prior)
                 if production is not None:
                     # A fresh generation must pass current host selection;
                     # the expired, unclaimed offer does not pin placement.
@@ -751,6 +753,13 @@ def _offer(paths, core, labels, *, writer, now=None):
         "lease_expires_at": _iso(stamp + timedelta(seconds=LEASE_SECONDS)),
         "writer": {"role": writer.role, "node": writer.node, "identity": writer.identity},
     }
+    spent = _preclaim_generations(
+        paths, card_id, (repository, base_ref, revision, normalized_labels)
+    )
+    if forgiving_unworked:
+        spent += 1
+    if spent:
+        request["preclaim_generation"] = spent
     card_meta = core.get("meta")
     if isinstance(card_meta, dict) and card_meta.get("operator_role") == "coord-custody":
         request["operator_role"] = "coord-custody"
@@ -778,8 +787,108 @@ EXITED_WITHOUT_OUTCOME = "worker exited without outcome; clean base released"
 AUTHORITY_RELEASED = "claim released by authority before evidence"
 
 
+# Dispatch-side refusals that happen before any claim, unit or worker exists.
+# Each is raised by this module while preparing an offer (source checkout,
+# workspace binding, card re-fold) and written as a terminal status with no
+# execution identity. None of them is a worker verdict about the card's work.
+PRECLAIM_DISPATCH_ERRORS = frozenset(
+    {
+        "exact source reconstruction failed",
+        "existing workspace does not match exact source binding",
+        "offered card changed after dispatch request",
+        "offered card is no longer foldable",
+    }
+)
+# Execution identity a status carries once a worker was claimed or launched.
+EXECUTION_IDENTITY_KEYS = (
+    "owner",
+    "claim_revision",
+    "pid",
+    "pid_start_ticks",
+    "unit",
+    "invocation",
+    "admission_contract",
+    "admission_terminal",
+    "exit_code",
+    "outcome_event",
+    "prior_owner",
+)
+# A pre-claim failure is retried only after it has stood this long, doubling
+# with each forgiven generation (6h, 12h, 24h), and at most
+# MAX_PRECLAIM_GENERATIONS times per card and binding. An unrecoverable source
+# then stays parked with an explicit reason instead of cycling forever.
+PRECLAIM_RETRY_COOLOFF_SECONDS = 6 * 3600
+MAX_PRECLAIM_GENERATIONS = 3
+
+
+def _generation_count(request: dict) -> int:
+    value = request.get("preclaim_generation", 0)
+    return value if type(value) is int and value >= 0 else MAX_PRECLAIM_GENERATIONS
+
+
+def preclaim_exhausted(request: dict, status: dict) -> bool:
+    """True when forgiveness is spent for this unworked terminal's card."""
+    return (
+        status.get("request_id") == request.get("request_id")
+        and status.get("error") in PRECLAIM_DISPATCH_ERRORS
+        and _generation_count(request) >= MAX_PRECLAIM_GENERATIONS
+    )
+
+
+def _preclaim_generations(paths: FleetPaths, card_id: str, binding: tuple) -> int:
+    """Forgiven generations already spent on this card and exact binding, any node."""
+    spent = 0
+    for path in (paths.root / "dispatch").glob(f"*/{card_id}.json"):
+        try:
+            request = _load(path) or {}
+        except BuilderDispatchError:
+            return MAX_PRECLAIM_GENERATIONS
+        if (
+            request.get("repository"),
+            request.get("base_ref"),
+            request.get("base_revision"),
+            request.get("labels"),
+        ) == binding:
+            spent = max(spent, _generation_count(request))
+    return spent
+
+
+def _unworked_dispatch_terminal(request: dict, status: dict) -> bool:
+    """True for a terminal that records a dispatch that never ran any work.
+
+    Discriminates on execution identity, not on state or completion: a status
+    with an owner, claim, process, unit, invocation, exit code or outcome event
+    is a real worker verdict (or custody) and stays charged. Only a
+    failed/blocked status for this exact request, carrying one of the
+    dispatch-side pre-claim errors and none of that identity, is forgiven, and
+    only after a cool-off. Ten cards sat parked for 11+ days behind such
+    terminals (0cc00002).
+    """
+    if (
+        status.get("request_id") != request.get("request_id")
+        or status.get("state") not in {"failed", "blocked"}
+        or status.get("error") not in PRECLAIM_DISPATCH_ERRORS
+        or status.get("claim_released") is True
+        or any(status.get(key) is not None for key in EXECUTION_IDENTITY_KEYS)
+        or _generation_count(request) >= MAX_PRECLAIM_GENERATIONS
+        # A failed attempt below MAX_ATTEMPTS is still retried inside its generation.
+        or (status.get("state") == "failed" and int(status.get("attempt") or 0) < MAX_ATTEMPTS)
+    ):
+        return False
+    try:
+        beat = datetime.strptime(status["heartbeat_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
+    cooloff = PRECLAIM_RETRY_COOLOFF_SECONDS * 2 ** _generation_count(request)
+    return (_now() - beat).total_seconds() >= cooloff
+
+
 def _unclaimed_expired_offer(request: dict, status: dict) -> bool:
     """Retry only a node-proven refusal that never acquired source custody."""
+    if _unworked_dispatch_terminal(request, status):
+        return True
     if (
         status.get("request_id") == request.get("request_id")
         and status.get("state") == "blocked"
@@ -870,6 +979,10 @@ def decline_reason(
             ):
                 error = " ".join(str(prior.get("error") or "").split())[:160]
                 detail = f" error={error}" if error else ""
+                if preclaim_exhausted(existing, prior):
+                    detail += (
+                        f" (forgiveness exhausted after {MAX_PRECLAIM_GENERATIONS} generations)"
+                    )
                 return (
                     f"terminal: node={view.name} state={prior.get('state')}"
                     f" attempt={prior.get('attempt')}{detail}"
@@ -922,6 +1035,18 @@ def _write_status(paths: FleetPaths, node: str, request: dict, state: str, **ext
     if request.get("production") is not None:
         payload["production"] = request["production"]
     path = status_path(paths, node, request["card_id"])
+    # Claim history survives a later status for the same card: a worker that ran
+    # in an earlier attempt must stay visible even when the next attempt fails
+    # before any claim, or that terminal would look like a dispatch that never
+    # ran work.
+    try:
+        prior = _load(path) or {}
+    except BuilderDispatchError:
+        prior = {}
+    if prior.get("request_id") == request["request_id"] and "owner" not in payload:
+        owner = prior.get("owner") or prior.get("prior_owner")
+        if owner:
+            payload["prior_owner"] = owner
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return payload
