@@ -287,6 +287,19 @@ def _silence_desktop_notifications(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_profile_defaults(monkeypatch):
+    """Keep register_all from writing the operator's real profile.
+
+    register_all applies host profile defaults (telemetry opt-out in
+    environment.d and ~/.hyperframes, skskills agent-framework skill links).
+    Tests that exercise them opt back in with SKCAPSTONE_PROFILE_DEFAULTS=1
+    and stub the writers or point them at tmp paths.
+    """
+    monkeypatch.setenv("SKCAPSTONE_PROFILE_DEFAULTS", "0")
+    monkeypatch.setenv("SKSKILLS_AGENT_LINKS", "0")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_agent_env(monkeypatch):
     """Prevent host SKCAPSTONE_AGENT / SKMEMORY_AGENT from leaking into unit tests.
 

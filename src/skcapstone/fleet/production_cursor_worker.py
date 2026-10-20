@@ -269,7 +269,10 @@ def run(request: dict, workspace: Path) -> int:
         + " with exactly "
         + json.dumps({"verdict": "PASS_FOR_REVIEW", "claim_revision": claim})
         + "; or replace verdict with BLOCKED blocked_on=<dependency|card|human|capability> "
-        "referent=<exact referent> <reason>. No terminal PASS. Card: " + json.dumps(core)
+        "referent=<exact referent> <reason>, and the verdict text must also carry "
+        "attempted=<what you tried>, resume=<what the next agent does first> and "
+        "work_location=<branch, commit, bundle, PR or none>. No terminal PASS. Card: "
+        + json.dumps(core)
     )
     executable, auth = runtime()
     path = progress_path(home, owner, claim)

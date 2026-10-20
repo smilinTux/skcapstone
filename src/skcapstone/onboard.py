@@ -1239,7 +1239,8 @@ def _step_shell_profile(home_path: Path, agent_name: str, agent_slug: str) -> bo
     """Write SKCAPSTONE profile environment variables to ~/.bashrc.
 
     Asks the user whether to set this agent as the default profile.
-    Appends SKCAPSTONE_HOME, SKCAPSTONE_AGENT, and PATH entries.
+    Appends SKCAPSTONE_HOME, SKCAPSTONE_AGENT, PATH, and the telemetry
+    opt-out exports (see telemetry_optout).
 
     Args:
         home_path: Agent home directory.
@@ -1251,11 +1252,14 @@ def _step_shell_profile(home_path: Path, agent_name: str, agent_slug: str) -> bo
     """
     import os as _os
 
+    from .telemetry_optout import bashrc_exports
+
     bashrc = Path.home() / ".bashrc"
     marker = "# --- SKCapstone profile ---"
 
     # Check if profile block already exists
     existing = ""
+    rewrite = False
     if bashrc.exists():
         existing = bashrc.read_text(encoding="utf-8")
         if marker in existing:
@@ -1277,6 +1281,7 @@ def _step_shell_profile(home_path: Path, agent_name: str, agent_slug: str) -> bo
                 if not skip:
                     new_lines.append(line)
             existing = "".join(new_lines)
+            rewrite = True
 
     set_default = Confirm.ask(
         f"  Set [cyan]{agent_name}[/] as default SKCAPSTONE_AGENT in ~/.bashrc?",
@@ -1292,15 +1297,17 @@ def _step_shell_profile(home_path: Path, agent_name: str, agent_slug: str) -> bo
         f'export SKCAPSTONE_HOME="{home_path}"\n'
         f'export SKCAPSTONE_AGENT="{agent_slug}"\n'
         f'export PATH="$HOME/.skenv/bin:$PATH"\n'
+        f"{bashrc_exports()}"
         f"{marker}\n"
     )
 
-    with open(bashrc, "a" if marker not in (existing or "") else "w", encoding="utf-8") as f:
-        if marker not in (existing or ""):
+    if rewrite:
+        # `existing` is the file with the old block already stripped; write it back
+        # whole plus the new block, never append onto the unstripped original.
+        bashrc.write_text(existing.rstrip("\n") + block, encoding="utf-8")
+    else:
+        with open(bashrc, "a", encoding="utf-8") as f:
             f.write(block)
-        else:
-            # Rewrite with updated block
-            f.write(existing.rstrip("\n") + block)
 
     _ok(f"~/.bashrc updated - SKCAPSTONE_AGENT={agent_slug}")
     _info("Run [bold]source ~/.bashrc[/] or open a new terminal to apply")

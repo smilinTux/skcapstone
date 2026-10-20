@@ -185,7 +185,8 @@ async def _handle_coord_describe(args: dict) -> list[TextContent]:
 
 async def _handle_coord_label(args: dict) -> list[TextContent]:
     """Add or remove a label on a card via one appended overlay event."""
-    from ..card import CardEvent, CardEventLog
+    from ..card import CardEvent
+    from ..coord_card_mutations import append_coord_annotation
 
     task_id = args.get("task_id", "")
     label = args.get("label", "")
@@ -203,15 +204,22 @@ async def _handle_coord_label(args: dict) -> list[TextContent]:
         return _error_response(str(exc))
     remove = bool(args.get("remove", False))
     action = "remove_label" if remove else "add_label"
-    CardEventLog(_shared_root()).append(
-        CardEvent(card_id=task_id, action=action, label=label, writer=args.get("agent", "") or "")
-    )
+    try:
+        append_coord_annotation(
+            _shared_root(),
+            CardEvent(
+                card_id=task_id, action=action, label=label, writer=args.get("agent", "") or ""
+            ),
+        )
+    except ValueError as exc:
+        return _error_response(str(exc))
     return _json_response({"labeled": True, "task_id": task_id, "label": label, "action": action})
 
 
 async def _handle_coord_link(args: dict) -> list[TextContent]:
     """Attach a link to a card via one appended overlay event."""
-    from ..card import CardEvent, CardEventLog
+    from ..card import CardEvent
+    from ..coord_card_mutations import append_coord_annotation
 
     task_id = args.get("task_id", "")
     key = args.get("key", "")
@@ -229,14 +237,15 @@ async def _handle_coord_link(args: dict) -> list[TextContent]:
     except BoundaryError as exc:
         return _error_response(str(exc))
     try:
-        CardEventLog(_shared_root()).append(
+        append_coord_annotation(
+            _shared_root(),
             CardEvent(
                 card_id=task_id,
                 action="link",
                 link_key=key,
                 link_value=value,
                 writer=args.get("agent", "") or "",
-            )
+            ),
         )
     except ValueError as exc:
         return _error_response(str(exc))
@@ -289,8 +298,12 @@ async def _handle_coord_amend_criteria(args: dict) -> list[TextContent]:
     try:
         amend_criteria(home, task_id, list(criteria), args.get("agent", "") or "")
         folded = current_acceptance_criteria(home, task_id)
-    except ValueError as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         return _error_response(str(exc))
+    if folded != list(criteria):
+        return _error_response(
+            f"criteria amendment for card {task_id} failed read-after-write verification"
+        )
     return _json_response(
         {
             "amended": True,

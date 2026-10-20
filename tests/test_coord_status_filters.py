@@ -250,6 +250,8 @@ def test_status_leaf_eligible_known_mix_uses_folded_cards(tmp_path):
     add("super01", "Superseded", labels=("superseded",))
     add("noclaim1", "Do not claim", labels=("do-not-claim",))
     add("noclaim2", "Not claimable", labels=("not-claimable",))
+    add("voidleaf", "Voided leaf")
+    store.append_event("voidleaf", "void", "fixture", reason="terminal")
     add("owned001", "Owned")
     store.append_event("owned001", "assign", "fixture", owner="agent")
     add("review01", "Needs reviewer")
@@ -295,3 +297,38 @@ def test_unreadable_card_is_reported_without_blocking_healthy_leaves(tmp_path, c
         leaves=1, review=1, malformed=1
     )
     assert "CardStore card broken01 is unreadable" in caplog.text
+
+
+def test_status_uses_same_folded_dependencies_as_claim_gate(tmp_path):
+    """Status must show a folded dependency that makes claim fail closed."""
+    store = CardStore(tmp_path)
+    store.create(CardCore(id="gate0001", title="Incomplete gate"))
+    store.create(CardCore(id="target01", title="Folded dependency target"))
+    store.append_event(
+        "target01",
+        "add_dependency",
+        "governance",
+        dependency="gate0001",
+        reason="test gate",
+    )
+
+    result = CliRunner().invoke(_main(), ["coord", "status", "--home", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    assert "target01" in result.output
+    target_line = next(line for line in result.output.splitlines() if "target01" in line)
+    assert "BLOCKED" in target_line
+    with pytest.raises(ValueError, match="incomplete dependencies: gate0001"):
+        Board(tmp_path).claim_task("worker", "target01")
+
+
+def test_leaf_eligibility_ignores_voided_dependency_and_voided_leaf(tmp_path):
+    """Raw void events deny admission; a done-but-voided dependency does not unblock."""
+    store = CardStore(tmp_path)
+    for card_id, deps in (("dep00001", ()), ("kid00001", ("dep00001",)), ("ok000001", ())):
+        store.create(CardCore(id=card_id, title=f"Card {card_id}", dependencies=list(deps)))
+    store.append_event("dep00001", "complete", "fixture")
+    assert leaf_eligibility_counts(tmp_path).leaves == 2  # kid00001 + ok000001
+    store.append_event("dep00001", "void", "fixture", reason="terminal")
+    store.append_event("ok000001", "void", "fixture", reason="terminal")
+    assert leaf_eligibility_counts(tmp_path).leaves == 0

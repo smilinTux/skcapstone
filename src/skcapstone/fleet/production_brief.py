@@ -159,8 +159,14 @@ For BLOCKED, preserve the workspace and write a private report under
 ~/.skcapstone/evidence/work/{card_id}/ describing the actual unmet contract.
 Record a typed verdict, not only a verdict link: skcapstone coord verdict {card_id}
 'BLOCKED blocked_on=<category> referent=<precise referent> <actual reason>'
+The verdict text must also carry
+attempted=<what you tried>, resume=<what the next agent does first> and
+work_location=<branch, commit, bundle, PR or none>.
 Categories are dependency, card, human or capability. Missing Git identity is
-blocked_on=capability referent=git-author-identity followed by the actual reason.
+blocked_on=capability referent=git-author-identity followed by the handover fields and
+the actual reason. A card that is obsolete or already superseded uses
+BLOCKED blocked_on=card referent=card:<superseding id> reason=obsolete-<why> and needs
+no handover fields. Without the handover fields the write is refused.
 --candidate <private report path> --commit <actual existing HEAD>
 --tree <actual existing HEAD tree> --ref <actual existing refs/heads/branch>
 --agent {owner}. Read the current owner/claim first as in the recipe below.

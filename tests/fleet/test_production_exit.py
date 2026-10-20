@@ -30,6 +30,9 @@ def exit_case(monkeypatch, tmp_path):
     return args, row
 
 
+_HANDOVER = " Attempted it; no repository change, so no PR."
+
+
 def test_local_retry_rechecks_death_and_is_bounded(exit_case, monkeypatch):
     args, _ = exit_case
     attempts, proofs, sleeps = [], [], []
@@ -90,7 +93,10 @@ def test_blocked_exact_native_release_or_preserved_custody(source, invalid):  # 
     Board(source["home"]).save_agent(
         AgentFile(agent=source["owner"], claimed_tasks=[source["card"]])
     )
-    outcome = {**source["outcome"], "verdict": "BLOCKED blocked_on=human referent=approval:test"}
+    outcome = {
+        **source["outcome"],
+        "verdict": "BLOCKED blocked_on=human referent=approval:test." + _HANDOVER,
+    }
     if invalid == "referent":
         outcome["verdict"] = "BLOCKED"
     if invalid == "claim":
@@ -132,7 +138,9 @@ def test_candidateless_blocked_releases_only_from_proven_unchanged_base(
     Board(source["home"]).save_agent(
         AgentFile(agent=source["owner"], claimed_tasks=[source["card"]])
     )
-    outcome = {"verdict": "BLOCKED blocked_on=capability referent=schema-absent-from-base"}
+    outcome = {
+        "verdict": "BLOCKED blocked_on=capability referent=schema-absent-from-base." + _HANDOVER
+    }
     if case == "partial-candidate":
         outcome["candidate_commit"] = "c" * 40
     if case == "base-as-candidate":
