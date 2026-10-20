@@ -1,7 +1,7 @@
 """A provisional PASS must be recorded as hash-bound native candidate evidence.
 
-MEASURED ON THE LIVE chi BOARD, 2026-09-18. ``OPENED_REVIEW`` was 0 across 14
-days and 1,660 rotations, while 214 cards reported
+MEASURED ON THE LIVE chi BOARD, 2026-09-18. ``OPENED_REVIEW`` was 0 across every
+rotation the journal retains (1,716 cycles back to 2026-09-09), while 214 cards reported
 ``OPEN_REVIEW_EVIDENCE_BLOCKED`` every single cycle. Of 354 cards that had ever
 been reported blocked that way, 305 carried their ``PASS_FOR_REVIEW`` ONLY as a
 kanban overlay row of the exact shape
@@ -432,3 +432,17 @@ def test_later_work_invalidates_the_generation_so_the_verdict_goes_last(tmp_path
         _opener(tmp_path)["_parent_review_generation"]("7777cccc", event["ts"], "PASS_FOR_REVIEW")
         is None
     )
+
+
+def test_refusal_message_does_not_repeat_the_retracted_14_day_figure():
+    """The 14 days / 1,660 rotations figure was a journal-head artifact (retracted)."""
+    import pytest
+
+    from skcapstone.provisional_verdict import validate_provisional_verdict
+
+    with pytest.raises(ValueError) as exc:
+        validate_provisional_verdict("verdict", "PASS_FOR_REVIEW")
+    assert "14 days" not in str(exc.value)
+    assert "1,660" not in str(exc.value)
+    # an unrelated verdict value must not raise
+    validate_provisional_verdict("verdict", "false")
