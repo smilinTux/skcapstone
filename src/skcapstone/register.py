@@ -309,8 +309,15 @@ def _apply_profile_defaults(dry_run: bool) -> dict:
 
     from . import telemetry_optout
 
-    paths = telemetry_optout.ensure_telemetry_optout()
-    out: dict = {"telemetry_optout": {"action": "updated" if paths else "exists", "paths": paths}}
+    report = telemetry_optout.ensure_telemetry_optout_report()
+    paths = report["changed"]
+    out: dict = {
+        "telemetry_optout": {
+            "action": "updated" if paths else "exists",
+            "paths": paths,
+            "skipped": report["skipped"],
+        }
+    }
 
     try:
         from skskills import agent_links

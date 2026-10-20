@@ -1259,6 +1259,7 @@ def _step_shell_profile(home_path: Path, agent_name: str, agent_slug: str) -> bo
 
     # Check if profile block already exists
     existing = ""
+    rewrite = False
     if bashrc.exists():
         existing = bashrc.read_text(encoding="utf-8")
         if marker in existing:
@@ -1280,6 +1281,7 @@ def _step_shell_profile(home_path: Path, agent_name: str, agent_slug: str) -> bo
                 if not skip:
                     new_lines.append(line)
             existing = "".join(new_lines)
+            rewrite = True
 
     set_default = Confirm.ask(
         f"  Set [cyan]{agent_name}[/] as default SKCAPSTONE_AGENT in ~/.bashrc?",
@@ -1299,12 +1301,13 @@ def _step_shell_profile(home_path: Path, agent_name: str, agent_slug: str) -> bo
         f"{marker}\n"
     )
 
-    with open(bashrc, "a" if marker not in (existing or "") else "w", encoding="utf-8") as f:
-        if marker not in (existing or ""):
+    if rewrite:
+        # `existing` is the file with the old block already stripped; write it back
+        # whole plus the new block, never append onto the unstripped original.
+        bashrc.write_text(existing.rstrip("\n") + block, encoding="utf-8")
+    else:
+        with open(bashrc, "a", encoding="utf-8") as f:
             f.write(block)
-        else:
-            # Rewrite with updated block
-            f.write(existing.rstrip("\n") + block)
 
     _ok(f"~/.bashrc updated - SKCAPSTONE_AGENT={agent_slug}")
     _info("Run [bold]source ~/.bashrc[/] or open a new terminal to apply")
